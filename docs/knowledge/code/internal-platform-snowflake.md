@@ -26,16 +26,19 @@ There is NO arbitrary-SQL entry point (unlike the reference app's
 `snowflake_query(sql)`). The only method, `ResolvePastEventNames(eventTerm,
 locationTerm, currentYear)`, builds a FIXED, fully-parameterized `SELECT DISTINCT
 EVENT_NAME, EVENT_ID` against `ANALYTICS.PLATINUM_LFX_ONE.event_registrations`:
-caller terms bind as `ILIKE ? ESCAPE '\\'` / `NOT ILIKE ? ESCAPE '\\'` parameters
-(never interpolated into the SQL text). Each bind pattern escapes the ILIKE
-metacharacters (`\`, `%`, `_`) so a literal `%`/`_` in a term matches literally
-instead of acting as a wildcard — the ESCAPE literal is `'\\'` (two backslashes)
-because Snowflake parses it by single-quoted-string rules where `\\` is one
-backslash. `currentYear` is REQUIRED as a 4-digit year (it's the "past editions only"
-guarantee, so a blank/malformed value is rejected rather than silently dropping the
-exclusion). The query fetches `maxEventRows+1` so truncation is DETECTABLE: if more
-than the cap match, it FAILS CLOSED ("narrow the search term") rather than silently
-returning a partial (incomplete) audience. The database/schema/table are package
+caller terms bind as `ILIKE ? ESCAPE '\\'` parameters (never interpolated into the
+SQL text). Each bind pattern escapes the ILIKE metacharacters (`\`, `%`, `_`) so a
+literal `%`/`_` in a term matches literally instead of acting as a wildcard — the
+ESCAPE literal is `'\\'` (two backslashes) because Snowflake parses it by
+single-quoted-string rules where `\\` is one backslash. `currentYear` is REQUIRED as
+a 4-digit year (it's the "past editions only" guarantee, so a blank/malformed value
+is rejected rather than silently dropping the exclusion). Year filtering is done in
+Go, not SQL (`ORDER BY EVENT_NAME` is alphabetical, not chronological, so it can't be
+pushed into a `LIMIT`); a row whose name carries no 4-digit year is ambiguous and is
+excluded (fail closed). The query fetches `(maxEventRows+1)*2` raw rows so truncation
+is DETECTABLE even though most of them may be filtered out afterward: if the raw
+fetch hits that limit, it FAILS CLOSED ("narrow the search term") rather than
+silently returning a partial (incomplete) audience. The database/schema/table are package
 constants; a defensive `ident` guard neutralizes any future config-sourced identifier
 so it can never inject SQL. So the package is structurally incapable of a write or an
 injection.

@@ -202,3 +202,28 @@ cascade that consumes it lands in GA-3b. The orchestrator dispatcher
 (registering `google-ads` so briefs dispatch upstream) is wired in
 `internal/dispatch/googleads.go` (LFXV2-2636). Metrics/keywords/audience reads
 and keyword actions follow in later GA slices.
+
+## Dispatch adapter (internal/dispatch)
+
+The `internal/dispatch` googleads adapter (see [internal/dispatch](internal-dispatch.md))
+interprets an OAuth2 application (clientId/secret + refreshToken) PLUS a Google Ads API
+developer token; AccountConfig comes from AccountID (the customer id) + an OPTIONAL
+`login_customer_id` (the manager/MCC account, from the connection's ProviderConfig).
+Budget (`googleAdsConfig.budget`) is in the ACCOUNT's currency (no FX). The client today
+creates a PAUSED search-campaign shell (budget → campaign); its two-step hierarchy means a
+PRE-attachment (budget-stage) orphan is reconciled by its deterministic
+`CampaignBudgetName`, but once the campaign attaches a non-shared budget's name
+synchronizes to the campaign name, so a campaign-stage partial reconciles the budget by
+`CampaignBudgetID` instead (the partial carries both). Either way the dispatcher returns a
+non-nil result (retaining the claim) on an ambiguous/duplicate-name create rather than
+releasing on an empty id.
+
+It implements PAUSE only; **ACTIVATE is refused** with `ErrCampaignNotProvisioned`
+(→409, raised locally without calling Google). The create path provisions only a PAUSED
+search campaign SHELL (budget → campaign) with no ad group, ad, or keywords, so flipping
+the campaign to ENABLED would report success while nothing can serve — the exact lie that
+sentinel exists to prevent. There is no cascade for the same reason: there are no children
+to cascade to. `UpdateCampaignStatus` sends a single `campaigns:mutate` UPDATE with
+`updateMask: "status"`. Note the vocabulary: Google spells the serving state **ENABLED**,
+not ACTIVE. When GA-3+ adds ad groups/ads/keywords, this must grow BOTH a cascade and a
+real child-id-based activate guard, matching the reddit shape.
