@@ -60,17 +60,28 @@ if [[ -n "$replay_head" ]]; then
   # current committer's sign-off for content that actually changed. Instead,
   # build a fingerprint from `git diff --binary` that keeps everything needed
   # to identify WHAT changed (file identity, mode/rename metadata, binary
-  # content, and the actual +/- content lines) while normalizing away only
-  # what legitimately varies across a replay landing on a different base
-  # commit: blob-oid `index` lines, `@@ ... @@` hunk-header line numbers, and
-  # unchanged context lines. Earlier drafts of this filter kept ONLY +/-
-  # content lines, which dropped the `diff --git a/x b/y` file-identity line,
-  # mode/rename metadata, and binary-patch bodies entirely — an edit to a
-  # DIFFERENT file (or a binary- or mode-only change) with the same textual
-  # content, or none at all, would then fingerprint identically to the
-  # original and wrongly qualify for the replay exemption. A whitespace-only
-  # edit to a +/- line, or any change to a binary blob, still flips the hash,
-  # unlike patch-id.
+  # content, and the actual +/- content lines, plus 1 line of surrounding
+  # context) while normalizing away only what legitimately varies across a
+  # replay landing on a different base commit: blob-oid `index` lines and
+  # `@@ ... @@` hunk-header line numbers/counts. Earlier drafts of this filter
+  # kept ONLY +/- content lines with no context at all, which let two edits of
+  # identical content at DIFFERENT locations in the same file (e.g. a line
+  # that reads "one" appearing twice, changed to "two" at one occurrence in
+  # the original and at the other in a modified replay) fingerprint
+  # identically and wrongly qualify for the exemption — the +/- lines alone
+  # carry no positional signal once line numbers are stripped. Keeping 1 line
+  # of context (`-U1`) restores enough surrounding-content signal to tell
+  # those apart in the common case without reintroducing the full line-number
+  # sensitivity `--stable` patch-id avoids; when even the 1-line context is
+  # identical at both locations the edit is truly ambiguous from content
+  # alone, and this hook fails closed (denies the exemption, falls through to
+  # requiring the current committer's sign-off) rather than guessing. `--no-
+  # ext-diff` pins this to git's built-in diff engine — otherwise a
+  # `diff.external`/`GIT_EXTERNAL_DIFF` driver configured on the machine
+  # replaces the diff BODY while `git diff --binary` still emits the ordinary
+  # `diff --git` header, so the awk filter would keep the file-identity line
+  # but silently lose the swapped-in body, letting a same-file content amend
+  # during a rebase `edit` hash identically to the original.
   #
   # awk (not grep) does the filtering: grep exits 1 when nothing matches its
   # pattern, which happens whenever the diff is empty (e.g. `git diff
@@ -79,18 +90,27 @@ if [[ -n "$replay_head" ]]; then
   # here would abort the whole hook, including on an otherwise-correctly-
   # signed commit, before the committer-sign-off fallback ever runs. awk exits
   # 0 even when it prints nothing, so an empty diff yields a well-defined
-  # empty-blob fingerprint instead of aborting.
+  # empty-blob fingerprint instead of aborting. The trailing `|| true` guards
+  # the rest of the pipeline too: under `set -o pipefail` (part of `-euo
+  # pipefail`), a fatal `git diff` failure (not just "differences found" —
+  # plain `git diff` without `--exit-code` only returns nonzero on an actual
+  # error) would otherwise abort the whole hook via the `var=$(...)`
+  # assignment at the call site before the committer-sign-off fallback ever
+  # runs. On failure this yields an empty fingerprint, which the `-n
+  # "$original_fingerprint"` check below already treats as "not a proven
+  # replay" — fail closed to requiring a fresh sign-off, never fail open.
   diff_fingerprint() {
-    git diff --binary "$@" -- 2>/dev/null | awk '
+    git diff --no-ext-diff --binary -U1 "$@" -- 2>/dev/null | awk '
       /^GIT binary patch$/ { print; inbin=1; next }
       inbin { print; if ($0 == "") inbin=0; next }
       /^diff --git / { print; next }
       /^(old mode|new mode|new file mode|deleted file mode|similarity index|rename from|rename to|copy from|copy to) / { print; next }
       /^Binary files .* differ$/ { print; next }
       /^\+\+\+ / || /^--- / { next }
-      /^[+-]/ { print; next }
+      /^@@ / { print "@@"; next }
+      /^[+ -]/ { print; next }
       { next }
-    ' | git hash-object --stdin 2>/dev/null
+    ' | git hash-object --stdin 2>/dev/null || true
   }
 
   original_message=$(git log -1 --format=%B "$replay_head")

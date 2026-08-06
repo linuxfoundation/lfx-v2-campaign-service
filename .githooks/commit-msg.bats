@@ -138,6 +138,71 @@ msg_file() {
   rm -f .git/REBASE_HEAD
 }
 
+@test "rejects a modified replay that edits identical content at a different location in the same file" {
+  printf 'alpha\none\nbeta\none\ngamma\n' >file.txt
+  git add file.txt
+  git commit -q -m "initial" --no-verify
+
+  # Original commit changes the FIRST "one" (line 2, between "alpha" and "beta").
+  printf 'alpha\ntwo\nbeta\none\ngamma\n' >file.txt
+  git add file.txt
+  GIT_AUTHOR_NAME="Original Author" GIT_AUTHOR_EMAIL="original@example.com" \
+    GIT_COMMITTER_NAME="Original Author" GIT_COMMITTER_EMAIL="original@example.com" \
+    git commit -q -s -m "feat: original change"
+  replay_sha=$(git rev-parse HEAD)
+  echo "$replay_sha" >.git/REBASE_HEAD
+  git reset --soft HEAD^
+
+  # Modified replay changes the SECOND "one" (line 4, between "beta" and
+  # "gamma") instead, leaving the first occurrence untouched. With no
+  # positional signal at all, both diffs reduce to the same "-one"/"+two"
+  # content and would wrongly fingerprint as identical; 1 line of surrounding
+  # context ("beta" before vs "beta" after) distinguishes them.
+  git checkout -- file.txt
+  printf 'alpha\none\nbeta\ntwo\ngamma\n' >file.txt
+  git add file.txt
+
+  GIT_AUTHOR_NAME="Original Author" GIT_AUTHOR_EMAIL="original@example.com" \
+    f=$(msg_file "$(git log -1 --format=%B "$replay_sha")")
+  run env GIT_AUTHOR_NAME="Original Author" GIT_AUTHOR_EMAIL="original@example.com" "$HOOK" "$f"
+  [ "$status" -ne 0 ]
+  rm -f .git/REBASE_HEAD
+}
+
+@test "ignores a diff.external/GIT_EXTERNAL_DIFF driver and still distinguishes different content" {
+  cat >"$REPO/fake-external-diff" <<'EOS'
+#!/usr/bin/env bash
+echo "same bogus diff output regardless of input"
+EOS
+  chmod +x "$REPO/fake-external-diff"
+
+  echo one >file.txt
+  git add file.txt
+  git commit -q -m "initial" --no-verify
+
+  echo two >file.txt
+  git add file.txt
+  GIT_AUTHOR_NAME="Original Author" GIT_AUTHOR_EMAIL="original@example.com" \
+    GIT_COMMITTER_NAME="Original Author" GIT_COMMITTER_EMAIL="original@example.com" \
+    git commit -q -s -m "feat: original change"
+  replay_sha=$(git rev-parse HEAD)
+  echo "$replay_sha" >.git/REBASE_HEAD
+  git reset --soft HEAD^
+
+  # Modified replay: a DIFFERENT content change ("one" -> "three") than the
+  # original ("one" -> "two"). If a configured external diff driver were
+  # honored, its output (identical regardless of actual content) would blind
+  # the fingerprint to this difference and wrongly grant the exemption.
+  echo three >file.txt
+  git add file.txt
+
+  f=$(msg_file "$(git log -1 --format=%B "$replay_sha")")
+  run env GIT_EXTERNAL_DIFF="$REPO/fake-external-diff" \
+    GIT_AUTHOR_NAME="Original Author" GIT_AUTHOR_EMAIL="original@example.com" "$HOOK" "$f"
+  [ "$status" -ne 0 ]
+  rm -f .git/REBASE_HEAD
+}
+
 @test "rejects a replay whose message was edited without a fresh sign-off" {
   git commit -q -m "initial" --no-verify
   echo two >file.txt
