@@ -215,6 +215,24 @@ find-or-create campaign creation (`campaign.go`); MS-2.5 completes the ad group 
 `UpdateCampaignAndChildrenStatus` on top: a three-level cascade whose ordering, child-id guard and
 outcome classification are described under Status toggle below.
 
+## Dispatch adapter (internal/dispatch)
+
+The `internal/dispatch` microsoft adapter (see [internal/dispatch](internal-dispatch.md))
+interprets an OAuth2 app (clientId/secret) + a developer token + refreshToken;
+AccountConfig comes from the connection's AccountID (the DIGITS-ONLY
+`CustomerAccountId`, trimmed) plus an optional `customer_id` (the manager/`CustomerId`
+header). The client builds the full Campaign → AdGroup → Ad hierarchy (all PAUSED) — so
+the adapter needs no ad config beyond `microsoftConfig.budget` (the DAILY budget, in the
+ACCOUNT's currency, no FX) and an optional `timeZone`. `NameSuffix = brief.ID` gives
+deterministic retry-safe names (Microsoft enforces case-insensitive campaign-name
+uniqueness, so a retry composes the SAME name and cleanly REUSES the existing campaign
+rather than duplicating it — though `AlreadyExisted` stays false unless the ad group and
+ad also both pre-existed). A non-nil result accompanied
+by an error is a separate UNCONFIRMED partial (claim retained); (nil, err) means nothing
+was created (claim released).
+
+It has a creation dispatcher; its status-TOGGLE capability is described next.
+
 ## Status toggle
 
 `UpdateCampaignAndChildrenStatus` cascades a status across campaign → ad group → ad. The dispatch
