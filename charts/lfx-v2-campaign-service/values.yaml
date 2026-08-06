@@ -218,6 +218,44 @@ app:
           name: lfx-v2-campaign-service-secrets
           key: credential-encryption-key
 
+    # SNOWFLAKE_* configure the read-only warehouse lookup that resolves an event's PAST
+    # EDITIONS, which is what makes audience groups 5 and 7 (past-edition registrants) possible.
+    # ALL of account/user/privateKey are required for the lookup to run; with any missing, every
+    # audience is built COUNTRY-ONLY and the plan records that no past editions were resolved.
+    #
+    # Optional refs so a cluster without the secret still starts: the warehouse is a read-only
+    # enrichment, and failing pod start over it would take down campaign dispatch for a feature
+    # that degrades cleanly. The cost of leaving it unset is a narrower audience, not an outage.
+    #
+    # Rollout prerequisite: ExternalSecret / secret sync must provision `snowflake-account`,
+    # `snowflake-user` and `snowflake-private-key` on lfx-v2-campaign-service-secrets before
+    # groups 5 and 7 will build.
+    SNOWFLAKE_ACCOUNT:
+      valueFrom:
+        secretKeyRef:
+          name: lfx-v2-campaign-service-secrets
+          key: snowflake-account
+          optional: true
+    SNOWFLAKE_USER:
+      valueFrom:
+        secretKeyRef:
+          name: lfx-v2-campaign-service-secrets
+          key: snowflake-user
+          optional: true
+    # The PEM private key for key-pair auth. A secret ref, never a value: it is a credential.
+    SNOWFLAKE_PRIVATE_KEY:
+      valueFrom:
+        secretKeyRef:
+          name: lfx-v2-campaign-service-secrets
+          key: snowflake-private-key
+          optional: true
+    # Warehouse and role are not secrets, but are environment-specific; empty means "use the
+    # account default", which is what a dev cluster wants.
+    SNOWFLAKE_WAREHOUSE:
+      value: ''
+    SNOWFLAKE_ROLE:
+      value: ''
+
     # INDEXER_SERVICE_TOKEN is the SERVICE credential the index relay stamps onto
     # messages it replays from the outbox. Outbox rows deliberately store no token
     # (the table is JSONB retained for audit with no pruning, so a per-request JWT

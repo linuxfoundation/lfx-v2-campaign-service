@@ -316,3 +316,32 @@ status-toggle cascade over that ad group/ad. The orchestrator dispatcher
 (registering `google-ads` so briefs dispatch upstream) is wired in
 `internal/dispatch/googleads.go` (LFXV2-2636). Keyword/audience targeting
 (GA-4), metrics reads, and keyword actions follow in later GA slices.
+
+## Dispatch adapter (internal/dispatch)
+
+The `internal/dispatch` googleads adapter (see [internal/dispatch](internal-dispatch.md))
+interprets an OAuth2 application (clientId/secret + refreshToken) PLUS a Google Ads API
+developer token; AccountConfig comes from AccountID (the customer id) + an OPTIONAL
+`login_customer_id` (the manager/MCC account, from the connection's ProviderConfig).
+Budget (`googleAdsConfig.budget`) is in the ACCOUNT's currency (no FX). The client today
+creates a PAUSED search-campaign shell (budget → campaign); its two-step hierarchy means a
+PRE-attachment (budget-stage) orphan is reconciled by its deterministic
+`CampaignBudgetName`, but once the campaign attaches a non-shared budget's name
+synchronizes to the campaign name, so a campaign-stage partial reconciles the budget by
+`CampaignBudgetID` instead (the partial carries both). Either way the dispatcher returns a
+non-nil result (retaining the claim) on an ambiguous/duplicate-name create rather than
+releasing on an empty id.
+
+It implements PAUSE cascading (see "Status toggling (GA-3c)" above): `ToggleStatus` reads the
+ad-group/ad ids GA-3b's create path persisted in the campaign's `Result` blob
+(`googleAdsChildIDs`) and flips the campaign FIRST via `UpdateCampaignStatus`, then the ad
+group/ad via `Client.UpdateAdGroupAndAdStatus`. **ACTIVATE is unconditionally refused** with
+`ErrCampaignNotProvisioned` (→409, raised locally without calling Google) because GA-3b's
+create path provisions the ad group + ad but no targeting criteria (keywords, audiences) — a
+campaign without targeting cannot deliver, so enabling it would report false success.
+Targeting provisioning is deferred to GA-4; once GA-4 lands, ACTIVATE will cascade with a
+children-first order (children activated before campaign) so a campaign never reports ENABLED
+before its ad group/ad already do. Note the vocabulary: Google spells the serving state
+**ENABLED**, not ACTIVE.
+
+Microsoft Ads has a creation dispatcher; its status-TOGGLE capability lands separately.
