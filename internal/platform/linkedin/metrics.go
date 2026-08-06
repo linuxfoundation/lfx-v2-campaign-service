@@ -11,9 +11,9 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/big"
 	"net/http"
 	"net/url"
-	"strconv"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -133,28 +133,31 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 // finite, non-negative decimal, or that would overflow int64 once converted to
 // micros, so a malformed value surfaces as a decode error instead of being
 // silently coerced into an understated cost.
+//
+// Parsed via big.Rat, not strconv.ParseFloat: costInUsd is a BigDecimal on
+// LinkedIn's side, and float64 only has ~15-17 significant decimal digits of
+// precision. At magnitudes near math.MaxInt64 micros (~9.2e12 USD), float64's
+// representable-value spacing exceeds 1 micro, so a float64 intermediate can
+// silently misrepresent the exact value before the overflow check even runs.
+// big.Rat represents the decimal exactly, so the rounding below is the only
+// place precision is intentionally lost — to the nearest whole micro.
 func costInUsdToMicros(s string) (int64, error) {
-	costUsd, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0, fmt.Errorf("not a valid decimal: %w", err)
+	r, ok := new(big.Rat).SetString(s)
+	if !ok {
+		return 0, fmt.Errorf("not a valid decimal: %q", s)
 	}
-	if math.IsNaN(costUsd) || math.IsInf(costUsd, 0) {
-		return 0, fmt.Errorf("non-finite value: %v", costUsd)
+	if r.Sign() < 0 {
+		return 0, fmt.Errorf("negative value: %s", s)
 	}
-	if costUsd < 0 {
-		return 0, fmt.Errorf("negative value: %v", costUsd)
+	scaled := new(big.Rat).Mul(r, big.NewRat(1_000_000, 1))
+	// FloatString(0) rounds to the nearest integer (ties away from zero), giving
+	// the same "round rather than truncate" behavior as the prior float64 path,
+	// but without the intermediate precision loss.
+	micros, ok := new(big.Int).SetString(scaled.FloatString(0), 10)
+	if !ok || !micros.IsInt64() {
+		return 0, fmt.Errorf("value overflows int64 micros: %s", s)
 	}
-	// math.MaxInt64 is not exactly representable as a float64 (it rounds UP to
-	// 2^63), so comparing the unrounded product against it leaves a gap just below
-	// 2^63 that would pass the guard and then overflow on the int64 conversion
-	// below (implementation-defined, not a caught error). Round first, then
-	// compare the rounded value against float64(math.MaxInt64), mirroring the Meta
-	// client's budget-overflow guard.
-	micros := math.Round(costUsd * 1_000_000)
-	if micros >= float64(math.MaxInt64) {
-		return 0, fmt.Errorf("value overflows int64 micros: %v", costUsd)
-	}
-	return int64(micros), nil
+	return micros.Int64(), nil
 }
 
 // restLiDate renders a time.Time as a Rest.li 2.0 nested date object literal,

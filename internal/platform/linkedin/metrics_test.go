@@ -6,6 +6,7 @@ package linkedin
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -598,17 +599,42 @@ func TestDateRangeForWindow_UTCNegativeOffset(t *testing.T) {
 	}
 }
 
-// TestCostInUsdToMicros_MaxInt64ItselfOverflows pins the float64-representability
-// boundary: math.MaxInt64 (9223372036854775807) is not exactly representable as a
-// float64 — it rounds UP to 2^63 (9223372036854775808). A guard that compares the
-// unrounded product directly against the untyped math.MaxInt64 constant (itself
-// promoted to that same rounded float64) therefore lets a product of exactly 2^63
-// through as "not greater than", after which converting it to int64 overflows
-// (implementation-defined, not a caught error). This input's product lands exactly
-// there: 9223372036854.775808 USD * 1_000_000 = 9223372036854775808 = 2^63.
-func TestCostInUsdToMicros_MaxInt64ItselfOverflows(t *testing.T) {
-	if _, err := costInUsdToMicros("9223372036854.775807"); err == nil {
-		t.Fatal("expected an overflow error for a value converting to exactly math.MaxInt64 micros' neighborhood, got nil")
+// TestCostInUsdToMicros_MaxInt64ExactlySucceeds pins the int64 boundary with exact
+// (big.Rat) arithmetic: a value converting to precisely math.MaxInt64 micros fits
+// and must succeed. This is the boundary a float64-intermediate implementation gets
+// wrong — math.MaxInt64 is not exactly representable as a float64 (it rounds UP to
+// 2^63), which would push this exact-fit value over a naive overflow guard.
+func TestCostInUsdToMicros_MaxInt64ExactlySucceeds(t *testing.T) {
+	got, err := costInUsdToMicros("9223372036854.775807")
+	if err != nil {
+		t.Fatalf("unexpected error for a value at exactly math.MaxInt64 micros: %v", err)
+	}
+	if want := int64(math.MaxInt64); got != want {
+		t.Errorf("micros = %d, want %d", got, want)
+	}
+}
+
+// TestCostInUsdToMicros_OneMicroOverMaxInt64Overflows pins the other side of the same
+// boundary: one micro beyond math.MaxInt64 must be rejected, not silently wrapped.
+func TestCostInUsdToMicros_OneMicroOverMaxInt64Overflows(t *testing.T) {
+	if _, err := costInUsdToMicros("9223372036854.775808"); err == nil {
+		t.Fatal("expected an overflow error for a value one micro beyond math.MaxInt64, got nil")
+	}
+}
+
+// TestCostInUsdToMicros_HighPrecisionValueParsedExactly pins the defect a float64
+// intermediate introduces: at magnitudes where float64's representable-value spacing
+// exceeds 1 micro, strconv.ParseFloat followed by *1_000_000 can silently misrepresent
+// the exact decimal. 9007199254.740993 is exactly representable in decimal but sits at
+// a spacing boundary where float64 cannot hold the odd micros value that follows.
+// big.Rat parses the decimal string exactly, so this must round-trip losslessly.
+func TestCostInUsdToMicros_HighPrecisionValueParsedExactly(t *testing.T) {
+	got, err := costInUsdToMicros("9007199254.740993")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := int64(9_007_199_254_740_993); got != want {
+		t.Errorf("micros = %d, want %d (exact odd value must survive parsing)", got, want)
 	}
 }
 
