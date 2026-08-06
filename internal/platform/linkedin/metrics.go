@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"regexp"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -94,6 +95,19 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 	// for a single campaign over a single (non-daily) date range.
 	var metrics model.CampaignMetrics
 	for _, elem := range *resp.Elements {
+		// Reject negative counts and check the running sum before adding, the same
+		// guard costInUsd's aggregation applies below: two individually valid int64
+		// counts can still overflow the sum, and a negative element would silently
+		// understate it instead of failing the read.
+		if elem.Impressions < 0 || elem.Clicks < 0 {
+			return nil, fmt.Errorf("get campaign metrics: negative impressions or clicks in response element")
+		}
+		if elem.Impressions > math.MaxInt64-metrics.Impressions {
+			return nil, fmt.Errorf("get campaign metrics: aggregate impressions overflows int64")
+		}
+		if elem.Clicks > math.MaxInt64-metrics.Clicks {
+			return nil, fmt.Errorf("get campaign metrics: aggregate clicks overflows int64")
+		}
 		metrics.Impressions += elem.Impressions
 		metrics.Clicks += elem.Clicks
 		if elem.CostInUsd != nil {
@@ -141,7 +155,16 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 // silently misrepresent the exact value before the overflow check even runs.
 // big.Rat represents the decimal exactly, so the rounding below is the only
 // place precision is intentionally lost — to the nearest whole micro.
+// decimalCostPattern matches a plain, optionally-negative decimal number: no
+// slashes, exponents, or other big.Rat-only rational syntax (e.g. "1/2"),
+// which SetString would otherwise accept and silently misinterpret as a
+// fraction rather than reject as malformed.
+var decimalCostPattern = regexp.MustCompile(`^-?[0-9]+(\.[0-9]+)?$`)
+
 func costInUsdToMicros(s string) (int64, error) {
+	if !decimalCostPattern.MatchString(s) {
+		return 0, fmt.Errorf("not a valid decimal: %q", s)
+	}
 	r, ok := new(big.Rat).SetString(s)
 	if !ok {
 		return 0, fmt.Errorf("not a valid decimal: %q", s)
