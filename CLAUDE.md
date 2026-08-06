@@ -21,8 +21,9 @@ Whenever you merge a PR, update a Helm manifest, or fix a bug:
    existing concept covers the change).
 2. Update the containing `index.md` bullet if a concept was added, renamed,
    or its description changed.
-3. Append a dated entry to `docs/knowledge/log.md`
-   (`## YYYY-MM-DD` / `**Update** — ...`).
+3. Add a new file `docs/knowledge/log/YYYY-MM-DD-<slug>.md` (slug = ticket +
+   short description) with a first H1 dated to match the filename, then
+   `**Update** — ...`. One file per entry — never edit another entry's file.
 4. Validate locally: `go run ./cmd/okfvalidate ./docs/knowledge`.
 
 Do not re-run `go run ./cmd/okfgen` to do this — it regenerates the entire
