@@ -42,23 +42,38 @@ if [[ -n "$replay_head" ]]; then
     exit 1
   fi
   author_name_email=$(sed -E 's/ [0-9]+ [-+][0-9]{4}$//' <<<"$author_ident")
+  if [[ -z "$author_name_email" ]]; then
+    echo "error: could not resolve author identity to verify DCO sign-off" >&2
+    exit 1
+  fi
   expected_author_trailer="Signed-off-by: ${author_name_email}"
 
-  # For a replay to skip committer sign-off, the message must be unchanged from
-  # the original commit. This ensures we catch both message edits and tree-only
-  # changes at an interactive-rebase edit stop (where git commit --amend preserves
-  # the original author but requires fresh committer sign-off if content was modified).
+  # For a replay to skip committer sign-off, both the message AND the content
+  # must be unchanged from the original commit. Message equality alone misses a
+  # tree-only amend (e.g. `git commit --amend --no-edit` at an interactive-rebase
+  # `edit` stop): the message and its Signed-off-by trailer survive untouched
+  # while the tree changes underneath. `git patch-id` is compared rather than
+  # the tree/SHA directly because it hashes the DIFF, not the tree state — a
+  # patch-id match holds even when the replay lands on a different base commit
+  # (a plain rebase or cherry-pick onto new history), which a tree-hash
+  # comparison would falsely flag as changed.
   original_message=$(git log -1 --format=%B "$replay_head")
   current_message=$(<"$commit_msg_file")
 
+  original_patch_id=$(git diff "${replay_head}^!" -- 2>/dev/null | git patch-id --stable 2>/dev/null | awk '{print $1}')
+  staged_patch_id=$(git diff --cached -- 2>/dev/null | git patch-id --stable 2>/dev/null | awk '{print $1}')
+
   if [[ "$original_message" == "$current_message" ]] && \
+     [[ -n "$original_patch_id" ]] && [[ "$original_patch_id" == "$staged_patch_id" ]] && \
      git interpret-trailers --parse "$commit_msg_file" | grep -qFx "$expected_author_trailer"; then
-    # Message is unchanged from the original commit AND original author's trailer
-    # is present: this is an unmodified replay of an already-signed commit, so
-    # the original author's signature is still valid. Skip the committer check.
+    # Message AND content (via patch-id) are unchanged from the original commit,
+    # AND the original author's trailer is present: this is a faithful, unmodified
+    # replay of an already-signed commit, so the original author's signature is
+    # still valid. Skip the committer check.
     exit 0
   fi
-  # Message was edited, author changed, or trailer is missing: the replay is no
+  # Message was edited, content changed (patch-id mismatch — includes a
+  # tree-only amend), author changed, or trailer is missing: the replay is no
   # longer a faithful reproduction of the original, so it needs a fresh sign-off
   # from the current committer. Fall through to the committer check below.
 fi
