@@ -3780,6 +3780,70 @@ func TestNoFollowRedirectPolicy(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_ThrottledNameLookupIsUnconfirmed is the end-to-end half of the 429
+// classification. The unit table proves createOutcomeAmbiguous's verdict; this proves the
+// verdict actually reaches the caller as a PARTIAL RESULT with the "verify in Ads Manager"
+// step, rather than a bare error that reads like "nothing happened".
+//
+// The distinction is the whole point of the name lookup: it exists to establish that the
+// campaign name is ABSENT, and a lookup that never got past Meta's throttle establishes
+// nothing. Handing that back as a clean failure tells the operator the opposite of what is
+// known.
+func TestCreateCampaign_ThrottledNameLookupIsUnconfirmed(t *testing.T) {
+	var gets int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			gets++
+			// No Retry-After: the client falls back to its (shrunk) capped backoff and
+			// exhausts the retry budget, which is the state under test.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"message":"User request limit reached","type":"OAuthException","code":17}}`)
+			return
+		}
+		t.Errorf("no mutating call may be attempted after an unresolved name lookup; got %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()), withRetryBaseDelay(time.Millisecond))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		Project:         "tlf",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		Budget:          10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		// The lookup is gated on this flag (false everywhere today), so without it the
+		// create runs unconditionally and this path is never entered.
+		ReconcileByName: true,
+	})
+	if err == nil {
+		t.Fatal("expected the throttled lookup to surface as an error")
+	}
+	if gets < 2 {
+		t.Errorf("the lookup was retried %d time(s); the test must exercise an EXHAUSTED retry budget", gets)
+	}
+	if res == nil {
+		t.Fatal("a throttled lookup must return an UNCONFIRMED partial result, not (nil, err): the caller cannot tell whether the name is absent")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("error = %q, want it marked UNCONFIRMED", err.Error())
+	}
+	var sawStep bool
+	for _, step := range res.Steps {
+		if strings.Contains(step, "UNCONFIRMED") && strings.Contains(step, "Ads Manager") {
+			sawStep = true
+		}
+	}
+	if !sawStep {
+		t.Errorf("Steps = %q, want one telling the operator to verify in Ads Manager before retrying", res.Steps)
+	}
+}
+
 // TestCreateOutcomeAmbiguous_3xxIsAmbiguous verifies a mutating 3xx (now surfaced
 // as an APIError because redirect following is disabled) is classified AMBIGUOUS
 // alongside 5xx — Meta may have committed the create before returning the redirect,
@@ -3796,7 +3860,7 @@ func TestCreateOutcomeAmbiguous_3xxIsAmbiguous(t *testing.T) {
 		{http.StatusBadGateway, true},          // 502
 		{http.StatusBadRequest, false},         // 400 — definite rejection
 		{http.StatusNotFound, false},           // 404
-		{http.StatusTooManyRequests, false},    // 429 handled by retry, not here
+		{http.StatusTooManyRequests, true},     // 429 — retry budget exhausted; a throttle is not a rejection
 	}
 	for _, tc := range cases {
 		err := &APIError{StatusCode: tc.status, Method: http.MethodPost, Path: "/campaigns"}
@@ -3818,6 +3882,11 @@ func TestCreateOutcomeAmbiguous_3xxIsAmbiguous(t *testing.T) {
 		{http.MethodGet, http.StatusInternalServerError, true},  // GET 500 — still ambiguous
 		{http.MethodPost, http.StatusFound, true},               // POST 302 — mutating redirect
 		{http.MethodDelete, http.StatusTemporaryRedirect, true}, // DELETE 307 — mutating
+		// 429 is NOT method-gated: on a mutating call Meta may have shed the request
+		// after committing, and on the name-lookup GET a throttle leaves ABSENCE
+		// unestablished, which is the thing that lookup exists to establish.
+		{http.MethodGet, http.StatusTooManyRequests, true},
+		{http.MethodPost, http.StatusTooManyRequests, true},
 	}
 	for _, tc := range methodCases {
 		err := &APIError{StatusCode: tc.status, Method: tc.method, Path: "/campaigns"}

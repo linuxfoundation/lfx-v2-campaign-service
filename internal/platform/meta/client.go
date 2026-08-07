@@ -943,6 +943,9 @@ func isPreSendDialError(err error) bool {
 //     mutating request is NOT a definite rejection — Meta may have committed the
 //     create and then returned a redirect — so it is ambiguous like a 5xx.
 //
+// A 429 that survives the retry budget is ambiguous too: it is a throttle, not a
+// rejection, so it establishes neither "not applied" nor "the name is absent".
+//
 // A definite 4xx (Meta rejected it), or any pre-send failure (token missing,
 // body encode/build, a pre-connect dial error), means NOT applied → returns
 // false so the caller returns a clean (nil, err) / "failed" rather than "may
@@ -965,6 +968,22 @@ func createOutcomeAmbiguous(err error) bool {
 	}
 	// A 5xx may follow a committed create.
 	if ae.StatusCode >= 500 {
+		return true
+	}
+	// 429 is the one 4xx that is NOT a semantic rejection. Reaching here means the
+	// bounded retry in doRequest was EXHAUSTED (or aborted on an over-cap
+	// Retry-After), so this is a throttle we never got past — and a throttle says
+	// nothing about what happened to the request. Two distinct callers need that:
+	//   - a mutating call may have been shed AFTER Meta committed the node, so a
+	//     clean-failure classification invites a blind retry that duplicates a PAID
+	//     campaign;
+	//   - the name LOOKUP exists to confirm ABSENCE, and a throttled lookup confirms
+	//     nothing, so the caller must be told to verify in Ads Manager rather than
+	//     be handed a bare failure.
+	// Unlike the 3xx case below this is deliberately NOT gated on the method: the
+	// 3xx gate asks "could this have created something?", while 429 also has to
+	// answer "did we establish absence?", and a GET cannot answer that either.
+	if ae.StatusCode == http.StatusTooManyRequests {
 		return true
 	}
 	// A 3xx on a MUTATING request reached a responder and may have committed a
