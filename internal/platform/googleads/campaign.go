@@ -410,9 +410,15 @@ func resourceID(resourceName string) string {
 	return resourceName[i+1:]
 }
 
-// CreateCampaign creates a PAUSED Google Ads search campaign: it first creates a
-// non-shared campaign budget, then a campaign referencing that budget. Everything
+// CreateCampaign creates a PAUSED Google Ads search campaign as a four-resource
+// cascade: a non-shared campaign budget, a campaign referencing that budget, an ad
+// group under the campaign, and a responsive search ad in that ad group. Everything
 // is created PAUSED so nothing serves until a human enables it.
+//
+// Each stage may leave a PARTIAL result: the returned *CampaignResult is populated
+// as far as the cascade got, and past the campaign stage a failure is returned
+// ALONGSIDE a non-nil result rather than as (nil, err), so the caller can record
+// what exists upstream. See the ad group/ad stage below for that contract.
 //
 // Because :mutate has no idempotency key, every failure is classified by whether
 // the request may have committed upstream (createOutcomeAmbiguous). An ambiguous
@@ -663,8 +669,8 @@ func (c *Client) validateCampaignResource(resourceName string) error {
 //
 // requireNumericID validates the trailing id segment is a plain numeric id — set
 // false for composite trailing segments (e.g. adGroupAds' "{adGroupId}~{adId}"),
-// whose shape is validated separately by compositeResourceID/adGroupAdID/
-// adGroupCriterionID.
+// whose shape is validated separately by adGroupAdID, the only composite splitter
+// in this package.
 func (c *Client) validateResourceKind(kind, resourceName string, requireNumericID bool) error {
 	pathParts := strings.Split(resourceName, "/")
 	// Require exactly 4 segments: customers, {id}, {kind}, {id}

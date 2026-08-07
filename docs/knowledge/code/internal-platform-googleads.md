@@ -283,9 +283,12 @@ contradicted `ad_copy.go` and is corrected.
 **The ad's final URL** (`buildAdFinalURL`) is the brief's `RegistrationURL`
 tagged with `utm_source=google`, `utm_medium=cpc`, `utm_campaign` (from
 EventSlug, falling back to EventName then NameSuffix), and `utm_content`
-(from Project) — any query param the registration URL already carries,
-INCLUDING a pre-existing `utm_*` key, is preserved rather than overwritten
-(`setIfAbsent`). An empty/non-http(s)/no-host registration URL is rejected
+(from Project). `utm_source` and `utm_medium` are set UNCONDITIONALLY
+(`q.Set`), overwriting any values the registration URL carried — a click on
+a Google CPC ad must be attributed to Google/CPC, never to an earlier
+channel's tag. `utm_campaign` and `utm_content` use `setIfAbsent`, so a
+caller-supplied value for either wins. Every other query param the URL
+already carries is preserved untouched. An empty/non-http(s)/no-host registration URL is rejected
 before any mutate runs, so a bad input never orphans an ad group with no ad.
 
 `Client.UpdateAdGroupAndAdStatus` sends the ad group status update then the ad
