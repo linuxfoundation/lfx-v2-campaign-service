@@ -445,3 +445,50 @@ cascade order and the ACTIVATE provisioning gate. Note the vocabulary: Google sp
 serving state **ENABLED**, not ACTIVE.
 
 Microsoft Ads has a creation dispatcher; its status-TOGGLE capability lands separately.
+
+## Account discovery
+
+`Client.ListAccessibleCustomers` enumerates the ad accounts reachable with the credential,
+returning `AccessibleCustomer{ResourceName, DescriptiveName}`. Two things make it unlike every
+other call in this package.
+
+**It runs with no `CustomerID`.** `doRequest` validates `c.account.CustomerID` as digits-only
+before building any request, but this call is how a caller LEARNS a customer id — a connection
+is authorized first and an account chosen afterwards, from this very list. So the
+account-agnostic paths call `doRequestValidated`, which is `doRequest` with the id precondition
+discharged by the caller. It exists only so those paths still share one copy of the URL
+construction, header set, body bounding, retry gating, and `apiError`/`transportError`
+classification; `validateLoginCustomerID` still runs, because the `login-customer-id` header is
+still attached and still has to be well-formed. `gaqlSearchForCustomer` is the same idea for
+searches: it takes an EXPLICIT customer id (validated there, since it is interpolated into the
+resource path) rather than the client's configured one, and `gaqlSearch` is now a thin
+delegation to it.
+
+**A manager credential needs the hierarchy walked.**
+`customers:listAccessibleCustomers` returns the accounts the authenticated user can act on
+DIRECTLY; a `login-customer-id` header does not make it enumerate that manager's children —
+that is a property of the endpoint, not of the header. On an MCC connection the flat list is
+therefore often just the manager itself, with every child ad account missing. When a manager id
+is configured, `listManagerClients` expands it with a `customer_client` GAQL query scoped to the
+manager, requesting only `status = 'ENABLED'` clients and dropping rows where
+`customer_client.manager` is true — a manager account cannot hold campaigns, so offering one
+would let a caller select an account that fails at the first create.
+
+That filter covers the expansion's own rows; the FLAT list needs its own, because it carries no
+`manager` flag — a manager and an ad account are indistinguishable there by resource name alone,
+and on an MCC credential the manager is precisely what the flat list returns. The one manager
+identifiable without extra metadata is the configured `login_customer_id`, so exactly that
+resource name is dropped from the direct results. Any other manager in the flat list survives:
+there is no field to recognise it by, and a per-row round-trip to find out would cost more than
+it saves on a list this short.
+
+The expansion is also the
+only source of `descriptive_name`: the flat endpoint returns resource names alone, so accounts
+reached only through the direct list carry no label. Results are deduplicated by resource name,
+with the labelled copy preferred. A row with no id is a hard error rather than a silent drop,
+since dropping it would understate the list the operator chooses from.
+
+The REST binding is GET (not the POST used by `:search` and `:mutate`), it takes no request
+body at all, and it is sent with `idempotent=true` — a pure read, so retrying a 429 cannot
+double-apply anything.
+
