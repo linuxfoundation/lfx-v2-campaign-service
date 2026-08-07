@@ -131,14 +131,20 @@ func TestMeta_DispatchSuccessMapsResult(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// The by-name reconcile lookup. It does NOT fire on this path today — the
+			// dispatcher leaves ReconcileByName unset, which
+			// TestMeta_DispatchNeverOptsIntoNameReconciliation pins. This arm exists
+			// so that opting in would not fail here with a confusing 404 instead.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
 			record(r)
-			_, _ = io.WriteString(w, `{"id":"camp_123"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
 			record(r)
-			_, _ = io.WriteString(w, `{"id":"adset_456"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			record(r)
 			n := atomic.AddInt32(&creativeCount, 1)
@@ -181,7 +187,7 @@ func TestMeta_DispatchSuccessMapsResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
-	if camp == nil || camp.PlatformCampaignID != "camp_123" {
+	if camp == nil || camp.PlatformCampaignID != "120100000000123" {
 		t.Fatalf("adapter must map the upstream campaign id, got %+v", camp)
 	}
 	if camp.CampaignName == "" || len(camp.Result) == 0 {
@@ -276,6 +282,71 @@ func TestMeta_DispatchSuccessMapsResult(t *testing.T) {
 	}
 }
 
+// TestMeta_DispatchNeverOptsIntoNameReconciliation pins the DORMANCY of the by-name
+// reconcile at the caller boundary, which is where it is actually decided.
+//
+// meta.Client gates the lookup on CampaignInput.ReconcileByName, and
+// TestCreateCampaignWithoutReconcileByNameDoesNotLookUpOrReuse (in the meta package)
+// proves the gate holds when the flag is unset. Neither of those says anything about
+// what THIS dispatcher passes — and the dispatcher is the only production caller. It
+// must leave the flag false: buildCampaignName is event/region/objective/project only,
+// so a lookup here would reuse a campaign belonging to a different brief that happens
+// to share those four segments, and would defeat the documented delete → re-dispatch
+// flow by silently reusing a campaign created with the wrong budget. Setting the flag
+// is LFXV2-2665's reconcile path, which knows it is resuming one dispatch generation;
+// a blanket dispatch never does.
+func TestMeta_DispatchNeverOptsIntoNameReconciliation(t *testing.T) {
+	var lookups int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// The by-name lookup, for both the campaign and the ad set. Answer it
+			// "no match" so the dispatch still completes and the assertion below is
+			// about the CALL being made, not about the create failing for some
+			// unrelated reason.
+			atomic.AddInt32(&lookups, 1)
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	clock := func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(clock),
+	)
+	cfg := json.RawMessage(`{"metaConfig":{
+		"budget":2500,"startDate":"2099-01-01","endDate":"2099-02-01","currencyOffset":100,
+		"variants":[{"headline":"KubeCon 2099","primaryText":"Join us","description":"Cloud native event"}]
+	}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if camp == nil || camp.PlatformCampaignID != "120100000000123" {
+		t.Fatalf("dispatch must have reached the create; got %+v", camp)
+	}
+	if got := atomic.LoadInt32(&lookups); got != 0 {
+		t.Errorf("dispatch issued %d by-name lookup(s), want 0: the ordinary dispatch path must "+
+			"not set meta.CampaignInput.ReconcileByName — the campaign name is not brief-unique, "+
+			"so reuse can attach a second brief to one upstream campaign and can silently re-run "+
+			"a budget that delete → re-dispatch was meant to correct", got)
+	}
+}
+
 func TestMeta_DegradedSuccessSetsCreatedDegraded(t *testing.T) {
 	// Two variants requested, but the SECOND ad POST fails (Meta rejects it). Meta
 	// treats per-variant ad failures as non-fatal, so CreateCampaign returns
@@ -286,12 +357,18 @@ func TestMeta_DegradedSuccessSetsCreatedDegraded(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// The by-name reconcile lookup. It does NOT fire on this path today — the
+			// dispatcher leaves ReconcileByName unset, which
+			// TestMeta_DispatchNeverOptsIntoNameReconciliation pins. This arm exists
+			// so that opting in would not fail here with a confusing 404 instead.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_123"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
-			_, _ = io.WriteString(w, `{"id":"adset_456"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -320,7 +397,7 @@ func TestMeta_DegradedSuccessSetsCreatedDegraded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a degraded success (campaign created, one ad failed) must NOT error: %v", err)
 	}
-	if camp == nil || camp.PlatformCampaignID != "camp_123" {
+	if camp == nil || camp.PlatformCampaignID != "120100000000123" {
 		t.Fatalf("the created campaign must still be mapped, got %+v", camp)
 	}
 	if camp.Status != campaignStatusCreatedDegraded {
@@ -336,12 +413,18 @@ func TestMeta_ConfigHSTokenTakesPrecedence(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// The by-name reconcile lookup. It does NOT fire on this path today — the
+			// dispatcher leaves ReconcileByName unset, which
+			// TestMeta_DispatchNeverOptsIntoNameReconciliation pins. This arm exists
+			// so that opting in would not fail here with a confusing 404 instead.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_123"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
-			_, _ = io.WriteString(w, `{"id":"adset_456"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			b, _ := io.ReadAll(r.Body)
 			mu.Lock()
@@ -592,5 +675,64 @@ func TestMeta_ToggleStatus_NoPageIDNeeded(t *testing.T) {
 	)
 	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, &model.Campaign{PlatformCampaignID: "23847290"}, model.CampaignRunPaused); err != nil {
 		t.Fatalf("ToggleStatus must work without a page_id: %v", err)
+	}
+}
+
+// ---- ReadMetrics --------------------------------------------------------
+
+func TestMeta_ReadMetrics_HappyPath(t *testing.T) {
+	var mu sync.Mutex
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotPath = r.URL.Path + "?" + r.URL.RawQuery
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[{"impressions":"1000","clicks":"40","spend":"25.00"}]}`)
+	}))
+	defer srv.Close()
+
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{}, meta.WithBaseURL(srv.URL))
+	camp := &model.Campaign{Platform: model.ProviderMetaAds, PlatformCampaignID: "777"}
+	m, err := d.ReadMetrics(context.Background(), "proj", model.ProviderMetaAds, camp, model.MetricsWindowLast30Days)
+	if err != nil {
+		t.Fatalf("ReadMetrics: %v", err)
+	}
+	if m.CampaignID != "777" || m.Window != model.MetricsWindowLast30Days || m.Impressions != 1000 || m.Clicks != 40 || m.CostMicros != 25_000_000 {
+		t.Errorf("got %+v", m)
+	}
+	if want := 0.04; m.Ctr != want {
+		t.Errorf("Ctr = %v, want %v", m.Ctr, want)
+	}
+	mu.Lock()
+	path := gotPath
+	mu.Unlock()
+	if !strings.HasPrefix(path, "/777/insights?") || !strings.Contains(path, "date_preset=last_30d") {
+		t.Errorf("request path = %s", path)
+	}
+}
+
+// TestMeta_ReadMetrics_ConnectionUnresolvedPropagates pins that a broken/inactive
+// connection surfaces as a plain error (NOT wrapped with notCreated, unlike Dispatch) — a
+// metrics read has no create-claim semantics to protect. Mirrors the Google Ads dispatcher.
+func TestMeta_ReadMetrics_ConnectionUnresolvedPropagates(t *testing.T) {
+	d := NewMetaDispatcher(fakeConnReader{err: errors.New("no connection")}, identityEncryptor{})
+	camp := &model.Campaign{Platform: model.ProviderMetaAds, PlatformCampaignID: "777"}
+	if _, err := d.ReadMetrics(context.Background(), "proj", model.ProviderMetaAds, camp, model.MetricsWindowLast30Days); err == nil {
+		t.Fatal("expected an error when the connection cannot be resolved")
+	}
+}
+
+func TestMeta_ReadMetrics_InactiveConnectionErrors(t *testing.T) {
+	conn := &model.Connection{
+		Provider:             model.ProviderMetaAds,
+		AccountID:            "act_777",
+		EncryptedCredentials: []byte(goodMetaCreds),
+		Status:               model.StatusInactive,
+	}
+	d := NewMetaDispatcher(fakeConnReader{conn: conn}, identityEncryptor{})
+	camp := &model.Campaign{Platform: model.ProviderMetaAds, PlatformCampaignID: "777"}
+	if _, err := d.ReadMetrics(context.Background(), "proj", model.ProviderMetaAds, camp, model.MetricsWindowLast30Days); err == nil {
+		t.Fatal("expected an error for an inactive connection")
 	}
 }

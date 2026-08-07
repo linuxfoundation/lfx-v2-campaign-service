@@ -169,6 +169,88 @@ commits just before a guarded `UPDATE` runs is invisible to its predicate — an
 the claim INSERTs a new row rather than updating this one, there is no row-level conflict
 for Postgres to serialize on. Pinned by `TestDeleteCampaign_LocksRowBeforeGuards`.
 
+The row lock alone is NOT sufficient, so `DeleteCampaign` first takes the same campaign
+advisory lock `ClaimCampaignVersion` uses. `FOR UPDATE` serializes delete against the
+dispatch path, which UPDATEs the row, but not against an in-flight run-state toggle: a
+toggle holds its claim ACROSS the platform call, and between `ClaimCampaignVersion` and
+`ReplaceCampaign` it holds no row lock at all. A delete committing in that window bumps
+`version`, so the toggle's `ReplaceCampaign(expectedVersion)` fails AFTER the paid side
+effect already landed upstream. Taking the same advisory lock keeps delete out of that
+window entirely: it does not wait for the toggle, it is refused with
+`ErrCampaignWriteInProgress` and returns a retryable 409, so a delete never commits between
+a toggle's claim and its persist. A delete issued after the toggle releases sees the bumped
+version through the ordinary optimistic check.
+
+The delete transaction begins on the connection already holding that advisory lock
+(`conn.Begin`), never on the pool (`r.db.Begin`) — beginning on the pool would take a
+SECOND connection while the first is held, self-deadlocking on a saturated pool
+(`pool_max_conns=1` guarantees it). The unlock is deferred on a context detached from
+the request, destroying the connection if the unlock fails, exactly as
+`ClaimCampaignVersion` does: a session advisory lock is not released by returning the
+connection to the pool, so a failed unlock strands it and blocks every future claim and
+delete for that campaign. Pinned by
+`TestDeleteCampaign_ParticipatesInAdvisoryLockProtocol`.
+
+**Every release path spends a budget that is a term of the shutdown budget.** A campaign
+lock holds a pooled connection, and `pgxpool.Close` blocks until every checked-out
+connection is returned — so any unlock that outlives `Container.Close`'s wait pushes
+shutdown past `ContainerCloseTimeout` by the difference. `releaseCampaignLock` therefore
+takes its bound from the caller rather than fixing it at `lockReleaseTimeout`, and EVERY
+path that can run during shutdown passes `shutdownReleaseBound()` — which returns whatever
+`StopCooldownsForShutdown` published, falling back to the ordinary timeout before shutdown,
+so nothing is tightened outside shutdown. Two of those paths do not look like shutdown
+paths: the straggler branch of `ReleaseCampaignLockAfterCooldown` (reached when
+`cooldownStopped` is already set), and its cooldown-ELAPSED branch, because when the timer
+fires at the same instant `cooldownShutdown` closes both select cases are ready and Go
+picks one at random. The same rule governs the connection-destroying fallback: `Close` is
+given the already-bounded `releaseCtx`, not `context.WithoutCancel(ctx)` — pgx uses that
+context to bound its wait, and on cooldown paths `ctx` is `context.Background()`, so
+`WithoutCancel` would supply no deadline at all. Pinned by
+`TestReleaseCampaignLockAfterCooldown_EveryShutdownPathUsesTheShutdownBound` and
+`TestReleaseCampaignLock_OrdinaryPathKeepsTheGenerousBound`.
+
+That `Close` rule is not confined to the release paths. `closeLockConn` applies it to every
+site on the CLAIM path that destroys a possibly-lock-bearing connection — a failed
+`pg_try_advisory_lock`, a failed unlock after a failed guarded read, and the delete path's two
+equivalents. Each is reached precisely BECAUSE something already failed or was cancelled,
+so the caller's `ctx` is routinely dead; `context.WithoutCancel` alone strips the deadline
+along with the cancellation and leaves the wait unbounded exactly where it is most likely
+to be taken. The pool slot is not returned until `Close` returns, so an unbounded `Close`
+here is a held slot, not just a slow log line.
+
+**The shutdown budget is an absolute deadline, not a duration.**
+`StopCooldownsForShutdown` stamps `time.Now().Add(timeout)` where the wait STARTS, and
+`shutdownReleaseBound` returns `time.Until` that instant. A stored duration would hand
+every straggler that woke afterwards a fresh full-length allowance — N stragglers costing
+N × timeout, from the one call whose purpose is to cap the wait — and only an absolute
+instant composes across an unknown number of wake-ups. A non-positive remainder is returned
+as is rather than floored: the resulting already-expired context destroys the connection,
+and destroying the connection is what actually frees the slot, so it is the FASTER answer
+on the out-of-budget path. The tests assert `got <= budget` rather than equality, which is
+the property itself and not a CI tolerance — equality cannot tell a shared deadline from a
+per-goroutine allowance.
+
+**Releasing a superseded token is a no-op for the SUCCESSOR, not for the caller's own
+connection.** When a delayed release finds that its `campaignID` slot now holds a different
+`*campaignLock`, `CompareAndDelete` deliberately fails and the successor's lock and
+connection are left alone — but the stale token still owns a checked-out connection that
+nothing else references, so the unlock and `Release` must still run. An early return there
+leaks that pool slot for the life of the process.
+
+**Every `campaigns` read excludes soft-deleted rows, the claim pair included.** Soft
+delete is a status value (`status = 'deleted'`), not a column, so the exclusion has to be
+written into each statement: `getCampaignQuery`, `getCampaignByPlatformQuery`,
+`replaceCampaignQuery`, `claimCampaignVersionQuery`, and `claimCampaignExistsQuery` all
+carry `status <> 'deleted'`. The claim is the one that must not be missed — it gates the
+run-status toggle, which makes a PAID platform call between claiming and replacing. A
+claim that admitted a deleted row at a matching version would succeed, mutate the
+campaign upstream, and only then fail in `ReplaceCampaign`, which does filter. The EXISTS
+probe needs the same predicate for its own reason: disagreeing with the read turns a
+correct 404 into a 412, telling the caller to retry a campaign that is gone for good. All
+five are package-level constants specifically so
+`TestCampaignRepo_ReadsExcludeSoftDeleted` can inspect their source; inlined SQL is
+invisible to it, which is how the claim originally slipped through.
+
 The guards, in order: `deleted` → `ErrNotFound` (a second DELETE is a 404, matching
 `GetCampaign`, not a silent success); an unresolved reconciliation marker →
 `ErrConflict`; then `version != expectedVersion` → `ErrPreconditionFailed` (checked LAST

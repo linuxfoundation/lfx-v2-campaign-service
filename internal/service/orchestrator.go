@@ -230,6 +230,10 @@ var (
 	// ErrMetricsWindowUnsupported: this platform IS a MetricsReader but rejects the
 	// specific requested window (e.g. X Ads' 7-day cap).
 	ErrMetricsWindowUnsupported = domain.ErrMetricsWindowUnsupported
+	// ErrCampaignAccountMismatch: the campaign was created under a different ad account
+	// than the project's current connection resolves to, so its id cannot be read safely.
+	ErrCampaignAccountMismatch = domain.ErrCampaignAccountMismatch
+
 	// ErrAccountsUnsupported: the platform has no account-listing capability wired.
 	ErrAccountsUnsupported = domain.ErrAccountsUnsupported
 )

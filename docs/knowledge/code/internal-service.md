@@ -68,7 +68,35 @@ only after the platform confirms. Only a fully-created campaign (`created`, or o
 (`model.CampaignStatusToggleable`); a `pending` ambiguous orphan or a `created_degraded`
 campaign is rejected 409 — toggling one would activate an incomplete campaign and/or
 overwrite its reconciliation marker with the run state (a non-empty `PlatformCampaignID`
-alone is not sufficient, since a partial/degraded campaign can carry an upstream id). A stale
+alone is not sufficient, since a partial/degraded campaign can carry an upstream id).
+Write ownership of the row is claimed via `CampaignRepo.ClaimCampaignVersion` BEFORE the
+paid platform call, not by comparing the read-time version in memory (LFXV2-2901): an
+in-memory comparison only rejects a stale caller, it does nothing to stop a SECOND
+caller that read the same version from also passing its own check and also calling
+the platform, so two toggles — or a toggle and `UpdateCampaign` — could both mutate
+the platform before either persisted.
+
+**The claim is a LOCK, not a version bump.** `ClaimCampaignVersion` takes a Postgres session
+advisory lock (keyed by campaign id, on a dedicated pooled connection), reads the row at
+`expectedVersion`, and leaves the version UNCHANGED. The increment happens later, in
+`ReplaceCampaign`, inside the same transaction that writes the outbox event — which is what
+preserves the invariant that every campaign write co-commits its index event. An earlier
+design bumped at claim time (`UPDATE ... SET version=version+1 WHERE version=$expected`) and
+could not hold that invariant; do not reintroduce it. Because ownership is the lock and not
+the version, it survives the caller's external I/O: a second writer is REFUSED for the whole
+duration of the first one's platform call instead of racing between the claim and the
+post-platform persist. Refused, not queued — the claim is `pg_try_advisory_lock`, so the
+loser gets `ErrCampaignWriteInProgress` immediately and the service returns a retryable 409.
+Nothing resumes after release; the client retries as a new request. Queuing was rejected
+because a waiter would pin a pool connection for the length of the holder's platform call. Callers MUST release via
+`ReleaseCampaignLock` (deferred), and the not-found vs. stale-version classification is made
+while the lock is still held — releasing first would let a concurrent delete turn a
+stale-version caller's 412 into a 404. `UpdateCampaign`, which has no I/O between its read
+and its write, claims first for the same reason — without it, its single-statement
+`ReplaceCampaign` could win the row out from under an in-flight toggle's claim,
+losing the toggle's own post-platform persist even though each write was
+individually consistent. Both handlers validate BEFORE claiming, so a request that will be
+rejected anyway never takes the lock and never blocks legitimate writers. A stale
 `If-Match` fails BEFORE the paid platform call;
 failures are classified (`ErrCampaignNotProvisioned` → 409 — a campaign with no upstream id yet,
 OR one that on ACTIVATE lacks the child ad group/ad ids needed to serve, so not every 409 means

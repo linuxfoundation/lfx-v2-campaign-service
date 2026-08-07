@@ -63,6 +63,30 @@ var (
 	// (%w) so the service layer can map it without importing every platform package.
 	ErrMetricsWindowUnsupported = errors.New("this window is not supported for the campaign's platform")
 
+	// ErrCampaignAccountMismatch indicates the campaign was created under one ad
+	// account but the project's CURRENT connection for that platform resolves to a
+	// different one. Platform campaign ids are unique only WITHIN an account, so an
+	// account-scoped request issued under the wrong account is not merely unauthorized —
+	// it is silently WRONG: the id most often matches nothing (indistinguishable from a
+	// campaign with genuinely zero activity) and, on a collision, matches somebody
+	// else's campaign. The platform is never contacted. It is a state error, not a
+	// transport one — a retry now fails identically — so it maps to 409, not 503.
+	ErrCampaignAccountMismatch = errors.New("the campaign belongs to a different ad account than the project's current connection")
+
+	// ErrCampaignWriteInProgress indicates another writer already holds the claim for this
+	// campaign, so this request did not acquire it. Maps to 409.
+	//
+	// This is why the claim is a TRY and not a wait. The winning claim is held across the
+	// ad-platform call — up to 45 seconds — and it holds a pooled connection for that whole
+	// span. A blocking pg_advisory_lock would make every loser hold a SECOND pooled
+	// connection for the same span, so a small burst against one campaign could exhaust a
+	// finite pool and stall unrelated requests and the readiness probe. Failing fast keeps
+	// contention costing one connection per campaign rather than one per request.
+	//
+	// Distinct from ErrPreconditionFailed: the caller's ETag may be perfectly current. The
+	// correct client response is to retry shortly, not to refetch and rebuild the request.
+	ErrCampaignWriteInProgress = errors.New("another write to this campaign is already in progress")
+
 	// ErrAccountsUnsupported indicates the platform has no account-listing capability
 	// wired (no dispatcher, or the dispatcher is not an AccountLister). The platform is
 	// never contacted. Maps to 400. Lives here for the same reason as ErrToggleUnsupported:

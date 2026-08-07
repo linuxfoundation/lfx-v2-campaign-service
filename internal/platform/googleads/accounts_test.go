@@ -33,14 +33,7 @@ func TestListAccessibleCustomers_Success(t *testing.T) {
 		gotDevToken  string
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Route to token endpoint
-		if r.URL.Path == "/token" {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"access_token": "mock_token",
-				"expires_in":   3600,
-				"token_type":   "Bearer",
-			})
+		if writeAccountsToken(w, r) {
 			mu.Lock()
 			tokenFetched = true
 			mu.Unlock()
@@ -54,30 +47,16 @@ func TestListAccessibleCustomers_Success(t *testing.T) {
 		gotDevToken = r.Header.Get("developer-token")
 		mu.Unlock()
 
-		// Return mock customer list
-		resp := listAccessibleCustomersResponse{
-			ResourceNames: []string{
-				"customers/1234567890",
-				"customers/0987654321",
-			},
-		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
+			ResourceNames: []string{"customers/1234567890", "customers/0987654321"},
+		})
 	}))
 	defer server.Close()
 
-	client := NewClient(
-		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
-		AccountConfig{CustomerID: "1234567890", Label: "Test"},
-		WithBaseURL(server.URL),
-		WithTokenURL(server.URL+"/token"),
-		WithAPIVersion("v23"),
-		WithClock(func() time.Time { return time.Unix(0, 0) }),
-	)
+	client := newAccountsTestClient(t, server)
 
-	ctx := context.Background()
-	accounts, err := client.ListAccessibleCustomers(ctx)
-
+	accounts, err := client.ListAccessibleCustomers(context.Background())
 	if err != nil {
 		t.Fatalf("ListAccessibleCustomers failed: %v", err)
 	}
@@ -116,33 +95,17 @@ func TestListAccessibleCustomers_Success(t *testing.T) {
 // TestListAccessibleCustomers_EmptyList tests the case where there are no accessible accounts.
 func TestListAccessibleCustomers_EmptyList(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/token" {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"access_token": "mock_token",
-				"expires_in":   3600,
-				"token_type":   "Bearer",
-			})
+		if writeAccountsToken(w, r) {
 			return
 		}
-		resp := listAccessibleCustomersResponse{ResourceNames: []string{}}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{ResourceNames: []string{}})
 	}))
 	defer server.Close()
 
-	client := NewClient(
-		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
-		AccountConfig{CustomerID: "1234567890"},
-		WithBaseURL(server.URL),
-		WithTokenURL(server.URL+"/token"),
-		WithAPIVersion("v23"),
-		WithClock(func() time.Time { return time.Unix(0, 0) }),
-	)
+	client := newAccountsTestClient(t, server)
 
-	ctx := context.Background()
-	accounts, err := client.ListAccessibleCustomers(ctx)
-
+	accounts, err := client.ListAccessibleCustomers(context.Background())
 	if err != nil {
 		t.Fatalf("ListAccessibleCustomers failed: %v", err)
 	}
@@ -154,13 +117,7 @@ func TestListAccessibleCustomers_EmptyList(t *testing.T) {
 // TestListAccessibleCustomers_APIError tests handling of API errors from listAccessibleCustomers.
 func TestListAccessibleCustomers_APIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/token" {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"access_token": "mock_token",
-				"expires_in":   3600,
-				"token_type":   "Bearer",
-			})
+		if writeAccountsToken(w, r) {
 			return
 		}
 		w.WriteHeader(http.StatusForbidden)
@@ -183,9 +140,7 @@ func TestListAccessibleCustomers_APIError(t *testing.T) {
 		WithClock(func() time.Time { return time.Unix(0, 0) }),
 	)
 
-	ctx := context.Background()
-	accounts, err := client.ListAccessibleCustomers(ctx)
-
+	accounts, err := client.ListAccessibleCustomers(context.Background())
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -200,13 +155,7 @@ func TestListAccessibleCustomers_APIError(t *testing.T) {
 // TestListAccessibleCustomers_MalformedResponse tests handling of invalid responses.
 func TestListAccessibleCustomers_MalformedResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/token" {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"access_token": "mock_token",
-				"expires_in":   3600,
-				"token_type":   "Bearer",
-			})
+		if writeAccountsToken(w, r) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -214,18 +163,9 @@ func TestListAccessibleCustomers_MalformedResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(
-		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
-		AccountConfig{CustomerID: "1234567890"},
-		WithBaseURL(server.URL),
-		WithTokenURL(server.URL+"/token"),
-		WithAPIVersion("v23"),
-		WithClock(func() time.Time { return time.Unix(0, 0) }),
-	)
+	client := newAccountsTestClient(t, server)
 
-	ctx := context.Background()
-	accounts, err := client.ListAccessibleCustomers(ctx)
-
+	accounts, err := client.ListAccessibleCustomers(context.Background())
 	if err == nil {
 		t.Fatal("expected error for malformed response, got nil")
 	}
@@ -244,6 +184,20 @@ func newAccountsTestClient(t *testing.T, srv *httptest.Server) *Client {
 	return NewClient(
 		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
 		AccountConfig{CustomerID: "1234567890", Label: "Test"},
+		WithBaseURL(srv.URL),
+		WithTokenURL(srv.URL+"/token"),
+		WithAPIVersion("v23"),
+		WithClock(func() time.Time { return time.Unix(0, 0) }),
+	)
+}
+
+// newManagerTestClient is newAccountsTestClient with a manager (MCC) account instead of a
+// chosen customer id — the configuration that triggers hierarchy expansion.
+func newManagerTestClient(t *testing.T, srv *httptest.Server) *Client {
+	t.Helper()
+	return NewClient(
+		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
+		AccountConfig{LoginCustomerID: "9999999999"},
 		WithBaseURL(srv.URL),
 		WithTokenURL(srv.URL+"/token"),
 		WithAPIVersion("v23"),
@@ -319,6 +273,13 @@ func TestListAccessibleCustomers_SendsNoRequestBody(t *testing.T) {
 // classification: the caller must receive an *apiError carrying the upstream status and
 // the parsed Google Ads error codes, not an opaque error. Without this, a 403
 // (bad developer token) is indistinguishable from a 500 at the call site.
+//
+// The `@type` in the detail is load-bearing, not decoration. parseErrorCodes skips any
+// detail whose type does not end in `GoogleAdsFailure`, so a fixture without it yields an
+// EMPTY ErrorCodes slice — and a test that asserts only the status code passes just as
+// happily against a parser that never extracts anything. The exact code is asserted below
+// for the same reason: a non-empty slice carrying the wrong value would satisfy a length
+// check while `hasErrorCode` still answered false at every call site that matters.
 func TestListAccessibleCustomers_APIErrorCarriesStatusAndCodes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if writeAccountsToken(w, r) {
@@ -326,7 +287,9 @@ func TestListAccessibleCustomers_APIErrorCarriesStatusAndCodes(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"error":{"code":403,"message":"denied","details":[{"errors":[{"errorCode":{"authorizationError":"DEVELOPER_TOKEN_NOT_APPROVED"}}]}]}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":403,"message":"denied","details":[` +
+			`{"@type":"type.googleapis.com/google.ads.googleads.v23.errors.GoogleAdsFailure",` +
+			`"errors":[{"errorCode":{"authorizationError":"DEVELOPER_TOKEN_NOT_APPROVED"}}]}]}}`))
 	}))
 	defer server.Close()
 
@@ -352,6 +315,13 @@ func TestListAccessibleCustomers_APIErrorCarriesStatusAndCodes(t *testing.T) {
 	// upstream failed without inspecting the concrete type.
 	if !strings.Contains(apiErr.Error(), "google-ads") {
 		t.Errorf("expected the message to identify the platform, got %q", apiErr.Error())
+	}
+	// The codes are what the name of this test promises. hasErrorCode is the accessor every
+	// classification site uses, so assert through it rather than indexing the slice.
+	if !apiErr.hasErrorCode("DEVELOPER_TOKEN_NOT_APPROVED") {
+		t.Errorf("ErrorCodes = %v, want it to carry DEVELOPER_TOKEN_NOT_APPROVED — an unparsed "+
+			"403 leaves the caller unable to tell a bad developer token from any other denial",
+			apiErr.ErrorCodes)
 	}
 }
 
@@ -457,9 +427,7 @@ func TestListAccessibleCustomers_WorksWithoutCustomerID(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
-			ResourceNames: []string{"customers/1234567890"},
-		})
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{ResourceNames: []string{"customers/1234567890"}})
 	}))
 	defer server.Close()
 
@@ -521,6 +489,7 @@ func TestListAccessibleCustomers_ExpandsManagerHierarchy(t *testing.T) {
 	var (
 		mu             sync.Mutex
 		searchPaths    []string
+		searchQueries  []string
 		gotLoginHeader string
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -533,8 +502,19 @@ func TestListAccessibleCustomers_ExpandsManagerHierarchy(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			// Decode the GAQL the client actually sent. Every fixture in this file returns
+			// pre-filtered ENABLED rows, so nothing else in the suite can tell whether the
+			// status predicate is in the query at all — a fake that answers the same way
+			// regardless of what it was asked is exactly the vacuous-test shape.
+			var body struct {
+				Query string `json:"query"`
+			}
+			if derr := json.NewDecoder(r.Body).Decode(&body); derr != nil {
+				t.Errorf("decode search request body: %v", derr)
+			}
 			mu.Lock()
 			searchPaths = append(searchPaths, r.URL.Path)
+			searchQueries = append(searchQueries, body.Query)
 			mu.Unlock()
 			// The manager itself, a child, and a nested sub-manager. Only the child is
 			// selectable: a manager account cannot hold campaigns.
@@ -546,20 +526,11 @@ func TestListAccessibleCustomers_ExpandsManagerHierarchy(t *testing.T) {
 			return
 		}
 		// The flat list sees only the manager — the whole reason expansion is needed.
-		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
-			ResourceNames: []string{"customers/9999999999"},
-		})
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{ResourceNames: []string{"customers/9999999999"}})
 	}))
 	defer server.Close()
 
-	client := NewClient(
-		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
-		AccountConfig{LoginCustomerID: "9999999999"},
-		WithBaseURL(server.URL),
-		WithTokenURL(server.URL+"/token"),
-		WithAPIVersion("v23"),
-		WithClock(func() time.Time { return time.Unix(0, 0) }),
-	)
+	client := newManagerTestClient(t, server)
 
 	accounts, err := client.ListAccessibleCustomers(context.Background())
 	if err != nil {
@@ -568,6 +539,7 @@ func TestListAccessibleCustomers_ExpandsManagerHierarchy(t *testing.T) {
 
 	mu.Lock()
 	paths := append([]string(nil), searchPaths...)
+	queries := append([]string(nil), searchQueries...)
 	loginHeader := gotLoginHeader
 	mu.Unlock()
 
@@ -579,6 +551,22 @@ func TestListAccessibleCustomers_ExpandsManagerHierarchy(t *testing.T) {
 	}
 	if loginHeader != "9999999999" {
 		t.Errorf("login-customer-id header = %q, want 9999999999", loginHeader)
+	}
+
+	// The status predicate is server-side filtering, and it is the ONLY thing keeping
+	// cancelled/closed accounts out of the picker: nothing downstream re-checks
+	// customerClient.status, so dropping the WHERE clause would silently start offering
+	// accounts a campaign can never run in. Assert it is on the wire.
+	if len(queries) != 1 {
+		t.Fatalf("captured %d search queries, want 1", len(queries))
+	}
+	if !strings.Contains(queries[0], "FROM customer_client") {
+		t.Errorf("query = %q, want it to select FROM customer_client", queries[0])
+	}
+	if !strings.Contains(queries[0], "WHERE customer_client.status = 'ENABLED'") {
+		t.Errorf("query = %q, want the ENABLED status predicate: it is the only filter that "+
+			"keeps cancelled or closed accounts out of the result, and no later stage re-checks it",
+			queries[0])
 	}
 
 	byName := map[string]string{}
@@ -627,9 +615,7 @@ func TestListAccessibleCustomers_NoManagerSkipsExpansion(t *testing.T) {
 			mu.Unlock()
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
-			ResourceNames: []string{"customers/1234567890"},
-		})
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{ResourceNames: []string{"customers/1234567890"}})
 	}))
 	defer server.Close()
 
@@ -641,5 +627,260 @@ func TestListAccessibleCustomers_NoManagerSkipsExpansion(t *testing.T) {
 	defer mu.Unlock()
 	if sawSearch {
 		t.Error("customer_client expansion ran with no login-customer-id configured")
+	}
+}
+
+// TestListAccessibleCustomers_CustomerClientRowWithoutIDIsAnError pins the stated
+// invariant that a row with no id fails the whole call. Silently dropping it would be
+// the tempting alternative and is the wrong one: the operator would be shown a SHORT
+// list with no indication that it is short, and would then conclude the missing account
+// is not reachable by this credential — a false negative that looks authoritative.
+// TestListAccessibleCustomers_CustomerClientRowWithUnusableIDIsAnError covers both
+// unusable shapes. Absent is the obvious one; NON-NUMERIC is the one an emptiness check
+// misses, and it is the dangerous one — the id is concatenated straight into
+// "customers/"+id, so "1/other" forges a resource name pointing at a different account
+// than the row describes, and a caller persists it as the connection's account id.
+func TestListAccessibleCustomers_CustomerClientRowWithUnusableIDIsAnError(t *testing.T) {
+	cases := []struct {
+		name string
+		row  string
+	}{
+		{"absent id", `{"customerClient":{"descriptiveName":"Nameless","manager":false,"status":"ENABLED"}}`},
+		{"non-numeric id forging a path", `{"customerClient":{"id":"1/other","descriptiveName":"Forged","manager":false,"status":"ENABLED"}}`},
+		{"id with dashes as shown in the UI", `{"customerClient":{"id":"123-456-7890","descriptiveName":"Dashed","manager":false,"status":"ENABLED"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if writeAccountsToken(w, r) {
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+					// A well-formed row FIRST: the good row ahead of it is what makes a
+					// silent drop plausible — the call would still "succeed".
+					_, _ = io.WriteString(w, `{"results":[
+						{"customerClient":{"id":"2222222222","descriptiveName":"Child","manager":false,"status":"ENABLED"}},
+						`+tc.row+`
+					]}`)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{ResourceNames: []string{"customers/9999999999"}})
+			}))
+			defer server.Close()
+
+			client := newManagerTestClient(t, server)
+
+			accounts, err := client.ListAccessibleCustomers(context.Background())
+			if err == nil {
+				t.Fatalf("an unusable customer_client id must fail the call, got accounts %+v", accounts)
+			}
+			if accounts != nil {
+				t.Errorf("accounts must be nil on error, got %+v", accounts)
+			}
+			// It is a malformed RESPONSE, not a rejected request — the distinction is what
+			// the dispatcher maps to a 503-with-retry rather than a client error.
+			var te *transportError
+			if !errors.As(err, &te) {
+				t.Fatalf("error must unwrap to *transportError, got %T: %v", err, err)
+			}
+			if !strings.Contains(te.Err.Error(), "numeric customer id") {
+				t.Errorf("diagnostic must name the defect, got %q", te.Err.Error())
+			}
+		})
+	}
+}
+
+// TestListAccessibleCustomers_MalformedResourceNameIsAnError pins the same contract one
+// layer up. AccessibleCustomer promises "customers/{digits}"; the flat list is the other
+// source of those values and had no validation at all, so a malformed 2xx could return an
+// empty, wrong-kind, or path-bearing string as a selectable account.
+func TestListAccessibleCustomers_MalformedResourceNameIsAnError(t *testing.T) {
+	cases := []struct {
+		name    string
+		resName string
+	}{
+		{"empty", ""},
+		{"bare id, no prefix", "9999999999"},
+		{"wrong resource kind", "customerClients/9999999999"},
+		{"extra path segment", "customers/9999999999/campaigns/1"},
+		{"non-numeric id", "customers/abc"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if writeAccountsToken(w, r) {
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				// A valid name first, for the same reason as above.
+				_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
+					ResourceNames: []string{"customers/1111111111", tc.resName},
+				})
+			}))
+			defer server.Close()
+
+			client := newAccountsTestClient(t, server)
+
+			accounts, err := client.ListAccessibleCustomers(context.Background())
+			if err == nil {
+				t.Fatalf("resource name %q must fail the call, got accounts %+v", tc.resName, accounts)
+			}
+			if accounts != nil {
+				t.Errorf("accounts must be nil on error, got %+v", accounts)
+			}
+			var te *transportError
+			if !errors.As(err, &te) {
+				t.Fatalf("error must unwrap to *transportError, got %T: %v", err, err)
+			}
+			if !strings.Contains(te.Err.Error(), "customers/{digits}") {
+				t.Errorf("diagnostic must name the expected shape, got %q", te.Err.Error())
+			}
+		})
+	}
+}
+
+// TestListAccessibleCustomers_ManagerModeIgnoresTheFlatCopyOfAChild covers the case where
+// the SAME account is reachable both ways: unlabelled from the flat list, labelled from the
+// manager expansion.
+//
+// Manager mode does not merge — it answers from the expansion alone — and this is the case
+// that would tempt a merge back in, because here the flat list is not wrong, merely
+// redundant and unlabelled. Reinstating a union would return the account twice; preferring
+// the first-seen copy would return it unlabelled and cost the operator every label, since
+// customer_client is the only source of descriptive_name. The sibling exclusion test uses an
+// account that is NOT under the manager, so it would stay green under either mistake.
+func TestListAccessibleCustomers_ManagerModeIgnoresTheFlatCopyOfAChild(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeAccountsToken(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			_, _ = io.WriteString(w, `{"results":[
+				{"customerClient":{"id":"2222222222","descriptiveName":"Child Ad Account","manager":false,"status":"ENABLED"}}
+			]}`)
+			return
+		}
+		// The credential can act on the child DIRECTLY as well as through the manager,
+		// so it appears in both — but the flat list has no descriptive_name to give.
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
+			ResourceNames: []string{"customers/9999999999", "customers/2222222222"},
+		})
+	}))
+	defer server.Close()
+
+	client := newManagerTestClient(t, server)
+
+	accounts, err := client.ListAccessibleCustomers(context.Background())
+	if err != nil {
+		t.Fatalf("ListAccessibleCustomers failed: %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("accounts = %+v, want exactly one entry — manager mode answers from the expansion "+
+			"alone, so the flat copy of the same child must not be appended", accounts)
+	}
+	if accounts[0].ResourceName != "customers/2222222222" {
+		t.Fatalf("got %+v, want the child ad account", accounts[0])
+	}
+	// The expansion is the ONLY source of descriptive_name, so returning the flat copy —
+	// or keeping the first-seen one under a reinstated merge — silently costs every label.
+	if accounts[0].DescriptiveName != "Child Ad Account" {
+		t.Errorf("DescriptiveName = %q, want the expansion's label; an unlabelled result means the "+
+			"flat list was consulted", accounts[0].DescriptiveName)
+	}
+}
+
+// TestListAccessibleCustomers_ManagerModeExcludesAccountsOutsideTheHierarchy pins the
+// rule that makes manager mode useful: in manager mode the SELECTABLE set is the
+// manager's children, not the union of those with the flat list.
+//
+// listAccessibleCustomers is unscoped — the login-customer-id header does not filter
+// it — but every other request this client makes DOES carry that header. So an account
+// the user can reach directly while it sits under a different manager comes back in the
+// flat list and then fails with PERMISSION_DENIED as soon as anything addresses it.
+// Offering it is offering a choice that cannot work, and the failure surfaces at first
+// dispatch, long after the connection was saved, where it reads as a credential problem
+// rather than a wrong-account one.
+//
+// The flat list here deliberately contains three things: the configured manager, a
+// child that IS under it, and an outsider that is not. Only the child may survive.
+func TestListAccessibleCustomers_ManagerModeExcludesAccountsOutsideTheHierarchy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeAccountsToken(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			// The hierarchy under 9999999999 contains only 2222222222.
+			_, _ = io.WriteString(w, `{"results":[
+				{"customerClient":{"id":"2222222222","descriptiveName":"In Hierarchy","manager":false,"status":"ENABLED"}}
+			]}`)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
+			ResourceNames: []string{
+				"customers/9999999999", // the configured manager itself
+				"customers/2222222222", // reachable directly AND under the manager
+				"customers/7777777777", // reachable directly, under a DIFFERENT manager
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := newManagerTestClient(t, server)
+
+	accounts, err := client.ListAccessibleCustomers(context.Background())
+	if err != nil {
+		t.Fatalf("ListAccessibleCustomers failed: %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("accounts = %+v, want exactly the one account inside the configured hierarchy", accounts)
+	}
+	if accounts[0].ResourceName != "customers/2222222222" {
+		t.Fatalf("got %+v, want customers/2222222222", accounts[0])
+	}
+	if accounts[0].DescriptiveName != "In Hierarchy" {
+		t.Errorf("DescriptiveName = %q, want the expansion's label", accounts[0].DescriptiveName)
+	}
+	for _, a := range accounts {
+		if a.ResourceName == "customers/7777777777" {
+			t.Errorf("an account outside the configured manager hierarchy was offered as selectable: %+v", a)
+		}
+		if a.ResourceName == "customers/9999999999" {
+			t.Errorf("the configured manager account was offered as selectable: %+v", a)
+		}
+	}
+}
+
+// TestListAccessibleCustomers_ManagerModeDedupsRepeatedChildren covers the one dedup
+// that survives in manager mode. customer_client reports a client once per path through
+// the hierarchy, so a client of a sub-manager that is itself a client of the root
+// appears twice. Appending both would put the same account in the picker twice.
+func TestListAccessibleCustomers_ManagerModeDedupsRepeatedChildren(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeAccountsToken(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			_, _ = io.WriteString(w, `{"results":[
+				{"customerClient":{"id":"2222222222","descriptiveName":"Reachable Two Ways","manager":false,"status":"ENABLED"}},
+				{"customerClient":{"id":"2222222222","descriptiveName":"Reachable Two Ways","manager":false,"status":"ENABLED"}}
+			]}`)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
+			ResourceNames: []string{"customers/9999999999"},
+		})
+	}))
+	defer server.Close()
+
+	accounts, err := newManagerTestClient(t, server).ListAccessibleCustomers(context.Background())
+	if err != nil {
+		t.Fatalf("ListAccessibleCustomers failed: %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("accounts = %+v, want the repeated child collapsed to one entry", accounts)
 	}
 }

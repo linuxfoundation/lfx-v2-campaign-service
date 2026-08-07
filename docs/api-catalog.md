@@ -31,12 +31,12 @@ A brief is the funnel unit: it carries the **program** (`program_type` = events 
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
 | POST | `/projects/{projectId}/briefs` | `campaign_manager` | JSON | Create a brief. |
-| GET | `/projects/{projectId}/briefs/{id}` | `campaign_manager` | JSON | Get a brief (full copy, keywords, targeting); returns ETag. |
+| GET | `/projects/{projectId}/briefs/{brief_id}` | `campaign_manager` | JSON | Get a brief (full copy, keywords, targeting); returns ETag. |
 | GET | `/projects/{projectId}/briefs?event_slug=` | `campaign_manager` | JSON | Find the saved brief for an event slug; returns ETag. `404` when the event has no brief yet (the ordinary first-generation case). The slug has no upper bound here, matching `BriefWriteInput` (the create/update payload) and the `TEXT` column, so any brief the create contract accepts is recallable; it must be non-empty, as on create. See the D5 note below. |
-| PUT | `/projects/{projectId}/briefs/{id}` | `campaign_manager` | JSON | Replace a brief (requires `If-Match`). |
-| POST | `/projects/{projectId}/briefs/{id}/refresh` | `campaign_manager` | JSON | Re-run generation against latest event data, producing a new version. |
-| POST | `/projects/{projectId}/briefs/{id}/approve` | `campaign_manager` | JSON | Approve a brief for campaign creation (requires `If-Match`; approval is version-gated so a brief replaced since it was fetched cannot be approved on stale content). |
-| DELETE | `/projects/{projectId}/briefs/{id}` | `campaign_manager` | JSON | Archive a brief (soft delete). |
+| PUT | `/projects/{projectId}/briefs/{brief_id}` | `campaign_manager` | JSON | Replace a brief (requires `If-Match`). |
+| POST | `/projects/{projectId}/briefs/{brief_id}/refresh` | `campaign_manager` | JSON | Re-run generation against latest event data, producing a new version. |
+| POST | `/projects/{projectId}/briefs/{brief_id}/approve` | `campaign_manager` | JSON | Approve a brief for campaign creation (requires `If-Match`; approval is version-gated so a brief replaced since it was fetched cannot be approved on stale content). |
+| DELETE | `/projects/{projectId}/briefs/{brief_id}` | `campaign_manager` | JSON | Archive a brief (soft delete). |
 
 > Listing briefs and viewing a brief's version history are served by the Query Service, not by dedicated endpoints here.
 
@@ -47,9 +47,9 @@ A campaign is subordinate to a brief. This is a **collection** under the brief (
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
 | POST | `/projects/{projectId}/briefs/{briefId}/campaigns` | `campaign_manager` | JSON | Create campaigns across the platforms selected in the body (async → `JobCreateResponse` with `jobId`). Persists one execution record per platform. |
-| GET | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}` | `campaign_manager` | JSON | Get one campaign execution; returns ETag. |
-| PUT | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}` | `campaign_manager` | JSON | Replace a campaign execution (requires `If-Match`). |
-| DELETE | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}` | `campaign_manager` | JSON | Delete a campaign (soft delete; requires `If-Match`). **Local only — does NOT touch the ad platform.** Frees the campaign's `(brief, platform)` slot so the brief can be re-dispatched to that platform. `409` if the campaign is mid-dispatch. |
+| GET | `/projects/{projectId}/briefs/{briefId}/campaigns/{campaign_id}` | `campaign_manager` | JSON | Get one campaign execution; returns ETag. |
+| PUT | `/projects/{projectId}/briefs/{briefId}/campaigns/{campaign_id}` | `campaign_manager` | JSON | Replace a campaign execution (requires `If-Match`). |
+| DELETE | `/projects/{projectId}/briefs/{briefId}/campaigns/{campaign_id}` | `campaign_manager` | JSON | Delete a campaign (soft delete; requires `If-Match`). **Local only — does NOT touch the ad platform.** Frees the campaign's `(brief, platform)` slot so the brief can be re-dispatched to that platform. `409` if the campaign is mid-dispatch. |
 | GET | `/projects/{projectId}/jobs/{jobId}` | `campaign_manager` | JSON | Poll campaign creation job status (`JobPollResponse`). |
 
 **Deleting a campaign.** A campaign row occupies its brief's slot for one platform — the `(brief_id, platform)` uniqueness that makes dispatch idempotent (a retry cannot create a second paid campaign upstream) also means a campaign created with the wrong budget, or one whose upstream create failed ambiguously, would block that pair forever. `DELETE` frees the slot: the row is soft-deleted (`status = 'deleted'`) and excluded from the partial unique index, so a re-dispatch to the same `(brief, platform)` succeeds while two *live* campaigns for the pair are still rejected. The soft-deleted row is retained deliberately — it holds `platform_campaign_id`, the only local pointer to a campaign that may still exist upstream — and becomes invisible to reads (`GET` returns `404`).
@@ -74,7 +74,9 @@ Because these paths nest under `/briefs/{briefId}/`, they inherit the gateway wi
 
 ### Monitoring (Insights Phase)
 
-Metrics are read-through from the ad platforms, scoped by project. There are no per-platform root paths; the provider is a path segment under the project. Because a connection is singleton per project, `/{provider}/metrics` unambiguously means "metrics for **this project's** account on that provider" — there is no per-connection or per-campaign metrics path (a campaign's metrics are a row inside the provider response, keyed by `campaignId`).
+Metrics are read-through from the ad platforms, scoped by project. There are no per-platform root paths; the provider is a path segment under the project. Because a connection is singleton per project, `/{provider}/metrics` unambiguously means "metrics for **this project's** account on that provider".
+
+> **Reading ONE campaign's metrics is not here.** It is `GET .../briefs/{briefId}/campaigns/{id}/metrics`, documented once in [Optimization](#optimization) below. It sits on the campaign-scoped path rather than under `{provider}/metrics` because it needs the persisted campaign row (for its platform and `PlatformCampaignID`), not a provider+project pair — so it belongs with the other campaign-scoped actions.
 
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
@@ -104,14 +106,17 @@ Each optimization action is scoped to a single campaign under its brief and is i
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
 | PATCH | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/status` | `campaign_manager` | JSON | Toggle campaign ACTIVE/PAUSED (Reddit, Meta, LinkedIn, X/Twitter, Google Ads, Microsoft Ads). |
-| GET | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/metrics` | `campaign_manager` | JSON | Read live performance metrics (impressions, clicks, cost, CTR) for one campaign directly from its ad platform. Pure read — never persisted, unlike `GET .../campaigns/{id}`. `window` query param (`today`, `yesterday`, `last_7_days`, `last_14_days`, `last_30_days`, `this_month`, `last_month`; default `last_30_days`, except X Ads which defaults to `last_7_days` since its stats endpoint caps queryable ranges at 7 days) is a closed, platform-agnostic vocabulary — each dispatcher maps it to its own platform's date-range dialect. A platform with no `MetricsReader` wired returns 400; an unprovisioned campaign returns 409. Support is per-platform (see below). |
+| GET | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/metrics` | `campaign_manager` | JSON | Read live performance metrics (impressions, clicks, cost, CTR) for one campaign directly from its ad platform. Pure read — never persisted, unlike `GET .../campaigns/{id}`. `window` query param (`today`, `yesterday`, `last_7_days`, `last_14_days`, `last_30_days`, `this_month`, `last_month`; default `last_30_days`, except X Ads which defaults to `last_7_days` since its stats endpoint caps queryable ranges at 7 days) is a closed, platform-agnostic vocabulary — each dispatcher maps it to its own platform's date-range dialect. A platform with no `MetricsReader` wired returns 400. **409** always means "this campaign id is not readable as asked". Every platform returns it when the campaign is unprovisioned (empty `PlatformCampaignID`). **Google Ads additionally returns it on an account mismatch** — the campaign was created under a different ad account than the project's connection now resolves to; platform campaign ids are account-scoped, so reading one under the wrong account silently yields zeros or another account's numbers, and the fix is to reconnect the original account. That second check is Google-Ads-only today: the Meta, LinkedIn, Reddit and X adapters do not verify account identity, so on those platforms an account switch surfaces as a wrong-looking number rather than a 409. Support is per-platform (see below). |
 | POST | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/keyword-actions` | `campaign_manager` | JSON | Pause/remove Google Ads keywords for this campaign. |
 
 **Per-campaign metrics-read support by platform**: this row documents the shared `MetricsReader` capability and endpoint; the remaining per-platform `ReadMetrics` adapters land in their own PRs.
 
 | Platform | Supported windows |
 |----------|-------------------|
+| Google Ads | All seven. The adapter maps each window to the matching GAQL date literal (`last_30_days` → `LAST_30_DAYS`, and so on) behind an allow-list, so the platform-agnostic value never reaches the query as caller-supplied text. |
+| Meta Ads | All seven. Each maps to a Graph Insights `date_preset` (`last_30_days` → `last_30d`, and so on) through a fixed allow-list, so an unrecognized literal fails locally rather than reaching Meta. |
 | X (Twitter) Ads | `today`, `yesterday`, `last_7_days` only — the stats endpoint caps a queryable range at 7 days, so the wider windows return `400`. This is why X defaults to `last_7_days` rather than `last_30_days`. |
+| LinkedIn Ads | `today`, `last_7_days`, `last_30_days`, `this_month`, `last_month`. `yesterday` and `last_14_days` return `400` — the Ad Analytics finder takes an explicit date range and these two have no mapping today. |
 | Reddit Ads | `today`, `last_7_days`, `last_30_days`, `this_month`, `last_month`. `yesterday` and `last_14_days` return `400` — no date-range mapping today. |
 
 Reddit Ads is wired but **default-OFF**: its reporting contract is unverified (LFXV2-2995 — see the Reddit Ads notes below), so the adapter returns the same 400 as an unsupported platform unless the deployment sets `REDDIT_METRICS_ENABLED=true`. That is deliberate — a guessed request/response shape and currency unit returning 200 would look authoritative to every consumer, and the caveats are not carried in the response.
