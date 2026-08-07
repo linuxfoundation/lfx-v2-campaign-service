@@ -193,6 +193,20 @@ var Campaign = Type("campaign", func() {
 	Required("id", "project_id", "brief_id", "platform", "campaign_name", "status", "version")
 })
 
+// CampaignMetrics is the live-read performance snapshot for one campaign over one window.
+// It is never persisted — a fresh platform read populates it on every request, unlike
+// Campaign (which reflects the stored row plus an ETag).
+var CampaignMetrics = Type("campaign-metrics", func() {
+	Attribute("campaign_id", String, "Campaign UUID")
+	Attribute("platform_campaign_id", String, "ID returned by the ad platform")
+	Attribute("window", String, "Platform-agnostic reporting window the metrics were read for", metricsWindowEnum)
+	Attribute("impressions", Int64, "Impressions in window")
+	Attribute("clicks", Int64, "Clicks in window")
+	Attribute("cost_micros", Int64, "Cost in window, in micro-units of the platform's native currency (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter, etc.)")
+	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0")
+	Required("campaign_id", "platform_campaign_id", "window", "impressions", "clicks", "cost_micros", "ctr")
+})
+
 // CampaignUpdateInput is the mutable campaign payload (replace).
 var CampaignUpdateInput = Type("campaign-update-input", func() {
 	Attribute("campaign_name", String, "Campaign name")
@@ -393,6 +407,27 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		})
 	})
 
+	Method("get-campaign-metrics", func() {
+		Description("Read live performance metrics (impressions, clicks, cost, CTR) for one campaign directly from its ad platform. This is a pure read — never persisted — unlike get-campaign, which returns the stored row. Support is per-platform: a campaign whose platform has no metrics-read dispatcher wired returns 400.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			Attribute("window", String, "Platform-agnostic reporting window (defaults to last_30_days when omitted)", metricsWindowEnum)
+			Required("project_id", "brief_id", "campaign_id")
+		})
+		Result(CampaignMetrics)
+		commonBriefErrors(false)
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/metrics")
+			Header("bearer_token:Authorization")
+			Param("window")
+			Response(StatusOK)
+			briefErrorResponses(false)
+		})
+	})
+
 	Method("update-campaign", func() {
 		Description("Replace a campaign (requires If-Match).")
 		Payload(func() {
@@ -496,6 +531,15 @@ func briefIDAttr() {
 
 func campaignIDAttr() {
 	Attribute("campaign_id", String, "Campaign UUID", func() { Format(FormatUUID) })
+}
+
+// metricsWindowEnum applies the platform-agnostic reporting-window vocabulary
+// (model.MetricsWindow's seven values) to the current attribute. Shared between
+// get-campaign-metrics' request parameter and CampaignMetrics' result attribute so
+// the two stay in lockstep — a window value the request accepts but the result type
+// can't represent (or vice versa) would silently diverge otherwise.
+func metricsWindowEnum() {
+	Enum("today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month")
 }
 
 // commonBriefErrors declares the standard error set for a brief method.

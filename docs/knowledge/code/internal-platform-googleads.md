@@ -175,8 +175,11 @@ up to the minimum, capped at the maximum — never silently dropping down to
 zero, but empties/duplicates ARE dropped and the count IS capped, so a caller
 should not assume its exact input list survives verbatim), and
 `buildAdFinalURL` builds the ad's destination URL from the brief's
-registration URL, UTM-tagging it without overwriting a `utm_*` key the
-registration URL already carries.
+registration URL, UTM-tagging it: `utm_source`/`utm_medium` are set
+unconditionally to `google`/`cpc` (a Google CPC click must attribute to this
+channel, never to a `utm_source` the registration URL already carried), while
+`utm_campaign`/`utm_content` are set only when the registration URL does not
+already carry them (`setIfAbsent`).
 
 `buildAdFinalURL` rejects a registration URL that: fails to parse; uses a
 scheme other than http/https; has no host; carries embedded userinfo
@@ -262,12 +265,20 @@ misbehave.
 `Descriptions`, trims/rune-truncates/dedupes them (`boundedUniqueCopy`), then
 pads with deterministic eventName/project-derived placeholders
 (`defaultHeadlines`/`defaultDescriptions` via `padUnique`) up to Google's v23
-RSA minimums (3 headlines ≤30 runes, 2 descriptions ≤90 runes). Caller-supplied
-entries are accepted up to the maximum (15 headlines, 4 descriptions), with
-later entries beyond those limits silently dropped. Unlike the Microsoft client,
-Google's limits are plain rune counts — there is NO double-width-character
-halving rule here. A caller with zero usable copy AND an empty EventName is a
-hard error (there is nothing to advertise).
+RSA minimums (3 headlines ≤30, 2 descriptions ≤90). Caller-supplied entries are
+accepted up to the maximum (15 headlines, 4 descriptions), with later entries
+beyond those limits silently dropped. A caller with zero usable copy AND an
+empty EventName is a hard error (there is nothing to advertise).
+
+Those limits are WEIGHTED character counts, not plain rune counts:
+`googleAdsCharWeight` scores CJK/full-width runes (Hangul Jamo and Syllables,
+CJK Radicals through Yi, CJK Compatibility Ideographs and Forms, Fullwidth
+Forms and Signs, CJK Ext. B-G) as 2 and everything else as 1, and
+`truncateWeighted` cuts to that budget on a rune boundary. All-wide-character
+copy therefore fits 15 headline / 45 description characters. This matches the
+Microsoft client's equivalent rule rather than differing from it — an earlier
+version of this file claimed there was no double-width halving here, which
+contradicted `ad_copy.go` and is corrected.
 
 **The ad's final URL** (`buildAdFinalURL`) is the brief's `RegistrationURL`
 tagged with `utm_source=google`, `utm_medium=cpc`, `utm_campaign` (from

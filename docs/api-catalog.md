@@ -104,7 +104,10 @@ Each optimization action is scoped to a single campaign under its brief and is i
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
 | PATCH | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/status` | `campaign_manager` | JSON | Toggle campaign ACTIVE/PAUSED (Reddit, Meta, LinkedIn, X/Twitter, Google Ads, Microsoft Ads). |
+| GET | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/metrics` | `campaign_manager` | JSON | Read live performance metrics (impressions, clicks, cost, CTR) for one campaign directly from its ad platform. Pure read — never persisted, unlike `GET .../campaigns/{id}`. `window` query param (`today`, `yesterday`, `last_7_days`, `last_14_days`, `last_30_days`, `this_month`, `last_month`; default `last_30_days`) is a closed, platform-agnostic vocabulary — each dispatcher maps it to its own platform's date-range dialect. A platform with no `MetricsReader` wired returns 400; an unprovisioned campaign returns 409. Support is per-platform (see below). |
 | POST | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/keyword-actions` | `campaign_manager` | JSON | Pause/remove Google Ads keywords for this campaign. |
+
+**Per-campaign metrics-read support by platform**: this row documents the shared `MetricsReader` capability and endpoint; per-platform `ReadMetrics` adapters land in their own PRs. Microsoft Ads is **not supported** — its only reporting surface is the Reporting API v13 (SOAP, async submit-then-poll-then-download), incompatible with this endpoint's single bounded synchronous call; see `docs/knowledge/code/internal-dispatch.md`.
 
 **Tentative** (later phases, same nesting + `campaign_manager` gating): budget adjust, bid-strategy change, per-keyword bid, ad/creative rotation, ad-copy edit, geo-target edit, audience edit, negative keywords, bid modifiers, scheduling, flight-date change. Cross-platform budget reallocation, if built, is modeled as a first-class per-project resource with its own single-target mutations — not a bulk endpoint.
 
@@ -325,16 +328,23 @@ budget: number                  — Whole units of the account currency (e.g. 25
                                   during dispatch (a pre-create job failure, since CreateCampaigns is
                                   async). Omitting it leaves the shell with no budget, which fails the
                                   platform job asynchronously — supply it explicitly.
-headlines?: string[]            — Optional Responsive Search Ad headlines (≤30 runes each, 3-15
-                                  after padding). Trimmed, rune-truncated, and de-duplicated;
+headlines?: string[]            — Optional Responsive Search Ad headlines (≤30 WEIGHTED chars
+                                  each, 3-15 after padding). Trimmed, truncated, and de-duplicated;
                                   caller-supplied entries are accepted up to 15 (later entries
                                   beyond that are silently dropped). Padded with deterministic
                                   eventName-derived placeholders up to the minimum of 3 when fewer
                                   are supplied (or omitted entirely).
-descriptions?: string[]         — Optional Responsive Search Ad descriptions (≤90 runes each, 2-4
-                                  after padding). Same trim/truncate/dedupe/pad rules as headlines,
-                                  with caller-supplied entries accepted up to 4 (later entries
-                                  beyond that are silently dropped).
+descriptions?: string[]         — Optional Responsive Search Ad descriptions (≤90 WEIGHTED chars
+                                  each, 2-4 after padding). Same trim/truncate/dedupe/pad rules as
+                                  headlines, with caller-supplied entries accepted up to 4 (later
+                                  entries beyond that are silently dropped).
+
+                                  WEIGHTED, not plain runes: matching Google Ads' own counting,
+                                  CJK and full-width characters (Hangul, Kana, CJK ideographs,
+                                  Fullwidth Forms) each count as TWO. All-wide-character copy
+                                  therefore fits 15 headline / 45 description characters, not
+                                  30 / 90, and is truncated at that point. Latin text is
+                                  unaffected — one character, one unit.
 keywords?: {text, matchType}[]  — OPTIONAL positive Search keyword criteria (GA-4), attached to the
                                   ad group created above. `text` ≤80 runes; `matchType` one of EXACT,
                                   PHRASE, BROAD (case-insensitive). At most 20 entries; duplicates
