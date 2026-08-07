@@ -175,8 +175,11 @@ dispatch path, which UPDATEs the row, but not against an in-flight run-state tog
 toggle holds its claim ACROSS the platform call, and between `ClaimCampaignVersion` and
 `ReplaceCampaign` it holds no row lock at all. A delete committing in that window bumps
 `version`, so the toggle's `ReplaceCampaign(expectedVersion)` fails AFTER the paid side
-effect already landed upstream. Holding the advisory lock makes delete wait for the
-toggle, then observe the bumped version and return an actionable 412.
+effect already landed upstream. Taking the same advisory lock keeps delete out of that
+window entirely: it does not wait for the toggle, it is refused with
+`ErrCampaignWriteInProgress` and returns a retryable 409, so a delete never commits between
+a toggle's claim and its persist. A delete issued after the toggle releases sees the bumped
+version through the ordinary optimistic check.
 
 The delete transaction begins on the connection already holding that advisory lock
 (`conn.Begin`), never on the pool (`r.db.Begin`) — beginning on the pool would take a

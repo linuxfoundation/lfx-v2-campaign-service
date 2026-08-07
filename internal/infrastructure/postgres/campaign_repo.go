@@ -464,8 +464,11 @@ type campaignLock struct {
 // connection, which prevents concurrent writers from claiming and executing
 // side-effecting calls (e.g., platform toggling) on the same campaign row
 // simultaneously. Only the lock holder can proceed to call external services or
-// perform ReplaceCampaign with the claimed version; any other caller attempting
-// to claim while a lock is held will wait for it to be released.
+// perform ReplaceCampaign with the claimed version. The claim does NOT queue: it is
+// pg_try_advisory_lock, so any other caller attempting to claim while a lock is held
+// is refused IMMEDIATELY with ErrCampaignWriteInProgress, which the service maps to a
+// retryable 409. Nothing parks and resumes after release — the loser retries as a new
+// request. See the TRY, never wait note at the acquisition site for why.
 //
 // The lock is stored in a package-level map and MUST be released via
 // ReleaseCampaignLock to unblock other writers. Failure to release will strand
@@ -505,10 +508,15 @@ type campaignLock struct {
 // POOL COST — the second thing to know before adding callers. The claim checks a connection
 // out of the SERVICE-WIDE pool and holds it for the whole guarded operation: the platform
 // call (up to 45s) plus, on an UNCONFIRMED result, unconfirmedLockCooldown after that. It is
-// therefore not free to spread this claim over more code paths. Concurrent guarded writes —
-// on different campaigns, or waiters queued behind the same advisory key — consume one pool
-// slot each, and enough of them starve ordinary reads, readiness probes, and every other
-// write in the process.
+// therefore not free to spread this claim over more code paths. Concurrent guarded writes on
+// DIFFERENT campaigns consume one pool slot each, and enough of them starve ordinary reads,
+// readiness probes, and every other write in the process.
+//
+// Contention on the SAME campaign costs nothing extra, and that is the point of the try-lock:
+// a loser returns its connection before it does any waiting, so a hot campaign cannot pile up
+// waiters each pinning a slot for the length of someone else'"'"'s platform call. The bound on pool
+// consumption is therefore the number of campaigns being written concurrently, not the number
+// of in-flight requests.
 //
 // The two callers today cost very different amounts, and the cheap one is why the hold time
 // above is stated as an upper bound rather than a typical one. service.ToggleCampaignStatus

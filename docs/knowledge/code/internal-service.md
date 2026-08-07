@@ -83,8 +83,12 @@ advisory lock (keyed by campaign id, on a dedicated pooled connection), reads th
 preserves the invariant that every campaign write co-commits its index event. An earlier
 design bumped at claim time (`UPDATE ... SET version=version+1 WHERE version=$expected`) and
 could not hold that invariant; do not reintroduce it. Because ownership is the lock and not
-the version, it survives the caller's external I/O: a second writer BLOCKS on the lock
-instead of racing between the claim and the post-platform persist. Callers MUST release via
+the version, it survives the caller's external I/O: a second writer is REFUSED for the whole
+duration of the first one's platform call instead of racing between the claim and the
+post-platform persist. Refused, not queued — the claim is `pg_try_advisory_lock`, so the
+loser gets `ErrCampaignWriteInProgress` immediately and the service returns a retryable 409.
+Nothing resumes after release; the client retries as a new request. Queuing was rejected
+because a waiter would pin a pool connection for the length of the holder's platform call. Callers MUST release via
 `ReleaseCampaignLock` (deferred), and the not-found vs. stale-version classification is made
 while the lock is still held — releasing first would let a concurrent delete turn a
 stale-version caller's 412 into a 404. `UpdateCampaign`, which has no I/O between its read

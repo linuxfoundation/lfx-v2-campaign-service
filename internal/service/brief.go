@@ -727,12 +727,18 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	// to stop a second concurrent caller (another toggle, or UpdateCampaign) that read the
 	// same version from also passing its own check and also mutating the platform — both would
 	// then race the final persist, and only one wins, leaving the platform and the row
-	// diverged with no compensating rollback. The claim closes that: a second caller blocks
-	// here, before either the platform is called or a claim is granted for anyone else to race
-	// against.
+	// diverged with no compensating rollback. The claim closes that: a second caller is turned
+	// away HERE, before either the platform is called or a claim is granted for anyone else to
+	// race against.
 	//
-	// "Blocks", not "can never win". The claim is a contention guard whose exclusion lasts
-	// only as long as the lock's session — a failover or a severed connection releases it
+	// "Turned away", not "queued". The claim is pg_try_advisory_lock, so the loser gets
+	// ErrCampaignWriteInProgress immediately — mapped to a retryable 409 — and does NOT park
+	// until the holder releases. A client that wants the write retries as a fresh request,
+	// which is deliberate: parking would pin a pool connection for the length of someone
+	// else's platform call. See ClaimCampaignVersion's POOL COST note.
+	//
+	// And "turned away", not "can never win". The claim is a contention guard whose exclusion
+	// lasts only as long as the lock's session — a failover or a severed connection releases it
 	// server-side while this call is still inside its platform call, and a successor can then
 	// claim the same still-unbumped version (see ClaimCampaignVersion's durability boundary).
 	// What makes that safe is not this claim but the compare-and-swap in the ReplaceCampaign
@@ -750,8 +756,9 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	// context is cancelled.
 	//
 	// releaseNow is turned off on the UNCONFIRMED path below, which schedules its own delayed
-	// release instead — releasing inline there would let a second waiter re-claim the same
-	// still-unbumped version and call the platform again while this call's outcome is unknown.
+	// release instead — releasing inline there would let the next request to arrive claim the
+	// same still-unbumped version and call the platform again while this call's outcome is
+	// unknown. During the cooldown those requests are refused with 409, not queued.
 	releaseNow := true
 	defer func() {
 		if releaseNow {
