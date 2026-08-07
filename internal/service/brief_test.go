@@ -1125,15 +1125,14 @@ func TestBriefService_ToggleCampaignStatus_ConcurrentTogglesSerialize(t *testing
 
 	successes, failures := 0, 0
 	for _, err := range errs {
-		switch {
-		case err == nil:
+		if err == nil {
 			successes++
-		default:
-			failures++
-			var precond *briefs.PreconditionFailedError
-			if !errors.As(err, &precond) {
-				t.Errorf("expected the losing concurrent toggle to fail with a 412 precondition error, got %T: %v", err, err)
-			}
+			continue
+		}
+		failures++
+		var precond *briefs.PreconditionFailedError
+		if !errors.As(err, &precond) {
+			t.Errorf("expected the losing concurrent toggle to fail with a 412 precondition error, got %T: %v", err, err)
 		}
 	}
 	if successes != 1 || failures != 1 {

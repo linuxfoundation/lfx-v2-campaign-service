@@ -734,7 +734,57 @@ const deleteCampaignQuery = `UPDATE campaigns SET status='deleted', version=vers
 // see model.CampaignStatusNeedsReconciliation), and domain.ErrPreconditionFailed on a
 // version mismatch.
 func (r *CampaignRepo) DeleteCampaign(ctx context.Context, projectID, briefID, id string, expectedVersion int64, indexPayload domain.CampaignIndexPayloadFunc) error {
-	tx, err := r.db.Begin(ctx)
+	// Participate in the SAME advisory-lock protocol as ClaimCampaignVersion before
+	// taking the row lock. FOR UPDATE alone serializes this against the dispatch path
+	// (which UPDATEs the row) but NOT against an in-flight run-state toggle: a toggle
+	// holds its claim across the platform call, and between ClaimCampaignVersion and
+	// ReplaceCampaign it holds no row lock at all. Deleting inside that window bumps
+	// version, so the toggle's ReplaceCampaign(expectedVersion) then fails AFTER the
+	// paid side effect already landed upstream — the campaign is changed on the
+	// platform with no local record of it. Blocking here until the toggle releases
+	// means we observe its bumped version and return a 412 the caller can act on.
+	conn, err := r.db.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("delete campaign: acquire connection: %w", err)
+	}
+	lockKey := hashCampaignID(id)
+	if _, lerr := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", lockKey); lerr != nil {
+		// Postgres may have granted the lock server-side even though the client saw a
+		// failure (e.g. the request context was cancelled mid-call). Returning this
+		// connection to the pool would strand a session-scoped lock on it forever, so
+		// destroy it instead — same reasoning as ClaimCampaignVersion.
+		if closeErr := conn.Conn().Close(context.WithoutCancel(ctx)); closeErr != nil {
+			slog.WarnContext(ctx, "failed to close campaign connection after delete advisory lock acquire error",
+				"campaign_id", id, "error", closeErr)
+		}
+		conn.Release()
+		return fmt.Errorf("delete campaign: claim advisory lock: %w", lerr)
+	}
+	// Unlock on a context detached from the request: the caller's ctx may already be
+	// cancelled by the time we get here, and an unlock issued on a dead context fails
+	// immediately, stranding the lock on a pooled connection and blocking every future
+	// claim AND delete for this campaign. If the unlock itself errors, destroy the
+	// connection so the lock-bearing session can never be reused.
+	defer func() {
+		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimRollbackTimeout)
+		_, unlockErr := conn.Exec(unlockCtx, "SELECT pg_advisory_unlock($1)", lockKey)
+		cancel()
+		if unlockErr != nil {
+			slog.WarnContext(ctx, "failed to release campaign advisory lock after delete; destroying connection",
+				"campaign_id", id, "error", unlockErr)
+			if closeErr := conn.Conn().Close(context.WithoutCancel(ctx)); closeErr != nil {
+				slog.WarnContext(ctx, "failed to close campaign connection after delete unlock failure",
+					"campaign_id", id, "error", closeErr)
+			}
+		}
+		conn.Release()
+	}()
+
+	// Begin the transaction on the SAME connection that holds the advisory lock.
+	// r.db.Begin would take a SECOND connection from the pool while this one is held,
+	// which self-deadlocks whenever the pool is saturated (pool_max_conns=1 guarantees
+	// it): the delete would wait for a connection that only it could free.
+	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("delete campaign: begin tx: %w", err)
 	}
