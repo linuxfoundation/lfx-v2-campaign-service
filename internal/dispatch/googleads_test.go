@@ -1302,8 +1302,21 @@ func TestGoogleAds_ListAccounts_WorksBeforeAnAccountIsChosen(t *testing.T) {
 
 // TestGoogleAds_ListAccounts_StillRejectsUnusableConnections pins the other half: dropping
 // the account-id requirement must not drop the rest of the connection contract. An
-// inactive connection, or one whose credential blob is missing OAuth fields, is a
-// connection problem and should read as one — not as an opaque failure from Google.
+// inactive connection, one whose credential blob is missing OAuth fields, or one carrying a
+// dashed manager id is a connection problem and should read as one — not as an opaque
+// failure from Google.
+//
+// Each case must also satisfy errors.Is(err, domain.ErrConnectionNotUsable). That is not
+// decoration: the service layer that answers this endpoint has exactly one way to tell a
+// "the connection needs editing" failure (400) from "Google did not answer" (503), and it is
+// this sentinel. Without it every case here lands in the default arm and becomes a 503 — a
+// promise that retrying might help, made about three conditions that cannot change until a
+// human edits the connection. The substring assertions alone would not catch that: the
+// message stays identical whether or not the wrap is there.
+//
+// The dashed login_customer_id case is the one that motivated the check at the dispatch
+// boundary. The client validates it too, but it does so inside the same call that talks to
+// Google, so by the time it fails the error is indistinguishable here from an upstream one.
 func TestGoogleAds_ListAccounts_StillRejectsUnusableConnections(t *testing.T) {
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
@@ -1331,6 +1344,13 @@ func TestGoogleAds_ListAccounts_StillRejectsUnusableConnections(t *testing.T) {
 			},
 			wantSub: "incomplete",
 		},
+		{
+			name: "manager id stored with dashes",
+			mutate: func(c *model.Connection) {
+				c.ProviderConfig = map[string]string{"login_customer_id": "999-999-9999"}
+			},
+			wantSub: "login_customer_id",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1347,6 +1367,16 @@ func TestGoogleAds_ListAccounts_StillRejectsUnusableConnections(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.wantSub) {
 				t.Errorf("error = %v, want it to contain %q", err, tc.wantSub)
+			}
+			if !errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Errorf("error = %v, want errors.Is(err, domain.ErrConnectionNotUsable): without "+
+					"the sentinel the service layer cannot separate this from an upstream failure "+
+					"and answers 503, telling the caller to retry a request that cannot succeed "+
+					"until the connection is edited", err)
+			}
+			if errors.Is(err, domain.ErrNotFound) {
+				t.Errorf("error = %v, must NOT satisfy ErrNotFound: the connection exists, it is "+
+					"just unusable — a 404 would tell the caller to create a second one", err)
 			}
 		})
 	}

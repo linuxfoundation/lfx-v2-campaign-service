@@ -8,12 +8,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
 )
+
+// storedCustomerIDRE is the shape a STORED Google Ads account id must have: digits
+// only, no dashes, spaces, or grouping. It intentionally duplicates the client's
+// customerIDRE (internal/platform/googleads/client.go) rather than exporting it: the
+// client keeps its own copy as the backstop for every caller, while this one exists so
+// a malformed STORED value is caught at the dispatch boundary, where the failure can
+// still be classified as domain.ErrConnectionNotUsable instead of an upstream 503. The
+// two must stay in step — widen one and you must widen the other.
+var storedCustomerIDRE = regexp.MustCompile(`^[0-9]+$`)
 
 // googleAdsCreds is the credential shape stored (encrypted) for a Google Ads
 // connection. Google Ads authenticates with an OAuth2 application (client id/secret)
@@ -309,9 +319,26 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 	if err != nil {
 		return nil, err
 	}
+	// Everything from here to NewClient inspects STORED state, before any request exists.
+	// A failure means the connection needs editing, not retrying, so each one is wrapped
+	// with domain.ErrConnectionNotUsable — otherwise the discovery handler's default arm
+	// reports 503 and tells the operator to wait for a condition that will never change on
+	// its own. Errors from creds.resolve above are deliberately NOT wrapped: that layer
+	// distinguishes ErrNotFound (no connection — a 404) from a real storage failure (which
+	// IS transient and IS a 503), and flattening both into "not usable" would lose it.
 	creds, err := validateGoogleAdsCredentials(projectID, res)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, err)
+	}
+	// login_customer_id is checked HERE, not only inside the client. The client validates
+	// it too (client.go validateLoginCustomerID, kept as the backstop for every other
+	// caller), but by then the failure is indistinguishable at this boundary from an
+	// upstream one — same call, same error type — and would be classified as retryable.
+	// Checking the stored value where it is read is what makes it classifiable.
+	loginCustomerID := strings.TrimSpace(res.providerConfig["login_customer_id"])
+	if loginCustomerID != "" && !storedCustomerIDRE.MatchString(loginCustomerID) {
+		return nil, fmt.Errorf("%w: stored login_customer_id %q must be digits only (no dashes or spaces)",
+			domain.ErrConnectionNotUsable, loginCustomerID)
 	}
 	return googleads.NewClient(
 		googleads.Credentials{
@@ -321,7 +348,7 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 			RefreshToken:   creds.RefreshToken,
 		},
 		googleads.AccountConfig{
-			LoginCustomerID: strings.TrimSpace(res.providerConfig["login_customer_id"]),
+			LoginCustomerID: loginCustomerID,
 			Label:           res.label,
 		},
 		d.opts...,

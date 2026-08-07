@@ -264,11 +264,29 @@ this method; it is reachable only from tests.
 Note what it is NOT: this does not list anything this service stores. A project holds at most one
 connection per provider, and that singleton is read via `GET .../connection-{provider}`.
 `AccessibleAccount` (`ID`, `Label`) is a live projection of the provider's own account list, never
-persisted — the same live-read-only discipline as `ReadMetrics`. Errors propagate verbatim: a read
-has no ambiguous mutation to protect, and the adapter deliberately does not classify them, leaving
-the HTTP status mapping to the service layer that lands next. What the adapter DOES guarantee is
-that `domain.ErrNotFound` survives the credential resolution, so that layer can tell "no connection
-configured" apart from "the provider call failed".
+persisted — the same live-read-only discipline as `ReadMetrics`. Errors from the provider CALL
+propagate verbatim: a read has no ambiguous mutation to protect, and the adapter does not classify
+those, leaving the HTTP status mapping to the service layer.
+
+**Errors that arise BEFORE any request are classified here, and must be.** The service layer has
+exactly one default arm for an unrecognized error, and it answers 503 — "the provider call failed,
+retry later". Three conditions would land there wrongly: an inactive connection, a credential blob
+that is incomplete or undecodable, and a `login_customer_id` stored with dashes. None of them
+improve with time; all of them need a human to edit the connection. So
+`resolveGoogleAdsDiscoveryClient` wraps each with `domain.ErrConnectionNotUsable`. The 400 mapping
+for that sentinel lands with the endpoint in the follow-up PR; the wrap has to exist here, in the
+layer that knows the failure was pre-send, because nothing downstream can recover the distinction.
+
+The manager-id check is duplicated on purpose. `Client.validateLoginCustomerID` still validates it
+(the backstop for every other caller), but it does so inside the same call that talks to Google, so
+by the time it fires the error is indistinguishable at this boundary from a genuine upstream
+failure. `storedCustomerIDRE` in `internal/dispatch/googleads.go` therefore checks the STORED value
+where it is read — the check has to happen where the answer is still classifiable. The two regexps
+must stay in step.
+
+Errors from `creds.resolve` are deliberately NOT wrapped: that layer distinguishes
+`domain.ErrNotFound` (no connection at all → 404) from a real storage failure (transient → 503), and
+flattening both into "not usable" would lose it.
 
 Google Ads is the only implementation today, via
 `Client.ListAccessibleCustomers` → `customers:listAccessibleCustomers`. That endpoint is
