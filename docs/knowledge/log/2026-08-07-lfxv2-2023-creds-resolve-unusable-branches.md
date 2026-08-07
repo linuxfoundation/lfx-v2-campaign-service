@@ -1,5 +1,9 @@
 # 2026-08-07 — LFXV2-2023: two creds.resolve branches still answered 503
 
+**Update** — `credsSource.resolve` now classifies its two permanent failure branches with
+`domain.ErrConnectionNotUsable`, closing the last path by which a pre-send setup failure reached
+the service layer's default 503 arm.
+
 **Fix** — The previous change classified the setup failures `resolveGoogleAdsDiscoveryClient`
 raises itself, but `credsSource.resolve` sits UNDER it and raises two of its own that belong in the
 same bucket: a connection row with an empty credential blob, and one whose blob will not decrypt.
