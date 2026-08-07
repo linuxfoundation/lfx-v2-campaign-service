@@ -306,6 +306,16 @@ func TestGetCampaignMetrics_CounterGuardsAreDecodeErrors(t *testing.T) {
 			data: `{"campaign_id":"camp_123","impressions":1,"clicks":9223372036854775807,"spend":"1.00"},` +
 				`{"campaign_id":"camp_123","impressions":1,"clicks":1,"spend":"1.00"}`,
 		},
+		{
+			// Two rows whose spend totals (in micros) exceed MaxInt64. Each individual row's
+			// spend passes the per-row overflow check (line 139), but their converted micros sum
+			// past MaxInt64 and must be caught at the checked addition (line 152-153). Without
+			// this case, removing or misordering the cost accumulation guard would silently
+			// reintroduce wrapped negative totals.
+			name: "cost total overflows",
+			data: `{"campaign_id":"camp_123","impressions":1,"clicks":1,"spend":"5000000000000"},` +
+				`{"campaign_id":"camp_123","impressions":1,"clicks":1,"spend":"5000000000000"}`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
