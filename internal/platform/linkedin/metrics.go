@@ -480,11 +480,12 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 			return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: redactBodyReadError(err)}
 		}
 		// Same redaction technique as the 2xx path (redactBodyReadError): a body-read error can
-		// carry untrusted upstream content regardless of status code. The resulting STRING
-		// differs by design — transportError.Err is surfaced as a bare cause, whereas
-		// apiError.Body is a free-form diagnostic field, so redactBodyReadError's own message
-		// is enough on its own here. Do not add a "read response body: " prefix: it would
-		// double-state what redactBodyReadError already says.
+		// carry untrusted upstream content regardless of status code. The two CARRIER FIELDS
+		// differ — transportError.Err is surfaced as a bare cause, apiError.Body is a free-form
+		// diagnostic field — but both carry redactBodyReadError's message VERBATIM, so no extra
+		// prefix is needed on either. Do not add a "read response body: " prefix here: it would
+		// double-state what redactBodyReadError already says, and it would also make the two
+		// paths' text diverge for no reason (metrics_test.go's wantBody asserts they match).
 		return nil, false, 0, &apiError{StatusCode: resp.StatusCode, Method: "GET", Path: "adAnalytics", Body: redactBodyReadError(err).Error()}
 	}
 
