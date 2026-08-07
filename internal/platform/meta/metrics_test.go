@@ -290,8 +290,15 @@ func TestGetCampaignMetrics_NegativeSpendIsRejected(t *testing.T) {
 // logged there. safeErrSummary bounds and normalises the text but cannot tell whose
 // text it is, so a printable secret sitting in an upstream field would survive it
 // unchanged — the only place that can stop it is here, at the point the error is
-// built. Each case therefore plants a distinctive marker in the offending field and
-// asserts it does not appear anywhere in the error chain.
+// built.
+//
+// Each case names the exact bytes it plants in the offending field and asserts they
+// appear nowhere in the error chain. A free-text marker only works for the branches
+// reached by an UNPARSEABLE value; the negative and overflow guards run only after
+// the value parses, so those cases plant a distinctive NUMERIC literal instead and
+// assert on that. Getting this wrong is easy and silent: `"-1SECRETMARKER"` does not
+// parse at all, so it lands on the not-an-integer branch and leaves the n < 0 branch
+// untested while looking like it covers it.
 //
 // The cases cover every malformed branch: both counters (unparseable and negative)
 // and all four spend guards (unparseable, non-finite, negative, overflow).
@@ -299,40 +306,60 @@ func TestGetCampaignMetrics_MalformedValuesAreNotEchoed(t *testing.T) {
 	const marker = "SECRETMARKER"
 
 	cases := map[string]struct {
-		body string
-		want string // a substring the error MUST still carry, so it stays diagnostic
+		body   string
+		secret string // the exact offending bytes; MUST NOT appear in the error
+		want   string // a substring the error MUST still carry, so it stays diagnostic
 	}{
 		"unparseable impressions": {
-			body: `{"data":[{"impressions":"` + marker + `","clicks":"1","spend":"1.00"}]}`,
-			want: "impressions not an integer",
+			body:   `{"data":[{"impressions":"` + marker + `","clicks":"1","spend":"1.00"}]}`,
+			secret: marker,
+			want:   "impressions not an integer",
 		},
 		"negative impressions": {
-			body: `{"data":[{"impressions":"-1` + marker + `","clicks":"1","spend":"1.00"}]}`,
-			want: "impressions",
+			// Parses cleanly, so it reaches the n < 0 guard rather than stopping at
+			// the syntax check. The digits stand in for the marker.
+			body:   `{"data":[{"impressions":"-98765432","clicks":"1","spend":"1.00"}]}`,
+			secret: "98765432",
+			want:   "impressions negative counter",
 		},
 		"unparseable clicks": {
-			body: `{"data":[{"impressions":"1","clicks":"` + marker + `","spend":"1.00"}]}`,
-			want: "clicks not an integer",
+			body:   `{"data":[{"impressions":"1","clicks":"` + marker + `","spend":"1.00"}]}`,
+			secret: marker,
+			want:   "clicks not an integer",
+		},
+		"negative clicks": {
+			body:   `{"data":[{"impressions":"1","clicks":"-87654321","spend":"1.00"}]}`,
+			secret: "87654321",
+			want:   "clicks negative counter",
 		},
 		"both counters malformed": {
-			body: `{"data":[{"impressions":"` + marker + `","clicks":"` + marker + `","spend":"1.00"}]}`,
-			want: "clicks", // both are named; the clicks half proves the second is not dropped
+			body:   `{"data":[{"impressions":"` + marker + `","clicks":"` + marker + `","spend":"1.00"}]}`,
+			secret: marker,
+			want:   "clicks", // both are named; the clicks half proves the second is not dropped
 		},
 		"unparseable spend": {
-			body: `{"data":[{"impressions":"1","clicks":"1","spend":"` + marker + `"}]}`,
-			want: "spend is not a number",
+			body:   `{"data":[{"impressions":"1","clicks":"1","spend":"` + marker + `"}]}`,
+			secret: marker,
+			want:   "spend is not a number",
 		},
 		"non-finite spend": {
-			body: `{"data":[{"impressions":"1","clicks":"1","spend":"NaN"}]}`,
-			want: "spend is not finite",
+			// ParseFloat accepts the "Infinity" spelling and returns +Inf with no
+			// error, so this reaches the IsInf guard. An out-of-range literal like
+			// 1e999 would NOT: ParseFloat reports ErrRange for it, which stops one
+			// branch earlier at "not a number".
+			body:   `{"data":[{"impressions":"1","clicks":"1","spend":"Infinity"}]}`,
+			secret: "Infinity",
+			want:   "spend is not finite",
 		},
 		"negative spend": {
-			body: `{"data":[{"impressions":"1","clicks":"1","spend":"-1.00"}]}`,
-			want: "spend is negative",
+			body:   `{"data":[{"impressions":"1","clicks":"1","spend":"-7654.321"}]}`,
+			secret: "7654.321",
+			want:   "spend is negative",
 		},
 		"overflowing spend": {
-			body: `{"data":[{"impressions":"1","clicks":"1","spend":"1e300"}]}`,
-			want: "spend overflows int64 micros",
+			body:   `{"data":[{"impressions":"1","clicks":"1","spend":"9.87654321e299"}]}`,
+			secret: "9.87654321e299",
+			want:   "spend overflows int64 micros",
 		},
 	}
 
@@ -347,8 +374,8 @@ func TestGetCampaignMetrics_MalformedValuesAreNotEchoed(t *testing.T) {
 			if err == nil {
 				t.Fatalf("expected a malformed row to be rejected, got %+v", m)
 			}
-			if strings.Contains(err.Error(), marker) {
-				t.Errorf("error echoed the raw upstream value: %v", err)
+			if strings.Contains(err.Error(), tc.secret) {
+				t.Errorf("error echoed the raw upstream value %q: %v", tc.secret, err)
 			}
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("error = %v, want it to contain %q so it stays diagnostic", err, tc.want)

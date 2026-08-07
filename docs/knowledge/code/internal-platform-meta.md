@@ -151,13 +151,40 @@ No malformed-value error echoes the offending bytes. `parseMetricInt` and the sp
 report the field name, the reason, and the value's byte LENGTH only, because these errors reach
 `BriefService.GetCampaignMetrics`'s default branch and are logged — and `safeErrSummary` bounds
 and normalises text without knowing whether the text is ours, so a short printable secret
-sitting in an upstream field would pass through it intact. Cost
+sitting in an upstream field would pass through it intact. The tests that pin this pick
+their inputs to REACH each guard: a value like `-1SECRETMARKER` never parses, so it lands on
+the syntax branch and leaves `n < 0` untested while looking covered — the negative and
+overflow cases plant a distinctive numeric literal instead. Cost
 is expressed in micros of the ad account's currency (consistent with the Google Ads metrics
 path, so a platform-agnostic dispatcher can normalize all platforms to the same unit). CTR
 is computed client-side (Clicks/Impressions, 0 when Impressions is 0 — never divides by
 zero). The return type `CampaignMetrics` is distinct from the domain type
 `model.CampaignMetrics` (an application-level platform-agnostic staging area), converted at
 the dispatcher boundary.
+
+## Credential scrubbing on error bodies
+
+When an error response is NOT a Graph diagnostic — a proxy page, a WAF block, a
+reflection of the request — the raw body is truncated into `APIError.Message`, and a
+reflection can echo the `Authorization` header. Scrubbing runs in two passes, in this
+order, and both are needed.
+
+`Client.redactSecrets` replaces this client's OWN configured `Credentials.AccessToken`
+by exact value first. That pass exists because the shape-based one cannot cover it:
+`credentialRE`'s Bearer alternative matches `[A-Za-z0-9._~+/=-]`, while the access
+token is accepted after trimming and nothing else. Meta's app access tokens are
+`{app-id}|{app-secret}`, and `|` is outside that alphabet — shape-based redaction alone
+turns `Bearer 12345|SECRET` into `Bearer [REDACTED]|SECRET`, carrying the app secret
+through while wearing a redaction marker. Exact-value replacement cannot be defeated by
+an unanticipated character. Secrets shorter than `minRedactableSecretLen` (8) are left
+alone: at that length a substring replace matches ordinary prose and destroys the
+diagnostic without protecting anything.
+
+`redactCredentials` then runs the shape-based pass, which still matters — a reflected
+body can carry credentials this client never held, such as a Meta-constructed
+`paging.next` URL with its own `access_token`. It keeps the KEY and drops the VALUE,
+and decides which alternative fired by scheme prefix rather than by delimiter search,
+because base64 padding puts `=` inside a bearer token.
 
 ## Dispatch adapter (internal/dispatch)
 

@@ -1197,7 +1197,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 				// safeErrSummary at the log call bounds and sanitizes this text but does NOT
 				// redact it, so the only place the credential can be removed is here, before
 				// it enters the error chain at all.
-				apiErr.Message = truncate(redactCredentials(snippet), 300)
+				apiErr.Message = truncate(c.redactSecrets(snippet), 300)
 			}
 			return apiErr
 		}
@@ -1670,6 +1670,35 @@ const bearerScheme = "bearer"
 
 var credentialRE = regexp.MustCompile(
 	`(?i)("?(?:access_token|appsecret_proof|client_secret|refresh_token)"?\s*[=:]\s*"?[^&\s"'<>,}]+"?)|(bearer\s+[A-Za-z0-9._~+/=-]+)`)
+
+// minRedactableSecretLen is the shortest configured secret that redactSecrets will
+// substring-replace. A one- or two-character token would match all over an ordinary
+// error body and turn the snippet into confetti, destroying the diagnostic without
+// protecting anything worth protecting.
+const minRedactableSecretLen = 8
+
+// redactSecrets scrubs an untrusted upstream body for this client's own credential
+// FIRST, by exact value, and only then applies the shape-based pass.
+//
+// The order matters, and the shape-based pass alone is not sufficient. credentialRE's
+// Bearer alternative matches a restricted token alphabet ([A-Za-z0-9._~+/=-]), but
+// Credentials.AccessToken is accepted after trimming and nothing else — it is sent
+// verbatim. Meta's own app access tokens are of the form "{app-id}|{app-secret}", and
+// '|' is outside that alphabet: shape-based redaction of "Bearer 12345|SECRET" stops
+// at the pipe and yields "Bearer [REDACTED]|SECRET", which carries the app secret into
+// APIError.Message while LOOKING handled. Replacing the configured token by exact
+// value cannot be defeated by an unanticipated character, because it does not guess at
+// the token's shape at all.
+//
+// The shape-based pass still runs afterwards, because a reflected body can also carry
+// credentials this client never held — a Meta-constructed paging.next URL with its own
+// access_token, or another tenant's token echoed by a shared proxy.
+func (c *Client) redactSecrets(s string) string {
+	if tok := c.creds.AccessToken; len(tok) >= minRedactableSecretLen {
+		s = strings.ReplaceAll(s, tok, "[REDACTED]")
+	}
+	return redactCredentials(s)
+}
 
 // redactCredentials removes credential values from an untrusted upstream body
 // before it is stored in an error. The KEY is kept — knowing that the body

@@ -4285,3 +4285,50 @@ func TestRedactCredentialsHandlesPaddedBearerToken(t *testing.T) {
 		})
 	}
 }
+
+// TestRedactSecretsRemovesTheConfiguredTokenVerbatim pins the half that shape-based
+// redaction cannot cover.
+//
+// credentialRE's Bearer alternative matches [A-Za-z0-9._~+/=-]. Credentials.AccessToken
+// is trimmed and otherwise accepted as given, and Meta's own app access tokens are
+// "{app-id}|{app-secret}" — '|' is not in that alphabet. Shape-based redaction alone
+// therefore stops at the pipe and emits "Bearer [REDACTED]|<app-secret>": the secret
+// half survives, wearing a redaction marker. Replacing the CONFIGURED token by exact
+// value cannot be defeated by a character nobody anticipated.
+func TestRedactSecretsRemovesTheConfiguredTokenVerbatim(t *testing.T) {
+	const appSecret = "9f3c1ab77e2d4c5ePUNCT"
+	const token = "1234567890|" + appSecret
+
+	c := NewClient(Credentials{AccessToken: token}, AccountConfig{AccountID: "act_777"}, WithBaseURL("https://example.invalid"))
+
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{"reflected authorization header", "403 blocked by proxy\nAuthorization: Bearer " + token},
+		{"bare token in an html error page", "<h1>Bad Request</h1><pre>token=" + token + "</pre>"},
+		{"token with no surrounding context", token},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := c.redactSecrets(tc.in)
+			if strings.Contains(got, appSecret) {
+				t.Errorf("app-secret half of the token survived redaction: %q", got)
+			}
+			if strings.Contains(got, token) {
+				t.Errorf("configured token survived redaction: %q", got)
+			}
+			if !strings.Contains(got, "[REDACTED]") {
+				t.Errorf("redaction marker missing, snippet may have been dropped instead: %q", got)
+			}
+		})
+	}
+
+	// A short configured secret is NOT substring-replaced: at that length it matches
+	// ordinary prose and would shred the diagnostic without protecting anything.
+	// The shape-based pass still runs, so a bearer-shaped occurrence is still caught.
+	short := NewClient(Credentials{AccessToken: "ab"}, AccountConfig{AccountID: "act_777"}, WithBaseURL("https://example.invalid"))
+	if got := short.redactSecrets("unable to reach ab.example.com"); got != "unable to reach ab.example.com" {
+		t.Errorf("short secret was substring-replaced, destroying the snippet: %q", got)
+	}
+}
