@@ -249,20 +249,26 @@ permanent X API constraint documented in the knowledge base. Spend is returned b
 
 ## Account discovery (optional capability)
 
-`AccountLister` is a third OPTIONAL dispatcher interface, alongside `StatusToggler` and
-`MetricsReader` — `ListAccounts(ctx, projectID, platform) ([]model.AccessibleAccount, error)` —
-enumerating the ad accounts reachable **upstream at the provider** with the connection's stored
+`GoogleAdsDispatcher.ListAccounts(ctx, projectID, platform) ([]model.AccessibleAccount, error)`
+enumerates the ad accounts reachable **upstream at the provider** with the connection's stored
 credential. It exists so an operator configuring a connection can pick the right account instead
-of pasting a customer ID by hand. Same shape as the other two: the orchestrator's `ReadAccounts`
-type-asserts it and returns `ErrAccountsUnsupported` when a platform's dispatcher does not
-implement it, without contacting the platform.
+of pasting a customer ID by hand.
+
+**Staged, and only half-landed here.** This is the adapter alone. `internal/service/orchestrator.go`
+currently declares only `StatusToggler` and `MetricsReader`; there is no `AccountLister` interface,
+no `Orchestrator.ReadAccounts`, and therefore no unsupported-platform or nil-result mapping yet —
+those land with the endpoint in the follow-up, which is also where the optional-capability
+type-assertion pattern (the same one `MetricsReader` uses) gets applied. Until then nothing calls
+this method; it is reachable only from tests.
 
 Note what it is NOT: this does not list anything this service stores. A project holds at most one
 connection per provider, and that singleton is read via `GET .../connection-{provider}`.
 `AccessibleAccount` (`ID`, `Label`) is a live projection of the provider's own account list, never
-persisted — the same live-read-only discipline as `ReadMetrics`. Errors propagate verbatim (a read
-has no ambiguous mutation to protect), surfacing as 400 for an unsupported platform and 503 for a
-provider failure.
+persisted — the same live-read-only discipline as `ReadMetrics`. Errors propagate verbatim: a read
+has no ambiguous mutation to protect, and the adapter deliberately does not classify them, leaving
+the HTTP status mapping to the service layer that lands next. What the adapter DOES guarantee is
+that `domain.ErrNotFound` survives the credential resolution, so that layer can tell "no connection
+configured" apart from "the provider call failed".
 
 Google Ads is the only implementation today, via
 `Client.ListAccessibleCustomers` → `customers:listAccessibleCustomers`. That endpoint is
