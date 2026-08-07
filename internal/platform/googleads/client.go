@@ -481,6 +481,13 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 // the resource path.
 var customerIDRE = regexp.MustCompile(`^[0-9]+$`)
 
+// CustomerID reports the ad account (customer) id this client is bound to. Exposed so a
+// caller holding a campaign created under a KNOWN customer can verify the connection it just
+// resolved still points at that same account before issuing an account-scoped request —
+// campaign ids are unique only WITHIN a customer, so running such a request under a different
+// customer reads as "no activity" at best and another account's campaign at worst.
+func (c *Client) CustomerID() string { return c.account.CustomerID }
+
 // validateAccountIDs rejects a CustomerID (and, when set, LoginCustomerID) that
 // isn't a digits-only id, before any request is built.
 func (c *Client) validateAccountIDs() error {
