@@ -4442,6 +4442,82 @@ func TestFindCampaignByName_MalformedData(t *testing.T) {
 	}
 }
 
+// TestFindByName_UnfinishableEnumerationIsAmbiguous verifies that a lookup which
+// cannot finish enumerating — a next link with no cursor, or the page cap reached
+// with pages still pending — is errLookupAmbiguous, NOT a clean failure. Both mean
+// unexamined matches may remain, so absence is unconfirmed; classifying either as
+// clean lets the dispatcher release the claim and the retry re-POST the same
+// deterministic name, duplicating a PAID campaign.
+func TestFindByName_UnfinishableEnumerationIsAmbiguous(t *testing.T) {
+	tests := []struct {
+		name string
+		// body returns the response for the nth request (0-indexed).
+		body func(n int) string
+		want string
+	}{
+		{
+			name: "next link with no cursor",
+			body: func(int) string {
+				return `{"data":[],"paging":{"next":"http://meta.test/next","cursors":{"after":"  "}}}`
+			},
+			want: "no cursor",
+		},
+		{
+			name: "page cap reached with pages pending",
+			// Every page advertises another, so the loop exits on the cap with
+			// `after` still set.
+			body: func(n int) string {
+				return fmt.Sprintf(`{"data":[],"paging":{"next":"http://meta.test/next","cursors":{"after":"cur%d"}}}`, n)
+			},
+			want: "exceeded",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, lookup := range []string{"campaign", "adset"} {
+				n := 0
+				rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					body := tc.body(n)
+					n++
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": []string{"application/json"}},
+						Body:       io.NopCloser(strings.NewReader(body)),
+						Request:    req,
+					}, nil
+				})
+				c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+					WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}))
+
+				var id string
+				var err error
+				if lookup == "campaign" {
+					id, err = c.findCampaignByName(context.Background(), "act_1", "My Campaign", "OUTCOME_TRAFFIC")
+				} else {
+					id, err = c.findAdSetByName(context.Background(), "120100000000123", "My Ad Set")
+				}
+				if err == nil {
+					t.Fatalf("%s lookup error = nil, want ambiguous error", lookup)
+				}
+				if id != "" {
+					t.Errorf("%s lookup id = %q, want empty on error", lookup, id)
+				}
+				if !errors.Is(err, errLookupAmbiguous) {
+					t.Errorf("%s lookup error must wrap errLookupAmbiguous, got %v", lookup, err)
+				}
+				// The classification only matters because createOutcomeAmbiguous reads it:
+				// assert the consequence, not just the sentinel.
+				if !createOutcomeAmbiguous(err) {
+					t.Errorf("%s lookup: createOutcomeAmbiguous = false, want true for %v", lookup, err)
+				}
+				if !strings.Contains(err.Error(), tc.want) {
+					t.Errorf("%s lookup error = %q, want it to mention %q", lookup, err.Error(), tc.want)
+				}
+			}
+		})
+	}
+}
+
 // TestCreateCampaignLookup4xxReturnsCleanFailure verifies that a definite 4xx on
 // the campaign name-lookup GET (the lookup was cleanly rejected, nothing created)
 // returns a plain (nil, err) — not an UNCONFIRMED partial.

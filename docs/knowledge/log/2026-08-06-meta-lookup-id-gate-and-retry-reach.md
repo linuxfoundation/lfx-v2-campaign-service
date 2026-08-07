@@ -31,6 +31,24 @@ real property of the design rather than a wording slip:
   "reconciliation required" and never calls the dispatcher, deliberately: a human may
   already be reconciling the row upstream.
 
+**Update** — Copilot then found the same classification gap one level up: the two paths where
+the lookup cannot FINISH enumerating — a `paging.next` link with no cursor, and the
+`adDiscoveryMaxPages` cap reached with pages still pending — returned plain errors that
+`createOutcomeAmbiguous` reads as clean failures. Both mean unexamined matches may remain, so
+absence is unconfirmed, and a clean failure releases the claim and lets the retry re-POST the
+same deterministic name — the duplicate-paid-campaign defect this lookup exists to prevent.
+
+All four (both lookups, both paths) now wrap `errLookupAmbiguous`. The sentinel's doc comment
+was widened to state the rule rather than enumerate one instance: **every** outcome that leaves
+absence unconfirmed is ambiguous, and only a definite answer — "this name is absent", or "it
+exists but is unusable for a stated reason" — may be a clean failure. The status/objective
+mismatch paths stay deliberately clean under that rule: they are definite findings a retry
+would reproduce identically.
+
+`TestFindByName_UnfinishableEnumerationIsAmbiguous` covers both paths across both lookups and
+asserts the CONSEQUENCE (`createOutcomeAmbiguous(err) == true`), not just the sentinel; verified
+binding by un-wrapping all four, which fails on exactly those assertions.
+
 Letting Meta's now-idempotent create re-dispatch a retained partial is a change to the
 SHARED retry path — it must not re-dispatch a platform whose create is not idempotent — so it
 is its own piece of work under LFXV2-2665, not part of this lookup. The reachability boundary

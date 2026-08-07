@@ -448,10 +448,20 @@ type createResponse struct {
 //	re-dispatch a platform whose create is not idempotent), so it is its own piece of
 //	work, not part of this lookup. Tracked under LFXV2-2665.
 //
-// errLookupAmbiguous marks a malformed-but-2xx lookup response (missing data
-// field, or a matched row with no usable id): Meta DID respond, so this is
-// classified ambiguous by createOutcomeAmbiguous like a 5xx, not a clean failure.
-var errLookupAmbiguous = errors.New("meta lookup response malformed; cannot confirm absence")
+// errLookupAmbiguous marks every lookup outcome that leaves ABSENCE UNCONFIRMED,
+// which createOutcomeAmbiguous then classifies like a 5xx rather than a clean
+// failure. That covers a malformed-but-2xx body (missing data field, a matched row
+// with no usable id or a non-numeric one) AND an enumeration we could not finish
+// (a next link with no cursor, or the page cap reached with pages still pending):
+// in both cases Meta DID respond and unexamined matches may remain.
+//
+// The classification is what makes the lookup worth having. A clean failure lets
+// the dispatcher release the claim, and the retry re-POSTs the same deterministic
+// name into an account where Meta enforces no uniqueness — a duplicate PAID
+// campaign, the exact defect this lookup exists to prevent. Only a definite answer
+// ("this name is absent", or "it exists but is unusable for a stated reason") may
+// be a clean failure.
+var errLookupAmbiguous = errors.New("meta lookup outcome ambiguous; cannot confirm absence")
 
 func (c *Client) findCampaignByName(ctx context.Context, accountID, name, expectedObjective string) (string, error) {
 	filtering, err := json.Marshal([]map[string]string{{"field": "name", "operator": "EQUAL", "value": name}})
@@ -509,13 +519,16 @@ func (c *Client) findCampaignByName(ctx context.Context, accountID, name, expect
 		}
 		after = strings.TrimSpace(resp.Paging.Cursors.After)
 		if after == "" {
-			return "", fmt.Errorf("meta campaign lookup for %q has more pages but no cursor; cannot guarantee the campaign name is absent", name)
+			// Ambiguous, not a clean failure: Meta says more pages exist and we cannot
+			// read them, so unexamined matches may remain. Reporting a clean failure
+			// releases the claim and lets a retry re-POST the same name.
+			return "", fmt.Errorf("meta campaign lookup for %q has more pages but no cursor; cannot guarantee the campaign name is absent: %w", name, errLookupAmbiguous)
 		}
 		page++
 	}
 	if page >= adDiscoveryMaxPages && after != "" {
 		// Reached page cap with pagination still pending: fail closed.
-		return "", fmt.Errorf("meta campaign lookup for %q exceeded %d pages; too many campaigns with that name to enumerate", name, adDiscoveryMaxPages)
+		return "", fmt.Errorf("meta campaign lookup for %q exceeded %d pages; too many campaigns with that name to enumerate: %w", name, adDiscoveryMaxPages, errLookupAmbiguous)
 	}
 
 	// No matches found.
@@ -617,13 +630,15 @@ func (c *Client) findAdSetByName(ctx context.Context, campaignID, name string) (
 		}
 		after = strings.TrimSpace(resp.Paging.Cursors.After)
 		if after == "" {
-			return "", fmt.Errorf("meta ad set lookup for %q has more pages but no cursor; cannot guarantee the ad set name is absent", name)
+			// Same reasoning as findCampaignByName: pagination we cannot follow leaves
+			// absence unconfirmed, so this is ambiguous, not a clean failure.
+			return "", fmt.Errorf("meta ad set lookup for %q has more pages but no cursor; cannot guarantee the ad set name is absent: %w", name, errLookupAmbiguous)
 		}
 		page++
 	}
 	if page >= adDiscoveryMaxPages && after != "" {
 		// Reached page cap with pagination still pending: fail closed.
-		return "", fmt.Errorf("meta ad set lookup for %q exceeded %d pages; too many ad sets with that name to enumerate", name, adDiscoveryMaxPages)
+		return "", fmt.Errorf("meta ad set lookup for %q exceeded %d pages; too many ad sets with that name to enumerate: %w", name, adDiscoveryMaxPages, errLookupAmbiguous)
 	}
 
 	// No matches found.
