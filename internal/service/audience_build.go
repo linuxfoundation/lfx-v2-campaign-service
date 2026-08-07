@@ -552,9 +552,11 @@ func createPlanLists(ctx context.Context, b AudienceBuilder, projectID string, p
 // eventFamily splits an event name into its year-free family term and the edition year.
 //
 // The year is taken from the brief's details when present, otherwise derived from the name
-// itself (event names normally carry it). When neither yields a 4-digit year the family is
-// returned unchanged with an empty year — the builder then resolves no editions rather than
-// guessing, since a wrong year excludes the wrong edition.
+// itself (event names normally carry it). When neither yields a year isSupportedYear accepts —
+// including a well-formed but out-of-range one like "9999" from a hand-edited details field —
+// the family is returned unchanged with an empty year. The builder then resolves no editions
+// rather than guessing, since a wrong year excludes the wrong edition; an out-of-range one
+// excludes NOTHING, which is worse because it looks like a successful build.
 func eventFamily(eventName, detailYear string) (family, year string) {
 	// The NAME wins when it carries a year. The name is what the search term is built from, so
 	// a detail year that disagrees with it is self-defeating: for "KubeCon Korea 2026" with a

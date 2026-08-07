@@ -210,7 +210,7 @@ func (c *Client) Close() error {
 // The query is fully parameterized (no term is interpolated into SQL); each term is
 // wrapped as a `%term%` ILIKE pattern with its metacharacters escaped (see
 // likeContains) so a literal `%` or `_` in a term matches literally instead of acting
-// as a wildcard. currentYear (a 4-digit year, e.g. "2026") is REQUIRED and excludes
+// as a wildcard. currentYear (a 4-digit 19xx/20xx year, e.g. "2026") is REQUIRED and excludes
 // that edition — it is the guarantee that only PAST editions are returned, so a blank
 // or malformed value is rejected rather than silently dropping the exclusion. A blank
 // eventTerm is likewise rejected (it would match everything).
@@ -222,7 +222,8 @@ func (c *Client) ResolvePastEventNames(ctx context.Context, eventTerm, locationT
 	// currentYear gates the "past editions only" contract. If it were optional, a
 	// blank/malformed value would silently drop the NOT-ILIKE exclusion and let the
 	// CURRENT edition through — the opposite of the method's guarantee. Require a
-	// 4-digit year.
+	// 4-digit 19xx/20xx year: the range is what keeps this comparable to the years
+	// yearInName can extract (see isSupportedYear).
 	currentYear = strings.TrimSpace(currentYear)
 	if !isSupportedYear(currentYear) {
 		return nil, fmt.Errorf("snowflake: ResolvePastEventNames requires currentYear as a 4-digit 19xx/20xx year (got %q)", currentYear)
@@ -264,7 +265,9 @@ WHERE EVENT_NAME ILIKE ? %s`, ident(defaultDatabase), ident(defaultSchema), iden
 	}
 	defer func() { _ = rows.Close() }()
 
-	// Parse currentYear once for filtering below. We already validated it's a 4-digit year.
+	// Parse currentYear once for filtering below. We already validated it's a 4-digit
+	// 19xx/20xx year, which is the same range yearInName can extract — so the comparison
+	// below is between two values drawn from one range.
 	currentYearInt, _ := parseYear(currentYear)
 
 	const rawLimit = (maxEventRows + 1) * 2

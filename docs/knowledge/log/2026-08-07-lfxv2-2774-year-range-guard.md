@@ -20,6 +20,16 @@ check and not a blanket reject. It deliberately does NOT call with `"9999"` and 
 result set — that assertion would stay green if the range check were deleted and some unrelated
 filter happened to empty the rows. Reverting the predicate fails all four rejection cases.
 
+**Fix** — Tightening the predicate left its prose behind. The error string was updated to say
+"4-digit 19xx/20xx year" but three comments around it still said "4-digit year", including one
+asserting "we already validated it's a 4-digit year" — a comment that describes a guard as looser
+than it is invites the next edit to loosen the guard to match. All three now name the range and say
+why it is the range: it is the set `yearInName` can extract, so the comparison stays between two
+values drawn from one vocabulary. `eventFamily`'s doc gained the case that matters — an
+out-of-range details year is now zeroed rather than passed through, and the reason it must be is
+that a wrong year excludes the wrong edition while an out-of-range one excludes NOTHING and still
+looks like a successful build.
+
 **Fix** — The finding came from Copilot on PR #70, against code that has since merged to `main` and
 is no longer in that PR's diff. It is fixed here on its own branch rather than inside #70, because
 adding warehouse files to a Google Ads metrics PR would recreate the scope problem the same review

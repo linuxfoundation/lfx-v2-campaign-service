@@ -376,6 +376,10 @@ func TestResolvePastEventNames_RejectsOutOfRangeCurrentYear(t *testing.T) {
 		}
 	}
 	// The accepted range still works, so the guard is a range check and not a blanket reject.
+	// The bounds are "1000" and "2999" rather than anything narrower on purpose: the guard's
+	// job is to match what yearInName can extract, not to judge which years are plausible.
+	// Narrowing it to, say, 2000-2100 would make the two predicates disagree again — the same
+	// class of drift this whole change exists to close.
 	for _, ok := range []string{"1999", "2026", "2999", "1000"} {
 		if _, err := c.ResolvePastEventNames(context.Background(), "KubeCon", "", ok); err != nil {
 			t.Errorf("currentYear %q must be accepted, got %v", ok, err)
