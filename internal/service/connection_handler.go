@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,6 +47,34 @@ func actorFromCtx(ctx context.Context) *model.Actor {
 		return a
 	}
 	return nil
+}
+
+// attributedActor returns the authenticated actor for a write that will RECORD it, logging
+// when there is none.
+//
+// The write proceeds either way — refusing it would escalate a token-decoding regression into
+// a total outage — but "proceeds" must not mean "silently". A broken gateway, a claim rename
+// upstream, or a regression in actorFromToken all present identically: every row commits with
+// NULL attribution and nothing else fails. This warning is the only signal an operator gets,
+// and its rate is the thing to alert on: a steady trickle is unauthenticated traffic, a step
+// change across every write is the auth path having broken.
+//
+// It counts ATTEMPTS, not commits, and that is deliberate — the message says "attempted" so
+// the two are not confused. This resolver runs before the repository call, so a write that
+// then fails on a version conflict, a missing parent, or a database error still logs here.
+// Moving the warning after a successful commit would look more precise and be strictly worse:
+// whether an actor was present is decided at the gateway, upstream of anything the repository
+// does, so a failed write is evidence about the auth path in exactly the same way a
+// successful one is. Worse, a deploy that breaks auth AND breaks writes would go silent
+// precisely when the signal is most needed. Alert on the rate relative to total write
+// attempts, not to commits.
+func attributedActor(ctx context.Context, operation string) *model.Actor {
+	a := actorFromCtx(ctx)
+	if a == nil {
+		slog.WarnContext(ctx, "write attempted with no authenticated actor; attribution will be recorded as NULL if it commits",
+			"operation", operation)
+	}
+	return a
 }
 
 // actorFromToken best-effort decodes the JWT payload to extract principal
