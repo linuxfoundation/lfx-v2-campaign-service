@@ -1,39 +1,40 @@
-# 2026-08-06 — GA-3b: cascade partial-result coverage and the weighted-character doc contradiction
+# 2026-08-06 — GA-3b review round (dealako): documentation and test-hygiene fixes
 
-**Update** — dealako flagged that `TestUpdateAdGroupAndAdStatus`'s failure sub-test drives BOTH
-`adGroups:mutate` and `adGroupAds:mutate` to 5xx, so `adgroup_ad.go`'s
-`&partialCascadeError{stage: "ad"}` branch was never reached. That branch is what tells the
-dispatcher a toggle was PARTIALLY applied rather than not applied at all — two states that demand
-different recovery — so a regression dropping the wrapping would have left the suite green. Added a
-sub-test where only the ad mutate fails, asserting `IsOutcomeUnconfirmed`, the concrete
-`*partialCascadeError`, its `stage`, and that the ad-group mutate really was issued (which is what
-makes the outcome partial rather than a no-op).
+**Update** — Addressed five minor review findings from dealako's CHANGES_REQUESTED on PR #67.
+All were doc-accuracy and test-coverage hardening; no blocking behavioral issues. Fixes:
 
-**Update** — `TestCreateAdGroupAndAd_AdCreationFails` and the ad-ambiguous-5xx case beside it
-discarded the returned `CampaignResult` with `_`. On those paths the result is the load-bearing
-contract, not the error text: the campaign and ad group exist upstream, and the dispatcher needs
-their ids to reconcile instead of stranding a created hierarchy. Both now assert via
-`assertPartialAdGroupResult` that `CampaignID`/`AdGroupID`/`AdGroupName` are populated and `AdID` is
-empty — the empty `AdID` being the signal that the cascade stopped short. Copilot had raised this on
-an earlier commit and it was still open.
+1. **ToggleStatus doc comment + error message** (`internal/dispatch/googleads.go:250-274`): The prior
+text claimed ACTIVATE was blocked because "no ad group/ad exists yet to cascade to," which GA-3b
+now makes false. Reworded both the doc comment (lines 250-261) and the 409 error message (lines
+268-272) to correctly state that the dispatcher-level cascade (GA-3c) is not wired yet and GA-4
+targeting is absent — NOT because children don't exist. The UpdateCampaignStatus comment in
+`internal/platform/googleads/campaign.go` was already accurate.
 
-**Update** — Nothing verified that GA-3b's four new dispatcher field mappings
-(`RegistrationURL`, `Headlines`, `Descriptions`, `EventSlug`) reached the wire. The client-level
-tests build `CampaignInput` directly and so cannot catch a dispatcher that drops one, and the
-cascade's fake handlers accept anything. `googleAdsServers` now records both cascade `:mutate`
-bodies, and `TestGoogleAds_AdCopyMappingsReachTheWire` decodes the ad payload rather than
-substring-matching it, so a HEADLINES/DESCRIPTIONS swap is detectable and not just a dropped value.
-Verified binding three ways: nulling `Headlines`, redirecting `RegistrationURL`, and swapping the
-two asset lists each fail it with the specific diagnostic.
+2. **CampaignResult field-state documentation** (`internal/platform/googleads/campaign.go:126-135`):
+The prior comment excluded the ambiguous outcome where a 2xx response returns a missing/malformed
+resource name, so an ad group may exist while AdGroupID remains empty. Expanded the comment to
+describe the fields in terms of which IDs are KNOWN to the client, not merely whether upstream
+resources were created, and noted that AdGroupName is paired with AdGroupID for reconciliation.
 
-**Update** — The documented headline/description limits contradicted the implementation, and the
-docs were the side that was wrong. `docs/api-catalog.md` and this repo's googleads concept both
-described 30/90 as plain RUNE counts, and the concept went further and asserted "there is NO
-double-width-character halving rule here". `ad_copy.go`'s `googleAdsCharWeight` scores CJK and
-full-width runes as 2 and `truncateWeighted` cuts to that budget, so all-wide-character copy fits
-15/45 and is silently truncated at that point — exactly what the docs promised could not happen, on
-a public API contract. Both now document the weighted counting and the effective 15/45 figures, and
-note this MATCHES the Microsoft client's rule rather than differing from it. The behaviour itself
-was already pinned by `TestComposeAdCopy_CJKHeadlineStaysUnderEffectiveWidth` and the
-`truncateWeighted` table; only the prose needed correcting. Copilot had raised the same
-contradiction across at least three rounds.
+3. **httptest handler goroutine safety** (`internal/platform/googleads/campaign_test.go:737-751,
+adgroup_ad_test.go:116-125`): The `decode(t, r)` helper called `t.Fatalf` from inside an httptest
+handler goroutine, which is not safe — `FailNow` is only valid on the test goroutine. Extracted a
+handler-safe `decodeRequest(r)` function that returns an error, updated `TestCreateAdGroupAndAd_HappyPath`
+to use it inside handlers, and collected decode errors under `sync.Mutex` to report after
+CreateCampaign returns. Mirrors `httptest-handler-state-needs-synchronized-handoff` in
+`docs/reviews/knowledge-base/test-hygiene.md`.
+
+4. **Documentation accuracy: weighted character limits** (`docs/knowledge/log/2026-08-04-ga3b-adgroup-ad-cascade.md:10`):
+The log entry claimed "no double-width halving unlike Microsoft," but the implementation applies
+weighted character counting where CJK/full-width runes count as 2 (matching Microsoft's rule).
+Corrected the entry to state "with weighted character counting where CJK/full-width characters
+count as 2." (The api-catalog and internal-platform-googleads files were already correct.)
+
+5. **Test comment accuracy** (`internal/dispatch/googleads_test.go:508-511`): The comment for
+`TestGoogleAds_ToggleStatus_ActivateIsNotProvisioned` claimed "the create path provisions only a
+campaign shell — no ad group, ad, or keywords," which GA-3b now makes false. Updated to correctly
+state that GA-3b creates the ad group and ad, but targeting is absent and the cascade is not wired.
+
+All five items were additive documentation/test fixes. No code behavior changed; no tests were added
+or removed. Existing tests already covered the partial-cascade classification and the ad-copy
+mappings reaching the wire.

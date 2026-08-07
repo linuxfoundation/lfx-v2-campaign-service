@@ -505,10 +505,10 @@ func TestGoogleAds_ToggleStatus_MutatesCampaignStatus(t *testing.T) {
 	}
 }
 
-// TestGoogleAds_ToggleStatus_ActivateIsNotProvisioned pins the ACTIVATE refusal. The create
-// path provisions only a campaign shell — no ad group, ad, or keywords — so flipping the
-// campaign to ENABLED would report success while nothing can serve. That must be
-// ErrCampaignNotProvisioned (a 409 state error) raised locally, without calling Google.
+// TestGoogleAds_ToggleStatus_ActivateIsNotProvisioned pins the ACTIVATE refusal. GA-3b creates
+// the ad group and ad, but no targeting criteria (keywords/audiences), so activating would
+// report success while nothing can deliver. That must be ErrCampaignNotProvisioned (a 409 state
+// error) raised locally, without calling Google — not wired until GA-4 targeting is added.
 func TestGoogleAds_ToggleStatus_ActivateIsNotProvisioned(t *testing.T) {
 	var mu sync.Mutex
 	var reached bool

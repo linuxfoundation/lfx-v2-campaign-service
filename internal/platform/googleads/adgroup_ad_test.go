@@ -31,6 +31,8 @@ func TestAdGroupAdID(t *testing.T) {
 		{"extra tildes rejected as malformed", "customers/1/adGroupAds/111~222~333", "", ""},
 		{"non-numeric adGroup half rejected", "customers/1/adGroupAds/abc~222", "", ""},
 		{"non-numeric ad half rejected", "customers/1/adGroupAds/111~abc", "", ""},
+		{"leading plus in adGroup half rejected", "customers/1/adGroupAds/+111~222", "", ""},
+		{"leading plus in ad half rejected", "customers/1/adGroupAds/111~+222", "", ""},
 		{"wrong resource kind (campaigns instead of adGroupAds) rejected", "customers/1/campaigns/111~222", "", ""},
 		{"missing adGroupAds segment rejected", "customers/1/111~222", "", ""},
 	}
@@ -111,23 +113,37 @@ func TestPrecomputeAdGroupAdInputs_OversizedFinalURLRejected(t *testing.T) {
 func TestCreateAdGroupAndAd_HappyPath(t *testing.T) {
 	var mu sync.Mutex
 	var adGroupBody, adGroupAdBody map[string]any
+	var decodeErr error
 	c := newCampaignClientFull(t, okBudget, okCampaign,
 		func(w http.ResponseWriter, r *http.Request) {
-			body := decode(t, r)
+			body, err := decodeRequest(r)
 			mu.Lock()
+			if err != nil && decodeErr == nil {
+				decodeErr = err
+			}
 			adGroupBody = body
 			mu.Unlock()
 			okAdGroup(w, r)
 		},
 		func(w http.ResponseWriter, r *http.Request) {
-			body := decode(t, r)
+			body, err := decodeRequest(r)
 			mu.Lock()
+			if err != nil && decodeErr == nil {
+				decodeErr = err
+			}
 			adGroupAdBody = body
 			mu.Unlock()
 			okAdGroupAd(w, r)
 		},
 	)
 	res, err := c.CreateCampaign(context.Background(), sampleInput())
+	// Check for decode errors from handlers
+	mu.Lock()
+	dErr := decodeErr
+	mu.Unlock()
+	if dErr != nil {
+		t.Fatalf("decode request body: %v", dErr)
+	}
 	if err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
