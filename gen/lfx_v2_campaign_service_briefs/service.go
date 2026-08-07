@@ -34,6 +34,12 @@ type Service interface {
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Get one campaign under a brief; returns ETag.
 	GetCampaign(context.Context, *GetCampaignPayload) (res *Campaign, err error)
+	// Read live performance metrics (impressions, clicks, cost, CTR) for one
+	// campaign directly from its ad platform. This is a pure read — never
+	// persisted — unlike get-campaign, which returns the stored row. Support is
+	// per-platform: a campaign whose platform has no metrics-read dispatcher wired
+	// returns 400.
+	GetCampaignMetrics(context.Context, *GetCampaignMetricsPayload) (res *CampaignMetrics, err error)
 	// Replace a campaign (requires If-Match).
 	UpdateCampaign(context.Context, *UpdateCampaignPayload) (res *Campaign, err error)
 	// Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist
@@ -75,7 +81,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [12]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "create-campaigns", "get-campaign", "update-campaign", "toggle-campaign-status", "delete-campaign", "get-job"}
+var MethodNames = [13]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "create-campaigns", "get-campaign", "get-campaign-metrics", "update-campaign", "toggle-campaign-status", "delete-campaign", "get-job"}
 
 // ApproveBriefPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service approve-brief method.
@@ -172,6 +178,27 @@ type CampaignCreateInput struct {
 	Config any
 }
 
+// CampaignMetrics is the result type of the lfx-v2-campaign-service-briefs
+// service get-campaign-metrics method.
+type CampaignMetrics struct {
+	// Campaign UUID
+	CampaignID string
+	// ID returned by the ad platform
+	PlatformCampaignID string
+	// Platform-agnostic reporting window the metrics were read for
+	Window string
+	// Impressions in window
+	Impressions int64
+	// Clicks in window
+	Clicks int64
+	// Cost in window, in micro-units of the platform's native currency
+	// (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter,
+	// etc.)
+	CostMicros int64
+	// Clicks/Impressions, 0 when Impressions is 0
+	Ctr float64
+}
+
 type CampaignUpdateInput struct {
 	// Campaign name
 	CampaignName string
@@ -249,6 +276,21 @@ type GetBriefPayload struct {
 	ProjectID string
 	// Brief UUID
 	BriefID string
+}
+
+// GetCampaignMetricsPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service get-campaign-metrics method.
+type GetCampaignMetricsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+	// Platform-agnostic reporting window (defaults to last_30_days when omitted)
+	Window *string
 }
 
 // GetCampaignPayload is the payload type of the lfx-v2-campaign-service-briefs

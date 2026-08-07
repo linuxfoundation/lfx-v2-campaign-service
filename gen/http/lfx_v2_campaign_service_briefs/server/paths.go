@@ -51,6 +51,11 @@ func GetCampaignLfxV2CampaignServiceBriefsPath(projectID string, briefID string,
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v", projectID, briefID, campaignID)
 }
 
+// GetCampaignMetricsLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service get-campaign-metrics HTTP endpoint.
+func GetCampaignMetricsLfxV2CampaignServiceBriefsPath(projectID string, briefID string, campaignID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/metrics", projectID, briefID, campaignID)
+}
+
 // UpdateCampaignLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service update-campaign HTTP endpoint.
 func UpdateCampaignLfxV2CampaignServiceBriefsPath(projectID string, briefID string, campaignID string) string {
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v", projectID, briefID, campaignID)
