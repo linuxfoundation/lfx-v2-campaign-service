@@ -210,6 +210,14 @@ type MetricsReader interface {
 type AccountLister interface {
 	// ListAccounts enumerates the accessible ad accounts for a project's connection.
 	// Returns a list of accessible accounts with minimal identifying information (ID and label).
+	//
+	// A successful call MUST return a NON-NIL slice, even when the credential reaches zero
+	// accounts — return an empty slice, not nil. This deviates from the usual Go convention
+	// that nil and empty are interchangeable, deliberately: the caller cannot otherwise tell
+	// "the provider authoritatively has nothing for you" from an implementation that fell
+	// through a branch and returned its zero values, and the two mean opposite things to an
+	// operator choosing an account. ReadAccounts treats (nil, nil) as a contract violation
+	// and converts it to a 503 rather than reporting an empty account list as fact.
 	ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error)
 }
 

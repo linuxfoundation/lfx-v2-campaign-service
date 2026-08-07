@@ -642,8 +642,11 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	orch := c.newOrchestrator(campaignRepo, jobRepo, dispatchers)
 	c.orch = orch
 	// Inject the orchestrator into the connection service for account-listing operations.
-	connSvc := c.Connections.(*service.ConnectionService)
-	connSvc.SetOrchestrator(orch)
+	// Through backendSetter, not a *service.ConnectionService cast: the cold-start path
+	// below binds through that same interface, so both injection sites are held to one
+	// declared contract and a signature change breaks both at compile time rather than
+	// leaving this one silently behind.
+	c.Connections.(backendSetter).SetOrchestrator(orch)
 	c.Briefs = c.newBriefService(briefRepo, campaignRepo, jobRepo, orch)
 	c.Audiences = c.newAudienceService(audienceRepo, briefRepo)
 

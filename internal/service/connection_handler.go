@@ -86,9 +86,13 @@ func actorFromToken(token string) *model.Actor {
 type ConnectionService struct {
 	// mu guards repo, enc, and orch, which can be swapped in after construction: during
 	// a database cold start the service boots with nil values (every method returns 503)
-	// and the container injects the live repo+encryptor+orchestrator via SetBackend once
-	// the pool opens. Probe/handler requests read them concurrently with that swap, so
-	// access is guarded.
+	// and the container injects the live values once the pool opens. Probe/handler
+	// requests read them concurrently with that swap, so access is guarded.
+	//
+	// The injection is TWO separate locked swaps, not one: SetBackend writes repo+enc,
+	// SetOrchestrator writes orch. A reader can therefore observe repo+enc installed
+	// while orch is still nil — which is why every orchestrator-backed method nil-checks
+	// orch under the read lock instead of assuming a backend implies an orchestrator.
 	mu   sync.RWMutex
 	repo domain.ConnectionRepository
 	enc  domain.Encryptor

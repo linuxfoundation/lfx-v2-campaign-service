@@ -17,8 +17,13 @@ different things.**
   capability is optional per dispatcher; only Google Ads implements it today. Nothing to retry.
 - **404** — the project has no stored connection for the provider. This is a SETUP state, not an
   outage, and it is the one worth spelling out: a 503 here would tell the caller to retry
-  something that cannot succeed until a connection is created. The orchestrator resolves the
-  connection before it reaches the dispatcher precisely so this case is answerable.
+  something that cannot succeed until a connection is created. The DISPATCHER owns connection
+  resolution — `GoogleAdsDispatcher.resolveGoogleAdsDiscoveryClient` reads the stored
+  connection; `Orchestrator.ReadAccounts` only type-asserts `AccountLister` and delegates. What
+  makes the case answerable is therefore not where resolution happens but that the dispatcher
+  wraps with `%w`, so `domain.ErrNotFound` survives up to the handler intact. Getting this
+  attribution right matters for the next provider: it tells the implementer that resolution is
+  their job, and that flattening the error is what breaks the 404.
 - **503** — the provider call itself failed. The only one where retrying is the right response.
 
 The result is never persisted. There is deliberately no write-back of the chosen account from
