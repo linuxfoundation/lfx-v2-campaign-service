@@ -279,6 +279,31 @@ const upsertCampaignQuery = `INSERT INTO campaigns
 
 // replaceCampaignQuery refuses to touch a soft-deleted row, so a stale client cannot
 // mutate (and effectively resurrect) a campaign that has been deleted.
+// claimCampaignVersionQuery reads the campaign at an expected version under the
+// advisory lock, without bumping it (ReplaceCampaign does that, co-committed with the
+// outbox message).
+//
+// `status <> 'deleted'` is not decoration here, it is what keeps the claim honest. A
+// soft-deleted campaign reads as ABSENT everywhere else — getCampaignQuery,
+// getCampaignByPlatformQuery, and replaceCampaignQuery all carry this predicate.
+// Without it, a claim on a deleted row whose version happens to match SUCCEEDS, the
+// caller goes on to make its paid platform call, and only then does ReplaceCampaign
+// (which does exclude deleted rows) fail — leaving the campaign mutated upstream with
+// no local record of it. That is the same failure the advisory-lock protocol exists to
+// prevent, reached from the other direction.
+//
+// Declared as a named constant rather than inlined so TestCampaignRepo_ReadsExcludeSoftDeleted
+// can hold it to the predicate along with every other campaigns read.
+const claimCampaignVersionQuery = `SELECT ` + campaignCols + ` FROM campaigns
+	WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND version=$4 AND status <> 'deleted'`
+
+// claimCampaignExistsQuery classifies a no-rows claim as 404 vs 412, and MUST use the
+// same liveness predicate as claimCampaignVersionQuery. If the two disagree a
+// soft-deleted row counts as "exists" and a correct 404 becomes a 412 — telling the
+// caller to reload and retry a campaign that is gone for good.
+const claimCampaignExistsQuery = `SELECT EXISTS (
+	SELECT 1 FROM campaigns WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND status <> 'deleted')`
+
 const replaceCampaignQuery = `UPDATE campaigns SET
 	campaign_name=$1, status=$2, budget_amount=$3, budget_type=$4, start_date=$5, end_date=$6,
 	config_snapshot=$7, result=$8, version=version+1, updated_at=now()
@@ -479,9 +504,7 @@ func (r *CampaignRepo) ClaimCampaignVersion(ctx context.Context, projectID, brie
 
 	// Read the campaign at the expected version. Do NOT bump the version yet; that
 	// happens in ReplaceCampaign so it co-commits with the outbox message.
-	q := `SELECT ` + campaignCols + ` FROM campaigns
-		WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND version=$4`
-	c, err := scanCampaign(conn.QueryRow(ctx, q, campaignID, briefID, projectID, expectedVersion))
+	c, err := scanCampaign(conn.QueryRow(ctx, claimCampaignVersionQuery, campaignID, briefID, projectID, expectedVersion))
 	if err != nil {
 		// Classify no-rows as 404 vs 412 BEFORE unlocking, on the SAME locked connection.
 		// The advisory lock is what makes the classification trustworthy: once it is
@@ -492,8 +515,7 @@ func (r *CampaignRepo) ClaimCampaignVersion(ctx context.Context, projectID, brie
 		claimErr := fmt.Errorf("claim campaign version: %w", err)
 		if errors.Is(err, pgx.ErrNoRows) {
 			var exists bool
-			probeErr := conn.QueryRow(ctx,
-				`SELECT EXISTS (SELECT 1 FROM campaigns WHERE id=$1 AND brief_id=$2 AND project_id=$3)`,
+			probeErr := conn.QueryRow(ctx, claimCampaignExistsQuery,
 				campaignID, briefID, projectID).Scan(&exists)
 			switch {
 			case probeErr != nil:

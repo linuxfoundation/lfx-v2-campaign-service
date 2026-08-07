@@ -188,6 +188,20 @@ connection to the pool, so a failed unlock strands it and blocks every future cl
 delete for that campaign. Pinned by
 `TestDeleteCampaign_ParticipatesInAdvisoryLockProtocol`.
 
+**Every `campaigns` read excludes soft-deleted rows, the claim pair included.** Soft
+delete is a status value (`status = 'deleted'`), not a column, so the exclusion has to be
+written into each statement: `getCampaignQuery`, `getCampaignByPlatformQuery`,
+`replaceCampaignQuery`, `claimCampaignVersionQuery`, and `claimCampaignExistsQuery` all
+carry `status <> 'deleted'`. The claim is the one that must not be missed — it gates the
+run-status toggle, which makes a PAID platform call between claiming and replacing. A
+claim that admitted a deleted row at a matching version would succeed, mutate the
+campaign upstream, and only then fail in `ReplaceCampaign`, which does filter. The EXISTS
+probe needs the same predicate for its own reason: disagreeing with the read turns a
+correct 404 into a 412, telling the caller to retry a campaign that is gone for good. All
+five are package-level constants specifically so
+`TestCampaignRepo_ReadsExcludeSoftDeleted` can inspect their source; inlined SQL is
+invisible to it, which is how the claim originally slipped through.
+
 The guards, in order: `deleted` → `ErrNotFound` (a second DELETE is a 404, matching
 `GetCampaign`, not a silent success); an unresolved reconciliation marker →
 `ErrConflict`; then `version != expectedVersion` → `ErrPreconditionFailed` (checked LAST

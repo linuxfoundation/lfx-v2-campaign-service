@@ -71,6 +71,12 @@ func TestCampaignRepo_ReadsExcludeSoftDeleted(t *testing.T) {
 		"GetCampaignByPlatform":               getCampaignByPlatformQuery,
 		"ReplaceCampaign":                     replaceCampaignQuery,
 		"ReplaceCampaign (no-row classifier)": replaceCampaignExistsQuery,
+		// The claim pair matters most of the three: it gates the run-status toggle,
+		// which makes a PAID platform call between claiming and replacing. A claim that
+		// admitted a soft-deleted row would mutate the campaign upstream and then fail
+		// the local write, because ReplaceCampaign does filter deleted rows.
+		"ClaimCampaignVersion":                     claimCampaignVersionQuery,
+		"ClaimCampaignVersion (no-row classifier)": claimCampaignExistsQuery,
 	} {
 		t.Run(name, func(t *testing.T) {
 			require.Contains(t, normalizeWS(q), livePredicate,
