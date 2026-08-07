@@ -6,6 +6,7 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -244,6 +245,69 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 		return uerr
 	}
 	return nil
+}
+
+// ReadMetrics returns live campaign metrics from LinkedIn's Ad Analytics API for the
+// given campaign during the specified time window. campaign is the persisted row;
+// campaign.PlatformCampaignID is the BARE numeric LinkedIn campaign id (trailingID of
+// the campaign URN, as persisted by campaignFromLinkedIn) — linkedin.GetCampaignMetrics
+// builds the sponsoredCampaign/sponsoredAccount URNs the Ad Analytics finder requires.
+func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+	if campaign.PlatformCampaignID == "" {
+		return nil, fmt.Errorf("campaign has no platform campaign ID")
+	}
+
+	// Validated BEFORE credential resolution, and this order is load-bearing. An
+	// unsupported window is a permanent 400 whatever the connection looks like; resolving
+	// credentials first means a project with an inactive or incomplete connection fails
+	// with a connection error that BriefService maps to 503, telling the caller to retry a
+	// request that can never succeed. Same order as the X adapter (twitter.go).
+	if werr := linkedin.ValidateMetricsWindow(window); werr != nil {
+		return nil, fmt.Errorf("get campaign metrics from linkedin: %w", errors.Join(domain.ErrMetricsWindowUnsupported, werr))
+	}
+
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	if res.status != model.StatusActive {
+		return nil, fmt.Errorf("linkedin connection for project %s is %s, not active", projectID, res.status)
+	}
+
+	var creds linkedinCreds
+	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
+		return nil, fmt.Errorf("decode linkedin credentials: %w", err)
+	}
+	// Trimmed once, here, and the trimmed value is what's used for both the
+	// empty-check and the client — passing the raw (possibly whitespace-padded)
+	// token to NewClient would let a token that looks valid still fail
+	// upstream with an invalid Authorization header.
+	accessToken := strings.TrimSpace(creds.AccessToken)
+	if accessToken == "" {
+		return nil, fmt.Errorf("linkedin credentials are incomplete (need accessToken)")
+	}
+
+	accountID := strings.TrimSpace(res.accountID)
+	if accountID == "" {
+		return nil, fmt.Errorf("linkedin connection for project %s has no account id", projectID)
+	}
+
+	runtime := linkedin.RuntimeConfig{
+		DefaultAccountID: accountID,
+		Accounts:         []linkedin.Account{{AccountID: accountID, Label: res.label}},
+	}
+	client := linkedin.NewClient(linkedin.Credentials{AccessToken: accessToken}, runtime, d.opts...)
+
+	// Call GetCampaignMetrics with the bare campaign id and account id.
+	metrics, err := client.GetCampaignMetrics(ctx, accountID, campaign.PlatformCampaignID, window)
+	if err != nil {
+		if errors.Is(err, linkedin.ErrUnsupportedWindow) {
+			return nil, fmt.Errorf("get campaign metrics from linkedin: %w", errors.Join(domain.ErrMetricsWindowUnsupported, err))
+		}
+		return nil, fmt.Errorf("get campaign metrics from linkedin: %w", err)
+	}
+
+	return metrics, nil
 }
 
 // linkedinRunStatus maps the service run state (active/paused) to LinkedIn's status enum.
