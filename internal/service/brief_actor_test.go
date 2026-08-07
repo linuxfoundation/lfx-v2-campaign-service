@@ -51,6 +51,13 @@ func TestBriefActor_CreateStampsBothColumns(t *testing.T) {
 	if stored.CreatedBy.Email != testActor.Email || stored.CreatedBy.Username != testActor.Username {
 		t.Errorf("CreatedBy = %+v, want %+v", stored.CreatedBy, testActor)
 	}
+	// BOTH columns are stamped on insert: createBriefQuery binds $11 to created_by and
+	// updated_by alike. Leaving updated_by NULL until the first edit would make "who
+	// touched this last" unanswerable for every brief nobody has edited yet.
+	if stored.UpdatedBy == nil || stored.UpdatedBy.Username != testActor.Username {
+		t.Errorf("UpdatedBy = %+v, want the author %+v on a freshly created brief",
+			stored.UpdatedBy, testActor)
+	}
 }
 
 // TestBriefActor_MissingActorStillWrites pins the deliberate choice NOT to reject the write.
@@ -107,12 +114,15 @@ func TestBriefActor_UpdateMovesOnlyUpdatedBy(t *testing.T) {
 	if stored.UpdatedBy == nil || stored.UpdatedBy.Username != editor.Username {
 		t.Errorf("UpdatedBy = %+v, want the editor %+v", stored.UpdatedBy, editor)
 	}
-	// The service builds a fresh model on update and leaves CreatedBy zero precisely because
-	// the UPDATE statement does not touch created_by — the stored column keeps the author.
-	// Asserting the handler does not carry the EDITOR into CreatedBy is the part that matters:
-	// if it did, the edit would overwrite authorship on the way to the database.
-	if stored.CreatedBy != nil && stored.CreatedBy.Username == editor.Username {
-		t.Errorf("CreatedBy = %+v: the edit overwrote authorship with the editor", stored.CreatedBy)
+	// The stored row must still name the AUTHOR. Asserting only "not the editor" would be
+	// satisfied by a repository that dropped created_by entirely — the fake models the real
+	// UPDATE, which never touches the column, so the author has to survive the edit intact.
+	if stored.CreatedBy == nil {
+		t.Fatal("CreatedBy is nil after an edit: the update erased authorship, which the " +
+			"UPDATE statement's omission of created_by is supposed to make impossible")
+	}
+	if stored.CreatedBy.Username != author.Username {
+		t.Errorf("CreatedBy = %+v, want the original author %+v", stored.CreatedBy, author)
 	}
 }
 
@@ -151,17 +161,21 @@ func TestBriefActor_DeleteAttributesTheArchive(t *testing.T) {
 // The three tests above inject an actor directly, so all three would keep passing if JWTAuth
 // stopped putting one on the context — every brief would silently persist with NULL
 // attribution and nothing would fail. This drives the real auth entry point instead.
+//
+// It must be BriefService.JWTAuth, not the connection service's: Goa wires each service to its
+// own security handler, so a regression that dropped the actor from the brief endpoints alone
+// would be invisible to a test that authenticated through a different service.
 func TestBriefActor_TokenToPersistedActor(t *testing.T) {
-	cs := newTestService(t, newFakeRepo())
+	repo := newFakeBriefRepo()
+	s := newTestBriefService(repo)
+
 	// payload {"email":"ada@lf.dev","preferred_username":"ada"} base64url-encoded, unpadded.
 	const payload = "eyJlbWFpbCI6ImFkYUBsZi5kZXYiLCJwcmVmZXJyZWRfdXNlcm5hbWUiOiJhZGEifQ"
-	ctx, err := cs.JWTAuth(context.Background(), "h."+payload+".s", nil)
+	ctx, err := s.JWTAuth(context.Background(), "h."+payload+".s", nil)
 	if err != nil {
 		t.Fatalf("JWTAuth: %v", err)
 	}
 
-	repo := newFakeBriefRepo()
-	s := newTestBriefService(repo)
 	created, err := s.CreateBrief(ctx, &briefs.CreateBriefPayload{
 		ProjectID: "cncf",
 		Brief:     &briefs.BriefInput{ProgramType: "events", EventSlug: "kubecon-2025"},

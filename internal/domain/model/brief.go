@@ -60,6 +60,13 @@ type CampaignBrief struct {
 	// CreatedBy / UpdatedBy name the human behind the write. Nil means "not
 	// recorded" — either the row predates actor attribution, or the write was
 	// system-initiated with no person behind it. It never means "nobody".
+	//
+	// These claims are decoded from the bearer token WITHOUT verifying its
+	// signature; Heimdall validates the token at the gateway before the request
+	// reaches this service (see service.JWTAuth). The trustworthiness of this
+	// audit trail is therefore exactly the trustworthiness of that gateway — a
+	// forged token that reached the service would produce a forged row and
+	// nothing here would notice. In-app JWKS verification is a follow-up.
 	CreatedBy *Actor
 	UpdatedBy *Actor
 	CreatedAt time.Time

@@ -18,6 +18,10 @@
 -- system-initiated with no human behind them. NULL means "not recorded", never
 -- "nobody".
 --
+-- These columns hold personal data (name, email). Nothing prunes them: the record
+-- lives as long as the brief, because an audit trail that expires answers "who did
+-- this" only for recent writes. Adding a deletion path is a compliance decision.
+--
 -- The campaigns table gets the same treatment in a follow-up; it is a separate
 -- migration because its write paths (dispatch claim, upsert, status toggle) are a
 -- distinct change with distinct failure modes.

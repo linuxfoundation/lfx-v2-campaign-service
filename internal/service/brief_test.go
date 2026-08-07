@@ -76,16 +76,27 @@ func (r *fakeBriefRepo) GetBrief(_ context.Context, projectID, id string) (*mode
 func (r *fakeBriefRepo) CreateBrief(_ context.Context, b *model.CampaignBrief, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
 	b.ID = "b-new"
 	b.Version = 1
+	// createBriefQuery binds ONE placeholder ($11) to both created_by and updated_by, so a
+	// freshly inserted row already answers "who touched this last". A fake that left
+	// UpdatedBy nil would let that half of the insert be deleted with every test still green.
+	b.UpdatedBy = b.CreatedBy
 	r.briefs[briefKey(b.ProjectID, b.ID)] = b
 	return b, r.enqueue(b, indexPayload)
 }
 
 func (r *fakeBriefRepo) ReplaceBrief(_ context.Context, b *model.CampaignBrief, _ int64, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
+	// replaceBriefQuery is an UPDATE: it never touches created_by, so the stored row keeps
+	// its original author. The caller builds a fresh model with CreatedBy unset, so a fake
+	// that simply overwrote the map entry would DROP the author — and an assertion that the
+	// edit did not rewrite authorship would then pass against a repository that erased it.
+	if prev, ok := r.briefs[briefKey(b.ProjectID, b.ID)]; ok {
+		b.CreatedBy = prev.CreatedBy
+	}
 	r.briefs[briefKey(b.ProjectID, b.ID)] = b
 	return b, r.enqueue(b, indexPayload)
 }
 
-func (r *fakeBriefRepo) Approve(_ context.Context, projectID, id string, _ *model.Actor, expectedVersion int64, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
+func (r *fakeBriefRepo) Approve(_ context.Context, projectID, id string, by *model.Actor, expectedVersion int64, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
 	b, ok := r.briefs[briefKey(projectID, id)]
 	if !ok {
 		return nil, domain.ErrNotFound
@@ -94,6 +105,10 @@ func (r *fakeBriefRepo) Approve(_ context.Context, projectID, id string, _ *mode
 		return nil, domain.ErrPreconditionFailed
 	}
 	b.Status = model.BriefApproved
+	// approveBriefQuery binds $1 to BOTH approved_by and updated_by: approving is a write,
+	// so it moves "who touched this last" as well as "who signed off".
+	b.ApprovedBy = by
+	b.UpdatedBy = by
 	return b, r.enqueue(b, indexPayload)
 }
 

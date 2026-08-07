@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,6 +47,24 @@ func actorFromCtx(ctx context.Context) *model.Actor {
 		return a
 	}
 	return nil
+}
+
+// attributedActor returns the authenticated actor for a write that will RECORD it, logging
+// when there is none.
+//
+// The write proceeds either way — refusing it would escalate a token-decoding regression into
+// a total outage — but "proceeds" must not mean "silently". A broken gateway, a claim rename
+// upstream, or a regression in actorFromToken all present identically: every row commits with
+// NULL attribution and nothing else fails. This warning is the only signal an operator gets,
+// and its rate is the thing to alert on: a steady trickle is unauthenticated traffic, a step
+// change to every write is the auth path having broken.
+func attributedActor(ctx context.Context, operation string) *model.Actor {
+	a := actorFromCtx(ctx)
+	if a == nil {
+		slog.WarnContext(ctx, "writing with no authenticated actor; attribution will be recorded as NULL",
+			"operation", operation)
+	}
+	return a
 }
 
 // actorFromToken best-effort decodes the JWT payload to extract principal

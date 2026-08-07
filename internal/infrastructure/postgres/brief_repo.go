@@ -164,9 +164,6 @@ func (r *BriefRepo) CreateBrief(ctx context.Context, b *model.CampaignBrief, ind
 
 // ReplaceBrief replaces mutable fields, gating on expectedVersion.
 func (r *BriefRepo) ReplaceBrief(ctx context.Context, b *model.CampaignBrief, expectedVersion int64, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
-	// The actor is stamped in the SAME statement as the edit. A follow-up UPDATE would
-	// leave a committed window in which the content changed and the attribution had not,
-	// and a crash inside that window loses the actor for a change that stuck.
 	updatedBy, err := marshalActor(b.UpdatedBy)
 	if err != nil {
 		return nil, err

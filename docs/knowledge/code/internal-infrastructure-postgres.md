@@ -173,10 +173,23 @@ therefore never answer "who did this", and if this service does not record it, t
 information exists nowhere. `campaign_briefs.created_by` / `updated_by` are that record.
 
 Both are JSONB holding a `model.Actor` (`{name, email, username}`), marshalled by the
-same `marshalActor`/`unmarshalActor` pair the connection tables use, and populated from
-`actorFromCtx` — the principal `JWTAuth` best-effort decodes out of the bearer token.
+same `marshalActor`/`unmarshalActor` pair the connection tables use (`connection_repo.go`),
+and populated from `actorFromCtx` — the principal `JWTAuth` decodes out of the bearer token.
+
+**Trust boundary.** `JWTAuth` does NOT verify the token signature or audience; it decodes
+the payload and takes the claims at face value. Signature and audience validation happen
+UPSTREAM, in Heimdall/OpenFGA at the gateway, before the request reaches this service (see
+`ConnectionService.JWTAuth`). The integrity of this audit trail therefore rests entirely on
+that gateway: a request that reached the service with a forged token would produce a forged
+attribution row, and nothing here would detect it. In-app JWKS verification is a follow-up.
+
 `scanBrief` surfaces corrupt actor JSON as an error rather than returning a nil audit
 trail, so data corruption fails loudly instead of looking like "not recorded".
+
+**Retention.** These columns hold personal data — a name and an email address — and
+nothing prunes them. The rows live as long as the brief does, by design: an audit trail
+that expires answers "who did this" only for recent writes. There is no deletion path
+today; adding one is a compliance decision, not a schema one.
 
 Three properties are load-bearing, and each is pinned by a test in `brief_repo_test.go`:
 
