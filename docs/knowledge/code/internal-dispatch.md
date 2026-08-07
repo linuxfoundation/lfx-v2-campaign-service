@@ -299,26 +299,35 @@ must stay in step.
 
 `creds.resolve` classifies each of its failure branches, and the splits are deliberate. A connection
 row with an EMPTY credential blob is permanently unusable as it stands, so it carries
-`domain.ErrConnectionNotUsable` and a read-only caller answers 400. Two branches do not:
+`domain.ErrConnectionNotUsable` (→ 400) alongside `domain.ErrCredentialsAbsent` for the reason
+token — without that second sentinel the most trivially diagnosable state in the set logs as
+`reason=unclassified`. Two branches do not:
 `domain.ErrNotFound` means there is no connection at all (→ 404, and the caller should create one,
 not edit one), and a repository failure is a genuine "try again later" (→ 503). Flattening either
 into "not usable" would lose a distinction the service layer depends on.
 
 **A decrypt failure is not one condition, and it splits again.** Only a blob the encryptor could not
 even ATTEMPT to authenticate — `domain.ErrCredentialsMalformed`, for AES-GCM a ciphertext shorter
-than a nonce — is proven bad ROW data, and only that branch earns `ErrConnectionNotUsable` → 400. A
-GCM AUTHENTICATION failure carries `domain.ErrCredentialDecryptionFailed` instead: it means a wrong
-or rotated APPLICATION key, or tampering (`internal/infrastructure/crypto/aesgcm.go` states both),
-and that key is deployment-wide, so the same failure hits every project's connection at once.
-Reported as "not usable as configured" it would answer 400 to all of them — every operator told to
-go fix a connection that is fine — and would erase the 500 that says the deployment is broken. An
-unrecognized decrypt error takes the authentication path on purpose: an `Encryptor` that proves
-nothing about the row must not be read as accusing it.
+than a nonce PLUS the authentication tag (`Seal` appends `Overhead()` bytes to every message,
+including an empty one, so anything shorter is provably truncated) — is proven bad ROW data, and
+only that branch earns `ErrConnectionNotUsable` → 400. Getting that boundary wrong is not cosmetic:
+a blob between the two lengths reaches `Open`, fails authentication, and is then classified as the
+key condition below. A GCM AUTHENTICATION failure carries `domain.ErrCredentialDecryptionFailed`
+instead: it means a wrong or rotated APPLICATION key, or tampering or corruption of that one row
+(`internal/infrastructure/crypto/aesgcm.go` states both), and the tag check CANNOT distinguish them.
+The blast radius therefore is not decided by the sentinel — a wrong deployment key fails every
+project at once, one corrupted row fails only that row, and the COUNT of failures is what tells a
+responder which. Reported as "not usable as configured" it would answer 400 to a whole deployment's
+worth of operators, each told to go fix a connection that is fine, and would erase the 500 that is
+the only signal a key rotation went wrong; answering 500 for one corrupted row over-escalates, which
+is the recoverable direction. An unrecognized decrypt error takes the authentication path on
+purpose: an `Encryptor` that proves nothing about the row must not be read as accusing it.
 
 **Which defect it was is carried by a second sentinel, and the log line is why.** Alongside
 `ErrConnectionNotUsable`, each stored-connection defect wraps one of
-`domain.ErrConnectionInactive`, `ErrCredentialsUndecodable`, `ErrCredentialsIncomplete`, or
-`ErrProviderConfigInvalid`. The status is still decided by the one sentinel; these only name the
+`domain.ErrConnectionInactive`, `ErrCredentialsAbsent`, `ErrCredentialsUndecodable`,
+`ErrCredentialsIncomplete`, or `ErrProviderConfigInvalid`. The status is still decided by the one
+sentinel; these only name the
 reason. They have to be sentinels rather than message text because the service layer cannot log the
 error at all: `validateGoogleAdsCredentials` detects the undecodable case by decoding the DECRYPTED
 blob, and `encoding/json` quotes its input — a `*json.SyntaxError` names the offending character, a

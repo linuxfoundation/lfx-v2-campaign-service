@@ -166,11 +166,14 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   here would tell the caller to retry something that cannot succeed until a connection exists.
 - `domain.ErrCredentialDecryptionFailed` → **500** — a well-formed credential blob failed
   AUTHENTICATED decryption, which means a wrong or rotated application encryption key, or tampered
-  data. This arm sits ABOVE the `ErrConnectionNotUsable` one and is checked first on purpose: the
-  application key is deployment-wide, so this failure hits every project's connection in the same
-  instant. A 400 would send each of their operators to go fix a row that is fine, and a 503 would
-  promise that waiting helps. Both would hide an outage behind a message about somebody's
-  connection. It logs at ERROR because it is the arm that should page someone, and the cause IS
+  or corrupted data — and GCM's tag check CANNOT tell those apart. This arm sits ABOVE the
+  `ErrConnectionNotUsable` one and is checked first on purpose: a wrong deployment key would fail
+  every project's connection at once, and a 400 would send each of their operators to go fix a row
+  that is fine, while a 503 would promise that waiting helps. That does NOT mean this status
+  asserts an outage — one tampered or corrupted row produces exactly the same failure, and which
+  it was is answered by the COUNT of failing projects, not by the status. The 500 is chosen because
+  the ambiguity is asymmetric: over-escalating one bad row is recoverable, under-reporting a broken
+  key is not. It logs at ERROR because it is the arm that should page someone, and the cause IS
   logged here — it is produced by the encryptor from ciphertext and key material only, never from
   plaintext.
 - `domain.ErrConnectionNotUsable` → **400** — the connection EXISTS but cannot be used as it
@@ -185,8 +188,9 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   `encoding/json` quotes its input, so logging the cause would put credential-derived bytes into
   centralized logs for exactly the connection whose credentials are malformed. What the log line
   carries instead is `reason=`, from `unusableConnectionReason` — a fixed token
-  (`connection_inactive`, `credentials_undecodable`, `credentials_incomplete`,
-  `provider_config_invalid`, `credential_blob_malformed`, `unclassified`) read off the reason
+  (`connection_inactive`, `credentials_absent`, `credentials_undecodable`,
+  `credentials_incomplete`, `provider_config_invalid`, `credential_blob_malformed`,
+  `unclassified`) read off the reason
   sentinel the dispatch layer wraps alongside `ErrConnectionNotUsable`. A closed vocabulary is what
   a log line wants anyway: greppable, alertable, and with no payload to carry a secret in.
 - Anything else → **503** — the platform was reached and did not answer.

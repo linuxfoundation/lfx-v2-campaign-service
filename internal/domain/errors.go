@@ -120,7 +120,13 @@ var (
 
 	// ErrCredentialsMalformed indicates the stored credential blob is structurally
 	// invalid — the Encryptor could not even ATTEMPT to authenticate it (for the
-	// AES-GCM implementation: shorter than a nonce). That is proven bad ROW data: the
+	// AES-GCM implementation: shorter than a nonce PLUS the authentication tag, since
+	// Seal appends a tag of Overhead() bytes to every message including an empty one,
+	// so anything below that minimum is provably truncated and no key could open it).
+	// Getting this boundary wrong is not cosmetic: a blob between those two lengths
+	// falls through to Open, fails authentication, and is then classified as the
+	// deployment-key condition below — one truncated row would send someone to look at
+	// the application key. That is proven bad ROW data: the
 	// row must be re-saved before this connection can work again, and nothing about
 	// the deployment is wrong. The credential-resolution path wraps it with
 	// ErrConnectionNotUsable, so it reaches the caller as a 400.
@@ -128,19 +134,30 @@ var (
 
 	// ErrCredentialDecryptionFailed indicates a well-formed blob that failed
 	// authenticated decryption. It is deliberately NOT ErrConnectionNotUsable: a GCM
-	// authentication failure means a wrong or ROTATED APPLICATION KEY, or tampered
-	// data (internal/infrastructure/crypto/aesgcm.go states both), and the application
-	// key is deployment-wide — one wrong key fails every project's connection at once.
-	// Classifying that as "not usable as configured" would answer 400 and tell every
-	// project to go fix a connection that is fine, while suppressing the only signal
-	// that says the DEPLOYMENT is broken. It maps to 500 and should page ops.
+	// authentication failure means a wrong or ROTATED APPLICATION KEY, or tampered or
+	// corrupted data (internal/infrastructure/crypto/aesgcm.go states both).
+	//
+	// GCM CANNOT TELL THOSE TWO APART, and the blast radius differs: a wrong deployment
+	// key fails every project's connection in the same instant, while one tampered or
+	// corrupted row fails exactly that row. The tag check returns the same failure
+	// either way, so this sentinel means "authentication failed, blast radius not yet
+	// determined" — never "the deployment is broken". A responder's FIRST question is
+	// which of the two it is, and the cheap discriminator is the count: one project
+	// failing is a row, every project failing at once is the key.
+	//
+	// It still maps to 500 rather than 400 because the ambiguity is asymmetric, not
+	// because the deployment case is the likely one. Answering 400 would tell an
+	// operator to go fix a connection that may be entirely fine and would suppress the
+	// only signal that surfaces a key rotation gone wrong; answering 500 for a single
+	// tampered row over-escalates one project. Over-escalating is the recoverable
+	// direction.
 	//
 	// It is also the DEFAULT for an unrecognised decrypt failure. An Encryptor that
 	// proves nothing about the row must not be read as proving the row is at fault:
 	// mistaking an outage for user error is the expensive direction of this call.
 	ErrCredentialDecryptionFailed = errors.New("stored credentials could not be decrypted")
 
-	// The four sentinels below name WHICH stored-connection defect made a connection
+	// The five sentinels below name WHICH stored-connection defect made a connection
 	// unusable. Each is wrapped ALONGSIDE ErrConnectionNotUsable at the point the defect
 	// is detected, so the HTTP status is decided by that one sentinel while the reason
 	// stays machine-readable.
@@ -155,6 +172,20 @@ var (
 	// ErrConnectionInactive — the connection row exists and its credentials may be fine,
 	// but its status is not "active". Nothing was validated beyond that.
 	ErrConnectionInactive = errors.New("the stored connection is not active")
+
+	// ErrCredentialsAbsent — the connection row exists but its credential column is
+	// EMPTY. Nothing was decrypted because there was nothing to decrypt.
+	//
+	// It needs its own sentinel rather than riding on ErrConnectionNotUsable alone
+	// because the reason vocabulary is what an operator greps: without it this known,
+	// fully-diagnosed condition logs as "unclassified", which reads as "we do not know",
+	// and the one state that is trivially fixable becomes the one that looks mysterious.
+	// It is also the state a half-finished connection sits in, so it is not rare.
+	//
+	// Distinct from ErrCredentialsMalformed (bytes present, structurally unopenable) and
+	// from ErrCredentialsIncomplete (decrypted and decoded, one field empty): only this
+	// one means the operator never got as far as saving a credential.
+	ErrCredentialsAbsent = errors.New("the stored connection has no credentials")
 
 	// ErrCredentialsUndecodable — the decrypted blob is not valid JSON for the platform's
 	// credential shape. Its cause is DERIVED FROM PLAINTEXT and is deliberately dropped

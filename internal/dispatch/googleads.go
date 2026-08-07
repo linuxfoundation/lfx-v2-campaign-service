@@ -251,13 +251,20 @@ func validateGoogleAdsConnection(projectID string, res *resolved) (googleAdsCred
 // validateGoogleAdsCredentials is validateGoogleAdsConnection WITHOUT the account-id
 // requirement, for the one operation that cannot have one yet: account discovery.
 //
-// A connection is created with credentials first and an account chosen afterwards, from
-// the list this very call produces. Demanding a non-empty account id before discovery
-// means the caller must already know the answer to the question they are asking, which
-// made the endpoint unreachable in exactly the state it exists to serve. Every other
-// check — active status, decodable blob, all four OAuth fields present — still applies,
-// because a discovery call against a stale or half-configured connection should fail as
-// a connection problem rather than as an opaque error from Google.
+// Be precise about which lifecycle this serves TODAY. `design/connection.go:333` still
+// declares `Required("account_id")` on GoogleAdsConnectionConfig, so a connection cannot
+// currently be created without one: the credentials-first, account-chosen-afterwards
+// bootstrap is NOT yet reachable. What IS reachable, and what this relaxation exists for,
+// is RE-POINTING — an operator with a working connection asking "which other customer ids
+// does this credential reach?" before switching account_id. Demanding a non-empty account
+// id would still not block that (one is stored), but the check would be answering a
+// question discovery does not ask, and it would have to be removed anyway the moment the
+// design drops the requirement. Keeping the relaxation here means only the design changes
+// when bootstrap lands, not this path.
+//
+// Every other check — active status, decodable blob, all four OAuth fields present — still
+// applies, because a discovery call against a stale or half-configured connection should
+// fail as a connection problem rather than as an opaque error from Google.
 func validateGoogleAdsCredentials(projectID string, res *resolved) (googleAdsCreds, error) {
 	var creds googleAdsCreds
 	if res.status != model.StatusActive {

@@ -176,8 +176,13 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 	// genuine "try again later", so flattening either into "not usable" would destroy a
 	// distinction the service layer depends on.
 	if len(conn.EncryptedCredentials) == 0 {
-		return nil, notCreated(fmt.Errorf("%s connection for project %s has no stored credentials: %w",
-			provider, projectID, domain.ErrConnectionNotUsable))
+		// Both sentinels, not just the status one. ErrConnectionNotUsable answers "what
+		// HTTP status", ErrCredentialsAbsent answers "why" — and the discovery handler
+		// logs the why from a fixed vocabulary (unusableConnectionReason). Wrapping only
+		// the status sentinel logged this as "unclassified", i.e. "cause unknown", for
+		// the single most knowable failure in the set.
+		return nil, notCreated(fmt.Errorf("%s connection for project %s has no stored credentials: %w: %w",
+			provider, projectID, domain.ErrConnectionNotUsable, domain.ErrCredentialsAbsent))
 	}
 	plaintext, derr := s.enc.Decrypt(conn.EncryptedCredentials)
 	if derr != nil {
@@ -187,13 +192,15 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 		// A decrypt failure is NOT one condition, and which sentinel it carries decides
 		// whether a human edits a connection or ops gets paged. Only a blob the encryptor
 		// could not even attempt to authenticate (domain.ErrCredentialsMalformed — for
-		// AES-GCM, shorter than a nonce) is proven bad row data, and only that earns
-		// ErrConnectionNotUsable → 400. A GCM AUTHENTICATION failure keeps its own
-		// classification: it means a wrong or rotated application key, or tampering, and
-		// the key is deployment-wide — so the same failure hits every project at once.
-		// Reported as "not usable as configured" it would tell every one of them to fix a
-		// connection that is fine, and would bury the 500 that says the deployment is
-		// broken. An unrecognised decrypt error takes that same path on purpose: an
+		// AES-GCM, shorter than a nonce PLUS the authentication tag) is proven bad row
+		// data, and only that earns ErrConnectionNotUsable → 400. A GCM AUTHENTICATION
+		// failure keeps its own classification: a wrong or rotated application key, or
+		// tampering/corruption of this one row. GCM cannot tell those apart, so the
+		// sentinel does not claim to either — it says "authentication failed", and how
+		// many projects are affected is what tells a responder which it was.
+		// Reported as "not usable as configured" it would tell an operator to fix a
+		// connection that may be fine, and would bury the 500 that surfaces a broken
+		// deployment key. An unrecognised decrypt error takes that same path on purpose: an
 		// encryptor that proves nothing about the row must not be read as proving the row
 		// is at fault.
 		if errors.Is(derr, domain.ErrCredentialsMalformed) {

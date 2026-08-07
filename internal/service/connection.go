@@ -137,6 +137,8 @@ func unusableConnectionReason(err error) string {
 		return "provider_config_invalid"
 	case errors.Is(err, domain.ErrCredentialsMalformed):
 		return "credential_blob_malformed"
+	case errors.Is(err, domain.ErrCredentialsAbsent):
+		return "credentials_absent"
 	default:
 		return "unclassified"
 	}

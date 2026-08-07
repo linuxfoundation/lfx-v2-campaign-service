@@ -377,6 +377,40 @@ func TestListGoogleAdsAccounts_UnusableConnectionLogsAReasonNotTheCause(t *testi
 	}
 }
 
+// TestListGoogleAdsAccounts_AbsentCredentialsLogAReasonNotUnclassified pins the token for
+// the one condition that is fully diagnosed before anything is attempted: the credential
+// column is empty.
+//
+// It gets its own test because "unclassified" is not a neutral default in this vocabulary —
+// it reads as "we do not know", and it was the token this state produced. An operator
+// grepping a 400 for the most trivially fixable connection state found the answer that says
+// nothing is known about it, which inverts the priority of the alert.
+func TestListGoogleAdsAccounts_AbsentCredentialsLogAReasonNotUnclassified(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	cause := fmt.Errorf("google-ads connection for project p has no stored credentials: %w: %w",
+		domain.ErrConnectionNotUsable, domain.ErrCredentialsAbsent)
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	svc.SetOrchestrator(&Orchestrator{
+		dispatchers: map[model.Provider]PlatformDispatcher{
+			model.ProviderGoogleAds: &mockAccountListerDispatcher{err: cause},
+		},
+	})
+
+	if _, err := svc.ListGoogleAdsAccounts(context.Background(), &conn.ListGoogleAdsAccountsPayload{ProjectID: "p"}); err == nil {
+		t.Fatal("expected an error for a connection with no credentials, got nil")
+	}
+
+	line := buf.String()
+	if !strings.Contains(line, "reason=credentials_absent") {
+		t.Errorf("log line does not carry reason=credentials_absent: %q — a known, fully "+
+			"diagnosed state must not log as unclassified", line)
+	}
+}
+
 // TestListGoogleAdsAccounts_ProviderFailureIs503 pins the `default` branch — the only
 // one of the three that tells the caller to RETRY. The existing 503 test covers the
 // dependency-unavailable case (no orchestrator wired at all), which never reaches this

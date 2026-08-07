@@ -52,8 +52,10 @@ type ConnectionRepository interface {
 // apart. An implementation must wrap ErrCredentialsMalformed when the stored blob was
 // structurally unusable and was never authenticated (bad row data — the connection
 // owner must re-save it), and ErrCredentialDecryptionFailed when a well-formed blob
-// failed authentication (wrong/rotated application key or tampering — an
-// infrastructure and security condition affecting every stored credential at once).
+// failed authentication (wrong/rotated application key, or tampering/corruption of
+// that one row — an authentication failure does NOT distinguish them, so callers must
+// not read this sentinel as proof that every stored credential is affected; the blast
+// radius is determined by how many rows fail, not by the sentinel).
 // Callers treat an error carrying NEITHER as the latter: see the two sentinels' own
 // documentation for why that default is the safe one.
 type Encryptor interface {

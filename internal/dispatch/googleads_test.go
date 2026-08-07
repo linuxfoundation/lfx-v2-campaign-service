@@ -1751,6 +1751,17 @@ func TestGoogleAds_ListAccounts_UnusableReasonsAreClassifiedWithoutPlaintext(t *
 			want:   domain.ErrConnectionInactive,
 		},
 		{
+			// The empty-credential column. It is the ONE case here that never reaches
+			// the decrypt/decode path at all — creds.resolve short-circuits on length —
+			// which is exactly why it was the case that regressed to
+			// reason=unclassified: it is wrapped in a different branch from every other
+			// row in this table, so a fix applied to the classification switch does not
+			// reach it.
+			name:   "absent credentials",
+			mutate: func(c *model.Connection) { c.EncryptedCredentials = nil },
+			want:   domain.ErrCredentialsAbsent,
+		},
+		{
 			// A *json.SyntaxError case: trailing garbage after a valid value makes
 			// encoding/json report "invalid character '@' after top-level value", quoting
 			// a byte of the decrypted blob.
