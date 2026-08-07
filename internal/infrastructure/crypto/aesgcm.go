@@ -11,9 +11,10 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // KeySize is the required AES-256 key length in bytes.
@@ -22,14 +23,26 @@ const KeySize = 32
 // ErrKeySize is returned when the configured key is not 32 bytes.
 var ErrKeySize = fmt.Errorf("encryption key must be %d bytes (AES-256)", KeySize)
 
+// The two Decrypt failures below carry DIFFERENT domain classifications, and the
+// wrapping is the mechanism that carries them: callers live above this package (the
+// dispatch and service layers depend on domain.Encryptor, not on crypto), so they
+// cannot import these sentinels to tell the cases apart. Wrapping the domain
+// sentinel lets `errors.Is` do it without inverting the dependency. Both remain
+// usable as `crypto.Err…` inside this package and its tests, and ErrCiphertextTooShort
+// is still returned by identity so an `==` comparison keeps working.
+
 // ErrCiphertextTooShort is returned when a ciphertext is too short to contain a
-// nonce — a malformed-input / data error (map to 422, not 500).
-var ErrCiphertextTooShort = errors.New("ciphertext too short")
+// nonce — a malformed-input / data error (map to 422, not 500). The blob is never
+// authenticated, so this proves the stored ROW is bad and nothing else:
+// domain.ErrCredentialsMalformed.
+var ErrCiphertextTooShort = fmt.Errorf("%w: ciphertext too short", domain.ErrCredentialsMalformed)
 
 // ErrDecryptionFailed is returned when GCM authentication fails — tampered data
 // or a wrong/rotated key. This is an infrastructure/security condition (map to
-// 500 and alert ops), distinct from a malformed-input error.
-var ErrDecryptionFailed = errors.New("decryption authentication failed")
+// 500 and alert ops), distinct from a malformed-input error: a wrong deployment key
+// fails EVERY connection, so it must not be reported as a per-connection data
+// problem. Hence domain.ErrCredentialDecryptionFailed, not ErrCredentialsMalformed.
+var ErrDecryptionFailed = fmt.Errorf("%w: decryption authentication failed", domain.ErrCredentialDecryptionFailed)
 
 // AESGCM implements domain.Encryptor using AES-256-GCM. The nonce is randomly
 // generated per message and prepended to the ciphertext.

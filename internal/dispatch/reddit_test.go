@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -39,10 +40,23 @@ type identityEncryptor struct{}
 func (identityEncryptor) Encrypt(p []byte) ([]byte, error) { return p, nil }
 func (identityEncryptor) Decrypt(c []byte) ([]byte, error) { return c, nil }
 
+// errEncryptor always fails Decrypt with an UNCLASSIFIED error — one carrying neither
+// domain sentinel. That is deliberate: it is the default arm of creds.resolve's
+// classification, and the arm that must not guess the row is at fault.
 type errEncryptor struct{}
 
 func (errEncryptor) Encrypt(p []byte) ([]byte, error) { return p, nil }
 func (errEncryptor) Decrypt([]byte) ([]byte, error)   { return nil, errors.New("bad key") }
+
+// malformedEncryptor fails Decrypt the way a structurally invalid blob fails: the
+// ciphertext is too short to contain a nonce, so nothing is ever authenticated. This is
+// the ONLY decrypt failure that proves the stored row is bad.
+type malformedEncryptor struct{}
+
+func (malformedEncryptor) Encrypt(p []byte) ([]byte, error) { return p, nil }
+func (malformedEncryptor) Decrypt([]byte) ([]byte, error) {
+	return nil, fmt.Errorf("%w: ciphertext too short", domain.ErrCredentialsMalformed)
+}
 
 func activeRedditConn(creds string) *model.Connection {
 	return &model.Connection{
