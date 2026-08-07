@@ -329,7 +329,10 @@ func TestGoogleAds_AdCopyMappingsReachTheWire(t *testing.T) {
 			} `json:"create"`
 		} `json:"operations"`
 	}
-	if err := json.Unmarshal(cap.adGroupAdBody, &payload); err != nil || len(payload.Operations) == 0 {
+	// Decode the string copied out under cap.mu above, NOT cap.adGroupAdBody — reaching
+	// back into the live field re-reads handler-written state from the test goroutine
+	// without the lock, which is the race the copy was made to avoid.
+	if err := json.Unmarshal([]byte(adGroupAdBody), &payload); err != nil || len(payload.Operations) == 0 {
 		t.Fatalf("decode adGroupAds:mutate body: %v (body %s)", err, adGroupAdBody)
 	}
 	rsa := payload.Operations[0].Create.Ad.ResponsiveSearchAd
