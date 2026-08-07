@@ -1330,12 +1330,28 @@ func TestGoogleAds_ListAccounts_StillRejectsUnusableConnections(t *testing.T) {
 	cases := []struct {
 		name    string
 		mutate  func(*model.Connection)
+		enc     domain.Encryptor // nil means identityEncryptor
 		wantSub string
 	}{
 		{
 			name:    "inactive connection",
 			mutate:  func(c *model.Connection) { c.Status = model.StatusInactive },
 			wantSub: "not active",
+		},
+		{
+			// Caught inside creds.resolve, before any adapter sees the blob. It is the
+			// same class as the cases below — the row needs editing, not retrying — so it
+			// must carry the same sentinel even though a different function produces it.
+			name:    "connection row with an empty credential blob",
+			mutate:  func(c *model.Connection) { c.EncryptedCredentials = nil },
+			wantSub: "no stored credentials",
+		},
+		{
+			// Also inside creds.resolve. A blob that will not decrypt cannot start
+			// decrypting later — key rotation or corruption, both of which need a human.
+			name:    "credential blob that will not decrypt",
+			enc:     errEncryptor{},
+			wantSub: "decrypt",
 		},
 		{
 			name: "credentials missing the refresh token",
@@ -1356,9 +1372,15 @@ func TestGoogleAds_ListAccounts_StillRejectsUnusableConnections(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			conn := activeGoogleAdsConn(goodGoogleAdsCreds)
 			conn.AccountID = ""
-			tc.mutate(conn)
+			if tc.mutate != nil {
+				tc.mutate(conn)
+			}
+			var enc domain.Encryptor = identityEncryptor{}
+			if tc.enc != nil {
+				enc = tc.enc
+			}
 			d := NewGoogleAdsDispatcher(
-				fakeConnReader{conn: conn}, identityEncryptor{},
+				fakeConnReader{conn: conn}, enc,
 				googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
 			)
 			_, err := d.ListAccounts(context.Background(), "proj", model.ProviderGoogleAds)

@@ -284,9 +284,14 @@ failure. `storedCustomerIDRE` in `internal/dispatch/googleads.go` therefore chec
 where it is read — the check has to happen where the answer is still classifiable. The two regexps
 must stay in step.
 
-Errors from `creds.resolve` are deliberately NOT wrapped: that layer distinguishes
-`domain.ErrNotFound` (no connection at all → 404) from a real storage failure (transient → 503), and
-flattening both into "not usable" would lose it.
+`creds.resolve` tags two of its own four failure branches, and the split is deliberate. A connection
+row with an EMPTY credential blob, and one whose blob will not DECRYPT, are permanently unusable as
+they stand — they carry `domain.ErrConnectionNotUsable` so a read-only caller answers 400. The other
+two do not: `domain.ErrNotFound` means there is no connection at all (→ 404, and the caller should
+create one, not edit one), and a repository failure is a genuine "try again later" (→ 503).
+Flattening either into "not usable" would lose a distinction the service layer depends on. Note the
+decrypt branch wraps BOTH the sentinel and the decrypt error (`%w: %w`); the service layer logs that
+cause rather than returning it, since a decrypt failure can carry ciphertext detail.
 
 Google Ads is the only implementation today, via
 `Client.ListAccessibleCustomers` → `customers:listAccessibleCustomers`. That endpoint is
