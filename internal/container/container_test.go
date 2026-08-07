@@ -54,15 +54,62 @@ func shrinkDBTimers(t *testing.T) {
 // mid-drain). This guards the invariant the init() in container.go panics on.
 func TestShutdownBudgetComposes(t *testing.T) {
 	// The container-close phase reserves EVERY term Close actually spends: the sweeper-stop
-	// wait, the index relay's stop wait, the dispatch drain, the post-cancel grace, AND the
-	// index publisher's connection drain. Omitting any one of these understates the phase and
-	// lets the two phases sum past DefaultShutdownTimeout — the SIGKILL-mid-drain this budget
-	// exists to prevent.
-	assert.Equal(t, sweeperStopTimeout+relayStopTimeout+dispatchDrainTimeout+service.CancelGracePeriod+indexer.DrainTimeout, ContainerCloseTimeout)
+	// wait, the index relay's stop wait, the dispatch drain, the post-cancel grace, the
+	// index publisher's connection drain, AND the UNCONFIRMED lock cooldown stop wait.
+	// Omitting any one of these understates the phase and lets the two phases sum past
+	// DefaultShutdownTimeout — the SIGKILL-mid-drain this budget exists to prevent.
+	assert.Equal(t, sweeperStopTimeout+relayStopTimeout+dispatchDrainTimeout+service.CancelGracePeriod+indexer.DrainTimeout+cooldownStopTimeout, ContainerCloseTimeout)
 	// The HTTP phase gets a positive share of the remaining budget.
 	assert.Positive(t, HTTPShutdownTimeout, "HTTP shutdown phase must have a positive budget")
 	// The two phases together stay within the overall budget.
 	assert.LessOrEqual(t, HTTPShutdownTimeout+ContainerCloseTimeout, constants.DefaultShutdownTimeout)
+}
+
+// TestClose_CooldownStopSpendsExactlyItsReservedTerm pins the hand-off that makes
+// cooldownStopTimeout an honest budget term rather than a comment.
+//
+// TestShutdownBudgetComposes above proves cooldownStopTimeout is RESERVED. That is only half
+// the invariant: what Close actually spends is whatever value it hands to
+// StopCooldownsForShutdown, and that value also becomes each woken release's own unlock
+// deadline (postgres.shutdownReleaseBound). Hand down a different constant — or none, in
+// which case the release falls back to its ordinary 5s lockReleaseTimeout — and Close returns
+// after 250ms while a cooldown connection stays checked out for up to 5s. pgxpool.Close then
+// blocks on that connection for the difference, OUTSIDE ContainerCloseTimeout. Nothing else
+// catches it: the budget arithmetic still balances, every postgres-side test still passes
+// (they call StopCooldownsForShutdown directly with their own timeout), and the overrun only
+// shows up as a SIGKILL mid-drain in production.
+//
+// Ordering is the second half. The signal is useless after the fact, so it must precede
+// pool.Close(); an unsignalled cooldown holds its connection for the full
+// unconfirmedLockCooldown (30s) and pool.Close waits out every second of it.
+//
+// Asserted on the source of Close because both properties are structural — there is no DB
+// harness here, and a behavioural test would have to observe a real pooled connection.
+func TestClose_CooldownStopSpendsExactlyItsReservedTerm(t *testing.T) {
+	src, err := os.ReadFile("container.go")
+	require.NoError(t, err)
+
+	const start = "func (c *Container) Close("
+	i := strings.Index(string(src), start)
+	require.NotEqual(t, -1, i, "Container.Close not found; update this test if the method was renamed")
+	body := string(src)[i:]
+	// Bound at the next top-level func so a later method cannot satisfy these on Close's behalf.
+	if j := strings.Index(body[len(start):], "\nfunc "); j != -1 {
+		body = body[:len(start)+j]
+	}
+
+	stop := strings.Index(body, "postgres.StopCooldownsForShutdown(cooldownStopTimeout)")
+	require.NotEqual(t, -1, stop,
+		"Close must signal cooldowns with cooldownStopTimeout itself — the term reserved in "+
+			"ContainerCloseTimeout — since that argument becomes each release's unlock deadline")
+	// The statement, not the several comments above that name it: matching the bare text
+	// would find the first mention (a comment about the sweeper) and compare against that.
+	closePool := strings.Index(body, "\n\t\tpool.Close()\n")
+	require.NotEqual(t, -1, closePool, "Close must close the pool")
+	assert.Less(t, stop, closePool,
+		"cooldowns must be signalled BEFORE pool.Close(): pgxpool.Close blocks until every "+
+			"checked-out connection is returned, and an unsignalled cooldown holds one for the "+
+			"full unconfirmedLockCooldown")
 }
 
 // blockingDispatcher blocks until its context is cancelled, so Orchestrator.Shutdown
@@ -128,12 +175,19 @@ func (stubCampaignRepo) DeleteDispatchClaim(context.Context, string, model.Provi
 func (stubCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, _ domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	return c, nil
 }
+func (stubCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64, domain.CampaignLockToken, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	return nil, domain.ErrNotFound
+}
 func (stubCampaignRepo) DeleteCampaign(context.Context, string, string, string, int64, domain.CampaignIndexPayloadFunc) error {
 	return nil
 }
-func (stubCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
-	return nil, domain.ErrNotFound
+func (stubCampaignRepo) ClaimCampaignVersion(context.Context, string, string, string, int64) (*model.Campaign, domain.CampaignLockToken, error) {
+	return nil, domain.CampaignLockToken{}, domain.ErrNotFound
 }
+func (stubCampaignRepo) ReleaseCampaignLock(context.Context, domain.CampaignLockToken) error {
+	return nil
+}
+func (stubCampaignRepo) ReleaseCampaignLockAfterCooldown(domain.CampaignLockToken, time.Duration) {}
 
 // TestClose_PropagatesShutdownError verifies Container.Close returns (does not
 // swallow) the orchestrator shutdown error when a dispatch is still running at
