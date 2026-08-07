@@ -131,11 +131,20 @@ that capability isn't wired.
 Note what it does NOT list: anything this service stores. A project holds at most one connection
 per provider, read via `GET .../connection-{provider}`.
 
-Four outcomes are distinguished deliberately, because collapsing them misdirects the caller.
+Five outcomes are distinguished deliberately, because collapsing them misdirects the caller.
 
 - `ErrAccountsUnsupported` → **400** — the platform has no discovery capability.
 - `domain.ErrNotFound` → **404** — the project has no stored connection. A setup state; a 503
   here would tell the caller to retry something that cannot succeed until a connection exists.
+- `domain.ErrCredentialDecryptionFailed` → **500** — a well-formed credential blob failed
+  AUTHENTICATED decryption, which means a wrong or rotated application encryption key, or tampered
+  data. This arm sits ABOVE the `ErrConnectionNotUsable` one and is checked first on purpose: the
+  application key is deployment-wide, so this failure hits every project's connection in the same
+  instant. A 400 would send each of their operators to go fix a row that is fine, and a 503 would
+  promise that waiting helps. Both would hide an outage behind a message about somebody's
+  connection. It logs at ERROR because it is the arm that should page someone, and the cause IS
+  logged here — it is produced by the encryptor from ciphertext and key material only, never from
+  plaintext.
 - `domain.ErrConnectionNotUsable` → **400** — the connection EXISTS but cannot be used as it
   stands: inactive, an incomplete or undecodable credential blob, or a malformed stored config
   value such as a dashed `login_customer_id`. The platform is never contacted. This arm is what
@@ -143,8 +152,15 @@ Four outcomes are distinguished deliberately, because collapsing them misdirects
   change until a human edits the connection. The distinction cannot be made here — a setup failure
   and an upstream one arrive as the same type — so `internal/dispatch/googleads.go`
   (`resolveGoogleAdsDiscoveryClient`) wraps every pre-send failure with the sentinel, and this arm
-  reads it. The cause is LOGGED, not returned: one of the wrapped errors comes from
-  `json.Unmarshal` over the decrypted credential blob, and an unmarshal error can quote its input.
+  reads it. Neither the cause NOR its text leaves this function — not in the response and not in
+  the log line. One of the wrapped errors is computed over the decrypted credential blob, and
+  `encoding/json` quotes its input, so logging the cause would put credential-derived bytes into
+  centralized logs for exactly the connection whose credentials are malformed. What the log line
+  carries instead is `reason=`, from `unusableConnectionReason` — a fixed token
+  (`connection_inactive`, `credentials_undecodable`, `credentials_incomplete`,
+  `provider_config_invalid`, `credential_blob_malformed`, `unclassified`) read off the reason
+  sentinel the dispatch layer wraps alongside `ErrConnectionNotUsable`. A closed vocabulary is what
+  a log line wants anyway: greppable, alertable, and with no payload to carry a secret in.
 - Anything else → **503** — the platform was reached and did not answer.
 
 `ReadAccounts` treats a nil result from a lister as a contract violation and maps it to 503, so

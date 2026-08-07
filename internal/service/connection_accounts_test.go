@@ -4,10 +4,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -237,11 +239,12 @@ func TestListGoogleAdsAccounts_UnusableConnectionIs400(t *testing.T) {
 		{"inactive connection", "google ads connection for project p is inactive, not active"},
 		{"incomplete credentials", "google ads credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)"},
 		{"malformed manager id", `stored login_customer_id "999-999-9999" must be digits only (no dashes or spaces)`},
-		// The last two come from a different layer — credsSource.resolve, below the
-		// discovery resolver — and reach here unchanged. They are listed because the arm
-		// must key on the sentinel alone, not on which function produced it.
+		// This one comes from a different layer — credsSource.resolve, below the discovery
+		// resolver — and reaches here unchanged. It is listed because the arm must key on
+		// the sentinel alone, not on which function produced it.
 		{"connection row with an empty credential blob", "google-ads connection for project p has no stored credentials"},
-		{"credential blob that will not decrypt", "decrypt google-ads credentials: cipher: message authentication failed"},
+		// A blob that fails AUTHENTICATED decryption is deliberately absent: it is not a
+		// connection problem at all. See TestListGoogleAdsAccounts_DecryptFailureIs500.
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -269,6 +272,108 @@ func TestListGoogleAdsAccounts_UnusableConnectionIs400(t *testing.T) {
 					"because the decode case can quote decrypted credential bytes", tc.cause)
 			}
 		})
+	}
+}
+
+// TestListGoogleAdsAccounts_DecryptFailureIs500 pins the arm that must NOT be a 400.
+//
+// A credential blob that fails authenticated decryption means a wrong or rotated
+// application key, or tampering. That key is deployment-wide, so the same failure hits
+// every project's connection in the same instant. 400 would tell each of their operators to
+// go fix a row that is fine; 503 would promise that waiting helps. Both hide an outage
+// behind a message about somebody's connection, which is why this arm sits ABOVE the
+// ErrConnectionNotUsable arm and answers 500.
+//
+// The second case is the one that would regress silently: an error carrying BOTH sentinels
+// must still take the 500 path. Reordering the switch is enough to break it, and no other
+// test in this file would notice.
+func TestListGoogleAdsAccounts_DecryptFailureIs500(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{
+			name: "authenticated decryption failed",
+			err: fmt.Errorf("decrypt google-ads credentials: %w: cipher: message authentication failed",
+				domain.ErrCredentialDecryptionFailed),
+		},
+		{
+			name: "also tagged not-usable by a caller upstack",
+			err: fmt.Errorf("%w: %w: cipher: message authentication failed",
+				domain.ErrConnectionNotUsable, domain.ErrCredentialDecryptionFailed),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+			svc.SetOrchestrator(&Orchestrator{
+				dispatchers: map[model.Provider]PlatformDispatcher{
+					model.ProviderGoogleAds: &mockAccountListerDispatcher{err: tc.err},
+				},
+			})
+
+			result, err := svc.ListGoogleAdsAccounts(context.Background(), &conn.ListGoogleAdsAccountsPayload{ProjectID: "p"})
+			if result != nil {
+				t.Fatalf("expected nil result, got %v", result)
+			}
+			internalErr, ok := err.(*conn.InternalServerError)
+			if !ok {
+				t.Fatalf("expected InternalServerError so the outage is visible as one, got %T: %v", err, err)
+			}
+			if internalErr.Code != "500" {
+				t.Errorf("expected code 500, got %q", internalErr.Code)
+			}
+			if strings.Contains(internalErr.Message, "cipher") {
+				t.Errorf("crypto detail leaked into the response message: %q", internalErr.Message)
+			}
+		})
+	}
+}
+
+// TestListGoogleAdsAccounts_UnusableConnectionLogsAReasonNotTheCause pins the log line
+// itself, which is the only place the finding lived: the response body was already
+// sanitized while the same material still reached centralized logs.
+//
+// The cause here is the shape production actually produces — the dispatch layer wraps a
+// reason sentinel alongside the status sentinel — and the assertions are on the emitted
+// RECORD, not on the returned error. `reason` must be the classification token, and no part
+// of the cause's text may appear anywhere in the line. The marker below stands in for what
+// an encoding/json error quotes out of a decrypted blob.
+func TestListGoogleAdsAccounts_UnusableConnectionLogsAReasonNotTheCause(t *testing.T) {
+	const marker = "sUp3r-s3cr3t-value"
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	cause := fmt.Errorf("%w: %w: decode google ads credentials: invalid character %q",
+		domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, marker)
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	svc.SetOrchestrator(&Orchestrator{
+		dispatchers: map[model.Provider]PlatformDispatcher{
+			model.ProviderGoogleAds: &mockAccountListerDispatcher{err: cause},
+		},
+	})
+
+	if _, err := svc.ListGoogleAdsAccounts(context.Background(), &conn.ListGoogleAdsAccountsPayload{ProjectID: "p"}); err == nil {
+		t.Fatal("expected an error for an unusable connection, got nil")
+	}
+
+	line := buf.String()
+	if !strings.Contains(line, "reason=credentials_undecodable") {
+		t.Errorf("log line does not carry the reason token, so the 400 is undiagnosable: %q", line)
+	}
+	if !strings.Contains(line, "project_id=p") {
+		t.Errorf("log line does not carry project metadata: %q", line)
+	}
+	if strings.Contains(line, marker) {
+		t.Errorf("log line quotes credential-derived text: %q", line)
+	}
+	if strings.Contains(line, "decode google ads credentials") {
+		t.Errorf("log line echoes the wrapped cause, which is the exposure this test exists to "+
+			"prevent — the cause is a fixed message TODAY, but nothing stops a future wrap from "+
+			"carrying plaintext into it: %q", line)
 	}
 }
 
