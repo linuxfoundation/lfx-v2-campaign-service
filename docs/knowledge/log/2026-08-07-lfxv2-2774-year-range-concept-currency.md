@@ -13,6 +13,8 @@ future editions come back labelled as past ones. Below it (`"0202"`) every row i
 and the caller gets a silently empty result. Two wrong answers with no error attached, which
 is exactly the class of bug a boundary rejection exists to prevent.
 
-**Note** — CLAUDE.md requires the concept update alongside the dated log, and this PR shipped
-only the log. The two are not interchangeable: the log records that a thing changed, the
-concept is what the next reader consults instead of the source.
+**Note** — CLAUDE.md requires the concept update alongside the dated log. The PR's earlier
+revisions carried only the log, which is what this entry corrects; the concept edit above is
+the correction, so the shipped PR has both. The two are not interchangeable: the log records
+that a thing changed, the concept is what the next reader consults instead of the source, and
+a log entry alone leaves the concept quietly asserting the superseded contract.
