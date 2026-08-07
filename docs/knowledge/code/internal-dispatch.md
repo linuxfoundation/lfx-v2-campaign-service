@@ -196,6 +196,30 @@ USD — the service does no FX conversion) and is `strconv.ParseFloat`'d then sc
 rounded (not truncated) to `CostMicros`, guarding against non-finite (`NaN`/`Inf`) results. CTR is
 computed client-side the same way as Google Ads.
 
+**Reddit implements it, but the capability is GATED OFF BY DEFAULT because the entire
+request/response contract is an UNVERIFIED, BEST-EFFORT GUESS**
+(`internal/platform/reddit/metrics.go`). `RedditDispatcher.ReadMetrics` returns
+`domain.ErrMetricsUnsupported` — the same 400 a platform with no metrics support at all
+produces — unless `REDDIT_METRICS_ENABLED` is exactly `"true"`; any other value, including
+unset, fails closed. The gate exists because DECLARING the method is itself the capability
+switch: the orchestrator discovers `MetricsReader` by type assertion and the published
+endpoint invokes it immediately, so an ungated wiring would return 200 from a guessed shape
+and currency unit, with none of the caveats visible in the response. The gate is read per
+call rather than at construction, so a deployment flips it without a rebuild.
+`REDDIT_METRICS_ENABLED` is declared in `pkg/constants` and wired in the chart's
+`values.yaml`. Once the shape is verified against a live ad account, the gate is deleted. Unlike this client's create/toggle endpoints
+(ported from a working upstream client) and unlike Meta/LinkedIn/X's metrics clients (built
+against each platform's public API docs), Reddit's v3 reporting/metrics endpoint has no public
+documentation — it is gated behind Reddit's developer portal and a private Postman collection.
+The implementation is inferred only from this package's own proven v3 conventions (resource
+nesting, OAuth2 bearer + retry/backoff, the `{"data": ...}` envelope): a `POST
+/ad_accounts/{account_id}/reports` with a guessed `{"data": {starts_at, ends_at, campaign_ids,
+breakdowns, fields}}` body, decimal-string spend (converted to micros ×1e6, rounded), and an
+empty result rows array treated as zero-activity. This was investigated and recorded as BLOCKED
+on LFXV2-2995 before the file was written — treat every field name and the request/response
+shape as a placeholder to be corrected once official Reddit Ads API access confirms the real
+contract, not a confirmed integration.
+
 **X/Twitter** implements it: `twitterMetricsWindow` maps the shared `model.MetricsWindow`
 vocabulary to X Ads' own `MetricsWindow` literals, then `GetCampaignMetrics(ctx, campaignID,
 window)` queries the X Ads `/stats` endpoint. **CRITICAL: X's stats endpoint caps queryable
