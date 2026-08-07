@@ -941,6 +941,22 @@ So the keyword work is **two layers, not one**, and PR 2 must contain both:
      Results    []KeywordCriterionResult
      Err        error
    }
+
+   // Error makes this an error — it is returned through the `error` interface and matched
+   // with errors.As at the dispatch boundary, so without this method the code does not
+   // compile. The message names the BOUNDARIES rather than counts: the type does not know
+   // len(ops), so it cannot count the never-sent tail, and "partial failure" on its own
+   // tells an operator nothing about which operations are in doubt.
+   func (e *PartialMutateError) Error() string {
+     return fmt.Sprintf("keyword mutate partially applied: ops[:%d] confirmed, ops[%d:%d] unconfirmed, ops[%d:] never sent: %v",
+       e.ConfirmedThrough, e.ConfirmedThrough, e.UnsentFrom, e.UnsentFrom, e.Err)
+   }
+
+   // Unwrap keeps the cause inspectable. This matters more than it looks: the caller has to
+   // distinguish a context cancellation from an upstream rejection, and it does that with
+   // errors.Is(err, context.Canceled) on the SAME error value it just matched with errors.As.
+   // Without Unwrap, wrapping the cause here would hide it.
+   func (e *PartialMutateError) Unwrap() error { return e.Err }
    ```
 
    This is the same discipline the create paths already follow: an ambiguous upstream outcome
@@ -1134,7 +1150,7 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
     }
 
     if _, ok := allowed[ref]; !ok {
-      outcome.Success = false
+      outcome.State = model.KeywordActionFailed
       outcome.Message = "criterion does not belong to this campaign"
       outcomes = append(outcomes, outcome)
       continue
@@ -1150,7 +1166,7 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
     case "remove":
       op = googleads.RemoveKeyword(ref)
     default:
-      outcome.Success = false
+      outcome.State = model.KeywordActionFailed
       outcome.Message = fmt.Sprintf("unsupported action: %s", action.Action)
       outcomes = append(outcomes, outcome)
       continue
