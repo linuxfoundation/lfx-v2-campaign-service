@@ -498,9 +498,13 @@ func (c *Client) validateAccountIDs() error {
 // validateLoginCustomerID validates ONLY the manager id, for the account-agnostic
 // endpoints that have no customer_id path segment (customers:listAccessibleCustomers).
 // Those calls are how a caller DISCOVERS a customer id, so requiring one first is the
-// chicken-and-egg that made account discovery unreachable: the login-customer-id header
-// is still attached by doRequest and must still be well-formed, but c.account.CustomerID
-// is legitimately empty here.
+// chicken-and-egg that made account discovery unreachable. Naming the layer precisely
+// matters, because this comment documents which precondition is bypassed: discovery calls
+// doRequestValidated, deliberately SKIPPING doRequest's validateAccountIDs. The
+// login-customer-id header is attached inside doRequestValidated itself, alongside
+// developer-token — so the header is still sent on every discovery call and must still be
+// well-formed, which is what this function checks and the only reason it exists separately
+// from validateAccountIDs, while c.account.CustomerID is legitimately empty here.
 func (c *Client) validateLoginCustomerID() error {
 	if c.account.LoginCustomerID != "" && !customerIDRE.MatchString(c.account.LoginCustomerID) {
 		return fmt.Errorf("invalid Google Ads login-customer-id %q: must be digits only (no dashes)", c.account.LoginCustomerID)
@@ -1007,15 +1011,31 @@ func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCusto
 		return nil, cerr
 	}
 	accounts := make([]AccessibleCustomer, 0, len(children))
-	at := make(map[string]struct{}, len(children))
+	at := make(map[string]int, len(children))
 	for _, child := range children {
 		// customer_client can report the same client twice when the hierarchy has more
-		// than one path to it (a sub-manager that is itself a client of the root). Keep
-		// the first, which is the shallowest.
-		if _, dup := at[child.ResourceName]; dup {
+		// than one path to it (a sub-manager that is itself a client of the root).
+		//
+		// Keep the FIRST occurrence, and note what that does and does not rest on. The
+		// query selects no customer_client.level and carries no ORDER BY, so GAQL makes no
+		// promise about which path is returned first — an earlier version of this comment
+		// claimed the first was "the shallowest", which is not an invariant the query
+		// provides and would have been a trap for anyone later relying on depth. It does
+		// not matter here: every duplicate describes the SAME customer, so id and
+		// descriptive_name are properties of that customer rather than of the path taken
+		// to reach it, and the two rows are interchangeable in the only two fields kept.
+		//
+		// The one asymmetry worth handling is a blank label. If a later duplicate carries
+		// a descriptive_name the first lacked, take it — a labelled account is strictly
+		// more useful in a picker than an unlabelled one, and this makes the result
+		// independent of arrival order rather than merely tolerant of it.
+		if i, dup := at[child.ResourceName]; dup {
+			if accounts[i].DescriptiveName == "" {
+				accounts[i].DescriptiveName = child.DescriptiveName
+			}
 			continue
 		}
-		at[child.ResourceName] = struct{}{}
+		at[child.ResourceName] = len(accounts)
 		accounts = append(accounts, child)
 	}
 

@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/googleads"
-description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer, GAQL search (GA-1), PAUSED campaign creation (GA-2), ad group + responsive search ad creation (GA-3), and keyword/audience-segment targeting on that ad group (GA-4)."
+description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer, GAQL search (GA-1), PAUSED campaign creation (GA-2), ad group + responsive search ad creation (GA-3), keyword/audience-segment targeting on that ad group (GA-4), and ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on the account-agnostic request path that validates only the manager id."
 resource: "internal/platform/googleads"
 tags:
   - platform-client
