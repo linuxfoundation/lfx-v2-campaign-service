@@ -1,5 +1,9 @@
 # 2026-08-07 — LFXV2-2023: two account-discovery tests passed against nothing
 
+**Update** — Two account-discovery tests in `internal/platform/googleads/accounts_test.go` were
+rewritten to assert against the REQUEST the client sends, not just the fixture's reply. Both were
+green against an implementation that did neither thing they claimed to cover.
+
 **Fix** — `listManagerClients` filters server-side with
 `WHERE customer_client.status = 'ENABLED'`, and that predicate is the ONLY thing keeping
 cancelled or closed accounts out of the picker — no later stage re-checks
