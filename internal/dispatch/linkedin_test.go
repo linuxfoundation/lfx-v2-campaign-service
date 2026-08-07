@@ -10,7 +10,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -632,5 +634,177 @@ func TestLinkedIn_ToggleStatus_NoOrgIDNeeded(t *testing.T) {
 	)
 	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, &model.Campaign{PlatformCampaignID: "555"}, model.CampaignRunPaused); err != nil {
 		t.Fatalf("ToggleStatus must work without an org_id: %v", err)
+	}
+}
+
+// TestLinkedIn_ReadMetrics_UnsupportedWindowIs400 verifies ReadMetrics wraps the platform
+// client's window-rejection error with domain.ErrMetricsWindowUnsupported, so brief.go's
+// GetCampaignMetrics maps it to 400 (caller input) instead of falling through to 503
+// (upstream failure) — LinkedIn's Ad Analytics date-range mapping has no "yesterday" or
+// "last_14_days" case, and the platform is never contacted.
+func TestLinkedIn_ReadMetrics_UnsupportedWindowIs400(t *testing.T) {
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+	)
+	_, err := d.ReadMetrics(
+		context.Background(), "proj", model.ProviderLinkedInAds,
+		&model.Campaign{PlatformCampaignID: "555"},
+		model.MetricsWindowYesterday,
+	)
+	if err == nil {
+		t.Fatal("expected an error for a window LinkedIn cannot map to a date range")
+	}
+	if !errors.Is(err, domain.ErrMetricsWindowUnsupported) {
+		t.Errorf("expected err to wrap domain.ErrMetricsWindowUnsupported (so brief.go maps it to 400), got: %v", err)
+	}
+	if !errors.Is(err, linkedin.ErrUnsupportedWindow) {
+		t.Errorf("expected err to still wrap linkedin.ErrUnsupportedWindow, got: %v", err)
+	}
+}
+
+// TestLinkedIn_ReadMetrics_HappyPathBuildsURNsAndForwardsID pins the adapter boundary
+// Copilot flagged as untested: PlatformCampaignID is persisted BARE (campaignFromLinkedIn
+// stores trailingID of the create response's URN), while the Ad Analytics finder requires
+// full sponsoredCampaign/sponsoredAccount URNs. Nothing previously asserted that the bare
+// id reaches the client and that the client — not the dispatcher — rebuilds the URNs, so a
+// regression that sent "555" straight through as the campaign filter, or that double-wrapped
+// an already-URN value, would have gone unnoticed. It also covers the connection's account
+// id flowing into the account URN and the decoded metrics coming back intact.
+func TestLinkedIn_ReadMetrics_HappyPathBuildsURNsAndForwardsID(t *testing.T) {
+	// gotQuery is written on the httptest handler's goroutine and read on the test's,
+	// so it is guarded -- an unsynchronized capture is a data race under -race even
+	// though the read happens after ReadMetrics returns.
+	var mu sync.Mutex
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotQuery = r.URL.RawQuery
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"elements":[{"impressions":1000,"clicks":40,"costInUsd":"25.50"}]}`)
+	}))
+	defer srv.Close()
+
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 15, 0, 0, 0, 0, time.UTC) }),
+	)
+	metrics, err := d.ReadMetrics(
+		context.Background(), "proj", model.ProviderLinkedInAds,
+		&model.Campaign{PlatformCampaignID: "555"},
+		model.MetricsWindowLast7Days,
+	)
+	if err != nil {
+		t.Fatalf("ReadMetrics: %v", err)
+	}
+
+	mu.Lock()
+	query := gotQuery
+	mu.Unlock()
+
+	// The campaign URN must be built from the BARE persisted id, exactly once.
+	if !strings.Contains(query, url.QueryEscape("urn:li:sponsoredCampaign:555")) {
+		t.Errorf("expected the bare id 555 to be wrapped into a sponsoredCampaign URN, query was: %s", query)
+	}
+	if strings.Contains(query, url.QueryEscape("urn:li:sponsoredCampaign:urn:li:")) {
+		t.Errorf("campaign URN was double-wrapped, query was: %s", query)
+	}
+	// The account URN comes from the resolved connection, not from the campaign row.
+	if !strings.Contains(query, url.QueryEscape("urn:li:sponsoredAccount:123456789")) {
+		t.Errorf("expected the connection's account id in a sponsoredAccount URN, query was: %s", query)
+	}
+
+	if metrics.Impressions != 1000 || metrics.Clicks != 40 || metrics.CostMicros != 25_500_000 {
+		t.Errorf("decoded metrics did not survive the adapter: got %+v", metrics)
+	}
+	if metrics.Window != model.MetricsWindowLast7Days {
+		t.Errorf("expected the requested window echoed back, got %q", metrics.Window)
+	}
+	if metrics.CampaignID != "555" {
+		t.Errorf("expected CampaignID to stay the bare persisted id, got %q", metrics.CampaignID)
+	}
+}
+
+// TestLinkedIn_ReadMetrics_PreflightErrorsNeverContactPlatform covers the adapter's guard
+// branches. Each must fail before any HTTP call: an unprovisioned campaign, a connection
+// that is not active, and a connection with no account id would otherwise produce an
+// Ad Analytics request with a malformed URN and get an opaque upstream error back.
+func TestLinkedIn_ReadMetrics_PreflightErrorsNeverContactPlatform(t *testing.T) {
+	inactive := activeLinkedInConn(goodLinkedInCreds)
+	inactive.Status = model.StatusInactive
+	noAccount := activeLinkedInConn(goodLinkedInCreds)
+	noAccount.AccountID = "   "
+
+	cases := []struct {
+		name     string
+		conn     *model.Connection
+		campaign *model.Campaign
+		wantSub  string
+	}{
+		{"unprovisioned campaign", activeLinkedInConn(goodLinkedInCreds), &model.Campaign{PlatformCampaignID: ""}, "no platform campaign ID"},
+		{"inactive connection", inactive, &model.Campaign{PlatformCampaignID: "555"}, "not active"},
+		{"connection without account id", noAccount, &model.Campaign{PlatformCampaignID: "555"}, "no account id"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				t.Error("the platform must not be contacted when preflight fails")
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer srv.Close()
+
+			d := NewLinkedInDispatcher(
+				fakeConnReader{conn: tc.conn}, identityEncryptor{},
+				linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 15, 0, 0, 0, 0, time.UTC) }),
+			)
+			_, err := d.ReadMetrics(
+				context.Background(), "proj", model.ProviderLinkedInAds, tc.campaign, model.MetricsWindowLast7Days,
+			)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("expected error containing %q, got: %v", tc.wantSub, err)
+			}
+		})
+	}
+}
+
+// TestLinkedIn_ReadMetrics_UnsupportedWindowBeatsUnusableConnection pins the ORDER of the
+// two preflight checks, which the individual tests above cannot: each of them holds the
+// other input valid. An unsupported window is a permanent 400 whatever state the
+// connection is in, but if credential resolution ran first, a project with an inactive or
+// incomplete connection would fail with a connection error that brief.go maps to 503 —
+// telling the caller to retry a request that can never succeed. Every combination of an
+// unmapped window with an unusable connection must still surface as 400.
+func TestLinkedIn_ReadMetrics_UnsupportedWindowBeatsUnusableConnection(t *testing.T) {
+	inactive := activeLinkedInConn(goodLinkedInCreds)
+	inactive.Status = model.StatusInactive
+	noAccount := activeLinkedInConn(goodLinkedInCreds)
+	noAccount.AccountID = "   "
+	badCreds := activeLinkedInConn(`{"accessToken":""}`)
+
+	conns := map[string]*model.Connection{
+		"inactive connection":               inactive,
+		"connection without account id":     noAccount,
+		"connection with empty accessToken": badCreds,
+	}
+	for _, window := range []model.MetricsWindow{model.MetricsWindowYesterday, model.MetricsWindowLast14Days} {
+		for name, c := range conns {
+			t.Run(string(window)+"/"+name, func(t *testing.T) {
+				d := NewLinkedInDispatcher(fakeConnReader{conn: c}, identityEncryptor{})
+				_, err := d.ReadMetrics(
+					context.Background(), "proj", model.ProviderLinkedInAds,
+					&model.Campaign{PlatformCampaignID: "555"}, window,
+				)
+				if err == nil {
+					t.Fatal("expected an error")
+				}
+				if !errors.Is(err, domain.ErrMetricsWindowUnsupported) {
+					t.Errorf("window %q with an unusable connection produced %v — the window check must run "+
+						"BEFORE credential resolution, or brief.go reports a retryable 503 for a permanent 400", window, err)
+				}
+			})
+		}
 	}
 }
