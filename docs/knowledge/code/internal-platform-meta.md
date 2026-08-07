@@ -89,6 +89,20 @@ past start date is refused, with a same-day ad-set `start_time` nudged to
 now+buffer. `doRequest` retries HTTP 429 and Graph rate-limit envelope codes
 (4/17/32/341/613/80004) with bounded backoff, draining the body before close, and a
 truncated response body is surfaced rather than reported as a false success.
+**Creates go through `doCreate`, which suppresses that throttle retry.** The retry
+and `createOutcomeAmbiguous` would otherwise hold opposite premises about the same
+response: the classifier calls a throttle UNCONFIRMED precisely because Meta may have
+committed the node before reporting it, while the retry loop would re-POST the create
+on that same signal — producing two campaigns (or ad sets, or ads) with one name
+inside a single call, which the start-of-flow name lookup cannot see or reconcile. A
+throttled create therefore returns immediately and is classified UNCONFIRMED. What
+happens to whatever Meta committed is then an OPERATOR question, not an automatic one:
+`findCampaignByName`/`findAdSetByName` is the mechanism that could adopt it, but that
+lookup is opt-in and off at every call site today (see "Campaign and ad-set idempotency
+by name" below), and nothing re-dispatches a retained partial — so the UNCONFIRMED result
+is surfaced for verification in Ads Manager rather than reconciled on a next run. The
+suppression is scoped to creates, not to POST as a method — the status-update POSTs
+assert a desired state, so repeating them changes nothing and they keep the retry.
 Redirect following is force-disabled (a shared `noFollow` `CheckRedirect` policy).
 For a `WithHTTPClient`-supplied client, `NewClient` builds a FRESH `*http.Client`
 carrying the caller's reusable exported fields (`Transport`, `Jar`, `Timeout`) with
@@ -100,6 +114,87 @@ classifies a mutating 3xx (gated on the method) and any 5xx/transport failure as
 UNCONFIRMED, so a create that may have committed is not blind-retried into a
 duplicate. The status is preserved even when the response body is unreadable or
 oversized, so an ambiguous outcome is never downgraded to a definite failure.
+
+## Campaign and ad-set idempotency by name
+
+Unlike Google Ads, Microsoft, and LinkedIn — which reject campaign name duplicates
+and let a retry discover the existing id via a name query — Meta's Graph API does
+NOT enforce campaign-name uniqueness and exposes NO create-idempotency key. A
+blind retry would silently create a second paid campaign with the identical name.
+To close this window, `CreateCampaign` can run a "poor-man's idempotency"
+reconciliation: before POSTing to create a campaign or ad set,
+`findCampaignByName` / `findAdSetByName` (using Graph API
+`filtering=[{"field":"name","operator":"EQUAL","value":name}]` lookups) check
+whether the name already exists. If found, the existing id is reused and the
+resource is not re-created.
+
+The lookup is OPT-IN, gated on `CampaignInput.ReconcileByName`, which is false at
+every call site today. An unconditional lookup cannot help the case it exists for
+and can only harm the cases it does reach. It cannot help because the orchestrator
+never re-dispatches a retained partial — it answers "reconciliation required"
+(`internal/service/orchestrator.go`) — so no retry arrives here to be reconciled.
+It harms because the campaign name is not brief-unique (below), so a different
+brief sharing the four name segments would be silently adopted; and because DELETE
+frees the (brief, platform) slot LOCALLY without touching the ad platform
+(`docs/api-catalog.md`), so the documented delete → re-dispatch flow — the supported
+way to correct a campaign created with the wrong budget — would find the old
+campaign by name (budget is not a name segment), reuse it and its ad set, and report
+success while re-running the old budget. When LFXV2-2665's reconcile path lands it
+is the caller, which knows it is resuming a specific dispatch generation, that sets
+the flag; the client cannot infer it.
+
+When the lookup does run and FAILS, for any reason, an UNCONFIRMED partial result is
+returned (the resource MAY exist, verify before retrying). The line is not
+transport-vs-4xx and it is not pre-send-vs-sent: a 2xx with no `data` field, a
+`paging.next` with no cursor, exceeding the page cap with pagination still pending, a
+single match whose id is empty or non-numeric, context cancellation mid-enumeration, a
+definite 4xx and a pre-send dial error all fail closed the same way. The lookup exists to
+establish that a NAME IS ABSENT so a prior ambiguous attempt can be adopted instead of
+duplicated, and a request that never left the process establishes absence no better than a
+timeout does. (`createOutcomeAmbiguous` asks a different question — *could this request
+have created something* — which is the right question for a POST and the wrong one for a
+GET, where it collapses to "was the transport ambiguous".)
+
+The one clean error is a definite CONFLICT, marked with `errLookupConflict`: the lookup
+succeeded, enumerated the name and read a match that is not `PAUSED`, or whose objective
+differs from the requested one. Absence is not unconfirmed there — presence is confirmed,
+with a stated reason. Nothing was created, nothing can be adopted, and a retry re-reads the
+same stable conflict rather than POSTing a duplicate, so no partial is retained and no one
+is sent to Ads Manager to verify what the error already says. The ad-set lookup splits the
+same two ways.
+
+Both names are deterministic, but they are composed differently and carry different
+uniqueness guarantees. The CAMPAIGN name is the attribution name (`Events | event |
+region | objective | Intent | Social | project | MoFU`) — deterministic for a given
+brief, but NOT brief-unique: two briefs sharing event name, region, objective and
+project produce the same name. The AD-SET name is only `"<EventName> - <objective
+label>"`; it is disambiguated by the campaign it is queried under, not by the name.
+Because a name match alone therefore cannot prove a campaign belongs to this brief,
+`findCampaignByName` fails CLOSED on anything it cannot pin down: more than one match,
+a non-numeric id, a status other than `PAUSED`, or an objective other than the
+requested one all abort rather than reuse. Only a single PAUSED campaign with a
+matching objective is reused. The ad-set lookup runs only when the campaign was in
+fact reused — a campaign created moments ago in the same call cannot already have a
+child ad set, so the extra GET would add a failure point with nothing to find.
+
+Both ids the create path produces are gated with `numericIDRE` before they are used
+or published. The lookups already gate the ids they return, and every consumer of a
+STORED id gates it again, which leaves a FRESHLY CREATED id as the only one that
+would otherwise reach `CampaignResult` — and from there durable storage and
+`"/{id}/..."` paths on later calls — unvalidated. A 2xx carrying `"123?fields=x"` or
+a padded `"123 "` would be persisted now and rejected much later, at a call site with
+no idea a campaign was created. Both gates classify the outcome as a malformed
+SUCCESS rather than a failure: the resource almost certainly exists (Meta answered
+2xx), it simply is not addressable by id, so a name-carrying partial is returned and
+the dispatcher keeps the claim instead of freeing it for a duplicating retry.
+
+This builds the client-layer half of LFXV2-2665 for campaign- and ad-set-level
+resources. Reaching it on a production retry needs the other half: the orchestrator
+re-invoking the dispatcher on a RETAINED claim (today `ClaimCampaignDispatch` hits
+`ON CONFLICT DO NOTHING` and the orchestrator returns "reconciliation required"
+without calling the dispatcher) AND that caller setting `ReconcileByName`. Until
+both land the lookup is exercised only by tests, which is the intended state — the
+capability is in place and deliberately unreached rather than on by default.
 
 ## Campaign status toggle
 
