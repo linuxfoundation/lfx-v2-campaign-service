@@ -89,6 +89,12 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	if err := json.Unmarshal(resp.Data, &rows); err != nil {
 		return nil, &transportError{Method: http.MethodPost, Path: "reports", Err: fmt.Errorf("decode campaign metrics response: %w", err)}
 	}
+	// Reject a nil slice (from JSON null) as a malformed response — only an explicit empty
+	// array means genuine zero activity; a null data field is either a schema error or a
+	// malformed upstream response and should not silently become zero metrics.
+	if rows == nil {
+		return nil, &transportError{Method: http.MethodPost, Path: "reports", Err: fmt.Errorf("decode campaign metrics response: null data field")}
+	}
 	if len(rows) == 0 {
 		// No rows for the window is treated as real zero-activity, not an error — mirrors
 		// every sibling platform's "campaign exists but had no activity" handling.

@@ -183,6 +183,20 @@ func TestGetCampaignMetrics_MalformedResponseIsDecodeError(t *testing.T) {
 	}
 }
 
+func TestGetCampaignMetrics_NullDataFieldIsDecodeError(t *testing.T) {
+	client := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// A null data field should not be treated as zero activity; it is a malformed
+		// response, not a valid "no metrics" response. Only an explicit empty array means
+		// genuine zero activity.
+		_, _ = w.Write([]byte(`{"data":null}`))
+	})
+
+	if _, err := client.GetCampaignMetrics(context.Background(), "camp_123", model.MetricsWindowToday); err == nil {
+		t.Fatal("expected a decode error for a null data field")
+	}
+}
+
 func TestGetCampaignMetrics_InvalidSpendIsDecodeError(t *testing.T) {
 	client := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
