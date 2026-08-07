@@ -114,10 +114,28 @@ lookups) check whether the name already exists. If found, the existing id is reu
 and the resource is not re-created. If the lookup itself fails ambiguously
 (transport/5xx), an UNCONFIRMED partial result is returned (the resource MAY exist,
 verify before retrying); a pre-send failure (dial error, definite 4xx) on the lookup
-is a clean error. Campaign names and ad-set names are both fully deterministic
-(composed from event name, region, objective, project), so a retry reaches the
-exact same names and reconciles correctly rather than creating duplicates. This
-closes the gap from LFXV2-2665 for campaign- and ad-set-level resources.
+is a clean error.
+
+Both names are deterministic, but they are composed differently and carry different
+uniqueness guarantees. The CAMPAIGN name is the attribution name (`Events | event |
+region | objective | Intent | Social | project | MoFU`) — deterministic for a given
+brief, but NOT brief-unique: two briefs sharing event name, region, objective and
+project produce the same name. The AD-SET name is only `"<EventName> - <objective
+label>"`; it is disambiguated by the campaign it is queried under, not by the name.
+Because a name match alone therefore cannot prove a campaign belongs to this brief,
+`findCampaignByName` fails CLOSED on anything it cannot pin down: more than one match,
+a non-numeric id, a status other than `PAUSED`, or an objective other than the
+requested one all abort rather than reuse. Only a single PAUSED campaign with a
+matching objective is reused. The ad-set lookup runs only when the campaign was in
+fact reused — a campaign created moments ago in the same call cannot already have a
+child ad set, so the extra GET would add a failure point with nothing to find.
+
+This closes the gap from LFXV2-2665 for campaign- and ad-set-level resources at the
+client layer. Reaching it on a production retry additionally requires the orchestrator
+to re-invoke the dispatcher on a RETAINED claim; today `ClaimCampaignDispatch` hits
+`ON CONFLICT DO NOTHING` and the orchestrator returns "reconciliation required"
+without calling the dispatcher, so the reconciliation path is currently exercised by
+in-call reuse and tests. Wiring the retained-claim path is tracked separately.
 
 ## Campaign status toggle
 

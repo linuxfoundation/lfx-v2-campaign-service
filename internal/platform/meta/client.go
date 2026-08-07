@@ -2570,24 +2570,35 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		adSetBody["daily_budget"] = budgetMinor
 	}
 
-	// Reconcile the ad set by name too, same rationale as the campaign lookup
-	// above: adSetName is deterministic (in.EventName + objective), and a retry
-	// that already created the campaign (existingCampaignID != "" above, or a
-	// fresh create just above) must not blindly re-POST an ad set that a prior
-	// attempt already made under the same campaign.
-	existingAdSetID, adSetLookupErr := c.findAdSetByName(ctx, campaignID, adSetName)
-	if adSetLookupErr != nil {
-		if ctx.Err() != nil {
-			return partialResult(), fmt.Errorf("meta campaign aborted during ad set name lookup (campaign %s created, PAUSED; caller context done): %w", campaignID, adSetLookupErr)
+	// Reconcile the ad set by name too, same rationale as the campaign lookup above:
+	// adSetName is deterministic ("<EventName> - <objective label>", disambiguated by
+	// the campaign scope rather than by the name itself), so a prior attempt that got
+	// as far as the ad set left one under this campaign that must not be re-POSTed.
+	//
+	// Gated on existingCampaignID: this lookup is only meaningful when THIS call reused
+	// a campaign a PRIOR attempt created. If the campaign was created a few lines above,
+	// its id was allocated by Meta just now — no earlier attempt could have parented an
+	// ad set to an id that did not exist yet, so the GET can only ever return empty. It
+	// would still be a live network call that can fail, and a transient failure there
+	// would abandon a freshly created campaign as an orphan for no reconciliation
+	// benefit at all. Skip it.
+	var existingAdSetID string
+	if existingCampaignID != "" {
+		var adSetLookupErr error
+		existingAdSetID, adSetLookupErr = c.findAdSetByName(ctx, campaignID, adSetName)
+		if adSetLookupErr != nil {
+			if ctx.Err() != nil {
+				return partialResult(), fmt.Errorf("meta campaign aborted during ad set name lookup (campaign %s created, PAUSED; caller context done): %w", campaignID, adSetLookupErr)
+			}
+			// The campaign already exists either way, so the partial result is the
+			// same — but word it UNCONFIRMED only when the lookup itself was
+			// ambiguous (Meta may have received it); a pre-send/4xx lookup failure
+			// means the ad set was definitely not looked up, not "may exist".
+			if !createOutcomeAmbiguous(adSetLookupErr) {
+				return partialResult(), fmt.Errorf("meta ad set lookup failed (campaign %s created, PAUSED): %w", campaignID, adSetLookupErr)
+			}
+			return partialResult(), fmt.Errorf("meta ad set lookup UNCONFIRMED (campaign %s created, PAUSED; cannot confirm ad set %q is absent; verify in Meta Ads Manager before retrying): %w", campaignID, adSetName, adSetLookupErr)
 		}
-		// The campaign already exists either way, so the partial result is the
-		// same — but word it UNCONFIRMED only when the lookup itself was
-		// ambiguous (Meta may have received it); a pre-send/4xx lookup failure
-		// means the ad set was definitely not looked up, not "may exist".
-		if !createOutcomeAmbiguous(adSetLookupErr) {
-			return partialResult(), fmt.Errorf("meta ad set lookup failed (campaign %s created, PAUSED): %w", campaignID, adSetLookupErr)
-		}
-		return partialResult(), fmt.Errorf("meta ad set lookup UNCONFIRMED (campaign %s created, PAUSED; cannot confirm ad set %q is absent; verify in Meta Ads Manager before retrying): %w", campaignID, adSetName, adSetLookupErr)
 	}
 	if existingAdSetID != "" {
 		adSetID = existingAdSetID

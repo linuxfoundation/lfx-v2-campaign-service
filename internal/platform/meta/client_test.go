@@ -4677,6 +4677,145 @@ func TestCreateCampaignReusesExistingByName(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignReusesExistingAdSetByName covers the other half of the reuse path:
+// the campaign was reconciled by name AND an ad set already exists under it (a prior
+// attempt got that far). The existing ad set id must be adopted and the ad set POST must
+// not be issued at all.
+func TestCreateCampaignReusesExistingAdSetByName(t *testing.T) {
+	var mu sync.Mutex
+	campaignPostCount := 0
+	adSetPostCount := 0
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"id":"x"}`
+		switch {
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") &&
+			strings.HasSuffix(req.URL.Path, "/campaigns"):
+			body = `{"data":[{"id":"120200000000123","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}]}`
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") &&
+			strings.HasSuffix(req.URL.Path, "/adsets"):
+			// A prior attempt already created the ad set under this campaign.
+			body = `{"data":[{"id":"120300000000456","status":"PAUSED"}],"paging":{}}`
+		case req.Method == http.MethodGet:
+			body = `{"name":"x"}`
+		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/campaigns"):
+			mu.Lock()
+			campaignPostCount++
+			mu.Unlock()
+			body = `{"id":"should_not_appear"}`
+		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/adsets"):
+			mu.Lock()
+			adSetPostCount++
+			mu.Unlock()
+			body = `{"id":"should_not_appear_either"}`
+		case strings.HasSuffix(req.URL.Path, "/adcreatives"):
+			body = `{"id":"creative_1"}`
+		case strings.HasSuffix(req.URL.Path, "/ads"):
+			body = `{"id":"ad_1"}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		Project:         "tlf",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		Budget:          10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign error: %v", err)
+	}
+	if res.AdSetID != "120300000000456" {
+		t.Errorf("ad set id = %q, want 120300000000456 (the pre-existing ad set)", res.AdSetID)
+	}
+	mu.Lock()
+	campaignPosts, adSetPosts := campaignPostCount, adSetPostCount
+	mu.Unlock()
+	if campaignPosts != 0 {
+		t.Errorf("campaign POST called %d times, want 0", campaignPosts)
+	}
+	if adSetPosts != 0 {
+		t.Errorf("ad set POST called %d times, want 0 (an ad set already exists by name)", adSetPosts)
+	}
+	if !anyStepContains(res.Steps, "Ad set already exists by name") {
+		t.Errorf("expected 'Ad set already exists by name' step, got %v", res.Steps)
+	}
+}
+
+// TestCreateCampaignSkipsAdSetLookupForFreshCampaign pins the gate on the ad-set
+// reconciliation: when the campaign is created by THIS call, its id was allocated by Meta
+// moments ago, so no prior attempt can have parented an ad set to it. Issuing the lookup
+// anyway would be a network call that can only return empty — but can still fail and
+// strand the campaign as an orphan. Assert no adsets filtering GET is made.
+func TestCreateCampaignSkipsAdSetLookupForFreshCampaign(t *testing.T) {
+	var mu sync.Mutex
+	adSetLookups := 0
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"id":"x"}`
+		switch {
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") &&
+			strings.HasSuffix(req.URL.Path, "/campaigns"):
+			// No existing campaign by that name: this call creates one.
+			body = `{"data":[],"paging":{}}`
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") &&
+			strings.HasSuffix(req.URL.Path, "/adsets"):
+			mu.Lock()
+			adSetLookups++
+			mu.Unlock()
+			body = `{"data":[],"paging":{}}`
+		case req.Method == http.MethodGet:
+			body = `{"name":"x"}`
+		case strings.HasSuffix(req.URL.Path, "/campaigns"):
+			body = `{"id":"120200000000999"}`
+		case strings.HasSuffix(req.URL.Path, "/adsets"):
+			body = `{"id":"adset_1"}`
+		case strings.HasSuffix(req.URL.Path, "/adcreatives"):
+			body = `{"id":"creative_1"}`
+		case strings.HasSuffix(req.URL.Path, "/ads"):
+			body = `{"id":"ad_1"}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		Project:         "tlf",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		Budget:          10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign error: %v", err)
+	}
+	if res.AdSetID != "adset_1" {
+		t.Errorf("ad set id = %q, want adset_1", res.AdSetID)
+	}
+	mu.Lock()
+	lookups := adSetLookups
+	mu.Unlock()
+	if lookups != 0 {
+		t.Errorf("ad set by-name lookup issued %d times, want 0 for a campaign created by this call", lookups)
+	}
+}
+
 // TestFindCampaignByName_PaginationEmptyFirstPage verifies that an empty first
 // page with a next link does NOT trick the lookup into reporting "no match" — it
 // follows pagination and finds a match on a later page. This guards against
