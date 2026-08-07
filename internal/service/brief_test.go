@@ -4,15 +4,18 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"unicode"
 
 	briefsclient "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/client"
 	briefsserver "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/server"
@@ -2339,4 +2342,147 @@ func TestBriefService_DeleteCampaign_MapsRepoErrors(t *testing.T) {
 			t.Fatalf("err = %#v, want PreconditionFailedError (412)", err)
 		}
 	})
+}
+
+// TestSafeErrSummary covers the scrubbing applied to an ad-platform error before it
+// reaches the metrics failure log. The vector is real: Meta's *APIError.Error()
+// renders the Graph Message field verbatim, and the non-Graph fallback fills that
+// field from the raw response body, so newlines in an upstream body could otherwise
+// forge additional lines in a line-oriented log sink.
+func TestSafeErrSummary(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "nil error yields empty string", err: nil, want: ""},
+		{
+			name: "printable text passes through unchanged",
+			err:  errors.New("meta api error (#100): Invalid parameter"),
+			want: "meta api error (#100): Invalid parameter",
+		},
+		{
+			name: "newlines cannot forge a second log line",
+			err:  errors.New("boom\nlevel=INFO msg=\"campaign deleted\""),
+			want: "boom�level=INFO msg=\"campaign deleted\"",
+		},
+		{
+			name: "carriage returns and tabs are replaced, not dropped",
+			err:  errors.New("a\r\tb"),
+			want: "a��b",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := safeErrSummary(tt.err); got != tt.want {
+				t.Errorf("safeErrSummary() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+
+	t.Run("an unbounded upstream body is capped", func(t *testing.T) {
+		got := safeErrSummary(errors.New(strings.Repeat("x", 5000)))
+		// errSummaryMaxRunes content runes plus the single-rune ellipsis marker.
+		if n := len([]rune(got)); n != errSummaryMaxRunes+1 {
+			t.Fatalf("summary is %d runes, want %d", n, errSummaryMaxRunes+1)
+		}
+		if !strings.HasSuffix(got, "…") {
+			t.Errorf("truncated summary %q does not end with the ellipsis marker", got)
+		}
+	})
+
+	t.Run("a multi-byte body is capped by runes, not bytes", func(t *testing.T) {
+		// Guards against a []byte slice, which would both mis-count and split a rune.
+		got := safeErrSummary(errors.New(strings.Repeat("é", 5000)))
+		if n := len([]rune(got)); n != errSummaryMaxRunes+1 {
+			t.Fatalf("summary is %d runes, want %d", n, errSummaryMaxRunes+1)
+		}
+		if strings.ContainsRune(strings.TrimSuffix(got, "…"), unicode.ReplacementChar) {
+			t.Errorf("multi-byte input was corrupted into replacement characters: %q", got)
+		}
+	})
+}
+
+// TestGetCampaignMetrics_PlatformErrorIsScrubbedBeforeLogging binds safeErrSummary to
+// the call site. TestSafeErrSummary alone would still pass if the handler logged merr
+// directly, so this one drives a real 503 through the handler and asserts on what
+// actually reaches the log record.
+//
+// It deliberately does NOT assert "a raw newline never reaches the sink": slog's
+// TextHandler and JSONHandler both quote attribute values, so that particular vector is
+// already closed by the handler and such an assertion would pass with or without the
+// fix. What the handler does NOT do is bound the value, and it does not normalize
+// control characters for a handler that writes values unquoted. Those two are
+// safeErrSummary's guarantees, so those are what this test pins.
+// TestGetCampaignMetrics_WindowUnsupportedErrorIsScrubbedBeforeLogging covers the OTHER
+// failure-path log in this handler. The 2026-08-06 fragment claimed both call sites went
+// through safeErrSummary; only the default branch did. The window-unsupported branch is
+// reachable with the SAME kind of payload — its wrapped detail comes from the adapter,
+// which for Meta can carry the raw non-Graph response body — so an unbounded, control-
+// character-bearing string reached the sink through it. One test per call site, because a
+// test on either one alone passes while the other logs verbatim.
+func TestGetCampaignMetrics_WindowUnsupportedErrorIsScrubbedBeforeLogging(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderMetaAds,
+		PlatformCampaignID: "meta-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	raw := "window rejected upstream\nlevel=ERROR msg=forged " + strings.Repeat("x", 5000)
+	disp := &metricsOnlyDispatcher{err: fmt.Errorf("%w: %s", ErrMetricsWindowUnsupported, raw)}
+	s := newMetricsService(camp, disp)
+	if _, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	}); err == nil {
+		t.Fatal("expected the unsupported window to surface as an error")
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "window rejected upstream") {
+		t.Fatalf("scrubbing dropped the diagnostic text entirely:\n%s", logged)
+	}
+	if len(logged) > 1000 {
+		t.Errorf("the unbounded upstream body reached the log sink: record is %d bytes", len(logged))
+	}
+	if !strings.Contains(logged, "\\ufffd") && !strings.ContainsRune(logged, unicode.ReplacementChar) {
+		t.Errorf("the control character was not normalized before logging:\n%s", logged)
+	}
+}
+
+func TestGetCampaignMetrics_PlatformErrorIsScrubbedBeforeLogging(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderMetaAds,
+		PlatformCampaignID: "meta-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	// Models Meta's non-Graph fallback, which puts the RAW response body into Message:
+	// a control character followed by a body far longer than any useful diagnostic.
+	raw := "meta api error: boom\nlevel=ERROR msg=forged " + strings.Repeat("x", 5000)
+	disp := &metricsOnlyDispatcher{err: errors.New(raw)}
+	s := newMetricsService(camp, disp)
+	if _, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	}); err == nil {
+		t.Fatal("expected the platform failure to surface as an error")
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "boom") {
+		t.Fatalf("scrubbing dropped the diagnostic text entirely:\n%s", logged)
+	}
+	// The unbounded body must not reach the sink. 5000 x-runes would blow past this;
+	// the whole record with a capped summary stays well under it.
+	if len(logged) > 1000 {
+		t.Errorf("the unbounded upstream body reached the log sink: record is %d bytes", len(logged))
+	}
+	if !strings.Contains(logged, "\\ufffd") && !strings.ContainsRune(logged, unicode.ReplacementChar) {
+		t.Errorf("the control character was not normalized before logging:\n%s", logged)
+	}
 }
