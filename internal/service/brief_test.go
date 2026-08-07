@@ -37,10 +37,6 @@ type fakeBriefRepo struct {
 	// indexPayloads records EVERY co-committed message, so a test can assert that a write was
 	// indexed at all rather than only inspecting the most recent one.
 	indexPayloads [][]byte
-	// claims counts ClaimCampaignVersion calls. The claim deliberately does NOT bump the
-	// version (production keeps the increment inside ReplaceCampaign's outbox transaction),
-	// so "was the claim taken?" cannot be inferred from the version — it must be observed.
-	claims int
 }
 
 func newFakeBriefRepo() *fakeBriefRepo {
