@@ -158,17 +158,31 @@ func (s *ConnectionService) ListGoogleAdsAccounts(ctx context.Context, p *conn.L
 			// to retry something that can never succeed until a connection exists.
 			return nil, &conn.NotFoundError{Code: "404", Message: "no google ads connection configured for this project"}
 		case errors.Is(aerr, domain.ErrCredentialDecryptionFailed):
-			// A well-formed credential blob that FAILED authenticated decryption. This is
-			// not the caller's problem and there is nothing for them to edit: it means a
-			// wrong or rotated application key, or tampering, and that key is
-			// deployment-wide — so this same failure is hitting every project's connection
-			// at this instant. 400 would blame each of their rows in turn; 503 would
-			// promise that waiting helps. Neither is true, and both hide an outage.
+			// A blob long enough to BE our own output that nonetheless failed authenticated
+			// decryption. Two causes reach here and they have opposite blast radii:
 			//
-			// Logged at ERROR because this is the arm that should page someone. The cause
-			// is safe to log here: it is produced by the encryptor from ciphertext and key
-			// material only, never from plaintext.
-			slog.ErrorContext(ctx, "stored credentials failed authenticated decryption; check the application encryption key",
+			//   - a wrong or rotated APPLICATION KEY, which is deployment-wide, so every
+			//     project's connection is failing at this instant; or
+			//   - THIS ONE ROW's ciphertext being corrupted or tampered with, in which
+			//     case every other connection is fine.
+			//
+			// GCM cannot tell them apart — an authentication failure is an authentication
+			// failure — so this arm must not assert either one. An earlier revision claimed
+			// the deployment-wide reading as a certainty, which misdirects incident response
+			// down a key-rotation path when the real fault is a single damaged row.
+			// (Provably truncated blobs no longer arrive here at all: they are rejected as
+			// malformed by the length guard in internal/infrastructure/crypto, which is a
+			// 400 about one row.)
+			//
+			// Either way it is not the caller's problem and there is nothing for them to
+			// edit: 400 would blame their row for what may be an outage; 503 would promise
+			// that waiting helps. Neither is true.
+			//
+			// Logged at ERROR because this is the arm that should page someone — the first
+			// question for whoever answers is whether OTHER projects are failing too, which
+			// is what separates the two causes. The cause is safe to log: it is produced by
+			// the encryptor from ciphertext and key material only, never from plaintext.
+			slog.ErrorContext(ctx, "stored credentials failed authenticated decryption; check the application encryption key, and whether this is one row or every connection",
 				"project_id", p.ProjectID, "provider", string(model.ProviderGoogleAds), "error", aerr)
 			return nil, &conn.InternalServerError{Code: "500", Message: "account discovery could not be completed"}
 		case errors.Is(aerr, domain.ErrConnectionNotUsable):
