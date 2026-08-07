@@ -566,7 +566,7 @@ func eventFamily(eventName, detailYear string) (family, year string) {
 	if year == "" {
 		year = strings.TrimSpace(detailYear)
 	}
-	if !isFourDigitYear(year) {
+	if !isSupportedYear(year) {
 		year = ""
 	}
 	if year == "" {
@@ -583,7 +583,7 @@ func eventFamily(eventName, detailYear string) (family, year string) {
 func yearInName(s string) string {
 	for i := 0; i+4 <= len(s); i++ {
 		c := s[i : i+4]
-		if !isFourDigitYear(c) || (c[0] != '1' && c[0] != '2') {
+		if !isSupportedYear(c) {
 			continue
 		}
 		// Reject a longer digit run (e.g. an id) that merely contains four digits.
@@ -594,8 +594,15 @@ func yearInName(s string) string {
 	return ""
 }
 
-func isFourDigitYear(s string) bool {
-	if len(s) != 4 {
+// isSupportedYear reports whether s is a 4-digit year in the 19xx/20xx range.
+//
+// The range is not decoration. yearInName can only ever EXTRACT a 19xx/20xx year from an
+// event name, so accepting a wider range for the year those extractions are COMPARED
+// against silently inverts the filter: a currentYear of "9999" leaves every real edition
+// strictly below it, and "past editions only" starts returning future ones. The two must
+// use one predicate, which is why the range lives here rather than at each comparison.
+func isSupportedYear(s string) bool {
+	if len(s) != 4 || (s[0] != '1' && s[0] != '2') {
 		return false
 	}
 	for _, r := range s {

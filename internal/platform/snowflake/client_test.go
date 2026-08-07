@@ -353,6 +353,36 @@ func TestResolvePastEventNames_RequiresValidCurrentYear(t *testing.T) {
 	}
 }
 
+// TestResolvePastEventNames_RejectsOutOfRangeCurrentYear pins the half of the guard that
+// four-digit-ness alone does not cover, and it is the dangerous half.
+//
+// yearInName can only ever EXTRACT a 19xx/20xx year, so a currentYear outside that range
+// leaves EVERY extracted year strictly below it and the `extractedYear >= currentYear`
+// exclusion never fires. The filter does not fail — it inverts. "Past editions only" starts
+// returning the current and future editions, and the audience built from them is silently
+// wrong rather than absent, which is the failure mode nobody notices.
+//
+// Note what this test does NOT do: it does not call ResolvePastEventNames with "9999" and
+// assert the rows come back empty. Rejecting the input is the fix; a row-count assertion
+// would still pass if the range check were deleted and some unrelated filter happened to
+// empty the set.
+func TestResolvePastEventNames_RejectsOutOfRangeCurrentYear(t *testing.T) {
+	c := newFakeClient(t, &fakeDriver{cols: []string{"EVENT_NAME", "EVENT_ID"}})
+	for _, bad := range []string{"9999", "0000", "3000", "0202"} {
+		if _, err := c.ResolvePastEventNames(context.Background(), "KubeCon", "", bad); err == nil {
+			t.Errorf("currentYear %q is four digits but outside the 19xx/20xx range yearInName "+
+				"can extract, so every real edition compares as past and the filter inverts; "+
+				"it must be rejected", bad)
+		}
+	}
+	// The accepted range still works, so the guard is a range check and not a blanket reject.
+	for _, ok := range []string{"1999", "2026", "2999", "1000"} {
+		if _, err := c.ResolvePastEventNames(context.Background(), "KubeCon", "", ok); err != nil {
+			t.Errorf("currentYear %q must be accepted, got %v", ok, err)
+		}
+	}
+}
+
 func TestResolvePastEventNames_RejectsEmptyTerm(t *testing.T) {
 	c := newFakeClient(t, &fakeDriver{})
 	if _, err := c.ResolvePastEventNames(context.Background(), "  ", "x", "2026"); err == nil {

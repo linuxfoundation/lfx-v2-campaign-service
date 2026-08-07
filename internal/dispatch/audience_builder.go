@@ -89,7 +89,7 @@ func (b *AudienceBuilder) ResolvePastEditions(ctx context.Context, eventTerm, lo
 	// brief's OWN edition through as a "past" one. Without a real year, return no editions —
 	// the caller degrades to a country-only audience and records the gap.
 	year := strings.TrimSpace(currentYear)
-	if !isFourDigitYear(year) {
+	if !isSupportedYear(year) {
 		year = yearIn(eventTerm)
 	}
 	if year == "" {
@@ -220,7 +220,7 @@ func (b *AudienceBuilder) client(ctx context.Context, projectID string) (*hubspo
 func yearIn(s string) string {
 	for i := 0; i+4 <= len(s); i++ {
 		c := s[i : i+4]
-		if isFourDigitYear(c) && (c[0] == '1' || c[0] == '2') {
+		if isSupportedYear(c) {
 			// Reject a longer digit run (e.g. a 6-digit id) that merely contains 4 digits.
 			if (i == 0 || s[i-1] < '0' || s[i-1] > '9') && (i+4 == len(s) || s[i+4] < '0' || s[i+4] > '9') {
 				return c
@@ -230,10 +230,18 @@ func yearIn(s string) string {
 	return ""
 }
 
-// isFourDigitYear mirrors the warehouse client's own guard so the fallback above produces a
-// value it will accept.
-func isFourDigitYear(s string) bool {
-	if len(s) != 4 {
+// isSupportedYear reports whether s is a 4-digit year in the 19xx/20xx range.
+//
+// The range is not decoration. yearIn can only ever EXTRACT a 19xx/20xx year from an
+// event name, so accepting a wider range for the year those extractions are COMPARED
+// against silently inverts the filter: a currentYear of "9999" leaves every real edition
+// strictly below it, and "past editions only" starts returning future ones. The two must
+// use one predicate, which is why the range lives here rather than at each comparison.
+//
+// It mirrors the warehouse client's own guard so the fallback above produces a value it
+// will accept.
+func isSupportedYear(s string) bool {
+	if len(s) != 4 || (s[0] != '1' && s[0] != '2') {
 		return false
 	}
 	for _, r := range s {
