@@ -365,8 +365,18 @@ var KeywordActionEnum = func() {
 // criterion ID alone cannot address a criterion, so ad_group_id is required on every
 // action, not just on the list response.
 var KeywordActionPayload = Type("keyword-action-payload", func() {
-  Attribute("ad_group_id", String, "Google Ads ad group ID that owns this criterion (numeric, stringified)")
-  Attribute("criterion_id", String, "Google Ads criterion ID (unique within the ad group)")
+  // Pattern on both ids, for the same reason MinLength is on `actions`: the constraint
+  // belongs in the contract so the generated client and the OpenAPI document carry it. Both
+  // values are interpolated into GAQL text and into the composite resource name that names
+  // the row Google is told to pause or remove, and both are caller-supplied. This is the
+  // OUTER of two guards — the platform client validates independently (see the GAQL section),
+  // because the client has callers that never pass through generated validation.
+  Attribute("ad_group_id", String, "Google Ads ad group ID that owns this criterion (numeric, stringified)", func() {
+    Pattern(`^[0-9]+$`)
+  })
+  Attribute("criterion_id", String, "Google Ads criterion ID (unique within the ad group)", func() {
+    Pattern(`^[0-9]+$`)
+  })
   Attribute("action", String, "Action to perform", KeywordActionEnum)
   Required("ad_group_id", "criterion_id", "action")
 })
@@ -1119,6 +1129,21 @@ computed date pair: `days` arrives as a closed `Enum(7, 14, 30)` and maps to exa
 `LAST_7_DAYS` / `LAST_14_DAYS` / `LAST_30_DAYS` through a total switch whose default is an error,
 so nothing outside that three-element set can ever reach the query text.
 
+**`adGroupID` and `criterionID` get the same digits-only validation, and PR 2 must apply it
+explicitly rather than inherit it.** Unlike `campaignID` — which the service reads off the stored
+campaign row — both of these arrive from the request body (`KeywordActionPayload`), so they are
+caller-controlled text with only `String` in the design. They reach two interpolation sites:
+`AuthorizeKeywordCriteria`'s `WHERE ad_group_criterion.criterion_id IN (...)` query, and
+`keywordCriterionResourceName`'s `fmt.Sprintf("adGroupCriteria/%s~%s", …)`. The resource-name site
+is not a lesser risk for being a mutate rather than a query: it is what names the row Google is
+told to PAUSE or REMOVE.
+
+Validate at the boundary of the platform client (one helper, applied to every id before it is
+formatted into either string), reject with an error rather than sanitizing, and pin it with a test
+that feeds a metacharacter-bearing id and asserts no request was issued. Putting the constraint
+only in the design's `Pattern` would leave the client's own callers — including future internal
+ones that never pass through Goa validation — unguarded.
+
 Using the literals rather than interpolated dates is a correctness decision, not a stylistic one —
 see the note on `dateRangeForDays` below: GAQL resolves `segments.date` in the **customer
 account's** timezone, and dates computed from `time.Now().UTC()` disagree with it for several
@@ -1422,6 +1447,33 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
     confirmedThrough, unsentFrom := 0, len(pending)
     ambiguous := googleads.IsOutcomeUnconfirmed(merr)
     if errors.As(merr, &pe) {
+      // Validate the reported boundaries against `pending` BEFORE anything consumes them.
+      // These three indices are a CLIENT CONTRACT, not data from Google, so a violation is
+      // our own bug — and every way it manifests is silent. `len(pe.Results) > len(pending)`
+      // panics on `pending[i]` below; `unsentFrom > len(pending)` makes the first range loop
+      // read past the slice, which for a `for i := a; i < b` loop is also a panic; and
+      // `confirmedThrough > unsentFrom` makes that loop no-op, so the in-flight chunk is
+      // never marked UNCONFIRMED and operations that may have committed upstream are
+      // reported with their zero-value state instead.
+      //
+      // The whole batch becomes unconfirmed on a violation. That is the only honest answer:
+      // a client that cannot say how far it got has told us nothing we can attribute
+      // per-operation, and the failure that produced the bad indices is exactly the kind
+      // that leaves the upstream state unknown. Downgrading to "failed" would be a claim
+      // the client just proved it cannot support.
+      if pe.ConfirmedThrough < 0 || pe.UnsentFrom < pe.ConfirmedThrough ||
+        pe.UnsentFrom > len(pending) || len(pe.Results) > len(pending) {
+        slog.ErrorContext(ctx, "google ads keyword mutate reported an out-of-range partial boundary",
+          "campaign_id", campaign.ID, "pending", len(pending),
+          "confirmed_through", pe.ConfirmedThrough, "unsent_from", pe.UnsentFrom,
+          "results", len(pe.Results))
+        for i := range pending {
+          pending[i].State = model.KeywordActionUnconfirmed
+          pending[i].Message = "unconfirmed: the platform client could not report how far the " +
+            "batch got — check Google Ads before retrying this keyword"
+        }
+        break
+      }
       confirmedThrough, unsentFrom = pe.ConfirmedThrough, pe.UnsentFrom
       for i, r := range pe.Results {
         if r.OK {
@@ -1486,6 +1538,18 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
     }
   }
 
+  // **503 is reachable only from PRE-FLIGHT failures — credential resolution, the
+  // account-mismatch guard, and `AuthorizeKeywordCriteria` — all of which run before any
+  // mutate is sent. Once a mutate request has been issued, every outcome is itemized and this
+  // function returns a nil error, never a service-level one.** That is the invariant PR 2 has
+  // to keep true, and it is what reconciles this `return outcomes, nil` with the still-declared
+  // `503 (platform failure)` contract on the endpoint: the 503 arm is not dead code, it is fed
+  // by the steps above this one. Anyone comparing the two without this sentence has to re-derive
+  // it from the call graph, which is exactly what produced an open review thread on this line.
+  //
+  // The invariant is also the reason the boundary validation above marks the batch
+  // `unconfirmed` rather than returning an error: a mutate had been sent by then, so a
+  // service-level error would break it.
   return outcomes, nil
 }
 
@@ -1723,6 +1787,16 @@ client, not just the adapter)**, `internal/platform/googleads/keywords_test.go`,
 - `TestDispatcher_UpdateKeywords_GoogleAdsFailure`
 - `TestGaqlWindowForDays_IsTotalAndReadsNoClock` (the switch is exhaustive over {7,14,30} and
   the mapping is a pure function — a replacement that derives dates from `time.Now()` fails it)
+- `TestClient_KeywordCriterionIDs_NonNumericIsRejectedBeforeAnyRequest` — feed an `adGroupID`
+  and a `criterionID` carrying GAQL metacharacters, separately, to both
+  `AuthorizeKeywordCriteria` and `keywordCriterionResourceName`; the httptest server must
+  receive nothing. Asserting only on the returned error would pass against a client that
+  sanitizes and sends
+- `TestDispatcher_UpdateKeywords_OutOfRangePartialBoundaryIsWholeBatchUnconfirmed` — a fake
+  client returning a `PartialMutateError` with `UnsentFrom > len(pending)`, and a second case
+  with `ConfirmedThrough > UnsentFrom`. The first would panic without the guard and the second
+  would silently leave the in-flight chunk at its zero-value state, so the two cases fail in
+  different ways and one test cannot stand in for the other
 - `TestDispatcher_ListKeywords_AccountMismatchIsRejectedBeforeAnyRequest`
 - `TestDispatcher_UpdateKeywords_AccountMismatchIsRejectedBeforeAnyRequest`
 
