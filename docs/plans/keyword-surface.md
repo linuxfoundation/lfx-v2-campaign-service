@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT -->
 
 **Goal:** Expose keywords for a campaign and actions to manage them, replacing the UI's direct Google Ads API calls at:
 - `GET /api/campaigns/keywords` (list keywords with metrics)
-- `POST /api/campaigns/keywords/actions` (pause/enable/change-bid actions)
+- `POST /api/campaigns/keywords/actions` (Phase 1: `pause` / `remove`; Phase 2 adds `enable` / `change-bid`)
 
 The new campaign-service endpoints will follow the `MetricsReader` optional-capability pattern established by `get-campaign-metrics`, with keywords managed via an analogous `KeywordManager` interface.
 
@@ -178,6 +178,36 @@ choice, not a wait. Every statement below that treated #69 as pending has been c
 - **Timing:** No longer gated. Branch from `origin/main` and the machinery is there.
 
 **Implication:** Phase 1 and Phase 2 are now purely a scope decision — ship pause/remove first if you want the smaller review, or do both. Neither waits on another PR.
+
+### Phase 2 surface (not in PR 1)
+
+Everything `change-bid` needs is listed here in one place so the Phase 2 commit is mechanical,
+and so PR 1 carries none of it. The rule the rest of this plan follows: **a phase ships the
+enum widening and the code that serves it in the same commit, or ships neither.**
+
+An earlier draft put `BidMicros`, `ErrInvalidBidChange`, the orchestrator's bid-validation
+loop, and the handler's 400 arm into PR 1 as "groundwork". That is not groundwork, it is dead
+surface. The Phase 1 Goa enum is `Enum("pause", "remove")`, so the generated request validation
+rejects `change-bid` before any of it runs — there is no input a reviewer or a test can supply
+that reaches the validation loop or the error arm. A guard no test can reach is exactly the
+defect class this repo's review process flags (see the metrics-window guards on #70), and a
+sentinel nothing returns reads as a shipped capability when it is not one.
+
+The Phase 2 commit adds, together:
+
+| Where | Addition |
+|---|---|
+| `design/brief.go` | `Enum("pause", "remove", "enable", "change-bid")`; `Attribute("bid_micros", Int64, …)` — optional, so the generated field is `*int64` |
+| `internal/domain/errors.go` | `ErrInvalidBidChange = errors.New("bid value is outside the platform's supported range")` |
+| `internal/domain/model/keyword.go` | `BidMicros *int64` on `KeywordAction` — a pointer, so "omitted" is distinguishable from an explicit `0`, which is the case the validation must reject |
+| `internal/service/orchestrator.go` | the `(action == "change-bid") ⇒ bid_micros non-nil and positive` loop, wrapping `ErrInvalidBidChange` with `%w` so the handler's `errors.Is` matches (a bare `fmt.Errorf` falls through to the default arm and returns 503 for a plain 400) |
+| `internal/service/brief.go` | `BidMicros: act.BidMicros` in the payload→domain conversion, and the `errors.Is(aerr, ErrInvalidBidChange)` → 400 arm |
+| `internal/dispatch/googleads.go` | the `"enable"` and `"change-bid"` cases in the action switch |
+| tests | enable → `ENABLED`; change-bid with a valid bid, a missing bid, `0`, and a negative bid |
+
+`enable` is the same shape minus the bid: enum entry, one switch case, one test. It is grouped
+into Phase 2 rather than Phase 1 only because both are status-adjacent follow-ups and one
+design change is cheaper than two — not because it is blocked.
 
 ---
 
@@ -398,7 +428,13 @@ var CampaignKeyword = Type("campaign-keyword", func() {
 var CampaignKeywordList = Type("campaign-keyword-list", func() {
   Attribute("campaign_id", String, "Campaign UUID")
   Attribute("platform_campaign_id", String, "Google Ads campaign ID")
-  Attribute("window", String, "Reporting window (days), e.g. '30'")
+  // Int32 with the SAME closed enum as the request's `days`, echoed back so a client that
+  // relied on the default knows which window it got. A String here would widen a value the
+  // request has already constrained: the generated schema would permit any string, and the
+  // UI would have to parse it back to a number to compare against what it asked for.
+  Attribute("window_days", Int32, "Reporting window in days, echoing the request", func() {
+    Enum(7, 14, 30)
+  })
   Attribute("pulled_at", String, "ISO 8601 timestamp when metrics were pulled")
   Attribute("total_keywords", Int32, "Total keyword count")
   Attribute("keywords", ArrayOf(CampaignKeyword))
@@ -413,7 +449,7 @@ var CampaignKeywordList = Type("campaign-keyword-list", func() {
     // Totals members are always computed, so they are values, not pointers.
     Required("impressions", "clicks", "ctr", "spend_micros", "conversions")
   })
-  Required("campaign_id", "platform_campaign_id", "window", "pulled_at", "total_keywords", "keywords", "totals")
+  Required("campaign_id", "platform_campaign_id", "window_days", "pulled_at", "total_keywords", "keywords", "totals")
 })
 
 // Individual action result
@@ -487,11 +523,12 @@ exists to prevent.
 // capability wired (no dispatcher, or the dispatcher is not a KeywordManager).
 // Maps to 400, follows the MetricsReader/StatusToggler pattern.
 ErrKeywordManagerUnsupported = errors.New("keyword management is not supported for this platform")
-
-// ErrInvalidBidChange indicates the bid value supplied is outside the platform's limits.
-// Maps to 400.
-ErrInvalidBidChange = errors.New("bid value is outside the platform's supported range")
 ```
+
+`ErrInvalidBidChange` is **Phase 2** and is declared in the Phase 2 commit, not here — see
+[Phase 2 surface](#phase-2-surface-not-in-pr-1). Nothing in Phase 1 can construct it: the
+Phase 1 Goa enum is `("pause", "remove")`, so a `change-bid` action is rejected by the
+generated validation before any handler runs.
 
 **New file `/internal/domain/model/keyword.go`:**
 ```go
@@ -506,11 +543,11 @@ type KeywordAction struct {
   AdGroupID   string // Google Ads ad group ID owning the criterion
   CriterionID string // Google Ads criterion ID
   Action      string // Phase 1: "pause" | "remove". Phase 2 adds "enable" | "change-bid"
-  // BidMicros is a POINTER because the Goa attribute is optional (change-bid only) and
-  // therefore generates *int64. It also has to distinguish "omitted" from an explicit 0,
-  // which is what lets change-bid validation reject a missing bid rather than silently
-  // treating it as zero. Phase 2 only.
-  BidMicros *int64
+  // Phase 2 adds `BidMicros *int64` here, in the same commit as the enum widening. It is
+  // deliberately absent in Phase 1: with no bid_micros attribute in the Phase 1 design
+  // there is nothing to populate it from, so it would be a field that is always nil and a
+  // validation branch no request can reach. See [Phase 2 surface](#phase-2-surface-not-in-pr-1)
+  // for why it must be a pointer when it does land.
 }
 
 // KeywordMetric holds a keyword's performance over a reporting window.
@@ -605,7 +642,6 @@ type KeywordManager interface {
 ```go
 var (
   ErrKeywordManagerUnsupported = domain.ErrKeywordManagerUnsupported
-  ErrInvalidBidChange = domain.ErrInvalidBidChange
 )
 ```
 
@@ -650,15 +686,10 @@ func (o *Orchestrator) UpdateCampaignKeywords(ctx context.Context, projectID str
   if campaign == nil || strings.TrimSpace(campaign.PlatformCampaignID) == "" {
     return nil, ErrCampaignNotProvisioned
   }
-  // Phase 2 only. The error WRAPS ErrInvalidBidChange — the handler classifies with
-  // errors.Is, so a bare fmt.Errorf would fall through to the default branch and return
-  // 503 for what is plainly a 400.
-  for _, act := range actions {
-    if act.Action == "change-bid" && (act.BidMicros == nil || *act.BidMicros <= 0) {
-      return nil, fmt.Errorf("%w: change-bid requires a positive bid_micros", ErrInvalidBidChange)
-    }
-  }
-  
+  // Phase 2 inserts the change-bid bid validation here — see
+  // [Phase 2 surface](#phase-2-surface-not-in-pr-1). It is not in PR 1 because the Phase 1
+  // enum cannot carry "change-bid" and KeywordAction has no BidMicros field, so the loop
+  // would be unreachable code guarding a field that does not exist.
   d, ok := o.dispatchers[platform]
   if !ok {
     return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrKeywordManagerUnsupported, platform)
@@ -769,7 +800,7 @@ func (s *BriefService) ListCampaignKeywords(ctx context.Context,
   return &briefs.CampaignKeywordList{
     CampaignID:       existing.ID,
     PlatformCampaignID: existing.PlatformCampaignID,
-    Window:           fmt.Sprintf("%d", days),
+    WindowDays:       days,
     PulledAt:         time.Now().UTC().Format(time.RFC3339),
     TotalKeywords:    int32(len(result.Keywords)),
     Keywords:         keywords,
@@ -783,7 +814,7 @@ func (s *BriefService) ListCampaignKeywords(ctx context.Context,
   }, nil
 }
 
-// UpdateCampaignKeywords applies bulk keyword actions (pause, remove, enable, change-bid).
+// UpdateCampaignKeywords applies bulk keyword actions (Phase 1: pause, remove).
 func (s *BriefService) UpdateCampaignKeywords(ctx context.Context,
   p *briefs.UpdateCampaignKeywordsPayload) (*briefs.CampaignKeywordActionResult, error) {
   
@@ -812,12 +843,9 @@ func (s *BriefService) UpdateCampaignKeywords(ctx context.Context,
       AdGroupID:   act.AdGroupID,
       CriterionID: act.CriterionID,
       Action:      act.Action,
-      // BidMicros is deliberately NOT assigned here. Phase 1's KeywordActionPayload has no
-      // bid_micros attribute, so the generated payload struct has no BidMicros field and
-      // this line would not compile. The domain field exists and stays nil until Phase 2
-      // adds the attribute; the assignment is a one-line addition in the same commit that
-      // widens the enum. It is a straight pointer copy when it arrives — *int64 on both
-      // sides — never a dereference, which would panic for every pause/remove action.
+      // Phase 2 adds `BidMicros: act.BidMicros` here, alongside the domain field and the
+      // widened attribute. It is a straight pointer copy — *int64 on both sides — never a
+      // dereference, which would panic for every pause/remove action.
     }
   }
   
@@ -827,8 +855,9 @@ func (s *BriefService) UpdateCampaignKeywords(ctx context.Context,
     switch {
     case errors.Is(aerr, ErrKeywordManagerUnsupported):
       return nil, &briefs.BadRequestError{Code: "400", Message: "keyword updates are not supported for this campaign's platform"}
-    case errors.Is(aerr, ErrInvalidBidChange):
-      return nil, &briefs.BadRequestError{Code: "400", Message: "bid value is outside the platform's supported range"}
+    // Phase 2 adds an `errors.Is(aerr, ErrInvalidBidChange)` arm here returning 400. It is
+    // not in PR 1: with no sentinel and no way to submit change-bid, the arm would be dead
+    // and a reviewer could not tell whether the mapping was ever exercised.
     case errors.Is(aerr, ErrCampaignNotProvisioned):
       return nil, &briefs.ConflictError{Code: "409", Message: "campaign has not been provisioned on the ad platform yet"}
     default:
@@ -1215,11 +1244,36 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
     //   - [ConfirmedThrough, UnsentFrom) → the in-flight chunk: UNCONFIRMED, all of it
     //   - [UnsentFrom, len)              → never transmitted; safe to retry
     //
-    // When the error is NOT a *PartialMutateError the client cannot say how far it got, so
-    // the conservative reading is that the WHOLE batch is in flight: ConfirmedThrough 0,
-    // UnsentFrom len(pending). Defaulting UnsentFrom to 0 instead would label every
-    // operation "not attempted" — the failure mode this branch exists to prevent, reached
-    // through a zero value.
+    // When the error is NOT a *PartialMutateError the client could not say how far it got
+    // by chunk index — but that does NOT mean the outcome is ambiguous. Two large classes
+    // of non-partial error are provably "nothing was applied":
+    //
+    //   - PRE-SEND failures. Credential resolution, account validation, request
+    //     construction, a context already cancelled — no HTTP request left this process,
+    //     so no keyword changed.
+    //   - DEFINITE upstream REJECTIONS. `adGroupCriteria:mutate` is atomic per request
+    //     unless partial_failure is set (this client does not set it), so a 4xx means
+    //     Google evaluated the batch and committed none of it.
+    //
+    // Blanket-marking those `unconfirmed` is not conservative, it is wrong in the
+    // expensive direction: it tells the operator "check Google Ads before retrying" for
+    // an operation that certainly did not happen, and the three-state design exists
+    // precisely so `unconfirmed` stays rare enough to be worth acting on. An `unconfirmed`
+    // that fires on every expired credential is noise, and noise gets ignored — including
+    // the one time it was real.
+    //
+    // So the fallback asks the client, which already owns this classification:
+    // `googleads.IsOutcomeUnconfirmed` (client.go / campaign.go) reports true for
+    // transport failures, 5xx, 429-after-send, cancellation mid-flight, and malformed 2xx —
+    // and false for pre-send and definite-rejection errors. Same helper the create and
+    // toggle paths use, so keyword writes cannot drift from the rest of the dispatcher.
+    //
+    // Note the asymmetry with the *PartialMutateError branch, and that it is deliberate:
+    // there, the in-flight chunk is unconfirmed even when the terminal error is a definite
+    // 4xx, because the 4xx describes the LAST chunk while EARLIER chunks were separate
+    // requests whose fate the error does not speak to. `ConfirmedThrough` is what records
+    // that, which is why the client encodes the span rather than leaving the dispatcher to
+    // infer it from the error alone.
     //
     // The platform client already classifies and redacts upstream errors; do not
     // re-render the raw response body into a user-visible message.
@@ -1235,6 +1289,15 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
         }
         pending[i].Message = r.Message
       }
+    } else if !googleads.IsOutcomeUnconfirmed(merr) {
+      // Nothing reached Google, or Google rejected the whole batch. Every operation
+      // failed, and retrying after fixing the cause is safe.
+      for _, outcome := range pending {
+        outcome.State = model.KeywordActionFailed
+        outcome.Message = "not applied: the request was rejected before any keyword was " +
+          "changed — fix the cause and retry the whole batch"
+      }
+      break
     }
     for i := confirmedThrough; i < unsentFrom; i++ {
       pending[i].State = model.KeywordActionUnconfirmed
@@ -1312,19 +1375,35 @@ answer include-today vs. completed-days. Whichever way it lands, pin it:
 Either way the divergence from `MetricsWindow`'s Google-aligned semantics elsewhere in this
 service is documented at the endpoint, so a reader comparing two surfaces is not left guessing.
 
-**File to edit:** `internal/dispatch/googleads.go` (same file — the capability assertion sits with
-the methods it asserts about)
+**File to edit:** `internal/dispatch/status_toggler_guard_test.go` — **not** `googleads.go`.
 
-**Declare that `GoogleAdsDispatcher` satisfies the KeywordManager capability:**
+**Declare that `GoogleAdsDispatcher` satisfies the KeywordManager capability**, in the existing
+guard's `var` block:
 
 ```go
-// Package-level assertion, alongside the ListKeywords/UpdateKeywords methods:
-var _ service.KeywordManager = (*GoogleAdsDispatcher)(nil)
+var (
+	_ service.StatusToggler = (*RedditDispatcher)(nil)
+	// … the five other togglers …
+	_ service.KeywordManager = (*GoogleAdsDispatcher)(nil)
+)
 ```
 
 The interface is declared in `internal/service` (the orchestrator's package), matching where
-`MetricsReader` lives — the dispatch package imports the service package's capability interfaces,
-not an `orchestrator` package (no such package exists).
+`MetricsReader` lives. That is precisely why the assertion cannot live in `googleads.go`:
+`internal/dispatch` must not import `internal/service` in production code, and
+`status_toggler_guard_test.go:25-27` exists to say so — *"a test file so the service import
+stays test-only, avoiding any production dispatch→service dependency"*. Putting
+`var _ service.KeywordManager = …` in `googleads.go` would create exactly the production
+`dispatch → service` edge that guard was written to prevent, and would do it silently, since
+the import already resolves.
+
+Co-locating it with the togglers also keeps one place to look. The reason the assertion is
+needed is identical: `Orchestrator.UpdateCampaignKeywords` discovers the capability via a
+RUNTIME `d.(KeywordManager)` assertion, so a drifting `ListKeywords`/`UpdateKeywords`
+signature would not fail the build — it would silently stop satisfying the interface and
+every keyword call would return `ErrKeywordManagerUnsupported` (a 400) instead of working.
+Rename the file to `capability_guard_test.go` in the same commit if the toggler-specific name
+becomes misleading; the guard is no longer toggler-only.
 
 ---
 
@@ -1368,7 +1447,7 @@ not an `orchestrator` package (no such package exists).
 - Implement `ListCampaignKeywords` / `UpdateCampaignKeywords` handlers in `BriefService` —
   **required in this PR**, per the note above
 - Add timeouts + error mapping
-- Add unit tests for error cases (unsupported platform, invalid bid, empty actions array)
+- Add unit tests for error cases (unsupported platform, unprovisioned campaign, empty actions array)
 
 No dispatcher implements `KeywordManager` yet at this point, which is the correct intermediate
 state and not a gap: the capability is optional, so both endpoints return a clean
@@ -1409,6 +1488,17 @@ assertion), `internal/dispatch/googleads_test.go`
 - `TestClient_MutateKeywordCriteria_SendsOneRequestForManyOperations` (pins the batch:
   a regression to one-call-per-action passes every behavioural test but blows the budget)
 - `TestDispatcher_UpdateKeywords_PartialFailureAttributesPerAction`
+- The four error classes must be asserted SEPARATELY — a single "the mutate failed" test
+  passes whether the fallback classifies correctly or blanket-marks everything unconfirmed:
+  - `TestDispatcher_UpdateKeywords_PreSendFailureIsFailedNotUnconfirmed` — make credential
+    resolution fail, so no HTTP request is issued; every outcome must be `failed`
+  - `TestDispatcher_UpdateKeywords_DefiniteRejectionIsFailedNotUnconfirmed` — serve a 400
+    `INVALID_ARGUMENT`; the batch is atomic, so every outcome must be `failed`
+  - `TestDispatcher_UpdateKeywords_TransportFailureIsUnconfirmed` — close the connection
+    mid-response; every outcome must be `unconfirmed`
+  - `TestDispatcher_UpdateKeywords_LaterChunkFailureLeavesEarlierChunksConfirmed` — more
+    operations than one chunk holds, first chunk 2xx, second fails; the first chunk's
+    outcomes keep their upstream verdicts and only the second chunk's are `unconfirmed`
 - `TestDispatcher_ListKeywords_HappyPath`
 - `TestDispatcher_ListKeywords_EmptyResultIsEmptySliceNotNil`
 - `TestDispatcher_ListKeywords_ZeroImpressionsCtrIsZeroNotNaN`
@@ -1425,11 +1515,19 @@ assertion), `internal/dispatch/googleads_test.go`
 budgeted because the platform-client layer was missing from that estimate; still under the
 1000-line cap, but if it grows, split the platform client into its own PR ahead of the adapter.
 
-### PR 3: Integration Tests + OpenAPI Snapshot (≈200 lines)
+### PR 3: Integration Tests (≈200 lines)
 
 **Branch:** `feat/LFXV2-2023-keyword-integration-phase1`
 **Base:** `origin/main`, opened once PR 2 has merged
-**Files:** `internal/service/brief_test.go` (new E2E-style tests), generated OpenAPI snapshot
+**Files:** `internal/service/brief_test.go` (new E2E-style tests) — **tests only**
+
+> **No generated specs in this PR.** An earlier draft assigned "the OpenAPI snapshot" here.
+> That is not deferrable: PR 1 changes `design/brief.go` and therefore runs `make apigen`, and
+> `make apigen` writes BOTH generated trees — `gen/` and the ko-embedded copies under
+> `cmd/campaign-service/kodata/gen/http/`. Committing only one of them leaves the repo in a
+> state where re-running `make apigen` produces a diff, which CI treats as drift, and leaves
+> the binary serving an OpenAPI document that does not describe its own endpoints. Both trees
+> ship with the contract change in PR 1; there is no snapshot left over for PR 3.
 
 - Full integration test: create campaign → list keywords → pause some → verify result
 - Uses real Goa-generated types and service handlers (no mocks at this level)
@@ -1441,7 +1539,7 @@ budgeted because the platform-client layer was missing from that estimate; still
 - `TestIntegration_UpdateKeywordsEndpoint`
 - `TestIntegration_KeywordErrorHandling`
 
-**Lines:** ~200 (tests only; gen/ output exempt)
+**Lines:** ~200 (tests only)
 
 ---
 
@@ -1456,7 +1554,7 @@ budgeted because the platform-client layer was missing from that estimate; still
    - Mock KeywordManager for both ListKeywords and UpdateKeywords
    - Verify timeout context is passed correctly
    - Verify error sentinel mapping (ErrKeywordManagerUnsupported → 400)
-   - Verify conditional bid validation (change-bid requires positive BidMicros)
+   - (Phase 2) Verify conditional bid validation: change-bid requires positive BidMicros
 
 3. **BriefService Handler**
    - Test days parameter validation (only 7, 14, 30 accepted)
@@ -1488,9 +1586,36 @@ budgeted because the platform-client layer was missing from that estimate; still
 
 - Test missing Google Ads credentials (handled by resolveGoogleAdsClient; should return 503 or config error)
 - Test campaign with no upstream ID → 409. A campaign row exists from the moment the brief is
-  dispatched, and `platform_campaign_id` stays empty until the platform call succeeds — so a
-  locally-present, upstream-absent campaign is an ordinary state, not an impossible one. Without
-  the guard the GAQL query carries an empty campaign filter and reads the whole account.
+  dispatched, so a locally-present, upstream-absent campaign is an ordinary state, not an
+  impossible one. Without the guard the GAQL query carries an empty campaign filter and reads
+  the whole account.
+
+  Do **not** rest that on "`platform_campaign_id` stays empty until the platform call
+  succeeds" — it does not. `docs/knowledge/code/internal-service.md:37-41` records that a
+  retained `pending` partial can carry an upstream id: the create succeeded, a later step in
+  the same dispatch did not, and the row is kept as a reconciliation-required ORPHAN
+  precisely so the id is not lost. The real invariant is narrower and is the one the guard
+  actually needs: **the id is empty until the upstream campaign exists**, in either
+  direction. Non-empty ⇒ there is a Google Ads campaign to address.
+
+  That leaves a genuine decision, which this plan makes rather than leaves implicit:
+
+  **Keyword writes are allowed whenever `platform_campaign_id` is non-empty, including for
+  `pending` and reconciliation-required campaigns.** The upstream campaign exists, its
+  keywords exist, and an operator pausing a runaway keyword on a half-provisioned campaign is
+  exactly who needs this endpoint most — gating on `status == created` would refuse the call
+  in the one state where spend is least supervised. Nothing about a pending row makes the
+  criterion mutate less safe: `AuthorizeKeywordCriteria` still scopes every criterion to this
+  campaign, so a partial row cannot be used to reach another campaign's keywords.
+
+  Tests, both of which fail under either mistaken invariant:
+  - `TestOrchestrator_UpdateCampaignKeywords_PendingWithUpstreamIDIsAllowed` — status
+    `pending`, `platform_campaign_id` set; must dispatch, not 409
+  - `TestOrchestrator_UpdateCampaignKeywords_CreatedWithoutUpstreamIDIs409` — status
+    `created`, id empty; must 409, not send an unscoped GAQL query
+
+  The same rule and the same pair of tests apply to the read path
+  (`ReadCampaignKeywords`), whose guard is character-for-character the same.
 
 ### Contract Compliance Tests (UI ← → Campaign Service)
 
@@ -1506,6 +1631,12 @@ budgeted because the platform-client layer was missing from that estimate; still
 ---
 
 ## Open Questions for Human Decision
+
+Eight were raised; **four are resolved inside this plan** (2 keyword text, 5 criterion id vs
+resource name, 6 partial success, 7 Phase 2 timing) and are kept below with their resolutions
+so a reviewer can check the reasoning rather than re-open them. **Four remain genuinely open**
+and need a human: 1 (bid currency — Phase 2 only), 3 (pagination), 4 (metrics window
+alignment), and 8 (the identity gap, which is the only one that changes the delivery shape).
 
 ### 1. Bid Change Currency & Precision
 
@@ -1627,8 +1758,8 @@ options below are retained for the record; the phasing choice is now about revie
 
 **Decision Needed:**
 - Should Phase 1 block until #69 is merged, or land independently and Phase 2 chains after?
-- If Phase 1 lands first, should it pre-implement enable/change-bid (disabled with "not yet" error) to avoid a second API change?
-- **Recommendation:** Land Phase 1 independently. Phase 2 can be a separate PR that rebases on #69 once it merges. Do NOT pre-implement Phase 2 in Phase 1 (adds complexity, unclear timeline).
+- ~~If Phase 1 lands first, should it pre-implement enable/change-bid (disabled with "not yet" error) to avoid a second API change?~~ **Answered: no.** The Phase 1 enum cannot carry the actions, so any pre-implemented validation, sentinel, or switch arm is unreachable and untestable. See [Phase 2 surface](#phase-2-surface-not-in-pr-1) for the full list of what moves.
+- **Recommendation:** Land Phase 1 independently. Phase 2 is a separate PR off current `main`. Do NOT pre-implement Phase 2 in Phase 1.
 
 ### 8. The identity gap — how the account-wide UI view migrates to a campaign-scoped endpoint
 
