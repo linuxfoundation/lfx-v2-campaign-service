@@ -107,7 +107,10 @@ dispatcher's `ToggleStatus`, which now receives the full persisted `*model.Campa
 ## Metrics reads — UNVERIFIED, best-effort contract (LFXV2-2995)
 
 `GetCampaignMetrics(ctx, campaignID, window)` reads impressions, clicks, and spend for a
-campaign. **Unlike every other client in this package (and unlike the Meta/LinkedIn/X
+campaign. **It is unreachable in a default deployment**: the dispatcher above it
+(`RedditDispatcher.ReadMetrics`) is gated on `REDDIT_METRICS_ENABLED == "true"` and otherwise
+returns `domain.ErrMetricsUnsupported`, so nothing in this section ships as live production
+metrics until the contract below is verified. **Unlike every other client in this package (and unlike the Meta/LinkedIn/X
 metrics clients built against public API docs), Reddit's v3 reporting/metrics endpoint has
 NO public documentation at all** — it lives behind Reddit's gated developer portal and a
 private Postman collection (postman.com/reddit-ads-api). This was investigated and recorded

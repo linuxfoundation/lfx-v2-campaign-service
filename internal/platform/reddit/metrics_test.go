@@ -261,6 +261,87 @@ func TestGetCampaignMetrics_OversizedSpendIsDecodeError(t *testing.T) {
 	}
 }
 
+// TestGetCampaignMetrics_CounterGuardsAreDecodeErrors covers the four counter branches
+// that the spend path already had coverage for: negative impressions, negative clicks,
+// and the checked additions that stop a running total from wrapping past MaxInt64.
+// Without these, reordering the overflow check relative to the addition would silently
+// reintroduce wrapped totals — the same bug class the spend-overflow fix was written for.
+func TestGetCampaignMetrics_CounterGuardsAreDecodeErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+	}{
+		{
+			name: "negative impressions",
+			data: `{"campaign_id":"camp_123","impressions":-1,"clicks":5,"spend":"1.00"}`,
+		},
+		{
+			name: "negative clicks",
+			data: `{"campaign_id":"camp_123","impressions":10,"clicks":-1,"spend":"1.00"}`,
+		},
+		{
+			// Two rows whose impressions sum past MaxInt64. One row cannot trip the guard:
+			// the running total starts at zero, so the overflow branch is only reachable
+			// with a second row, which is why these cases need two.
+			name: "impressions total overflows",
+			data: `{"campaign_id":"camp_123","impressions":9223372036854775807,"clicks":1,"spend":"1.00"},` +
+				`{"campaign_id":"camp_123","impressions":1,"clicks":1,"spend":"1.00"}`,
+		},
+		{
+			name: "clicks total overflows",
+			data: `{"campaign_id":"camp_123","impressions":1,"clicks":9223372036854775807,"spend":"1.00"},` +
+				`{"campaign_id":"camp_123","impressions":1,"clicks":1,"spend":"1.00"}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"data":[` + tt.data + `]}`))
+			})
+
+			if _, err := client.GetCampaignMetrics(context.Background(), "camp_123", model.MetricsWindowToday); err == nil {
+				t.Fatalf("expected a decode error for %s", tt.name)
+			}
+		})
+	}
+}
+
+// TestGetCampaignMetrics_MultipleRowsAccumulate exercises the decode loop with more than
+// one row. Every other test uses a single-element data array, so nothing pinned the
+// accumulation itself. Multi-row responses (one row per day in the window) are a plausible
+// real shape, and since the report contract here is UNVERIFIED it is one this scaffold may
+// well meet first in production.
+func TestGetCampaignMetrics_MultipleRowsAccumulate(t *testing.T) {
+	client := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[` +
+			`{"campaign_id":"camp_123","impressions":1000,"clicks":40,"spend":"10.00"},` +
+			`{"campaign_id":"camp_123","impressions":600,"clicks":20,"spend":"5.25"},` +
+			`{"campaign_id":"camp_123","impressions":400,"clicks":20,"spend":"0.75"}` +
+			`]}`))
+	})
+
+	metrics, err := client.GetCampaignMetrics(context.Background(), "camp_123", model.MetricsWindowLast7Days)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if metrics.Impressions != 2000 {
+		t.Errorf("expected 2000 impressions summed across rows, got %d", metrics.Impressions)
+	}
+	if metrics.Clicks != 80 {
+		t.Errorf("expected 80 clicks summed across rows, got %d", metrics.Clicks)
+	}
+	if metrics.CostMicros != 16_000_000 {
+		t.Errorf("expected 16000000 costMicros summed across rows, got %d", metrics.CostMicros)
+	}
+	// CTR is recomputed from the TOTALS (80/2000), not averaged per row — a per-row mean
+	// would give 0.0333, which is what this assertion rules out.
+	if metrics.Ctr != 0.04 {
+		t.Errorf("expected CTR recomputed from totals (0.04), got %f", metrics.Ctr)
+	}
+}
+
 func TestDateRangeForWindow_Today(t *testing.T) {
 	fixed := time.Date(2026, 3, 15, 10, 30, 0, 0, time.UTC)
 	start, end, err := dateRangeForWindow(model.MetricsWindowToday, fixed)
