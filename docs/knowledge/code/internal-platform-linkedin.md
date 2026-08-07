@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting and up-front validation."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, and live analytics reads."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -9,7 +9,8 @@ tags:
   - linkedin-ads
   - oauth2
   - go-package
-timestamp: "2026-07-13T19:22:00Z"
+  - metrics
+timestamp: "2026-08-05T14:30:00Z"
 ---
 
 # internal/platform/linkedin
@@ -25,7 +26,10 @@ Marketing API. `CreateCampaign` builds the full sponsored-content hierarchy in
 one call — Campaign Group (ACTIVE) -> Campaign (PAUSED) -> Dark Post
 (`feedDistribution: NONE`) -> Creative — with targeting assembled from the
 runtime config's profile (skills/groups/job-functions) and resolved geo URNs.
-Cross-tenant org/account pairing fails closed.
+Cross-tenant org/account pairing fails closed. `GetCampaignMetrics` reads live
+campaign analytics from LinkedIn's Ad Analytics API; the dispatcher's `ReadMetrics`
+method implements the optional `service.MetricsReader` interface the orchestrator
+discovers per dispatcher and delegates to this client method.
 
 A deliberate divergence from the TS source is that geo resolution is a pure,
 cache-only function (no network fallback). Beyond that, the Go port validates
@@ -71,6 +75,44 @@ the runtime config (same as create); ids must be numeric. `IsOutcomeUnconfirmed(
 the shared ambiguity classifier (and honors the `Unconfirmed()` behavioral interface) so a
 caller can tell a maybe-applied outcome (including a partial cascade) from a definite rejection.
 `doRequest` gained an optional per-call headers map to carry the `X-Restli-Method` header.
+
+## Metrics read
+
+`GetCampaignMetrics(ctx, accountID, campaignID, window)` is the platform-client helper behind
+`dispatch.LinkedInDispatcher.ReadMetrics` — the dispatcher, not this method, is what satisfies
+`service.MetricsReader` (the type-asserted, optional capability the orchestrator's live-read
+metrics endpoint discovers per dispatcher — see `internal/service/orchestrator.go`); the two
+signatures differ. `campaignID` is the BARE
+NUMERIC id persisted by `campaignFromLinkedIn` (`trailingID` of the creation response's
+campaign URN, not a URN) — this method builds the `urn:li:sponsoredCampaign:{id}` and
+`urn:li:sponsoredAccount:{acctID}` URNs the Ad Analytics finder itself requires.
+
+The Ad Analytics finder (`GET /adAnalytics`) uses Rest.li 2.0 array/nested-object query
+literals — `dateRange=(start:(day:D,month:M,year:Y),end:(...))`, `campaigns=List(urn:...)`,
+`accounts=List(urn:...)` — that are not expressible through `url.Values.Encode()` (which would
+percent-encode the structural parentheses/colons LinkedIn requires literally), so
+`makeAdAnalyticsRequest` builds the raw query string directly and bypasses `doRequest`'s
+flat `map[string]string` param model entirely, going through a dedicated
+`doAdAnalyticsAttempt` GET path instead. It reuses the client's existing 429 retry policy
+(`parseRetryAfter`/`retryBaseDelay`/`maxRetryWait`/`sleepCtx`), the same as `doRequest`'s
+idempotent-method retry rule. **UNVERIFIED ASSUMPTION**: the finder name (`q=analytics`),
+`pivot=CAMPAIGN`, and `timeGranularity=ALL` are LinkedIn's documented Ad Analytics contract,
+flagged in code but not yet verified against a live Marketing API account.
+
+The response's `elements` field is decoded via a `*[]AdAnalyticsElement` pointer so a
+missing/null field (malformed response — empty body, `{}`, `null`) is distinguishable from an
+explicit `{"elements": []}` (genuine zero activity in the window): a nil pointer is a decode
+error, never silently reported as zero metrics. Spend (`costInUsd`, decimal USD returned as a
+JSON string representing a BigDecimal) is parsed with `big.Rat`, NOT `strconv.ParseFloat`: a
+BigDecimal can carry more precision than float64 holds, so a float parse would round the
+value twice. `costInUsdToMicros` multiplies the exact rational by 1e6, rounds — not truncates
+— to the nearest integer, and rejects the result unless `big.Int.IsInt64` confirms it fits,
+so an out-of-range spend is an error rather than a silently wrapped micro value.
+
+`dateRangeForWindow` anchors both `this_month` and `last_month` off the first-of-month date
+rather than `AddDate(0, -1, 0)` on today's day-of-month, since `time.AddDate` silently
+normalizes an invalid day (e.g. subtracting a month from the 31st) into the following month —
+that would otherwise shift both windows' boundaries on 29th/30th/31st-of-month days.
 
 ## Dispatch adapter (internal/dispatch)
 
