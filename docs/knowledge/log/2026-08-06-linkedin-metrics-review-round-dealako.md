@@ -8,16 +8,15 @@ from the `adAnalytics` `apiError` earlier on this branch. The message is now val
 a comment recording why, so a future edit does not reintroduce the interpolation. The sibling count
 guards were already value-free and needed no change.
 
-**Update** — `MetricsWindowLastMonth` computed its month boundaries in `now.Location()`. Every other
-window on this path is UTC-anchored, so a non-UTC process TZ would have shifted only this one
-window's start/end by the offset, silently including or excluding a day at each edge. Now
-`time.UTC`, matching its siblings.
+**Update** — `MetricsWindowLastMonth` computed its month boundaries in `now.Location()`. Since `now`
+was already UTC from `c.now().UTC()`, this had no behavioral effect, but the code was inconsistent:
+every other window on this path explicitly uses `time.UTC`, so the inconsistency invited future
+bugs. Changed to `time.UTC` for clarity and consistency with its siblings.
 
-**Update** — `internal/dispatch/linkedin.go:296` formatted two `%w` verbs in one `fmt.Errorf`. Go
-wraps only the first, so `errors.Is(err, domain.ErrMetricsWindowUnsupported)` held while the
-underlying client error was unwrappable — the caller could see the sentinel but never the cause.
-Replaced with `errors.Join(domain.ErrMetricsWindowUnsupported, err)` under a single `%w`, which
-keeps both reachable.
+**Update** — `internal/dispatch/linkedin.go:296` formatted two `%w` verbs in one `fmt.Errorf`, which
+works in Go 1.20+. Changed to `errors.Join(domain.ErrMetricsWindowUnsupported, err)` for clarity:
+it explicitly names both errors as co-equal sentinels in the chain, avoiding the need for callers
+to reason about `fmt.Errorf`'s wrapping behavior.
 
 **Update** — Two coverage gaps in `costInUsdToMicros`, both for guards that existed but were
 unpinned. `TestCostInUsdToMicros_NegativeValueRejected` covers the `Sign() < 0` branch.

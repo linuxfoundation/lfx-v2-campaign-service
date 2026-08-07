@@ -99,6 +99,18 @@ func TestGetCampaignMetrics_HappyPath(t *testing.T) {
 	if !strings.Contains(decodedQuery, "pivot=CAMPAIGN") {
 		t.Errorf("expected pivot=CAMPAIGN in query, got %s", decodedQuery)
 	}
+	if !strings.Contains(decodedQuery, "timeGranularity=ALL") {
+		t.Errorf("expected timeGranularity=ALL in query, got %s", decodedQuery)
+	}
+	if !strings.Contains(decodedQuery, "dateRange=(start:") {
+		t.Errorf("expected dateRange with start in query, got %s", decodedQuery)
+	}
+	if !strings.Contains(decodedQuery, ",end:") {
+		t.Errorf("expected dateRange with end in query, got %s", decodedQuery)
+	}
+	if !strings.Contains(decodedQuery, "fields=impressions,clicks,costInUsd") {
+		t.Errorf("expected fields in query, got %s", decodedQuery)
+	}
 }
 
 func TestGetCampaignMetrics_AggregateCostOverflowIsError(t *testing.T) {
