@@ -31,10 +31,13 @@ var ErrKeySize = fmt.Errorf("encryption key must be %d bytes (AES-256)", KeySize
 // usable as `crypto.Err…` inside this package and its tests, and ErrCiphertextTooShort
 // is still returned by identity so an `==` comparison keeps working.
 
-// ErrCiphertextTooShort is returned when a ciphertext is too short to contain a
-// nonce — a malformed-input / data error (map to 422, not 500). The blob is never
-// authenticated, so this proves the stored ROW is bad and nothing else:
-// domain.ErrCredentialsMalformed.
+// ErrCiphertextTooShort is returned when a sealed value is too short to be GCM
+// output at all — a malformed-input / data error. The blob is never authenticated,
+// so this proves the stored ROW is bad and nothing else: domain.ErrCredentialsMalformed,
+// which credsSource.resolve wraps with domain.ErrConnectionNotUsable, mapping to
+// **400** (not 422 — an earlier revision of this comment said 422 and was wrong about
+// the contract it was describing; the resolve path is the authority, see
+// internal/dispatch/creds.go).
 var ErrCiphertextTooShort = fmt.Errorf("%w: ciphertext too short", domain.ErrCredentialsMalformed)
 
 // ErrDecryptionFailed is returned when GCM authentication fails — tampered data
@@ -88,8 +91,19 @@ func (a *AESGCM) Encrypt(plaintext []byte) ([]byte, error) {
 
 // Decrypt opens nonce||ciphertext produced by Encrypt.
 func (a *AESGCM) Decrypt(sealed []byte) ([]byte, error) {
-	ns := a.aead.NonceSize()
-	if len(sealed) < ns {
+	// The minimum is nonce + AUTHENTICATION TAG, not nonce alone. Seal appends a
+	// tag of Overhead() bytes to every message, including an empty one, so any
+	// value shorter than ns+Overhead() cannot be output this package produced —
+	// it is provably truncated, and no key could ever open it.
+	//
+	// Checking only `< ns` would let that range fall through to Open, which fails
+	// authentication and is therefore classified as ErrDecryptionFailed — the
+	// "wrong or rotated deployment key" condition that maps to 500 and pages ops
+	// because it implies EVERY connection is broken. A single truncated row would
+	// send someone to look at the key. Rejecting the full minimum here keeps the
+	// blast radius honest: one bad row, reported as one bad row.
+	ns, overhead := a.aead.NonceSize(), a.aead.Overhead()
+	if len(sealed) < ns+overhead {
 		return nil, ErrCiphertextTooShort
 	}
 	nonce, ciphertext := sealed[:ns], sealed[ns:]

@@ -79,6 +79,48 @@ func TestAESGCM_DecryptRejectsShortInput(t *testing.T) {
 	}
 }
 
+// The interesting range is the one BETWEEN the two minima: at least a full nonce, but
+// short of nonce+tag. Such a value is provably truncated — Seal always appends
+// Overhead() tag bytes, even to an empty plaintext — yet a `len(sealed) < NonceSize()`
+// check alone lets it reach Open, where it fails authentication and is reported as the
+// wrong-or-rotated-KEY condition (500, page ops, every connection presumed broken)
+// instead of one malformed row (400).
+//
+// Deleting the `+overhead` term in Decrypt must fail this test. The exact boundary
+// matters, so both ends are pinned: ns+overhead-1 is the last rejected length, and a
+// genuine seal of empty plaintext — exactly ns+overhead bytes — must still OPEN.
+func TestAESGCM_DecryptRejectsTruncatedBelowNonceAndTag(t *testing.T) {
+	enc, err := NewAESGCM(newTestKey(t))
+	if err != nil {
+		t.Fatalf("NewAESGCM: %v", err)
+	}
+	sealed, err := enc.Encrypt(nil)
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	minLen := len(sealed) // an empty message seals to exactly nonce+tag
+	if _, err := enc.Decrypt(sealed); err != nil {
+		t.Fatalf("a genuine seal of empty plaintext must decrypt, got %v", err)
+	}
+
+	// nonceSize is minLen-Overhead; walk the whole nonce..nonce+tag-1 window.
+	nonceSize := minLen - 16 // AES-GCM tag is 16 bytes
+	for n := nonceSize; n < minLen; n++ {
+		_, derr := enc.Decrypt(sealed[:n])
+		if !errors.Is(derr, ErrCiphertextTooShort) {
+			t.Errorf("len=%d (nonce=%d, min=%d): got %v, want ErrCiphertextTooShort — "+
+				"a value shorter than nonce+tag cannot be our own output, so it is a "+
+				"malformed ROW, not an authentication failure",
+				n, nonceSize, minLen, derr)
+		}
+		if errors.Is(derr, ErrDecryptionFailed) {
+			t.Errorf("len=%d: truncated blob misclassified as an auth failure — this is "+
+				"the path that maps to 500 and pages ops for a deployment-wide key problem",
+				n)
+		}
+	}
+}
+
 func TestAESGCM_DecryptTamperedIsAuthFailure(t *testing.T) {
 	enc, _ := NewAESGCM(newTestKey(t))
 	ct, _ := enc.Encrypt([]byte("secret"))
