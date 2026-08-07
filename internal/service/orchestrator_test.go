@@ -1699,3 +1699,60 @@ func TestOrchestrator_CampaignIndexCoCommitsWithoutACallerToken(t *testing.T) {
 		t.Errorf("stored payload carries an authorization header (%q); the relay must stamp it at publish time", auth)
 	}
 }
+
+// accountListerRecordingDeadline is an AccountLister that records the deadline it was
+// handed, so the bound on the synchronous platform call can be asserted rather than
+// assumed.
+type accountListerRecordingDeadline struct {
+	gotDeadline time.Time
+	hadDeadline bool
+}
+
+func (d *accountListerRecordingDeadline) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return nil, nil
+}
+
+func (d *accountListerRecordingDeadline) ListAccounts(ctx context.Context, _ string, _ model.Provider) ([]model.AccessibleAccount, error) {
+	d.gotDeadline, d.hadDeadline = ctx.Deadline()
+	return []model.AccessibleAccount{{ID: "1234567890"}}, nil
+}
+
+// TestOrchestrator_ReadAccountsBoundsThePlatformCall pins that ReadAccounts hands the
+// AccountLister a context bounded by accountsCallTimeout.
+//
+// Account discovery is a SYNCHRONOUS call made while an HTTP request is held open, and it
+// reaches an external provider — Google Ads' listAccessibleCustomers plus, on an MCC
+// credential, a second customer_client search. An unbounded call there does not fail, it
+// HANGS: the handler's own context may carry no deadline at all, and nothing else in this
+// path imposes one, so a provider that stops responding would pin a request goroutine
+// indefinitely. The metrics path is asserted the same way; without this test the bound
+// could be dropped in a refactor and every test would still pass.
+func TestOrchestrator_ReadAccountsBoundsThePlatformCall(t *testing.T) {
+	disp := &accountListerRecordingDeadline{}
+	orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: disp,
+	})
+
+	// The caller's context deliberately carries NO deadline — the bound must come from the
+	// orchestrator, not be inherited. Bracket the call so the tolerance window covers exactly
+	// the span the deadline could have been derived from.
+	beforeCall := time.Now()
+	accounts, err := orch.ReadAccounts(context.Background(), "proj-1", model.ProviderGoogleAds)
+	afterCall := time.Now()
+	if err != nil {
+		t.Fatalf("ReadAccounts: %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("accounts = %+v, want the one the lister returned", accounts)
+	}
+
+	if !disp.hadDeadline {
+		t.Fatal("the account lister received a context with NO deadline; a hung provider would pin the request goroutine")
+	}
+	expectedMin := beforeCall.Add(accountsCallTimeout)
+	expectedMax := afterCall.Add(accountsCallTimeout)
+	if disp.gotDeadline.Before(expectedMin) || disp.gotDeadline.After(expectedMax) {
+		t.Errorf("deadline %v not within [%v, %v] (call bracket + accountsCallTimeout=%v)",
+			disp.gotDeadline, expectedMin, expectedMax, accountsCallTimeout)
+	}
+}

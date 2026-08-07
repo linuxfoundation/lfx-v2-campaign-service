@@ -84,14 +84,15 @@ func actorFromToken(token string) *model.Actor {
 // thin adapters (see connection.go) that convert the typed Goa payloads to and
 // from the generic domain model and call the core helpers here.
 type ConnectionService struct {
-	// mu guards repo and enc, which can be swapped in after construction: during
-	// a database cold start the service boots with a nil repo (every method
-	// returns 503) and the container injects the live repo+encryptor via
-	// SetBackend once the pool opens. Probe/handler requests read them
-	// concurrently with that swap, so access is guarded.
+	// mu guards repo, enc, and orch, which can be swapped in after construction: during
+	// a database cold start the service boots with nil values (every method returns 503)
+	// and the container injects the live repo+encryptor+orchestrator via SetBackend once
+	// the pool opens. Probe/handler requests read them concurrently with that swap, so
+	// access is guarded.
 	mu   sync.RWMutex
 	repo domain.ConnectionRepository
 	enc  domain.Encryptor
+	orch *Orchestrator
 }
 
 var (
@@ -102,7 +103,8 @@ var (
 // NewConnectionService constructs a ConnectionService. A nil repo is valid: it
 // signals the database is not configured OR not yet ready, so every method
 // returns the typed 503 ServiceUnavailable (see resolveBackend) instead of
-// panicking on a nil repo.
+// panicking on a nil repo. A nil orchestrator is also valid for the account-listing
+// methods (they fail with 503 until it is wired).
 func NewConnectionService(repo domain.ConnectionRepository, enc domain.Encryptor) *ConnectionService {
 	return &ConnectionService{repo: repo, enc: enc}
 }
@@ -118,11 +120,19 @@ func (s *ConnectionService) SetBackend(repo domain.ConnectionRepository, enc dom
 	s.mu.Unlock()
 }
 
-// backend returns the current repo and encryptor under the read lock.
-func (s *ConnectionService) backend() (domain.ConnectionRepository, domain.Encryptor) {
+// SetOrchestrator injects the orchestrator for account-listing operations.
+// Called by the container after the orchestrator is constructed.
+func (s *ConnectionService) SetOrchestrator(orch *Orchestrator) {
+	s.mu.Lock()
+	s.orch = orch
+	s.mu.Unlock()
+}
+
+// backend returns the current repo, encryptor, and orchestrator under the read lock.
+func (s *ConnectionService) backend() (domain.ConnectionRepository, domain.Encryptor, *Orchestrator) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.repo, s.enc
+	return s.repo, s.enc, s.orch
 }
 
 // resolveBackend returns the repo+encryptor for one request, or the typed 503
@@ -132,11 +142,25 @@ func (s *ConnectionService) backend() (domain.ConnectionRepository, domain.Encry
 // SetBackend swap mid-handler. The routes are still mounted in the unavailable
 // mode so runtime matches the published OpenAPI contract.
 func (s *ConnectionService) resolveBackend() (domain.ConnectionRepository, domain.Encryptor, error) {
-	repo, enc := s.backend()
+	repo, enc, _ := s.backend()
 	if repo == nil {
 		return nil, nil, &conn.ConnServiceUnavailableError{Code: "503", Message: "connection storage is unavailable"}
 	}
 	return repo, enc, nil
+}
+
+// resolveBackendWithOrch returns the repo, encryptor, and orchestrator for account-listing
+// operations, or a typed 503 error when any of them is unavailable. The orchestrator is
+// only required for account discovery, while repo is needed by all connection operations.
+func (s *ConnectionService) resolveBackendWithOrch() (domain.ConnectionRepository, domain.Encryptor, *Orchestrator, error) {
+	repo, enc, orch := s.backend()
+	if repo == nil {
+		return nil, nil, nil, &conn.ConnServiceUnavailableError{Code: "503", Message: "connection storage is unavailable"}
+	}
+	if orch == nil {
+		return nil, nil, nil, &conn.ConnServiceUnavailableError{Code: "503", Message: "account discovery service is unavailable"}
+	}
+	return repo, enc, orch, nil
 }
 
 // createConn encrypts credentials, persists a new connection, and returns the

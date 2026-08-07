@@ -247,6 +247,11 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/connection-google-ads", true},
 		{"/projects/p1/connection-google-ads/test", true},
 		{"/projects/p1/connection-google-ads/set-credential", true},
+		// Account discovery (LFXV2-2023). Unlike /test and /set-credential this is NOT
+		// shared by the whole connection-* family — it exists only for google-ads, so
+		// it needs its own route/rule entry on both sides. The linkedin row below pins
+		// that the alternation was not widened to every provider by accident.
+		{"/projects/p1/connection-google-ads/accounts", true},
 		{"/projects/abc-123/connection-linkedin-ads", true},
 		{"/projects/p1/connection-meta-ads/test", true},
 		{"/projects/p1/connection-reddit-ads/set-credential", true},
@@ -291,6 +296,7 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// --- rejected: unknown provider / unknown connection action ---
 		{"/projects/p1/connection-tiktok-ads", false},
 		{"/projects/p1/connection-google-ads/delete", false},
+		{"/projects/p1/connection-linkedin-ads/accounts", false},
 		// --- rejected: metrics/keywords on the wrong provider ---
 		{"/projects/p1/meta-ads/keywords", false},
 		{"/projects/p1/linkedin-ads/audience", false},

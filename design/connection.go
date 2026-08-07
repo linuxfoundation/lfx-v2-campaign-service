@@ -339,6 +339,14 @@ var GoogleAdsConnection = Type("google-ads-connection", func() {
 	commonConnectionRequired()
 })
 
+// AccessibleAccount represents an ad account reachable via the connection's
+// stored credential. Returned by account discovery operations.
+var AccessibleAccount = Type("accessible-account", func() {
+	Attribute("id", String, "Account identifier in the ad platform's namespace", func() { Example("8666746580") })
+	Attribute("label", String, "Human-readable account name or label")
+	Required("id")
+})
+
 // ─── LinkedIn Ads ───
 
 var LinkedInAdsCredentials = Type("linkedin-ads-credentials", func() {
@@ -551,4 +559,32 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	connectionMethods("twitter-ads", "X/Twitter Ads", TwitterAdsConnectionConfig, TwitterAdsCredentials, TwitterAdsConnection)
 	connectionMethods("microsoft-ads", "Microsoft Ads", MicrosoftAdsConnectionConfig, MicrosoftAdsCredentials, MicrosoftAdsConnection)
 	connectionMethods("hubspot", "HubSpot", HubSpotConnectionConfig, HubSpotCredentials, HubSpotConnection)
+
+	// Google Ads specific: account discovery (not in connectionMethods, as other providers
+	// will add their own account-discovery methods in follow-up PRs).
+	Method("list-google-ads-accounts", func() {
+		Description("Enumerate the Google Ads ad accounts accessible via the stored connection credential.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Required("project_id")
+		})
+		Result(func() {
+			Attribute("accounts", ArrayOf(AccessibleAccount))
+			Required("accounts")
+		})
+		Error("NotFound", NotFoundError, "Resource not found")
+		Error("BadRequest", BadRequestError, "Bad request")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-google-ads/accounts")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("BadRequest", StatusBadRequest)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
 })

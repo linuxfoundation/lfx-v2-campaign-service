@@ -13,8 +13,11 @@ package service
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
@@ -110,6 +113,42 @@ func (s *ConnectionService) TestGoogleAds(ctx context.Context, p *conn.TestGoogl
 
 func (s *ConnectionService) SetCredentialGoogleAds(ctx context.Context, p *conn.SetCredentialGoogleAdsPayload) error {
 	return s.setCredential(ctx, p.ProjectID, model.ProviderGoogleAds, p.Credentials, actorFromCtx(ctx))
+}
+
+func (s *ConnectionService) ListGoogleAdsAccounts(ctx context.Context, p *conn.ListGoogleAdsAccountsPayload) (*conn.ListGoogleAdsAccountsResult, error) {
+	_, _, orch, err := s.resolveBackendWithOrch()
+	if err != nil {
+		return nil, err
+	}
+	accounts, aerr := orch.ReadAccounts(ctx, p.ProjectID, model.ProviderGoogleAds)
+	if aerr != nil {
+		switch {
+		case errors.Is(aerr, ErrAccountsUnsupported):
+			return nil, &conn.BadRequestError{Code: "400", Message: "account discovery is not supported for this platform"}
+		case errors.Is(aerr, domain.ErrNotFound):
+			// The project has no stored Google Ads connection. That is a client-side
+			// state error, not a platform outage — reporting 503 would tell the caller
+			// to retry something that can never succeed until a connection exists.
+			return nil, &conn.NotFoundError{Code: "404", Message: "no google ads connection configured for this project"}
+		default:
+			slog.WarnContext(ctx, "account discovery failed on google ads",
+				"project_id", p.ProjectID, "error", aerr)
+			return nil, &conn.ConnServiceUnavailableError{Code: "503", Message: "account discovery could not be completed"}
+		}
+	}
+	// Convert model.AccessibleAccount to generated conn type. Preallocated with make so an
+	// empty result serializes as `[]`, not `null` — a nil slice here would undo the
+	// dispatcher's deliberate make([]model.AccessibleAccount, 0, len(customers)) one layer
+	// down and hand every client a null it has to special-case.
+	connAccounts := make([]*conn.AccessibleAccount, 0, len(accounts))
+	for _, acct := range accounts {
+		label := acct.Label // Convert to pointer
+		connAccounts = append(connAccounts, &conn.AccessibleAccount{
+			ID:    acct.ID,
+			Label: &label,
+		})
+	}
+	return &conn.ListGoogleAdsAccountsResult{Accounts: connAccounts}, nil
 }
 
 // ─── LinkedinAds ───
