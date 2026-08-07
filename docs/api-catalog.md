@@ -321,7 +321,10 @@ config — not this campaign config.
 
 #### GoogleAdsConfig (the `googleAdsConfig` object)
 
-Google Ads per-platform config. Today the dispatcher creates a PAUSED search-campaign shell, so `budget` is the only caller-supplied key here; targeting/keywords land in a later phase (GA-3+). **Budget is in whole units of the ad ACCOUNT's currency**, not USD — the service does no FX conversion (mirroring `metaConfig`).
+Google Ads per-platform config. The dispatcher creates a PAUSED search campaign with an ad
+group + a Responsive Search Ad (GA-3); keyword/audience targeting land in a later phase (GA-4).
+**Budget is in whole units of the ad ACCOUNT's currency**, not USD — the service does no FX
+conversion (mirroring `metaConfig`).
 
 ```
 budget: number                  — Whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…),
@@ -330,6 +333,23 @@ budget: number                  — Whole units of the account currency (e.g. 25
                                   during dispatch (a pre-create job failure, since CreateCampaigns is
                                   async). Omitting it leaves the shell with no budget, which fails the
                                   platform job asynchronously — supply it explicitly.
+headlines?: string[]            — Optional Responsive Search Ad headlines (≤30 WEIGHTED chars
+                                  each, 3-15 after padding). Trimmed, truncated, and de-duplicated;
+                                  caller-supplied entries are accepted up to 15 (later entries
+                                  beyond that are silently dropped). Padded with deterministic
+                                  eventName-derived placeholders up to the minimum of 3 when fewer
+                                  are supplied (or omitted entirely).
+descriptions?: string[]         — Optional Responsive Search Ad descriptions (≤90 WEIGHTED chars
+                                  each, 2-4 after padding). Same trim/truncate/dedupe/pad rules as
+                                  headlines, with caller-supplied entries accepted up to 4 (later
+                                  entries beyond that are silently dropped).
+
+                                  WEIGHTED, not plain runes: matching Google Ads' own counting,
+                                  CJK and full-width characters (Hangul, Kana, CJK ideographs,
+                                  Fullwidth Forms) each count as TWO. All-wide-character copy
+                                  therefore fits 15 headline / 45 description characters, not
+                                  30 / 90, and is truncated at that point. Latin text is
+                                  unaffected — one character, one unit.
 ```
 
 #### HubSpotConfig (the `hubspotConfig` object)
