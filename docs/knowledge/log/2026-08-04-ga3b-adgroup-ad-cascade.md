@@ -7,8 +7,8 @@ ad group (create-then-catch-duplicate idempotency via `AdGroupError.DUPLICATE_AD
 mirroring the existing budget/campaign convention rather than Microsoft's find-first
 pattern) followed by a PAUSED Responsive Search Ad. Ad copy is composed from optional
 caller-supplied headlines/descriptions padded with deterministic eventName/project
-placeholders up to Google's v23 RSA minimums (3/2, no double-width halving unlike
-Microsoft); the ad's final URL is the brief's registration URL UTM-tagged without
+placeholders up to Google's v23 RSA minimums (3/2, with weighted character counting where
+CJK/full-width characters count as 2); the ad's final URL is the brief's registration URL UTM-tagged without
 overwriting any pre-existing query params. AdGroupAd resourceNames use a composite
 `{adGroupId}~{adId}` trailing segment (unlike every other Google Ads resource), handled
 by a dedicated `adGroupAdID` splitter — flagged as the riskiest unverified assumption in

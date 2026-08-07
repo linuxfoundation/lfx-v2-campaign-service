@@ -736,11 +736,22 @@ func TestFirstResourceName(t *testing.T) {
 // decode reads a JSON request body into a map.
 func decode(t *testing.T, r *http.Request) map[string]any {
 	t.Helper()
-	var m map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+	m, err := decodeRequest(r)
+	if err != nil {
 		t.Fatalf("decode request body: %v", err)
 	}
 	return m
+}
+
+// decodeRequest is a handler-safe decoder that returns an error instead of calling t.Fatal.
+// Use this inside httptest.Server handler goroutines to avoid calling t.Fatalf/FailNow from
+// a non-test goroutine, which is not safe. See test-hygiene.md:httptest-handler-state-needs-synchronized-handoff.
+func decodeRequest(r *http.Request) (map[string]any, error) {
+	var m map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // firstCreate returns operations[0].create from a decoded :mutate request body.

@@ -111,23 +111,34 @@ func TestPrecomputeAdGroupAdInputs_OversizedFinalURLRejected(t *testing.T) {
 func TestCreateAdGroupAndAd_HappyPath(t *testing.T) {
 	var mu sync.Mutex
 	var adGroupBody, adGroupAdBody map[string]any
+	var decodeErr error
 	c := newCampaignClientFull(t, okBudget, okCampaign,
 		func(w http.ResponseWriter, r *http.Request) {
-			body := decode(t, r)
+			body, err := decodeRequest(r)
 			mu.Lock()
+			if err != nil && decodeErr == nil {
+				decodeErr = err
+			}
 			adGroupBody = body
 			mu.Unlock()
 			okAdGroup(w, r)
 		},
 		func(w http.ResponseWriter, r *http.Request) {
-			body := decode(t, r)
+			body, err := decodeRequest(r)
 			mu.Lock()
+			if err != nil && decodeErr == nil {
+				decodeErr = err
+			}
 			adGroupAdBody = body
 			mu.Unlock()
 			okAdGroupAd(w, r)
 		},
 	)
 	res, err := c.CreateCampaign(context.Background(), sampleInput())
+	// Check for decode errors from handlers
+	if decodeErr != nil {
+		t.Fatalf("decode request body: %v", decodeErr)
+	}
 	if err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}

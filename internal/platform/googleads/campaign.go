@@ -124,9 +124,13 @@ type CampaignResult struct {
 	CampaignID         string `json:"campaignId"`
 	CampaignBudgetID   string `json:"campaignBudgetId"`
 	// AdGroupName/AdGroupID/AdID are set by the GA-3 ad group + ad cascade
-	// (createAdGroupAndAd in adgroup_ad.go). AdGroupID/AdID are empty on a
-	// pre-ad-group failure; AdID alone is empty if the ad group was created but
-	// the ad step failed/is unconfirmed.
+	// (createAdGroupAndAd in adgroup_ad.go). The fields indicate which IDs were
+	// successfully KNOWN to the client, not necessarily whether upstream resources
+	// were created: a 2xx response with a missing/malformed resource name means the
+	// ad group may exist while AdGroupID remains empty (and thus AdID also remains
+	// empty since the cascade stops). AdGroupName is always populated when AdGroupID
+	// is (for reconciliation by name on retry); AdID alone is empty if the ad group
+	// ID is known but the ad step failed/is unconfirmed.
 	AdGroupName  string   `json:"adGroupName,omitempty"`
 	AdGroupID    string   `json:"adGroupId,omitempty"`
 	AdID         string   `json:"adId,omitempty"`
