@@ -590,42 +590,108 @@ func TestListAccessibleCustomers_NoManagerSkipsExpansion(t *testing.T) {
 // the tempting alternative and is the wrong one: the operator would be shown a SHORT
 // list with no indication that it is short, and would then conclude the missing account
 // is not reachable by this credential — a false negative that looks authoritative.
-func TestListAccessibleCustomers_CustomerClientRowWithoutIDIsAnError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if writeAccountsToken(w, r) {
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
-			// A well-formed row followed by one with no id: the good row ahead of it is
-			// what makes a silent drop plausible — the call would still "succeed".
-			_, _ = io.WriteString(w, `{"results":[
-				{"customerClient":{"id":"2222222222","descriptiveName":"Child","manager":false,"status":"ENABLED"}},
-				{"customerClient":{"descriptiveName":"Nameless","manager":false,"status":"ENABLED"}}
-			]}`)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{ResourceNames: []string{"customers/9999999999"}})
-	}))
-	defer server.Close()
+// TestListAccessibleCustomers_CustomerClientRowWithUnusableIDIsAnError covers both
+// unusable shapes. Absent is the obvious one; NON-NUMERIC is the one an emptiness check
+// misses, and it is the dangerous one — the id is concatenated straight into
+// "customers/"+id, so "1/other" forges a resource name pointing at a different account
+// than the row describes, and a caller persists it as the connection's account id.
+func TestListAccessibleCustomers_CustomerClientRowWithUnusableIDIsAnError(t *testing.T) {
+	cases := []struct {
+		name string
+		row  string
+	}{
+		{"absent id", `{"customerClient":{"descriptiveName":"Nameless","manager":false,"status":"ENABLED"}}`},
+		{"non-numeric id forging a path", `{"customerClient":{"id":"1/other","descriptiveName":"Forged","manager":false,"status":"ENABLED"}}`},
+		{"id with dashes as shown in the UI", `{"customerClient":{"id":"123-456-7890","descriptiveName":"Dashed","manager":false,"status":"ENABLED"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if writeAccountsToken(w, r) {
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+					// A well-formed row FIRST: the good row ahead of it is what makes a
+					// silent drop plausible — the call would still "succeed".
+					_, _ = io.WriteString(w, `{"results":[
+						{"customerClient":{"id":"2222222222","descriptiveName":"Child","manager":false,"status":"ENABLED"}},
+						`+tc.row+`
+					]}`)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{ResourceNames: []string{"customers/9999999999"}})
+			}))
+			defer server.Close()
 
-	client := newManagerTestClient(t, server)
+			client := newManagerTestClient(t, server)
 
-	accounts, err := client.ListAccessibleCustomers(context.Background())
-	if err == nil {
-		t.Fatalf("a customer_client row with no id must fail the call, got accounts %+v", accounts)
+			accounts, err := client.ListAccessibleCustomers(context.Background())
+			if err == nil {
+				t.Fatalf("an unusable customer_client id must fail the call, got accounts %+v", accounts)
+			}
+			if accounts != nil {
+				t.Errorf("accounts must be nil on error, got %+v", accounts)
+			}
+			// It is a malformed RESPONSE, not a rejected request — the distinction is what
+			// the dispatcher maps to a 503-with-retry rather than a client error.
+			var te *transportError
+			if !errors.As(err, &te) {
+				t.Fatalf("error must unwrap to *transportError, got %T: %v", err, err)
+			}
+			if !strings.Contains(te.Err.Error(), "numeric customer id") {
+				t.Errorf("diagnostic must name the defect, got %q", te.Err.Error())
+			}
+		})
 	}
-	if accounts != nil {
-		t.Errorf("accounts must be nil on error, got %+v", accounts)
+}
+
+// TestListAccessibleCustomers_MalformedResourceNameIsAnError pins the same contract one
+// layer up. AccessibleCustomer promises "customers/{digits}"; the flat list is the other
+// source of those values and had no validation at all, so a malformed 2xx could return an
+// empty, wrong-kind, or path-bearing string as a selectable account.
+func TestListAccessibleCustomers_MalformedResourceNameIsAnError(t *testing.T) {
+	cases := []struct {
+		name    string
+		resName string
+	}{
+		{"empty", ""},
+		{"bare id, no prefix", "9999999999"},
+		{"wrong resource kind", "customerClients/9999999999"},
+		{"extra path segment", "customers/9999999999/campaigns/1"},
+		{"non-numeric id", "customers/abc"},
 	}
-	// It is a malformed RESPONSE, not a rejected request — the distinction is what the
-	// dispatcher maps to a 503-with-retry rather than a client error.
-	var te *transportError
-	if !errors.As(err, &te) {
-		t.Fatalf("error must unwrap to *transportError, got %T: %v", err, err)
-	}
-	if !strings.Contains(te.Err.Error(), "no id") {
-		t.Errorf("diagnostic must name the defect, got %q", te.Err.Error())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if writeAccountsToken(w, r) {
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				// A valid name first, for the same reason as above.
+				_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
+					ResourceNames: []string{"customers/1111111111", tc.resName},
+				})
+			}))
+			defer server.Close()
+
+			client := newAccountsTestClient(t, server)
+
+			accounts, err := client.ListAccessibleCustomers(context.Background())
+			if err == nil {
+				t.Fatalf("resource name %q must fail the call, got accounts %+v", tc.resName, accounts)
+			}
+			if accounts != nil {
+				t.Errorf("accounts must be nil on error, got %+v", accounts)
+			}
+			var te *transportError
+			if !errors.As(err, &te) {
+				t.Fatalf("error must unwrap to *transportError, got %T: %v", err, err)
+			}
+			if !strings.Contains(te.Err.Error(), "customers/{digits}") {
+				t.Errorf("diagnostic must name the expected shape, got %q", te.Err.Error())
+			}
+		})
 	}
 }
 

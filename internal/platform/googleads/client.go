@@ -481,6 +481,11 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 // the resource path.
 var customerIDRE = regexp.MustCompile(`^[0-9]+$`)
 
+// accessibleResourceNameRE pins the exact two-segment shape AccessibleCustomer promises.
+// Anchored on both ends so a value carrying extra path segments cannot pass; the digit
+// class is customerIDRE's, kept in step with it deliberately.
+var accessibleResourceNameRE = regexp.MustCompile(`^customers/[0-9]+$`)
+
 // validateAccountIDs rejects a CustomerID (and, when set, LoginCustomerID) that
 // isn't a digits-only id, before any request is built.
 func (c *Client) validateAccountIDs() error {
@@ -868,8 +873,10 @@ type AccessibleCustomer struct {
 }
 
 // listAccessibleCustomersResponse is the response from the Google Ads
-// customers.listAccessibleCustomers API. The API returns a flat list of all
-// accessible accounts under the authenticated credential + login-customer-id.
+// customers.listAccessibleCustomers API. The API returns a flat list of the accounts
+// the AUTHENTICATED USER can act on directly. The login-customer-id header does not
+// scope, filter, or expand this list — see ListAccessibleCustomers below, which walks
+// the manager hierarchy separately precisely because this call will not.
 type listAccessibleCustomersResponse struct {
 	// ResourceNames is the list of customer resources reachable via the credential.
 	// Each is formatted as "customers/{customer_id}". This API endpoint — unlike most
@@ -900,12 +907,14 @@ func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCusto
 	// POST used by the :search and :mutate custom methods — it takes no request
 	// body at all. Sending POST here fails against the real API.
 	//
-	// This goes through doRequest like every other call: the URL construction,
-	// header set, body bounding, and apiError/transportError classification are
-	// identical, so duplicating them here would be a second copy to keep in sync.
-	// The nil body means doRequest omits Content-Type, and idempotent=true is
-	// correct because this is a pure read — retrying a 429 cannot double-apply
-	// anything, which is exactly the case doRequest's retry is gated on.
+	// This goes through the SHARED request layer (doRequestValidated, which doRequest
+	// itself wraps): the URL construction, header set, body bounding, and
+	// apiError/transportError classification are identical, so duplicating them here
+	// would be a second copy to keep in sync. The one thing it deliberately bypasses is
+	// doRequest's digits-only CustomerID precondition — see below. The nil body means
+	// the layer omits Content-Type, and idempotent=true is correct because this is a
+	// pure read: retrying a 429 cannot double-apply anything, which is exactly the case
+	// the shared retry is gated on.
 	const path = "customers:listAccessibleCustomers"
 
 	// doRequestValidated, not doRequest: doRequest insists on a digits-only
@@ -946,15 +955,34 @@ func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCusto
 		managerResName = "customers/" + c.account.LoginCustomerID
 	}
 	accounts := make([]AccessibleCustomer, 0, len(resp2xx.ResourceNames))
-	seen := make(map[string]struct{}, len(resp2xx.ResourceNames))
+	// at maps a resource name to its index in accounts. A plain "seen" set would force a
+	// linear scan of accounts to relabel a duplicate during the manager merge below,
+	// making that merge quadratic when the hierarchy substantially overlaps the direct
+	// list. Storing the index makes both the dedup test and the relabel O(1).
+	at := make(map[string]int, len(resp2xx.ResourceNames))
 	for _, resName := range resp2xx.ResourceNames {
-		if _, dup := seen[resName]; dup {
+		// The AccessibleCustomer contract promises "customers/{digits}", and a caller
+		// persists this value as the connection's account id and interpolates it into
+		// later request paths. A malformed 2xx must not put an empty, wrong-kind, or
+		// path-bearing string on that route: fail the read rather than hand back an
+		// account id that is unusable at best.
+		if !accessibleResourceNameRE.MatchString(resName) {
+			return nil, &transportError{
+				Method: http.MethodGet,
+				Path:   path,
+				Err:    fmt.Errorf("resource name %q is not of the form customers/{digits}", resName),
+			}
+		}
+		if _, dup := at[resName]; dup {
 			continue
 		}
-		seen[resName] = struct{}{}
 		if resName == managerResName {
-			continue // the configured MCC: reachable, but not selectable as an ad account
+			// The configured MCC: reachable, but not selectable as an ad account. Recorded
+			// in `at` anyway so the manager merge below does not re-add it as a child.
+			at[resName] = -1
+			continue
 		}
+		at[resName] = len(accounts)
 		accounts = append(accounts, AccessibleCustomer{ResourceName: resName})
 	}
 
@@ -975,16 +1003,16 @@ func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCusto
 			return nil, cerr
 		}
 		for _, child := range children {
-			if _, dup := seen[child.ResourceName]; dup {
+			if i, dup := at[child.ResourceName]; dup {
 				// Already listed directly, but without a label. Prefer the labelled copy.
-				for i := range accounts {
-					if accounts[i].ResourceName == child.ResourceName && accounts[i].DescriptiveName == "" {
-						accounts[i].DescriptiveName = child.DescriptiveName
-					}
+				// i == -1 marks the configured manager, which is deliberately absent from
+				// accounts — leave it out rather than reinstating it through the merge.
+				if i >= 0 && accounts[i].DescriptiveName == "" {
+					accounts[i].DescriptiveName = child.DescriptiveName
 				}
 				continue
 			}
-			seen[child.ResourceName] = struct{}{}
+			at[child.ResourceName] = len(accounts)
 			accounts = append(accounts, child)
 		}
 	}
@@ -1028,13 +1056,16 @@ func (c *Client) listManagerClients(ctx context.Context, managerID string) ([]Ac
 				Err:    fmt.Errorf("decode customer_client row: %w", uerr),
 			}
 		}
-		// A row with no id is unusable — it cannot be turned into a resource name a
-		// caller could select — and silently dropping it would understate the list.
-		if row.CustomerClient.ID == "" {
+		// A row whose id is missing OR non-numeric is unusable: AccessibleCustomer
+		// promises a digits-only customer id, and this id is concatenated straight into
+		// "customers/"+id. An empty check alone lets a value like "1/other" through and
+		// forges a resource name pointing somewhere else entirely. Silently dropping such
+		// a row would understate the list, so fail the read.
+		if !customerIDRE.MatchString(row.CustomerClient.ID) {
 			return nil, &transportError{
 				Method: http.MethodPost,
 				Path:   "customers/" + managerID + "/googleAds:search",
-				Err:    fmt.Errorf("customer_client row has no id"),
+				Err:    fmt.Errorf("customer_client row id %q is not a numeric customer id", row.CustomerClient.ID),
 			}
 		}
 		if row.CustomerClient.Manager {
