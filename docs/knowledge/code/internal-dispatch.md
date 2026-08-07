@@ -190,8 +190,9 @@ live read) — deferred, not attempted here.
 `date_preset` mapped from `window` (validated against a platform-side allow-list — an invalid
 caller value fails inside the client). The campaign id is validated as digits-only (the same
 `numericIDRE` sibling Meta client methods use) BEFORE string concatenation into the request path,
-since the Graph API has no parameterized path segments. `spend` arrives as a decimal-USD JSON
-string (not micros, unlike Google Ads) and is `strconv.ParseFloat`'d then scaled ×1,000,000 and
+since the Graph API has no parameterized path segments. `spend` arrives as a JSON string in
+whole units of the ad ACCOUNT's currency (not micros, unlike Google Ads, and not necessarily
+USD — the service does no FX conversion) and is `strconv.ParseFloat`'d then scaled ×1,000,000 and
 rounded (not truncated) to `CostMicros`, guarding against non-finite (`NaN`/`Inf`) results. CTR is
 computed client-side the same way as Google Ads.
 

@@ -150,13 +150,14 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		// when multiplied by 1_000_000, and out-of-range values must be rejected
 		// before int64 conversion to prevent underflow/corruption.
 		//
-		// Round BEFORE comparing: math.MaxInt64 is not exactly representable as a
-		// float64, so float64(math.MaxInt64) rounds UP to 2^63. Comparing the
-		// unrounded product with '>' lets a value in [2^63-0.5, 2^63) — which rounds
-		// to exactly 2^63 — pass this guard and then overflow int64 on conversion,
-		// corrupting the cost. Round first, then compare with '>=' so the rounded
-		// boundary itself is rejected, mirroring the budget-scaling guard in
-		// client.go's applyBudget.
+		// The comparison is '>=', not '>': math.MaxInt64 is not exactly representable
+		// as a float64, so float64(math.MaxInt64) is 2^63 — one MORE than MaxInt64.
+		// A product of exactly 2^63 therefore passes a '>' guard and then wraps to
+		// MinInt64 on int64 conversion, corrupting the cost. (Float spacing at this
+		// magnitude is 2048, so 2^63 is reachable while 2^63-1 is not; rounding does
+		// not create this case and cannot avoid it — only '>=' rejects it.) Round
+		// first so sub-boundary spends are rounded rather than truncated, mirroring
+		// the budget-scaling guard in client.go's applyBudget.
 		scaled := math.Round(spend * 1_000_000)
 		if math.IsInf(scaled, 0) || scaled >= float64(math.MaxInt64) || scaled <= float64(math.MinInt64) {
 			return nil, &transportError{

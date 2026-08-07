@@ -182,11 +182,11 @@ func TestGetCampaignMetrics_NonNumericSpendIsTransportError(t *testing.T) {
 // edge the overflow guard must catch: math.MaxInt64 is not exactly representable as a
 // float64, so float64(math.MaxInt64) rounds UP to 2^63 (one past the real int64 max).
 // A spend value whose scaled-to-micros product rounds to exactly 2^63 must still be
-// rejected — comparing the UNROUNDED product with '>' lets it slip through, since
-// 2^63-0.5 rounds to 2^63 but is not itself '> 2^63'.
+// rejected — a '>' comparison lets it slip through, since the product is not
+// itself greater than float64(math.MaxInt64), which is also 2^63.
 func TestGetCampaignMetrics_SpendAtInt64BoundaryOverflows(t *testing.T) {
-	// 9223372036854775808.5 / 1e6 scales to (2^63 + 0.5), which rounds to 2^63 on the
-	// nearest-even boundary — the exact case an unrounded '>' comparison misses.
+	// This literal scales to exactly 2^63 — one more than MaxInt64, and equal to
+	// float64(math.MaxInt64) — the exact case a '>' comparison misses.
 	c := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"data":[{"impressions":"5","clicks":"1","spend":"9223372036854.775808"}]}`)
