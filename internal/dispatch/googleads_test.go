@@ -644,9 +644,13 @@ func TestGoogleAds_ToggleStatus_AlreadyCanceledContextSendsNothing(t *testing.T)
 	}
 }
 
-// provisionedGoogleAdsCampaign returns a campaign whose persisted Result blob carries the
-// ad group/ad ids the GA-3b create path stores, so ToggleStatus's cascade has children to flip.
-func provisionedGoogleAdsCampaign() *model.Campaign {
+// googleAdsCampaignWithChildrenNoTargeting returns a campaign whose persisted Result blob
+// carries the ad group/ad ids the GA-3b create path stores, so ToggleStatus's PAUSE cascade
+// has children to flip — but NO keywordCriteriaIds. It is deliberately not fully
+// provisioned: this is the shape that exercises every PAUSE path (which does not care about
+// targeting) and, on ACTIVATE, the provisioning guard's second condition. Use the inline
+// blob with keywordCriteriaIds (see ActivateSucceedsChildrenFirst) for the activatable shape.
+func googleAdsCampaignWithChildrenNoTargeting() *model.Campaign {
 	return &model.Campaign{
 		Platform:           model.ProviderGoogleAds,
 		PlatformCampaignID: "777",
@@ -708,7 +712,7 @@ func TestGoogleAds_ToggleStatus_PauseCascadesToChildren(t *testing.T) {
 		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
 		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
 	)
-	camp := provisionedGoogleAdsCampaign()
+	camp := googleAdsCampaignWithChildrenNoTargeting()
 	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunPaused); err != nil {
 		t.Fatalf("ToggleStatus: %v", err)
 	}
@@ -726,17 +730,20 @@ func TestGoogleAds_ToggleStatus_PauseCascadesToChildren(t *testing.T) {
 	}
 }
 
-// TestGoogleAds_ToggleStatus_ActivateCascadesChildrenFirst_Refused verifies that
-// ACTIVATE is refused in GA-3c until GA-4 provisions targeting criteria. GA-3b creates
-// ad group + ad but no keywords/audience targeting, so activating would report false success.
-func TestGoogleAds_ToggleStatus_ActivateCascadesChildrenFirst_Refused(t *testing.T) {
+// TestGoogleAds_ToggleStatus_ActivateWithoutKeywordCriteriaIsNotProvisioned pins the second
+// condition of the activation guard, the one this slice adds: ad group + ad ids alone are not
+// enough. A campaign created before targeting was provisioned has children to cascade to but
+// no keyword criteria, so enabling it would report success for a campaign that cannot serve.
+// The refusal is local — no dispatcher client is configured here, so any API call would fail
+// with a connection error rather than ErrCampaignNotProvisioned.
+func TestGoogleAds_ToggleStatus_ActivateWithoutKeywordCriteriaIsNotProvisioned(t *testing.T) {
 	d := NewGoogleAdsDispatcher(
 		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
 	)
-	camp := provisionedGoogleAdsCampaign()
+	camp := googleAdsCampaignWithChildrenNoTargeting()
 	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive)
 	if err == nil {
-		t.Fatal("expected ACTIVATE to be refused in GA-3c (targeting criteria not yet provisioned)")
+		t.Fatal("expected ACTIVATE to be refused: keyword criteria are not provisioned")
 	}
 	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
 		t.Errorf("expected ErrCampaignNotProvisioned, got %v", err)
@@ -772,7 +779,7 @@ func TestGoogleAds_ToggleStatus_PauseCascadeStopsOnChildFailure(t *testing.T) {
 		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
 		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
 	)
-	camp := provisionedGoogleAdsCampaign()
+	camp := googleAdsCampaignWithChildrenNoTargeting()
 	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunPaused)
 	if err == nil {
 		t.Fatal("expected an error when the child ad-group mutate fails")
@@ -822,7 +829,7 @@ func TestGoogleAds_ToggleStatus_PauseCascadeChildDefiniteFailureIsUnconfirmed(t 
 		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
 		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
 	)
-	camp := provisionedGoogleAdsCampaign()
+	camp := googleAdsCampaignWithChildrenNoTargeting()
 	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunPaused)
 	if err == nil {
 		t.Fatal("expected an error when the child ad-group mutate fails")
@@ -842,27 +849,30 @@ func TestGoogleAds_ToggleStatus_PauseCascadeChildDefiniteFailureIsUnconfirmed(t 
 	}
 }
 
-// TestGoogleAds_ToggleStatus_ActivateCascadeStopsOnCampaignFailure_Refused verifies that
-// ACTIVATE is refused (it's re-enabled in GA-4 once targeting is provisioned).
-func TestGoogleAds_ToggleStatus_ActivateCascadeStopsOnCampaignFailure_Refused(t *testing.T) {
+// TestGoogleAds_ToggleStatus_ActivateGuardRunsBeforeAnyMutate pins the ORDERING of the
+// activation guard: an unprovisioned campaign is refused before the cascade starts, so no
+// child is left enabled by a run that then refuses. The dispatcher here has no client
+// options at all, so if the guard were checked after the first mutate the error would be a
+// connection failure instead of ErrCampaignNotProvisioned.
+func TestGoogleAds_ToggleStatus_ActivateGuardRunsBeforeAnyMutate(t *testing.T) {
 	d := NewGoogleAdsDispatcher(
 		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
 	)
-	camp := provisionedGoogleAdsCampaign()
+	camp := googleAdsCampaignWithChildrenNoTargeting()
 	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive)
 	if err == nil {
-		t.Fatal("expected ACTIVATE to be refused in GA-3c")
+		t.Fatal("expected ACTIVATE to be refused before any mutate is sent")
 	}
 	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
 		t.Errorf("expected ErrCampaignNotProvisioned, got %v", err)
 	}
 }
 
-// TestGoogleAds_ToggleStatus_ActivateChildDefititeFailureIsNotUnconfirmed verifies that on
+// TestGoogleAds_ToggleStatus_ActivateChildDefiniteFailureIsNotUnconfirmed verifies that on
 // ACTIVATE (children-first), a definite child failure (4xx) is NOT wrapped as unconfirmed.
 // The child mutate happens before the campaign gate is opened; a definite error means the
 // change was not applied upstream, so the failure is clean (not a partial cascade).
-func TestGoogleAds_ToggleStatus_ActivateChildDefititeFailureIsNotUnconfirmed(t *testing.T) {
+func TestGoogleAds_ToggleStatus_ActivateChildDefiniteFailureIsNotUnconfirmed(t *testing.T) {
 	var mu sync.Mutex
 	var paths []string
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

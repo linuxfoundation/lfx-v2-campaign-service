@@ -774,18 +774,21 @@ func IsOutcomeUnconfirmed(err error) bool {
 // with an updateMask of "status".
 //
 // This method flips ONLY the campaign — it does not cascade to the ad group/ad. The cascade
-// is implemented in GoogleAdsDispatcher.ToggleStatus (dispatch/googleads.go): PAUSE cascades
-// campaign-first (stops delivery immediately) then the ad group/ad; ACTIVATE is deferred
-// until GA-4 provisions targeting criteria.
+// is implemented in GoogleAdsDispatcher.ToggleStatus (dispatch/googleads.go), and the two
+// directions cascade in OPPOSITE order so neither leaves a parent enabled ahead of its
+// children: PAUSE goes campaign-first (stopping delivery immediately) then the ad group/ad;
+// ACTIVATE goes children-first, campaign last, so the campaign only reports ENABLED once its
+// ad group and ad already do.
 //
 // Kept as two client methods (rather than one combined call) because the ad group/ad may
 // legitimately not exist (a duplicate-name orphan from GA-3b's create path — see
 // createAdGroupAndAd) — the dispatcher's activate guard (ErrCampaignNotProvisioned) checks
 // for that BEFORE calling either method. Additionally, keeping them separate lets a caller
 // pause a campaign whose children failed to create, without that call depending on child ids
-// it may not have. Note: today the dispatcher rejects ACTIVATE unconditionally because GA-4
-// targeting provisioning is absent — that is the only remaining reason; the PAUSE cascade
-// itself is wired.
+// it may not have. ACTIVATE is no longer rejected unconditionally: with GA-4's targeting
+// provisioning in place, the dispatcher's guard now rejects only a campaign that is actually
+// missing its ad group/ad ids or its keyword criteria (ErrCampaignNotProvisioned), and
+// activates every campaign that has them.
 //
 // The mutate IS sent as idempotent (doRequest's last arg), unlike the create path. That flag
 // gates only bounded 429 retries, and the create path's reason for declining them (no

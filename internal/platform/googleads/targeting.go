@@ -58,20 +58,20 @@ type userListInfo struct {
 	UserList string `json:"userList"`
 }
 
-// customAudienceInfo is the "customAudience" criterion payload, the other
-// audience-segment shape this client accepts.
-type customAudienceInfo struct {
-	CustomAudience string `json:"customAudience"`
-}
-
 // adGroupCriterionCreate is the create payload for adGroupCriteria:mutate.
-// Exactly one of Keyword/UserList/CustomAudience is set per operation.
+// Exactly one of Keyword/UserList is set per operation.
+//
+// There is deliberately no customAudience field. Google Ads has a
+// customAudience criterion, but validateAudienceSegments rejects every
+// customAudiences resource name before any mutate is built — Custom Audiences
+// are not supported on SEARCH campaigns, which is the only campaign type this
+// client creates. Carrying the field would make the payload advertise a
+// targeting shape this client can never populate.
 type adGroupCriterionCreate struct {
-	AdGroup        string              `json:"adGroup"`
-	Status         string              `json:"status"`
-	Keyword        *keywordInfo        `json:"keyword,omitempty"`
-	UserList       *userListInfo       `json:"userList,omitempty"`
-	CustomAudience *customAudienceInfo `json:"customAudience,omitempty"`
+	AdGroup  string        `json:"adGroup"`
+	Status   string        `json:"status"`
+	Keyword  *keywordInfo  `json:"keyword,omitempty"`
+	UserList *userListInfo `json:"userList,omitempty"`
 }
 
 // validateKeywords trims/validates each caller-supplied keyword and
@@ -123,10 +123,22 @@ func validateKeywords(keywords []Keyword) ([]Keyword, error) {
 // audienceCriterionField reports which oneof field a caller-supplied audience
 // resource name maps to, inferred from its resource-collection segment.
 // Google Ads has several audience-criterion shapes (userInterest,
-// combinedAudience, detailedDemographic, …); this client only recognizes the
-// two that match what "a built campaign audience" (docs/api-catalog.md's
-// campaign_audiences resource) represents — a Customer Match list or a custom
-// audience the caller already built, not a Google-defined category.
+// combinedAudience, detailedDemographic, …); this client recognizes only the
+// two that name a list the caller already built rather than a Google-defined
+// category — a Customer Match user list or a custom audience.
+//
+// Only "userList" is ever actually mutated. "customAudience" is recognized
+// solely so validateAudienceSegments can reject it with the reason ("not
+// supported for SEARCH campaigns") instead of the generic
+// unrecognized-resource-name error, which would send a caller looking for a
+// typo in a resource name that is perfectly well formed.
+//
+// These resource names are Google Ads' own, supplied through this dispatcher's
+// configuration. They are unrelated to the campaign_audiences resource in
+// docs/api-catalog.md: that resource's platform enum is "hubspot" only
+// (design/audience.go), so it holds HubSpot master-list pointers, which can
+// never appear here.
+//
 // Validates that the resource name has the exact shape .../userLists/{id} or
 // .../customAudiences/{id}, where {id} is numeric.
 func audienceCriterionField(resourceName string) (field string, ok bool) {
@@ -262,15 +274,17 @@ func (c *Client) createAdGroupTargeting(ctx context.Context, adGroupResource, ad
 		}})
 	}
 	for _, seg := range audienceSegments {
-		op := adGroupCriterionCreate{AdGroup: adGroupResource, Status: StatusEnabled}
-		field, _ := audienceCriterionField(seg) // already validated by validateAudienceSegments
-		switch field {
-		case "userList":
-			op.UserList = &userListInfo{UserList: seg}
-		case "customAudience":
-			op.CustomAudience = &customAudienceInfo{CustomAudience: seg}
-		}
-		ops = append(ops, mutateOperation{Create: op})
+		// Every segment reaching here is a userList: validateAudienceSegments (the sole
+		// producer of this slice) rejects customAudiences resource names outright, and
+		// any other shape fails audienceCriterionField. So there is no oneof to branch
+		// on. The earlier switch here was dead in its customAudience arm and, worse,
+		// silently emitted a criterion with NO oneof set for an unrecognized field —
+		// a 4xx after the budget/campaign/ad group/ad already exist.
+		ops = append(ops, mutateOperation{Create: adGroupCriterionCreate{
+			AdGroup:  adGroupResource,
+			Status:   StatusEnabled,
+			UserList: &userListInfo{UserList: seg},
+		}})
 	}
 
 	resp, mErr := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroupCriteria:mutate"), mutateRequest{Operations: ops}, false)

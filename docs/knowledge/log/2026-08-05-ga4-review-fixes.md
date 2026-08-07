@@ -1,6 +1,6 @@
 # 2026-08-05 — GA-4: review fixes and migration hardening
 
-**Fix** — Resolve outstanding Copilot review thread on PR #69 GA-4
+**Update** — Resolve outstanding Copilot review thread on PR #69 GA-4
 (`internal/platform/googleads/targeting.go:295`).
 
 `adGroupCriterionID` validated the resource kind (`adGroupCriteria`) and the composite
@@ -12,7 +12,7 @@ own criterion and its id persisted. `adGroupCriterionID` is now a `*Client` meth
 also checks `pathParts[1] == c.account.CustomerID`, returning `("", "")` (classified
 UNCONFIRMED by the caller) on a mismatch, mirroring `validateCampaignResource`.
 
-**Fix** — Resolve outstanding Copilot review thread on PR #69 GA-4
+**Update** — Resolve outstanding Copilot review thread on PR #69 GA-4
 (`internal/platform/googleads/adgroup_ad.go:148`).
 
 `adGroupCriterionID` accepted a resourceName with `len(pathParts) < 4`, unlike its
@@ -21,7 +21,7 @@ path segments. A resource name with extra path segments (a malformed/substituted
 response) was silently accepted, with the extra segments ignored rather than
 rejected. Changed the check to `!= 4`, matching `adGroupAdID`.
 
-**Fix** — Cursor Bugbot correctly flagged that `000013_rebuild_stuck_claim_index.down.sql`
+**Update** — Cursor Bugbot correctly flagged that `000013_rebuild_stuck_claim_index.down.sql`
 (added in the entry directly below) unconditionally ran `DROP INDEX CONCURRENTLY IF EXISTS
 idx_campaigns_stuck_claims`. On the common path, `000013`'s up is itself a no-op (`IF NOT
 EXISTS`, since `000008` already built a valid index), so `000013` doesn't actually own the
@@ -29,7 +29,7 @@ index — rolling back only that version would drop an index that `000008` (stil
 relying on, leaving stuck-claim scans without their partial index. Changed `000013`'s down to
 a no-op (`SELECT 1`), mirroring `000009`'s down for the same ensure/repair-semantics reason.
 
-**Fix** — Cursor Bugbot correctly flagged that the "migration concurrency" fix below (item 2 of the
+**Update** — Cursor Bugbot correctly flagged that the "migration concurrency" fix below (item 2 of the
 same day's earlier entry) was itself broken: putting the DO-block DROP and
 `CREATE INDEX CONCURRENTLY` in the same file means golang-migrate's pgx/v5 driver sends both
 statements to Postgres in one implicit transaction (it does not wrap migrations in an explicit
@@ -42,7 +42,7 @@ moved the `CREATE INDEX CONCURRENTLY IF NOT EXISTS` rebuild into a new migration
 000009 to avoid colliding with the `000010`-`000012` index-outbox chain from PR #60), mirroring
 000008's single-statement, non-transactional shape.
 
-**Fix** — Renumbered `000013_rebuild_stuck_claim_index.up/down.sql` → `000015`. PR #64
+**Update** — Renumbered `000013_rebuild_stuck_claim_index.up/down.sql` → `000015`. PR #64
 (campaign delete) has since merged into `main`, claiming `000013_campaigns_partial_unique_platform`
 and `000014_drop_campaigns_full_unique_platform` — versions this branch could not see when it
 picked `000013` for the rebuild file above. `000015` is the next free version above every
@@ -50,7 +50,7 @@ migration now present on `main`. Updated the two in-file comments in
 `000009_drop_invalid_stuck_claim_index.up.sql` and `000015_rebuild_stuck_claim_index.down.sql`
 that referred to the rebuild migration by its old number.
 
-**Fix** — Closed 4 unresolved Copilot comments on GA-4 (`internal/platform/googleads/targeting.go`,
+**Update** — Closed 4 unresolved Copilot comments on GA-4 (`internal/platform/googleads/targeting.go`,
 `docs/api-catalog.md`, `internal/infrastructure/postgres/migrations/000009_drop_invalid_stuck_claim_index.up.sql`,
 `internal/container/container.go`):
 
@@ -76,7 +76,7 @@ that referred to the rebuild migration by its old number.
    be shortened below its documented window. Extended `ContainerCloseTimeout` to include
    `sweeperStopTimeout`. Updated the container_test.go assertion to verify the new budget.
 
-**Fix** — Closed 5 suppressed Copilot findings on GA-4 (`internal/dispatch/googleads.go`,
+**Update** — Closed 5 suppressed Copilot findings on GA-4 (`internal/dispatch/googleads.go`,
 `internal/platform/googleads/targeting.go`):
 
 1. **Real bug** — `ToggleStatus`'s ACTIVATE path wrapped a campaign-mutate failure with

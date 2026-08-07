@@ -350,6 +350,24 @@ is rejected — deliberately narrow scope limiting to externally built user list
 that have already been provisioned outside this service. Also capped at 20 per
 call, deduped by resource name.
 
+Because `userList` is the only shape that survives validation, the
+`adGroupCriterionCreate` payload carries no `customAudience` field and
+`createAdGroupTargeting` does not branch on the criterion kind: a
+customAudience arm there would be unreachable, and a `switch` over an
+unrecognized kind silently emits a criterion with NO oneof set — a 4xx arriving
+only after the budget, campaign, ad group and ad already exist. The one place
+`customAudiences` is still recognized is `audienceCriterionField`, and only so
+that `validateAudienceSegments` can reject it with its actual reason ("not
+supported for SEARCH campaigns") instead of the generic
+unrecognized-resource-name error, which would send a caller hunting for a typo
+in a perfectly well-formed name.
+
+These resource names are Google Ads' own, arriving through this dispatcher's
+configuration. They are NOT the `campaign_audiences` resource in
+`docs/api-catalog.md`: that resource's `platform` enum is `hubspot` only
+(`design/audience.go`), so it holds HubSpot master-list pointers, which can
+never appear as a Google Ads criterion.
+
 **Observation vs targeting — the audience-restriction gotcha**: a Search ad
 group's audience criteria default to TARGETING (restrictive — narrows
 delivery to ONLY that audience) unless a `targetingSetting.targetRestrictions`
