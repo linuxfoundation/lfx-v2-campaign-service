@@ -259,10 +259,20 @@ func validateGoogleAdsConnection(projectID string, res *resolved) (googleAdsCred
 func validateGoogleAdsCredentials(projectID string, res *resolved) (googleAdsCreds, error) {
 	var creds googleAdsCreds
 	if res.status != model.StatusActive {
-		return creds, fmt.Errorf("google ads connection for project %s is %s, not active", projectID, res.status)
+		return creds, fmt.Errorf("%w: google ads connection for project %s is %s, not active",
+			domain.ErrConnectionInactive, projectID, res.status)
 	}
 	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return creds, fmt.Errorf("decode google ads credentials: %w", err)
+		// The unmarshal error is DROPPED, not wrapped. It is the one error on this path
+		// derived from the DECRYPTED credential blob, and encoding/json quotes its input:
+		// a *json.SyntaxError names the offending character and a *json.UnmarshalTypeError
+		// names the field it was reading. Wrapping it put credential-derived bytes into
+		// every log line and error chain downstream, for exactly the connection whose
+		// credentials are malformed. Nothing is lost that a reader could act on — the
+		// remedy is "re-save the credential", not "fix byte 41" — and the sentinel keeps
+		// the condition distinguishable without carrying a payload.
+		return creds, fmt.Errorf("%w: google ads credentials for project %s are not valid JSON",
+			domain.ErrCredentialsUndecodable, projectID)
 	}
 	// Trim ONCE, in place, so the emptiness check and the values handed to NewClient are
 	// the same strings. Checking the untrimmed value lets a whitespace-only field — the
@@ -276,7 +286,8 @@ func validateGoogleAdsCredentials(projectID string, res *resolved) (googleAdsCre
 	creds.DeveloperToken = strings.TrimSpace(creds.DeveloperToken)
 	creds.RefreshToken = strings.TrimSpace(creds.RefreshToken)
 	if creds.ClientID == "" || creds.ClientSecret == "" || creds.DeveloperToken == "" || creds.RefreshToken == "" {
-		return creds, fmt.Errorf("google ads credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)")
+		return creds, fmt.Errorf("%w: google ads credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)",
+			domain.ErrCredentialsIncomplete)
 	}
 	return creds, nil
 }
@@ -337,8 +348,8 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 	// Checking the stored value where it is read is what makes it classifiable.
 	loginCustomerID := strings.TrimSpace(res.providerConfig["login_customer_id"])
 	if loginCustomerID != "" && !storedCustomerIDRE.MatchString(loginCustomerID) {
-		return nil, fmt.Errorf("%w: stored login_customer_id %q must be digits only (no dashes or spaces)",
-			domain.ErrConnectionNotUsable, loginCustomerID)
+		return nil, fmt.Errorf("%w: %w: stored login_customer_id %q must be digits only (no dashes or spaces)",
+			domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid, loginCustomerID)
 	}
 	return googleads.NewClient(
 		googleads.Credentials{

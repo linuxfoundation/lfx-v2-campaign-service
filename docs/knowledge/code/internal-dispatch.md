@@ -303,7 +303,19 @@ go fix a connection that is fine — and would erase the 500 that says the deplo
 unrecognized decrypt error takes the authentication path on purpose: an `Encryptor` that proves
 nothing about the row must not be read as accusing it.
 
-The two sentinels are declared in `internal/domain` rather than in `crypto` because callers depend
+**Which defect it was is carried by a second sentinel, and the log line is why.** Alongside
+`ErrConnectionNotUsable`, each stored-connection defect wraps one of
+`domain.ErrConnectionInactive`, `ErrCredentialsUndecodable`, `ErrCredentialsIncomplete`, or
+`ErrProviderConfigInvalid`. The status is still decided by the one sentinel; these only name the
+reason. They have to be sentinels rather than message text because the service layer cannot log the
+error at all: `validateGoogleAdsCredentials` detects the undecodable case by decoding the DECRYPTED
+blob, and `encoding/json` quotes its input — a `*json.SyntaxError` names the offending character, a
+`*json.UnmarshalTypeError` names the field being read. So that unmarshal error is **dropped, not
+wrapped**: nothing a reader could act on is lost (the remedy is "re-save the credential", not "fix
+byte 41"), and `errors.Is` over a fixed vocabulary carries the diagnosis with no payload attached to
+carry secrets in.
+
+The two decrypt sentinels are declared in `internal/domain` rather than in `crypto` because callers depend
 on the `domain.Encryptor` PORT and never import the implementation; the port's doc states the
 wrapping obligation, and `crypto`'s `ErrCiphertextTooShort` / `ErrDecryptionFailed` each wrap their
 domain sentinel so `errors.Is` carries the classification across the layer without inverting the
