@@ -488,12 +488,31 @@ var customerIDRE = regexp.MustCompile(`^[0-9]+$`)
 // customer reads as "no activity" at best and another account's campaign at worst.
 func (c *Client) CustomerID() string { return c.account.CustomerID }
 
+// accessibleResourceNameRE pins the exact two-segment shape AccessibleCustomer promises.
+// Anchored on both ends so a value carrying extra path segments cannot pass; the digit
+// class is customerIDRE's, kept in step with it deliberately.
+var accessibleResourceNameRE = regexp.MustCompile(`^customers/[0-9]+$`)
+
 // validateAccountIDs rejects a CustomerID (and, when set, LoginCustomerID) that
 // isn't a digits-only id, before any request is built.
 func (c *Client) validateAccountIDs() error {
 	if !customerIDRE.MatchString(c.account.CustomerID) {
 		return fmt.Errorf("invalid Google Ads customer id %q: must be digits only (no dashes)", c.account.CustomerID)
 	}
+	return c.validateLoginCustomerID()
+}
+
+// validateLoginCustomerID validates ONLY the manager id, for the account-agnostic
+// endpoints that have no customer_id path segment (customers:listAccessibleCustomers).
+// Those calls are how a caller DISCOVERS a customer id, so requiring one first is the
+// chicken-and-egg that made account discovery unreachable. Naming the layer precisely
+// matters, because this comment documents which precondition is bypassed: discovery calls
+// doRequestValidated, deliberately SKIPPING doRequest's validateAccountIDs. The
+// login-customer-id header is attached inside doRequestValidated itself, alongside
+// developer-token — so the header is still sent on every discovery call and must still be
+// well-formed, which is what this function checks and the only reason it exists separately
+// from validateAccountIDs, while c.account.CustomerID is legitimately empty here.
+func (c *Client) validateLoginCustomerID() error {
 	if c.account.LoginCustomerID != "" && !customerIDRE.MatchString(c.account.LoginCustomerID) {
 		return fmt.Errorf("invalid Google Ads login-customer-id %q: must be digits only (no dashes)", c.account.LoginCustomerID)
 	}
@@ -528,7 +547,16 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 	if err := c.validateAccountIDs(); err != nil {
 		return nil, err
 	}
+	return c.doRequestValidated(ctx, method, path, body, idempotent)
+}
 
+// doRequestValidated is doRequest with the account-id precondition already discharged by
+// the caller. It exists ONLY so the account-agnostic endpoints — the ones whose whole job
+// is to tell a caller which customer ids exist — can run without a customer id, while
+// still sharing one copy of the URL construction, header set, body bounding, retry gating,
+// and apiError/transportError classification. Every caller must have validated whatever
+// ids its path actually embeds first.
+func (c *Client) doRequestValidated(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, error) {
 	var encoded []byte
 	if body != nil {
 		b, mErr := json.Marshal(body)
@@ -776,7 +804,23 @@ var (
 // schedule; a reporting date-range window (segments.date, or the query's
 // DURING clause) is a separate concern and not a substitute for them.
 func (c *Client) gaqlSearch(ctx context.Context, query string) ([]json.RawMessage, error) {
-	path := c.customerPath("googleAds:search")
+	return c.gaqlSearchForCustomer(ctx, c.account.CustomerID, query)
+}
+
+// gaqlSearchForCustomer is gaqlSearch scoped to an EXPLICIT customer id rather than the
+// client's configured one. Account discovery needs it: expanding a manager account's
+// children runs under the manager id, which is the login-customer-id, at a point where
+// c.account.CustomerID is deliberately empty because discovering it is the point of the
+// call. The customer id is validated here (not in doRequest) because it is interpolated
+// straight into the resource path.
+func (c *Client) gaqlSearchForCustomer(ctx context.Context, customerID, query string) ([]json.RawMessage, error) {
+	if !customerIDRE.MatchString(customerID) {
+		return nil, fmt.Errorf("invalid Google Ads customer id %q: must be digits only (no dashes)", customerID)
+	}
+	if err := c.validateLoginCustomerID(); err != nil {
+		return nil, err
+	}
+	path := "customers/" + customerID + "/googleAds:search"
 	var out []json.RawMessage
 	var totalBytes int
 	pageToken := ""
@@ -784,7 +828,13 @@ func (c *Client) gaqlSearch(ctx context.Context, query string) ([]json.RawMessag
 
 	for page := 0; page < maxSearchPages; page++ {
 		// GAQL search is read-only (idempotent), so a 429 is safe to retry.
-		raw, err := c.doRequest(ctx, http.MethodPost, path, searchRequest{Query: query, PageToken: pageToken}, true /* idempotent */)
+		//
+		// doRequestValidated, not doRequest: both ids this call depends on were validated
+		// at the top of gaqlSearchForCustomer — the customer id because it is interpolated
+		// into `path` above, the manager id because it is sent as a header. Re-running
+		// doRequest's check would instead validate c.account.CustomerID, which the
+		// discovery path deliberately leaves empty.
+		raw, err := c.doRequestValidated(ctx, http.MethodPost, path, searchRequest{Query: query, PageToken: pageToken}, true /* idempotent */)
 		if err != nil {
 			return nil, fmt.Errorf("gaql search: %w", err)
 		}
@@ -823,4 +873,237 @@ func (c *Client) gaqlSearch(ctx context.Context, query string) ([]json.RawMessag
 		pageToken = sr.NextPageToken
 	}
 	return nil, fmt.Errorf("gaql search %q: exceeded %d pages with a page token still present", path, maxSearchPages)
+}
+
+// AccessibleCustomer represents a Google Ads customer (account) accessible via
+// the authenticated developer token and login-customer-id (if set). Extracted
+// from the ListAccessibleCustomers response.
+type AccessibleCustomer struct {
+	ResourceName    string
+	DescriptiveName string
+}
+
+// listAccessibleCustomersResponse is the response from the Google Ads
+// customers.listAccessibleCustomers API. The API returns a flat list of the accounts
+// the AUTHENTICATED USER can act on directly. The login-customer-id header does not
+// scope, filter, or expand this list — see ListAccessibleCustomers below, which walks
+// the manager hierarchy separately precisely because this call will not.
+type listAccessibleCustomersResponse struct {
+	// ResourceNames is the list of customer resources reachable via the credential.
+	// Each is formatted as "customers/{customer_id}". This API endpoint — unlike most
+	// Google Ads read operations — does NOT require a customer_id path segment;
+	// it is accessed at /v{api_version}/customers:listAccessibleCustomers.
+	ResourceNames []string `json:"resourceNames"`
+}
+
+// ListAccessibleCustomers discovers the ad accounts reachable with this client's
+// credential, returning minimal identifying info (resource name and descriptive name).
+// The resource name is formatted as "customers/{customer_id}" (digits only, no dashes).
+//
+// It runs WITHOUT a configured CustomerID — this is the call that tells a caller which
+// customer ids exist, so requiring one would be circular — and it is the reason
+// doRequestValidated exists.
+//
+// There are two MODES, and they do not merge — which source answers depends entirely on
+// whether a login-customer-id is configured.
+//
+// Without one: customers:listAccessibleCustomers stands alone. It gives the accounts the
+// authenticated user can act on DIRECTLY, unlabelled (the response carries resource names
+// only), and there is no hierarchy root to walk.
+//
+// With one: the answer is the manager's ENABLED, non-manager children from
+// customer_client, and the flat list is DISCARDED rather than merged. Every other request
+// this client makes carries the login-customer-id header, so an account outside that
+// hierarchy is not addressable through this client even though the unscoped flat list
+// returns it — offering it would present a choice that fails at first dispatch. The
+// expansion is also labelled and already has managers filtered out. See the MANAGER MODE
+// comment in the body for the full reasoning.
+//
+// Resource-name validation runs over the flat list in BOTH modes: a malformed 2xx must
+// fail the read rather than yield an account id a caller would persist and interpolate
+// into later request paths.
+func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCustomer, error) {
+	// The ListAccessibleCustomers endpoint is account-agnostic; it does NOT have a
+	// customer_id path segment. The path is just customers:listAccessibleCustomers.
+	//
+	// The REST binding for CustomerService.ListAccessibleCustomers is GET, not the
+	// POST used by the :search and :mutate custom methods — it takes no request
+	// body at all. Sending POST here fails against the real API.
+	//
+	// This goes through the SHARED request layer (doRequestValidated, which doRequest
+	// itself wraps): the URL construction, header set, body bounding, and
+	// apiError/transportError classification are identical, so duplicating them here
+	// would be a second copy to keep in sync. The one thing it deliberately bypasses is
+	// doRequest's digits-only CustomerID precondition — see below. The nil body means
+	// the layer omits Content-Type, and idempotent=true is correct because this is a
+	// pure read: retrying a 429 cannot double-apply anything, which is exactly the case
+	// the shared retry is gated on.
+	const path = "customers:listAccessibleCustomers"
+
+	// doRequestValidated, not doRequest: doRequest insists on a digits-only
+	// c.account.CustomerID, and this call is how a caller LEARNS one. Requiring an
+	// account id before account discovery is the chicken-and-egg that made the endpoint
+	// unreachable for a connection that has credentials but no account chosen yet. The
+	// login-customer-id header is still attached and still validated.
+	if err := c.validateLoginCustomerID(); err != nil {
+		return nil, err
+	}
+
+	raw, err := c.doRequestValidated(ctx, http.MethodGet, path, nil, true)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp2xx listAccessibleCustomersResponse
+	if err := json.Unmarshal(raw, &resp2xx); err != nil {
+		return nil, &transportError{Method: http.MethodGet, Path: path, Err: fmt.Errorf("decode response: %w", err)}
+	}
+
+	// Convert resource names to AccessibleCustomer structs. This endpoint returns
+	// resource_names ONLY — no descriptive_name and no `manager` flag — so labels stay
+	// empty here, and a manager account in this list is indistinguishable from an ad
+	// account by its resource name alone.
+	//
+	// Validation runs over every row regardless of which branch below consumes them: the
+	// AccessibleCustomer contract promises "customers/{digits}", a caller persists this
+	// value as the connection's account id and interpolates it into later request paths,
+	// and a malformed 2xx must not put an empty, wrong-kind, or path-bearing string on
+	// that route. Fail the read rather than hand back an account id that is unusable at
+	// best.
+	direct := make([]AccessibleCustomer, 0, len(resp2xx.ResourceNames))
+	seen := make(map[string]struct{}, len(resp2xx.ResourceNames))
+	for _, resName := range resp2xx.ResourceNames {
+		if !accessibleResourceNameRE.MatchString(resName) {
+			return nil, &transportError{
+				Method: http.MethodGet,
+				Path:   path,
+				Err:    fmt.Errorf("resource name %q is not of the form customers/{digits}", resName),
+			}
+		}
+		if _, dup := seen[resName]; dup {
+			continue
+		}
+		seen[resName] = struct{}{}
+		direct = append(direct, AccessibleCustomer{ResourceName: resName})
+	}
+
+	// Without a configured manager, the direct list IS the answer: every account in it is
+	// one the credential addresses on its own behalf, and there is no hierarchy root to
+	// walk. (A manager account can still be in here and cannot hold campaigns, but with
+	// no `manager` flag on this response there is nothing to recognise it by, and a
+	// round-trip per row to find out would cost more than it saves on a list this short.)
+	if c.account.LoginCustomerID == "" {
+		return direct, nil
+	}
+
+	// MANAGER MODE. This is not a merge, and that is the whole point.
+	//
+	// listAccessibleCustomers is explicitly UNSCOPED — the login-customer-id header does
+	// not filter it, and it does not walk a hierarchy either. Every OTHER request this
+	// client makes does carry that header, so an account is only addressable through this
+	// client if it sits under the configured manager. An account the user reaches
+	// directly but which belongs to a different hierarchy therefore comes back in the
+	// flat list and then fails with PERMISSION_DENIED the moment anything is done with
+	// it. Returning it presents the caller a choice that cannot work, and the failure
+	// lands at first dispatch — long after the connection was saved — where it reads as a
+	// credential problem rather than a wrong-account one.
+	//
+	// So in manager mode the selectable set is exactly the manager's ENABLED, non-manager
+	// children. That set is also strictly better shaped: customer_client carries
+	// descriptive_name, so those accounts come back labelled, and listManagerClients has
+	// already dropped the managers the flat list cannot identify. Any account present in
+	// both lists is in the expansion too, so nothing addressable is lost.
+	children, cerr := c.listManagerClients(ctx, c.account.LoginCustomerID)
+	if cerr != nil {
+		return nil, cerr
+	}
+	accounts := make([]AccessibleCustomer, 0, len(children))
+	at := make(map[string]int, len(children))
+	for _, child := range children {
+		// customer_client can report the same client twice when the hierarchy has more
+		// than one path to it (a sub-manager that is itself a client of the root).
+		//
+		// Keep the FIRST occurrence, and note what that does and does not rest on. The
+		// query selects no customer_client.level and carries no ORDER BY, so GAQL makes no
+		// promise about which path is returned first — an earlier version of this comment
+		// claimed the first was "the shallowest", which is not an invariant the query
+		// provides and would have been a trap for anyone later relying on depth. It does
+		// not matter here: every duplicate describes the SAME customer, so id and
+		// descriptive_name are properties of that customer rather than of the path taken
+		// to reach it, and the two rows are interchangeable in the only two fields kept.
+		//
+		// The one asymmetry worth handling is a blank label. If a later duplicate carries
+		// a descriptive_name the first lacked, take it — a labelled account is strictly
+		// more useful in a picker than an unlabelled one, and this makes the result
+		// independent of arrival order rather than merely tolerant of it.
+		if i, dup := at[child.ResourceName]; dup {
+			if accounts[i].DescriptiveName == "" {
+				accounts[i].DescriptiveName = child.DescriptiveName
+			}
+			continue
+		}
+		at[child.ResourceName] = len(accounts)
+		accounts = append(accounts, child)
+	}
+
+	return accounts, nil
+}
+
+// customerClientRow is one customer_client row from the manager-hierarchy expansion.
+type customerClientRow struct {
+	CustomerClient struct {
+		ID              string `json:"id"`
+		DescriptiveName string `json:"descriptiveName"`
+		Manager         bool   `json:"manager"`
+		Status          string `json:"status"`
+	} `json:"customerClient"`
+}
+
+// listManagerClients enumerates the ad accounts beneath a manager (MCC) account.
+//
+// Manager accounts are excluded from the result: they cannot hold campaigns, so offering
+// one as a choice would let a caller select an account that fails at the first create.
+// Only ENABLED clients are requested — a cancelled or closed account is not somewhere a
+// campaign can run either.
+func (c *Client) listManagerClients(ctx context.Context, managerID string) ([]AccessibleCustomer, error) {
+	const query = `SELECT customer_client.id, customer_client.descriptive_name, ` +
+		`customer_client.manager, customer_client.status FROM customer_client ` +
+		`WHERE customer_client.status = 'ENABLED'`
+
+	rows, err := c.gaqlSearchForCustomer(ctx, managerID, query)
+	if err != nil {
+		return nil, fmt.Errorf("expand manager %s: %w", managerID, err)
+	}
+
+	out := make([]AccessibleCustomer, 0, len(rows))
+	for _, raw := range rows {
+		var row customerClientRow
+		if uerr := json.Unmarshal(raw, &row); uerr != nil {
+			return nil, &transportError{
+				Method: http.MethodPost,
+				Path:   "customers/" + managerID + "/googleAds:search",
+				Err:    fmt.Errorf("decode customer_client row: %w", uerr),
+			}
+		}
+		// A row whose id is missing OR non-numeric is unusable: AccessibleCustomer
+		// promises a digits-only customer id, and this id is concatenated straight into
+		// "customers/"+id. An empty check alone lets a value like "1/other" through and
+		// forges a resource name pointing somewhere else entirely. Silently dropping such
+		// a row would understate the list, so fail the read.
+		if !customerIDRE.MatchString(row.CustomerClient.ID) {
+			return nil, &transportError{
+				Method: http.MethodPost,
+				Path:   "customers/" + managerID + "/googleAds:search",
+				Err:    fmt.Errorf("customer_client row id %q is not a numeric customer id", row.CustomerClient.ID),
+			}
+		}
+		if row.CustomerClient.Manager {
+			continue
+		}
+		out = append(out, AccessibleCustomer{
+			ResourceName:    "customers/" + row.CustomerClient.ID,
+			DescriptiveName: row.CustomerClient.DescriptiveName,
+		})
+	}
+	return out, nil
 }
