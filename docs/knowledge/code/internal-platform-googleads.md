@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/googleads"
-description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer, GAQL search (GA-1), PAUSED campaign creation (GA-2), ad group + responsive search ad creation (GA-3), and keyword/audience-segment targeting on that ad group (GA-4)."
+description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer, GAQL search (GA-1), PAUSED campaign creation (GA-2), ad group + responsive search ad creation (GA-3), keyword/audience-segment targeting on that ad group (GA-4), live campaign metrics reads (GA-5), and ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on the account-agnostic request path that validates only the manager id."
 resource: "internal/platform/googleads"
 tags:
   - platform-client
@@ -318,6 +318,21 @@ ad GA-3b creates, mirroring the reddit adapter's child-cascade contract:
   ACTIVATE cascades children-first (children activated before campaign) so a campaign never
   reports ENABLED before its ad group/ad already do.
 
+- **Both directions are refused** with `domain.ErrCampaignAccountMismatch` (409, Google never
+  contacted) when the campaign was created under a different customer than the project's
+  connection currently resolves to. `googleAdsCreationCustomerID` recovers the creation-time
+  customer id from the persisted `Result` blob — its `customerId` field, falling back to the
+  customer segment of the stored `googleAdsUrl` for campaigns written before that field existed —
+  and compares it with `client.CustomerID()`; the
+  check sits ABOVE the PAUSE/ACTIVATE branch deliberately, because it is not about which way the
+  status is moving. The stored campaign/ad-group/ad ids are bare numerics, unique only within the
+  customer they were created under, and `UpdateGoogleAds` can re-point a connection between create
+  and toggle — so on an id collision the mutate would succeed against ANOTHER account's resources,
+  pausing or enabling something this project does not own. `ReadMetrics` enforces the same
+  invariant for the same reason (see "Metrics reads (GA-5)"); it matters more here because this
+  path mutates. A campaign whose blob carries no creation customer id (created before the id was
+  recorded) skips the check rather than failing closed.
+
 `googleAdsChildIDs` recovers the ad-group/ad ids from the campaign's
 persisted `Result` blob (the JSON GA-3b's create path stores) — a
 missing/unparseable blob yields empty ids, which is what drives the "nothing
@@ -412,6 +427,63 @@ per-platform dispatcher config (`internal/dispatch/googleads.go`,
 `googleAdsConfig.Keywords`/`.AudienceSegments`) maps the wire JSON shape 1:1
 into `CampaignInput.Keywords`/`.AudienceSegments`.
 
+## Metrics reads (GA-5)
+
+`GetCampaignMetrics` (in `metrics.go`) reads live impressions, clicks, cost, and
+CTR for one campaign over a predefined date-range window (e.g. `LAST_30_DAYS`)
+via a single GAQL `googleAds:search` query. The window and campaign id are
+both validated as constrained (an allow-list of GAQL predefined-date-range
+literals, and digits-only respectively) BEFORE string concatenation into the
+query, since GAQL has no parameterized queries. int64 metric fields arrive as
+JSON strings in the v23 REST response and are parsed via `parseMetricInt`, which
+treats empty strings (Google Ads omits zero-valued optional metrics) as zeros
+rather than parse errors. CTR is computed client-side (Clicks/Impressions, 0
+when Impressions is 0 — never divides by zero). The return type `CampaignMetrics`
+is distinct from the domain type `model.CampaignMetrics` (an application-level
+neutral staging area), converted at the dispatcher boundary.
+
+`WindowFor` maps the platform-agnostic `model.MetricsWindow` (`last_30_days`, …)
+onto this package's GAQL literals. It lives HERE, not in the dispatcher, so
+Google's dialect never escapes the platform package — the API surface and the
+`MetricsReader` interface both speak only the neutral vocabulary. It is a
+translation, not a security boundary: the mapped literal still goes through the
+`validMetricsWindows` allow-list in `GetCampaignMetrics`, which is what actually
+guards the GAQL concatenation. A window it cannot map yields
+`ErrUnsupportedWindow`, which the dispatcher joins with
+`domain.ErrMetricsWindowUnsupported` so the service layer answers 400 (caller
+input) rather than 503, without contacting Google Ads at all. Every branch of that
+mapping is pinned by `TestWindowFor_CoversEveryModelWindow` against the literal GAQL
+strings, and the table is size-checked against `validMetricsWindows`: a wrong literal
+would compile, pass the allow-list, and silently report the WRONG REPORTING PERIOD,
+whose only symptom is plausible numbers for the wrong dates.
+
+**A decode error names the failing field, never its value.** Metric values arrive as
+strings in the upstream body, and the service's default failure branch renders a
+platform error into a warning log — so interpolating the raw value into the error text
+is a log-injection path from an attacker-influenceable response. `GetCampaignMetrics`
+reports which of `impressions` / `clicks` / `costMicros` failed to parse and stops
+there; the value stays out of the log stream. Pinned by
+`TestGetCampaignMetrics_NonNumericMetricFieldIsTransportError`, which asserts both
+halves — the field name present, the value absent.
+
+`Client.CustomerID` exposes the ad account the client is bound to, and
+`CampaignResult.CustomerID` records the one a campaign was CREATED under (stamped on
+every partial too, so an ambiguous create is reconcilable in the right account). The
+pair exists because a Google Ads campaign id is unique only WITHIN a customer, while
+the project's connection is mutable — `UpdateGoogleAds` can re-point it at another
+account. `ReadMetrics` compares the two before querying: mismatched, it returns
+`domain.ErrCampaignAccountMismatch` (409) rather than issuing a GAQL query that
+Google answers with an empty result set indistinguishable from genuinely zero
+activity — or, on an id collision, with another account's numbers. Campaign rows
+predating the field fall back to the `ocid` parameter of the stored
+`googleAdsUrl`; when neither is present the identity is unknown, which cannot prove
+a mismatch, so the read proceeds.
+
+**UNVERIFIED ASSUMPTION**: a `segments.date` WHERE-filter without `segments.date`
+in SELECT returns one row aggregated over the whole window, not one row per day.
+Not yet verified against a live Google Ads account with >1 day of data in the
+window.
+
 ## Scope
 
 GA-1 is the scaffold (auth + request layer + GAQL search); GA-2 is campaign
@@ -419,10 +491,11 @@ creation (`:mutate`); GA-3a is ad-copy generation and final-URL building
 (`ad_copy.go`, this file's previous section); GA-3b is the ad-group/ad
 creation cascade that consumes it; GA-3c is the dispatcher-level
 status-toggle cascade over that ad group/ad; GA-4 is keyword/audience-segment
-targeting on that same ad group. The orchestrator dispatcher (registering
+targeting on that same ad group; GA-5 is metrics reads (`metrics.go`, see
+above). The orchestrator dispatcher (registering
 `google-ads` so briefs dispatch upstream) is wired in
-`internal/dispatch/googleads.go` (LFXV2-2636). Metrics reads and keyword
-actions (pause/adjust an individual keyword post-creation) follow in later GA
+`internal/dispatch/googleads.go` (LFXV2-2636). Keyword actions
+(pause/adjust an individual keyword post-creation) follow in later GA
 slices.
 
 ## Dispatch adapter (internal/dispatch)

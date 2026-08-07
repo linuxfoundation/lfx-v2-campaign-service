@@ -1628,6 +1628,72 @@ func TestGraphAPIErrorMapping(t *testing.T) {
 	}
 }
 
+// TestNonGraphErrorBodyRedactsReflectedCredentials is the other half of
+// TestNonGraphErrorBodySurfaces. That test pins that the raw body is NOT dropped; this
+// one pins WHAT MUST BE DROPPED FROM IT. The two constrain each other: a fix that
+// satisfies this one by discarding the snippet fails that one, and vice versa.
+//
+// The vector is specific to this client: it authenticates by putting access_token (and
+// appsecret_proof) in the QUERY STRING, so any upstream that echoes the request line —
+// a WAF block page, a proxy debug page, an API gateway 4xx — hands a LIVE credential
+// straight back in the response body, which the non-Graph fallback then stores in
+// APIError.Message and every log/5xx downstream inherits. safeErrSummary in
+// internal/service bounds and sanitizes that text but does not redact it, so the
+// redaction has to happen here, before it enters the error chain.
+func TestNonGraphErrorBodyRedactsReflectedCredentials(t *testing.T) {
+	const sentinel = "EAAGsentinelLIVETOKEN123"
+	// Deliberately printable and free of control characters: safeErrSummary would pass
+	// this through untouched, which is the point.
+	body := `<html>403 blocked by proxy: GET /v21.0/act_1/campaigns?access_token=` + sentinel +
+		`&appsecret_proof=` + sentinel + `abc (header "Authorization: Bearer ` + sentinel + `")</html>`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"name":"x"}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, body)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: sentinel}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		Project:         "tlf",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		Budget:          10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil {
+		t.Fatalf("expected an error")
+	}
+	if strings.Contains(err.Error(), sentinel) {
+		t.Errorf("the reflected credential survived into the error chain:\n%s", err.Error())
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error type = %T, want an unwrappable *APIError", err)
+	}
+	if strings.Contains(apiErr.Message, sentinel) {
+		t.Errorf("APIError.Message = %q, want the credential values redacted", apiErr.Message)
+	}
+	// The diagnostic value has to survive, or the redaction is just deletion: the
+	// operator still needs to see that a proxy blocked the call and that the body
+	// echoed a token.
+	for _, want := range []string{"403 blocked by proxy", "access_token", "[REDACTED]"} {
+		if !strings.Contains(apiErr.Message, want) {
+			t.Errorf("APIError.Message = %q, want it to still contain %q", apiErr.Message, want)
+		}
+	}
+}
+
 // TestNonGraphErrorBodySurfaces verifies that a non-2xx response whose body is
 // NOT a Graph error envelope still surfaces the raw body in the error, rather
 // than pointing at nonexistent server logs. A 5xx on the campaign create is
@@ -4181,5 +4247,88 @@ func TestUpdateCampaignAndChildrenStatus_PauseUpdatesCampaignFirst(t *testing.T)
 	}
 	if len(seq) == 0 || seq[0] != "campaign" {
 		t.Fatalf("campaign gate must be flipped FIRST on pause; sequence = %v", seq)
+	}
+}
+
+// TestRedactCredentialsHandlesPaddedBearerToken pins the alternative-detection order
+// inside redactCredentials. Base64 padding puts '=' INSIDE a bearer token, so deciding
+// which regex alternative fired by searching for a "=" or ":" delimiter splits the match
+// at the padding and emits most of the credential followed by "[REDACTED]" — a leak that
+// LOOKS redacted, which is worse than an obvious one because it survives review.
+func TestRedactCredentialsHandlesPaddedBearerToken(t *testing.T) {
+	const padded = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo="
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"padded bearer", "Authorization: Bearer " + padded, "Authorization: Bearer [REDACTED]"},
+		{"double-padded bearer", "Bearer QUJDRA==", "Bearer [REDACTED]"},
+		{"unpadded bearer", "Bearer abcDEF123", "Bearer [REDACTED]"},
+		{"lowercase scheme", "bearer " + padded, "bearer [REDACTED]"},
+		{"query pair keeps the key", "access_token=EAAlive123&x=1", "access_token=[REDACTED]&x=1"},
+		// The regex consumes the whitespace around the delimiter, so the redacted form
+		// is tighter than the input. That is fine — this is a diagnostic snippet, not
+		// re-parseable JSON.
+		{"json member keeps the key", `{"client_secret": "s3cr3t"}`, `{"client_secret":[REDACTED]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactCredentials(tc.in)
+			if got != tc.want {
+				t.Errorf("redactCredentials(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			// Belt-and-braces: no fragment of the padded token may survive anywhere.
+			if strings.Contains(tc.in, padded) && strings.Contains(got, padded[:8]) {
+				t.Errorf("token prefix survived redaction: %q", got)
+			}
+		})
+	}
+}
+
+// TestRedactSecretsRemovesTheConfiguredTokenVerbatim pins the half that shape-based
+// redaction cannot cover.
+//
+// credentialRE's Bearer alternative matches [A-Za-z0-9._~+/=-]. Credentials.AccessToken
+// is trimmed and otherwise accepted as given, and Meta's own app access tokens are
+// "{app-id}|{app-secret}" — '|' is not in that alphabet. Shape-based redaction alone
+// therefore stops at the pipe and emits "Bearer [REDACTED]|<app-secret>": the secret
+// half survives, wearing a redaction marker. Replacing the CONFIGURED token by exact
+// value cannot be defeated by a character nobody anticipated.
+func TestRedactSecretsRemovesTheConfiguredTokenVerbatim(t *testing.T) {
+	const appSecret = "9f3c1ab77e2d4c5ePUNCT"
+	const token = "1234567890|" + appSecret
+
+	c := NewClient(Credentials{AccessToken: token}, AccountConfig{AccountID: "act_777"}, WithBaseURL("https://example.invalid"))
+
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{"reflected authorization header", "403 blocked by proxy\nAuthorization: Bearer " + token},
+		{"bare token in an html error page", "<h1>Bad Request</h1><pre>token=" + token + "</pre>"},
+		{"token with no surrounding context", token},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := c.redactSecrets(tc.in)
+			if strings.Contains(got, appSecret) {
+				t.Errorf("app-secret half of the token survived redaction: %q", got)
+			}
+			if strings.Contains(got, token) {
+				t.Errorf("configured token survived redaction: %q", got)
+			}
+			if !strings.Contains(got, "[REDACTED]") {
+				t.Errorf("redaction marker missing, snippet may have been dropped instead: %q", got)
+			}
+		})
+	}
+
+	// A short configured secret is NOT substring-replaced: at that length it matches
+	// ordinary prose and would shred the diagnostic without protecting anything.
+	// The shape-based pass still runs, so a bearer-shaped occurrence is still caught.
+	short := NewClient(Credentials{AccessToken: "ab"}, AccountConfig{AccountID: "act_777"}, WithBaseURL("https://example.invalid"))
+	if got := short.redactSecrets("unable to reach ab.example.com"); got != "unable to reach ab.example.com" {
+		t.Errorf("short secret was substring-replaced, destroying the snippet: %q", got)
 	}
 }

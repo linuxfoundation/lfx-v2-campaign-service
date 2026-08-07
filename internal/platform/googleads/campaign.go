@@ -130,8 +130,16 @@ type CampaignInput struct {
 // | … vs LFX | Search Campaign | …), so a caller reconciling a possibly-orphaned
 // budget must look it up by CampaignBudgetName — CampaignName would not find it.
 type CampaignResult struct {
-	Platform           string `json:"platform"`
-	AccountLabel       string `json:"accountLabel,omitempty"`
+	Platform     string `json:"platform"`
+	AccountLabel string `json:"accountLabel,omitempty"`
+	// CustomerID is the ad account this campaign was created under. CampaignID is unique
+	// only WITHIN a customer, so a later account-scoped request (a metrics read, a status
+	// toggle) must confirm the connection it resolves still points here — the project's
+	// Google Ads connection can be re-pointed at another account, and the same id under a
+	// different customer reads as "no such campaign" or, worse, another account's campaign.
+	// Persisted with the rest of the blob; absent on rows created before this field existed,
+	// where the caller falls back to the ocid in GoogleAdsURL.
+	CustomerID         string `json:"customerId,omitempty"`
 	CampaignName       string `json:"campaignName"`
 	CampaignBudgetName string `json:"campaignBudgetName"`
 	CampaignID         string `json:"campaignId"`
@@ -506,8 +514,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// the meta/twitter name-only partials.
 	campaignNamePartial := func() *CampaignResult {
 		return &CampaignResult{
-			Platform:           "google-ads",
-			AccountLabel:       c.account.Label,
+			Platform:     "google-ads",
+			AccountLabel: c.account.Label,
+			// Stamped on the PARTIAL, not just the success result: every returned result —
+			// including every ambiguous/duplicate partial — descends from this closure, so a
+			// caller reconciling a possibly-created campaign knows which account to look in.
+			CustomerID:         c.account.CustomerID,
 			CampaignName:       campaignName,
 			CampaignBudgetName: budgetName,
 			GoogleAdsURL:       googleAdsURL,

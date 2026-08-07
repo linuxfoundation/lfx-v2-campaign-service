@@ -591,6 +591,60 @@ func TestDoRequest_RejectsMalformedCustomerID(t *testing.T) {
 	}
 }
 
+// TestGaqlSearchForCustomer_RejectsMalformedCustomerID covers the SAME guard on the
+// explicit-customer path, which the test above cannot reach.
+//
+// gaqlSearchForCustomer deliberately bypasses doRequest — it calls doRequestValidated, so
+// that validateAccountIDs does not reject the empty c.account.CustomerID account discovery
+// depends on. That bypass also skips the customer-id check the test above exercises, so
+// this function validates the CALLER-SUPPLIED id itself before interpolating it into the
+// resource path. Without a test that calls this function, deleting that check leaves
+// TestDoRequest_RejectsMalformedCustomerID green while `123/456` is concatenated straight
+// into `customers/<id>/googleAds:search` and silently addresses a different resource.
+//
+// No server is started, and that is the point: the client's base URL is the real Google
+// endpoint and no token server exists, so anything that got as far as building a request
+// would fail with a token or dial error — not the validation message asserted here. The
+// "gaql search" prefix check below makes that explicit rather than implicit.
+func TestGaqlSearchForCustomer_RejectsMalformedCustomerID(t *testing.T) {
+	const q = "SELECT customer.id FROM customer"
+	cases := []string{"123-456-7890", " 123 ", "123/456", "123.456", "abc", ""}
+	for _, cid := range cases {
+		t.Run(cid, func(t *testing.T) {
+			c := NewClient(testCreds(), testAccount(), WithClock(fixedClock()))
+			rows, err := c.gaqlSearchForCustomer(context.Background(), cid, q)
+			if err == nil {
+				t.Fatalf("expected a validation error for customer id %q, got nil", cid)
+			}
+			if rows != nil {
+				t.Errorf("a rejected customer id must return no rows, got %d", len(rows))
+			}
+			if !strings.Contains(err.Error(), "customer id") {
+				t.Errorf("error should name the invalid customer id, got: %v", err)
+			}
+			// Validation must precede the request, not follow a failed one. Every
+			// post-validation failure in this function is wrapped with "gaql search", so
+			// the ABSENCE of that prefix is what proves nothing was sent.
+			if strings.Contains(err.Error(), "gaql search") {
+				t.Errorf("customer id %q reached the request path before validation: %v", cid, err)
+			}
+		})
+	}
+
+	// The manager id travels as a header rather than in the path and is checked by the
+	// same function: a dashed one is rejected even when the customer id is well-formed.
+	acct := testAccount()
+	acct.LoginCustomerID = "999-888-777"
+	c := NewClient(testCreds(), acct, WithClock(fixedClock()))
+	_, err := c.gaqlSearchForCustomer(context.Background(), "1234567890", q)
+	if err == nil {
+		t.Fatal("expected a validation error for a dashed login-customer-id, got nil")
+	}
+	if strings.Contains(err.Error(), "gaql search") {
+		t.Errorf("a dashed login-customer-id reached the request path: %v", err)
+	}
+}
+
 // TestAccessToken_ConcurrentSingleFlight verifies the token single-flight: with
 // the token endpoint blocked, N concurrent callers trigger exactly ONE refresh, a
 // cancelled waiter returns WHILE the shared refresh is STILL BLOCKED (proving it

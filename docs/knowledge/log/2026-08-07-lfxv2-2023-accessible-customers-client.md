@@ -20,18 +20,18 @@ account is missing**, so a configured manager id is expanded with a `customer_cl
 via `gaqlSearchForCustomer`, which takes an explicit customer id (validated where it is
 interpolated into the path) instead of the client's configured one.
 
-Both halves of the merged list need a manager filter, for different reasons. The expansion has
-`customer_client.manager` and drops on it. The flat list has no such field — a manager and an ad
-account are indistinguishable there by resource name — so the one manager identifiable without
-extra metadata, the configured `login_customer_id`, is dropped by id. Any other manager in the
-flat list survives; there is nothing to recognise it by, and a per-row round-trip would cost
-more than it saves on a list this short. Offering a manager as a choice is not cosmetic: it
-produces a connection that fails at the first campaign create, far from where the choice was
-made.
+The first cut MERGED the two sources and filtered managers out of each half separately: the
+expansion has `customer_client.manager` and drops on it, while the flat list has no such
+field — a manager and an ad account are indistinguishable there by resource name — so only
+the configured `login_customer_id` could be dropped, by id. Offering a manager as a choice is
+not cosmetic: it produces a connection that fails at the first campaign create, far from
+where the choice was made.
 
-The expansion is also the only source of `descriptive_name`, so dedup by resource name prefers
-the labelled copy. A row with no id is a hard error, not a silent drop — dropping it would
-understate the list the operator picks from.
+**The merge did not survive review** — see the review pass below, which replaced it with two
+modes. Read that section, not this paragraph, for the shipped behaviour; what carries over is
+the reasoning about what each source can and cannot tell you. The expansion remains the only
+source of `descriptive_name`, and a `customer_client` row with no id is still a hard error
+rather than a silent drop, which would understate the list the operator picks from.
 
 This PR is the platform client only. The dispatch adapter and the HTTP endpoint that expose it
 land separately.

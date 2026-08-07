@@ -481,6 +481,13 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 // the resource path.
 var customerIDRE = regexp.MustCompile(`^[0-9]+$`)
 
+// CustomerID reports the ad account (customer) id this client is bound to. Exposed so a
+// caller holding a campaign created under a KNOWN customer can verify the connection it just
+// resolved still points at that same account before issuing an account-scoped request —
+// campaign ids are unique only WITHIN a customer, so running such a request under a different
+// customer reads as "no activity" at best and another account's campaign at worst.
+func (c *Client) CustomerID() string { return c.account.CustomerID }
+
 // accessibleResourceNameRE pins the exact two-segment shape AccessibleCustomer promises.
 // Anchored on both ends so a value carrying extra path segments cannot pass; the digit
 // class is customerIDRE's, kept in step with it deliberately.
@@ -498,9 +505,13 @@ func (c *Client) validateAccountIDs() error {
 // validateLoginCustomerID validates ONLY the manager id, for the account-agnostic
 // endpoints that have no customer_id path segment (customers:listAccessibleCustomers).
 // Those calls are how a caller DISCOVERS a customer id, so requiring one first is the
-// chicken-and-egg that made account discovery unreachable: the login-customer-id header
-// is still attached by doRequest and must still be well-formed, but c.account.CustomerID
-// is legitimately empty here.
+// chicken-and-egg that made account discovery unreachable. Naming the layer precisely
+// matters, because this comment documents which precondition is bypassed: discovery calls
+// doRequestValidated, deliberately SKIPPING doRequest's validateAccountIDs. The
+// login-customer-id header is attached inside doRequestValidated itself, alongside
+// developer-token — so the header is still sent on every discovery call and must still be
+// well-formed, which is what this function checks and the only reason it exists separately
+// from validateAccountIDs, while c.account.CustomerID is legitimately empty here.
 func (c *Client) validateLoginCustomerID() error {
 	if c.account.LoginCustomerID != "" && !customerIDRE.MatchString(c.account.LoginCustomerID) {
 		return fmt.Errorf("invalid Google Ads login-customer-id %q: must be digits only (no dashes)", c.account.LoginCustomerID)
@@ -893,12 +904,24 @@ type listAccessibleCustomersResponse struct {
 // customer ids exist, so requiring one would be circular — and it is the reason
 // doRequestValidated exists.
 //
-// Two sources are merged. customers:listAccessibleCustomers gives the accounts the
-// authenticated user can act on DIRECTLY; it does not walk a manager hierarchy, so on an
-// MCC credential it typically yields the manager and none of the child ad accounts. When
-// a login-customer-id is configured, customer_client under that manager supplies the
-// children (labelled, and with manager accounts filtered out). Without a manager id there
-// is no hierarchy root to walk and the direct list stands alone.
+// There are two MODES, and they do not merge — which source answers depends entirely on
+// whether a login-customer-id is configured.
+//
+// Without one: customers:listAccessibleCustomers stands alone. It gives the accounts the
+// authenticated user can act on DIRECTLY, unlabelled (the response carries resource names
+// only), and there is no hierarchy root to walk.
+//
+// With one: the answer is the manager's ENABLED, non-manager children from
+// customer_client, and the flat list is DISCARDED rather than merged. Every other request
+// this client makes carries the login-customer-id header, so an account outside that
+// hierarchy is not addressable through this client even though the unscoped flat list
+// returns it — offering it would present a choice that fails at first dispatch. The
+// expansion is also labelled and already has managers filtered out. See the MANAGER MODE
+// comment in the body for the full reasoning.
+//
+// Resource-name validation runs over the flat list in BOTH modes: a malformed 2xx must
+// fail the read rather than yield an account id a caller would persist and interpolate
+// into later request paths.
 func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCustomer, error) {
 	// The ListAccessibleCustomers endpoint is account-agnostic; it does NOT have a
 	// customer_id path segment. The path is just customers:listAccessibleCustomers.
@@ -995,15 +1018,31 @@ func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCusto
 		return nil, cerr
 	}
 	accounts := make([]AccessibleCustomer, 0, len(children))
-	at := make(map[string]struct{}, len(children))
+	at := make(map[string]int, len(children))
 	for _, child := range children {
 		// customer_client can report the same client twice when the hierarchy has more
-		// than one path to it (a sub-manager that is itself a client of the root). Keep
-		// the first, which is the shallowest.
-		if _, dup := at[child.ResourceName]; dup {
+		// than one path to it (a sub-manager that is itself a client of the root).
+		//
+		// Keep the FIRST occurrence, and note what that does and does not rest on. The
+		// query selects no customer_client.level and carries no ORDER BY, so GAQL makes no
+		// promise about which path is returned first — an earlier version of this comment
+		// claimed the first was "the shallowest", which is not an invariant the query
+		// provides and would have been a trap for anyone later relying on depth. It does
+		// not matter here: every duplicate describes the SAME customer, so id and
+		// descriptive_name are properties of that customer rather than of the path taken
+		// to reach it, and the two rows are interchangeable in the only two fields kept.
+		//
+		// The one asymmetry worth handling is a blank label. If a later duplicate carries
+		// a descriptive_name the first lacked, take it — a labelled account is strictly
+		// more useful in a picker than an unlabelled one, and this makes the result
+		// independent of arrival order rather than merely tolerant of it.
+		if i, dup := at[child.ResourceName]; dup {
+			if accounts[i].DescriptiveName == "" {
+				accounts[i].DescriptiveName = child.DescriptiveName
+			}
 			continue
 		}
-		at[child.ResourceName] = struct{}{}
+		at[child.ResourceName] = len(accounts)
 		accounts = append(accounts, child)
 	}
 
