@@ -113,6 +113,9 @@ Each optimization action is scoped to a single campaign under its brief and is i
 |----------|-------------------|
 | X (Twitter) Ads | `today`, `yesterday`, `last_7_days` only — the stats endpoint caps a queryable range at 7 days, so the wider windows return `400`. This is why X defaults to `last_7_days` rather than `last_30_days`. |
 | LinkedIn Ads | `today`, `last_7_days`, `last_30_days`, `this_month`, `last_month`. `yesterday` and `last_14_days` return `400` — the Ad Analytics finder takes an explicit date range and these two have no mapping today. |
+| Reddit Ads | `today`, `last_7_days`, `last_30_days`, `this_month`, `last_month`. `yesterday` and `last_14_days` return `400` — no date-range mapping today. |
+
+Reddit Ads is wired but **default-OFF**: its reporting contract is unverified (LFXV2-2995 — see the Reddit Ads notes below), so the adapter returns the same 400 as an unsupported platform unless the deployment sets `REDDIT_METRICS_ENABLED=true`. That is deliberate — a guessed request/response shape and currency unit returning 200 would look authoritative to every consumer, and the caveats are not carried in the response.
 
 Microsoft Ads is **not supported** — its only reporting surface is the Reporting API v13 (SOAP, async submit-then-poll-then-download), incompatible with this endpoint's single bounded synchronous call; see `docs/knowledge/code/internal-dispatch.md`.
 
@@ -637,6 +640,7 @@ pacingLabel: string             — underspending | normal | constrained | overs
 - Token refresh with expiry buffer (tokens expire; must refresh before expiry)
 - Subreddit targeting uses subreddit **names** (the `r/` prefix stripped), not `t5_` IDs — the Ads API `communities` field rejects `t5_` values as "invalid communities" (matches the reference TS implementation, which sends the stripped names directly); if any supplied name is invalid the ad-group create falls back to keyword/geo-only targeting with a warning rather than orphaning the PAUSED campaign
 - Account must be whitelisted in runtime config
+- **Metrics reads are UNVERIFIED (LFXV2-2995) and therefore DEFAULT-OFF**: the `ReadMetrics` adapter is wired but gated on `REDDIT_METRICS_ENABLED=true` (any other value, including unset, fails closed). With the gate closed, `GET .../campaigns/{id}/metrics` answers 400 for a Reddit campaign. Reddit's v3 reporting endpoint has no public documentation (unlike Google/Meta/LinkedIn/X, which have public specs). The `POST /ad_accounts/{account_id}/reports` request/response shape is inferred from this client's own proven `{"data": ...}` conventions, not from Reddit's real (gated) contract — treat every field name as a placeholder pending official API access. See the [internal/platform/reddit knowledge doc](knowledge/code/internal-platform-reddit.md).
 
 ### X/Twitter Ads
 - OAuth 1.0a with HMAC-SHA1 signing (not OAuth 2.0)

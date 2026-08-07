@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // redditCreds is the credential shape stored (encrypted) for a Reddit connection —
@@ -254,6 +256,46 @@ func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, p
 		return uerr
 	}
 	return nil
+}
+
+// ReadMetrics returns live campaign metrics from Reddit's Ads v3 reporting endpoint for
+// the given campaign during the specified time window.
+//
+// See the UNVERIFIED-CONTRACT warning on reddit.Client.GetCampaignMetrics: Reddit's
+// reporting endpoint has no public documentation (LFXV2-2995 investigation), so the
+// request/response shape this calls is a best-effort guess, not a confirmed integration.
+//
+// Because of that, this capability is OFF unless REDDIT_METRICS_ENABLED is set to "true".
+// Merely declaring this method is the capability switch — Orchestrator.ReadCampaignMetrics
+// discovers MetricsReader by type assertion, and the published endpoint then calls it — so
+// without the flag a guessed request shape, response shape, and currency unit would ship as
+// production metrics that return 200 and look authoritative. Nothing in the response carries
+// the caveats. The gate is checked here rather than at construction so a deployment can flip
+// it without a rebuild, and so the disabled path costs nothing but an env read.
+//
+// Disabled reads answer domain.ErrMetricsUnsupported, which the service maps to the same 400
+// a platform with no metrics support at all returns — the accurate answer while the contract
+// is unverified. Delete the gate once the shape is confirmed against a live ad account.
+func (d *RedditDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+	if os.Getenv(constants.EnvRedditMetricsEnabled) != "true" {
+		return nil, fmt.Errorf("reddit metrics reads are disabled (%s is not \"true\") while the reporting contract is unverified: %w",
+			constants.EnvRedditMetricsEnabled, domain.ErrMetricsUnsupported)
+	}
+	if campaign.PlatformCampaignID == "" {
+		return nil, fmt.Errorf("campaign has no platform campaign ID")
+	}
+	client, err := d.resolveRedditClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	metrics, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, window)
+	if err != nil {
+		if errors.Is(err, reddit.ErrUnsupportedWindow) {
+			return nil, fmt.Errorf("get campaign metrics from reddit: %w: %w", domain.ErrMetricsWindowUnsupported, err)
+		}
+		return nil, fmt.Errorf("get campaign metrics from reddit: %w", err)
+	}
+	return metrics, nil
 }
 
 // redditChildIDs pulls the ad group + ad ids the create path stored in the persisted
