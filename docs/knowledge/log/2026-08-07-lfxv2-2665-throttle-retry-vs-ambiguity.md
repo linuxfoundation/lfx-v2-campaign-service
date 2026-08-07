@@ -32,7 +32,9 @@ A negative test pins that, so a future "just don't retry POSTs" simplification f
 a test rather than quietly costing availability.
 
 The cost of the fix is one lost in-call retry when the throttle really was a clean
-pre-commit rejection: the flow returns UNCONFIRMED and the next run adopts or creates
-once. The cost of not fixing it is a duplicate no later pass can tell from the
+pre-commit rejection: the flow returns UNCONFIRMED and an operator verifies in Ads
+Manager. Not "the next run adopts or creates once" — that reconciliation is gated on
+`ReconcileByName`, which no caller sets, so nothing re-dispatches a retained partial
+today. The cost of not fixing it is a duplicate no later pass can tell from the
 original. Revert-verified: restoring the retry makes the throttled create hit the
 server 4 times instead of 1, for all three throttle shapes.

@@ -3074,9 +3074,11 @@ func TestDoCreateDoesNotRepeatAThrottledCreate(t *testing.T) {
 				t.Errorf("server calls = %d, want 1 — a throttled create must not be re-POSTed", got)
 			}
 			// And the error the caller gets must still classify as UNCONFIRMED, so the
-			// flow records "may exist" and the next run's find-by-name adopts the node
-			// Meta may have committed. Suppressing the retry without preserving this
-			// would trade a duplicate for a silent orphan.
+			// flow records "may exist" and an operator is sent to Ads Manager to check
+			// for the node Meta may have committed. (The find-by-name reconciliation is
+			// gated on ReconcileByName, which no caller sets, so it does NOT adopt the
+			// node automatically.) Suppressing the retry without preserving this would
+			// trade a duplicate for a silent orphan.
 			if !createOutcomeAmbiguous(err) {
 				t.Errorf("createOutcomeAmbiguous(%v) = false, want true", err)
 			}
@@ -3937,10 +3939,14 @@ func TestNoFollowRedirectPolicy(t *testing.T) {
 // nothing. Handing that back as a clean failure tells the operator the opposite of what is
 // known.
 func TestCreateCampaign_ThrottledNameLookupIsUnconfirmed(t *testing.T) {
-	var gets int
+	// atomic: the handler runs on net/http's goroutine while the assertions below run on
+	// the test goroutine. Returning from CreateCampaign is not a happens-before edge for a
+	// plain int, so -race reports this — and the neighbouring call-count tests already use
+	// atomics for exactly this reason.
+	var gets atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			gets++
+			gets.Add(1)
 			// No Retry-After: the client falls back to its (shrunk) capped backoff and
 			// exhausts the retry budget, which is the state under test.
 			w.Header().Set("Content-Type", "application/json")
@@ -3971,8 +3977,8 @@ func TestCreateCampaign_ThrottledNameLookupIsUnconfirmed(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the throttled lookup to surface as an error")
 	}
-	if gets < 2 {
-		t.Errorf("the lookup was retried %d time(s); the test must exercise an EXHAUSTED retry budget", gets)
+	if n := gets.Load(); n < 2 {
+		t.Errorf("the lookup was retried %d time(s); the test must exercise an EXHAUSTED retry budget", n)
 	}
 	if res == nil {
 		t.Fatal("a throttled lookup must return an UNCONFIRMED partial result, not (nil, err): the caller cannot tell whether the name is absent")
@@ -4796,10 +4802,19 @@ func TestRedactCredentialsHandlesPaddedBearerToken(t *testing.T) {
 	}
 }
 
-// TestCreateCampaignLookup4xxReturnsCleanFailure verifies that a definite 4xx on
-// the campaign name-lookup GET (the lookup was cleanly rejected, nothing created)
-// returns a plain (nil, err) — not an UNCONFIRMED partial.
-func TestCreateCampaignLookup4xxReturnsCleanFailure(t *testing.T) {
+// TestCreateCampaignLookup4xxIsStillUnconfirmed pins the case most likely to be
+// "tightened" back into a clean failure, because it reads like one: Meta cleanly
+// rejected the lookup GET, and a GET creates nothing.
+//
+// It is not the create that is in question. The lookup exists to establish that the
+// campaign NAME IS ABSENT, and a rejected lookup establishes nothing about absence —
+// exactly as little as a timeout does. Return (nil, err) here and
+// IsOutcomeUnconfirmed goes false, the dispatcher records a clean failure and
+// releases the retained partial, and the next dispatch POSTs the same deterministic
+// name into an account where Meta enforces no name uniqueness. The cost of being
+// wrong in this direction is a duplicate PAID campaign; in the other, one look in
+// Ads Manager.
+func TestCreateCampaignLookup4xxIsStillUnconfirmed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -4825,11 +4840,20 @@ func TestCreateCampaignLookup4xxReturnsCleanFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for a 4xx campaign name lookup")
 	}
-	if res != nil {
-		t.Errorf("expected NO partial result for a definite 4xx lookup (nothing created), got %+v", res)
+	if res == nil {
+		t.Fatal("a 4xx lookup returned (nil, err), so the campaign name is discarded and the " +
+			"dispatcher will release the retained partial — the next dispatch re-POSTs the same " +
+			"name and duplicates a PAID campaign. It must return the name-carrying partial.")
 	}
-	if strings.Contains(err.Error(), "UNCONFIRMED") {
-		t.Errorf("expected a clean failure, not UNCONFIRMED: %v", err)
+	if res.CampaignName == "" {
+		t.Error("the partial carries no CampaignName, so a retry has nothing to reconcile against")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("error = %q, want it marked UNCONFIRMED: a rejected lookup confirms nothing about absence", err)
+	}
+	if !createOutcomeAmbiguous(err) {
+		t.Error("createOutcomeAmbiguous is false, so IsOutcomeUnconfirmed is too and the " +
+			"dispatcher treats this as a clean failure regardless of the message")
 	}
 }
 

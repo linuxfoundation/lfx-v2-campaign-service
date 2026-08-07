@@ -1321,12 +1321,19 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 // cannot see or clean up the duplicate — and a duplicate the caller never learns about
 // is exactly the outcome this whole file exists to prevent.
 //
-// So a throttled create returns the rate-limit error immediately. The caller
-// classifies it through createOutcomeAmbiguous as UNCONFIRMED, and the next run's
-// findCampaignByName / findAdSetByName either adopts the node Meta did commit or
-// creates it once. Losing the in-call retry costs an extra round trip on a throttle
-// that was a clean pre-commit rejection; keeping it risks a duplicate that no later
-// pass can distinguish from the original.
+// So a throttled create returns the rate-limit error immediately, and the caller
+// classifies it through createOutcomeAmbiguous as UNCONFIRMED so the operator is told
+// to verify the campaign in Ads Manager before retrying.
+//
+// It does NOT self-heal on the next run. findCampaignByName / findAdSetByName are
+// gated on CampaignInput.ReconcileByName, which nothing in internal/dispatch sets —
+// the reconciliation this file adds is dormant infrastructure awaiting a safe-resume
+// signal through the orchestrator (see internal-platform-meta.md). Until that is
+// wired, an UNCONFIRMED create is resolved by a person looking at Ads Manager, not by
+// a later pass adopting the node. Losing the in-call retry still costs only an extra
+// round trip on a throttle that was a clean pre-commit rejection; keeping it would
+// risk a duplicate inside ONE call that no later pass — dormant or not — could
+// distinguish from the original.
 //
 // Idempotent POSTs — the status updates in UpdateCampaignStatus and friends, which
 // assert a desired state rather than creating a node — keep using doRequest and its
@@ -2644,22 +2651,31 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				}, fmt.Errorf("meta campaign creation aborted during name lookup UNCONFIRMED (caller context done; cannot confirm %q is absent, verify in Meta Ads Manager before retrying): %w",
 					campaignName, errors.Join(errLookupAmbiguous, lookupErr))
 		}
-		// A pre-send failure (dial error) or a definite 4xx on the lookup GET
-		// means the lookup never reached Meta / was cleanly rejected — nothing
-		// was created, so this is a clean failure like any other, not
-		// UNCONFIRMED. Only an ambiguous lookup outcome (transport/5xx — Meta may
-		// have received it) genuinely can't rule out a prior create, so only that
-		// case returns the UNCONFIRMED partial.
-		if !createOutcomeAmbiguous(lookupErr) {
-			return nil, fmt.Errorf("meta campaign lookup failed: %w", lookupErr)
-		}
-		steps = append(steps, "Campaign lookup outcome is UNCONFIRMED (ambiguous response — timeout or server error); cannot confirm the campaign name is absent — verify in Meta Ads Manager before retrying")
+		// EVERY failed lookup is UNCONFIRMED, including a pre-send dial error and a
+		// definite 4xx. An earlier version gated this on createOutcomeAmbiguous and it
+		// was answering the wrong question: createOutcomeAmbiguous asks "could THIS
+		// request have created something", and a GET never creates anything, so on this
+		// path it reduces to "was the transport ambiguous" — which is not what the caller
+		// needs to know. The lookup exists to establish that the campaign NAME IS ABSENT,
+		// so that a prior ambiguous attempt can be adopted instead of duplicated. A dial
+		// error establishes nothing about absence. A 4xx establishes nothing about
+		// absence. Both leave the question exactly as open as a timeout does.
+		//
+		// The consequence of getting it wrong is not symmetric. Returning (nil, err) makes
+		// IsOutcomeUnconfirmed false, so the dispatcher records a clean failure, releases
+		// the retained partial, and the next dispatch POSTs the same deterministic name
+		// into an account where Meta enforces no name uniqueness — a duplicate PAID
+		// campaign. Over-reporting UNCONFIRMED costs an operator one look in Ads Manager.
+		// This is the same reasoning the cancelled-context branch above already applied;
+		// that branch was not a special case, it was the general rule arrived at early.
+		steps = append(steps, "Campaign lookup FAILED, so its outcome is UNCONFIRMED; cannot confirm the campaign name is absent — verify in Meta Ads Manager before retrying")
 		return &CampaignResult{
-			Platform:     "meta-ads",
-			CampaignName: campaignName,
-			MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
-			Steps:        steps,
-		}, fmt.Errorf("meta campaign lookup UNCONFIRMED (cannot confirm %q is absent; verify in Meta Ads Manager before retrying): %w", campaignName, lookupErr)
+				Platform:     "meta-ads",
+				CampaignName: campaignName,
+				MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
+				Steps:        steps,
+			}, fmt.Errorf("meta campaign lookup UNCONFIRMED (cannot confirm %q is absent; verify in Meta Ads Manager before retrying): %w",
+				campaignName, errors.Join(errLookupAmbiguous, lookupErr))
 	}
 
 	var campaignID string
@@ -2681,9 +2697,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// deterministic campaignName, so return a partial result carrying it (like
 			// the no-id 2xx case below) plus an UNCONFIRMED step, rather than discarding
 			// the name and letting a retry duplicate it. A clear 4xx/validation error
-			// means nothing was created, so keep the plain (nil, err). A later retry
-			// finds this name via findCampaignByName above and reconciles instead of
-			// duplicating.
+			// means nothing was created, so keep the plain (nil, err). The name is what
+			// makes the orphan findable — by an operator in Ads Manager today, and by
+			// findCampaignByName above once ReconcileByName is actually set by a caller
+			// (nothing in internal/dispatch does yet; the reconciliation is dormant).
 			if createOutcomeAmbiguous(err) {
 				steps = append(steps, "Campaign creation outcome is UNCONFIRMED (ambiguous response — timeout, server error, or an unfollowed redirect); a PAUSED campaign may exist — verify by name in Meta Ads Manager")
 				return &CampaignResult{
@@ -2700,7 +2717,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// A 2xx with no id is a malformed success: Meta may have created a PAUSED
 			// campaign whose id we couldn't read. Return a partial result carrying the
 			// campaign NAME so an orphan is reconcilable by name (not discarded), with an
-			// UNCONFIRMED note. A later retry finds it via findCampaignByName above.
+			// UNCONFIRMED note — reconcilable by an operator in Ads Manager now, and by
+			// findCampaignByName above once a caller sets ReconcileByName.
 			steps = append(steps, "Campaign creation returned no campaign ID (malformed response); a PAUSED campaign may exist — verify by name in Meta Ads Manager")
 			return &CampaignResult{
 				Platform:     "meta-ads",
@@ -2835,9 +2853,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// the ad set — a definite "failed" instruction would let a retry create a
 			// DUPLICATE ad set. Word it UNCONFIRMED (verify before retrying) in that case;
 			// a clear 4xx rejection means nothing was created, so keep the plain "failed"
-			// wording. Mirrors the campaign and ad/creative create paths. A later retry
-			// finds this ad set via findAdSetByName above and reconciles instead of
-			// duplicating.
+			// wording. Mirrors the campaign and ad/creative create paths. The retained
+			// campaign id and deterministic ad-set name are what make the orphan findable:
+			// by an operator in Ads Manager today, and by findAdSetByName above once a
+			// caller sets ReconcileByName (nothing in internal/dispatch does yet).
 			if createOutcomeAmbiguous(err) {
 				return partialResult(), fmt.Errorf("meta ad set creation UNCONFIRMED (campaign %s created, PAUSED; an ad set may exist — verify in Meta Ads Manager before retrying): %w", campaignID, err)
 			}
