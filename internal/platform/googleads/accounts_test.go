@@ -33,14 +33,7 @@ func TestListAccessibleCustomers_Success(t *testing.T) {
 		gotDevToken  string
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Route to token endpoint
-		if r.URL.Path == "/token" {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"access_token": "mock_token",
-				"expires_in":   3600,
-				"token_type":   "Bearer",
-			})
+		if writeAccountsToken(w, r) {
 			mu.Lock()
 			tokenFetched = true
 			mu.Unlock()
@@ -54,30 +47,16 @@ func TestListAccessibleCustomers_Success(t *testing.T) {
 		gotDevToken = r.Header.Get("developer-token")
 		mu.Unlock()
 
-		// Return mock customer list
-		resp := listAccessibleCustomersResponse{
-			ResourceNames: []string{
-				"customers/1234567890",
-				"customers/0987654321",
-			},
-		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
+			ResourceNames: []string{"customers/1234567890", "customers/0987654321"},
+		})
 	}))
 	defer server.Close()
 
-	client := NewClient(
-		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
-		AccountConfig{CustomerID: "1234567890", Label: "Test"},
-		WithBaseURL(server.URL),
-		WithTokenURL(server.URL+"/token"),
-		WithAPIVersion("v23"),
-		WithClock(func() time.Time { return time.Unix(0, 0) }),
-	)
+	client := newAccountsTestClient(t, server)
 
-	ctx := context.Background()
-	accounts, err := client.ListAccessibleCustomers(ctx)
-
+	accounts, err := client.ListAccessibleCustomers(context.Background())
 	if err != nil {
 		t.Fatalf("ListAccessibleCustomers failed: %v", err)
 	}
@@ -116,33 +95,17 @@ func TestListAccessibleCustomers_Success(t *testing.T) {
 // TestListAccessibleCustomers_EmptyList tests the case where there are no accessible accounts.
 func TestListAccessibleCustomers_EmptyList(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/token" {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"access_token": "mock_token",
-				"expires_in":   3600,
-				"token_type":   "Bearer",
-			})
+		if writeAccountsToken(w, r) {
 			return
 		}
-		resp := listAccessibleCustomersResponse{ResourceNames: []string{}}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{ResourceNames: []string{}})
 	}))
 	defer server.Close()
 
-	client := NewClient(
-		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
-		AccountConfig{CustomerID: "1234567890"},
-		WithBaseURL(server.URL),
-		WithTokenURL(server.URL+"/token"),
-		WithAPIVersion("v23"),
-		WithClock(func() time.Time { return time.Unix(0, 0) }),
-	)
+	client := newAccountsTestClient(t, server)
 
-	ctx := context.Background()
-	accounts, err := client.ListAccessibleCustomers(ctx)
-
+	accounts, err := client.ListAccessibleCustomers(context.Background())
 	if err != nil {
 		t.Fatalf("ListAccessibleCustomers failed: %v", err)
 	}
@@ -154,13 +117,7 @@ func TestListAccessibleCustomers_EmptyList(t *testing.T) {
 // TestListAccessibleCustomers_APIError tests handling of API errors from listAccessibleCustomers.
 func TestListAccessibleCustomers_APIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/token" {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"access_token": "mock_token",
-				"expires_in":   3600,
-				"token_type":   "Bearer",
-			})
+		if writeAccountsToken(w, r) {
 			return
 		}
 		w.WriteHeader(http.StatusForbidden)
@@ -183,9 +140,7 @@ func TestListAccessibleCustomers_APIError(t *testing.T) {
 		WithClock(func() time.Time { return time.Unix(0, 0) }),
 	)
 
-	ctx := context.Background()
-	accounts, err := client.ListAccessibleCustomers(ctx)
-
+	accounts, err := client.ListAccessibleCustomers(context.Background())
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -200,13 +155,7 @@ func TestListAccessibleCustomers_APIError(t *testing.T) {
 // TestListAccessibleCustomers_MalformedResponse tests handling of invalid responses.
 func TestListAccessibleCustomers_MalformedResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/token" {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"access_token": "mock_token",
-				"expires_in":   3600,
-				"token_type":   "Bearer",
-			})
+		if writeAccountsToken(w, r) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -214,18 +163,9 @@ func TestListAccessibleCustomers_MalformedResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(
-		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
-		AccountConfig{CustomerID: "1234567890"},
-		WithBaseURL(server.URL),
-		WithTokenURL(server.URL+"/token"),
-		WithAPIVersion("v23"),
-		WithClock(func() time.Time { return time.Unix(0, 0) }),
-	)
+	client := newAccountsTestClient(t, server)
 
-	ctx := context.Background()
-	accounts, err := client.ListAccessibleCustomers(ctx)
-
+	accounts, err := client.ListAccessibleCustomers(context.Background())
 	if err == nil {
 		t.Fatal("expected error for malformed response, got nil")
 	}
@@ -244,6 +184,20 @@ func newAccountsTestClient(t *testing.T, srv *httptest.Server) *Client {
 	return NewClient(
 		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
 		AccountConfig{CustomerID: "1234567890", Label: "Test"},
+		WithBaseURL(srv.URL),
+		WithTokenURL(srv.URL+"/token"),
+		WithAPIVersion("v23"),
+		WithClock(func() time.Time { return time.Unix(0, 0) }),
+	)
+}
+
+// newManagerTestClient is newAccountsTestClient with a manager (MCC) account instead of a
+// chosen customer id — the configuration that triggers hierarchy expansion.
+func newManagerTestClient(t *testing.T, srv *httptest.Server) *Client {
+	t.Helper()
+	return NewClient(
+		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
+		AccountConfig{LoginCustomerID: "9999999999"},
 		WithBaseURL(srv.URL),
 		WithTokenURL(srv.URL+"/token"),
 		WithAPIVersion("v23"),
@@ -457,9 +411,7 @@ func TestListAccessibleCustomers_WorksWithoutCustomerID(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
-			ResourceNames: []string{"customers/1234567890"},
-		})
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{ResourceNames: []string{"customers/1234567890"}})
 	}))
 	defer server.Close()
 
@@ -546,20 +498,11 @@ func TestListAccessibleCustomers_ExpandsManagerHierarchy(t *testing.T) {
 			return
 		}
 		// The flat list sees only the manager — the whole reason expansion is needed.
-		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
-			ResourceNames: []string{"customers/9999999999"},
-		})
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{ResourceNames: []string{"customers/9999999999"}})
 	}))
 	defer server.Close()
 
-	client := NewClient(
-		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
-		AccountConfig{LoginCustomerID: "9999999999"},
-		WithBaseURL(server.URL),
-		WithTokenURL(server.URL+"/token"),
-		WithAPIVersion("v23"),
-		WithClock(func() time.Time { return time.Unix(0, 0) }),
-	)
+	client := newManagerTestClient(t, server)
 
 	accounts, err := client.ListAccessibleCustomers(context.Background())
 	if err != nil {
@@ -627,9 +570,7 @@ func TestListAccessibleCustomers_NoManagerSkipsExpansion(t *testing.T) {
 			mu.Unlock()
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
-			ResourceNames: []string{"customers/1234567890"},
-		})
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{ResourceNames: []string{"customers/1234567890"}})
 	}))
 	defer server.Close()
 
@@ -664,20 +605,11 @@ func TestListAccessibleCustomers_CustomerClientRowWithoutIDIsAnError(t *testing.
 			]}`)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
-			ResourceNames: []string{"customers/9999999999"},
-		})
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{ResourceNames: []string{"customers/9999999999"}})
 	}))
 	defer server.Close()
 
-	client := NewClient(
-		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
-		AccountConfig{LoginCustomerID: "9999999999"},
-		WithBaseURL(server.URL),
-		WithTokenURL(server.URL+"/token"),
-		WithAPIVersion("v23"),
-		WithClock(func() time.Time { return time.Unix(0, 0) }),
-	)
+	client := newManagerTestClient(t, server)
 
 	accounts, err := client.ListAccessibleCustomers(context.Background())
 	if err == nil {
@@ -721,14 +653,7 @@ func TestListAccessibleCustomers_DedupPrefersLabelledCopy(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(
-		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
-		AccountConfig{LoginCustomerID: "9999999999"},
-		WithBaseURL(server.URL),
-		WithTokenURL(server.URL+"/token"),
-		WithAPIVersion("v23"),
-		WithClock(func() time.Time { return time.Unix(0, 0) }),
-	)
+	client := newManagerTestClient(t, server)
 
 	accounts, err := client.ListAccessibleCustomers(context.Background())
 	if err != nil {
