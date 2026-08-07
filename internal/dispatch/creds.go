@@ -168,12 +168,23 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 		// not-created so a transient DB blip doesn't wedge the claim.
 		return nil, notCreated(fmt.Errorf("load %s connection: %w", provider, err))
 	}
+	// The two branches below are tagged with domain.ErrConnectionNotUsable; the two
+	// above deliberately are not. The distinction is whether the connection row itself
+	// is the thing that needs editing. A row with no credential blob, or one whose blob
+	// will not decrypt, is permanently unusable as it stands and no amount of retrying
+	// changes that — read-only callers must answer 400, not 503. A missing connection
+	// (ErrNotFound) is a 404 and a repo failure is a genuine "try again later", so
+	// flattening either into "not usable" would destroy a distinction the service layer
+	// depends on.
 	if len(conn.EncryptedCredentials) == 0 {
-		return nil, notCreated(fmt.Errorf("%s connection for project %s has no stored credentials", provider, projectID))
+		return nil, notCreated(fmt.Errorf("%s connection for project %s has no stored credentials: %w",
+			provider, projectID, domain.ErrConnectionNotUsable))
 	}
 	plaintext, derr := s.enc.Decrypt(conn.EncryptedCredentials)
 	if derr != nil {
-		return nil, notCreated(fmt.Errorf("decrypt %s credentials: %w", provider, derr))
+		// derr is NOT echoed to callers by the service layer — a decrypt failure can
+		// carry ciphertext detail. It is logged there and a fixed message returned.
+		return nil, notCreated(fmt.Errorf("decrypt %s credentials: %w: %w", provider, domain.ErrConnectionNotUsable, derr))
 	}
 	return &resolved{
 		plaintext:      plaintext,
