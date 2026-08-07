@@ -14,7 +14,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 	"unicode"
 
 	briefsclient "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/client"
@@ -543,6 +546,14 @@ type campaignEditRepo struct {
 	// indexPayloads records the co-committed index messages, so a test can assert the update
 	// is indexed rather than only persisted.
 	indexPayloads [][]byte
+	// claims counts ClaimCampaignVersion calls. The claim deliberately does NOT bump the
+	// version — production keeps the increment inside ReplaceCampaign's outbox transaction —
+	// so "was the claim taken?" cannot be inferred from the version; it must be observed.
+	claims int
+	// claimErr, when set, is returned by ClaimCampaignVersion instead of a token. It models
+	// the try-lock losing: the real repo answers ErrCampaignWriteInProgress immediately
+	// rather than waiting for the holder.
+	claimErr error
 }
 
 func (r *campaignEditRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
@@ -561,8 +572,12 @@ func (r *campaignEditRepo) DeleteDispatchClaim(context.Context, string, model.Pr
 func (r *campaignEditRepo) UpsertCampaign(_ context.Context, c *model.Campaign, _ domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	return c, nil
 }
-func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64, _ domain.CampaignLockToken, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	r.got = c
+	// The version bump lives here, not in the claim — mirroring the real repo, which
+	// increments inside the same transaction that writes the outbox event.
+	r.cur.Version++
+	c.Version = r.cur.Version
 	return c, r.recordIndex(c, indexPayload)
 }
 
@@ -578,6 +593,83 @@ func (r *campaignEditRepo) recordIndex(c *model.Campaign, indexPayload domain.Ca
 	}
 	r.indexPayloads = append(r.indexPayloads, payload)
 	return nil
+}
+func (r *campaignEditRepo) ClaimCampaignVersion(_ context.Context, _, _, campaignID string, expectedVersion int64) (*model.Campaign, domain.CampaignLockToken, error) {
+	r.claims++
+	if r.claimErr != nil {
+		return nil, domain.CampaignLockToken{}, r.claimErr
+	}
+	if r.cur.Version != expectedVersion {
+		return nil, domain.CampaignLockToken{}, domain.ErrPreconditionFailed
+	}
+	// No bump: the real claim takes an advisory lock and leaves the version alone.
+	cp := *r.cur
+	return &cp, domain.NewCampaignLockToken(campaignID, &cp), nil
+}
+func (r *campaignEditRepo) ReleaseCampaignLock(context.Context, domain.CampaignLockToken) error {
+	return nil
+}
+func (r *campaignEditRepo) ReleaseCampaignLockAfterCooldown(domain.CampaignLockToken, time.Duration) {
+}
+
+// UpdateCampaign must validate status BEFORE claiming. The claim takes the campaign's
+// advisory lock on a dedicated pooled connection and EXCLUDES every other writer for that
+// campaign until release, so a request that is going to be rejected anyway must never take
+// it. Because the lock is a try, not a wait, taking it needlessly does not merely delay the
+// other writers — it turns their requests into 409s. (The claim does not bump the version —
+// only ReplaceCampaign does — so this is about not rejecting legitimate writers, not about
+// ETag invalidation.)
+func TestBriefService_UpdateCampaign_ValidationBeforeClaim(t *testing.T) {
+	camps := &campaignEditRepo{cur: &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Version: 5,
+		CampaignName: "old", Status: "created",
+	}}
+	s := &BriefService{briefs: &fakeBriefRepo{briefs: map[string]*model.CampaignBrief{}}, campaigns: camps, jobs: newFakeJobRepo(), orch: NewOrchestrator(camps, newFakeJobRepo(), nil)}
+	v := "5"
+	// Attempt a status change (run status), which should fail validation before claiming
+	_, err := s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &v,
+		Campaign: &briefs.CampaignUpdateInput{CampaignName: "old", Status: "active"}, // invalid: run status change
+	})
+	var badReq *briefs.BadRequestError
+	if !errors.As(err, &badReq) {
+		t.Fatalf("expected 400 BadRequestError, got %T: %v", err, err)
+	}
+	// Observe the claim directly. The version cannot stand in for it: the real claim takes
+	// an advisory lock and leaves the version untouched, so a version of 5 here is equally
+	// consistent with "never claimed" and "claimed, then rejected" — only the counter tells
+	// the two apart.
+	if camps.claims != 0 {
+		t.Errorf("ClaimCampaignVersion was called %d times before validation rejected the request, want 0", camps.claims)
+	}
+	if camps.cur.Version != 5 {
+		t.Errorf("version changed on a rejected request: got %d, want 5", camps.cur.Version)
+	}
+}
+
+// A stale If-Match must be reported as 412, not misclassified as a 400 run-status
+// rejection. If the stored row's status changed (e.g. a concurrent toggle) since the
+// client's version, the status-mismatch check must not run against the new row before
+// the version is checked — otherwise a stale-ETag conflict surfaces as "use the
+// status-toggle endpoint" instead of "refetch and retry".
+func TestBriefService_UpdateCampaign_StaleVersionIsPreconditionFailed(t *testing.T) {
+	camps := &campaignEditRepo{cur: &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Version: 6,
+		CampaignName: "old", Status: "active", // a concurrent toggle moved this to "active" at v6
+	}}
+	s := &BriefService{briefs: &fakeBriefRepo{briefs: map[string]*model.CampaignBrief{}}, campaigns: camps, jobs: newFakeJobRepo(), orch: NewOrchestrator(camps, newFakeJobRepo(), nil)}
+	v := "5" // client last saw v5, where status was "paused"
+	_, err := s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &v,
+		Campaign: &briefs.CampaignUpdateInput{CampaignName: "old", Status: "paused"}, // round-trips the client's stale view
+	})
+	var preFailed *briefs.PreconditionFailedError
+	if !errors.As(err, &preFailed) {
+		t.Fatalf("expected 412 PreconditionFailedError for a stale If-Match, got %T: %v", err, err)
+	}
+	if camps.got != nil {
+		t.Error("ReplaceCampaign must NOT be called when the If-Match version is stale")
+	}
 }
 func (r *campaignEditRepo) DeleteCampaign(_ context.Context, _ string, _ string, _ string, _ int64, indexPayload domain.CampaignIndexPayloadFunc) error {
 	if indexPayload != nil {
@@ -794,21 +886,86 @@ func TestBriefService_GetJob_SkippedSurfacesNonFailure(t *testing.T) {
 // campaign from GetCampaign and records the ReplaceCampaign it receives.
 type toggleCampaignRepo struct {
 	fakeCampaignRepo
-	got      *model.Campaign
-	replaced *model.Campaign
-	getErr   error
+	// claimMu is this fake's analog of the real repo's per-campaign Postgres advisory
+	// lock (see CampaignRepo.ClaimCampaignVersion): held from a successful claim until
+	// ReleaseCampaignLock, and taken with TryLock, so a concurrent second claim is REFUSED
+	// immediately rather than parking — exactly as pg_try_advisory_lock behaves, and the
+	// interleaving a sequential (non-goroutine) test cannot otherwise exercise.
+	claimMu sync.Mutex
+	// dataMu guards got/replaced against concurrent goroutines racing GetCampaign
+	// (called outside claimMu, before any claim is held) against the claim holder's
+	// ReplaceCampaign.
+	dataMu         sync.Mutex
+	got            *model.Campaign
+	replaced       *model.Campaign
+	getErr         error
+	claimStatusErr error
 	// indexPayloads records the co-committed index messages for the toggle path.
 	indexPayloads [][]byte
+	// reads, when set, makes GetCampaign a rendezvous point so a concurrency test can
+	// GUARANTEE that every racing caller read the same pre-claim version, instead of
+	// hoping a sleep was long enough. Nil for the sequential tests.
+	reads *readBarrier
+}
+
+// readBarrier is an n-party rendezvous. The first n callers of wait all block until the
+// n-th arrives; every later call returns immediately. Used to pin down the interleaving a
+// concurrency test depends on: without it, one goroutine can finish its whole
+// claim→platform→persist→release cycle before the other has even read, so the second
+// caller fails on a version it never observed and the test passes while proving nothing
+// about serialization.
+type readBarrier struct {
+	mu      sync.Mutex
+	n       int
+	arrived int
+	release chan struct{}
+}
+
+func newReadBarrier(n int) *readBarrier {
+	return &readBarrier{n: n, release: make(chan struct{})}
+}
+
+func (b *readBarrier) wait() {
+	b.mu.Lock()
+	if b.arrived >= b.n {
+		b.mu.Unlock()
+		return
+	}
+	b.arrived++
+	tripped := b.arrived == b.n
+	b.mu.Unlock()
+	if tripped {
+		close(b.release)
+		return
+	}
+	<-b.release
 }
 
 func (r *toggleCampaignRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
 	if r.getErr != nil {
 		return nil, r.getErr
 	}
+	r.dataMu.Lock()
 	cp := *r.got
+	r.dataMu.Unlock()
+	// Rendezvous AFTER the snapshot is taken and dataMu is dropped: holding dataMu here
+	// would deadlock against the claim holder's ReplaceCampaign. No write can land in
+	// between, because every party is still parked on this barrier and no one has claimed.
+	if r.reads != nil {
+		r.reads.wait()
+	}
 	return &cp, nil
 }
-func (r *toggleCampaignRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+func (r *toggleCampaignRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, expectedVersion int64, _ domain.CampaignLockToken, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	// Mirror the real implementation: gate on expectedVersion and bump the version.
+	r.dataMu.Lock()
+	if r.got.Version != expectedVersion {
+		r.dataMu.Unlock()
+		return nil, domain.ErrPreconditionFailed
+	}
+	r.got.Version++
+	c.Version = r.got.Version
+	r.dataMu.Unlock()
 	r.replaced = c
 	if indexPayload == nil {
 		return c, nil
@@ -819,6 +976,52 @@ func (r *toggleCampaignRepo) ReplaceCampaign(_ context.Context, c *model.Campaig
 	}
 	r.indexPayloads = append(r.indexPayloads, payload)
 	return c, nil
+}
+
+// ClaimCampaignVersion mirrors the real implementation: it gates on expectedVersion
+// and acquires a lock, but does NOT bump the version (that happens in ReplaceCampaign).
+//
+// TryLock, not Lock — the real claim is pg_try_advisory_lock. An earlier version of this
+// fake BLOCKED, which is the opposite of production, and it made the tests using it assert
+// the wrong contract: a loser that parks and resumes eventually re-reads the bumped version
+// and gets a 412, whereas the real service refuses it immediately with
+// ErrCampaignWriteInProgress → 409, having never touched the row. Tests written against the
+// blocking fake would keep passing if the production try-lock were changed to a wait, which
+// is precisely the regression that matters here (a waiter pins a pool connection for the
+// length of the holder's platform call).
+func (r *toggleCampaignRepo) ClaimCampaignVersion(_ context.Context, _, _, campaignID string, expectedVersion int64) (*model.Campaign, domain.CampaignLockToken, error) {
+	if !r.claimMu.TryLock() {
+		return nil, domain.CampaignLockToken{}, domain.ErrCampaignWriteInProgress
+	}
+	if r.claimStatusErr != nil {
+		r.claimMu.Unlock()
+		return nil, domain.CampaignLockToken{}, r.claimStatusErr
+	}
+	r.dataMu.Lock()
+	ver := r.got.Version
+	cp := *r.got
+	r.dataMu.Unlock()
+	if ver != expectedVersion {
+		r.claimMu.Unlock()
+		return nil, domain.CampaignLockToken{}, domain.ErrPreconditionFailed
+	}
+	return &cp, domain.NewCampaignLockToken(campaignID, &cp), nil
+}
+
+// ReleaseCampaignLock releases the advisory-lock analog acquired by ClaimCampaignVersion.
+func (r *toggleCampaignRepo) ReleaseCampaignLock(context.Context, domain.CampaignLockToken) error {
+	r.claimMu.Unlock()
+	return nil
+}
+
+// ReleaseCampaignLockAfterCooldown overrides the embedded fakeCampaignRepo's
+// no-op: the real ToggleCampaignStatus UNCONFIRMED path calls this instead of
+// ReleaseCampaignLock, so without an override claimMu is never unlocked here
+// and any later claim on the same fake deadlocks. The fake ignores the
+// cooldown duration and releases immediately — there's no real connection to
+// hold open, and the test only cares that the lock is eventually released.
+func (r *toggleCampaignRepo) ReleaseCampaignLockAfterCooldown(_ domain.CampaignLockToken, _ time.Duration) {
+	r.claimMu.Unlock()
 }
 
 // stubToggler implements PlatformDispatcher + StatusToggler, recording the toggle call.
@@ -913,6 +1116,120 @@ func TestBriefService_ToggleCampaignStatus_StaleIfMatchSkipsPlatform(t *testing.
 	}
 	if tog.gotID != "" {
 		t.Error("a stale If-Match must fail BEFORE the platform is called")
+	}
+}
+
+// concurrentStubToggler implements PlatformDispatcher + StatusToggler for the genuine
+// concurrency test below. Unlike stubToggler, its ToggleStatus is safe to call from
+// multiple goroutines and tracks how many calls were ever IN FLIGHT AT ONCE — the thing
+// a broken claim would let happen — rather than just the final state one caller left
+// behind, which a sequential test cannot observe by construction.
+type concurrentStubToggler struct {
+	mu          sync.Mutex
+	calls       int
+	inFlight    int32
+	maxInFlight int32
+}
+
+func (d *concurrentStubToggler) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
+	return nil, errors.New("unused")
+}
+
+func (d *concurrentStubToggler) ToggleStatus(context.Context, string, model.Provider, *model.Campaign, string) error {
+	n := atomic.AddInt32(&d.inFlight, 1)
+	for {
+		max := atomic.LoadInt32(&d.maxInFlight)
+		if n <= max || atomic.CompareAndSwapInt32(&d.maxInFlight, max, n) {
+			break
+		}
+	}
+	// Widen the window a broken (unserialized) claim would let a second call overlap in.
+	// This only sharpens the maxInFlight probe; the test's guarantees do not rest on it.
+	// What both callers observing the same pre-claim version rests on is the read barrier
+	// in toggleCampaignRepo.GetCampaign, which is a rendezvous, not a duration.
+	time.Sleep(20 * time.Millisecond)
+	atomic.AddInt32(&d.inFlight, -1)
+	d.mu.Lock()
+	d.calls++
+	d.mu.Unlock()
+	return nil
+}
+
+// TestBriefService_ToggleCampaignStatus_ConcurrentTogglesSerialize pins the actual race
+// LFXV2-2901 closes: two GENUINELY CONCURRENT toggles (real goroutines, released at the
+// same instant) reading the same version must not both reach the platform. toggleCampaignRepo
+// models the real repo's per-campaign advisory TRY-lock, so this exercises the actual
+// interleaving the production code depends on rather than asserting the same outcome via
+// two calls made one after the other, which the fake's earliest version already appeared to
+// satisfy without ever serializing anything.
+//
+// The loser gets 409, not 412, and the difference is the whole contract. A 412 would mean it
+// read a version that had already moved; a 409 means it was refused before looking, while the
+// version it holds is still current. Retrying is the right response to exactly one of those.
+func TestBriefService_ToggleCampaignStatus_ConcurrentTogglesSerialize(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", Status: "created", Version: 3,
+	}
+	tog := &concurrentStubToggler{}
+	repo := newFakeBriefRepo()
+	// Both goroutines must read version 3 BEFORE either claims — otherwise the loser is
+	// rejected on a version it never saw and nothing about serialization is proven.
+	camps := &toggleCampaignRepo{got: camp, reads: newReadBarrier(2)}
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderRedditAds: tog})
+	s := NewBriefService(repo, camps, jobs, orch)
+	s.SetIndexer(&failingIndexer{})
+	orch.SetIndexer(&failingIndexer{})
+
+	im := "3"
+	statuses := [2]string{model.CampaignRunPaused, model.CampaignRunActive}
+	errs := [2]error{}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range 2 {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start // both goroutines release at the same instant
+			_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+				ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: statuses[i],
+			})
+			errs[i] = err
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	if tog.maxInFlight > 1 {
+		t.Fatalf("platform saw %d toggle calls in flight at once; the version claim did not serialize them", tog.maxInFlight)
+	}
+	if tog.calls != 1 {
+		t.Fatalf("platform was called %d times, want exactly 1 — the losing concurrent toggle must be rejected at claim time, not reach the platform", tog.calls)
+	}
+
+	successes, failures := 0, 0
+	for _, err := range errs {
+		if err == nil {
+			successes++
+			continue
+		}
+		failures++
+		var conflict *briefs.ConflictError
+		if !errors.As(err, &conflict) {
+			t.Errorf("expected the losing concurrent toggle to fail with a retryable 409 (the claim is a "+
+				"try-lock: it is refused outright, it does not park and then observe a bumped version), got %T: %v", err, err)
+		}
+	}
+	if successes != 1 || failures != 1 {
+		t.Fatalf("got %d successes and %d failures, want exactly 1 of each", successes, failures)
+	}
+	// The claim leaves the version alone — it takes a lock, it does not bump. The winner
+	// therefore reaches ReplaceCampaign at the claimed version 3, and ReplaceCampaign's own
+	// `version=version+1` produces 4. That 4 is what must be persisted: it comes from the
+	// write that co-commits the outbox event, NOT from the stale IfMatch either caller sent.
+	if camps.replaced == nil || camps.replaced.Version != 4 {
+		t.Fatalf("persisted version = %+v, want 4 (claimed 3, bumped by ReplaceCampaign — not the stale IfMatch)", camps.replaced)
 	}
 }
 
@@ -2355,6 +2672,79 @@ func TestBriefService_DeleteCampaign_PendingIsActionableConflict(t *testing.T) {
 	}
 }
 
+// TestBriefService_LostClaimIsARetryable409 pins how a LOST try-lock reaches the client.
+//
+// The claim is a try, not a wait (see domain.ErrCampaignWriteInProgress): a second writer for
+// the same campaign is answered immediately rather than parked, so this sentinel is now on
+// every campaign write path and its mapping is the whole caller-facing contract for it. Two
+// wrong answers are easy to fall into and neither would fail any other test:
+//
+//   - 412. The loser's ETag may be perfectly current — it lost a race, not a version check.
+//     A 412 tells them to refetch and rebuild a request that was already correct, and a
+//     client that automates that never retries the write at all.
+//   - 409 "the resource already exists", which is what mapBriefErr renders for the
+//     neighbouring domain.ErrConflict. Right status, but it describes a uniqueness
+//     violation, so it reads as permanent and gives the caller nothing to act on.
+//
+// Both subtests matter because the two paths map errors differently: DeleteCampaign
+// intercepts domain.ErrConflict itself before delegating, so it is the path where a
+// mis-ordered case could swallow this sentinel.
+func TestBriefService_LostClaimIsARetryable409(t *testing.T) {
+	assertRetryable := func(t *testing.T, err error) {
+		t.Helper()
+		var pf *briefs.PreconditionFailedError
+		if errors.As(err, &pf) {
+			t.Fatalf("err = 412 %q; losing the claim says nothing about the caller's ETag, so a "+
+				"refetch-and-rebuild is exactly the wrong advice", pf.Message)
+		}
+		var conflict *briefs.ConflictError
+		if !errors.As(err, &conflict) {
+			t.Fatalf("err = %#v, want ConflictError (409)", err)
+		}
+		if strings.Contains(conflict.Message, "already exists") {
+			t.Errorf("message = %q; that is domain.ErrConflict's uniqueness wording, which reads as "+
+				"permanent — this condition clears on its own", conflict.Message)
+		}
+		if !strings.Contains(conflict.Message, "retry") {
+			t.Errorf("message = %q, want it to tell the caller to retry", conflict.Message)
+		}
+	}
+
+	t.Run("update campaign", func(t *testing.T) {
+		camps := &campaignEditRepo{
+			cur: &model.Campaign{
+				ID: "c1", ProjectID: "cncf", BriefID: "b1", Version: 5,
+				CampaignName: "old", Status: "created",
+			},
+			claimErr: domain.ErrCampaignWriteInProgress,
+		}
+		s := &BriefService{
+			briefs:    &fakeBriefRepo{briefs: map[string]*model.CampaignBrief{}},
+			campaigns: camps,
+			jobs:      newFakeJobRepo(),
+			orch:      NewOrchestrator(camps, newFakeJobRepo(), nil),
+		}
+		v := "5"
+		_, err := s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
+			ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &v,
+			// Status is re-sent unchanged: update-campaign rejects a run-status change
+			// outright, and that 400 lands BEFORE the claim, so omitting it would make
+			// this subtest pass without ever reaching the claim at all.
+			Campaign: &briefs.CampaignUpdateInput{CampaignName: "new", Status: "created"},
+		})
+		assertRetryable(t, err)
+	})
+
+	t.Run("delete campaign", func(t *testing.T) {
+		s, _ := newDeleteService(domain.ErrCampaignWriteInProgress)
+		im := "1"
+		err := s.DeleteCampaign(context.Background(), &briefs.DeleteCampaignPayload{
+			ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im,
+		})
+		assertRetryable(t, err)
+	})
+}
+
 // The remaining repo sentinels keep their standard mappings, so a deleted/absent
 // campaign is a 404 and a stale ETag is a 412 (not, say, a 500).
 func TestBriefService_DeleteCampaign_MapsRepoErrors(t *testing.T) {
@@ -2380,6 +2770,285 @@ func TestBriefService_DeleteCampaign_MapsRepoErrors(t *testing.T) {
 			t.Fatalf("err = %#v, want PreconditionFailedError (412)", err)
 		}
 	})
+}
+
+// sequencedToggler returns a scripted error per call, so a test can make the FIRST
+// platform call UNCONFIRMED and a later one succeed. stubToggler cannot: it returns the
+// same err forever, so a second toggle could never get past the platform.
+type sequencedToggler struct {
+	mu   sync.Mutex
+	errs []error
+	n    int
+}
+
+func (d *sequencedToggler) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
+	return nil, errors.New("unused")
+}
+
+func (d *sequencedToggler) ToggleStatus(context.Context, string, model.Provider, *model.Campaign, string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	i := d.n
+	d.n++
+	if i < len(d.errs) {
+		return d.errs[i]
+	}
+	return nil
+}
+
+func (d *sequencedToggler) count() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.n
+}
+
+// cooldownToggleRepo makes the UNCONFIRMED cooldown OBSERVABLE.
+//
+// toggleCampaignRepo's ReleaseCampaignLockAfterCooldown unlocks IMMEDIATELY — deliberately,
+// so the sequential toggle tests don't deadlock — but that is exactly what makes those tests
+// unable to bind the guarantee this cooldown exists for. With an immediate release, a
+// ToggleCampaignStatus that (wrongly) took the ordinary release path would behave
+// identically and every existing test would still pass. This repo instead holds the lock
+// until the test says so, which is what turns "was the cooldown release used?" into an
+// observable difference rather than an implementation detail.
+type cooldownToggleRepo struct {
+	*toggleCampaignRepo
+	// releaseNow stands in for the cooldown elapsing. Closed by the test.
+	releaseNow chan struct{}
+	// cooldowns records each ReleaseCampaignLockAfterCooldown call and its duration.
+	cooldowns chan time.Duration
+	// immediate counts ordinary ReleaseCampaignLock calls, which the UNCONFIRMED path must
+	// NOT make — releasing inline is precisely the defect the cooldown replaces.
+	immediate atomic.Int32
+}
+
+func (r *cooldownToggleRepo) ReleaseCampaignLock(ctx context.Context, tok domain.CampaignLockToken) error {
+	r.immediate.Add(1)
+	return r.toggleCampaignRepo.ReleaseCampaignLock(ctx, tok)
+}
+
+func (r *cooldownToggleRepo) ReleaseCampaignLockAfterCooldown(tok domain.CampaignLockToken, d time.Duration) {
+	r.cooldowns <- d
+	go func() {
+		<-r.releaseNow
+		// Not the counted override: this release IS the cooldown completing, not the
+		// inline release the assertions are looking for.
+		_ = r.toggleCampaignRepo.ReleaseCampaignLock(context.Background(), tok)
+	}()
+}
+
+// TestBriefService_ToggleCampaignStatus_UnconfirmedHoldsTheClaimForTheCooldown pins the
+// guarantee the UNCONFIRMED path's `releaseNow = false` exists to make: while a toggle's
+// outcome is unknown, a second writer must NOT be able to claim the same still-unbumped
+// version and call the platform again. Doubling up on an already-ambiguous change is the
+// one thing the cooldown prevents, and it is invisible to every other toggle test because
+// their fake releases the lock immediately.
+//
+// The second caller here is legitimate in every other respect — it reads the same version 3
+// the first caller did, because the UNCONFIRMED path deliberately writes nothing — so
+// nothing but the held claim stops it.
+func TestBriefService_ToggleCampaignStatus_UnconfirmedHoldsTheClaimForTheCooldown(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", Status: "created", Version: 3,
+	}
+	tog := &sequencedToggler{errs: []error{unconfirmedErr{}}} // first call UNCONFIRMED, later calls succeed
+	camps := &cooldownToggleRepo{
+		toggleCampaignRepo: &toggleCampaignRepo{got: camp},
+		releaseNow:         make(chan struct{}),
+		cooldowns:          make(chan time.Duration, 4),
+	}
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderRedditAds: tog})
+	s := NewBriefService(newFakeBriefRepo(), camps, jobs, orch)
+	s.SetIndexer(&failingIndexer{})
+	orch.SetIndexer(&failingIndexer{})
+
+	im := "3"
+	toggle := func(status string) error {
+		_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+			ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: status,
+		})
+		return err
+	}
+
+	if err := toggle(model.CampaignRunPaused); err == nil {
+		t.Fatal("expected the UNCONFIRMED toggle to surface an error")
+	} else if _, ok := err.(*briefs.ConnServiceUnavailableError); !ok {
+		t.Fatalf("expected a 503 ConnServiceUnavailableError, got %T: %v", err, err)
+	}
+	select {
+	case d := <-camps.cooldowns:
+		if d != unconfirmedLockCooldown {
+			t.Errorf("cooldown = %v, want %v", d, unconfirmedLockCooldown)
+		}
+	default:
+		t.Fatal("the UNCONFIRMED path did not request a cooldown release; the claim was handed back the instant the outcome became ambiguous")
+	}
+	if n := camps.immediate.Load(); n != 0 {
+		t.Fatalf("ReleaseCampaignLock was called %d times on the UNCONFIRMED path, want 0 — the deferred inline release must be skipped so the cooldown is what governs the lock", n)
+	}
+
+	// A second toggle, same still-unbumped version. The claim is a try-lock, so this one is
+	// REFUSED on the spot rather than parked, and — the part that matters — it never reaches
+	// the platform. It runs inline: there is nothing to wait for.
+	err := toggle(model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("the second toggle succeeded while the first outcome was still UNCONFIRMED — it claimed version 3 and called the platform a second time on an ambiguous change")
+	}
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected the refused second toggle to surface a retryable 409 ConflictError, got %T: %v", err, err)
+	}
+	if n := tog.count(); n != 1 {
+		t.Fatalf("the platform was called %d times during the cooldown, want 1", n)
+	}
+
+	close(camps.releaseNow) // the cooldown elapses
+
+	// Nothing was queued on the refused caller's behalf, so nothing resumes by itself: the
+	// retry is a FRESH request. Poll, because the cooldown release runs on its own goroutine
+	// and "released" is not observable from here except by the claim succeeding.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err = toggle(model.CampaignRunActive)
+		if err == nil || time.Now().After(deadline) {
+			break
+		}
+		if !errors.As(err, &conflict) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("a toggle retried after the cooldown released the claim still failed: %v — the cooldown must DELAY the next writer, not lock it out permanently", err)
+	}
+	if n := tog.count(); n != 2 {
+		t.Fatalf("the platform was called %d times in total, want 2 — only the retry may reach it", n)
+	}
+}
+
+// blockingToggler parks inside the platform call until the test releases it, so another
+// writer can be observed arriving while the claim is genuinely held across external I/O.
+type blockingToggler struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (d *blockingToggler) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
+	return nil, errors.New("unused")
+}
+
+func (d *blockingToggler) ToggleStatus(context.Context, string, model.Provider, *model.Campaign, string) error {
+	close(d.entered)
+	<-d.release
+	return nil
+}
+
+// TestBriefService_UpdateCampaignIsRefusedDuringAToggle is the cross-endpoint half of
+// LFXV2-2901. The existing concurrency test races two TOGGLES; this one races the two
+// DIFFERENT writers, which is the interleaving that motivated adding the claim to
+// UpdateCampaign in the first place.
+//
+// Without the claim in UpdateCampaign, a name edit that arrives while a toggle is inside
+// its platform call would take version 3 for itself and commit; the toggle's own
+// post-platform persist would then find version 4 and fail — leaving the ad platform
+// paused while the row says otherwise, even though each request was individually
+// consistent. The rendezvous makes that ordering deterministic rather than probable: the
+// update is issued only once the platform call has been entered.
+//
+// REFUSED, not blocked. The claim is pg_try_advisory_lock, so the update returns 409
+// straight away with the row untouched; it does not park until the toggle releases and
+// then discover a bumped version. The distinction is the contract: a 409 says "your
+// request is fine, retry it", a 412 says "your ETag is stale, refetch first". Only one of
+// those is true here, and only a non-blocking fake can tell them apart.
+func TestBriefService_UpdateCampaignIsRefusedDuringAToggle(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", CampaignName: "original", Status: "created", Version: 3,
+	}
+	tog := &blockingToggler{entered: make(chan struct{}), release: make(chan struct{})}
+	camps := &toggleCampaignRepo{got: camp}
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderRedditAds: tog})
+	s := NewBriefService(newFakeBriefRepo(), camps, jobs, orch)
+	s.SetIndexer(&failingIndexer{})
+	orch.SetIndexer(&failingIndexer{})
+
+	im := "3"
+	toggleErr := make(chan error, 1)
+	go func() {
+		_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+			ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+		})
+		toggleErr <- err
+	}()
+
+	<-tog.entered // the toggle holds the claim and is inside the platform call
+
+	// Runs inline: a refused claim returns without waiting for anything.
+	_, uerr := s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im,
+		// Same version the toggle claimed, and the same status round-tripped, so this
+		// request is rejected by the CLAIM and nothing else.
+		Campaign: &briefs.CampaignUpdateInput{CampaignName: "renamed", Status: "created"},
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(uerr, &conflict) {
+		t.Fatalf("expected UpdateCampaign to be refused with a retryable 409 while a toggle held the claim for the same campaign, got %T: %v — anything else means it took the version the toggle already reserved", uerr, uerr)
+	}
+
+	close(tog.release) // the platform call returns; the toggle persists and releases
+
+	if err := <-toggleErr; err != nil {
+		t.Fatalf("the toggle failed: %v — a refused update must not disturb the writer that holds the claim", err)
+	}
+
+	// Assert the toggle's own write before any retry lands on top of it.
+	togWrite := camps.replaced
+	if togWrite == nil {
+		t.Fatal("the toggle never persisted")
+	}
+	if togWrite.Version != 4 {
+		t.Errorf("persisted version = %d, want 4 (the toggle claimed 3; ReplaceCampaign bumped it)", togWrite.Version)
+	}
+	if togWrite.Status != model.CampaignRunPaused {
+		t.Errorf("persisted status = %q, want %q — the platform change must be what lands", togWrite.Status, model.CampaignRunPaused)
+	}
+	if togWrite.CampaignName != "original" {
+		t.Errorf("persisted name = %q, want %q — the refused update must not have written", togWrite.CampaignName, "original")
+	}
+
+	// Nothing resumed on the refused update's behalf, so the retry is a fresh request. Its
+	// original ETag is genuinely stale now — the toggle bumped the version — and 412 is the
+	// honest answer to THAT, unlike the 412 a blocking claim would have produced for a
+	// request whose ETag was still current when it arrived.
+	_, uerr = s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im,
+		Campaign: &briefs.CampaignUpdateInput{CampaignName: "renamed", Status: "created"},
+	})
+	var precond *briefs.PreconditionFailedError
+	if !errors.As(uerr, &precond) {
+		t.Fatalf("expected the stale-ETag retry to fail with 412, got %T: %v", uerr, uerr)
+	}
+
+	// Refetched and retried at the current version, it goes through: the claim excluded it
+	// for the duration of one platform call, not permanently.
+	cur := "4"
+	if _, err := s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &cur,
+		// Still "created": this fake's ReplaceCampaign bumps the stored version but does not
+		// fold the rest of the write back into the row GetCampaign serves, so the status the
+		// update must round-trip is the one it can actually read.
+		Campaign: &briefs.CampaignUpdateInput{CampaignName: "renamed", Status: "created"},
+	}); err != nil {
+		t.Fatalf("the update retried at the current version still failed: %v", err)
+	}
+
+	if camps.replaced.CampaignName != "renamed" || camps.replaced.Version != 5 {
+		t.Errorf("final persisted state = %q at version %d, want %q at 5 — the retry must land once the claim is free",
+			camps.replaced.CampaignName, camps.replaced.Version, "renamed")
+	}
 }
 
 // TestSafeErrSummary covers the scrubbing applied to an ad-platform error before it
