@@ -97,4 +97,61 @@ so the row can't diverge from the platform if the request is cancelled after the
 and a stuck DB can't hang shutdown; a persist failure after the platform changed is logged as a
 divergence reconcile signal.
 
+## Campaign metrics read
+
+`BriefService.GetCampaignMetrics` (backing `GET .../campaigns/{id}/metrics`) reads live
+performance metrics (impressions, clicks, cost, CTR) directly from the campaign's ad
+platform. Unlike `GetCampaign`, this is a pure read — `model.CampaignMetrics` is never
+persisted, so there is no `If-Match`/version to check, mirroring `ToggleCampaignStatus`'s
+always-live-not-cached semantics. `Orchestrator.ReadCampaignMetrics` type-asserts the
+platform's dispatcher for the optional `MetricsReader` capability at call time (the same
+optional-capability pattern as `StatusToggler`) rather than requiring every dispatcher to
+implement it; a dispatcher that isn't a `MetricsReader` — or a platform with no dispatcher
+registered at all — returns `ErrMetricsUnsupported` (400) without ever contacting the
+platform. An unprovisioned campaign (`PlatformCampaignID` empty, or `campaign == nil`)
+returns `ErrCampaignNotProvisioned` (409) before any platform call, same as the toggle. Any
+other error from the dispatcher's `ReadMetrics` call propagates as-is (503) — a read has no
+ambiguous mutation to protect, so there is no UNCONFIRMED classification here. The call is
+bounded by `metricsCallTimeout` (20s, distinct from `toggleCallTimeout`'s 45s — reads should
+fail fast rather than hold a request open).
+
+The `window` query parameter is a closed, platform-agnostic vocabulary
+(`model.MetricsWindow`: `today`, `yesterday`, `last_7_days`, `last_14_days`,
+`last_30_days` [default], `this_month`, `last_month`) — never a platform's own dialect
+(e.g. Google Ads' GAQL `DURING` literals, Meta's Insights `date_preset`). Each platform's
+`MetricsReader` adapter is responsible for mapping this vocabulary to its own platform's
+query syntax; the mapping (and any platform-specific validation, e.g. an allow-list guard
+against GAQL injection) lives in the platform client package, not here.
+
+## Campaign delete
+
+`BriefService.DeleteCampaign` (backing `DELETE .../campaigns/{id}`, `If-Match` required)
+SOFT-deletes a campaign locally. Its purpose is slot recovery: the `(brief_id, platform)`
+uniqueness that makes dispatch idempotent also meant a campaign row occupied its brief's
+slot for that platform permanently, so a wrong-budget campaign or an ambiguously-failed
+upstream create blocked the pair forever. The partial unique index from `000010` excludes
+deleted rows, so deleting frees the slot for a legitimate re-dispatch.
+
+**It never touches the ad platform, by design.** No provider client in
+`internal/platform/*` implements a campaign delete/remove call, and inventing an
+unverified one is worse than not offering it: removing the local row while a real paid
+campaign keeps spending is the worst available outcome. The API description says so
+explicitly — a campaign already created upstream keeps running until it is stopped there
+(pause it via the status toggle first). That is also why the delete is SOFT: the retained
+row holds `platform_campaign_id`, the only local pointer to whatever may still exist
+upstream, so a hard delete would free the slot but destroy the sole record needed to find
+and stop the campaign still spending.
+
+Guards, evaluated under a `SELECT … FOR UPDATE` row lock in one transaction: absent or
+already-deleted → `ErrNotFound` (404, matching `GetCampaign`, which hides deleted rows);
+mid-dispatch `pending` → `ErrConflict`, re-mapped by the service to an ACTIONABLE 409
+("being dispatched … wait and retry") rather than `mapBriefErr`'s generic "already
+exists"; then the version check → 412. The version check runs LAST so a stale ETag on a
+dispatching campaign reports the dispatch, not a misleading "reload and retry". The row
+lock is required, not decorative: a `pending` row is an active dispatch claim, and under
+READ COMMITTED a plain guarded `UPDATE` cannot see a claim that commits just before the
+statement (and the claim INSERTs rather than updates, so there is no row conflict to
+serialize on) — deleting under an in-flight dispatch could let a concurrent claim
+double-create upstream.
+
 See [internal/service](../../../internal/service).

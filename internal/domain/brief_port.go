@@ -170,6 +170,30 @@ type CampaignWriter interface {
 	// lock past its own request's lifetime (see BriefService.ToggleCampaignStatus's UNCONFIRMED
 	// path) without leaking the held connection past process shutdown.
 	ReleaseCampaignLockAfterCooldown(token CampaignLockToken, cooldown time.Duration)
+	// DeleteCampaign SOFT-deletes a campaign (status = 'deleted'), gating on
+	// expectedVersion. The row is retained: it holds platform_campaign_id, the only
+	// local record of a campaign that may still exist (and still be spending) on the
+	// ad platform, so hard-deleting would destroy both the audit trail and the
+	// pointer needed to reconcile it. Deleting is LOCAL ONLY — it never contacts the
+	// ad platform.
+	//
+	// Its purpose is to free the (brief_id, platform) slot: the partial unique index
+	// added in 000013 excludes deleted rows, so a brief whose campaign was created
+	// with the wrong budget (or whose upstream create failed ambiguously) can be
+	// re-dispatched to that platform instead of being blocked forever.
+	//
+	// Returns ErrNotFound if absent or already deleted, ErrConflict if the campaign
+	// is mid-dispatch (status 'pending' — an active claim owned by an in-flight
+	// dispatch, whose deletion could let a concurrent claim double-create upstream),
+	// and ErrPreconditionFailed on a version mismatch. The guards are evaluated under
+	// a SELECT ... FOR UPDATE row lock, which is required to close the TOCTOU race
+	// against a concurrent claim/finalize under READ COMMITTED (see the
+	// implementation for the full isolation reasoning).
+	//
+	// The campaign is ALWAYS co-indexed on delete, just as every other write,
+	// so the indexer can remove it and keep search consistent. A nil indexPayload
+	// means the caller does not want the delete indexed; the soft delete still commits.
+	DeleteCampaign(ctx context.Context, projectID, briefID, id string, expectedVersion int64, indexPayload CampaignIndexPayloadFunc) error
 }
 
 // CampaignRepository is the full persistence port for campaigns.

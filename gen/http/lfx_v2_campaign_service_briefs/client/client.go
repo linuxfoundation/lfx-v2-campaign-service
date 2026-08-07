@@ -50,6 +50,10 @@ type Client struct {
 	// get-campaign endpoint.
 	GetCampaignDoer goahttp.Doer
 
+	// GetCampaignMetrics Doer is the HTTP client used to make requests to the
+	// get-campaign-metrics endpoint.
+	GetCampaignMetricsDoer goahttp.Doer
+
 	// UpdateCampaign Doer is the HTTP client used to make requests to the
 	// update-campaign endpoint.
 	UpdateCampaignDoer goahttp.Doer
@@ -57,6 +61,10 @@ type Client struct {
 	// ToggleCampaignStatus Doer is the HTTP client used to make requests to the
 	// toggle-campaign-status endpoint.
 	ToggleCampaignStatusDoer goahttp.Doer
+
+	// DeleteCampaign Doer is the HTTP client used to make requests to the
+	// delete-campaign endpoint.
+	DeleteCampaignDoer goahttp.Doer
 
 	// GetJob Doer is the HTTP client used to make requests to the get-job endpoint.
 	GetJobDoer goahttp.Doer
@@ -90,8 +98,10 @@ func NewClient(
 		DeleteBriefDoer:          doer,
 		CreateCampaignsDoer:      doer,
 		GetCampaignDoer:          doer,
+		GetCampaignMetricsDoer:   doer,
 		UpdateCampaignDoer:       doer,
 		ToggleCampaignStatusDoer: doer,
+		DeleteCampaignDoer:       doer,
 		GetJobDoer:               doer,
 		RestoreResponseBody:      restoreBody,
 		scheme:                   scheme,
@@ -293,6 +303,30 @@ func (c *Client) GetCampaign() goa.Endpoint {
 	}
 }
 
+// GetCampaignMetrics returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service get-campaign-metrics server.
+func (c *Client) GetCampaignMetrics() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeGetCampaignMetricsRequest(c.encoder)
+		decodeResponse = DecodeGetCampaignMetricsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildGetCampaignMetricsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.GetCampaignMetricsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "get-campaign-metrics", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
 // UpdateCampaign returns an endpoint that makes HTTP requests to the
 // lfx-v2-campaign-service-briefs service update-campaign server.
 func (c *Client) UpdateCampaign() goa.Endpoint {
@@ -336,6 +370,30 @@ func (c *Client) ToggleCampaignStatus() goa.Endpoint {
 		resp, err := c.ToggleCampaignStatusDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "toggle-campaign-status", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// DeleteCampaign returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service delete-campaign server.
+func (c *Client) DeleteCampaign() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeDeleteCampaignRequest(c.encoder)
+		decodeResponse = DecodeDeleteCampaignResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildDeleteCampaignRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.DeleteCampaignDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "delete-campaign", err)
 		}
 		return decodeResponse(resp)
 	}

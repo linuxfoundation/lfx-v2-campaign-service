@@ -231,6 +231,28 @@ type GetCampaignResponseBody struct {
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 }
 
+// GetCampaignMetricsResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
+// HTTP response body.
+type GetCampaignMetricsResponseBody struct {
+	// Campaign UUID
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// ID returned by the ad platform
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// Platform-agnostic reporting window the metrics were read for
+	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
+	// Impressions in window
+	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
+	// Clicks in window
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Cost in window, in micro-units of the platform's native currency
+	// (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter,
+	// etc.)
+	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
+	// Clicks/Impressions, 0 when Impressions is 0
+	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
+}
+
 // UpdateCampaignResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
 // response body.
@@ -728,6 +750,56 @@ type GetCampaignNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetCampaignMetricsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
+// HTTP response body for the "BadRequest" error.
+type GetCampaignMetricsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetCampaignMetricsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
+// HTTP response body for the "Conflict" error.
+type GetCampaignMetricsConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetCampaignMetricsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type GetCampaignMetricsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetCampaignMetricsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
+// HTTP response body for the "InternalServerError" error.
+type GetCampaignMetricsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetCampaignMetricsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
+// HTTP response body for the "NotFound" error.
+type GetCampaignMetricsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // UpdateCampaignBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -862,6 +934,76 @@ type ToggleCampaignStatusPreconditionFailedResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
 // HTTP response body for the "PreconditionRequired" error.
 type ToggleCampaignStatusPreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "BadRequest" error.
+type DeleteCampaignBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteCampaignConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "Conflict" error.
+type DeleteCampaignConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteCampaignServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type DeleteCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteCampaignInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "InternalServerError" error.
+type DeleteCampaignInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteCampaignNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "NotFound" error.
+type DeleteCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteCampaignPreconditionFailedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "PreconditionFailed" error.
+type DeleteCampaignPreconditionFailedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// DeleteCampaignPreconditionRequiredResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "PreconditionRequired" error.
+type DeleteCampaignPreconditionRequiredResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1679,6 +1821,80 @@ func NewGetCampaignNotFound(body *GetCampaignNotFoundResponseBody) *lfxv2campaig
 	return v
 }
 
+// NewGetCampaignMetricsCampaignMetricsOK builds a
+// "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
+// result from a HTTP "OK" response.
+func NewGetCampaignMetricsCampaignMetricsOK(body *GetCampaignMetricsResponseBody) *lfxv2campaignservicebriefs.CampaignMetrics {
+	v := &lfxv2campaignservicebriefs.CampaignMetrics{
+		CampaignID:         *body.CampaignID,
+		PlatformCampaignID: *body.PlatformCampaignID,
+		Window:             *body.Window,
+		Impressions:        *body.Impressions,
+		Clicks:             *body.Clicks,
+		CostMicros:         *body.CostMicros,
+		Ctr:                *body.Ctr,
+	}
+
+	return v
+}
+
+// NewGetCampaignMetricsBadRequest builds a lfx-v2-campaign-service-briefs
+// service get-campaign-metrics endpoint BadRequest error.
+func NewGetCampaignMetricsBadRequest(body *GetCampaignMetricsBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetCampaignMetricsConflict builds a lfx-v2-campaign-service-briefs
+// service get-campaign-metrics endpoint Conflict error.
+func NewGetCampaignMetricsConflict(body *GetCampaignMetricsConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetCampaignMetricsServiceUnavailable builds a
+// lfx-v2-campaign-service-briefs service get-campaign-metrics endpoint
+// ServiceUnavailable error.
+func NewGetCampaignMetricsServiceUnavailable(body *GetCampaignMetricsServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetCampaignMetricsInternalServerError builds a
+// lfx-v2-campaign-service-briefs service get-campaign-metrics endpoint
+// InternalServerError error.
+func NewGetCampaignMetricsInternalServerError(body *GetCampaignMetricsInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetCampaignMetricsNotFound builds a lfx-v2-campaign-service-briefs
+// service get-campaign-metrics endpoint NotFound error.
+func NewGetCampaignMetricsNotFound(body *GetCampaignMetricsNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewUpdateCampaignCampaignOK builds a "lfx-v2-campaign-service-briefs"
 // service "update-campaign" endpoint result from a HTTP "OK" response.
 func NewUpdateCampaignCampaignOK(body *UpdateCampaignResponseBody, etag *string) *lfxv2campaignservicebriefs.Campaign {
@@ -1866,6 +2082,84 @@ func NewToggleCampaignStatusPreconditionFailed(body *ToggleCampaignStatusPrecond
 // lfx-v2-campaign-service-briefs service toggle-campaign-status endpoint
 // PreconditionRequired error.
 func NewToggleCampaignStatusPreconditionRequired(body *ToggleCampaignStatusPreconditionRequiredResponseBody) *lfxv2campaignservicebriefs.PreconditionRequiredError {
+	v := &lfxv2campaignservicebriefs.PreconditionRequiredError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewDeleteCampaignBadRequest builds a lfx-v2-campaign-service-briefs service
+// delete-campaign endpoint BadRequest error.
+func NewDeleteCampaignBadRequest(body *DeleteCampaignBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewDeleteCampaignConflict builds a lfx-v2-campaign-service-briefs service
+// delete-campaign endpoint Conflict error.
+func NewDeleteCampaignConflict(body *DeleteCampaignConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewDeleteCampaignServiceUnavailable builds a lfx-v2-campaign-service-briefs
+// service delete-campaign endpoint ServiceUnavailable error.
+func NewDeleteCampaignServiceUnavailable(body *DeleteCampaignServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewDeleteCampaignInternalServerError builds a lfx-v2-campaign-service-briefs
+// service delete-campaign endpoint InternalServerError error.
+func NewDeleteCampaignInternalServerError(body *DeleteCampaignInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewDeleteCampaignNotFound builds a lfx-v2-campaign-service-briefs service
+// delete-campaign endpoint NotFound error.
+func NewDeleteCampaignNotFound(body *DeleteCampaignNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewDeleteCampaignPreconditionFailed builds a lfx-v2-campaign-service-briefs
+// service delete-campaign endpoint PreconditionFailed error.
+func NewDeleteCampaignPreconditionFailed(body *DeleteCampaignPreconditionFailedResponseBody) *lfxv2campaignservicebriefs.PreconditionFailedError {
+	v := &lfxv2campaignservicebriefs.PreconditionFailedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewDeleteCampaignPreconditionRequired builds a
+// lfx-v2-campaign-service-briefs service delete-campaign endpoint
+// PreconditionRequired error.
+func NewDeleteCampaignPreconditionRequired(body *DeleteCampaignPreconditionRequiredResponseBody) *lfxv2campaignservicebriefs.PreconditionRequiredError {
 	v := &lfxv2campaignservicebriefs.PreconditionRequiredError{
 		Code:    *body.Code,
 		Message: *body.Message,
@@ -2164,6 +2458,38 @@ func ValidateGetCampaignResponseBody(body *GetCampaignResponseBody) (err error) 
 	}
 	if body.Version == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
+	}
+	return
+}
+
+// ValidateGetCampaignMetricsResponseBody runs the validations defined on
+// Get-Campaign-MetricsResponseBody
+func ValidateGetCampaignMetricsResponseBody(body *GetCampaignMetricsResponseBody) (err error) {
+	if body.CampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
+	}
+	if body.PlatformCampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "body"))
+	}
+	if body.Window == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("window", "body"))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", "body"))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
+	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days" || *body.Window == "last_14_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
+		}
 	}
 	return
 }
@@ -2774,6 +3100,66 @@ func ValidateGetCampaignNotFoundResponseBody(body *GetCampaignNotFoundResponseBo
 	return
 }
 
+// ValidateGetCampaignMetricsBadRequestResponseBody runs the validations
+// defined on get-campaign-metrics_BadRequest_response_body
+func ValidateGetCampaignMetricsBadRequestResponseBody(body *GetCampaignMetricsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetCampaignMetricsConflictResponseBody runs the validations defined
+// on get-campaign-metrics_Conflict_response_body
+func ValidateGetCampaignMetricsConflictResponseBody(body *GetCampaignMetricsConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetCampaignMetricsServiceUnavailableResponseBody runs the
+// validations defined on get-campaign-metrics_ServiceUnavailable_response_body
+func ValidateGetCampaignMetricsServiceUnavailableResponseBody(body *GetCampaignMetricsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetCampaignMetricsInternalServerErrorResponseBody runs the
+// validations defined on get-campaign-metrics_InternalServerError_response_body
+func ValidateGetCampaignMetricsInternalServerErrorResponseBody(body *GetCampaignMetricsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetCampaignMetricsNotFoundResponseBody runs the validations defined
+// on get-campaign-metrics_NotFound_response_body
+func ValidateGetCampaignMetricsNotFoundResponseBody(body *GetCampaignMetricsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateUpdateCampaignBadRequestResponseBody runs the validations defined on
 // update-campaign_BadRequest_response_body
 func ValidateUpdateCampaignBadRequestResponseBody(body *UpdateCampaignBadRequestResponseBody) (err error) {
@@ -2937,6 +3323,90 @@ func ValidateToggleCampaignStatusPreconditionFailedResponseBody(body *ToggleCamp
 // validations defined on
 // toggle-campaign-status_PreconditionRequired_response_body
 func ValidateToggleCampaignStatusPreconditionRequiredResponseBody(body *ToggleCampaignStatusPreconditionRequiredResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteCampaignBadRequestResponseBody runs the validations defined on
+// delete-campaign_BadRequest_response_body
+func ValidateDeleteCampaignBadRequestResponseBody(body *DeleteCampaignBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteCampaignConflictResponseBody runs the validations defined on
+// delete-campaign_Conflict_response_body
+func ValidateDeleteCampaignConflictResponseBody(body *DeleteCampaignConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteCampaignServiceUnavailableResponseBody runs the validations
+// defined on delete-campaign_ServiceUnavailable_response_body
+func ValidateDeleteCampaignServiceUnavailableResponseBody(body *DeleteCampaignServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteCampaignInternalServerErrorResponseBody runs the validations
+// defined on delete-campaign_InternalServerError_response_body
+func ValidateDeleteCampaignInternalServerErrorResponseBody(body *DeleteCampaignInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteCampaignNotFoundResponseBody runs the validations defined on
+// delete-campaign_NotFound_response_body
+func ValidateDeleteCampaignNotFoundResponseBody(body *DeleteCampaignNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteCampaignPreconditionFailedResponseBody runs the validations
+// defined on delete-campaign_PreconditionFailed_response_body
+func ValidateDeleteCampaignPreconditionFailedResponseBody(body *DeleteCampaignPreconditionFailedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateDeleteCampaignPreconditionRequiredResponseBody runs the validations
+// defined on delete-campaign_PreconditionRequired_response_body
+func ValidateDeleteCampaignPreconditionRequiredResponseBody(body *DeleteCampaignPreconditionRequiredResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

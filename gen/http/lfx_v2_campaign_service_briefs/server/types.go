@@ -231,6 +231,28 @@ type GetCampaignResponseBody struct {
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
 
+// GetCampaignMetricsResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
+// HTTP response body.
+type GetCampaignMetricsResponseBody struct {
+	// Campaign UUID
+	CampaignID string `form:"campaign_id" json:"campaign_id" xml:"campaign_id"`
+	// ID returned by the ad platform
+	PlatformCampaignID string `form:"platform_campaign_id" json:"platform_campaign_id" xml:"platform_campaign_id"`
+	// Platform-agnostic reporting window the metrics were read for
+	Window string `form:"window" json:"window" xml:"window"`
+	// Impressions in window
+	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
+	// Clicks in window
+	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
+	// Cost in window, in micro-units of the platform's native currency
+	// (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter,
+	// etc.)
+	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
+	// Clicks/Impressions, 0 when Impressions is 0
+	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+}
+
 // UpdateCampaignResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
 // response body.
@@ -728,6 +750,56 @@ type GetCampaignNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetCampaignMetricsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
+// HTTP response body for the "BadRequest" error.
+type GetCampaignMetricsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCampaignMetricsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
+// HTTP response body for the "Conflict" error.
+type GetCampaignMetricsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCampaignMetricsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type GetCampaignMetricsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCampaignMetricsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
+// HTTP response body for the "InternalServerError" error.
+type GetCampaignMetricsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetCampaignMetricsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
+// HTTP response body for the "NotFound" error.
+type GetCampaignMetricsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // UpdateCampaignBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -862,6 +934,76 @@ type ToggleCampaignStatusPreconditionFailedResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "toggle-campaign-status" endpoint
 // HTTP response body for the "PreconditionRequired" error.
 type ToggleCampaignStatusPreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "BadRequest" error.
+type DeleteCampaignBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCampaignConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "Conflict" error.
+type DeleteCampaignConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCampaignServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type DeleteCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCampaignInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "InternalServerError" error.
+type DeleteCampaignInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCampaignNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "NotFound" error.
+type DeleteCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCampaignPreconditionFailedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "PreconditionFailed" error.
+type DeleteCampaignPreconditionFailedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// DeleteCampaignPreconditionRequiredResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
+// response body for the "PreconditionRequired" error.
+type DeleteCampaignPreconditionRequiredResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1129,6 +1271,22 @@ func NewGetCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *GetCa
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		Version:            res.Version,
+	}
+	return body
+}
+
+// NewGetCampaignMetricsResponseBody builds the HTTP response body from the
+// result of the "get-campaign-metrics" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCampaignMetricsResponseBody(res *lfxv2campaignservicebriefs.CampaignMetrics) *GetCampaignMetricsResponseBody {
+	body := &GetCampaignMetricsResponseBody{
+		CampaignID:         res.CampaignID,
+		PlatformCampaignID: res.PlatformCampaignID,
+		Window:             res.Window,
+		Impressions:        res.Impressions,
+		Clicks:             res.Clicks,
+		CostMicros:         res.CostMicros,
+		Ctr:                res.Ctr,
 	}
 	return body
 }
@@ -1672,6 +1830,61 @@ func NewGetCampaignNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFound
 	return body
 }
 
+// NewGetCampaignMetricsBadRequestResponseBody builds the HTTP response body
+// from the result of the "get-campaign-metrics" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCampaignMetricsBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *GetCampaignMetricsBadRequestResponseBody {
+	body := &GetCampaignMetricsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCampaignMetricsConflictResponseBody builds the HTTP response body from
+// the result of the "get-campaign-metrics" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCampaignMetricsConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *GetCampaignMetricsConflictResponseBody {
+	body := &GetCampaignMetricsConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCampaignMetricsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "get-campaign-metrics" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCampaignMetricsServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *GetCampaignMetricsServiceUnavailableResponseBody {
+	body := &GetCampaignMetricsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCampaignMetricsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "get-campaign-metrics" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCampaignMetricsInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *GetCampaignMetricsInternalServerErrorResponseBody {
+	body := &GetCampaignMetricsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetCampaignMetricsNotFoundResponseBody builds the HTTP response body from
+// the result of the "get-campaign-metrics" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetCampaignMetricsNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *GetCampaignMetricsNotFoundResponseBody {
+	body := &GetCampaignMetricsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewUpdateCampaignBadRequestResponseBody builds the HTTP response body from
 // the result of the "update-campaign" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -1826,6 +2039,83 @@ func NewToggleCampaignStatusPreconditionRequiredResponseBody(res *lfxv2campaigns
 	return body
 }
 
+// NewDeleteCampaignBadRequestResponseBody builds the HTTP response body from
+// the result of the "delete-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCampaignBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *DeleteCampaignBadRequestResponseBody {
+	body := &DeleteCampaignBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteCampaignConflictResponseBody builds the HTTP response body from the
+// result of the "delete-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCampaignConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *DeleteCampaignConflictResponseBody {
+	body := &DeleteCampaignConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteCampaignServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "delete-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCampaignServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *DeleteCampaignServiceUnavailableResponseBody {
+	body := &DeleteCampaignServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteCampaignInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "delete-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCampaignInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *DeleteCampaignInternalServerErrorResponseBody {
+	body := &DeleteCampaignInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteCampaignNotFoundResponseBody builds the HTTP response body from the
+// result of the "delete-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCampaignNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *DeleteCampaignNotFoundResponseBody {
+	body := &DeleteCampaignNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteCampaignPreconditionFailedResponseBody builds the HTTP response
+// body from the result of the "delete-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCampaignPreconditionFailedResponseBody(res *lfxv2campaignservicebriefs.PreconditionFailedError) *DeleteCampaignPreconditionFailedResponseBody {
+	body := &DeleteCampaignPreconditionFailedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewDeleteCampaignPreconditionRequiredResponseBody builds the HTTP response
+// body from the result of the "delete-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewDeleteCampaignPreconditionRequiredResponseBody(res *lfxv2campaignservicebriefs.PreconditionRequiredError) *DeleteCampaignPreconditionRequiredResponseBody {
+	body := &DeleteCampaignPreconditionRequiredResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetJobBadRequestResponseBody builds the HTTP response body from the
 // result of the "get-job" endpoint of the "lfx-v2-campaign-service-briefs"
 // service.
@@ -1972,6 +2262,19 @@ func NewGetCampaignPayload(projectID string, briefID string, campaignID string, 
 	return v
 }
 
+// NewGetCampaignMetricsPayload builds a lfx-v2-campaign-service-briefs service
+// get-campaign-metrics endpoint payload.
+func NewGetCampaignMetricsPayload(projectID string, briefID string, campaignID string, window *string, bearerToken *string) *lfxv2campaignservicebriefs.GetCampaignMetricsPayload {
+	v := &lfxv2campaignservicebriefs.GetCampaignMetricsPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.CampaignID = campaignID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v
+}
+
 // NewUpdateCampaignPayload builds a lfx-v2-campaign-service-briefs service
 // update-campaign endpoint payload.
 func NewUpdateCampaignPayload(body *UpdateCampaignRequestBody, projectID string, briefID string, campaignID string, bearerToken *string, ifMatch *string) *lfxv2campaignservicebriefs.UpdateCampaignPayload {
@@ -1992,6 +2295,19 @@ func NewToggleCampaignStatusPayload(body *ToggleCampaignStatusRequestBody, proje
 	v := &lfxv2campaignservicebriefs.ToggleCampaignStatusPayload{
 		Status: *body.Status,
 	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.CampaignID = campaignID
+	v.BearerToken = bearerToken
+	v.IfMatch = ifMatch
+
+	return v
+}
+
+// NewDeleteCampaignPayload builds a lfx-v2-campaign-service-briefs service
+// delete-campaign endpoint payload.
+func NewDeleteCampaignPayload(projectID string, briefID string, campaignID string, bearerToken *string, ifMatch *string) *lfxv2campaignservicebriefs.DeleteCampaignPayload {
+	v := &lfxv2campaignservicebriefs.DeleteCampaignPayload{}
 	v.ProjectID = projectID
 	v.BriefID = briefID
 	v.CampaignID = campaignID

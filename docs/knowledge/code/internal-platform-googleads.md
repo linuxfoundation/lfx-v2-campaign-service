@@ -165,12 +165,46 @@ that the original budget name is then freed for reuse, so for at-most-once retri
 callers should pass a stable-per-logical-campaign `NameSuffix` (which makes the
 retry collide on `DUPLICATE_NAME`) rather than relying on name reuse.
 
+## Responsive Search Ad copy + final URL (GA-3a)
+
+`ad_copy.go` holds the pure, side-effect-free helpers GA-3's ad-group/ad
+creation cascade consumes: `composeAdCopy` resolves caller-supplied
+headlines/descriptions into a valid RSA content set (trimmed, weight-capped —
+CJK/full-width runes count double, see `truncateWeighted` — deduped, padded
+with deterministic `eventName`/`project`-derived placeholders
+up to the minimum, capped at the maximum — never silently dropping down to
+zero, but empties/duplicates ARE dropped and the count IS capped, so a caller
+should not assume its exact input list survives verbatim), and
+`buildAdFinalURL` builds the ad's destination URL from the brief's
+registration URL, UTM-tagging it: `utm_source`/`utm_medium` are set
+unconditionally to `google`/`cpc` (a Google CPC click must attribute to this
+channel, never to a `utm_source` the registration URL already carried), while
+`utm_campaign`/`utm_content` are set only when the registration URL does not
+already carry them (`setIfAbsent`).
+
+`buildAdFinalURL` rejects a registration URL that: fails to parse; uses a
+scheme other than http/https; has no host; carries embedded userinfo
+(`user[:password]@host` — an ad destination never needs URL credentials, and
+forwarding them downstream would leak a basic-auth secret); or has a
+malformed query string (an unparsable percent-escape in `RawQuery` is
+silently dropped by `u.Query()`, which would otherwise alter the actual
+destination the ad points to). Every validation error redacts the raw
+registration URL via `redactURLForError` (scheme+host+path only) before
+including it in the message — the URL may carry a token in its query string
+or userinfo, and this error can be logged or persisted in a result
+step/snapshot. Mirrors the twitter client's `redactURLForError` and the
+reddit/meta clients' equivalent `redactURL` (userinfo/credentials-in-caller-
+URL pattern, see `docs/reviews/knowledge-base/credentials-and-untrusted-text.md`).
+
 ## Scope
 
 GA-1 is the scaffold (auth + request layer + GAQL search); GA-2 is campaign
-creation (`:mutate`). The orchestrator dispatcher (registering `google-ads` so
-briefs dispatch upstream) is wired in `internal/dispatch/googleads.go` (LFXV2-2636).
-Metrics/keywords/audience reads and keyword actions follow in later GA slices.
+creation (`:mutate`); GA-3a is ad-copy generation and final-URL building
+(`ad_copy.go`, this file's previous section) — the ad-group/ad creation
+cascade that consumes it lands in GA-3b. The orchestrator dispatcher
+(registering `google-ads` so briefs dispatch upstream) is wired in
+`internal/dispatch/googleads.go` (LFXV2-2636). Metrics/keywords/audience reads
+and keyword actions follow in later GA slices.
 
 ## Dispatch adapter (internal/dispatch)
 

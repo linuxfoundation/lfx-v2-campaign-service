@@ -23,14 +23,16 @@ type Client struct {
 	DeleteBriefEndpoint          goa.Endpoint
 	CreateCampaignsEndpoint      goa.Endpoint
 	GetCampaignEndpoint          goa.Endpoint
+	GetCampaignMetricsEndpoint   goa.Endpoint
 	UpdateCampaignEndpoint       goa.Endpoint
 	ToggleCampaignStatusEndpoint goa.Endpoint
+	DeleteCampaignEndpoint       goa.Endpoint
 	GetJobEndpoint               goa.Endpoint
 }
 
 // NewClient initializes a "lfx-v2-campaign-service-briefs" service client
 // given the endpoints.
-func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, createCampaigns, getCampaign, updateCampaign, toggleCampaignStatus, getJob goa.Endpoint) *Client {
+func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, createCampaigns, getCampaign, getCampaignMetrics, updateCampaign, toggleCampaignStatus, deleteCampaign, getJob goa.Endpoint) *Client {
 	return &Client{
 		CreateBriefEndpoint:          createBrief,
 		FindBriefEndpoint:            findBrief,
@@ -40,8 +42,10 @@ func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, dele
 		DeleteBriefEndpoint:          deleteBrief,
 		CreateCampaignsEndpoint:      createCampaigns,
 		GetCampaignEndpoint:          getCampaign,
+		GetCampaignMetricsEndpoint:   getCampaignMetrics,
 		UpdateCampaignEndpoint:       updateCampaign,
 		ToggleCampaignStatusEndpoint: toggleCampaignStatus,
+		DeleteCampaignEndpoint:       deleteCampaign,
 		GetJobEndpoint:               getJob,
 	}
 }
@@ -190,6 +194,24 @@ func (c *Client) GetCampaign(ctx context.Context, p *GetCampaignPayload) (res *C
 	return ires.(*Campaign), nil
 }
 
+// GetCampaignMetrics calls the "get-campaign-metrics" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// GetCampaignMetrics may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) GetCampaignMetrics(ctx context.Context, p *GetCampaignMetricsPayload) (res *CampaignMetrics, err error) {
+	var ires any
+	ires, err = c.GetCampaignMetricsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*CampaignMetrics), nil
+}
+
 // UpdateCampaign calls the "update-campaign" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
 // UpdateCampaign may return the following errors:
@@ -228,6 +250,22 @@ func (c *Client) ToggleCampaignStatus(ctx context.Context, p *ToggleCampaignStat
 		return
 	}
 	return ires.(*Campaign), nil
+}
+
+// DeleteCampaign calls the "delete-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// DeleteCampaign may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PreconditionFailed" (type *PreconditionFailedError): ETag mismatch
+//   - "PreconditionRequired" (type *PreconditionRequiredError): If-Match header required
+//   - error: internal error
+func (c *Client) DeleteCampaign(ctx context.Context, p *DeleteCampaignPayload) (err error) {
+	_, err = c.DeleteCampaignEndpoint(ctx, p)
+	return
 }
 
 // GetJob calls the "get-job" endpoint of the "lfx-v2-campaign-service-briefs"
