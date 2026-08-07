@@ -15,7 +15,8 @@ The new campaign-service endpoints will follow the `MetricsReader` optional-capa
 
 ## Current UI Contract (Source of Truth)
 
-All contract shapes are from `/Users/misharautela/LFX-DEV/lfx-v2-ui/packages/shared/src/interfaces/campaign.interface.ts:560–667`.
+All contract shapes are from `packages/shared/src/interfaces/campaign.interface.ts:560–667` in the
+`linuxfoundation/lfx-self-serve` repository (the LFX One UI).
 
 ### GET `/api/campaigns/keywords` — List Keywords with Metrics
 
@@ -113,14 +114,14 @@ interface BulkKeywordActionResponse {
 **Verdict:** **Item 4 CAN land before PR #69 merges** — with a deliberate two-phase structure.
 
 ### Phase 1 (No #69 dependency): List Keywords + Pause/Remove Actions
-- **What lands:** `GET /campaigns/{campaignId}/keywords` (list) and `POST /campaigns/{campaignId}/keywords/actions` (pause/remove only)
+- **What lands:** `GET /campaigns/{campaignId}/keywords` (list) and `POST /campaigns/{campaignId}/keyword-actions` (pause/remove only — the path already catalogued on `main`)
 - **Blocked on:** Nothing in #69. Uses existing Google Ads API surfaces (adGroupCriteria:search, mutate)
 - **Google Ads API:** `SearchGoogleAdsRequest` over `adGroupCriteria` (read metrics); `MutateGoogleAdsRequest` on `adGroupCriteria` with `pause` / `remove` operations
 - **Can build on:** origin/main as-is. No keyword creation plumbing needed
 
 ### Phase 2 (With #69): Enable/Resume + Bid Changes
 - **What lands:** `'enable'` action (resume paused keywords) and `'change-bid'` operation (set max CPC in micros)
-- **Dependency:** #69's keyword resource-name construction and criterion-ID plumbing in `internal/platform/googleads/targeting.go`
+- **Dependency:** #69's keyword resource-name construction and criterion-ID plumbing in `internal/platform/googleads/targeting.go`. **This file does not exist on `main` today** — PR #69 introduces it (along with `targeting_test.go`). Every reference to it in this plan is forward-looking and unresolvable until #69 merges; do not treat it as an existing API surface when scoping Phase 1.
 - **Why:** The bid-change mutation uses the same criterion resource name machinery #69 implements for creation; reusing it is safer than duplicating it
 - **Timing:** After PR #69 merges. Does NOT require a new base branch merge; the keyword-surface branch simply rebases onto #69 once it lands
 
@@ -169,9 +170,16 @@ Method("list-campaign-keywords", func() {
 
 #### Method 2: `update-campaign-keywords`
 
+The HTTP path is **not a new invention** — `POST
+/projects/{projectId}/briefs/{briefId}/campaigns/{id}/keyword-actions` is already catalogued on
+`main` (`docs/api-catalog.md`, *Optimization* section). This method implements that documented row;
+it must not introduce a second, differently-shaped keyword path. `keyword-actions` (an action
+collection) is deliberately a POST rather than a PATCH on `.../keywords`: the request is a list of
+operations to apply, not a replacement representation of the keyword set.
+
 ```goa
 Method("update-campaign-keywords", func() {
-  Description("Pause, enable, or change bid on keywords in a campaign. Phase 1 supports pause and remove; enable and change-bid follow in Phase 2 (LFXV2-xxx). Returns 400 when the campaign's platform has no keyword-manager capability wired.")
+  Description("Pause, enable, or change bid on keywords in a campaign. Phase 1 supports pause and remove; enable and change-bid follow in Phase 2 (LFXV2-2023). Returns 400 when the campaign's platform has no keyword-manager capability wired.")
   
   Payload(func() {
     bearerToken()
@@ -189,7 +197,7 @@ Method("update-campaign-keywords", func() {
   commonBriefErrors(true)  // Body validation
   
   HTTP(func() {
-    PATCH("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keywords")
+    POST("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-actions")
     Header("bearer_token:Authorization")
     Response(StatusOK)
     briefErrorResponses(true)
@@ -606,12 +614,20 @@ func (s *BriefService) UpdateCampaignKeywords(ctx context.Context,
 
 ### Layer 5: Platform Dispatcher (Google Ads)
 
-**File to edit/create:** `/internal/dispatch/googleads/keywords.go` (new)
+**File to edit:** `internal/dispatch/googleads.go`
+
+`internal/dispatch` is a **flat package — one file per platform**, with each optional capability
+added as a method on that platform's dispatcher type. There is no `internal/dispatch/googleads/`
+subpackage and no `dispatch.go`; the type is `GoogleAdsDispatcher` (`googleads.go:43`), and
+`ToggleStatus` (`:252`) is the precedent for how a capability is attached. Keyword methods go
+alongside it in the same file. If `googleads.go` grows unwieldy, the split to make is a sibling
+flat file (`googleads_keywords.go`), not a new package — a package would break the shared
+unexported helpers (`googleAdsConfig`, `validateGoogleAdsConnection`, `resolveGoogleAdsClient`).
 
 **Implementation outline** (Phase 1: pause/remove only):
 
 ```go
-package googleads
+package dispatch
 
 import (
   "context"
@@ -623,11 +639,12 @@ import (
 // ListKeywords returns keywords for a campaign with their metrics over a reporting window.
 // Aggregates across all ad groups via SearchGoogleAdsRequest over adGroupCriteria.
 // Returns results sorted by impression count (descending).
-func (d *Dispatcher) ListKeywords(ctx context.Context, projectID string, platform model.Provider,
+func (d *GoogleAdsDispatcher) ListKeywords(ctx context.Context, projectID string, platform model.Provider,
   campaign *model.Campaign, days int32) (*model.KeywordListResult, error) {
   
-  // Resolve Google Ads credentials (shared with createAdGroupAndAd, status toggle, metrics)
-  client, creds, err := resolveGoogleAdsClient(ctx, projectID)
+  // Resolve Google Ads credentials (shared with createAdGroupAndAd, status toggle, metrics).
+  // Signature per googleads.go:202 — a method on the dispatcher, returning (*googleads.Client, error).
+  client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
   if err != nil {
     return nil, fmt.Errorf("could not resolve google ads client: %w", err)
   }
@@ -708,10 +725,10 @@ func (d *Dispatcher) ListKeywords(ctx context.Context, projectID string, platfor
 
 // UpdateKeywords applies bulk actions (pause, remove) to keywords.
 // Phase 1: pause, remove only. Phase 2 adds enable, change-bid.
-func (d *Dispatcher) UpdateKeywords(ctx context.Context, projectID string, platform model.Provider,
+func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID string, platform model.Provider,
   campaign *model.Campaign, actions []*model.KeywordAction) ([]*model.KeywordActionOutcome, error) {
   
-  client, creds, err := resolveGoogleAdsClient(ctx, projectID)
+  client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
   if err != nil {
     return nil, fmt.Errorf("could not resolve google ads client: %w", err)
   }
@@ -827,18 +844,34 @@ func dateRangeForDays(days int32) (string, string) {
 }
 ```
 
-**File to edit:** `/internal/dispatch/googleads/dispatch.go`
+**File to edit:** `internal/dispatch/googleads.go` (same file — the capability assertion sits with
+the methods it asserts about)
 
-**Update the Dispatcher to implement KeywordManager interface:**
+**Declare that `GoogleAdsDispatcher` satisfies the KeywordManager capability:**
 
 ```go
-// In the Dispatcher constructor or as a package-level assertion:
-var _ orchestrator.KeywordManager = (*Dispatcher)(nil)
+// Package-level assertion, alongside the ListKeywords/UpdateKeywords methods:
+var _ service.KeywordManager = (*GoogleAdsDispatcher)(nil)
 ```
+
+The interface is declared in `internal/service` (the orchestrator's package), matching where
+`MetricsReader` lives — the dispatch package imports the service package's capability interfaces,
+not an `orchestrator` package (no such package exists).
 
 ---
 
 ## PR Breakdown
+
+> **On the `Base:` fields below.** These are written as a stack (each PR based on the previous),
+> which conflicts with the repo's standing convention that **every PR targets `main`**. The Google
+> Ads stack (#66→#67→#68→#69→#70) is the cautionary case: it is currently blocked because #69 has
+> an unresolvable conflict against its base rather than against `main`, and each unmerged parent
+> multiplies the rebase cost of everything above it.
+>
+> Prefer landing PR 1 into `main` first and rebasing PR 2 onto `main` once PR 1 merges, rather than
+> opening all four as a stack up front. If review latency makes serialization impractical, note
+> that the `Base:` values below are a **build order**, not an instruction to open four chained PRs
+> simultaneously.
 
 ### PR 1: Goa Design + Type Definitions (≈150 lines)
 
@@ -878,12 +911,12 @@ var _ orchestrator.KeywordManager = (*Dispatcher)(nil)
 
 **Branch:** `feat/LFXV2-2023-keyword-googleads-phase1`
 **Base:** PR 2 branch
-**Files:** `internal/dispatch/googleads/keywords.go` (new), `internal/dispatch/googleads/dispatch.go` (minimal edit to declare interface implementation)
+**Files:** `internal/dispatch/googleads.go` (add `ListKeywords`/`UpdateKeywords` methods plus the `KeywordManager` assertion), `internal/dispatch/googleads_test.go`
 
 - Implement ListKeywords for Google Ads (query via SearchGoogleAdsRequest)
 - Implement UpdateKeywords for Phase 1 (pause, remove actions only)
 - Add date-range parsing for days ∈ {7, 14, 30}
-- Use `resolveGoogleAdsClient` (existing pattern from createAdGroupAndAd)
+- Use `d.resolveGoogleAdsClient` (`internal/dispatch/googleads.go:202`); `ToggleStatus` (`:252`) is the closest existing caller to model on
 - Add happy-path + error tests (mock Google Ads client)
 
 **Test cases:**
