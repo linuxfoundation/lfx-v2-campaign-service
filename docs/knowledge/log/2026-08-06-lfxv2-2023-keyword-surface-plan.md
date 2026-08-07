@@ -1,4 +1,4 @@
-# 2026-08-06 — Keyword surface plan, and four contract facts it got wrong (LFXV2-2023)
+# 2026-08-06 — Keyword surface plan, and the contract facts it got wrong (LFXV2-2023)
 
 **Update** — `docs/plans/keyword-surface.md` records the design for roadmap item 4: two new
 brief-service methods (`list-campaign-keywords`, `update-campaign-keywords`) behind a
@@ -35,6 +35,27 @@ withholds, an unset max CPC) should stay optional. The mirror of this applies to
 an optional `bid_micros` is `*int64` on the wire, so the domain model must be `*int64` too, and
 flattening it at the boundary destroys the "omitted vs. explicit zero" distinction the validation
 depends on.
+
+**A Goa design PR cannot land without its handlers.** The first breakdown split "design + codegen"
+from "handlers" into two PRs. That split does not build: `make apigen` adds the new methods to the
+generated `briefs.Service` interface, and `internal/service/brief.go:48` asserts
+`var _ briefs.Service = (*BriefService)(nil)` at compile time, so the design-only PR turns `main`
+red the moment it merges. This is a property of every service design in this repo, not of
+keywords — adding a method to a design and implementing it are one PR.
+
+**`cpc_bid_micros` and `effective_cpc_bid_micros` are not interchangeable.** The effective bid is
+what the auction used and stays populated by INHERITING the ad group's bid, so selecting it makes
+a criterion-level "max CPC" non-null for every keyword and erases the only distinction the field
+carries: has its own bid vs. bids at group level. `ad_group_criterion.cpc_bid_micros` is the
+criterion-level bid and is absent exactly when none is set.
+
+**The bulk-mutation rule (`docs/api-catalog.md:19`) needed answering, not citing.** The reserved
+`keyword-actions` row existing in the catalog does not by itself override the rule. Of the rule's
+two stated reasons, the partial-success one is met by an itemized per-action result array, and the
+permission-boundary one — the load-bearing reason — is met *only because* every criterion is
+resolved against the one campaign before any operation is built. Without that authorization step
+the rule's objection is simply correct. The exception has to be written into the catalog itself in
+the implementing PR; an exception argued only in a plan reads later as an oversight.
 
 Two behavioural gaps found in the same pass, both now written into the plan: criterion IDs
 arriving in a request body must be authorized against the campaign before any mutate operation is

@@ -15,8 +15,14 @@ The new campaign-service endpoints will follow the `MetricsReader` optional-capa
 
 ## Current UI Contract (Source of Truth)
 
-All contract shapes are from `packages/shared/src/interfaces/campaign.interface.ts:560–667` in the
-`linuxfoundation/lfx-self-serve` repository (the LFX One UI).
+All contract shapes below are transcribed from the LFX One UI's shared interfaces, pinned to a
+commit so a reviewer can diff this plan against the exact revision it was written from:
+
+[`packages/shared/src/interfaces/campaign.interface.ts#L563-L667`](https://github.com/linuxfoundation/lfx-self-serve/blob/f1c6fab38193197339caae68458e33e6b16089fd/packages/shared/src/interfaces/campaign.interface.ts#L563-L667)
+(`linuxfoundation/lfx-self-serve` @ `f1c6fab3`) — `KeywordMetrics` at L563, `KeywordTotals` at
+L582, `KeywordMetricsResponse` at L590, `KeywordActionType` at L640, and the request/response
+action types at L642–L667. A local checkout path is not a citation: it names no revision and no
+reviewer can open it.
 
 ### GET `/api/campaigns/keywords` — List Keywords with Metrics
 
@@ -118,7 +124,7 @@ interface BulkKeywordActionResponse {
 - **Blocked on:** Nothing in #69. Uses existing Google Ads API surfaces (adGroupCriteria:search, mutate)
 - **Google Ads API:** a GAQL search over `keyword_view` for the read, and `adGroupCriteria:mutate`
   with status updates / removes for the write. Both go through `internal/platform/googleads`'s
-  existing REST transport — this repo has no Google Ads SDK, so PR 3 adds the semantic client
+  existing REST transport — this repo has no Google Ads SDK, so PR 2 adds the semantic client
   methods rather than calling a generated `SearchGoogleAds`/`MutateGoogleAds` surface that does
   not exist.
 - **Can build on:** origin/main as-is. No keyword creation plumbing needed
@@ -176,10 +182,35 @@ Method("list-campaign-keywords", func() {
 
 The HTTP path is **not a new invention** — `POST
 /projects/{projectId}/briefs/{briefId}/campaigns/{id}/keyword-actions` is already catalogued on
-`main` (`docs/api-catalog.md`, *Optimization* section). This method implements that documented row;
-it must not introduce a second, differently-shaped keyword path. `keyword-actions` (an action
+`main` (`docs/api-catalog.md:108`, *Optimization* section). This method implements that documented
+row; it must not introduce a second, differently-shaped keyword path. `keyword-actions` (an action
 collection) is deliberately a POST rather than a PATCH on `.../keywords`: the request is a list of
 operations to apply, not a replacement representation of the keyword set.
+
+**This has to be reconciled with rule 5, "No bulk mutation endpoints" (`docs/api-catalog.md:19`),
+before implementation — and it is not enough that the catalog already reserves the row.** The rule
+gives two reasons, and both have to be answered on their own terms rather than waved past:
+
+1. *"HTTP cannot cleanly express partial success/failure across a set."* The rule is about
+   endpoints where the status code is the only outcome channel. Here it is not: the result type
+   carries `succeeded`, `failed`, and a per-action `results` array with an explicit `success` and
+   `message` on every entry, so the response says precisely which criteria changed and which did
+   not. The 200 is a statement about the request being processed, and nothing in it is read as
+   "everything worked".
+2. *"A single bulk call cuts across per-target permission boundaries."* This is the load-bearing
+   reason, and it is the one that genuinely does not apply — but only because of the authorization
+   step added below. Every criterion in the request is resolved against **this campaign** before a
+   single operation is built, and the route is gated on `campaign_manager` for **this project**.
+   The permission-evaluated target is the campaign, and there is exactly one of them per request.
+   Without `AuthorizeKeywordCriteria` the rule's objection would be exactly right: criterion IDs
+   are caller-supplied, so an unauthorized batch really would span every campaign in the customer.
+
+The rule's prohibited shape is the omitted "bulk status/budget change across campaigns", where N
+independently-permissioned resources are mutated in one call. This endpoint has a single
+permissioned target and an itemized outcome, so it is an exception with a stated rationale rather
+than a violation — **but it must be written into `docs/api-catalog.md` as a named exception in the
+PR that implements it.** An exception argued only in a plan document is one an implementer or a
+future reviewer will read as an oversight.
 
 ```goa
 Method("update-campaign-keywords", func() {
@@ -612,8 +643,6 @@ func (s *BriefService) ListCampaignKeywords(ctx context.Context,
       MatchType:    kw.MatchType,
       Status:       kw.Status,
       QualityScore: kw.QualityScore,
-      AdGroupID:    kw.AdGroupID,
-      AdGroupName:  kw.AdGroupName,
       Impressions:  kw.Impressions,
       Clicks:       kw.Clicks,
       Ctr:          kw.Ctr,
@@ -742,14 +771,15 @@ customer/account fields are all **unexported**. `resolveGoogleAdsClient` returns
 `*googleads.Client` — there is no `creds` value in scope in the dispatcher, and no
 `SearchGoogleAds` / `MutateGoogleAds` method to call.
 
-So the keyword work is **two layers, not one**, and PR 3 must contain both:
+So the keyword work is **two layers, not one**, and PR 2 must contain both:
 
 1. `internal/platform/googleads/keywords.go` — two new *semantic* methods on `*Client`:
    `ListCampaignKeywords(ctx, campaignID string, startDate, endDate string) ([]KeywordRow, error)`
    and `MutateKeywordCriteria(ctx, ops []KeywordCriterionOp) ([]KeywordCriterionResult, error)`.
    These own the GAQL text, the resource-name construction, the response decoding, and the
    malformed-response classification — exactly where `CreateCampaign` and `UpdateCampaignStatus`
-   already put that work.
+   already put that work. `KeywordRow` also carries the finished `GoogleAdsURL`, built here from
+   the client's own (unexported) customer ID, so the dispatcher never needs an account accessor.
 2. `internal/dispatch/googleads.go` — `ListKeywords` / `UpdateKeywords` translate between
    `model.*` and those client types. No HTTP, no GAQL, no resource names.
 
@@ -763,6 +793,14 @@ So the keyword work is **two layers, not one**, and PR 3 must contain both:
 // single row comes back. There is also no `metrics.ctr_percent` field; `metrics.ctr` is
 // already a fraction, and we recompute totals CTR ourselves regardless.
 //
+// `ad_group_criterion.cpc_bid_micros`, NOT `effective_cpc_bid_micros`. The two are not
+// interchangeable: the effective bid is what the auction actually used, and it stays
+// populated by inheriting the ad group's bid even when the keyword has no bid of its own.
+// Selecting it would make max_cpc_micros non-null for every keyword and quietly destroy
+// the one distinction the field exists to carry — "this keyword has its own max CPC" vs.
+// "this keyword bids at ad-group level". cpc_bid_micros is the criterion-level bid and is
+// absent exactly when none is set, which is the contract below.
+//
 // The campaign filter is what scopes the read. It is applied here, in the client, so no
 // caller can accidentally issue an account-wide keyword query.
 const keywordReportQuery = `
@@ -771,7 +809,7 @@ const keywordReportQuery = `
          ad_group_criterion.keyword.match_type,
          ad_group_criterion.status,
          ad_group_criterion.quality_info.quality_score,
-         ad_group_criterion.effective_cpc_bid_micros,
+         ad_group_criterion.cpc_bid_micros,
          ad_group.id,
          ad_group.name,
          campaign.id,
@@ -860,8 +898,15 @@ func (d *GoogleAdsDispatcher) ListKeywords(ctx context.Context, projectID string
       AvgCpcMicros: row.AverageCpcMicros,
       SpendMicros:  row.CostMicros,
       Conversions:  row.Conversions,
-      MaxCpcMicros: row.EffectiveCpcBidMicros,
-      GoogleAdsURL: keywordDeepLink(client.CustomerID(), row.CampaignID, row.AdGroupID, row.CriterionID),
+      // CpcBidMicros, not the effective bid: nil here MEANS "bids at ad-group level".
+      MaxCpcMicros: row.CpcBidMicros,
+      // The deep link is built by the client and arrives on the row. It cannot be built
+      // here: the URL needs the customer ID, `Client.account` is unexported, and there is
+      // no CustomerID() accessor — the same boundary this plan states at lines 739–743.
+      // Adding an accessor purely to leak the account outward would widen the client's
+      // surface for one string; returning the finished URL keeps account-awareness inside
+      // the package that already owns it.
+      GoogleAdsURL: row.GoogleAdsURL,
     })
     result.Impressions += row.Impressions
     result.Clicks += row.Clicks
@@ -1011,37 +1056,42 @@ not an `orchestrator` package (no such package exists).
 > an unresolvable conflict against its base rather than against `main`, and each unmerged parent
 > multiplies the rebase cost of everything above it.
 >
-> Prefer landing PR 1 into `main` first and rebasing PR 2 onto `main` once PR 1 merges, rather than
-> opening all four as a stack up front. If review latency makes serialization impractical, note
-> that the `Base:` values below are a **build order**, not an instruction to open four chained PRs
-> simultaneously.
+> Every PR below therefore targets `main` and is opened only once its predecessor has merged. The
+> ordering is a **build order**, not an instruction to open a chained stack up front.
 
-### PR 1: Goa Design + Type Definitions (≈150 lines)
+> **Design and handlers cannot be separate PRs.** An earlier draft split them, and that split does
+> not build. `make apigen` puts `ListCampaignKeywords` and `UpdateCampaignKeywords` on the
+> generated `briefs.Service` interface, and `internal/service/brief.go:48` asserts
+> `var _ briefs.Service = (*BriefService)(nil)` at compile time. The moment the design lands
+> without the handlers, that assertion fails and `go build ./...` is red on `main` — the design
+> PR is not "design-only", it is a breaking change to an interface the service already claims to
+> satisfy. The two are merged into PR 1 below. This is a general property of Goa in this repo, not
+> a quirk of keywords: **any PR that adds a method to a service design must implement it.**
 
-**Branch:** `feat/LFXV2-2023-keyword-types`
+### PR 1: Goa Design + Domain Model + Orchestrator + Handlers (≈500 lines)
+
+**Branch:** `feat/LFXV2-2023-keyword-surface`
 **Base:** `origin/main`
-**Files:** `design/brief.go`, `internal/domain/model/keyword.go`, `internal/domain/errors.go`
+**Files:** `design/brief.go`, `internal/domain/model/keyword.go`, `internal/domain/errors.go`,
+`internal/service/orchestrator.go`, `internal/service/brief.go`, `internal/service/brief_test.go`,
+`internal/service/orchestrator_test.go`
 
 - Add Goa type definitions for keyword list/action payloads and results
-- Add new methods `list-campaign-keywords`, `update-campaign-keywords` (Goa DSL only)
-- Define error sentinels in domain/errors.go
+- Add new methods `list-campaign-keywords`, `update-campaign-keywords`
+- Define error sentinels in `domain/errors.go`; add `model/keyword.go`
 - Run `make apigen` to regenerate `gen/` **and** the ko-embedded OpenAPI copies under
   `cmd/campaign-service/kodata/gen/http/`. Not `goa gen` alone (leaves kodata stale) and
   definitely not `go run ./cmd/okfgen`, which regenerates the knowledge bundle.
-
-**Reviewable as:** Design-only; code generation output exempt from line count.
-
-### PR 2: Orchestrator Interfaces + Service Handler (≈350 lines)
-
-**Branch:** `feat/LFXV2-2023-keyword-orchestrator`
-**Base:** PR 1 branch
-**Files:** `internal/service/orchestrator.go`, `internal/service/brief.go`
-
-- Add KeywordManager interface to orchestrator
-- Add ReadCampaignKeywords / UpdateCampaignKeywords methods to Orchestrator
-- Implement ListCampaignKeywords / UpdateCampaignKeywords handlers in BriefService
+- Add `KeywordManager` interface + `ReadCampaignKeywords` / `UpdateCampaignKeywords` to Orchestrator
+- Implement `ListCampaignKeywords` / `UpdateCampaignKeywords` handlers in `BriefService` —
+  **required in this PR**, per the note above
 - Add timeouts + error mapping
 - Add unit tests for error cases (unsupported platform, invalid bid, empty actions array)
+
+No dispatcher implements `KeywordManager` yet at this point, which is the correct intermediate
+state and not a gap: the capability is optional, so both endpoints return a clean
+`ErrKeywordManagerUnsupported` → 400 until PR 2 wires Google Ads. That is exactly how
+`get-campaign-metrics` behaved between its foundation PR and the first platform adapter.
 
 **Test cases to add:**
 - `TestBriefService_ListCampaignKeywords_HappyPath`
@@ -1052,10 +1102,10 @@ not an `orchestrator` package (no such package exists).
 - `TestBriefService_UpdateCampaignKeywords_EmptyActionsIs400`
 - `TestBriefService_UpdateCampaignKeywords_PlatformFailureIs503`
 
-### PR 3: Google Ads Keyword Operations — Phase 1 (≈600 lines)
+### PR 2: Google Ads Keyword Operations — Phase 1 (≈750 lines)
 
 **Branch:** `feat/LFXV2-2023-keyword-googleads-phase1`
-**Base:** PR 2 branch
+**Base:** `origin/main`, opened once PR 1 has merged
 **Files:** `internal/platform/googleads/keywords.go` **(new — this PR must include the platform
 client, not just the adapter)**, `internal/platform/googleads/keywords_test.go`,
 `internal/dispatch/googleads.go` (add `ListKeywords`/`UpdateKeywords` plus the `KeywordManager`
@@ -1089,10 +1139,10 @@ assertion), `internal/dispatch/googleads_test.go`
 budgeted because the platform-client layer was missing from that estimate; still under the
 1000-line cap, but if it grows, split the platform client into its own PR ahead of the adapter.
 
-### PR 4: Integration Tests + OpenAPI Snapshot (≈200 lines)
+### PR 3: Integration Tests + OpenAPI Snapshot (≈200 lines)
 
 **Branch:** `feat/LFXV2-2023-keyword-integration-phase1`
-**Base:** PR 3 branch
+**Base:** `origin/main`, opened once PR 2 has merged
 **Files:** `internal/service/brief_test.go` (new E2E-style tests), generated OpenAPI snapshot
 
 - Full integration test: create campaign → list keywords → pause some → verify result
@@ -1262,16 +1312,17 @@ concept and add a dated log fragment; deferring that to PR 1 would put this one 
 contract. The plan is itself a durable decision record, so it ships with:
 
 - `docs/knowledge/log/2026-08-06-lfxv2-2023-keyword-surface-plan.md` — what was decided and, more
-  usefully, the four contract facts the first draft got wrong (GAQL is snake_case; criterion
-  resource names are composite; `make apigen` not `okfgen`; optional Goa attributes generate
-  pointers).
+  usefully, the contract facts the first drafts got wrong (GAQL is snake_case; criterion resource
+  names are composite; `make apigen` not `okfgen`; optional Goa attributes generate pointers; a
+  Goa design PR cannot land without its handlers; `cpc_bid_micros` is not
+  `effective_cpc_bid_micros`; the bulk-mutation rule needs answering, not citing).
 
 Then, as each implementation PR lands:
 
-1. `docs/knowledge/code/design-and-gen.md` — the two new methods and their types (PR 1)
-2. `docs/knowledge/code/internal-service.md` — the `KeywordManager` optional capability (PR 2)
-3. `docs/knowledge/code/internal-platform-googleads.md` — the keyword client surface, the GAQL
-   query, and criterion authorization (PR 3)
+1. `docs/knowledge/code/design-and-gen.md` and `docs/knowledge/code/internal-service.md` — the
+   two new methods, their types, and the `KeywordManager` optional capability (PR 1)
+2. `docs/knowledge/code/internal-platform-googleads.md` — the keyword client surface, the GAQL
+   query, and criterion authorization (PR 2)
 4. `docs/api-catalog.md` — the two endpoint rows, with the `keyword-actions` row updated from
    planned to implemented
 5. A dated `docs/knowledge/log/` fragment per PR
@@ -1285,7 +1336,7 @@ This plan provides a concrete, layered implementation roadmap for the Optimize-p
 **Dependencies and blocking factors are resolved:**
 - No hard dependency on PR #69 for Phase 1
 - Error mapping follows established patterns (MetricsReader, StatusToggler)
-- The Google Ads surface is reached through `internal/platform/googleads`, which PR 3 extends
+- The Google Ads surface is reached through `internal/platform/googleads`, which PR 2 extends
   with keyword read/mutate/authorize methods — there is no SDK and no exported search or mutate
   entry point to call from the dispatcher
 - Test plan covers all error cases and happy paths
