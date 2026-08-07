@@ -5,10 +5,12 @@ package postgres
 
 import (
 	"io/fs"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/migrations"
@@ -57,6 +59,33 @@ func TestCampaignRepo_OnConflictCarriesLivePredicate(t *testing.T) {
 	}
 }
 
+// TestClaimVersionIsBackedByACompareAndSwap pins the durable half of the serialization
+// protocol. ClaimCampaignVersion's advisory lock is SESSION-scoped: a failover, a pool
+// eviction, or a dropped TCP connection releases it server-side while the holder is still
+// inside its external platform call, and a successor can then claim the same version. The
+// lock is a contention guard, not durable ownership.
+//
+// What makes a lost lock survivable is this compare-and-swap: ReplaceCampaign must both
+// PREDICATE on the claimed version and BUMP it in the same statement. Whichever writer
+// commits first wins; the other matches zero rows and gets ErrPreconditionFailed. Drop
+// either half and two writers that both held the "same" claim can both persist — two
+// campaign writes at one version, two outbox rows, and the later one silently overwriting
+// the earlier. Asserted against the SQL text because this package has no live-database
+// harness in CI.
+func TestClaimVersionIsBackedByACompareAndSwap(t *testing.T) {
+	q := replaceCampaignQuery
+
+	assert.Contains(t, q, "version=version+1",
+		"without the bump, a second claimant at the same version also passes the version predicate "+
+			"and both writers persist — the advisory lock cannot prevent this, it is only session-scoped")
+	assert.Contains(t, q, "AND version=$12",
+		"without the version predicate, a writer whose lock was lost mid-call overwrites a newer "+
+			"state rather than failing with ErrPreconditionFailed")
+	assert.Contains(t, claimCampaignVersionQuery, "version=$4",
+		"the claim must read AT the caller's expected version; reading the current version instead "+
+			"would hand every racing writer a claim that then passes the swap")
+}
+
 // TestCampaignRepo_ReadsExcludeSoftDeleted pins that every campaigns read filters out
 // soft-deleted rows. A soft delete only flips a status column, so a read that forgets
 // the filter keeps serving the deleted campaign — a 200 where the contract promises
@@ -70,6 +99,12 @@ func TestCampaignRepo_ReadsExcludeSoftDeleted(t *testing.T) {
 		"GetCampaignByPlatform":               getCampaignByPlatformQuery,
 		"ReplaceCampaign":                     replaceCampaignQuery,
 		"ReplaceCampaign (no-row classifier)": replaceCampaignExistsQuery,
+		// The claim pair matters most of the three: it gates the run-status toggle,
+		// which makes a PAID platform call between claiming and replacing. A claim that
+		// admitted a soft-deleted row would mutate the campaign upstream and then fail
+		// the local write, because ReplaceCampaign does filter deleted rows.
+		"ClaimCampaignVersion":                     claimCampaignVersionQuery,
+		"ClaimCampaignVersion (no-row classifier)": claimCampaignExistsQuery,
 	} {
 		t.Run(name, func(t *testing.T) {
 			require.Contains(t, normalizeWS(q), livePredicate,
@@ -170,3 +205,59 @@ func TestMigration000014_GuardChecksIndexDefinition(t *testing.T) {
 // normalizeWS collapses all whitespace runs to a single space so assertions are
 // insensitive to the SQL literals' line breaks and indentation.
 func normalizeWS(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// TestDeleteCampaign_ParticipatesInAdvisoryLockProtocol pins that DeleteCampaign takes
+// the campaign advisory lock, and that it runs its transaction on the SAME connection
+// that holds it.
+//
+// This repo has no DB-backed test harness (see TestDeleteCampaign_LocksRowBeforeGuards),
+// so this asserts on the source of the method body rather than by racing two real
+// transactions. Both properties it pins are structural, and both were real defects:
+//
+//  1. Without the advisory lock, FOR UPDATE serializes delete against the dispatch path
+//     (which UPDATEs the row) but NOT against an in-flight run-state toggle. A toggle
+//     holds its claim ACROSS the platform call, and between ClaimCampaignVersion and
+//     ReplaceCampaign it holds no row lock at all. A delete committing inside that
+//     window bumps version, so the toggle's ReplaceCampaign(expectedVersion) fails after
+//     the paid side effect already landed upstream.
+//
+//  2. Beginning the transaction with r.db.Begin would take a SECOND pool connection
+//     while this one is held, self-deadlocking whenever the pool is saturated
+//     (pool_max_conns=1 guarantees it) — the delete would block waiting for a
+//     connection only it could release.
+func TestDeleteCampaign_ParticipatesInAdvisoryLockProtocol(t *testing.T) {
+	src, err := os.ReadFile("campaign_repo.go")
+	require.NoError(t, err)
+
+	const start = "func (r *CampaignRepo) DeleteCampaign("
+	i := strings.Index(string(src), start)
+	require.NotEqual(t, -1, i, "DeleteCampaign not found; update this test if the method was renamed")
+	body := string(src)[i:]
+	// Bound the body at the next top-level func so later methods cannot satisfy these
+	// assertions on DeleteCampaign's behalf.
+	if j := strings.Index(body[len(start):], "\nfunc "); j != -1 {
+		body = body[:len(start)+j]
+	}
+
+	require.Contains(t, body, "pg_try_advisory_lock",
+		"DeleteCampaign must take the campaign advisory lock: FOR UPDATE alone does not serialize it "+
+			"against an in-flight toggle, which holds its claim across the platform call and no row lock at all.")
+	// The TRY form, never the blocking one. This connection is already checked out of the
+	// pool, so waiting here would pin a SECOND pooled connection for the length of the
+	// winner's platform call (up to 45s) — a small burst against one campaign could then
+	// exhaust the pool and stall unrelated requests and the readiness probe.
+	require.NotContains(t, body, `"SELECT pg_advisory_lock(`,
+		"DeleteCampaign must not BLOCK on the advisory lock; use pg_try_advisory_lock and return "+
+			"ErrCampaignWriteInProgress so a loser never holds a pooled connection while it waits")
+	require.Contains(t, body, "domain.ErrCampaignWriteInProgress",
+		"a lost claim must surface as 409 retry-shortly, not as a 412 that would send a caller with "+
+			"a perfectly current ETag off to refetch")
+	require.Contains(t, body, "pg_advisory_unlock",
+		"DeleteCampaign must release the advisory lock; a session lock left held strands every future "+
+			"claim and delete for this campaign.")
+	require.Contains(t, body, "conn.Begin(ctx)",
+		"the delete transaction must begin on the connection already holding the advisory lock")
+	require.NotContains(t, body, "r.db.Begin(",
+		"beginning on the pool takes a SECOND connection while holding the lock, which self-deadlocks "+
+			"on a saturated pool")
+}

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
@@ -599,6 +600,17 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if gerr != nil {
 		return nil, mapBriefErr(gerr)
 	}
+	// Check the If-Match version against the LOADED row BEFORE the status-mismatch
+	// check below. Without this, a stale If-Match is validated against a row the
+	// client never saw: a concurrent ToggleCampaignStatus can flip existing.Status
+	// between the client's read and this request, and the status-mismatch check
+	// would then compare the client's (now-stale) status field against the NEW
+	// existing.Status and return 400 ("use the status-toggle endpoint") for what is
+	// actually a stale-ETag conflict — misreporting a 412 as a 400. Mirrors
+	// UpdateAudience's early version check for the same reason.
+	if existing.Version != version {
+		return nil, &briefs.PreconditionFailedError{Code: "412", Message: "the supplied ETag does not match the current version"}
+	}
 	// This DB-only update MUST NOT be a back door for changing the RUN status
 	// (active/paused): that would persist a run state WITHOUT contacting the ad platform,
 	// recreating exactly the DB/platform divergence the ToggleCampaignStatus endpoint exists
@@ -611,12 +623,36 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	// caller a replacement succeeded when it silently did not. Run-state attempts get the
 	// specific toggle-endpoint message; every other mismatch (a provisioning state, or an
 	// unknown value) is rejected as unsupported on this path.
+	//
+	// VALIDATION MUST HAPPEN BEFORE CLAIMING. A rejected request has no business taking the
+	// campaign's write lock: claiming acquires a dedicated pooled connection and blocks every
+	// other writer for this campaign until it is released, so validating first keeps an
+	// invalid request from queueing behind — or ahead of — legitimate writers. (The claim
+	// itself does not bump the version; only ReplaceCampaign does. So the ETag a rejected
+	// caller holds stays valid either way.)
 	if p.Campaign.Status != existing.Status {
 		if model.IsCampaignRunStatus(p.Campaign.Status) {
 			return nil, &briefs.BadRequestError{Code: "400", Message: "run status (active/paused) cannot be changed via update-campaign; use the status-toggle endpoint so the change is applied on the ad platform first"}
 		}
 		return nil, &briefs.BadRequestError{Code: "400", Message: "status cannot be changed via update-campaign; re-send the campaign's current status (it is set by the create/dispatch flow and the status-toggle endpoint)"}
 	}
+	// Claim write ownership at the read version BEFORE building the edit, not just
+	// at the final ReplaceCampaign. This path itself has no I/O in between, so a
+	// bare ReplaceCampaign(version) would already be race-free against another
+	// UpdateCampaign — but not against a concurrent ToggleCampaignStatus, which
+	// claims its own version before calling the ad platform. Without this claim, a
+	// name/config edit landing in that toggle's claim-to-persist window would win
+	// the version the toggle already reserved, so the toggle's own post-platform
+	// persist then loses — the platform and the row diverge even though this edit
+	// and that toggle were each individually consistent. Claiming here makes every
+	// campaign writer serialize through the same version-gated mutex.
+	_, lockToken, cerr := campaignRepo.ClaimCampaignVersion(ctx, p.ProjectID, p.BriefID, p.CampaignID, version)
+	if cerr != nil {
+		return nil, mapBriefErr(cerr)
+	}
+	// Ensure lock is released even if a panic or context cancellation occurs.
+	defer func() { _ = campaignRepo.ReleaseCampaignLock(ctx, lockToken) }()
+
 	existing.CampaignName = p.Campaign.CampaignName
 	// Only overwrite the stored config when the caller actually supplied one.
 	// config is optional in CampaignUpdateInput, so an omitted value must leave
@@ -626,12 +662,22 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if p.Campaign.Config != nil {
 		existing.ConfigSnapshot = marshalAny(p.Campaign.Config)
 	}
-	updated, uerr := campaignRepo.ReplaceCampaign(ctx, existing, version, s.campaignIndexPayload(indexer.ActionUpdated))
+	// Gate the final write on the original claimed version. The claim acquired
+	// the lock but did NOT bump the version; ReplaceCampaign will bump it
+	// (from version to version+1) inside the outbox transaction, preserving the
+	// invariant that every campaign write co-commits its index event.
+	updated, uerr := campaignRepo.ReplaceCampaign(ctx, existing, version, lockToken, s.campaignIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
 	return campaignResult(updated), nil
 }
+
+// unconfirmedLockCooldown bounds how long ToggleCampaignStatus holds the claim lock after an
+// UNCONFIRMED platform outcome before letting another writer claim the same (still-unbumped)
+// version. It gives an operator or the caller's own retry a window to verify the platform's
+// actual state before a second call can race a possibly-already-applied change.
+const unconfirmedLockCooldown = 30 * time.Second
 
 // ToggleCampaignStatus pauses/resumes a campaign ON THE AD PLATFORM, then persists the new
 // status. Unlike UpdateCampaign (DB-only), the platform call happens FIRST — the row is
@@ -655,11 +701,17 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	if gerr != nil {
 		return nil, mapBriefErr(gerr)
 	}
-	// Guard optimistic concurrency BEFORE the (side-effecting, paid) platform call, so a
-	// stale If-Match fails fast without touching the ad platform.
+	// Check the If-Match version against the LOADED row BEFORE any state checks or platform
+	// calls. Without this, a stale If-Match is validated against a row the client never saw:
+	// a concurrent UpdateCampaign can change existing.Status or other fields between the
+	// client's read and this request, and the status-mismatch check below would then compare
+	// the client's (now-stale) status field against the NEW existing.Status and return 400
+	// ("use the status-toggle endpoint") for what is actually a stale-ETag conflict —
+	// misreporting a 412 as a 400.
 	if existing.Version != version {
-		return nil, &briefs.PreconditionFailedError{Code: "412", Message: "campaign has been modified; reload and retry"}
+		return nil, &briefs.PreconditionFailedError{Code: "412", Message: "the supplied ETag does not match the current version"}
 	}
+
 	// Only a fully-created campaign (or one already in a run state) may be toggled. A
 	// "pending" ambiguous orphan or a "created_degraded" campaign (a sub-step still needs
 	// reconciliation) must NOT be toggled: doing so would activate an incomplete campaign
@@ -670,6 +722,65 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 		return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not in a toggleable state (it is still provisioning or needs reconciliation); resolve its status before toggling"}
 	}
 
+	// VALIDATION MUST HAPPEN BEFORE CLAIMING, for the same reason as UpdateCampaign above:
+	// claiming takes the campaign's write lock on a dedicated pooled connection and blocks
+	// every other writer for this campaign until release, so a request that is going to be
+	// rejected anyway must never take it. (The claim leaves the version unchanged — only
+	// ReplaceCampaign bumps it — so a rejected caller's ETag survives either way.) Check
+	// platform-independent errors here; platform-specific errors (like UNCONFIRMED from
+	// transport) must still go through the platform call.
+	if existing.Platform.Kind() == model.ChannelEmail {
+		return nil, &briefs.BadRequestError{Code: "400", Message: "status toggle does not apply to the email channel: it stages a draft for a human to send, so there is no running campaign to pause or resume"}
+	}
+	if existing.PlatformCampaignID == "" {
+		return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned for activation — it has no platform campaign id yet, or it lacks the child entities needed to serve (e.g. its ad group/ad, ad set, or creatives); finish or recreate the campaign before toggling its status"}
+	}
+
+	// Claim write ownership at the read version BEFORE the (side-effecting, paid) platform
+	// call, atomically via the repository rather than by comparing existing.Version in memory.
+	// An in-memory comparison only rejects THIS caller if it's already stale; it does nothing
+	// to stop a second concurrent caller (another toggle, or UpdateCampaign) that read the
+	// same version from also passing its own check and also mutating the platform — both would
+	// then race the final persist, and only one wins, leaving the platform and the row
+	// diverged with no compensating rollback. The claim closes that: a second caller is turned
+	// away HERE, before either the platform is called or a claim is granted for anyone else to
+	// race against.
+	//
+	// "Turned away", not "queued". The claim is pg_try_advisory_lock, so the loser gets
+	// ErrCampaignWriteInProgress immediately — mapped to a retryable 409 — and does NOT park
+	// until the holder releases. A client that wants the write retries as a fresh request,
+	// which is deliberate: parking would pin a pool connection for the length of someone
+	// else's platform call. See ClaimCampaignVersion's POOL COST note.
+	//
+	// And "turned away", not "can never win". The claim is a contention guard whose exclusion
+	// lasts only as long as the lock's session — a failover or a severed connection releases it
+	// server-side while this call is still inside its platform call, and a successor can then
+	// claim the same still-unbumped version (see ClaimCampaignVersion's durability boundary).
+	// What makes that safe is not this claim but the compare-and-swap in the ReplaceCampaign
+	// below: whichever writer commits first bumps the version and the other is rejected, so a
+	// lost lock costs at most one duplicated declarative platform call, never two persisted
+	// writes at the same version.
+	_, lockToken, cerr := campaignRepo.ClaimCampaignVersion(ctx, p.ProjectID, p.BriefID, p.CampaignID, version)
+	if cerr != nil {
+		return nil, mapBriefErr(cerr)
+	}
+	// Defer lock release: it MUST NOT be released until after persistence, and it MUST use
+	// a detached context because persistence will run on context.WithoutCancel after the
+	// platform call succeeds (to persist even if the request is cancelled). ReleaseCampaignLock
+	// internally uses context.WithoutCancel to guarantee the unlock runs even if the caller's
+	// context is cancelled.
+	//
+	// releaseNow is turned off on the UNCONFIRMED path below, which schedules its own delayed
+	// release instead — releasing inline there would let the next request to arrive claim the
+	// same still-unbumped version and call the platform again while this call's outcome is
+	// unknown. During the cooldown those requests are refused with 409, not queued.
+	releaseNow := true
+	defer func() {
+		if releaseNow {
+			_ = campaignRepo.ReleaseCampaignLock(ctx, lockToken)
+		}
+	}()
+
 	// Platform-side toggle FIRST. On failure the row is left untouched (no optimistic
 	// lie that the campaign is paused when the platform still has it running).
 	if terr := orch.ToggleCampaignStatus(ctx, p.ProjectID, existing.Platform, existing, p.Status); terr != nil {
@@ -677,14 +788,9 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 		switch {
 		case errors.Is(terr, ErrToggleUnsupported):
 			// The platform (or its dispatcher) doesn't support toggling — a client error,
-			// the platform was never called. Distinguish the two reasons: for the EMAIL
-			// channel there is nothing to pause BY DESIGN (it stages a draft a human sends,
-			// with no run state this service controls), so a generic "not supported" reads
-			// as a missing feature and invites someone to "fix" it. For an ad platform it
-			// genuinely means the toggle capability is not wired yet.
-			if existing.Platform.Kind() == model.ChannelEmail {
-				return nil, &briefs.BadRequestError{Code: "400", Message: "status toggle does not apply to the email channel: it stages a draft for a human to send, so there is no running campaign to pause or resume"}
-			}
+			// the platform was never called. This is a platform-specific error that should
+			// have been caught earlier if the dispatcher wiring was complete; it indicates
+			// the toggle capability is not wired yet for this provider.
 			return nil, &briefs.BadRequestError{Code: "400", Message: "status toggle is not supported for this campaign's platform"}
 		case errors.Is(terr, ErrCampaignNotProvisioned):
 			// The campaign is not fully provisioned for this toggle — either it has no upstream
@@ -719,6 +825,21 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,
 				"requested_status", p.Status, "error", terr)
+			// The row is deliberately left untouched here (it might already be right, or not
+			// — see the test asserting this). But releasing the claim lock immediately, as the
+			// deferred release above would, lets a second caller already waiting on it claim
+			// the SAME still-unbumped expectedVersion right away and call the platform again
+			// while THIS call's outcome is still unknown — doubling up on an already-ambiguous
+			// change. Hold the lock for a bounded cooldown instead of releasing it inline: skip
+			// the deferred release for this path and let the repo release it asynchronously
+			// after unconfirmedLockCooldown. This gives an operator/retry a window to reconcile
+			// before any other writer can proceed, without persisting anything (a crash before
+			// the cooldown elapses still releases the lock immediately — it's a Postgres session
+			// lock, so it drops the moment the holding connection closes). The repo's cooldown
+			// release also cuts short at process shutdown instead of holding its pooled
+			// connection for the full 30s: see ReleaseCampaignLockAfterCooldown.
+			releaseNow = false
+			campaignRepo.ReleaseCampaignLockAfterCooldown(lockToken, unconfirmedLockCooldown)
 			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the campaign status change is unconfirmed — it may or may not have been applied on the ad platform; verify in the platform before retrying"}
 		default:
 			// A DEFINITE platform-call failure (4xx) or the dispatcher's cred resolution
@@ -742,7 +863,11 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	existing.Status = p.Status
 	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 	defer cancel()
-	updated, uerr := campaignRepo.ReplaceCampaign(persistCtx, existing, version, s.campaignIndexPayload(indexer.ActionUpdated))
+	// Gate the final write on the original claimed version. The claim acquired the lock but
+	// did NOT bump the version; ReplaceCampaign will bump it (from version to version+1)
+	// inside the outbox transaction, preserving the invariant that every campaign write
+	// co-commits its index event.
+	updated, uerr := campaignRepo.ReplaceCampaign(persistCtx, existing, version, lockToken, s.campaignIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
 		// The platform WAS changed but the row write failed → platform and DB now diverge.
 		// Log it loudly as an operational reconcile signal (the run state on the platform is
@@ -959,6 +1084,11 @@ func mapBriefErr(err error) error {
 		// state conflict, not a uniqueness one — tell the client to refresh and
 		// re-approve, which "already exists" would misdescribe.
 		return &briefs.ConflictError{Code: "409", Message: "brief is no longer approved at the expected version; refresh and re-approve, then retry"}
+	case errors.Is(err, domain.ErrCampaignWriteInProgress):
+		// The claim is a try-lock, not a wait (see domain.ErrCampaignWriteInProgress). The
+		// caller's ETag may be perfectly current, so 412 would send them off to refetch and
+		// rebuild a request that was already correct — the right advice is simply to retry.
+		return &briefs.ConflictError{Code: "409", Message: "another write to this campaign is already in progress; retry shortly"}
 	case errors.Is(err, domain.ErrConflict):
 		return &briefs.ConflictError{Code: "409", Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):
