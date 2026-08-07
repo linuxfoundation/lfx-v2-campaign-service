@@ -78,3 +78,31 @@ built (otherwise a campaign-scoped route lets a caller mutate any campaign under
 customer), and an aggregate CTR must guard its denominator — a non-empty keyword list can still
 total zero impressions, and `x/0` in float arithmetic produces `+Inf`/`NaN`, which is not
 encodable as a JSON number.
+
+## Review pass — the outcome a boolean cannot express
+
+One finding survived the earlier rounds, and it is the most consequential one in the plan:
+the bulk-mutate failure branch marked every pending action `success: false` and called it
+"none was applied."
+
+That claim is not one the service can make. `MutateKeywordCriteria` chunks internally, so a
+failure on the third chunk leaves the first two **definitely applied**; and a
+`transportError` means the request left and the response did not return intact, so the
+operation in flight may well have committed. Flattening all three states — confirmed,
+unconfirmed, not attempted — into `false` tells the operator to retry the whole batch. For
+pause/remove that is merely wrong; for Phase 2's change-bid it stacks a second adjustment on
+top of one that already landed.
+
+So the client now owes the caller a typed failure. `PartialMutateError` carries
+`AppliedThrough` (the count whose outcome upstream confirmed) plus those confirmed results,
+which lets the dispatcher split `pending` three ways instead of one: keep the confirmed
+outcomes, mark the operation at the failure point UNCONFIRMED with a message that says to
+check Google Ads before retrying, and mark the rest not-attempted and safe to retry.
+
+This is the create-path discipline applied to a mutate: an ambiguous upstream outcome is
+reported as ambiguous. Assuming failure is the more dangerous default precisely because it
+reads as safe.
+
+Left open for the owning team: whether `KeywordActionResult` should carry an explicit
+three-state `outcome` field rather than encoding the distinction in the `message` prose. It
+would be cleaner for the UI, but it changes a response shape the UI already consumes.

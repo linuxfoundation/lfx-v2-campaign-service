@@ -795,6 +795,29 @@ So the keyword work is **two layers, not one**, and PR 2 must contain both:
    malformed-response classification — exactly where `CreateCampaign` and `UpdateCampaignStatus`
    already put that work. `KeywordRow` also carries the finished `GoogleAdsURL`, built here from
    the client's own (unexported) customer ID, so the dispatcher never needs an account accessor.
+
+   Because `MutateKeywordCriteria` chunks internally, its error has to say **how far it got**,
+   or the caller cannot tell "nothing was applied" from "the first two chunks committed and the
+   third failed". A bare error collapses those into one, and they call for opposite operator
+   actions. So the failure is typed:
+
+   ```go
+   // PartialMutateError reports a mutate that stopped part-way through its chunks.
+   // AppliedThrough is the number of operations whose outcome the upstream response
+   // CONFIRMED, and Results holds those outcomes, index-aligned with the ops slice.
+   // Operation AppliedThrough itself is the one that was in flight when the call failed:
+   // it is UNCONFIRMED — the request left and the response did not return intact, so it
+   // may or may not have committed. Everything after it was never attempted.
+   type PartialMutateError struct {
+     AppliedThrough int
+     Results        []KeywordCriterionResult
+     Err            error
+   }
+   ```
+
+   This is the same discipline the create paths already follow: an ambiguous upstream outcome
+   is reported as ambiguous rather than assumed to have failed. Assuming failure is the more
+   dangerous default here, because it is the one that invites a blind full-batch retry.
 2. `internal/dispatch/googleads.go` — `ListKeywords` / `UpdateKeywords` translate between
    `model.*` and those client types. No HTTP, no GAQL, no resource names.
 
@@ -1025,12 +1048,47 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
   res, merr := client.MutateKeywordCriteria(ctx, ops)
   switch {
   case merr != nil:
-    // A transport-level failure fails every operation in the batch — none was applied.
+    // A whole-call failure is UNCONFIRMED, not "nothing happened". Two reasons, and both
+    // matter for what the operator does next:
+    //
+    //   1. `transportError` means the request left and the response did not come back
+    //      intact. The mutate may well have committed upstream.
+    //   2. MutateKeywordCriteria chunks internally, so a failure on chunk 3 leaves
+    //      chunks 1 and 2 DEFINITELY applied. Those operations succeeded and the caller
+    //      has no way to learn it from this branch.
+    //
+    // Marking every pending action `success: false` claims none was applied, and an
+    // operator reading that retries the whole batch — re-pausing keywords that are
+    // already paused (harmless) or, in Phase 2, re-applying a bid change on top of one
+    // that already landed (not harmless). This mirrors the create-path discipline the
+    // dispatchers already use: an ambiguous outcome is reported as ambiguous.
+    //
+    // So the client returns what it knows. MutateKeywordCriteria's error carries the
+    // index at which the batch stopped (`AppliedThrough`), which lets this branch split
+    // pending into three groups instead of flattening them into one wrong one:
+    //   - before the failure point → the upstream result already says OK/failed; keep it
+    //   - AT the failure point     → UNCONFIRMED, may or may not have applied
+    //   - after it                 → not attempted; safe to retry
+    //
     // The platform client already classifies and redacts upstream errors; do not
     // re-render the raw response body into a user-visible message.
-    for _, outcome := range pending {
-      outcome.Success = false
-      outcome.Message = merr.Error()
+    var pe *googleads.PartialMutateError
+    applied := 0
+    if errors.As(merr, &pe) {
+      applied = pe.AppliedThrough // count of ops whose outcome upstream confirmed
+      for i, r := range pe.Results {
+        pending[i].Success = r.OK
+        pending[i].Message = r.Message
+      }
+    }
+    for i := applied; i < len(pending); i++ {
+      pending[i].Success = false
+      if i == applied {
+        pending[i].Message = "unconfirmed: the request failed after it was sent, so this " +
+          "keyword may or may not have been changed — check Google Ads before retrying"
+      } else {
+        pending[i].Message = "not attempted: an earlier keyword in this batch failed"
+      }
     }
   case len(res) != len(ops):
     // A 2xx whose result count does not match the operation count is a malformed
@@ -1334,10 +1392,21 @@ customer anyway, which is the same work with a larger attack surface.
 
 **Current Design:** Returns 200 with per-action outcomes (similar to bulk-upload patterns). The UI can inspect `results` array to see which failed.
 
-**Decision Needed:**
-- Is this the right balance of usability vs. simplicity?
-- Should a single failure fail the whole request (simpler, but user must retry all)?
-- **Recommendation:** Keep partial-success (200 + per-action outcomes). The UI can show a summary ("95 succeeded, 5 failed") and let the user retry the failed ones.
+**Recommendation:** Keep partial-success (200 + per-action outcomes). The UI can show a summary
+("95 succeeded, 5 failed") and let the user retry the failed ones.
+
+**But two outcomes, not three, is the actual trap here.** `success: true|false` cannot express the
+case that matters most: the batch stopped mid-flight and one operation's fate is genuinely unknown.
+Reporting that operation as `success: false` is a claim the service cannot support, and it is the
+claim that produces the worst next action — a full-batch retry that re-applies whatever already
+committed. Harmless for pause/remove (idempotent); not harmless for Phase 2's change-bid, which
+would stack a second adjustment on top of one that already landed.
+
+The `merr != nil` branch above therefore distinguishes *unconfirmed* from *not attempted* in the
+`message`, and the UI should surface the unconfirmed one as "check Google Ads" rather than folding
+it into the failed count for a one-click retry. **Open question for the owning team:** whether
+`KeywordActionResult` should carry an explicit three-state `outcome` field instead of encoding the
+distinction in prose — cleaner for the UI, but it changes the shape the UI already consumes.
 
 ### 7. Phase 2 Timing & Dependency on PR #69
 
@@ -1366,13 +1435,13 @@ contract. The plan is itself a durable decision record, so it ships with:
 
 Then, as each implementation PR lands:
 
-1. `docs/knowledge/code/design-and-gen.md` and `docs/knowledge/code/internal-service.md` — the
+1. `docs/knowledge/code/design.md` and `docs/knowledge/code/internal-service.md` — the
    two new methods, their types, and the `KeywordManager` optional capability (PR 1)
 2. `docs/knowledge/code/internal-platform-googleads.md` — the keyword client surface, the GAQL
    query, and criterion authorization (PR 2)
-4. `docs/api-catalog.md` — the two endpoint rows, with the `keyword-actions` row updated from
+3. `docs/api-catalog.md` — the two endpoint rows, with the `keyword-actions` row updated from
    planned to implemented
-5. A dated `docs/knowledge/log/` fragment per PR
+4. A dated `docs/knowledge/log/` fragment per PR
 
 ---
 
