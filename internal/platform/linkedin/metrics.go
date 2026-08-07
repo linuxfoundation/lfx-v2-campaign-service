@@ -119,7 +119,12 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 			// like a real (if low) cost rather than a decode failure.
 			micros, err := costInUsdToMicros(*elem.CostInUsd)
 			if err != nil {
-				return nil, fmt.Errorf("get campaign metrics: parse costInUsd %q: %w", *elem.CostInUsd, err)
+				// The raw costInUsd value is deliberately NOT interpolated here. This error
+				// propagates to BriefService.GetCampaignMetrics's default branch, which logs it,
+				// so echoing unvalidated response content into the message would put it in the
+				// server log -- the same pattern 1db44ee removed from the adAnalytics apiError
+				// on this branch. The sibling count guards below are already value-free.
+				return nil, fmt.Errorf("get campaign metrics: parse costInUsd: %w", err)
 			}
 			// Each micros value individually fits int64 (costInUsdToMicros rejects an
 			// overflowing single value), but the running SUM across elements can still
@@ -374,7 +379,7 @@ func (c *Client) dateRangeForWindow(window model.MetricsWindow) (start, end time
 		// One day before the first of this month is always the last day of the
 		// previous month, regardless of how many days that month has.
 		lastDayOfLastMonth := firstOfThisMonth.AddDate(0, 0, -1)
-		start = time.Date(lastDayOfLastMonth.Year(), lastDayOfLastMonth.Month(), 1, 0, 0, 0, 0, now.Location())
+		start = time.Date(lastDayOfLastMonth.Year(), lastDayOfLastMonth.Month(), 1, 0, 0, 0, 0, time.UTC)
 		end = lastDayOfLastMonth
 
 	default:

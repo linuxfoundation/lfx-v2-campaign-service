@@ -715,3 +715,31 @@ func TestCostInUsdToMicros_RoundsRatherThanTruncates(t *testing.T) {
 		t.Errorf("micros = %d, want %d (round, not truncate)", got, want)
 	}
 }
+
+// TestCostInUsdToMicros_NegativeValueRejected pins the r.Sign() < 0 guard. It is the only
+// thing between a negative spend figure and a sign-flipped CostMicros, and a future swap
+// away from big.Rat could drop it while every other case in this suite still passed.
+func TestCostInUsdToMicros_NegativeValueRejected(t *testing.T) {
+	for _, in := range []string{"-10.50", "-0.000001", "-9223372036854.775807"} {
+		t.Run(in, func(t *testing.T) {
+			if _, err := costInUsdToMicros(in); err == nil {
+				t.Fatalf("expected an error for negative spend %q, got nil", in)
+			}
+		})
+	}
+}
+
+// TestCostInUsdToMicros_RatioSyntaxRejected pins decimalCostPattern, whose entire reason
+// for existing is that big.Rat.SetString accepts syntax that is not a decimal at all.
+// Without the regex, SetString("1/2") SUCCEEDS and yields 0.5 — a parse error silently
+// becoming value coercion. That makes the guard look redundant in a diff, which is exactly
+// why it needs a test to stop it being cleaned up.
+func TestCostInUsdToMicros_RatioSyntaxRejected(t *testing.T) {
+	for _, in := range []string{"1/2", "3/4", "1e3", "0x10", " 1.5", "1.5 ", "1,5", ""} {
+		t.Run(in, func(t *testing.T) {
+			if _, err := costInUsdToMicros(in); err == nil {
+				t.Fatalf("expected an error for non-decimal syntax %q, got nil", in)
+			}
+		})
+	}
+}

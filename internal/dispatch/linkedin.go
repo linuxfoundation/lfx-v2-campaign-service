@@ -293,7 +293,7 @@ func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, 
 	metrics, err := client.GetCampaignMetrics(ctx, accountID, campaign.PlatformCampaignID, window)
 	if err != nil {
 		if errors.Is(err, linkedin.ErrUnsupportedWindow) {
-			return nil, fmt.Errorf("get campaign metrics from linkedin: %w: %w", domain.ErrMetricsWindowUnsupported, err)
+			return nil, fmt.Errorf("get campaign metrics from linkedin: %w", errors.Join(domain.ErrMetricsWindowUnsupported, err))
 		}
 		return nil, fmt.Errorf("get campaign metrics from linkedin: %w", err)
 	}
