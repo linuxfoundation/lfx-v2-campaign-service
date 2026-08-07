@@ -2383,7 +2383,25 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	existingCampaignID, lookupErr := c.findCampaignByName(ctx, accountID, campaignName, objParams.CampaignObjective)
 	if lookupErr != nil {
 		if ctx.Err() != nil {
-			return nil, fmt.Errorf("meta campaign creation aborted during name lookup (caller context done; nothing created): %w", lookupErr)
+			// A cancelled/deadlined caller context aborts the create, but "nothing
+			// created BY THIS CALL" is not the question this lookup answers — it exists
+			// to find a campaign a PRIOR ambiguous attempt may already have created
+			// under the same deterministic name. A cancel leaves that unanswered, which
+			// is exactly the ambiguous case below, so the name-carrying partial must be
+			// retained rather than dropped: returning a bare (nil, err) makes
+			// IsOutcomeUnconfirmed false, the dispatcher records a clean failure and
+			// releases the claim, and the next retry re-POSTs the same name into an
+			// account where Meta enforces no uniqueness — a duplicate PAID campaign.
+			// The ad set lookup below already returns partialResult() on cancel for the
+			// same reason; this path was the odd one out.
+			steps = append(steps, "Campaign lookup was CUT SHORT by a cancelled/expired caller context; cannot confirm the campaign name is absent — verify in Meta Ads Manager before retrying")
+			return &CampaignResult{
+					Platform:     "meta-ads",
+					CampaignName: campaignName,
+					MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
+					Steps:        steps,
+				}, fmt.Errorf("meta campaign creation aborted during name lookup UNCONFIRMED (caller context done; cannot confirm %q is absent, verify in Meta Ads Manager before retrying): %w",
+					campaignName, errors.Join(errLookupAmbiguous, lookupErr))
 		}
 		// A pre-send failure (dial error) or a definite 4xx on the lookup GET
 		// means the lookup never reached Meta / was cleanly rejected — nothing

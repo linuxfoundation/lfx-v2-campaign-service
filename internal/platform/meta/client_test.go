@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -1799,6 +1800,59 @@ func TestCreateCampaignPerVariantFailureIsNonFatal(t *testing.T) {
 	}
 	if !anyStepContains(res.Steps, "Ad 2 created") {
 		t.Errorf("expected an 'Ad 2 created' step, got %v", res.Steps)
+	}
+}
+
+// TestCreateCampaignContextCancelDuringNameLookupRetainsPartial pins that a caller context
+// cancelled DURING the by-name campaign lookup is reported as UNCONFIRMED with the
+// name-carrying partial retained, not as a clean "nothing created" failure.
+//
+// The lookup's whole purpose is to find a campaign a PRIOR ambiguous attempt may already
+// have created under the same deterministic name. A cancel leaves that unanswered, so it is
+// ambiguous in exactly the way a transport failure is. Returning a bare (nil, err) would make
+// IsOutcomeUnconfirmed false, the dispatcher would record a clean failure and release the
+// claim, and the retry would POST the same name again — and Meta enforces no name
+// uniqueness, so that is a duplicate PAID campaign, the defect this lookup exists to prevent.
+func TestCreateCampaignContextCancelDuringNameLookupRetainsPartial(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") {
+			cancel()
+			return nil, fmt.Errorf("Get %q: %w", req.URL.String(), context.Canceled)
+		}
+		if req.Method == http.MethodPost {
+			t.Errorf("no mutating call may be made after the lookup was cut short: %s %s", req.Method, req.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"name":"x"}`)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(ctx, CampaignInput{
+		EventName: "E", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error when the caller context is cancelled during the name lookup")
+	}
+	if res == nil || res.CampaignName == "" {
+		t.Fatalf("expected a partial result carrying the campaign name so a retry can reconcile, got %+v", res)
+	}
+	if !IsOutcomeUnconfirmed(err) {
+		t.Errorf("error must classify as UNCONFIRMED so the dispatcher keeps the claim, got %v", err)
+	}
+	if !anyStepContains(res.Steps, "UNCONFIRMED") && !anyStepContains(res.Steps, "CUT SHORT") {
+		t.Errorf("expected a step recording the unconfirmed lookup, got %v", res.Steps)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("the cancellation cause must stay reachable, got %v", err)
 	}
 }
 
@@ -4423,20 +4477,37 @@ func TestCreateCampaignLookupMalformed2xxReturnsUnconfirmed(t *testing.T) {
 // given name already exists, CreateCampaign reuses its ID instead of creating a
 // new one.
 func TestCreateCampaignReusesExistingByName(t *testing.T) {
+	var mu sync.Mutex
 	campaignPostCount := 0
+	adSetPostCount := 0
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		body := `{"id":"x"}`
 		switch {
-		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering"):
+		// The two by-name lookups are BOTH filtering GETs, so they must be told apart by
+		// path — /{account}/campaigns vs /{campaignID}/adsets. Answering both with the
+		// same campaign-shaped payload would make findAdSetByName "find" the campaign id
+		// as an ad set, skip the ad set POST entirely, and leave the reconciliation path
+		// this test exists to cover (existing campaign + a genuinely new ad set) unexercised.
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") &&
+			strings.HasSuffix(req.URL.Path, "/campaigns"):
 			// Existing campaign found by name.
 			body = `{"data":[{"id":"existing_camp_123","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}]}`
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") &&
+			strings.HasSuffix(req.URL.Path, "/adsets"):
+			// No ad set under that campaign yet: the reuse path must still CREATE one.
+			body = `{"data":[],"paging":{}}`
 		case req.Method == http.MethodGet:
 			body = `{"name":"x"}`
 		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/campaigns"):
 			// Track POST attempts — should NOT be called for reused campaign.
+			mu.Lock()
 			campaignPostCount++
+			mu.Unlock()
 			body = `{"id":"should_not_appear"}`
 		case strings.HasSuffix(req.URL.Path, "/adsets"):
+			mu.Lock()
+			adSetPostCount++
+			mu.Unlock()
 			body = `{"id":"adset_1"}`
 		case strings.HasSuffix(req.URL.Path, "/adcreatives"):
 			body = `{"id":"creative_1"}`
@@ -4468,8 +4539,20 @@ func TestCreateCampaignReusesExistingByName(t *testing.T) {
 	if res.CampaignID != "existing_camp_123" {
 		t.Errorf("campaign id = %q, want existing_camp_123", res.CampaignID)
 	}
-	if campaignPostCount != 0 {
-		t.Errorf("campaign POST called %d times, want 0 (should reuse by name)", campaignPostCount)
+	// The reconciliation this feature exists for: reuse the campaign, but still create
+	// the ad set that does not exist under it. An ad set id equal to the campaign id
+	// would mean the two lookups were conflated.
+	if res.AdSetID != "adset_1" {
+		t.Errorf("ad set id = %q, want adset_1 (a NEW ad set created under the reused campaign)", res.AdSetID)
+	}
+	mu.Lock()
+	campaignPosts, adSetPosts := campaignPostCount, adSetPostCount
+	mu.Unlock()
+	if campaignPosts != 0 {
+		t.Errorf("campaign POST called %d times, want 0 (should reuse by name)", campaignPosts)
+	}
+	if adSetPosts != 1 {
+		t.Errorf("ad set POST called %d times, want 1 (no ad set exists yet under the reused campaign)", adSetPosts)
 	}
 	if !anyStepContains(res.Steps, "Campaign already exists by name") {
 		t.Errorf("expected 'Campaign already exists by name' step, got %v", res.Steps)
@@ -4482,19 +4565,26 @@ func TestCreateCampaignReusesExistingByName(t *testing.T) {
 // false absence when Meta's filtering returns an empty first page but has more
 // results under pagination.
 func TestFindCampaignByName_PaginationEmptyFirstPage(t *testing.T) {
+	// callOrder is written from the RoundTripper's goroutine and read by the test's, so it
+	// carries its own mutex rather than relying on the client happening to make these calls
+	// sequentially — -race reasons about happens-before edges, not observed interleaving.
+	var mu sync.Mutex
 	callOrder := 0
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		mu.Lock()
 		callOrder++
+		order := callOrder
+		mu.Unlock()
 		body := ""
 		switch {
-		case callOrder == 1 && strings.Contains(req.URL.RawQuery, "filtering"):
+		case order == 1 && strings.Contains(req.URL.RawQuery, "filtering"):
 			// First call: empty page with a next link.
 			body = `{"data":[],"paging":{"cursors":{"after":"CUR2"},"next":"https://graph.example/x?after=CUR2"}}`
-		case callOrder == 2 && strings.Contains(req.URL.RawQuery, "filtering"):
+		case order == 2 && strings.Contains(req.URL.RawQuery, "filtering"):
 			// Second call: match on second page.
 			body = `{"data":[{"id":"camp_from_page_2","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}],"paging":{}}`
 		default:
-			t.Errorf("unexpected call %d: %s %s", callOrder, req.Method, req.URL.Path)
+			t.Errorf("unexpected call %d: %s %s", order, req.Method, req.URL.Path)
 			return &http.Response{StatusCode: http.StatusNotFound}, nil
 		}
 		return &http.Response{
@@ -4513,8 +4603,11 @@ func TestFindCampaignByName_PaginationEmptyFirstPage(t *testing.T) {
 	if id != "camp_from_page_2" {
 		t.Errorf("id = %q, want camp_from_page_2 (from second page)", id)
 	}
-	if callOrder != 2 {
-		t.Errorf("made %d calls, want 2 (pagination followed)", callOrder)
+	mu.Lock()
+	calls := callOrder
+	mu.Unlock()
+	if calls != 2 {
+		t.Errorf("made %d calls, want 2 (pagination followed)", calls)
 	}
 }
 
@@ -4522,19 +4615,26 @@ func TestFindCampaignByName_PaginationEmptyFirstPage(t *testing.T) {
 // is exhausted even when there's no match, and the function returns empty string
 // when fully enumerated with no match found.
 func TestFindCampaignByName_PaginationNoMatchMultiplePages(t *testing.T) {
+	// callOrder is written from the RoundTripper's goroutine and read by the test's, so it
+	// carries its own mutex rather than relying on the client happening to make these calls
+	// sequentially — -race reasons about happens-before edges, not observed interleaving.
+	var mu sync.Mutex
 	callOrder := 0
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		mu.Lock()
 		callOrder++
+		order := callOrder
+		mu.Unlock()
 		body := ""
 		switch {
-		case callOrder == 1 && strings.Contains(req.URL.RawQuery, "filtering"):
+		case order == 1 && strings.Contains(req.URL.RawQuery, "filtering"):
 			// First call: empty page with a next link.
 			body = `{"data":[],"paging":{"cursors":{"after":"CUR2"},"next":"https://graph.example/x?after=CUR2"}}`
-		case callOrder == 2 && strings.Contains(req.URL.RawQuery, "filtering"):
+		case order == 2 && strings.Contains(req.URL.RawQuery, "filtering"):
 			// Second call: still empty, no next link — fully enumerated.
 			body = `{"data":[],"paging":{}}`
 		default:
-			t.Errorf("unexpected call %d: %s %s", callOrder, req.Method, req.URL.Path)
+			t.Errorf("unexpected call %d: %s %s", order, req.Method, req.URL.Path)
 			return &http.Response{StatusCode: http.StatusNotFound}, nil
 		}
 		return &http.Response{
@@ -4553,8 +4653,11 @@ func TestFindCampaignByName_PaginationNoMatchMultiplePages(t *testing.T) {
 	if id != "" {
 		t.Errorf("id = %q, want empty string (no match after exhausting all pages)", id)
 	}
-	if callOrder != 2 {
-		t.Errorf("made %d calls, want 2 (pagination exhausted)", callOrder)
+	mu.Lock()
+	calls := callOrder
+	mu.Unlock()
+	if calls != 2 {
+		t.Errorf("made %d calls, want 2 (pagination exhausted)", calls)
 	}
 }
 
@@ -4563,15 +4666,22 @@ func TestFindCampaignByName_PaginationNoMatchMultiplePages(t *testing.T) {
 // raw paging.next URL — so a credential in paging.next can't leak into the request
 // path. Mirrors the listAdIDs pagination security model.
 func TestFindCampaignByName_PaginationUsesCursorNotRawURL(t *testing.T) {
+	// callOrder is written from the RoundTripper's goroutine and read by the test's, so it
+	// carries its own mutex rather than relying on the client happening to make these calls
+	// sequentially — -race reasons about happens-before edges, not observed interleaving.
+	var mu sync.Mutex
 	callOrder := 0
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		mu.Lock()
 		callOrder++
+		order := callOrder
+		mu.Unlock()
 		body := ""
 		switch {
-		case callOrder == 1 && strings.Contains(req.URL.RawQuery, "filtering"):
+		case order == 1 && strings.Contains(req.URL.RawQuery, "filtering"):
 			// First call: empty page with a next link that would carry a credential.
 			body = `{"data":[],"paging":{"cursors":{"after":"OPAQUE_CURSOR"},"next":"https://graph.example/x?access_token=SECRET&after=OPAQUE_CURSOR"}}`
-		case callOrder == 2 && strings.Contains(req.URL.RawQuery, "filtering"):
+		case order == 2 && strings.Contains(req.URL.RawQuery, "filtering"):
 			// Second call: verify the URL does NOT contain the credential.
 			if strings.Contains(req.URL.RawQuery, "access_token") || strings.Contains(req.URL.RawQuery, "SECRET") {
 				t.Errorf("pagination leaked credential into query string: %q", req.URL.RawQuery)
@@ -4581,7 +4691,7 @@ func TestFindCampaignByName_PaginationUsesCursorNotRawURL(t *testing.T) {
 			}
 			body = `{"data":[{"id":"camp_found","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}]}`
 		default:
-			t.Errorf("unexpected call %d: %s %s", callOrder, req.Method, req.URL.Path)
+			t.Errorf("unexpected call %d: %s %s", order, req.Method, req.URL.Path)
 			return &http.Response{StatusCode: http.StatusNotFound}, nil
 		}
 		return &http.Response{
