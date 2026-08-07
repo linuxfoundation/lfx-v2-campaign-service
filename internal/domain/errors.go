@@ -64,8 +64,16 @@ var (
 	ErrMetricsWindowUnsupported = errors.New("this window is not supported for the campaign's platform")
 
 	// ErrAccountsUnsupported indicates the platform has no account-listing capability
-	// wired (no dispatcher, or the dispatcher is not an AccountLister). The platform is
-	// never contacted. Maps to 400. Lives here for the same reason as ErrToggleUnsupported:
-	// a platform dispatcher can return it directly without importing the orchestration layer.
+	// wired. The platform is never contacted.
+	//
+	// RESERVED, and unreferenced in this tree. Nothing returns or inspects it yet: the
+	// `AccountLister` interface it names, `Orchestrator.ReadAccounts`, and the 400 status
+	// mapping all land with the account-discovery ENDPOINT in the follow-up PR, which is
+	// the first code to use this sentinel. It is declared here, one PR early, for the same
+	// reason as ErrToggleUnsupported — a platform dispatcher must be able to return it
+	// without importing the orchestration layer, so it cannot live in internal/service —
+	// and declaring it with the adapter keeps the endpoint PR to the endpoint.
+	//
+	// Do not infer current behaviour from this comment; grep for callers.
 	ErrAccountsUnsupported = errors.New("account discovery is not supported for this platform")
 )

@@ -36,13 +36,22 @@ service layer that consumes it already existed.
 
 **The docs described a contract that is not in this tree.** `internal-dispatch.md` and the
 `ListAccounts` godoc both described an `AccountLister` interface, an
-`Orchestrator.ReadAccounts` that type-asserts it, `ErrAccountsUnsupported`, and a 400/503
+`Orchestrator.ReadAccounts` that type-asserts it, and a 400/503
 status mapping. `internal/service/orchestrator.go` in this branch declares only
 `StatusToggler` and `MetricsReader` — none of that exists until the endpoint PR. A doc that
 describes the intended end state as if it were present is worse than one that says nothing:
 the next reader greps for `AccountLister`, finds nothing, and cannot tell whether the doc is
 aspirational or the code regressed. Both are now scoped to what this PR contains, and say
 explicitly that the orchestration lands next.
+
+**`ErrAccountsUnsupported` is the one exception, and it needed the same treatment.** Unlike
+`AccountLister` and `ReadAccounts`, this PR really does declare the sentinel — an earlier
+revision of this fragment listed it among the things that do not exist, which was simply
+wrong. But nothing in this tree returns or inspects it; the endpoint PR is its first caller.
+It is declared a PR early because a platform dispatcher must be able to return it without
+importing the orchestration layer, so it cannot live in `internal/service`. Its godoc now
+says RESERVED and tells the reader to grep for callers rather than infer behaviour from the
+comment — the same failure mode as the docs above, one declaration lower down.
 
 **The one promise that IS this PR's to keep** is that `domain.ErrNotFound` survives credential
 resolution. That is what lets the caller answer 404 ("no connection configured — go create
