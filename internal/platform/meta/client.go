@@ -983,7 +983,14 @@ func createOutcomeAmbiguous(err error) bool {
 	// Unlike the 3xx case below this is deliberately NOT gated on the method: the
 	// 3xx gate asks "could this have created something?", while 429 also has to
 	// answer "did we establish absence?", and a GET cannot answer that either.
-	if ae.StatusCode == http.StatusTooManyRequests {
+	// The HTTP status alone does not identify a Meta throttle. Meta reports rate
+	// limiting as an HTTP 429 OR, commonly, as an HTTP 400 carrying a Graph error
+	// envelope with a known rate-limit code — doRequest already treats both as
+	// retryable for exactly that reason, and preserves the code on the APIError it
+	// finally returns. Recognising only 429 here would classify an exhausted
+	// HTTP-400 throttle as a clean rejection, which is the more common shape of the
+	// two on the Marketing API, so the whole guard would miss its main case.
+	if ae.StatusCode == http.StatusTooManyRequests || graphRateLimitCodes[ae.Code] {
 		return true
 	}
 	// A 3xx on a MUTATING request reached a responder and may have committed a

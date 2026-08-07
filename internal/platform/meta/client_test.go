@@ -3862,6 +3862,31 @@ func TestCreateOutcomeAmbiguous_3xxIsAmbiguous(t *testing.T) {
 		{http.StatusNotFound, false},           // 404
 		{http.StatusTooManyRequests, true},     // 429 — retry budget exhausted; a throttle is not a rejection
 	}
+	// Meta reports throttling as an HTTP 400 carrying a Graph rate-limit CODE at least
+	// as often as it reports a 429, and doRequest already retries both. A status-only
+	// check would classify the exhausted 400 form as a definite rejection — releasing
+	// the claim on a create that may have committed.
+	codeCases := []struct {
+		code int
+		want bool
+	}{
+		{4, true},     // application request-limit reached
+		{17, true},    // user request-limit reached
+		{32, true},    // page-level throttling
+		{341, true},   // temporary app-level limit
+		{613, true},   // ad-account rate limit
+		{80004, true}, // business-use-case throttling (Marketing API)
+		{100, false},  // invalid parameter — a genuine rejection
+		{190, false},  // invalid access token — a genuine rejection
+		{0, false},    // no Graph envelope at all
+	}
+	for _, tc := range codeCases {
+		err := &APIError{StatusCode: http.StatusBadRequest, Code: tc.code, Method: http.MethodPost, Path: "/campaigns"}
+		if got := createOutcomeAmbiguous(err); got != tc.want {
+			t.Errorf("createOutcomeAmbiguous(400 with Graph code %d) = %v, want %v", tc.code, got, tc.want)
+		}
+	}
+
 	for _, tc := range cases {
 		err := &APIError{StatusCode: tc.status, Method: http.MethodPost, Path: "/campaigns"}
 		if got := createOutcomeAmbiguous(err); got != tc.want {
