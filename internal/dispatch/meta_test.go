@@ -132,7 +132,10 @@ func TestMeta_DispatchSuccessMapsResult(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
-			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			// The by-name reconcile lookup. It does NOT fire on this path today — the
+			// dispatcher leaves ReconcileByName unset, which
+			// TestMeta_DispatchNeverOptsIntoNameReconciliation pins. This arm exists
+			// so that opting in would not fail here with a confusing 404 instead.
 			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
@@ -279,6 +282,71 @@ func TestMeta_DispatchSuccessMapsResult(t *testing.T) {
 	}
 }
 
+// TestMeta_DispatchNeverOptsIntoNameReconciliation pins the DORMANCY of the by-name
+// reconcile at the caller boundary, which is where it is actually decided.
+//
+// meta.Client gates the lookup on CampaignInput.ReconcileByName, and
+// TestCreateCampaignWithoutReconcileByNameDoesNotLookUpOrReuse (in the meta package)
+// proves the gate holds when the flag is unset. Neither of those says anything about
+// what THIS dispatcher passes — and the dispatcher is the only production caller. It
+// must leave the flag false: buildCampaignName is event/region/objective/project only,
+// so a lookup here would reuse a campaign belonging to a different brief that happens
+// to share those four segments, and would defeat the documented delete → re-dispatch
+// flow by silently reusing a campaign created with the wrong budget. Setting the flag
+// is LFXV2-2665's reconcile path, which knows it is resuming one dispatch generation;
+// a blanket dispatch never does.
+func TestMeta_DispatchNeverOptsIntoNameReconciliation(t *testing.T) {
+	var lookups int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// The by-name lookup, for both the campaign and the ad set. Answer it
+			// "no match" so the dispatch still completes and the assertion below is
+			// about the CALL being made, not about the create failing for some
+			// unrelated reason.
+			atomic.AddInt32(&lookups, 1)
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	clock := func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(clock),
+	)
+	cfg := json.RawMessage(`{"metaConfig":{
+		"budget":2500,"startDate":"2099-01-01","endDate":"2099-02-01","currencyOffset":100,
+		"variants":[{"headline":"KubeCon 2099","primaryText":"Join us","description":"Cloud native event"}]
+	}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if camp == nil || camp.PlatformCampaignID != "120100000000123" {
+		t.Fatalf("dispatch must have reached the create; got %+v", camp)
+	}
+	if got := atomic.LoadInt32(&lookups); got != 0 {
+		t.Errorf("dispatch issued %d by-name lookup(s), want 0: the ordinary dispatch path must "+
+			"not set meta.CampaignInput.ReconcileByName — the campaign name is not brief-unique, "+
+			"so reuse can attach a second brief to one upstream campaign and can silently re-run "+
+			"a budget that delete → re-dispatch was meant to correct", got)
+	}
+}
+
 func TestMeta_DegradedSuccessSetsCreatedDegraded(t *testing.T) {
 	// Two variants requested, but the SECOND ad POST fails (Meta rejects it). Meta
 	// treats per-variant ad failures as non-fatal, so CreateCampaign returns
@@ -290,7 +358,10 @@ func TestMeta_DegradedSuccessSetsCreatedDegraded(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
-			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			// The by-name reconcile lookup. It does NOT fire on this path today — the
+			// dispatcher leaves ReconcileByName unset, which
+			// TestMeta_DispatchNeverOptsIntoNameReconciliation pins. This arm exists
+			// so that opting in would not fail here with a confusing 404 instead.
 			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
@@ -343,7 +414,10 @@ func TestMeta_ConfigHSTokenTakesPrecedence(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
-			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			// The by-name reconcile lookup. It does NOT fire on this path today — the
+			// dispatcher leaves ReconcileByName unset, which
+			// TestMeta_DispatchNeverOptsIntoNameReconciliation pins. This arm exists
+			// so that opting in would not fail here with a confusing 404 instead.
 			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
