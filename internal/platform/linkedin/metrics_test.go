@@ -991,6 +991,30 @@ func TestRedactHTTPDoError(t *testing.T) {
 		}
 	})
 
+	t.Run("dial_error_text_never_reaches_the_error_string", func(t *testing.T) {
+		// WithHTTPClient accepts an arbitrary RoundTripper, so the innermost dial error is
+		// not this package's to trust: its text (here, net.DNSError.Name) can carry a URL or
+		// a credential. The redacted error must render a fixed string while still being
+		// classifiable via errors.As.
+		const markerInCause = "CREDENTIAL_MARKER_IN_CAUSE"
+		dialErr := &net.DNSError{Name: "api.linkedin.com/?token=" + markerInCause}
+		wrapped := &url.Error{
+			Op:  "Get",
+			URL: "https://api.linkedin.com/rest/adAnalytics?q=analytics",
+			Err: dialErr,
+		}
+
+		redacted := redactHTTPDoError(wrapped)
+		if errStr := redacted.Error(); strings.Contains(errStr, markerInCause) {
+			t.Errorf("redacted error rendered the untrusted dial cause: %v", errStr)
+		}
+
+		var dnsErr *net.DNSError
+		if !errors.As(redacted, &dnsErr) {
+			t.Errorf("redacted error lost DNSError classification: %v", redacted)
+		}
+	})
+
 	t.Run("redacts_url_error_wrapping_context_canceled", func(t *testing.T) {
 		// errors.Is matches context.Canceled through a *url.Error wrapper, but wrapper.Error()
 		// still renders the full URL with account/campaign query values. Verify that

@@ -27,14 +27,15 @@ var ErrUnsupportedWindow = errors.New("unsupported metrics window")
 // redactHTTPDoError redacts an error from httpClient.Do, which may carry full URLs with bearer
 // tokens in a *url.Error wrapper. Preserves classification sentinels and pre-send dial errors
 // so callers can still distinguish retryable vs permanent failures via errors.Is/errors.As,
-// but returns the canonical sentinel (not the *url.Error wrapper) for context errors, the
-// unwrapped dial error (without the URL) for pre-send dial errors, or a safe generic message
-// for mid-flight/RoundTripper errors. No untrusted error strings survive.
+// but returns the canonical sentinel (not the *url.Error wrapper) for context errors, a
+// *dialError with a fixed Error() for pre-send dial errors, or a safe generic message for
+// mid-flight/RoundTripper errors. No untrusted error strings survive.
 //
 // http.Client.Do returns a *url.Error when the round-trip fails. If it's a pre-send dial
 // error (DNS, ECONNREFUSED), the *url.Error wraps the inner error but includes the full
 // URL. isPreSendDialError traverses the wrapper via errors.As/errors.Is, but err.Error()
-// still renders the URL verbatim. Unwrap the dial error and return it classifiable but safe.
+// still renders the URL verbatim. Unwrap the dial error and hide it behind dialError, which
+// keeps it classifiable but renders a fixed string.
 // For context cancellation/deadline, return the canonical sentinel so the wrapper is discarded.
 func redactHTTPDoError(err error) error {
 	// Preserve classification sentinels: return the canonical sentinel, not the wrapper.
@@ -51,21 +52,42 @@ func redactHTTPDoError(err error) error {
 	// RoundTripper might return an already-wrapped error). Unwrap all layers and return
 	// the innermost dial error classifiable but URL-free.
 	if isPreSendDialError(err) {
-		// Recursively unwrap *url.Error layers to get to the actual dial error.
+		// Recursively unwrap *url.Error layers so no URL-bearing wrapper survives in the
+		// chain at all, then hide the remaining cause behind dialError's fixed Error().
 		unwrapped := err
 		for {
 			var ue *url.Error
 			if errors.As(unwrapped, &ue) {
 				unwrapped = ue.Err
 			} else {
-				// No more *url.Error wrapping; return what we have.
-				return unwrapped
+				break
 			}
 		}
+		return &dialError{cause: unwrapped}
 	}
 	// Mid-flight or RoundTripper error: no classification possible, return safe generic message.
 	return fmt.Errorf("analytics request failed")
 }
+
+// dialError is the redacted form of a pre-send dial failure. Error() is a fixed string, so
+// nothing from the wrapped cause is ever rendered into a log line; Unwrap keeps the cause
+// reachable via errors.Is/errors.As so callers can still classify the failure (DNS, refused,
+// timeout) and decide whether to retry.
+//
+// Unwrapping the *url.Error layers alone is not enough: WithHTTPClient accepts an arbitrary
+// RoundTripper, so the innermost error is not this package's to trust — a custom transport can
+// return a dial-shaped error whose text, or whose net.DNSError.Name, carries a URL or a
+// credential. transportError.Err is exported and reaches error-level logging, so the fixed
+// string is what must be exported, not the cause.
+type dialError struct {
+	cause error
+}
+
+// Error returns a fixed description that never includes text from the wrapped cause.
+func (e *dialError) Error() string { return "analytics request failed: connection error" }
+
+// Unwrap exposes the cause to errors.Is/errors.As only — never to Error()-based rendering.
+func (e *dialError) Unwrap() error { return e.cause }
 
 // redactBodyReadError redacts an error from buf.ReadFrom (response body I/O). Body-read errors
 // are local I/O failures after the connection is established, carrying no credentials or URLs,

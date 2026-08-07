@@ -77,3 +77,25 @@ subtests with the marker rendered verbatim in the error string.
 only the lines they changed. This branch preceded them and was never re-read, so two rounds of
 review confirmed the file "clean" while the first exit of both helpers still leaked. Reported
 independently by Cursor and Copilot.
+
+## Dial cause hidden behind a fixed Error()
+
+**Update** — The pre-send dial branch of `redactHTTPDoError` peeled the `*url.Error`
+layers and then returned the innermost dial error itself. That removed the URL the
+wrapper renders, but not the cause's own text: `WithHTTPClient` accepts an arbitrary
+`RoundTripper`, so the innermost error is not this package's to trust — a custom
+transport can return a dial-shaped error whose message, or whose `net.DNSError.Name`,
+carries a URL or a credential. `transportError.Err` is exported and reaches
+error-level logging, so that text would have been rendered verbatim.
+
+The branch now returns a `*dialError`, whose `Error()` is the fixed string
+`analytics request failed: connection error` and whose `Unwrap()` exposes the cause to
+`errors.Is`/`errors.As` only. Classification (DNS, refused, timeout, and therefore the
+retry decision) is unchanged; nothing from the cause is rendered. The `*url.Error`
+peel is retained so no URL-bearing wrapper survives anywhere in the chain, not merely
+at its head.
+
+Bound by `TestRedactHTTPDoError/dial_error_text_never_reaches_the_error_string`, which
+plants a credential marker in `net.DNSError.Name` and asserts it never appears in the
+redacted error while `errors.As` still finds the `*net.DNSError`. Reverting the wrap
+fails it with the marker in the diagnostic.
