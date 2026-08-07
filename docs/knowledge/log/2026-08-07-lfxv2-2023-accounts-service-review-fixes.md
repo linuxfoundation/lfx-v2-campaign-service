@@ -1,5 +1,15 @@
 # 2026-08-07 — LFXV2-2023: account-discovery service-layer review fixes
 
+**Update** — Review round on the account-discovery service layer: one status-mapping correction,
+one knowledge-bundle structural fix, and one comment that documented a failure mode that cannot
+occur.
+
+**Fix** — The 400 arm keys on the sentinel alone, not on which layer raised it. Two of the five
+sub-cases now originate in `credsSource.resolve` (empty credential blob, undecryptable blob) rather
+than in `resolveGoogleAdsDiscoveryClient`, and reach this switch unchanged. Listing them separately
+is the point: an arm that happened to work only for the resolver's own errors would pass a test
+covering only those three.
+
 **Fix** — The handler's `default` arm answered 503 for failures that had nothing to do with
 Google. `ListGoogleAdsAccounts` now maps `domain.ErrConnectionNotUsable` to 400 — an inactive
 connection, an incomplete credential blob, or a dashed stored `login_customer_id`. The sentinel

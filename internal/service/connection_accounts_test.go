@@ -237,6 +237,11 @@ func TestListGoogleAdsAccounts_UnusableConnectionIs400(t *testing.T) {
 		{"inactive connection", "google ads connection for project p is inactive, not active"},
 		{"incomplete credentials", "google ads credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)"},
 		{"malformed manager id", `stored login_customer_id "999-999-9999" must be digits only (no dashes or spaces)`},
+		// The last two come from a different layer — credsSource.resolve, below the
+		// discovery resolver — and reach here unchanged. They are listed because the arm
+		// must key on the sentinel alone, not on which function produced it.
+		{"connection row with an empty credential blob", "google-ads connection for project p has no stored credentials"},
+		{"credential blob that will not decrypt", "decrypt google-ads credentials: cipher: message authentication failed"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
