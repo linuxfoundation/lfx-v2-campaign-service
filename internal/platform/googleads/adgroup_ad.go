@@ -353,8 +353,8 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 // PAUSED, mirroring UpdateCampaignStatus. Both mutates are sent as idempotent
 // (bounded 429 retries are safe: re-applying the same status converges, same
 // reasoning as UpdateCampaignStatus). Returns after the FIRST failure without
-// attempting the second mutate — the caller (ToggleStatus, once the GA-3c child
-// cascade is wired) will order campaign/ad-group/ad calls per the children-first-on-ACTIVATE /
+// attempting the second mutate — the caller (GoogleAdsDispatcher.ToggleStatus, which
+// wires this cascade) orders campaign/ad-group/ad calls per the children-first-on-ACTIVATE /
 // campaign-first-on-PAUSE contract, so a failed ad group update must not mask
 // itself as "ad group ok, ad unknown".
 func (c *Client) UpdateAdGroupAndAdStatus(ctx context.Context, adGroupID, adID, status string) error {

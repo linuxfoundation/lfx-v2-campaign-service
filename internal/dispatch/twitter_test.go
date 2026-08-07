@@ -612,3 +612,160 @@ func TestTwitter_ToggleStatus_SucceedsWithoutFundingInstrument(t *testing.T) {
 		t.Fatalf("issued %d PUTs, want 2 (campaign + line item): %v", len(got), got)
 	}
 }
+
+// TestTwitter_ReadMetrics_HappyPath verifies the dispatcher resolves creds,
+// calls the client's GetCampaignMetrics, and returns the mapped metrics.
+func TestTwitter_ReadMetrics_HappyPath(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":[{"id":"cmp1","id_data":[{"metrics":{"impressions":[1000],"clicks":[50],"billed_charge_local_micro":[100000000]}}]}]}`))
+	}))
+	defer api.Close()
+
+	d := NewTwitterDispatcher(
+		fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{},
+		twitter.WithBaseURL(api.URL), twitter.WithAPIVersion("12"), twitter.WithWriteDelay(0),
+	)
+
+	metrics, err := d.ReadMetrics(
+		context.Background(), "proj", model.ProviderTwitterAds,
+		twitterToggleCampaign("cmp1", "li1"),
+		model.MetricsWindowLast7Days,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if metrics.CampaignID != "cmp1" {
+		t.Errorf("expected campaignID cmp1, got %s", metrics.CampaignID)
+	}
+	if metrics.Impressions != 1000 {
+		t.Errorf("expected 1000 impressions, got %d", metrics.Impressions)
+	}
+	if metrics.Clicks != 50 {
+		t.Errorf("expected 50 clicks, got %d", metrics.Clicks)
+	}
+	if metrics.CostMicros != 100_000_000 {
+		t.Errorf("expected 100000000 costMicros, got %d", metrics.CostMicros)
+	}
+	if metrics.Window != model.MetricsWindowLast7Days {
+		t.Errorf("expected window last_7_days, got %s", metrics.Window)
+	}
+}
+
+// TestTwitter_ReadMetrics_UnsupportedWindow verifies the dispatcher returns
+// an error when the client rejects an unsupported window (e.g. LAST_30_DAYS).
+func TestTwitter_ReadMetrics_UnsupportedWindow(t *testing.T) {
+	d := NewTwitterDispatcher(
+		fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{},
+		twitter.WithBaseURL("https://api.example.com"), twitter.WithAPIVersion("12"),
+	)
+
+	_, err := d.ReadMetrics(
+		context.Background(), "proj", model.ProviderTwitterAds,
+		twitterToggleCampaign("cmp1", "li1"),
+		model.MetricsWindowLast30Days, // Unsupported: exceeds 7-day limit
+	)
+	if err == nil {
+		t.Fatal("expected error for unsupported LAST_30_DAYS window, got nil")
+	}
+	if !strings.Contains(err.Error(), "7 days") {
+		t.Errorf("expected error mentioning 7-day API limit, got: %v", err)
+	}
+	if !errors.Is(err, domain.ErrMetricsWindowUnsupported) {
+		t.Errorf("expected err to wrap domain.ErrMetricsWindowUnsupported (so brief.go maps it to 400), got: %v", err)
+	}
+}
+
+// TestTwitter_ReadMetrics_YesterdayIsSupported verifies that YESTERDAY window
+// (a single-day range within the 7-day limit) is correctly mapped and produces
+// query params with the right start_time and end_time.
+func TestTwitter_ReadMetrics_YesterdayIsSupported(t *testing.T) {
+	var mu sync.Mutex
+	var gotQuery string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotQuery = r.URL.RawQuery
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":[{"id":"li1","id_data":[{"metrics":{"impressions":[100],"clicks":[10],"billed_charge_local_micro":[500000]}}]}]}`))
+	}))
+	defer api.Close()
+
+	d := NewTwitterDispatcher(
+		fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{},
+		twitter.WithBaseURL(api.URL), twitter.WithAPIVersion("12"), twitter.WithWriteDelay(0),
+	)
+
+	metrics, err := d.ReadMetrics(
+		context.Background(), "proj", model.ProviderTwitterAds,
+		twitterToggleCampaign("cmp1", "li1"),
+		model.MetricsWindowYesterday,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if metrics.Impressions != 100 || metrics.Clicks != 10 || metrics.CostMicros != 500000 {
+		t.Errorf("expected impressions=100 clicks=10 costMicros=500000, got impressions=%d clicks=%d costMicros=%d",
+			metrics.Impressions, metrics.Clicks, metrics.CostMicros)
+	}
+
+	// Verify the query contained start_time and end_time (exact values depend on fixed clock,
+	// tested separately in twitter/metrics_test.go::TestGetCampaignMetrics_YesterdayQueryParams).
+	mu.Lock()
+	query := gotQuery
+	mu.Unlock()
+	if !strings.Contains(query, "start_time=") || !strings.Contains(query, "end_time=") {
+		t.Errorf("expected start_time and end_time in query, got: %s", query)
+	}
+}
+
+// TestTwitter_ReadMetrics_ConnectionResolutionFails verifies that connection
+// resolution errors are propagated (unlike Dispatch which wraps them).
+func TestTwitter_ReadMetrics_ConnectionResolutionFails(t *testing.T) {
+	d := NewTwitterDispatcher(
+		fakeConnReader{err: errors.New("connection not found")}, identityEncryptor{},
+	)
+
+	_, err := d.ReadMetrics(
+		context.Background(), "proj", model.ProviderTwitterAds,
+		twitterToggleCampaign("cmp1", "li1"),
+		model.MetricsWindowLast7Days,
+	)
+	if err == nil {
+		t.Fatal("expected error for failed connection resolution, got nil")
+	}
+}
+
+// TestTwitter_ReadMetrics_ZeroCampaignActivity returns zero-value metrics
+// when the server returns no data (campaign had no activity).
+func TestTwitter_ReadMetrics_ZeroCampaignActivity(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer api.Close()
+
+	d := NewTwitterDispatcher(
+		fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{},
+		twitter.WithBaseURL(api.URL), twitter.WithAPIVersion("12"), twitter.WithWriteDelay(0),
+	)
+
+	metrics, err := d.ReadMetrics(
+		context.Background(), "proj", model.ProviderTwitterAds,
+		twitterToggleCampaign("cmp1", "li1"),
+		model.MetricsWindowLast7Days,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if metrics.Impressions != 0 || metrics.Clicks != 0 || metrics.CostMicros != 0 {
+		t.Errorf("expected all zero-value metrics for empty campaign activity, got impressions=%d clicks=%d costMicros=%d",
+			metrics.Impressions, metrics.Clicks, metrics.CostMicros)
+	}
+}

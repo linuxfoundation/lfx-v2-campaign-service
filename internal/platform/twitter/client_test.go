@@ -483,6 +483,61 @@ func TestRetryOn429(t *testing.T) {
 	}
 }
 
+// TestRetryOn429ReusesTheConnection pins the drain in drainAndClose. net/http only
+// returns a connection to the idle pool when the body has been read to EOF and closed;
+// closing a 429's unread body tears the connection down, so the retry pays a fresh
+// TCP (and in production TLS) handshake. The assertion is on r.RemoteAddr: the retry
+// arriving from the same client port is the observable proof the connection was reused,
+// which is exactly what draining buys and what closing-without-draining loses.
+func TestRetryOn429ReusesTheConnection(t *testing.T) {
+	var (
+		mu    sync.Mutex
+		addrs []string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		addrs = append(addrs, r.RemoteAddr)
+		n := len(addrs)
+		mu.Unlock()
+		if n == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			// A non-empty 429 body is the realistic case (X returns a JSON error
+			// envelope) and the only one that can distinguish drained from not:
+			// an empty body is already at EOF, so closing it reuses the connection
+			// regardless and the test would pass against the unfixed code.
+			_, _ = w.Write([]byte(`{"errors":[{"code":"RATE_LIMIT_EXCEEDED","message":"too many requests"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"id":"cmp123"}}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1"},
+		WithBaseURL(srv.URL),
+		WithAPIVersion("12"),
+		WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+
+	if _, err := c.createRequest(context.Background(), "campaigns", map[string]string{"name": "x"}); err != nil {
+		t.Fatalf("request: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(addrs) != 2 {
+		t.Fatalf("expected 2 requests (1 retry), got %d", len(addrs))
+	}
+	if addrs[0] != addrs[1] {
+		t.Errorf("retry opened a NEW connection (%s then %s): the 429 body was closed without being drained, so net/http could not return the connection to the idle pool", addrs[0], addrs[1])
+	}
+}
+
 // TestParseRetryAfter covers all three headers: Retry-After is a delay in
 // seconds (or an HTTP-date); the *-Rate-Limit-Reset headers are Unix epochs that
 // must be converted to time-until-reset (not treated as a raw delay, which would

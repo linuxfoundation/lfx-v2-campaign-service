@@ -79,7 +79,7 @@ type CampaignInput struct {
 	EventName string
 	// EventSlug is the URL-safe event identifier, used (with EventName/Project as
 	// fallbacks) to build the ad's utm_campaign click-through param — see
-	// buildAdFinalURL in adgroup_ad.go.
+	// buildAdFinalURL in ad_copy.go.
 	EventSlug string
 	// Project is folded into the composed name alongside EventName.
 	Project string
@@ -783,8 +783,9 @@ func IsOutcomeUnconfirmed(err error) bool {
 // createAdGroupAndAd) — the dispatcher's activate guard (ErrCampaignNotProvisioned) checks
 // for that BEFORE calling either method. Additionally, keeping them separate lets a caller
 // pause a campaign whose children failed to create, without that call depending on child ids
-// it may not have. Note: today the dispatcher rejects ACTIVATE unconditionally because GA-3b
-// has no targeting; GA-4 targeting provisioning will gate ACTIVATE's reachability.
+// it may not have. Note: today the dispatcher rejects ACTIVATE unconditionally because GA-4
+// targeting provisioning is absent — that is the only remaining reason; the PAUSE cascade
+// itself is wired.
 //
 // The mutate IS sent as idempotent (doRequest's last arg), unlike the create path. That flag
 // gates only bounded 429 retries, and the create path's reason for declining them (no

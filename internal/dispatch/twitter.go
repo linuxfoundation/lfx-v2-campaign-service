@@ -301,3 +301,52 @@ func (d *TwitterDispatcher) ToggleStatus(ctx context.Context, projectID string, 
 	}
 	return nil
 }
+
+// twitterMetricsWindow maps the platform-agnostic model.MetricsWindow vocabulary to X Ads'
+// own MetricsWindow literals. X Ads supports YESTERDAY, TODAY, and LAST_7_DAYS (the stats
+// endpoint caps queryable date ranges at 7 days per request); every other foundation window
+// (LAST_14_DAYS, LAST_30_DAYS, THIS_MONTH, LAST_MONTH) is not representable and returns
+// twitter.ErrUnsupportedWindow rather than being silently approximated (no averaging,
+// truncation, or extrapolation).
+func twitterMetricsWindow(w model.MetricsWindow) (twitter.MetricsWindow, error) {
+	switch w {
+	case model.MetricsWindowYesterday:
+		return twitter.WindowYesterday, nil
+	case model.MetricsWindowToday:
+		return twitter.WindowToday, nil
+	case model.MetricsWindowLast7Days:
+		return twitter.WindowLast7Days, nil
+	default:
+		return "", fmt.Errorf("%w: %w: %q (X Ads only supports yesterday, today, and last_7_days)", domain.ErrMetricsWindowUnsupported, twitter.ErrUnsupportedWindow, w)
+	}
+}
+
+// ReadMetrics implements service.MetricsReader for X (Twitter) Ads. It resolves
+// the same connection ToggleStatus does and reads the campaign's live metrics,
+// mapping the foundation's platform-agnostic window to X Ads' own vocabulary via
+// twitterMetricsWindow.
+//
+// Note: X Ads API caps queryable date ranges at 7 days per request. Windows longer
+// than 7 days are NOT supported — no averaging, no truncation, no extrapolation.
+func (d *TwitterDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+	xWindow, err := twitterMetricsWindow(window)
+	if err != nil {
+		return nil, err
+	}
+	client, err := d.resolveTwitterClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	m, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, xWindow)
+	if err != nil {
+		return nil, err
+	}
+	return &model.CampaignMetrics{
+		CampaignID:  m.CampaignID,
+		Window:      window,
+		Impressions: m.Impressions,
+		Clicks:      m.Clicks,
+		CostMicros:  m.CostMicros,
+		Ctr:         m.Ctr,
+	}, nil
+}
