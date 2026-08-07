@@ -31,3 +31,49 @@ All binding verified: reverting each redaction branch causes its test to fail wi
 **Issue**: `TestGetCampaignMetrics_RetriesOn429` and `TestGetCampaignMetrics_RetriesExhaustedReturnsError` consumed 1 second and 7 seconds of real wall-clock backoff time respectively, slowing test runs.
 
 **Fix** (metrics_test.go:367, 408): Added `withRetryBaseDelay(time.Millisecond)` to both retry tests to use 1 millisecond backoff instead of the production 1-second default. This reduces combined test sleep from 8 seconds to 8 milliseconds without changing retry logic or reducing iteration count. Retry backoff is parameterized via the test harness and this confirms the backoff path is exercised without production-scale delays.
+
+## Context-sentinel path bypassed redaction
+
+**Issue**: Both `redactHTTPDoError` and `redactBodyReadError` opened with a combined early return
+that handed back the ORIGINAL error whenever `errors.Is` matched `context.Canceled` or
+`context.DeadlineExceeded`:
+
+```go
+if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	return err
+}
+```
+
+`errors.Is` matches straight THROUGH a `*url.Error` wrapper, and `http.Client.Do` wraps
+cancellation and deadline failures in exactly that type. So on the cancellation path the helper
+returned the wrapper intact, and `wrapper.Error()` renders the full analytics URL — including the
+account and campaign query values — which `BriefService.GetCampaignMetrics` then logs verbatim. A
+custom `RoundTripper` can likewise embed the Authorization header in its error text and wrap one of
+these sentinels to reach the same path. The redaction was bypassed on precisely the branch that ran
+first, in both helpers.
+
+**Fix**: Return the CANONICAL sentinel rather than the untrusted outer error, in both helpers:
+
+```go
+if errors.Is(err, context.Canceled) {
+	return context.Canceled
+}
+if errors.Is(err, context.DeadlineExceeded) {
+	return context.DeadlineExceeded
+}
+```
+
+`errors.Is` still matches for the caller's retry/cancellation classification, and nothing from the
+wrapper — URL, query values, or injected header text — survives.
+
+**Tests**: `TestRedactHTTPDoError/redacts_url_error_wrapping_context_canceled` and
+`/redacts_url_error_wrapping_context_deadline_exceeded` build a `*url.Error` carrying a marker in
+its `URL` field and wrapping each sentinel, then assert the marker is absent, `errors.Is` still
+matches, and the result IS the canonical sentinel. `TestRedactBodyReadError` covers the same two
+branches of the body-read helper. Binding verified: restoring the combined `return err` fails both
+subtests with the marker rendered verbatim in the error string.
+
+**Why it survived earlier rounds**: the two prior redaction fixes were each verified by re-reading
+only the lines they changed. This branch preceded them and was never re-read, so two rounds of
+review confirmed the file "clean" while the first exit of both helpers still leaked. Reported
+independently by Cursor and Copilot.

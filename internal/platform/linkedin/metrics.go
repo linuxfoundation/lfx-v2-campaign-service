@@ -27,17 +27,24 @@ var ErrUnsupportedWindow = errors.New("unsupported metrics window")
 // redactHTTPDoError redacts an error from httpClient.Do, which may carry full URLs with bearer
 // tokens in a *url.Error wrapper. Preserves classification sentinels and pre-send dial errors
 // so callers can still distinguish retryable vs permanent failures via errors.Is/errors.As,
-// but returns the unwrapped dial error (without the URL) or a safe generic message for
-// mid-flight/RoundTripper errors. The cause is intentionally discarded: no errors.Unwrap.
+// but returns the canonical sentinel (not the *url.Error wrapper) for context errors, the
+// unwrapped dial error (without the URL) for pre-send dial errors, or a safe generic message
+// for mid-flight/RoundTripper errors. No untrusted error strings survive.
 //
 // http.Client.Do returns a *url.Error when the round-trip fails. If it's a pre-send dial
 // error (DNS, ECONNREFUSED), the *url.Error wraps the inner error but includes the full
 // URL. isPreSendDialError traverses the wrapper via errors.As/errors.Is, but err.Error()
 // still renders the URL verbatim. Unwrap the dial error and return it classifiable but safe.
+// For context cancellation/deadline, return the canonical sentinel so the wrapper is discarded.
 func redactHTTPDoError(err error) error {
-	// Preserve classification sentinels: context cancellation and deadline.
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return err
+	// Preserve classification sentinels: return the canonical sentinel, not the wrapper.
+	// errors.Is still matches the sentinel inside the wrapper, but wrapper.Error() renders
+	// the URL. Return the canonical value so the wrapper and its URL are discarded.
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
 	}
 	// If this is a pre-send dial error (DNSError, ECONNREFUSED, etc.), it may be wrapped
 	// in one or more *url.Error layers (http.Client.Do wraps RoundTripper errors, and a
@@ -63,13 +70,18 @@ func redactHTTPDoError(err error) error {
 // redactBodyReadError redacts an error from buf.ReadFrom (response body I/O). Body-read errors
 // are local I/O failures after the connection is established, carrying no credentials or URLs,
 // but the actual error may include details a malicious RoundTripper or local I/O path injected.
-// Returns a fixed, distinct message so callers can distinguish body-read failures from
-// round-trip failures. The cause is intentionally discarded: no errors.Unwrap.
+// Returns the canonical sentinel for context errors or a fixed, distinct message for I/O errors,
+// so callers can distinguish body-read failures from round-trip failures and still detect
+// cancellation/deadline via errors.Is.
 func redactBodyReadError(err error) error {
 	// Body reads can only fail due to local I/O or response frame issues, never credentials,
-	// but preserve cancellation sentinels so the caller knows the context was canceled.
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return err
+	// but return the canonical sentinels for context cancellation/deadline so the caller
+	// can still detect them via errors.Is.
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
 	}
 	return fmt.Errorf("read response body failed")
 }

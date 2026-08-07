@@ -990,6 +990,131 @@ func TestRedactHTTPDoError(t *testing.T) {
 			t.Errorf("redacted error lost DNSError classification: %v", redacted)
 		}
 	})
+
+	t.Run("redacts_url_error_wrapping_context_canceled", func(t *testing.T) {
+		// errors.Is matches context.Canceled through a *url.Error wrapper, but wrapper.Error()
+		// still renders the full URL with account/campaign query values. Verify that
+		// redactHTTPDoError returns the canonical sentinel, not the wrapper.
+		const markerInURL = "CREDENTIAL_MARKER_IN_URL"
+		wrapped := &url.Error{
+			Op:  "Get",
+			URL: "https://api.linkedin.com/rest/adAnalytics?" + markerInURL + "=true",
+			Err: context.Canceled,
+		}
+
+		redacted := redactHTTPDoError(wrapped)
+		errStr := redacted.Error()
+
+		// The marker in the URL must not appear in the redacted error
+		if strings.Contains(errStr, markerInURL) {
+			t.Errorf("redacted error still contains URL marker: %v", errStr)
+		}
+
+		// But errors.Is must still work with the redacted result
+		if !errors.Is(redacted, context.Canceled) {
+			t.Errorf("redacted error lost context.Canceled classification: %v", redacted)
+		}
+
+		// And the redacted result must be exactly the canonical sentinel
+		if redacted != context.Canceled {
+			t.Errorf("redacted error is not the canonical context.Canceled sentinel: %v", redacted)
+		}
+	})
+
+	t.Run("redacts_url_error_wrapping_context_deadline_exceeded", func(t *testing.T) {
+		// Same as canceled but for deadline exceeded.
+		const markerInURL = "DEADLINE_MARKER_IN_URL"
+		wrapped := &url.Error{
+			Op:  "Get",
+			URL: "https://api.linkedin.com/rest/adAnalytics?" + markerInURL + "=true",
+			Err: context.DeadlineExceeded,
+		}
+
+		redacted := redactHTTPDoError(wrapped)
+		errStr := redacted.Error()
+
+		// The marker must not appear
+		if strings.Contains(errStr, markerInURL) {
+			t.Errorf("redacted error still contains URL marker: %v", errStr)
+		}
+
+		// But errors.Is must work
+		if !errors.Is(redacted, context.DeadlineExceeded) {
+			t.Errorf("redacted error lost context.DeadlineExceeded classification: %v", redacted)
+		}
+
+		// And it must be the canonical sentinel
+		if redacted != context.DeadlineExceeded {
+			t.Errorf("redacted error is not the canonical context.DeadlineExceeded sentinel: %v", redacted)
+		}
+	})
+}
+
+// TestRedactBodyReadError verifies that the body-read redaction helper correctly
+// handles context errors and I/O errors.
+func TestRedactBodyReadError(t *testing.T) {
+	t.Run("redacts_wrapped_context_canceled_marker", func(t *testing.T) {
+		// Create a wrapped context.Canceled error (e.g., from a malicious RoundTripper
+		// that wraps the sentinel in an error with a marker string).
+		const markerInError = "MALICIOUS_BODY_READ_MARKER_CANCELED"
+		wrappedErr := fmt.Errorf("body read failed: %s, wrapped: %w", markerInError, context.Canceled)
+
+		redacted := redactBodyReadError(wrappedErr)
+
+		// The marker must not appear in the output
+		errStr := redacted.Error()
+		if strings.Contains(errStr, markerInError) {
+			t.Errorf("redacted error still contains malicious marker: %v", errStr)
+		}
+
+		// But classification must be preserved
+		if !errors.Is(redacted, context.Canceled) {
+			t.Errorf("redacted error lost context.Canceled classification: %v", redacted)
+		}
+
+		// And the result must be the canonical sentinel
+		if redacted != context.Canceled {
+			t.Errorf("redacted error is not the canonical context.Canceled sentinel: %v", redacted)
+		}
+	})
+
+	t.Run("redacts_wrapped_context_deadline_exceeded_marker", func(t *testing.T) {
+		// Same as canceled but for deadline exceeded
+		const markerInError = "MALICIOUS_BODY_READ_MARKER_DEADLINE"
+		wrappedErr := fmt.Errorf("body read failed: %s, wrapped: %w", markerInError, context.DeadlineExceeded)
+
+		redacted := redactBodyReadError(wrappedErr)
+
+		// The marker must not appear in the output
+		errStr := redacted.Error()
+		if strings.Contains(errStr, markerInError) {
+			t.Errorf("redacted error still contains malicious marker: %v", errStr)
+		}
+
+		// But classification must be preserved
+		if !errors.Is(redacted, context.DeadlineExceeded) {
+			t.Errorf("redacted error lost context.DeadlineExceeded classification: %v", redacted)
+		}
+
+		// And the result must be the canonical sentinel
+		if redacted != context.DeadlineExceeded {
+			t.Errorf("redacted error is not the canonical context.DeadlineExceeded sentinel: %v", redacted)
+		}
+	})
+
+	t.Run("redacts_io_errors", func(t *testing.T) {
+		// Regular I/O errors should return the safe generic message
+		ioErr := fmt.Errorf("connection reset by peer")
+		redacted := redactBodyReadError(ioErr)
+		errStr := redacted.Error()
+
+		if !strings.Contains(errStr, "read response body failed") {
+			t.Errorf("redacted error missing safe message: %v", errStr)
+		}
+		if strings.Contains(errStr, "connection reset") {
+			t.Errorf("redacted error leaked raw I/O error details: %v", errStr)
+		}
+	})
 }
 
 // TestGetCampaignMetrics_MalformedJSONRedaction verifies that json.Unmarshal errors
