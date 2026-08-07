@@ -912,7 +912,9 @@ func TestGetCampaignMetrics_TransportErrorRedaction(t *testing.T) {
 		// present. A "contains prefix and not EOF" pair cannot fail: any leak that keeps
 		// the prefix and appends raw I/O detail satisfies both halves. Equality is what
 		// binds the absence of appended detail.
-		const wantBody = "read response body: read response body failed"
+		// Matches the 2xx path's transportError.Err exactly: apiError.Body carries
+		// redactBodyReadError's own message with no extra prefix.
+		const wantBody = "read response body failed"
 		if apiErr.Body != wantBody {
 			t.Errorf("apiError.Body = %q, want exactly %q — anything appended is raw I/O detail that escaped redaction", apiErr.Body, wantBody)
 		}

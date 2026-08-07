@@ -423,9 +423,13 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: redactBodyReadError(err)}
 		}
-		// Same redaction as 2xx path: body-read errors can contain malicious/untrusted content
-		// regardless of status code. Use the redacted message for the diagnostic.
-		return nil, false, 0, &apiError{StatusCode: resp.StatusCode, Method: "GET", Path: "adAnalytics", Body: fmt.Sprintf("read response body: %v", redactBodyReadError(err))}
+		// Same redaction technique as the 2xx path (redactBodyReadError): a body-read error can
+		// carry untrusted upstream content regardless of status code. The resulting STRING
+		// differs by design — transportError.Err is surfaced as a bare cause, whereas
+		// apiError.Body is a free-form diagnostic field, so redactBodyReadError's own message
+		// is enough on its own here. Do not add a "read response body: " prefix: it would
+		// double-state what redactBodyReadError already says.
+		return nil, false, 0, &apiError{StatusCode: resp.StatusCode, Method: "GET", Path: "adAnalytics", Body: redactBodyReadError(err).Error()}
 	}
 
 	if int64(buf.Len()) > maxResponseBytes {
