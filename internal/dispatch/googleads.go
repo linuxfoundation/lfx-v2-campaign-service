@@ -284,10 +284,12 @@ func googleAdsRunStatus(status string) (string, error) {
 
 // ToggleStatus implements service.StatusToggler for Google Ads.
 //
-// GA-3b created ad group + ad under the campaign; GA-3c wires the dispatcher-level cascade.
-// Today, only PAUSE is implemented. PAUSE cascades from the campaign FIRST (stops delivery
-// immediately, regardless of whether the children can be reached) down to the ad group/ad via the
-// persisted ids stored in the campaign's Result blob.
+// GA-3b created ad group + ad under the campaign; GA-3c wired the dispatcher-level cascade;
+// GA-4 enables ACTIVATE once targeting exists. Both directions cascade, in OPPOSITE orders.
+//
+// PAUSE cascades from the campaign FIRST (stops delivery immediately, regardless of whether the
+// children can be reached) down to the ad group/ad via the persisted ids stored in the campaign's
+// Result blob.
 //
 // ACTIVATE is refused with ErrCampaignNotProvisioned (→409, raised locally without calling
 // Google) unless the Result blob shows the ad group/ad were fully provisioned AND at least one

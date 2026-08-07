@@ -840,14 +840,15 @@ var migrateMu sync.Mutex
 // already created an upstream campaign isn't cut off before it persists, THEN closes
 // the database pool.
 //
-// Orchestrator.Shutdown runs three separately-budgeted phases: the sweeper stop
-// (sweeperStopTimeout), a clean dispatch drain (dispatchDrainTimeout), then (only
-// if that elapses) a post-cancel grace (CancelGracePeriod). All three must fit
-// within ctx, so ctx MUST carry the full ContainerCloseTimeout (= sweeperStopTimeout
-// + relayStopTimeout + dispatchDrainTimeout + CancelGracePeriod + indexer.DrainTimeout),
-// not just the drain timeout — otherwise the grace phase would have zero budget and
-// the pool could close while a just-cancelled dispatch is still finalizing
-// job/campaign state.
+// The stuck-claim sweeper stop (sweeperStopTimeout) is waited on HERE, by Close, before
+// Shutdown is called — Orchestrator.Shutdown owns only two separately-budgeted phases: a
+// clean dispatch drain (dispatchDrainTimeout), then (only if that elapses) a post-cancel
+// grace (CancelGracePeriod). (Shutdown does cancel its own periodic recovery sweeper, but
+// that is an unbudgeted cancel, not a wait.) All of these must fit within ctx, so ctx MUST
+// carry the full ContainerCloseTimeout (= sweeperStopTimeout + relayStopTimeout +
+// dispatchDrainTimeout + CancelGracePeriod + indexer.DrainTimeout), not just the drain
+// timeout — otherwise the grace phase would have zero budget and the pool could close
+// while a just-cancelled dispatch is still finalizing job/campaign state.
 // setIndexRelay installs and starts a relay under c.mu. The 503 cold-start path assigns from the
 // init goroutine while Close may read concurrently, so the field is mutex-guarded like c.pool.
 func (c *Container) setIndexRelay(relay *indexer.Relay) {
