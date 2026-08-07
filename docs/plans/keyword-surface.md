@@ -44,7 +44,9 @@ interface KeywordMetrics {
   googleAdsUrl: string;            // Direct link to keyword in Google Ads UI
   impressions: number;
   clicks: number;
-  ctr: number;                     // CTR as decimal (e.g., 0.05 for 5%)
+  ctr: number;                     // PERCENTAGE POINTS, not a ratio: 5.0 means 5%. The BFF
+                                   // stores `metrics.ctr * 100` (campaign-metrics.service.ts:383)
+                                   // and the display pipe only appends `%`. See the CTR note below.
   avgCpc: number;                  // Average cost-per-click (currency units, not micros)
   spend: number;
   conversions: number;
@@ -77,8 +79,9 @@ interface KeywordMetricsResponse {
 type KeywordActionType = 'pause' | 'remove';   // Current UI vocabulary
 
 interface KeywordActionRequest {
-  campaignId: string;              // Campaign UUID (UI's internal ID)
-  adGroupId: string;               // Ad group UUID (UI's internal ID)
+  campaignId: string;              // GOOGLE ADS campaign id (GAQL `campaign.id`), NOT a
+                                   // campaign-service UUID — see the identity-gap note below
+  adGroupId: string;               // GOOGLE ADS ad group id (GAQL `ad_group.id`), likewise
   criterionId: string;             // Google Ads criterion ID (the keyword row's criterionId)
   action: KeywordActionType;
 }
@@ -113,15 +116,54 @@ interface BulkKeywordActionResponse {
 
 **Error Cases:** 200 (partial success OK), 400 (validation), 503 (platform failure)
 
+### The identity gap — this endpoint cannot be a drop-in replacement
+
+Every id the current surface carries is a **Google Ads** id, read straight out of GAQL:
+`campaignId` ← `campaign.id`, `adGroupId` ← `ad_group.id`, `criterionId` ←
+`ad_group_criterion.criterion_id` (`campaign-metrics.service.ts:370-380`). None of them is a
+campaign-service UUID, and the view they come from is **account-wide**: `getKeywords` runs one
+GAQL query over `keyword_view` across the authenticated user's whole Google Ads account, with
+no project, brief, or local campaign in scope at all.
+
+The endpoint proposed below is scoped `/{projectId}/briefs/{briefId}/campaigns/{campaignId}/…`
+and takes the campaign-service UUID as its path parameter. **The current UI does not have those
+three values on this screen**, so it cannot call the new endpoint by swapping a URL. That is a
+real migration, not a rename, and pretending otherwise is how this plan would ship a Phase 1
+nothing can consume.
+
+Two ways to close it; the owning team picks one (tracked as Open Question 8):
+
+1. **Scope the optimization view to a campaign.** The keyword table moves under a selected
+   campaign, so the UI already holds project/brief/campaign and the new path is directly
+   callable. Cleanest contract, biggest UX change — the account-wide "all my keywords" view
+   goes away or becomes a separate surface.
+2. **Resolve Google Ads ids back to local campaigns.** The service already persists
+   `PlatformCampaignID` per (brief, platform), so a lookup from `campaign.id` to the local
+   campaign row is possible. Preserves the current view, but only covers keywords under
+   campaigns THIS service created — anything created directly in Ads Manager has no local row
+   and cannot be actioned, which the UI would have to represent.
+
+Until one is chosen, the read endpoint below is additive (a new campaign-scoped view) and does
+**not** retire `GET /api/campaigns/keywords`. The retirement is UI work in `lfx-self-serve`,
+sequenced after the choice, and out of scope for the PRs in this plan.
+
 ---
 
 ## Dependency Analysis: PR #69 vs. Plan Item 4
 
-**Verdict:** **Item 4 CAN land before PR #69 merges** — with a deliberate two-phase structure.
+**Verdict: the dependency is GONE.** PR #69 (GA-4 targeting) merged to `main` on
+**2026-08-07 at 15:37 UTC**, and `internal/platform/googleads/targeting.go` is present on `main`
+today. The two-phase structure below was written to route around an unmerged #69; it is kept
+because the phases are still a sensible *delivery* split (pause/remove is the smaller, safer
+surface and can ship first), but Phase 2 is no longer BLOCKED on anything — it is a scope
+choice, not a wait. Every statement below that treated #69 as pending has been corrected.
 
 ### Phase 1 (No #69 dependency): List Keywords + Pause/Remove Actions
 - **What lands:** `GET /campaigns/{campaignId}/keywords` (list) and `POST /campaigns/{campaignId}/keyword-actions` (pause/remove only — the path already catalogued on `main`)
-- **Blocked on:** Nothing in #69. Uses existing Google Ads API surfaces (adGroupCriteria:search, mutate)
+- **Blocked on:** Nothing in #69. Uses existing Google Ads API surfaces: `googleAds:search` for
+  the GAQL read and `adGroupCriteria:mutate` for the write. (There is no
+  `adGroupCriteria:search` endpoint — v23 has exactly one GAQL read surface, and this repo's
+  client already encodes the split at `internal/platform/googleads/client.go:725-772`.)
 - **Google Ads API:** a GAQL search over `keyword_view` for the read, and `adGroupCriteria:mutate`
   with status updates / removes for the write. Both go through `internal/platform/googleads`'s
   existing REST transport — this repo has no Google Ads SDK, so PR 2 adds the semantic client
@@ -131,11 +173,11 @@ interface BulkKeywordActionResponse {
 
 ### Phase 2 (With #69): Enable/Resume + Bid Changes
 - **What lands:** `'enable'` action (resume paused keywords) and `'change-bid'` operation (set max CPC in micros)
-- **Dependency:** #69's keyword resource-name construction and criterion-ID plumbing in `internal/platform/googleads/targeting.go`. **This file does not exist on `main` today** — PR #69 introduces it (along with `targeting_test.go`). Every reference to it in this plan is forward-looking and unresolvable until #69 merges; do not treat it as an existing API surface when scoping Phase 1.
+- **Dependency:** #69's keyword resource-name construction and criterion-ID plumbing in `internal/platform/googleads/targeting.go`. That file is **on `main` now** (#69 merged 2026-08-07 15:37 UTC), so references to it in this plan resolve against an existing API surface and can be read while scoping.
 - **Why:** The bid-change mutation uses the same criterion resource name machinery #69 implements for creation; reusing it is safer than duplicating it
-- **Timing:** After PR #69 merges. Does NOT require a new base branch merge; the keyword-surface branch simply rebases onto #69 once it lands
+- **Timing:** No longer gated. Branch from `origin/main` and the machinery is there.
 
-**Implication:** If you want pause/remove in the next release, open Phase 1 independently. Phase 2 can chain behind #69 without blocking it.
+**Implication:** Phase 1 and Phase 2 are now purely a scope decision — ship pause/remove first if you want the smaller review, or do both. Neither waits on another PR.
 
 ---
 
@@ -236,8 +278,15 @@ Method("update-campaign-keywords", func() {
     // reject it by hand — the design-contract-looser-than-runtime shape called out in
     // docs/reviews/knowledge-base/api-contract-and-docs-currency.md. Put the constraint
     // in the contract so the generated client and the OpenAPI document carry it too.
+    // MaxLength as well as MinLength. The dispatcher rationale below fixes the supported
+    // scale at 100 actions and gives the whole synchronous operation a 30-second budget; an
+    // UNBOUNDED array lets a caller force arbitrary mutate chunks, blow that budget mid-batch,
+    // and manufacture exactly the unconfirmed-outcome case the rest of this design works to
+    // avoid. The cap belongs in the contract, not in a handler check, so the generated client
+    // and the OpenAPI document both carry it and a caller learns the limit before sending.
     Attribute("actions", ArrayOf(KeywordActionPayload), "Keyword actions to apply", func() {
       MinLength(1)
+      MaxLength(100)
     })
     
     Required("project_id", "brief_id", "campaign_id", "actions")
@@ -312,13 +361,27 @@ var CampaignKeyword = Type("campaign-keyword", func() {
   Attribute("ad_group_name", String, "Ad group name (for display)")
   Attribute("impressions", Int64, "Impressions in window")
   Attribute("clicks", Int64, "Clicks in window")
-  Attribute("ctr", Float64, "Click-through rate (clicks/impressions; 0 when impressions=0)")
+  // A RATIO (0.05 = 5%), matching Google's own `metrics.ctr` and this service's existing
+  // CampaignMetrics.Ctr. The current UI contract is NOT a ratio: its BFF stores
+  // `metrics.ctr * 100` and the display pipe only appends `%`, so a keyword row consumed
+  // straight from this endpoint would render "0.05%" instead of "5%". Deliberate — the new
+  // endpoint stays consistent with every other metric surface this service exposes rather
+  // than inheriting one screen's convention — but it is a REQUIRED UI conversion, not a
+  // drop-in: the consumer multiplies by 100 at the boundary. Listed with the identity gap
+  // above as part of the migration work, and out of scope for the PRs in this plan.
+  Attribute("ctr", Float64, "Click-through rate as a RATIO: clicks/impressions, 0 when impressions=0 (multiply by 100 for percent)")
   // Micros are denominated in the AD ACCOUNT's own currency, not USD — the same fact
   // docs/api-catalog.md:318-321 records for Google Ads budgets. The service does no FX
   // conversion, so naming USD in the generated schema would mislead every non-USD account.
   Attribute("avg_cpc_micros", Int64, "Average CPC in micros of the ad account's currency")
   Attribute("spend_micros", Int64, "Total spend in micros of the ad account's currency")
-  Attribute("conversions", Int64, "Conversions in window")
+  // Float64, not Int64: Google Ads v23 types `metrics.conversions` as a DOUBLE, and
+  // attributed conversions are routinely fractional (a conversion split across several
+  // touchpoints contributes a fraction to each). Int64 either rejects the fractional JSON
+  // value during decoding or silently truncates it, and truncation toward zero systematically
+  // UNDER-reports the metric the keyword table exists to optimise against. Float64 all the way
+  // through — model, totals, and dispatcher accumulation.
+  Attribute("conversions", Float64, "Conversions in window (fractional; Google attributes partial conversions)")
   Attribute("max_cpc_micros", Int64, "Criterion-level max CPC bid in micros of the ad account's currency (null when the keyword bids at ad-group level)")
   Attribute("google_ads_url", String, "Direct link to keyword in Google Ads UI")
   // Everything the report always returns is Required. An optional attribute generates a
@@ -344,7 +407,9 @@ var CampaignKeywordList = Type("campaign-keyword-list", func() {
     Attribute("clicks", Int64)
     Attribute("ctr", Float64)
     Attribute("spend_micros", Int64)
-    Attribute("conversions", Int64)
+    // Float64 for the same reason as the per-keyword field above; a sum of fractional
+    // conversions is fractional, and truncating the TOTAL compounds the per-row loss.
+    Attribute("conversions", Float64)
     // Totals members are always computed, so they are values, not pointers.
     Required("impressions", "clicks", "ctr", "spend_micros", "conversions")
   })
@@ -357,20 +422,37 @@ var KeywordActionResult = Type("keyword-action-result", func() {
   Attribute("criterion_id", String, "The keyword's criterion ID")
   Attribute("keyword", String, "Keyword text (for logging/display)")
   Attribute("action", String, "Action that was performed")
-  Attribute("success", Boolean, "Whether the action succeeded")
+  // THREE states, in a machine-readable field. `success: bool` cannot express the one that
+  // matters most — the batch stopped mid-flight and this operation's fate is genuinely
+  // unknown — and encoding it in `message` prose forces every consumer to string-match to
+  // avoid the wrong next action. An unconfirmed operation reported as `success: false` is a
+  // claim the service cannot support, and it is the claim that produces a full-batch retry.
+  Attribute("outcome", String, "applied | failed | unconfirmed", func() {
+    Enum("applied", "failed", "unconfirmed")
+  })
+  // success is RETAINED for the existing UI contract and is defined as `outcome ==
+  // "applied"` — so an unconfirmed operation is false here too. That is why `failed` below
+  // is NOT derived from it. New consumers read `outcome`; `success` exists so the current
+  // client keeps compiling, and is the field to drop once the UI migrates.
+  Attribute("success", Boolean, "Deprecated: true iff outcome == \"applied\". Read outcome instead")
   Attribute("message", String, "Outcome or error message")
   // message is always populated — a success reason or the failure — so it is a value,
   // not a *string the handler cannot assign to.
-  Required("ad_group_id", "criterion_id", "keyword", "action", "success", "message")
+  Required("ad_group_id", "criterion_id", "keyword", "action", "outcome", "success", "message")
 })
 
 // Response for update-campaign-keywords
 var CampaignKeywordActionResult = Type("campaign-keyword-action-result", func() {
   Attribute("total", Int32, "Total actions requested")
-  Attribute("succeeded", Int32, "Number that succeeded")
-  Attribute("failed", Int32, "Number that failed")
+  Attribute("succeeded", Int32, "Number with outcome == applied")
+  Attribute("failed", Int32, "Number with outcome == failed (does NOT include unconfirmed)")
+  // The third count, and the reason `failed` is counted rather than derived. A consumer
+  // computing `total - succeeded` folds unconfirmed operations into failures — the exact
+  // fold this design exists to prevent, arrived at by arithmetic instead of by a decision.
+  // total == succeeded + failed + unconfirmed, always.
+  Attribute("unconfirmed", Int32, "Number whose fate is unknown — verify in Google Ads before retrying")
   Attribute("results", ArrayOf(KeywordActionResult), "Per-action outcome")
-  Required("total", "succeeded", "failed", "results")
+  Required("total", "succeeded", "failed", "unconfirmed", "results")
 })
 ```
 
@@ -448,7 +530,7 @@ type KeywordMetric struct {
   Ctr            float64
   AvgCpcMicros   int64
   SpendMicros    int64
-  Conversions    int64
+  Conversions    float64  // Google types metrics.conversions as a double; attribution is fractional
   MaxCpcMicros   *int64  // Nullable: bid may not be explicitly set
   GoogleAdsURL   string
 }
@@ -460,8 +542,21 @@ type KeywordListResult struct {
   Clicks      int64
   Ctr         float64
   SpendMicros int64
-  Conversions int64
+  Conversions float64  // fractional, as above
 }
+
+// KeywordActionState is the three-valued fate of one keyword operation. A bool cannot
+// carry the third value, and the third value is the one that changes what an operator does.
+type KeywordActionState string
+
+const (
+  KeywordActionApplied     KeywordActionState = "applied"
+  KeywordActionFailed      KeywordActionState = "failed"
+  // KeywordActionUnconfirmed: the operation was in flight when the call failed, or shared a
+  // mutate chunk with the operation that was. It MAY have committed upstream. Never retry
+  // it blindly; surface it for verification in Google Ads.
+  KeywordActionUnconfirmed KeywordActionState = "unconfirmed"
+)
 
 // KeywordActionOutcome is the result of one keyword operation.
 type KeywordActionOutcome struct {
@@ -469,9 +564,14 @@ type KeywordActionOutcome struct {
   CriterionID string
   Keyword     string
   Action      string
-  Success     bool
+  State       KeywordActionState
   Message     string
 }
+
+// Applied reports whether the operation definitely committed. It is what populates the
+// legacy `success` boolean on the wire — deliberately a method rather than a second stored
+// field, so the two cannot drift apart.
+func (o KeywordActionOutcome) Applied() bool { return o.State == KeywordActionApplied }
 ```
 
 ### Layer 3: Service Interfaces (Orchestrator Capabilities)
@@ -742,26 +842,37 @@ func (s *BriefService) UpdateCampaignKeywords(ctx context.Context,
   
   // Marshal results
   results := make([]*briefs.KeywordActionResult, len(outcomes))
-  succeeded := int32(0)
+  var succeeded, failed, unconfirmed int32
   for i, outcome := range outcomes {
     results[i] = &briefs.KeywordActionResult{
       AdGroupID:   outcome.AdGroupID,
       CriterionID: outcome.CriterionID,
       Keyword:     outcome.Keyword,
       Action:      outcome.Action,
-      Success:     outcome.Success,
+      Outcome:     string(outcome.State),
+      Success:     outcome.Applied(),  // legacy field, derived — never stored twice
       Message:     outcome.Message,
     }
-    if outcome.Success {
+    // Counted per state, NOT derived. `failed := len(outcomes) - succeeded` is the bug this
+    // whole three-state design exists to prevent: it silently reclassifies every unconfirmed
+    // operation as a failure, and a UI reading that offers a one-click retry of a batch that
+    // may already have committed.
+    switch outcome.State {
+    case model.KeywordActionApplied:
       succeeded++
+    case model.KeywordActionFailed:
+      failed++
+    case model.KeywordActionUnconfirmed:
+      unconfirmed++
     }
   }
   
   return &briefs.CampaignKeywordActionResult{
-    Total:     int32(len(outcomes)),
-    Succeeded: succeeded,
-    Failed:    int32(len(outcomes)) - succeeded,
-    Results:   results,
+    Total:       int32(len(outcomes)),
+    Succeeded:   succeeded,
+    Failed:      failed,
+    Unconfirmed: unconfirmed,
+    Results:     results,
   }, nil
 }
 ```
@@ -803,15 +914,32 @@ So the keyword work is **two layers, not one**, and PR 2 must contain both:
 
    ```go
    // PartialMutateError reports a mutate that stopped part-way through its chunks.
-   // AppliedThrough is the number of operations whose outcome the upstream response
-   // CONFIRMED, and Results holds those outcomes, index-aligned with the ops slice.
-   // Operation AppliedThrough itself is the one that was in flight when the call failed:
-   // it is UNCONFIRMED — the request left and the response did not return intact, so it
-   // may or may not have committed. Everything after it was never attempted.
+   //
+   // The unit of ambiguity is the CHUNK, not the operation. MutateKeywordCriteria sends a
+   // whole chunk in ONE HTTP request, so when a response is lost every operation in that
+   // request is unconfirmed — not just the first one. A single AppliedThrough index cannot
+   // say that: it makes the operations after it look "never attempted" and therefore safe to
+   // retry, when they were in the same in-flight request and may equally have committed.
+   // That is the most dangerous possible mislabelling, because it is the one an operator
+   // acts on.
+   //
+   // So the boundaries are recorded as a RANGE, and the three groups are explicit:
+   //   ops[:ConfirmedThrough]              — the upstream response confirmed these;
+   //                                         Results holds their outcomes, index-aligned
+   //   ops[ConfirmedThrough:UnsentFrom]    — the in-flight chunk: UNCONFIRMED, every one
+   //   ops[UnsentFrom:]                    — never left this process; safe to retry
+   //
+   // For a failure on the very first chunk ConfirmedThrough is 0 and UnsentFrom is that
+   // chunk's length, which is exactly right: nothing is confirmed and the whole chunk is in
+   // doubt.
    type PartialMutateError struct {
-     AppliedThrough int
-     Results        []KeywordCriterionResult
-     Err            error
+     // ConfirmedThrough is the number of operations whose outcome the upstream CONFIRMED.
+     ConfirmedThrough int
+     // UnsentFrom is the index of the first operation that was never transmitted — i.e. the
+     // start of the first chunk after the one that failed.
+     UnsentFrom int
+     Results    []KeywordCriterionResult
+     Err        error
    }
    ```
 
@@ -1057,38 +1185,50 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
     //      chunks 1 and 2 DEFINITELY applied. Those operations succeeded and the caller
     //      has no way to learn it from this branch.
     //
-    // Marking every pending action `success: false` claims none was applied, and an
-    // operator reading that retries the whole batch — re-pausing keywords that are
-    // already paused (harmless) or, in Phase 2, re-applying a bid change on top of one
-    // that already landed (not harmless). This mirrors the create-path discipline the
-    // dispatchers already use: an ambiguous outcome is reported as ambiguous.
+    // Marking every pending action `failed` claims none was applied, and an operator reading
+    // that retries the whole batch — re-pausing keywords that are already paused (harmless)
+    // or, in Phase 2, overwriting an intervening manual bid change with a stale value (not
+    // harmless). This mirrors the create-path discipline the dispatchers already use: an
+    // ambiguous outcome is reported as ambiguous.
     //
-    // So the client returns what it knows. MutateKeywordCriteria's error carries the
-    // index at which the batch stopped (`AppliedThrough`), which lets this branch split
-    // pending into three groups instead of flattening them into one wrong one:
-    //   - before the failure point → the upstream result already says OK/failed; keep it
-    //   - AT the failure point     → UNCONFIRMED, may or may not have applied
-    //   - after it                 → not attempted; safe to retry
+    // So the client returns what it knows, as a RANGE rather than a single index — see
+    // PartialMutateError. The chunk is the unit of ambiguity: everything in the in-flight
+    // HTTP request is unconfirmed together, because one lost response loses the fate of
+    // every operation it carried. Three groups, and the middle one is a span, not a point:
+    //   - [0, ConfirmedThrough)          → upstream said OK/failed; keep its verdict
+    //   - [ConfirmedThrough, UnsentFrom) → the in-flight chunk: UNCONFIRMED, all of it
+    //   - [UnsentFrom, len)              → never transmitted; safe to retry
+    //
+    // When the error is NOT a *PartialMutateError the client cannot say how far it got, so
+    // the conservative reading is that the WHOLE batch is in flight: ConfirmedThrough 0,
+    // UnsentFrom len(pending). Defaulting UnsentFrom to 0 instead would label every
+    // operation "not attempted" — the failure mode this branch exists to prevent, reached
+    // through a zero value.
     //
     // The platform client already classifies and redacts upstream errors; do not
     // re-render the raw response body into a user-visible message.
     var pe *googleads.PartialMutateError
-    applied := 0
+    confirmedThrough, unsentFrom := 0, len(pending)
     if errors.As(merr, &pe) {
-      applied = pe.AppliedThrough // count of ops whose outcome upstream confirmed
+      confirmedThrough, unsentFrom = pe.ConfirmedThrough, pe.UnsentFrom
       for i, r := range pe.Results {
-        pending[i].Success = r.OK
+        if r.OK {
+          pending[i].State = model.KeywordActionApplied
+        } else {
+          pending[i].State = model.KeywordActionFailed
+        }
         pending[i].Message = r.Message
       }
     }
-    for i := applied; i < len(pending); i++ {
-      pending[i].Success = false
-      if i == applied {
-        pending[i].Message = "unconfirmed: the request failed after it was sent, so this " +
-          "keyword may or may not have been changed — check Google Ads before retrying"
-      } else {
-        pending[i].Message = "not attempted: an earlier keyword in this batch failed"
-      }
+    for i := confirmedThrough; i < unsentFrom; i++ {
+      pending[i].State = model.KeywordActionUnconfirmed
+      pending[i].Message = "unconfirmed: this keyword was in the request that failed after " +
+        "it was sent, so it may or may not have been changed — check Google Ads before retrying"
+    }
+    for i := unsentFrom; i < len(pending); i++ {
+      pending[i].State = model.KeywordActionFailed
+      pending[i].Message = "not attempted: an earlier part of this batch failed before this " +
+        "keyword was sent"
     }
   case len(res) != len(ops):
     // A 2xx whose result count does not match the operation count is a malformed
@@ -1097,13 +1237,21 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
     // controlled platform error. Length checks belong in the client, which is why
     // MutateKeywordCriteria returns a typed slice and validates the count itself; this
     // is the caller-side backstop.
+    // UNCONFIRMED, not failed: Google answered 2xx, so the mutate very likely committed —
+    // we simply cannot map results back to operations. Calling that a failure invites the
+    // retry.
     for _, outcome := range pending {
-      outcome.Success = false
-      outcome.Message = "google ads returned an incomplete result set for this batch"
+      outcome.State = model.KeywordActionUnconfirmed
+      outcome.Message = "google ads returned an incomplete result set for this batch; the " +
+        "changes may have been applied — check Google Ads before retrying"
     }
   default:
     for i, outcome := range pending {
-      outcome.Success = res[i].OK
+      if res[i].OK {
+        outcome.State = model.KeywordActionApplied
+      } else {
+        outcome.State = model.KeywordActionFailed
+      }
       outcome.Message = res[i].Message
     }
   }
@@ -1126,10 +1274,27 @@ func dateRangeForDays(days int32) (string, string) {
 }
 ```
 
-**Note on `LAST_30_DAYS` semantics.** Google's own `LAST_30_DAYS` excludes today. The window above
-*includes* today, because the UI's `days` parameter has always meant "the last N days including
-the partial current day" and the keyword table is used for intra-day decisions. That is a
-deliberate divergence, not an oversight — Open Question 4 asks whether to keep it.
+**Note on `LAST_30_DAYS` semantics — this CHANGES the reporting window.** Google's own
+`LAST_30_DAYS` excludes today, and so does the current UI: `resolveDateRange` maps `days` to the
+GAQL literals `LAST_7_DAYS` / `LAST_14_DAYS` / `LAST_30_DAYS`
+(`campaign-metrics.service.ts:128-132`), all of which end YESTERDAY. The window computed above
+*includes* the partial current day, so the same `days=30` request returns a different set of
+rows than the screen it is meant to replace — numbers will not tie out against the existing view
+during any overlap.
+
+That may still be the right call: the keyword table is used for intra-day decisions, and a
+30-day window that silently stops at midnight is a real complaint. But it is a **behaviour
+change requiring an explicit decision and a test**, not a note. Open Question 4 as originally
+written asked only which day COUNTS to allow, which is the smaller question; it now also has to
+answer include-today vs. completed-days. Whichever way it lands, pin it:
+
+- If completed-days wins, `dateRangeForDays` ends at `now-1` and a test asserts the end date is
+  not today.
+- If include-today wins, a test asserts the end date IS today, and the migration note says
+  plainly that keyword numbers will differ from the legacy endpoint by one partial day.
+
+Either way the divergence from `MetricsWindow`'s Google-aligned semantics elsewhere in this
+service is documented at the endpoint, so a reader comparing two surfaces is not left guessing.
 
 **File to edit:** `internal/dispatch/googleads.go` (same file — the capability assertion sits with
 the methods it asserts about)
@@ -1151,9 +1316,11 @@ not an `orchestrator` package (no such package exists).
 
 > **On the `Base:` fields below.** These are written as a stack (each PR based on the previous),
 > which conflicts with the repo's standing convention that **every PR targets `main`**. The Google
-> Ads stack (#66→#67→#68→#69→#70) is the cautionary case: it is currently blocked because #69 has
-> an unresolvable conflict against its base rather than against `main`, and each unmerged parent
-> multiplies the rebase cost of everything above it.
+> Ads stack (#66→#67→#68→#69→#70) is the cautionary case: it stalled for days because #69
+> conflicted against its BASE rather than against `main`, and each unmerged parent multiplied the
+> rebase cost of everything above it. That particular jam has since cleared — #69 merged on
+> 2026-08-07 — but the cost it demonstrated is the reason for the rule, not an argument that the
+> rule was unnecessary.
 >
 > Every PR below therefore targets `main` and is opened only once its predecessor has merged. The
 > ordering is a **build order**, not an instruction to open a chained stack up front.
@@ -1363,10 +1530,24 @@ payload. This question only existed while authorization was missing from the des
 
 **Current Design:** The service validates `days ∈ {7, 14, 30}` and rejects others with 400.
 
-**Decision Needed:**
+**Decision Needed (a) — which day counts to accept:**
 - Keep the strict enum (breaks compatibility with any UI call using days=1 or days=60)?
 - Map arbitrary days to the nearest enum value (days ≤ 7 → 7, 7 < days ≤ 14 → 14, days > 14 → 30)?
-- **Recommendation:** Keep strict enum. The UI should be updated to only call with valid values. This is backward-compatible because the current /api/campaigns/keywords endpoint doesn't exist yet; there's no deployed UI calling it.
+- **Recommendation:** Keep strict enum. The UI should be updated to only call with valid values. The current `/api/campaigns/keywords` BFF endpoint accepts arbitrary `days` but `resolveDateRange` already collapses it to one of three GAQL literals, so the enum loses nothing a caller can actually observe.
+
+**Decision Needed (b) — where the window ENDS.** This is the larger half and was missing from the
+original framing. The UI's `resolveDateRange` (`campaign-metrics.service.ts:128-132`) emits
+`LAST_7_DAYS` / `LAST_14_DAYS` / `LAST_30_DAYS`, all of which END YESTERDAY. The explicit-date
+computation proposed above ends TODAY. Same `days=30`, different rows.
+
+- Preserve completed-day semantics (end at `now-1`): numbers tie out against the existing screen;
+  intra-day changes are invisible until the next day.
+- Include today: better for the optimize loop this surface exists for, but keyword numbers will
+  not reconcile with the legacy endpoint, and that has to be stated in the UI.
+- **Recommendation:** preserve completed-day semantics for the first cut, because "the new page
+  disagrees with the old page" is the failure mode that costs the most trust, and switching to
+  include-today later is additive. **Either choice ships with a test asserting the end date**, so
+  the window cannot drift silently.
 
 ### 5. Criterion ID vs. Resource Name
 
@@ -1399,23 +1580,62 @@ customer anyway, which is the same work with a larger attack surface.
 case that matters most: the batch stopped mid-flight and one operation's fate is genuinely unknown.
 Reporting that operation as `success: false` is a claim the service cannot support, and it is the
 claim that produces the worst next action — a full-batch retry that re-applies whatever already
-committed. Harmless for pause/remove (idempotent); not harmless for Phase 2's change-bid, which
-would stack a second adjustment on top of one that already landed.
+committed.
 
-The `merr != nil` branch above therefore distinguishes *unconfirmed* from *not attempted* in the
-`message`, and the UI should surface the unconfirmed one as "check Google Ads" rather than folding
-it into the failed count for a one-click retry. **Open question for the owning team:** whether
-`KeywordActionResult` should carry an explicit three-state `outcome` field instead of encoding the
-distinction in prose — cleaner for the UI, but it changes the shape the UI already consumes.
+Note what the retry risk actually is, because the obvious framing is wrong. `change-bid` sets an
+ABSOLUTE `bid_micros` (see the operation shape above), so replaying it does NOT stack a second
+adjustment — it writes the same number again, which on its own is idempotent. The real hazard is
+**overwriting an intervening change**: between the ambiguous first attempt and the retry, someone
+can raise the bid in Ads Manager or an automated rule can move it, and the blind replay silently
+reverts that to the value the batch was originally built from. `remove` has a companion hazard —
+a replay of an already-applied `remove` returns a not-found error that reads as a NEW failure and
+sends the operator looking for a problem that does not exist. Neither is caught by "the operation
+is idempotent"; both are caught by not retrying an operation whose fate is unknown.
+
+The `merr != nil` branch above therefore distinguishes *unconfirmed* from *not attempted*, and the
+UI should surface the unconfirmed one as "check Google Ads" rather than folding it into the failed
+count for a one-click retry.
+
+**Resolved in this design:** `KeywordActionResult` carries an explicit three-state `outcome`
+(`applied` / `failed` / `unconfirmed`) rather than encoding the distinction in prose, with the
+boolean `success` retained as a deprecated derived field so the existing UI shape does not break —
+see the Goa result type and `model.KeywordActionState` above. Encoding a state the UI must branch
+on inside a human-readable `message` would make correct UI behaviour depend on string matching.
 
 ### 7. Phase 2 Timing & Dependency on PR #69
 
-**Question:** PR #69 (GA-4 targeting) is currently unmerged and in conflict. Phase 1 (this plan) can land independently. Phase 2 (enable + change-bid) has a soft dependency on #69's keyword resource-name machinery.
+**Resolved — no longer a question.** PR #69 (GA-4 targeting) merged to `main` on 2026-08-07 at
+15:37 UTC and `internal/platform/googleads/targeting.go` is present. Phase 2's soft dependency
+on its keyword resource-name machinery is satisfied by branching from current `main`. The
+options below are retained for the record; the phasing choice is now about review size alone.
 
 **Decision Needed:**
 - Should Phase 1 block until #69 is merged, or land independently and Phase 2 chains after?
 - If Phase 1 lands first, should it pre-implement enable/change-bid (disabled with "not yet" error) to avoid a second API change?
 - **Recommendation:** Land Phase 1 independently. Phase 2 can be a separate PR that rebases on #69 once it merges. Do NOT pre-implement Phase 2 in Phase 1 (adds complexity, unclear timeline).
+
+### 8. The identity gap — how the account-wide UI view migrates to a campaign-scoped endpoint
+
+**This is the one open question that changes the delivery shape, not just a field.** The existing
+BFF `getKeywords` (`campaign-metrics.service.ts:67-95`) runs ONE account-wide GAQL query over
+`keyword_view` with no project, brief, or campaign scope, and returns Google Ads
+`campaign.id` / `ad_group.id` strings. The endpoint designed here is scoped to a
+campaign-service campaign UUID. They do not return the same set of rows, so this is not a URL
+swap — see "The identity gap" section above.
+
+**Decision Needed** — pick one:
+- **Scope the view.** The UI adds a campaign selector and calls the new endpoint per campaign.
+  Simplest server side; changes the screen's information architecture.
+- **Resolve GA ids to local campaigns.** Add an account-wide read that maps each returned
+  `campaign.id` back through `PlatformCampaignID` so the flat table survives. Preserves the
+  screen; needs a second endpoint and a decision about keywords on campaigns this service does
+  not own.
+- **Recommendation:** scope the view. The keyword surface exists to act on one campaign's
+  keywords, and an account-wide table that mixes campaigns this service cannot act on is a
+  worse starting point than a narrower one that is correct.
+
+Until this is decided, the new endpoint is **additive**: `GET /api/campaigns/keywords` is not
+retired by PR 1.
 
 ---
 
@@ -1447,10 +1667,10 @@ Then, as each implementation PR lands:
 
 ## Conclusion
 
-This plan provides a concrete, layered implementation roadmap for the Optimize-phase keyword surface. **Phase 1 (pause/remove) is deliverable independently and immediately.** Phase 2 (enable/change-bid) chains cleanly behind PR #69 when that merges. Each PR is under 1000 hand-written lines and reviewable against clear acceptance criteria.
+This plan provides a concrete, layered implementation roadmap for the Optimize-phase keyword surface. **Phase 1 (pause/remove) is deliverable independently and immediately.** Phase 2 (enable/change-bid) is equally unblocked — #69 merged on 2026-08-07, so its resource-name machinery is already on `main`; splitting the phases is now a review-size choice, not a dependency. Each PR is under 1000 hand-written lines and reviewable against clear acceptance criteria.
 
 **Dependencies and blocking factors are resolved:**
-- No hard dependency on PR #69 for Phase 1
+- No dependency on PR #69 for either phase — it merged 2026-08-07
 - Error mapping follows established patterns (MetricsReader, StatusToggler)
 - The Google Ads surface is reached through `internal/platform/googleads`, which PR 2 extends
   with keyword read/mutate/authorize methods — there is no SDK and no exported search or mutate

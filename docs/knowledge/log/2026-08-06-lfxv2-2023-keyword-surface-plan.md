@@ -90,14 +90,20 @@ failure on the third chunk leaves the first two **definitely applied**; and a
 `transportError` means the request left and the response did not return intact, so the
 operation in flight may well have committed. Flattening all three states — confirmed,
 unconfirmed, not attempted — into `false` tells the operator to retry the whole batch. For
-pause/remove that is merely wrong; for Phase 2's change-bid it stacks a second adjustment on
-top of one that already landed.
+pause/remove that is merely wrong; for Phase 2's change-bid it is worse — though not for the
+reason the first draft of this entry gave. `change-bid` writes an ABSOLUTE `bid_micros`, so a
+replay writes the same value and stacks nothing. The hazard is that the replay **overwrites an
+intervening change**: a bid raised in Ads Manager or moved by an automated rule between the
+ambiguous attempt and the retry is silently reverted to the batch's original value. Idempotence
+is not the property that saves you here; not retrying an unknown outcome is.
 
 So the client now owes the caller a typed failure. `PartialMutateError` carries
-`AppliedThrough` (the count whose outcome upstream confirmed) plus those confirmed results,
-which lets the dispatcher split `pending` three ways instead of one: keep the confirmed
-outcomes, mark the operation at the failure point UNCONFIRMED with a message that says to
-check Google Ads before retrying, and mark the rest not-attempted and safe to retry.
+`ConfirmedThrough` (the count whose outcome upstream confirmed) and `UnsentFrom` (where the
+never-sent tail begins) plus those confirmed results, which lets the dispatcher split `pending`
+three ways instead of one: keep the confirmed outcomes, mark the whole in-flight chunk
+UNCONFIRMED — not just the single operation at the failure point, since a chunk fails as a unit
+— with a message that says to check Google Ads before retrying, and mark the rest not-attempted
+and safe to retry.
 
 This is the create-path discipline applied to a mutate: an ambiguous upstream outcome is
 reported as ambiguous. Assuming failure is the more dangerous default precisely because it
