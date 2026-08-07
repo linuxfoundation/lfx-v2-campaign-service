@@ -543,18 +543,20 @@ DIRECTLY; a `login-customer-id` header does not make it enumerate that manager's
 that is a property of the endpoint, not of the header. On an MCC connection the flat list is
 therefore often just the manager itself, with every child ad account missing.
 
-So `ListAccessibleCustomers` has two modes, and they do not merge:
+So `ListAccessibleCustomers` has two modes, they do not merge, and **each issues exactly one
+Google Ads request**. The mode is decided from `login_customer_id` before anything goes over
+the wire:
 
 - **No `login_customer_id`.** The direct list IS the answer. Every account in it is one the
   credential addresses on its own behalf. A manager account can still be in there and cannot
   hold campaigns, but the response carries no `manager` flag, so there is nothing to recognise
   it by; a round-trip per row to find out would cost more than it saves on a list this short.
-- **`login_customer_id` set.** The selectable set is exactly `listManagerClients`' output: a
+- **`login_customer_id` set.** `listManagerChildren` returns immediately, and the flat endpoint
+  is **never called**. The selectable set is exactly `listManagerClients`' output: a
   `customer_client` GAQL query scoped to the manager, requesting only `status = 'ENABLED'`
-  clients and dropping rows where `customer_client.manager` is true. The flat list is validated
-  and then **not used as a source of selectable accounts.**
+  clients and dropping rows where `customer_client.manager` is true.
 
-Discarding it is the point, not an oversight. `listAccessibleCustomers` is UNSCOPED — the
+Not calling it is the point, not an oversight. `listAccessibleCustomers` is UNSCOPED — the
 header does not filter it — while every OTHER request this client makes carries that header, so
 an account is addressable through this client only if it sits under the configured manager. An
 account the user reaches directly but which belongs to a different hierarchy comes back in the
@@ -571,9 +573,19 @@ per path through the hierarchy and a client of a sub-manager that is itself a cl
 appears twice. A row with no id is a hard error rather than a silent drop, since dropping it
 would understate the list the operator chooses from.
 
-Validation of the flat list still runs in BOTH modes even though manager mode discards its
-contents: a resource name that is not `customers/{digits}` means the 2xx did not match the
-documented contract, and that is worth failing on wherever it is noticed.
+Flat-list resource names are validated as `customers/{digits}` in direct mode, where a caller
+persists the value as the connection's account id and interpolates it into later request
+paths. That validation used to run in manager mode too, on rows nothing would consume — which
+only meant the discarded response had one more way to fail the request. Manager-mode ids are
+validated inside `listManagerClients` instead.
+
+**Only one call means only one failure mode.** Fetching the flat list and then throwing it
+away spent request quota and the caller's shared 20s discovery budget, but the behavioural
+cost was worse: a timeout, 429, or 5xx on a response that was never going to be read still
+propagated out and failed the whole discovery, even though the hierarchy query alone would
+have answered correctly. `TestListAccessibleCustomers_ManagerModeNeverCallsTheFlatList` pins
+this by failing the flat endpoint with a 500 and requiring discovery to succeed anyway —
+every other manager-mode test serves both endpoints and so passes either way.
 
 The REST binding is GET (not the POST used by `:search` and `:mutate`), it takes no request
 body at all, and it is sent with `idempotent=true` — a pure read, so retrying a 429 cannot

@@ -479,6 +479,64 @@ func TestListAccessibleCustomers_RejectsMalformedLoginCustomerID(t *testing.T) {
 	}
 }
 
+// TestListAccessibleCustomers_ManagerModeNeverCallsTheFlatList pins that manager mode
+// issues exactly ONE Google Ads request.
+//
+// Every other manager-mode test in this file serves both endpoints, so all of them pass
+// whether the flat list is fetched-then-discarded or never fetched at all. That made the
+// wasted round-trip invisible to the suite. It is not a cosmetic waste: the flat call
+// spends request quota and the caller's shared 20s discovery budget, and its own timeout,
+// 429, or 5xx propagates out of ListAccessibleCustomers and fails discovery even though
+// its result would have been thrown away.
+//
+// The handler here therefore FAILS the flat endpoint with a 500. If the implementation
+// touches it, the error surfaces and the test fails on the returned error; if it does not,
+// discovery succeeds from the hierarchy query alone. The counter makes the diagnostic
+// explicit rather than leaving it as a confusing 500.
+func TestListAccessibleCustomers_ManagerModeNeverCallsTheFlatList(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		flatHits int
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeAccountsToken(w, r) {
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"results":[
+				{"customerClient":{"id":"2222222222","descriptiveName":"Child Ad Account","manager":false,"status":"ENABLED"}}
+			]}`)
+			return
+		}
+		mu.Lock()
+		flatHits++
+		mu.Unlock()
+		// A flat list that is genuinely unavailable. Manager mode must not care.
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"error":{"code":500,"message":"backend error"}}`)
+	}))
+	defer server.Close()
+
+	accounts, err := newManagerTestClient(t, server).ListAccessibleCustomers(context.Background())
+
+	mu.Lock()
+	hits := flatHits
+	mu.Unlock()
+
+	if hits != 0 {
+		t.Errorf("manager mode issued %d request(s) to customers:listAccessibleCustomers, want 0 — "+
+			"its result is discarded, so the call can only cost quota and budget and add a failure mode", hits)
+	}
+	if err != nil {
+		t.Fatalf("manager-mode discovery must succeed from the hierarchy query alone even when the "+
+			"flat list is failing; got %v", err)
+	}
+	if len(accounts) != 1 || accounts[0].ResourceName != "customers/2222222222" {
+		t.Errorf("got %+v, want the single enabled child from the expansion", accounts)
+	}
+}
+
 // TestListAccessibleCustomers_ExpandsManagerHierarchy pins the MCC case.
 // customers:listAccessibleCustomers returns only what the authenticated user can act on
 // DIRECTLY — it does not walk a manager hierarchy, whatever login-customer-id says. On an
