@@ -538,6 +538,21 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			return nil, &briefs.BadRequestError{Code: "400", Message: msg}
 		case errors.Is(merr, ErrCampaignNotProvisioned):
 			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id yet"}
+		case errors.Is(merr, ErrCampaignAccountMismatch):
+			// The two customer ids stay server-side: which ad account a project is connected
+			// to is connection configuration, not something a metrics reader needs told.
+			//
+			// The LOG is scrubbed too, for a separate reason. merr embeds
+			// client.CustomerID(), which comes from the connection's account_id — a design
+			// attribute with no Pattern, MaxLength, or charset constraint (unlike Meta's
+			// act_<digits> or X's alphanumeric ids). This guard also runs BEFORE any request,
+			// so the client's own validateAccountIDs has not executed for this instance yet.
+			// The value reaching this line is therefore arbitrary operator-supplied text, and
+			// safeErrSummary is what keeps it from being written verbatim into a log record.
+			slog.WarnContext(ctx, "campaign metrics read blocked: campaign belongs to a different ad account than the current connection",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "error", safeErrSummary(merr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "the campaign belongs to a different ad account than this project's current connection — reconnect the original account to read its metrics"}
 		default:
 			slog.WarnContext(ctx, "campaign metrics read failed on the ad platform",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
@@ -690,6 +705,18 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			// the same way, so this is a 409, not a 503. It avoids "wait" (a campaign missing a
 			// child never gains one by waiting) and points at the actual remedy.
 			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id yet, or it lacks the child entities needed to change its status (e.g. its ad group/ad, ad set, or creatives); finish or recreate the campaign before toggling its status"}
+		case errors.Is(terr, ErrCampaignAccountMismatch):
+			// The campaign belongs to a different ad account than the project's current
+			// connection, so the mutation was refused BEFORE the platform was contacted —
+			// nothing changed upstream, and a retry would be refused identically, so this is a
+			// non-retryable 409 rather than a 503 or an UNCONFIRMED outcome. The two customer
+			// ids stay server-side (connection configuration, not client business), and the
+			// log goes through safeErrSummary for the same unvalidated-account_id reason
+			// spelled out on the metrics branch above.
+			slog.WarnContext(ctx, "campaign status toggle blocked: campaign belongs to a different ad account than the current connection",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "status", p.Status, "error", safeErrSummary(terr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "the campaign belongs to a different ad account than this project's current connection — reconnect the original account to change its status"}
 		case errors.As(terr, &unconfirmed) && unconfirmed.Unconfirmed():
 			// UNCONFIRMED: a transport/5xx/redirect error means the PATCH MAY already have
 			// applied on the platform. Do NOT say "not modified" (it might be) and do NOT
