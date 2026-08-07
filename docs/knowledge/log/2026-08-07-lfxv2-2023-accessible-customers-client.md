@@ -35,3 +35,35 @@ understate the list the operator picks from.
 
 This PR is the platform client only. The dispatch adapter and the HTTP endpoint that expose it
 land separately.
+
+## Review pass — the flat list is not usable in manager mode
+
+The first cut treated `listAccessibleCustomers` and the manager expansion as two sources
+to merge, dropping only the configured manager from the flat half. Review pointed out that
+the merge itself is wrong.
+
+`listAccessibleCustomers` is unscoped: the `login-customer-id` header does not filter it.
+Every other request this client makes does carry that header. So the flat list can contain
+an account the user genuinely reaches — through some *other* manager, or directly — that
+this client cannot address at all. Returning it puts an unusable option in the account
+picker, and the failure does not surface at selection time. It surfaces at first dispatch,
+as `PERMISSION_DENIED`, long after the connection was saved, where it reads as a broken
+credential rather than a wrong account.
+
+Manager mode now returns exactly the manager's ENABLED, non-manager children. That set is
+also better shaped for every other reason: `customer_client` carries `descriptive_name`, so
+the accounts are labelled, and the manager rows the flat list cannot identify are already
+filtered out by the query. Nothing addressable is lost — an account under the configured
+manager appears in the expansion too — so the merge was only ever adding options that could
+not work.
+
+The flat list is still fetched and still validated in manager mode. A resource name that is
+not `customers/{digits}` means the 2xx did not match the documented contract, and that is
+worth failing on wherever it is noticed, regardless of which branch consumes the rows.
+
+`TestListAccessibleCustomers_ManagerModeExcludesAccountsOutsideTheHierarchy` puts three
+things in the flat list — the configured manager, a child inside the hierarchy, and an
+outsider — and asserts only the child survives. Restoring the merge fails it, along with
+`ManagerModeDedupsRepeatedChildren`, which covers the one dedup that still matters:
+`customer_client` reports a client once per path through the hierarchy, so a client of a
+sub-manager that is itself a client of the root would otherwise appear in the picker twice.
