@@ -682,9 +682,12 @@ func TestTwitter_ReadMetrics_UnsupportedWindow(t *testing.T) {
 // (a single-day range within the 7-day limit) is correctly mapped and produces
 // query params with the right start_time and end_time.
 func TestTwitter_ReadMetrics_YesterdayIsSupported(t *testing.T) {
+	var mu sync.Mutex
 	var gotQuery string
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		gotQuery = r.URL.RawQuery
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"data":[{"id":"li1","id_data":[{"metrics":{"impressions":[100],"clicks":[10],"billed_charge_local_micro":[500000]}}]}]}`))
@@ -712,8 +715,11 @@ func TestTwitter_ReadMetrics_YesterdayIsSupported(t *testing.T) {
 
 	// Verify the query contained start_time and end_time (exact values depend on fixed clock,
 	// tested separately in twitter/metrics_test.go::TestGetCampaignMetrics_YesterdayQueryParams).
-	if !strings.Contains(gotQuery, "start_time=") || !strings.Contains(gotQuery, "end_time=") {
-		t.Errorf("expected start_time and end_time in query, got: %s", gotQuery)
+	mu.Lock()
+	query := gotQuery
+	mu.Unlock()
+	if !strings.Contains(query, "start_time=") || !strings.Contains(query, "end_time=") {
+		t.Errorf("expected start_time and end_time in query, got: %s", query)
 	}
 }
 

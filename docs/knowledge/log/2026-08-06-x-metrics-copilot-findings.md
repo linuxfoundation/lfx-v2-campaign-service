@@ -45,3 +45,13 @@ description to list all three supported windows: `WindowYesterday`, `WindowToday
 **Update** — Updated documentation in `docs/knowledge/code/internal-platform-twitter.md`
 to include `WindowYesterday` in the list of supported windows and to be explicit about
 which longer windows are rejected (`LAST_14_DAYS`, `LAST_30_DAYS`, `THIS_MONTH`, `LAST_MONTH`).
+
+**Update** — Fixed unsynchronized test variable race condition in
+`internal/dispatch/twitter_test.go:TestTwitter_ReadMetrics_YesterdayIsSupported`
+(reported by both Cursor and Copilot). The test wrote `gotQuery` from within the
+httptest handler goroutine and read it in the test goroutine without synchronization.
+Added `sync.Mutex` guarding both the write (in the handler) and the read (in the test
+assertion), following the pattern used in all other httptest tests in
+`internal/platform/twitter/metrics_test.go`. This defect class appears in other
+table-driven httptest tests in the repo (e.g., PR #67); PR #74 now serves as a pattern
+fix for the campaign-service tests.
