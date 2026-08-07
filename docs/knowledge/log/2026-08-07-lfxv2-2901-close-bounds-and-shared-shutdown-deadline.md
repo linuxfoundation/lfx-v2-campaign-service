@@ -65,3 +65,42 @@ holds the claim ACROSS the platform call (where the 45s and the cooldown come fr
 the update performs no I/O between claim and persist. What bounds the concurrent claim
 count is that both are one operation per campaign per request. Nothing structural bounds
 it, which is the same tracked design change as durable ownership.
+
+## Second review pass — the shared deadline was still extendable
+
+The absolute-instant fix above made every straggler share ONE expiry. It did not make that
+expiry monotonic, and Copilot's follow-up found the hole: `StopCooldownsForShutdown`
+published it with a plain `Store`, so the LAST caller won regardless of when its deadline
+expires. The doc comment on that function says it is safe to call more than once — so a
+second call carrying a longer timeout hands every woken straggler a deadline past the point
+the FIRST call's wait returns. The first caller reports the cooldowns drained while a
+release is still holding a connection, and `pgxpool.Close` blocks on it outside
+`ContainerCloseTimeout`. The overrun the shared deadline exists to prevent, reintroduced one
+layer down from where it was fixed.
+
+`publishCooldownReleaseDeadline` keeps the EARLIEST published deadline via a CAS loop. CAS
+rather than a mutex because `shutdownReleaseBound` runs on the woken goroutines' path and
+must not contend with them. Earliest, not latest, because it is the only direction safe for
+both callers at once: the shorter budget still expires before either wait does, and an
+expired context makes `releaseCampaignLock` destroy the connection — which is what frees the
+pool slot, so out-of-budget is the fast answer rather than the lossy one.
+
+The zero case is the part worth stating explicitly: an unpublished deadline reads as `0`,
+which is numerically EARLIER than any real instant. Treating it as a competitor would pin
+the bound at the epoch permanently and make every release run on a dead context, shutdown or
+not. The CAS therefore treats `0` as "nothing published" rather than as the earliest
+deadline, and a subtest covers exactly that. Revert-verified: restoring the plain `Store`
+fails the extend subtest and only that one.
+
+**The `Close` budget formula was written down with a term missing.**
+`docs/knowledge/code/internal-container.md` listed five of the six terms in
+`ContainerCloseTimeout` and omitted `sweeperStopTimeout`, which the constant and
+`TestShutdownBudgetComposes` both include. The `init()` panic message enumerated only three.
+A budget doc that under-counts is worse than none: the next person adding a `Close` timeout
+compares against the doc's sum, concludes there is headroom that is already spent, and the
+test that would have caught it is the one they did not know to read. Both now list all six
+in the order the constant declares them.
+
+Two log fragments from the 2026-08-06 pass carried no ticket in their slugs
+(`toggle-concurrency-test-fake-fidelity`, `toggle-fake-cooldown-release-deadlock`). Renamed
+with `lfxv2-2901` per the log-naming rule; nothing referenced the old paths.

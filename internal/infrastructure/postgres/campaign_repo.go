@@ -740,6 +740,9 @@ var (
 	// then blocks on that connection outside ContainerCloseTimeout, which is the exact overrun
 	// this budget exists to prevent. A shared deadline is the only form that composes across an
 	// unknown number of wake-ups.
+	//
+	// Published by publishCooldownReleaseDeadline, which keeps the EARLIEST deadline rather than
+	// the latest — see that function for why a plain Store is wrong under concurrent callers.
 	cooldownReleaseDeadlineNanos atomic.Int64
 )
 
@@ -752,6 +755,37 @@ var (
 // connection — which is precisely what frees the pool slot. Waiting politely for a graceful
 // unlock past the point Close stopped waiting would hold the slot pgxpool.Close is blocked on,
 // so out-of-budget is the one case where destroying the connection is the FASTER answer.
+// publishCooldownReleaseDeadline records deadline as the shared cooldown-release expiry, keeping
+// whichever published deadline is EARLIEST.
+//
+// StopCooldownsForShutdown is documented safe to call more than once, and Close is not the only
+// caller — a test harness or a second shutdown path can call it with a different timeout. A plain
+// Store lets the LAST caller win regardless of when it expires: a second call carrying a longer
+// timeout would hand every woken straggler a deadline past the point the FIRST call's wait
+// returns, so that first caller reports the cooldowns drained while a release is still holding a
+// connection — and pgxpool.Close then blocks on it outside ContainerCloseTimeout. That is the
+// exact overrun the shared deadline exists to prevent, reintroduced through the back door.
+//
+// Keeping the earliest is the conservative direction and the only one that is safe for BOTH
+// callers: the shorter budget still expires before either wait does, and an expired context makes
+// releaseCampaignLock destroy the connection, which frees the pool slot faster than a graceful
+// unlock would. CAS rather than a mutex because shutdownReleaseBound reads this on the woken
+// goroutines' path and must not contend with them.
+func publishCooldownReleaseDeadline(deadline time.Time) {
+	nanos := deadline.UnixNano()
+	for {
+		cur := cooldownReleaseDeadlineNanos.Load()
+		// cur == 0 is "nothing published yet"; any real deadline supersedes it. Otherwise only a
+		// strictly earlier deadline replaces what is there.
+		if cur != 0 && cur <= nanos {
+			return
+		}
+		if cooldownReleaseDeadlineNanos.CompareAndSwap(cur, nanos) {
+			return
+		}
+	}
+}
+
 func shutdownReleaseBound() time.Duration {
 	if d := cooldownReleaseDeadlineNanos.Load(); d > 0 {
 		return time.Until(time.Unix(0, d))
@@ -819,7 +853,11 @@ func StopCooldownsForShutdown(timeout time.Duration) {
 	// their own unlock, and a goroutine that woke first and read a zero would fall back to
 	// the default rather than to Close's actual budget. It is stamped here, where the wait
 	// starts, so every straggler shares one expiry no matter when it is scheduled.
-	cooldownReleaseDeadlineNanos.Store(time.Now().Add(timeout).UnixNano())
+	//
+	// Published through the earliest-wins helper, not stored directly: a concurrent or repeat
+	// call carrying a longer timeout must not extend a deadline an earlier caller is already
+	// waiting against.
+	publishCooldownReleaseDeadline(time.Now().Add(timeout))
 	cooldownMu.Lock()
 	cooldownStopped = true
 	cooldownMu.Unlock()

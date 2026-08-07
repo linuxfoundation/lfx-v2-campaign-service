@@ -304,3 +304,71 @@ func TestReleaseCampaignLock_OrdinaryPathKeepsTheGenerousBound(t *testing.T) {
 		}
 	}
 }
+
+// TestStopCooldownsForShutdown_LaterCallCannotExtendAnEarlierDeadline pins the direction the
+// shared deadline is allowed to move.
+//
+// StopCooldownsForShutdown is documented safe to call more than once, and the calls need not
+// carry the same timeout. Publishing with a plain Store makes the LAST call win regardless of
+// when it expires, so a second call with a longer timeout hands every woken straggler a deadline
+// past the point the FIRST call's wait returns. That first caller then reports the cooldowns
+// drained while a release still holds a connection, and pgxpool.Close blocks on it OUTSIDE
+// ContainerCloseTimeout — the exact overrun the shared deadline exists to prevent.
+//
+// The subtests cover both orders so the fix cannot be "always keep the second" by accident:
+// shrinking must take effect, extending must not.
+func TestStopCooldownsForShutdown_LaterCallCannotExtendAnEarlierDeadline(t *testing.T) {
+	const (
+		short = 100 * time.Millisecond
+		long  = 5 * time.Second
+	)
+
+	t.Run("a longer second call does not extend the first deadline", func(t *testing.T) {
+		resetCooldownState(t)
+
+		StopCooldownsForShutdown(short)
+		first := shutdownReleaseBound()
+		StopCooldownsForShutdown(long)
+
+		got := shutdownReleaseBound()
+		if got > short {
+			t.Fatalf("bound = %v after a %v call followed by a %v call; want no more than the "+
+				"earlier %v budget — a later call must never extend a deadline an earlier "+
+				"caller is already waiting against", got, short, long, short)
+		}
+		if got > first {
+			t.Fatalf("bound grew from %v to %v across the second call; the shared deadline may "+
+				"only move earlier", first, got)
+		}
+	})
+
+	t.Run("a shorter second call does tighten the deadline", func(t *testing.T) {
+		resetCooldownState(t)
+
+		StopCooldownsForShutdown(long)
+		StopCooldownsForShutdown(short)
+
+		got := shutdownReleaseBound()
+		if got > short {
+			t.Fatalf("bound = %v after a %v call followed by a %v call; want no more than %v — "+
+				"earliest-wins must accept a tighter budget, not merely reject a looser one",
+				got, long, short, short)
+		}
+	})
+
+	t.Run("the first publish wins over nothing, not over zero", func(t *testing.T) {
+		resetCooldownState(t)
+
+		// Guards the CAS's zero case: an unpublished deadline reads as 0, which is numerically
+		// EARLIER than any real deadline. Treating it as a competitor would pin the bound at the
+		// epoch forever and make every release destroy its connection on a permanently expired
+		// context, shutdown or not.
+		StopCooldownsForShutdown(long)
+
+		got := shutdownReleaseBound()
+		if got <= 0 {
+			t.Fatalf("bound = %v after the only publish; the unset zero must be superseded, "+
+				"not treated as the earliest deadline", got)
+		}
+	})
+}

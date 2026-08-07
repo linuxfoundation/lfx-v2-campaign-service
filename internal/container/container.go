@@ -151,7 +151,7 @@ func init() {
 	// Every term Close actually spends must be inside the budget — including the index
 	// publisher's connection drain, which Close performs after the pool closes.
 	if ContainerCloseTimeout > constants.DefaultShutdownTimeout {
-		panic("ContainerCloseTimeout (dispatch drain + cancel grace + index drain) exceeds DefaultShutdownTimeout")
+		panic("ContainerCloseTimeout (sweeper stop + relay stop + dispatch drain + cancel grace + index drain + cooldown stop) exceeds DefaultShutdownTimeout")
 	}
 	// The HTTP phase must have a positive budget once the container-close phase
 	// is reserved; otherwise HTTP handlers would get no drain window at all.
