@@ -521,7 +521,12 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			slog.WarnContext(ctx, "campaign metrics window unsupported by platform",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "window", window, "error", merr)
-			return nil, &briefs.BadRequestError{Code: "400", Message: "this window is not supported for the campaign's platform"}
+			// Provide platform-specific guidance on window support (e.g., X Ads' 7-day limit)
+			msg := "this window is not supported for the campaign's platform"
+			if existing.Platform == model.ProviderTwitterAds {
+				msg = "X Ads supports only today, yesterday, and last_7_days windows (API cap: 7-day queryable range)"
+			}
+			return nil, &briefs.BadRequestError{Code: "400", Message: msg}
 		case errors.Is(merr, ErrCampaignNotProvisioned):
 			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id yet"}
 		default:

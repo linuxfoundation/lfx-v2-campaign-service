@@ -134,16 +134,16 @@ dispatcher), mirroring the reddit client's helper of the same name.
 
 `GetCampaignMetrics(ctx, campaignID, window)` reads impressions, clicks, and spend metrics for
 a campaign from the X Ads synchronous analytics (`stats`) endpoint. It is a **LIVE READ ONLY**
-— never persisted, no async sweeper. Window is a predefined date-range literal (`WindowToday`
-or `WindowLast7Days`); an unsupported window returns the typed `ErrUnsupportedWindow` sentinel
-(discriminable via `errors.Is`, not string-matching) rather than silently truncating or
+— never persisted, no async sweeper. Window is a predefined date-range literal (`WindowYesterday`,
+`WindowToday`, or `WindowLast7Days`); an unsupported window returns the typed `ErrUnsupportedWindow`
+sentinel (discriminable via `errors.Is`, not string-matching) rather than silently truncating or
 averaging. Campaign ID validation similarly returns the typed `ErrInvalidCampaignID` sentinel.
 
 **CRITICAL DESIGN CONSTRAINT: X Ads API stats endpoint caps queryable date ranges at 7 days
-per request.** Only `WindowToday` (1 day) and `WindowLast7Days` (7 days) are supported. Any
-request for a longer window (`LAST_30_DAYS`, `THIS_MONTH`, `LAST_MONTH`) is REJECTED with
-`ErrUnsupportedWindow` — NOT silently truncated, averaged, or extrapolated. This is a permanent
-platform constraint documented in the knowledge base.
+per request.** Supported windows: `WindowYesterday` (1 day), `WindowToday` (1 day), and `WindowLast7Days`
+(7 days). Any request for a longer window (`LAST_14_DAYS`, `LAST_30_DAYS`, `THIS_MONTH`,
+`LAST_MONTH`) is REJECTED with `ErrUnsupportedWindow` — NOT silently truncated, averaged, or
+extrapolated. This is a permanent platform constraint documented in the knowledge base.
 
 **The stats endpoint is NOT nested under `/accounts/{id}` the way every other endpoint this
 client calls is** — it's `{base}/{version}/stats/accounts/{id}` (account id trailing, not

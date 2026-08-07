@@ -27,11 +27,13 @@ var campaignIDRe = regexp.MustCompile(`^[A-Za-z0-9]+$`)
 type MetricsWindow string
 
 // Supported metrics windows. X Ads limits the date range to 7 days per request,
-// so only LAST_7_DAYS (7 days) and TODAY (1 day) are supported. Any other window
-// — LAST_30_DAYS, THIS_MONTH, LAST_MONTH — will return ErrUnsupportedWindow
-// explaining the 7-day API limitation. Do NOT extend this allow-list without
-// also lifting X's API ceiling; extrapolation or averaging is never acceptable.
+// so YESTERDAY (1 day), TODAY (1 day), and LAST_7_DAYS (7 days) are supported.
+// Any other window — LAST_14_DAYS, LAST_30_DAYS, THIS_MONTH, LAST_MONTH — will
+// return ErrUnsupportedWindow explaining the 7-day API limitation. Do NOT extend
+// this allow-list without also lifting X's API ceiling; extrapolation or averaging
+// is never acceptable.
 const (
+	WindowYesterday MetricsWindow = "YESTERDAY"
 	WindowToday     MetricsWindow = "TODAY"
 	WindowLast7Days MetricsWindow = "LAST_7_DAYS"
 
@@ -96,13 +98,19 @@ func firstOrZero(metrics []int64) int64 {
 
 // dateRangeForWindow computes the start and end dates for a metrics window,
 // returning them as YYYY-MM-DD strings suitable for X Ads API parameters.
-// X Ads uses the convention of date ranges that are inclusive on both ends.
+// The X Ads stats endpoint uses exclusive-end-time boundaries: the returned
+// endDate is incremented by one day so that when combined with T00:00:00Z it
+// represents the start of the next day (exclusive upper bound of the range).
 func dateRangeForWindow(window MetricsWindow, now time.Time) (startDate, endDate string) {
 	// Normalize to UTC for consistent date computation
 	now = now.UTC()
 	endDate = now.Format("2006-01-02")
 
 	switch window {
+	case WindowYesterday:
+		// Yesterday is one day before today
+		startDate = now.AddDate(0, 0, -1).Format("2006-01-02")
+		endDate = startDate // Both start and end are the same day
 	case WindowToday:
 		startDate = endDate
 	case WindowLast7Days:
@@ -149,7 +157,7 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	// ErrUnsupportedWindow so callers can discriminate this from an upstream
 	// failure via errors.Is.
 	switch w {
-	case WindowToday, WindowLast7Days:
+	case WindowYesterday, WindowToday, WindowLast7Days:
 		// Valid; proceed
 	default:
 		return nil, ErrUnsupportedWindow
@@ -182,8 +190,7 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	//     whole date range rather than a time series.
 	// UNVERIFIED ASSUMPTION: this matches the documented X Ads v12
 	// stats/accounts/:account_id contract, but has not been verified against a
-	// live X Ads account. Mirrors the same disclosed-assumption convention used
-	// in internal/platform/googleads/metrics.go and internal/platform/linkedin/metrics.go.
+	// live X Ads account.
 	params := map[string]string{
 		"start_time":    startDate + "T00:00:00Z",
 		"end_time":      endTimestamp,

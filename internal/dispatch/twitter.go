@@ -303,18 +303,21 @@ func (d *TwitterDispatcher) ToggleStatus(ctx context.Context, projectID string, 
 }
 
 // twitterMetricsWindow maps the platform-agnostic model.MetricsWindow vocabulary to X Ads'
-// own MetricsWindow literals. X Ads only supports TODAY and LAST_7_DAYS (the stats endpoint
-// caps queryable date ranges at 7 days per request); every other foundation window is not
-// representable and returns twitter.ErrUnsupportedWindow rather than being silently
-// approximated (no averaging, truncation, or extrapolation).
+// own MetricsWindow literals. X Ads supports YESTERDAY, TODAY, and LAST_7_DAYS (the stats
+// endpoint caps queryable date ranges at 7 days per request); every other foundation window
+// (LAST_14_DAYS, LAST_30_DAYS, THIS_MONTH, LAST_MONTH) is not representable and returns
+// twitter.ErrUnsupportedWindow rather than being silently approximated (no averaging,
+// truncation, or extrapolation).
 func twitterMetricsWindow(w model.MetricsWindow) (twitter.MetricsWindow, error) {
 	switch w {
+	case model.MetricsWindowYesterday:
+		return twitter.WindowYesterday, nil
 	case model.MetricsWindowToday:
 		return twitter.WindowToday, nil
 	case model.MetricsWindowLast7Days:
 		return twitter.WindowLast7Days, nil
 	default:
-		return "", fmt.Errorf("%w: %w: %q (X Ads only supports today and last_7_days)", domain.ErrMetricsWindowUnsupported, twitter.ErrUnsupportedWindow, w)
+		return "", fmt.Errorf("%w: %w: %q (X Ads only supports yesterday, today, and last_7_days)", domain.ErrMetricsWindowUnsupported, twitter.ErrUnsupportedWindow, w)
 	}
 }
 

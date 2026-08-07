@@ -678,6 +678,45 @@ func TestTwitter_ReadMetrics_UnsupportedWindow(t *testing.T) {
 	}
 }
 
+// TestTwitter_ReadMetrics_YesterdayIsSupported verifies that YESTERDAY window
+// (a single-day range within the 7-day limit) is correctly mapped and produces
+// query params with the right start_time and end_time.
+func TestTwitter_ReadMetrics_YesterdayIsSupported(t *testing.T) {
+	var gotQuery string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":[{"id":"li1","id_data":[{"metrics":{"impressions":[100],"clicks":[10],"billed_charge_local_micro":[500000]}}]}]}`))
+	}))
+	defer api.Close()
+
+	d := NewTwitterDispatcher(
+		fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{},
+		twitter.WithBaseURL(api.URL), twitter.WithAPIVersion("12"), twitter.WithWriteDelay(0),
+	)
+
+	metrics, err := d.ReadMetrics(
+		context.Background(), "proj", model.ProviderTwitterAds,
+		twitterToggleCampaign("cmp1", "li1"),
+		model.MetricsWindowYesterday,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if metrics.Impressions != 100 || metrics.Clicks != 10 || metrics.CostMicros != 500000 {
+		t.Errorf("expected impressions=100 clicks=10 costMicros=500000, got impressions=%d clicks=%d costMicros=%d",
+			metrics.Impressions, metrics.Clicks, metrics.CostMicros)
+	}
+
+	// Verify the query contained start_time and end_time (exact values depend on fixed clock,
+	// tested separately in twitter/metrics_test.go::TestGetCampaignMetrics_YesterdayQueryParams).
+	if !strings.Contains(gotQuery, "start_time=") || !strings.Contains(gotQuery, "end_time=") {
+		t.Errorf("expected start_time and end_time in query, got: %s", gotQuery)
+	}
+}
+
 // TestTwitter_ReadMetrics_ConnectionResolutionFails verifies that connection
 // resolution errors are propagated (unlike Dispatch which wraps them).
 func TestTwitter_ReadMetrics_ConnectionResolutionFails(t *testing.T) {

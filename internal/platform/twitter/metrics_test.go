@@ -115,8 +115,8 @@ func TestGetCampaignMetrics_NoActivity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if metrics.Impressions != 0 || metrics.Clicks != 0 || metrics.CostMicros != 0 {
-		t.Errorf("expected zero metrics, got %+v", metrics)
+	if metrics.Impressions != 0 || metrics.Clicks != 0 || metrics.CostMicros != 0 || metrics.Ctr != 0 {
+		t.Errorf("expected all zero-value metrics, got impressions=%d clicks=%d costMicros=%d ctr=%f", metrics.Impressions, metrics.Clicks, metrics.CostMicros, metrics.Ctr)
 	}
 }
 
@@ -211,6 +211,14 @@ func TestDateRangeForWindow_Today(t *testing.T) {
 	start, end := dateRangeForWindow(WindowToday, fixed)
 	if start != "2025-01-15" || end != "2025-01-15" {
 		t.Errorf("expected 2025-01-15/2025-01-15, got %s/%s", start, end)
+	}
+}
+
+func TestDateRangeForWindow_Yesterday(t *testing.T) {
+	fixed := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
+	start, end := dateRangeForWindow(WindowYesterday, fixed)
+	if start != "2025-01-14" || end != "2025-01-14" {
+		t.Errorf("expected 2025-01-14/2025-01-14, got %s/%s", start, end)
 	}
 }
 
@@ -354,6 +362,42 @@ func TestGetCampaignMetrics_Last7DaysQueryParams(t *testing.T) {
 	}
 	if !strings.Contains(decoded, "end_time=2025-01-16T00:00:00Z") {
 		t.Errorf("expected end_time=2025-01-16T00:00:00Z (exclusive next-midnight bound), got %s", decoded)
+	}
+}
+
+// TestGetCampaignMetrics_YesterdayQueryParams pins the start_time and end_time for the
+// YESTERDAY window, which is a single-day range (one of the 7-day limit).
+func TestGetCampaignMetrics_YesterdayQueryParams(t *testing.T) {
+	var mu sync.Mutex
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotQuery = r.URL.RawQuery
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"data":[]}`)
+	}))
+	defer server.Close()
+
+	client := testClient(server.URL)
+	// now = 2025-01-15; YESTERDAY is 2025-01-14, so start_time and end_time both
+	// point to 2025-01-14, with end_time as the exclusive next-midnight bound (2025-01-15T00:00:00Z).
+	client.timeFn = func() time.Time { return time.Date(2025, 1, 15, 14, 30, 0, 0, time.UTC) }
+
+	if _, err := client.GetCampaignMetrics(context.Background(), "12345", WindowYesterday); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	mu.Lock()
+	query := gotQuery
+	mu.Unlock()
+	decoded, _ := url.QueryUnescape(query)
+
+	if !strings.Contains(decoded, "start_time=2025-01-14T00:00:00Z") {
+		t.Errorf("expected start_time=2025-01-14T00:00:00Z in query, got %s", decoded)
+	}
+	if !strings.Contains(decoded, "end_time=2025-01-15T00:00:00Z") {
+		t.Errorf("expected end_time=2025-01-15T00:00:00Z (exclusive next-midnight bound), got %s", decoded)
 	}
 }
 

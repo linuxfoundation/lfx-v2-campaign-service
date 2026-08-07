@@ -2119,6 +2119,32 @@ func TestBriefService_GetCampaignMetrics_WindowUnsupportedIs400(t *testing.T) {
 	}
 }
 
+// TestBriefService_GetCampaignMetrics_TwitterWindowUnsupportedIncludesPlatformGuidance
+// verifies that when X Ads rejects an unsupported window, the error message includes
+// the 7-day API limit guidance so the caller understands the constraint.
+func TestBriefService_GetCampaignMetrics_TwitterWindowUnsupportedIncludesPlatformGuidance(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderTwitterAds,
+		PlatformCampaignID: "x-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	disp := &metricsOnlyDispatcher{err: fmt.Errorf("x ads: %w", ErrMetricsWindowUnsupported)}
+	s := newMetricsService(camp, disp)
+	window := "last_30_days"
+	_, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", Window: &window,
+	})
+	var bad *briefs.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("expected a BadRequestError (400), got %T: %v", err, err)
+	}
+	if !strings.Contains(bad.Message, "7-day") {
+		t.Errorf("expected error message to mention X's 7-day limit, got: %s", bad.Message)
+	}
+	if !strings.Contains(bad.Message, "yesterday") || !strings.Contains(bad.Message, "today") {
+		t.Errorf("expected error message to list supported windows, got: %s", bad.Message)
+	}
+}
+
 func TestBriefService_GetCampaignMetrics_InvalidWindowIs400(t *testing.T) {
 	camp := &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
