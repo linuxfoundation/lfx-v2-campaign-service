@@ -1184,12 +1184,17 @@ func (c *Client) AuthorizeKeywordCriteria(ctx context.Context, campaignID string
 // earlier in this plan and make the planned invalid-ID test impossible to write: there
 // would be no failure for it to assert. Reject either malformed component here, and
 // propagate before a single mutate operation is constructed or sent.
+//
+// The message wording is not free-form: it copies the package's existing numeric-id
+// rejections verbatim in shape — `google-ads: ` prefix, `<what> id %q is not numeric`
+// (adgroup_ad.go:373,376; campaign.go's campaign-id check). An implementer looking for a
+// validator to copy will find those, so a third phrasing here is a divergence, not a choice.
 func (c *Client) keywordCriterionResourceName(adGroupID, criterionID string) (string, error) {
   if !numericID(adGroupID) {
-    return "", fmt.Errorf("ad group id %q is not a numeric id", adGroupID)
+    return "", fmt.Errorf("google-ads: ad group id %q is not numeric", adGroupID)
   }
   if !numericID(criterionID) {
-    return "", fmt.Errorf("criterion id %q is not a numeric id", criterionID)
+    return "", fmt.Errorf("google-ads: criterion id %q is not numeric", criterionID)
   }
   return c.customerPath(fmt.Sprintf("adGroupCriteria/%s~%s", adGroupID, criterionID)), nil
 }
@@ -1742,8 +1747,15 @@ platform client is internal, so it can land ahead of both without publishing any
 
 | PR | Contents | Public surface after merge | Est. |
 |---|---|---|---|
-| **A** | `internal/platform/googleads/keywords.go` + tests. No design, no handler, no dispatcher method. | none — nothing reachable changes | ≈600 |
-| **B** | `design/brief.go`, `model/keyword.go`, `errors.go`, orchestrator, handlers, **and** the `internal/dispatch/googleads.go` `ListKeywords`/`UpdateKeywords` methods + the `KeywordManager` guard assertion. | two endpoints that WORK for Google Ads | ≈650 |
+| **A** | `internal/platform/googleads/keywords.go` + tests. No design, no handler, no dispatcher method. | none — nothing reachable changes | ≈600 (platform client ~300 + tests ~300) |
+| **B** | `design/brief.go`, `model/keyword.go`, `errors.go`, orchestrator, handlers, **and** the `internal/dispatch/googleads.go` `ListKeywords`/`UpdateKeywords` methods + the `KeywordManager` guard assertion. | two endpoints that WORK for Google Ads | ≈650 (service ~450 + dispatcher ~200) |
+
+The two estimates are the ≈500 and ≈750 in the `### PR n` headings below, re-cut along the new
+boundary rather than re-guessed: PR 2's own breakdown (`~750 = platform client ~300 + dispatcher
+~200 + tests ~250`) splits cleanly, since the platform client and its tests are exactly what
+moves into PR A. PR A takes the ~300 client plus the ~300 of PR 2's tests that cover it; PR B
+keeps ≈450 of PR 1's service layer plus the ~200 dispatcher half PR 2 leaves behind. Nothing is
+added or dropped by the reorder — the same work crosses a different line.
 
 Both stay under the 1000-line cap, and neither merge leaves `main` advertising a capability that
 returns 400 for every caller. PR A is dead code between the two merges — unreferenced, untested
