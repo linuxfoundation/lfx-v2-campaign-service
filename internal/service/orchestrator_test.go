@@ -197,9 +197,14 @@ func (r *fakeCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int
 	return nil, errors.New("unused")
 }
 
-// ClaimCampaignVersion simulates the atomic version-gated UPDATE against byID: it
-// bumps the stored row's version on a match, or reports precondition-failed /
-// not-found, mirroring CampaignRepo.ClaimCampaignVersion.
+// ClaimCampaignVersion mirrors CampaignRepo.ClaimCampaignVersion: it gates on the expected
+// version and reports precondition-failed / not-found, and it returns the row's snapshot
+// UNCHANGED.
+//
+// The version is deliberately not bumped here. Production leaves it to ReplaceCampaign so the
+// increment co-commits with the outbox event; a fake that bumps at claim time models a
+// lifecycle production cannot provide, and any test built on it would pass against code that
+// double-bumps or that reads a version the real claim never produces.
 func (r *fakeCampaignRepo) ClaimCampaignVersion(_ context.Context, _, _, campaignID string, expectedVersion int64) (*model.Campaign, domain.CampaignLockToken, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -213,7 +218,6 @@ func (r *fakeCampaignRepo) ClaimCampaignVersion(_ context.Context, _, _, campaig
 	if c.Version != expectedVersion {
 		return nil, domain.CampaignLockToken{}, domain.ErrPreconditionFailed
 	}
-	c.Version++
 	cp := *c
 	return &cp, domain.NewCampaignLockToken(campaignID, &cp), nil
 }

@@ -1201,10 +1201,12 @@ func TestBriefService_ToggleCampaignStatus_ConcurrentTogglesSerialize(t *testing
 	if successes != 1 || failures != 1 {
 		t.Fatalf("got %d successes and %d failures, want exactly 1 of each", successes, failures)
 	}
-	// The claim bumped the row's version, so the persisted row must reflect that
-	// bumped version, not the stale IfMatch either caller sent.
+	// The claim leaves the version alone — it takes a lock, it does not bump. The winner
+	// therefore reaches ReplaceCampaign at the claimed version 3, and ReplaceCampaign's own
+	// `version=version+1` produces 4. That 4 is what must be persisted: it comes from the
+	// write that co-commits the outbox event, NOT from the stale IfMatch either caller sent.
 	if camps.replaced == nil || camps.replaced.Version != 4 {
-		t.Fatalf("persisted version = %+v, want 4 (claimed version, not the stale IfMatch)", camps.replaced)
+		t.Fatalf("persisted version = %+v, want 4 (claimed 3, bumped by ReplaceCampaign — not the stale IfMatch)", camps.replaced)
 	}
 }
 

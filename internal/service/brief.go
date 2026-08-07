@@ -700,9 +700,18 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	// to stop a second concurrent caller (another toggle, or UpdateCampaign) that read the
 	// same version from also passing its own check and also mutating the platform — both would
 	// then race the final persist, and only one wins, leaving the platform and the row
-	// diverged with no compensating rollback. The atomic claim closes that: only one caller can
-	// ever win a given expectedVersion, so the loser is rejected here, before either the
-	// platform is called or a claim is granted for anyone else to race against.
+	// diverged with no compensating rollback. The claim closes that: a second caller blocks
+	// here, before either the platform is called or a claim is granted for anyone else to race
+	// against.
+	//
+	// "Blocks", not "can never win". The claim is a contention guard whose exclusion lasts
+	// only as long as the lock's session — a failover or a severed connection releases it
+	// server-side while this call is still inside its platform call, and a successor can then
+	// claim the same still-unbumped version (see ClaimCampaignVersion's durability boundary).
+	// What makes that safe is not this claim but the compare-and-swap in the ReplaceCampaign
+	// below: whichever writer commits first bumps the version and the other is rejected, so a
+	// lost lock costs at most one duplicated declarative platform call, never two persisted
+	// writes at the same version.
 	_, lockToken, cerr := campaignRepo.ClaimCampaignVersion(ctx, p.ProjectID, p.BriefID, p.CampaignID, version)
 	if cerr != nil {
 		return nil, mapBriefErr(cerr)

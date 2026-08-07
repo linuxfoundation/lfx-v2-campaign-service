@@ -4,6 +4,7 @@
 package postgres
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -140,5 +141,116 @@ func TestStopCooldownsForShutdown_PublishesReleaseBoundBeforeWaking(t *testing.T
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("goroutine parked on cooldownShutdown was never woken")
+	}
+}
+
+// observeReleaseBounds installs the release-budget observer for the duration of a test and
+// returns a func that drains what was recorded.
+func observeReleaseBounds(t *testing.T) func() []time.Duration {
+	t.Helper()
+	var mu sync.Mutex
+	var seen []time.Duration
+	obs := func(d time.Duration) {
+		mu.Lock()
+		seen = append(seen, d)
+		mu.Unlock()
+	}
+	releaseBoundObserver.Store(&obs)
+	t.Cleanup(func() { releaseBoundObserver.Store(nil) })
+	return func() []time.Duration {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]time.Duration(nil), seen...)
+	}
+}
+
+// TestReleaseCampaignLockAfterCooldown_EveryShutdownPathUsesTheShutdownBound pins the budget
+// used by BOTH ways a cooldown release can run during shutdown, because both are reachable and
+// only one of them looks like the shutdown path.
+//
+//  1. The straggler branch: ReleaseCampaignLockAfterCooldown called after cooldownStopped is
+//     already true, which releases synchronously on the caller's goroutine.
+//  2. The cooldown-elapsed branch: if the cooldown timer fires at the same instant shutdown
+//     closes cooldownShutdown, BOTH select cases are ready and Go picks one at random — so the
+//     ordinary-looking case can be the one that runs while Close is waiting.
+//
+// Either using lockReleaseTimeout (5s) keeps a pool connection checked out long after
+// StopCooldownsForShutdown's 250ms wait returns, and pgxpool.Close blocks on it outside
+// ContainerCloseTimeout. Reverting either branch to ReleaseCampaignLock fails this test with
+// the offending budget named.
+func TestReleaseCampaignLockAfterCooldown_EveryShutdownPathUsesTheShutdownBound(t *testing.T) {
+	const budget = 250 * time.Millisecond
+
+	t.Run("straggler after stop", func(t *testing.T) {
+		resetCooldownState(t)
+		recorded := observeReleaseBounds(t)
+		r := &CampaignRepo{}
+		StopCooldownsForShutdown(budget)
+
+		r.ReleaseCampaignLockAfterCooldown(domain.CampaignLockToken{}, time.Hour)
+
+		got := recorded()
+		if len(got) != 1 {
+			t.Fatalf("expected exactly one release, got %d: %v", len(got), got)
+		}
+		if got[0] != budget {
+			t.Errorf("straggler released with a %v budget, want %v (Close's own wait); a 5s unlock here outlives pgxpool.Close's wait", got[0], budget)
+		}
+	})
+
+	t.Run("cooldown elapsed during shutdown", func(t *testing.T) {
+		resetCooldownState(t)
+		recorded := observeReleaseBounds(t)
+		r := &CampaignRepo{}
+
+		// Publish the shutdown budget WITHOUT closing cooldownShutdown, then use a cooldown
+		// of 0 so time.After fires immediately: cooldownShutdown is never ready, so the
+		// select can only take the elapsed branch. That isolates the branch under test —
+		// racing the two ready cases would leave which one ran up to Go's random choice.
+		cooldownReleaseBoundNanos.Store(int64(budget))
+		r.ReleaseCampaignLockAfterCooldown(domain.CampaignLockToken{}, 0)
+		deadline := time.Now().Add(2 * time.Second)
+		for len(recorded()) == 0 && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+
+		got := recorded()
+		if len(got) != 1 {
+			t.Fatalf("expected exactly one release, got %d: %v", len(got), got)
+		}
+		if got[0] != budget {
+			t.Errorf("cooldown-elapsed release used a %v budget, want %v; this branch is reachable during shutdown because both select cases can be ready at once", got[0], budget)
+		}
+	})
+}
+
+// TestReleaseCampaignLock_OrdinaryPathKeepsTheGenerousBound is the other half of the pair: the
+// shutdown bound must not leak into normal operation. Before shutdown publishes anything,
+// shutdownReleaseBound falls back to lockReleaseTimeout, so a cooldown that elapses on a
+// healthy process still gets the generous unlock budget — the alternative to a slow-but-
+// successful unlock is destroying the connection.
+func TestReleaseCampaignLock_OrdinaryPathKeepsTheGenerousBound(t *testing.T) {
+	resetCooldownState(t)
+	recorded := observeReleaseBounds(t)
+	r := &CampaignRepo{}
+
+	if err := r.ReleaseCampaignLock(context.Background(), domain.CampaignLockToken{}); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	r.ReleaseCampaignLockAfterCooldown(domain.CampaignLockToken{}, 0)
+	// Drain the cooldown goroutine without publishing a shutdown budget.
+	deadline := time.Now().Add(2 * time.Second)
+	for len(recorded()) < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	got := recorded()
+	if len(got) != 2 {
+		t.Fatalf("expected 2 releases, got %d: %v", len(got), got)
+	}
+	for i, d := range got {
+		if d != lockReleaseTimeout {
+			t.Errorf("release %d used %v, want the ordinary %v — shutdown's tighter budget must not apply before shutdown", i, d, lockReleaseTimeout)
+		}
 	}
 }

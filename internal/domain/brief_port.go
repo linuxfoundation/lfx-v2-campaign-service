@@ -154,9 +154,14 @@ type CampaignWriter interface {
 	// caller; it does nothing to stop a SECOND caller reading the same version and
 	// also proceeding to call the platform, so two toggles (or a toggle and an
 	// update-campaign) can both pass the check and both mutate the platform before
-	// either persists. The atomic version bump here closes that window: only one
-	// concurrent caller can win a given expectedVersion, so the loser is rejected
-	// before it ever reaches the platform, not after.
+	// either persists. The claim closes that window by EXCLUSION, not by bumping the
+	// version: while one caller holds the claim for a campaign, a second caller's claim
+	// blocks, so the second one is stopped before it ever reaches the platform rather
+	// than after. Do not read this as durable ownership — the exclusion lasts only as
+	// long as the implementation's lock (for Postgres, the lifetime of the session
+	// holding it), and what makes a lost lock safe is the compare-and-swap in the
+	// subsequent ReplaceCampaign, which rejects any writer whose expectedVersion has
+	// since moved.
 	//
 	// BriefService.UpdateCampaign — which has no I/O between its read and its write —
 	// also claims first so its single-statement write can never land in the gap
@@ -170,9 +175,16 @@ type CampaignWriter interface {
 	// Use defer for guaranteed release, even on panic or cancellation.
 	ClaimCampaignVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64) (*model.Campaign, CampaignLockToken, error)
 	// ReleaseCampaignLock releases the advisory lock identified by token, as returned by
-	// ClaimCampaignVersion. It is a no-op for the zero CampaignLockToken, or if token no longer
-	// identifies the lock currently held for its campaign (see CampaignLockToken). Callers MUST
-	// call this after claiming, either directly or via defer, to allow other writers to proceed.
+	// ClaimCampaignVersion. Callers MUST call this after claiming, either directly or via
+	// defer, to allow other writers to proceed.
+	//
+	// It is a complete no-op only for the zero CampaignLockToken and for an already-released
+	// token. When token no longer identifies the lock currently held for its campaign — a
+	// SUCCESSOR claimed it after this token's session ended (see CampaignLockToken) — the
+	// call must leave that successor's lock and resources alone, but it must still release
+	// whatever THIS token holds. Implementations that return early in that case leak their
+	// own held resource (in Postgres, a checked-out pool connection) with nothing left
+	// referencing it.
 	ReleaseCampaignLock(ctx context.Context, token CampaignLockToken) error
 	// ReleaseCampaignLockAfterCooldown releases the advisory lock identified by token after
 	// cooldown elapses, or immediately once the process starts shutting down — whichever

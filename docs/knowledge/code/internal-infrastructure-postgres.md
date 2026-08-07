@@ -188,6 +188,31 @@ connection to the pool, so a failed unlock strands it and blocks every future cl
 delete for that campaign. Pinned by
 `TestDeleteCampaign_ParticipatesInAdvisoryLockProtocol`.
 
+**Every release path spends a budget that is a term of the shutdown budget.** A campaign
+lock holds a pooled connection, and `pgxpool.Close` blocks until every checked-out
+connection is returned — so any unlock that outlives `Container.Close`'s wait pushes
+shutdown past `ContainerCloseTimeout` by the difference. `releaseCampaignLock` therefore
+takes its bound from the caller rather than fixing it at `lockReleaseTimeout`, and EVERY
+path that can run during shutdown passes `shutdownReleaseBound()` — which returns whatever
+`StopCooldownsForShutdown` published, falling back to the ordinary timeout before shutdown,
+so nothing is tightened outside shutdown. Two of those paths do not look like shutdown
+paths: the straggler branch of `ReleaseCampaignLockAfterCooldown` (reached when
+`cooldownStopped` is already set), and its cooldown-ELAPSED branch, because when the timer
+fires at the same instant `cooldownShutdown` closes both select cases are ready and Go
+picks one at random. The same rule governs the connection-destroying fallback: `Close` is
+given the already-bounded `releaseCtx`, not `context.WithoutCancel(ctx)` — pgx uses that
+context to bound its wait, and on cooldown paths `ctx` is `context.Background()`, so
+`WithoutCancel` would supply no deadline at all. Pinned by
+`TestReleaseCampaignLockAfterCooldown_EveryShutdownPathUsesTheShutdownBound` and
+`TestReleaseCampaignLock_OrdinaryPathKeepsTheGenerousBound`.
+
+**Releasing a superseded token is a no-op for the SUCCESSOR, not for the caller's own
+connection.** When a delayed release finds that its `campaignID` slot now holds a different
+`*campaignLock`, `CompareAndDelete` deliberately fails and the successor's lock and
+connection are left alone — but the stale token still owns a checked-out connection that
+nothing else references, so the unlock and `Release` must still run. An early return there
+leaks that pool slot for the life of the process.
+
 **Every `campaigns` read excludes soft-deleted rows, the claim pair included.** Soft
 delete is a status value (`status = 'deleted'`), not a column, so the exclusion has to be
 written into each statement: `getCampaignQuery`, `getCampaignByPlatformQuery`,
