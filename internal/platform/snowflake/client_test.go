@@ -354,33 +354,40 @@ func TestResolvePastEventNames_RequiresValidCurrentYear(t *testing.T) {
 }
 
 // TestResolvePastEventNames_RejectsOutOfRangeCurrentYear pins the half of the guard that
-// four-digit-ness alone does not cover, and it is the dangerous half.
+// four-digit-ness alone does not cover.
 //
-// yearInName can only ever EXTRACT a 19xx/20xx year, so a currentYear outside that range
-// leaves EVERY extracted year strictly below it and the `extractedYear >= currentYear`
-// exclusion never fires. The filter does not fail — it inverts. "Past editions only" starts
-// returning the current and future editions, and the audience built from them is silently
-// wrong rather than absent, which is the failure mode nobody notices.
+// yearInName can only ever EXTRACT a 19xx/20xx year, so a currentYear outside that range is
+// not comparable with the years it is compared AGAINST. The two out-of-range directions fail
+// differently, and only one of them is quiet:
 //
-// Note what this test does NOT do: it does not call ResolvePastEventNames with "9999" and
-// assert the rows come back empty. Rejecting the input is the fix; a row-count assertion
-// would still pass if the range check were deleted and some unrelated filter happened to
-// empty the set.
+//   - ABOVE the range ("9999", "3000"): every extracted year is strictly below currentYear, so
+//     the `extractedYear >= currentYear` exclusion never fires. The filter does not fail — it
+//     INVERTS. "Past editions only" starts returning the current and future editions, and the
+//     audience built from them is silently wrong rather than absent. This is the dangerous one.
+//   - BELOW the range ("0000", "0202"): every extracted year is >= currentYear, so every row is
+//     excluded and the resolve fails closed with nothing. Loud and harmless by comparison, but
+//     still a wrong answer produced from an input the caller believed was valid.
+//
+// Both are rejected at the door, which is why this test asserts the rejection rather than the
+// downstream symptom. It deliberately does NOT call with "9999" and assert the rows come back
+// empty: a row-count assertion would still pass if the range check were deleted and some
+// unrelated filter happened to empty the set.
 func TestResolvePastEventNames_RejectsOutOfRangeCurrentYear(t *testing.T) {
 	c := newFakeClient(t, &fakeDriver{cols: []string{"EVENT_NAME", "EVENT_ID"}})
-	for _, bad := range []string{"9999", "0000", "3000", "0202"} {
+	// Above the range (inverts the filter) and below it (empties the result), plus the two
+	// boundaries just outside 19xx/20xx that a first-digit-only check would wrongly accept.
+	for _, bad := range []string{"9999", "3000", "0000", "0202", "1899", "2100"} {
 		if _, err := c.ResolvePastEventNames(context.Background(), "KubeCon", "", bad); err == nil {
 			t.Errorf("currentYear %q is four digits but outside the 19xx/20xx range yearInName "+
-				"can extract, so every real edition compares as past and the filter inverts; "+
-				"it must be rejected", bad)
+				"can extract, so it is not comparable with any extracted year; it must be rejected", bad)
 		}
 	}
 	// The accepted range still works, so the guard is a range check and not a blanket reject.
-	// The bounds are "1000" and "2999" rather than anything narrower on purpose: the guard's
-	// job is to match what yearInName can extract, not to judge which years are plausible.
-	// Narrowing it to, say, 2000-2100 would make the two predicates disagree again — the same
-	// class of drift this whole change exists to close.
-	for _, ok := range []string{"1999", "2026", "2999", "1000"} {
+	// The bounds are exactly 19xx/20xx because that is what yearInName extracts — the guard's
+	// job is to match the extraction predicate, not to judge which years are plausible. Widening
+	// it (a first-digit check accepts 1000-2999) or narrowing it makes the two disagree again,
+	// which is the drift this whole change exists to close.
+	for _, ok := range []string{"1900", "1999", "2000", "2026", "2099"} {
 		if _, err := c.ResolvePastEventNames(context.Background(), "KubeCon", "", ok); err != nil {
 			t.Errorf("currentYear %q must be accepted, got %v", ok, err)
 		}

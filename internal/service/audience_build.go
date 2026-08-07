@@ -598,21 +598,22 @@ func yearInName(s string) string {
 
 // isSupportedYear reports whether s is a 4-digit year in the 19xx/20xx range.
 //
-// The range is not decoration. yearInName can only ever EXTRACT a 19xx/20xx year from an
-// event name, so accepting a wider range for the year those extractions are COMPARED
-// against silently inverts the filter: a currentYear of "9999" leaves every real edition
-// strictly below it, and "past editions only" starts returning future ones. The two must
-// use one predicate, which is why the range lives here rather than at each comparison.
+// The range is not decoration, and it is deliberately the FULL two-byte prefix rather than a
+// first-digit check (which would accept 1000-2999). yearInName can only ever EXTRACT a 19xx/20xx
+// year from an event name, so a year outside that range is not comparable with the years it
+// is compared AGAINST. Above the range a currentYear of "9999" leaves every real edition
+// strictly below it and the exclusion never fires — "past editions only" quietly starts
+// returning future ones; below it ("0202") every edition is excluded and the resolve returns
+// nothing. The two predicates must be one, which is why the range lives here rather than at
+// each comparison.
 func isSupportedYear(s string) bool {
-	if len(s) != 4 || (s[0] != '1' && s[0] != '2') {
+	if len(s) != 4 {
 		return false
 	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
+	if s[0:2] != "19" && s[0:2] != "20" {
+		return false
 	}
-	return true
+	return s[2] >= '0' && s[2] <= '9' && s[3] >= '0' && s[3] <= '9'
 }
 
 // decodeEventDetails pulls the fields the build needs out of the brief's opaque blobs. It
