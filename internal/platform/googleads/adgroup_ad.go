@@ -14,11 +14,10 @@ import (
 
 // ---------------------------------------------------------------------------
 // Ad group + responsive search ad creation (GA-3): adGroups:mutate ->
-// adGroupAds:mutate. Keywords/audience targeting are NOT part of this slice —
-// the ad group is created with no criteria, so the campaign still won't serve
-// without a follow-up (tracked as GA-4). This slice's job is to make the
-// campaign->ad group->ad hierarchy real, matching the shape of the reddit and
-// microsoft adapters.
+// adGroupAds:mutate. This makes the campaign->ad group->ad hierarchy real,
+// matching the shape of the reddit and microsoft adapters. Keyword/audience
+// targeting on the resulting ad group is GA-4 (see targeting.go) — this file
+// calls into it after the ad is created.
 // ---------------------------------------------------------------------------
 
 const (
@@ -50,12 +49,16 @@ const (
 	errCodeDuplicateAdGroupName = "DUPLICATE_ADGROUP_NAME"
 )
 
-// adGroupCreate is the create payload for adGroups:mutate.
+// adGroupCreate is the create payload for adGroups:mutate. TargetingSetting is
+// set only when GA-4 attaches audience segments (see createAdGroupAndAd) — see
+// targetingSetting's doc comment in campaign.go for why this lives at the ad
+// group level rather than the campaign level.
 type adGroupCreate struct {
-	Name     string `json:"name"`
-	Campaign string `json:"campaign"`
-	Status   string `json:"status"`
-	Type     string `json:"type"`
+	Name             string            `json:"name"`
+	Campaign         string            `json:"campaign"`
+	Status           string            `json:"status"`
+	Type             string            `json:"type"`
+	TargetingSetting *targetingSetting `json:"targetingSetting,omitempty"`
 }
 
 // adGroupStatusUpdate is the update payload for adGroups:mutate (status-only toggle,
@@ -102,7 +105,7 @@ func isDuplicateAdGroupNameErr(err error) bool {
 }
 
 // adGroupAdID splits an adGroupAd resourceName into its ad group id and ad id.
-// Unlike every other Google Ads resource, AdGroupAd uses a COMPOSITE trailing
+// Unlike most other Google Ads resources, AdGroupAd uses a COMPOSITE trailing
 // segment "{adGroupId}~{adId}" (e.g. "customers/1/adGroupAds/111~222") rather
 // than a single numeric id — resourceID's plain last-slash split returns that
 // whole "111~222" string, so this further splits on "~". Requires EXACTLY two
@@ -115,7 +118,8 @@ func isDuplicateAdGroupNameErr(err error) bool {
 // so a malformed resource of a wrong type (e.g. "customers/1/campaigns/111~222")
 // is correctly rejected rather than incorrectly accepted as a confirmed AdGroupAd.
 // Returns ("", "") if the resource name is empty, the resource kind is not
-// "adGroupAds", or the trailing segment isn't in that exact shape.
+// "adGroupAds", or the trailing segment isn't in that exact shape. AdGroupCriterion
+// (GA-4, targeting.go) uses adGroupCriterionID for the same composite shape.
 func adGroupAdID(resourceName string) (adGroupID, adID string) {
 	// Validate the full resource path structure: customers/<id>/adGroupAds/<composite-id>
 	// Split by "/" to validate the resource kind is "adGroupAds" and not something else.
@@ -124,7 +128,44 @@ func adGroupAdID(resourceName string) (adGroupID, adID string) {
 	if len(pathParts) != 4 || pathParts[0] != "customers" || pathParts[2] != "adGroupAds" {
 		return "", ""
 	}
+	return compositeResourceID(resourceName)
+}
 
+// adGroupCriterionID splits an adGroupCriterion resourceName into its ad group id
+// and criterion id. Like AdGroupAd, AdGroupCriterion uses a COMPOSITE trailing
+// segment "{adGroupId}~{criterionId}" (e.g. "customers/1/adGroupCriteria/111~222")
+// rather than a single numeric id. Requires EXACTLY two components and BOTH must be
+// a non-empty run of ASCII digits (numericID) — a third tilde-separated component
+// or a non-numeric half is rejected as malformed. ALSO validates that the resource
+// KIND is "adGroupCriteria" (not e.g. "campaigns" or "adGroupAds") AND that the
+// customer segment is THIS client's current account, mirroring
+// validateCampaignResource's own cross-account check — a malformed/substituted
+// resourceName naming another customer's adGroupCriteria must not be trusted enough
+// to persist. Returns ("", "") if the resource name is empty, the resource kind is
+// not "adGroupCriteria", the customer segment doesn't match, or the trailing segment
+// isn't in the exact composite shape.
+func (c *Client) adGroupCriterionID(resourceName string) (adGroupID, criterionID string) {
+	// Validate the full resource path structure: customers/<id>/adGroupCriteria/<composite-id>
+	// Split by "/" to validate the resource kind is "adGroupCriteria" and not something else.
+	// Require EXACTLY 4 segments, matching adGroupAdID: extra segments indicate a
+	// malformed/substituted response and must be rejected, not accepted with the
+	// extra segments silently ignored.
+	pathParts := strings.Split(resourceName, "/")
+	if len(pathParts) != 4 || pathParts[0] != "customers" || pathParts[2] != "adGroupCriteria" {
+		return "", ""
+	}
+	if pathParts[1] != c.account.CustomerID {
+		return "", ""
+	}
+	return compositeResourceID(resourceName)
+}
+
+// compositeResourceID splits a resourceName's trailing "{parentId}~{id}"
+// segment — the shape AdGroupAd and AdGroupCriterion resource names use,
+// unlike every single-id resource this package otherwise handles via
+// resourceID. Returns ("", "") if the resource name is empty or the trailing
+// segment isn't in that shape.
+func compositeResourceID(resourceName string) (parentID, id string) {
 	trailing := resourceID(resourceName)
 	if trailing == "" {
 		return "", ""
@@ -139,29 +180,38 @@ func adGroupAdID(resourceName string) (adGroupID, adID string) {
 // precomputeAdGroupAdInputs validates and derives everything createAdGroupAndAd
 // needs (destination URL, ad copy, ad-group name) WITHOUT sending any request.
 // CreateCampaign calls this BEFORE the first (budget) mutate: an invalid
-// RegistrationURL, an over-length composed final URL, unusable ad copy, or an
-// over-length ad-group name must fail before any Google Ads resource is
-// created, not after the budget+campaign already committed — surfacing it
-// only inside createAdGroupAndAd (which runs after both prior mutates) would
-// orphan a real campaign+budget with no ad group/ad for what is purely a
-// local input-validation failure.
-func precomputeAdGroupAdInputs(in CampaignInput) (finalURL string, headlines, descriptions []string, adGroupName string, err error) {
+// RegistrationURL, an over-length composed final URL, unusable ad copy,
+// over-length ad-group name, or bad keyword/audience-segment (GA-4) input
+// must fail before any Google Ads resource is created, not after the
+// budget+campaign already committed — surfacing it only inside
+// createAdGroupAndAd (which runs after both prior mutates) would orphan a
+// real campaign+budget with no ad group/ad for what is purely a local
+// input-validation failure.
+func precomputeAdGroupAdInputs(in CampaignInput) (finalURL string, headlines, descriptions []string, adGroupName string, keywords []Keyword, audienceSegments []string, err error) {
 	finalURL, err = buildAdFinalURL(in.RegistrationURL, in.EventSlug, in.EventName, in.Project, in.NameSuffix)
 	if err != nil {
-		return "", nil, nil, "", fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid destination URL): %w", err)
+		return "", nil, nil, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid destination URL): %w", err)
 	}
 	if n := len(finalURL); n > maxFinalURLBytes {
-		return "", nil, nil, "", fmt.Errorf("google-ads ad group/ad creation aborted before any request (composed ad final URL is %d bytes, exceeding the %d limit; shorten the registration URL)", n, maxFinalURLBytes)
+		return "", nil, nil, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (composed ad final URL is %d bytes, exceeding the %d limit; shorten the registration URL)", n, maxFinalURLBytes)
 	}
 	headlines, descriptions, err = composeAdCopy(in.Headlines, in.Descriptions, in.EventName, in.Project)
 	if err != nil {
-		return "", nil, nil, "", fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid ad copy): %w", err)
+		return "", nil, nil, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid ad copy): %w", err)
 	}
 	adGroupName = composeName("Ad Group", in)
 	if err := validateEntityName("ad group", adGroupName, utf8.RuneCountInString(adGroupName), maxAdGroupNameRunes, "characters"); err != nil {
-		return "", nil, nil, "", err
+		return "", nil, nil, "", nil, nil, err
 	}
-	return finalURL, headlines, descriptions, adGroupName, nil
+	keywords, err = validateKeywords(in.Keywords)
+	if err != nil {
+		return "", nil, nil, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid keyword input): %w", err)
+	}
+	audienceSegments, err = validateAudienceSegments(in.AudienceSegments)
+	if err != nil {
+		return "", nil, nil, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid audience segment input): %w", err)
+	}
+	return finalURL, headlines, descriptions, adGroupName, keywords, audienceSegments, nil
 }
 
 // createAdGroupAndAd extends a just-created campaign with a PAUSED ad group and a
@@ -177,25 +227,37 @@ func precomputeAdGroupAdInputs(in CampaignInput) (finalURL string, headlines, de
 // campaign left in that state needs manual reconciliation, same as a
 // duplicate-budget or duplicate-campaign orphan today.
 //
-// finalURL/headlines/descriptions/adGroupName are precomputed by
-// precomputeAdGroupAdInputs BEFORE CreateCampaign's first mutate, so this
-// method performs no local validation of its own — by the time it runs, the
-// campaign already exists and there is nothing left to reject before sending.
+// finalURL/headlines/descriptions/adGroupName/keywords/audienceSegments are
+// precomputed by precomputeAdGroupAdInputs BEFORE CreateCampaign's first
+// mutate, so this method performs no local validation of its own — by the
+// time it runs, the campaign already exists and there is nothing left to
+// reject before sending. If both keywords and audienceSegments are empty
+// (GA-4 targeting is optional), the ad group/ad are created with no
+// criteria, same as pre-GA-4 behavior.
 //
 // res is mutated in place (AdGroupName/AdGroupID/AdID/Steps) so the caller's
 // existing partial-result plumbing (campaignNamePartial-derived) carries
 // whatever was created even when this returns an error.
-func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campaignID, finalURL string, headlines, descriptions []string, adGroupName string, res *CampaignResult) error {
+func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campaignID, finalURL string, headlines, descriptions []string, adGroupName string, keywords []Keyword, audienceSegments []string, res *CampaignResult) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return fmt.Errorf("google-ads ad group creation aborted before any request (context already done): %w", ctxErr)
 	}
 
-	adGroupReq := mutateRequest{Operations: []mutateOperation{{Create: adGroupCreate{
+	adGroupCreateVal := adGroupCreate{
 		Name:     adGroupName,
 		Campaign: campaignResource,
 		Status:   StatusPaused,
 		Type:     adGroupTypeSearchStandard,
-	}}}}
+	}
+	// See targetingSetting's doc comment (campaign.go): GA-4's audience criteria
+	// are AdGroupCriterions, so the observation-only setting must be declared
+	// here, on the ad group create, not on the campaign create.
+	if len(audienceSegments) > 0 {
+		adGroupCreateVal.TargetingSetting = &targetingSetting{
+			TargetRestrictions: []targetRestriction{{TargetingDimension: "AUDIENCE", BidOnly: true}},
+		}
+	}
+	adGroupReq := mutateRequest{Operations: []mutateOperation{{Create: adGroupCreateVal}}}
 	// Set the ad group name into the result before sending the mutate, so that on failure
 	// (duplicate, ambiguous) the partial result still carries the deterministic name for
 	// reconciliation.
@@ -273,6 +335,17 @@ func (c *Client) createAdGroupAndAd(ctx context.Context, campaignResource, campa
 	}
 	res.AdID = adID
 	res.Steps = append(res.Steps, fmt.Sprintf("Responsive search ad created: %s (PAUSED, %d headlines, %d descriptions)", adID, len(headlines), len(descriptions)))
+
+	if len(keywords) == 0 && len(audienceSegments) == 0 {
+		return nil
+	}
+	keywordIDs, audienceIDs, err := c.createAdGroupTargeting(ctx, adGroupResource, adGroupID, keywords, audienceSegments)
+	if err != nil {
+		return err
+	}
+	res.KeywordCriteriaIDs = keywordIDs
+	res.AudienceCriteriaIDs = audienceIDs
+	res.Steps = append(res.Steps, fmt.Sprintf("Keyword/audience targeting attached: %d keyword(s), %d audience segment(s)", len(keywordIDs), len(audienceIDs)))
 	return nil
 }
 
