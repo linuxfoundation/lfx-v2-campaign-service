@@ -75,4 +75,22 @@ var (
 	// ErrToggleUnsupported: a platform dispatcher must be able to return it without
 	// importing the orchestration layer.
 	ErrAccountsUnsupported = errors.New("account discovery is not supported for this platform")
+
+	// ErrConnectionNotUsable indicates the project's stored connection cannot be used as
+	// it stands: it is not active, its credential blob is incomplete or undecodable, or a
+	// stored config value is malformed. The ad platform is never contacted.
+	//
+	// It exists to keep these OUT of the retryable bucket. Without it, the discovery
+	// handler's default arm answers 503 for a connection that is missing a refresh token
+	// or carries a dashed `login_customer_id` — telling the caller to retry a request that
+	// cannot succeed until someone edits the connection, and burying the one thing that
+	// would let them fix it. A 503 is a promise that waiting might help; none of these
+	// improve with time.
+	//
+	// Distinct from ErrNotFound (no connection at all — 404) and from an upstream failure
+	// (the platform was reached and did not answer — 503). Platform adapters wrap their
+	// own typed setup errors with this sentinel (%w), the same arrangement as
+	// ErrMetricsWindowUnsupported, so the service layer classifies without importing every
+	// platform package.
+	ErrConnectionNotUsable = errors.New("the stored connection is not usable as configured")
 )
