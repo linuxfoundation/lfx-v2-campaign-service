@@ -463,6 +463,16 @@ type createResponse struct {
 // be a clean failure.
 var errLookupAmbiguous = errors.New("meta lookup outcome ambiguous; cannot confirm absence")
 
+// errLookupConflict marks the exact opposite outcome: the lookup SUCCEEDED and found the
+// name occupied by a resource this create cannot adopt (a match that is not PAUSED, or
+// whose objective differs from the requested one). Absence is not unconfirmed here —
+// PRESENCE is confirmed, with a stated reason. Nothing was created, nothing can be
+// adopted, and a retry re-reads the very same conflict rather than POSTing a duplicate, so
+// this is a CLEAN failure. Wrapping it in errLookupAmbiguous would tell an operator to go
+// verify in Ads Manager something the error already states, and would leave the dispatcher
+// holding a partial for a create that provably never happened.
+var errLookupConflict = errors.New("meta lookup found the name already in use by a resource that cannot be reused")
+
 func (c *Client) findCampaignByName(ctx context.Context, accountID, name, expectedObjective string) (string, error) {
 	filtering, err := json.Marshal([]map[string]string{{"field": "name", "operator": "EQUAL", "value": name}})
 	if err != nil {
@@ -565,7 +575,7 @@ func (c *Client) findCampaignByName(ctx context.Context, accountID, name, expect
 	// createOutcomeAmbiguous treats it as a clean failure, not UNCONFIRMED.
 	status := strings.TrimSpace(allMatches[0].Status)
 	if status != "PAUSED" {
-		return "", fmt.Errorf("meta campaign lookup for %q matched an existing campaign with status=%q (expected PAUSED); campaign name is already in use and cannot be reused", name, status)
+		return "", fmt.Errorf("meta campaign lookup for %q matched an existing campaign with status=%q (expected PAUSED); campaign name is already in use and cannot be reused: %w", name, status, errLookupConflict)
 	}
 	// Validate the matched campaign's objective matches the requested one. A
 	// mismatch is a definite conflict (name already taken by a differently-
@@ -573,7 +583,7 @@ func (c *Client) findCampaignByName(ctx context.Context, accountID, name, expect
 	// errLookupAmbiguous) so createOutcomeAmbiguous treats it as a clean failure.
 	objective := strings.TrimSpace(allMatches[0].Objective)
 	if objective != expectedObjective {
-		return "", fmt.Errorf("meta campaign lookup for %q matched an existing campaign with objective=%q (expected %q); campaign name is already in use with a different objective and cannot be reused", name, objective, expectedObjective)
+		return "", fmt.Errorf("meta campaign lookup for %q matched an existing campaign with objective=%q (expected %q); campaign name is already in use with a different objective and cannot be reused: %w", name, objective, expectedObjective, errLookupConflict)
 	}
 	return id, nil
 }
@@ -672,7 +682,7 @@ func (c *Client) findAdSetByName(ctx context.Context, campaignID, name string) (
 	// createOutcomeAmbiguous treats it as a clean failure, not UNCONFIRMED.
 	status := strings.TrimSpace(allMatches[0].Status)
 	if status != "PAUSED" {
-		return "", fmt.Errorf("meta ad set lookup for %q matched an existing ad set with status=%q (expected PAUSED); ad set name is already in use and cannot be reused", name, status)
+		return "", fmt.Errorf("meta ad set lookup for %q matched an existing ad set with status=%q (expected PAUSED); ad set name is already in use and cannot be reused: %w", name, status, errLookupConflict)
 	}
 	return id, nil
 }
@@ -2630,6 +2640,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		existingCampaignID, lookupErr = c.findCampaignByName(ctx, accountID, campaignName, objParams.CampaignObjective)
 	}
 	if lookupErr != nil {
+		// A DEFINITE conflict is checked before anything else, including the caller's
+		// context: the lookup already completed and read the match's status/objective, so
+		// the name is known to be occupied by a campaign this create cannot adopt. That
+		// fact does not become uncertain because the caller later went away. Nothing was
+		// created and a retry re-reads the same conflict, so this is a clean failure.
+		if errors.Is(lookupErr, errLookupConflict) {
+			steps = append(steps, "Campaign lookup found the name ALREADY IN USE by a campaign this create cannot adopt; nothing was created")
+			return nil, fmt.Errorf("meta campaign creation blocked: %w", lookupErr)
+		}
 		if ctx.Err() != nil {
 			// A cancelled/deadlined caller context aborts the create, but "nothing
 			// created BY THIS CALL" is not the question this lookup answers — it exists
@@ -2825,17 +2844,25 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		var adSetLookupErr error
 		existingAdSetID, adSetLookupErr = c.findAdSetByName(ctx, campaignID, adSetName)
 		if adSetLookupErr != nil {
+			// Same split as the campaign lookup above, and for the same reason. A definite
+			// conflict — findAdSetByName enumerated the name and read a match that is not
+			// PAUSED — is a confirmed PRESENCE with a stated reason, so it stays a clean
+			// failure whatever the caller's context did afterwards.
+			if errors.Is(adSetLookupErr, errLookupConflict) {
+				return partialResult(), fmt.Errorf("meta ad set lookup found the name already in use (campaign %s created, PAUSED): %w", campaignID, adSetLookupErr)
+			}
+			// Everything else is UNCONFIRMED, including a cancelled context, a pre-send
+			// dial error and a definite 4xx. An earlier version reported those as clean
+			// failures on the grounds that "the ad set was definitely not looked up" —
+			// which is true and beside the point. This lookup exists to establish that the
+			// ad set NAME IS ABSENT under a campaign a PRIOR attempt created, and a lookup
+			// that never left the process establishes that no better than a timeout does.
+			// Report it as failed and the next dispatch POSTs the same deterministic name
+			// under the same campaign: a duplicate ad set, spending real budget.
 			if ctx.Err() != nil {
-				return partialResult(), fmt.Errorf("meta campaign aborted during ad set name lookup (campaign %s created, PAUSED; caller context done): %w", campaignID, adSetLookupErr)
+				return partialResult(), fmt.Errorf("meta ad set lookup UNCONFIRMED (campaign %s created, PAUSED; caller context done, so ad set %q cannot be confirmed absent; verify in Meta Ads Manager before retrying): %w", campaignID, adSetName, errors.Join(errLookupAmbiguous, adSetLookupErr))
 			}
-			// The campaign already exists either way, so the partial result is the
-			// same — but word it UNCONFIRMED only when the lookup itself was
-			// ambiguous (Meta may have received it); a pre-send/4xx lookup failure
-			// means the ad set was definitely not looked up, not "may exist".
-			if !createOutcomeAmbiguous(adSetLookupErr) {
-				return partialResult(), fmt.Errorf("meta ad set lookup failed (campaign %s created, PAUSED): %w", campaignID, adSetLookupErr)
-			}
-			return partialResult(), fmt.Errorf("meta ad set lookup UNCONFIRMED (campaign %s created, PAUSED; cannot confirm ad set %q is absent; verify in Meta Ads Manager before retrying): %w", campaignID, adSetName, adSetLookupErr)
+			return partialResult(), fmt.Errorf("meta ad set lookup UNCONFIRMED (campaign %s created, PAUSED; cannot confirm ad set %q is absent; verify in Meta Ads Manager before retrying): %w", campaignID, adSetName, errors.Join(errLookupAmbiguous, adSetLookupErr))
 		}
 	}
 	if existingAdSetID != "" {

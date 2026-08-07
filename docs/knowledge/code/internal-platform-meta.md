@@ -143,14 +143,25 @@ success while re-running the old budget. When LFXV2-2665's reconcile path lands 
 is the caller, which knows it is resuming a specific dispatch generation, that sets
 the flag; the client cannot infer it.
 
-When the lookup does run and fails ambiguously, an UNCONFIRMED partial result is
-returned (the resource MAY exist, verify before retrying). Ambiguous is broader than
-transport/5xx: a 2xx with no `data` field, a `paging.next` with no cursor, exceeding
-the page cap with pagination still pending, a single match whose id is empty or
-non-numeric, and context cancellation mid-enumeration all fail closed the same way,
-because each leaves a matching campaign possibly present but unexamined. Only a
-pre-send failure (dial error) or a definite conflict — a match that is not `PAUSED`,
-or whose objective differs from the requested one — is a clean error.
+When the lookup does run and FAILS, for any reason, an UNCONFIRMED partial result is
+returned (the resource MAY exist, verify before retrying). The line is not
+transport-vs-4xx and it is not pre-send-vs-sent: a 2xx with no `data` field, a
+`paging.next` with no cursor, exceeding the page cap with pagination still pending, a
+single match whose id is empty or non-numeric, context cancellation mid-enumeration, a
+definite 4xx and a pre-send dial error all fail closed the same way. The lookup exists to
+establish that a NAME IS ABSENT so a prior ambiguous attempt can be adopted instead of
+duplicated, and a request that never left the process establishes absence no better than a
+timeout does. (`createOutcomeAmbiguous` asks a different question — *could this request
+have created something* — which is the right question for a POST and the wrong one for a
+GET, where it collapses to "was the transport ambiguous".)
+
+The one clean error is a definite CONFLICT, marked with `errLookupConflict`: the lookup
+succeeded, enumerated the name and read a match that is not `PAUSED`, or whose objective
+differs from the requested one. Absence is not unconfirmed there — presence is confirmed,
+with a stated reason. Nothing was created, nothing can be adopted, and a retry re-reads the
+same stable conflict rather than POSTing a duplicate, so no partial is retained and no one
+is sent to Ads Manager to verify what the error already says. The ad-set lookup splits the
+same two ways.
 
 Both names are deterministic, but they are composed differently and carry different
 uniqueness guarantees. The CAMPAIGN name is the attribution name (`Events | event |

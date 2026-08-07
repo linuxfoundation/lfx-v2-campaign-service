@@ -5623,3 +5623,123 @@ func TestRedactSecretsRemovesTheConfiguredTokenVerbatim(t *testing.T) {
 		t.Errorf("short secret was substring-replaced, destroying the snippet: %q", got)
 	}
 }
+
+// TestCreateCampaignLookupStatusConflictIsCleanFailure and its objective sibling pin the
+// OTHER half of the "every failed lookup is UNCONFIRMED" rule: a definite conflict is not
+// a failed lookup. findCampaignByName enumerated the name successfully and READ the
+// match's status, so the name is known to be occupied by a campaign this create cannot
+// adopt. Absence is not unconfirmed — presence is confirmed, with a stated reason.
+//
+// Classifying it UNCONFIRMED would be worse than noisy. The dispatcher would retain a
+// partial and send an operator to Ads Manager to verify a fact the error already states,
+// and every retry would repeat it, because the conflict is stable: the name stays taken
+// until someone renames or deletes the live campaign.
+func TestCreateCampaignLookupStatusConflictIsCleanFailure(t *testing.T) {
+	res, err := runConflictLookup(t, `{"data":[{"id":"120200000000123","status":"ACTIVE","objective":"OUTCOME_TRAFFIC"}]}`)
+	assertCleanConflict(t, res, err, "status")
+}
+
+func TestCreateCampaignLookupObjectiveConflictIsCleanFailure(t *testing.T) {
+	res, err := runConflictLookup(t, `{"data":[{"id":"120200000000123","status":"PAUSED","objective":"OUTCOME_LEADS"}]}`)
+	assertCleanConflict(t, res, err, "objective")
+}
+
+func runConflictLookup(t *testing.T, lookupBody string) (*CampaignResult, error) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			_, _ = io.WriteString(w, lookupBody)
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+		default:
+			t.Errorf("a definite name conflict must not reach a mutating call, got %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	return c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		ReconcileByName: true,
+	})
+}
+
+func assertCleanConflict(t *testing.T, res *CampaignResult, err error, kind string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected an error for a %s conflict on the name lookup", kind)
+	}
+	if !errors.Is(err, errLookupConflict) {
+		t.Errorf("error does not carry errLookupConflict, so the definite/ambiguous split is not expressible by callers: %v", err)
+	}
+	if createOutcomeAmbiguous(err) {
+		t.Errorf("a %s conflict is reported UNCONFIRMED; the lookup completed and read the match, so the name is KNOWN to be taken — an operator would be sent to verify what the error already says, on every retry, forever: %v", kind, err)
+	}
+	if res != nil {
+		t.Errorf("a clean failure returned a partial result (%+v); nothing was created, so there is nothing to reconcile", res)
+	}
+}
+
+// TestCreateCampaignAdSetLookupFailureIsUnconfirmed covers the ad-set half of the same
+// rule, which an earlier revision left on the opposite side of it: it reported a
+// pre-send/4xx ad-set lookup failure as a clean failure because "the ad set was
+// definitely not looked up". True, and beside the point. This lookup runs only when the
+// campaign was ADOPTED from a prior attempt, so a prior attempt may well have parented an
+// ad set under it; a lookup that never left the process establishes that no better than a
+// timeout does. Reported as failed, the next dispatch POSTs the same deterministic ad-set
+// name under the same campaign and duplicates real spend.
+func TestCreateCampaignAdSetLookupFailureIsUnconfirmed(t *testing.T) {
+	for _, tc := range []struct{ name, kind string }{{"4xx", "4xx"}, {"cancelled context", "cancel"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering") &&
+					strings.HasSuffix(r.URL.Path, "/campaigns"):
+					// An adoptable campaign: this is what makes the ad-set lookup run at all.
+					_, _ = io.WriteString(w, `{"data":[{"id":"120200000000123","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}]}`)
+				case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering") &&
+					strings.HasSuffix(r.URL.Path, "/adsets"):
+					if tc.kind == "cancel" {
+						cancel()
+					}
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = io.WriteString(w, `{"error":{"message":"bad filter","type":"OAuthException","code":100}}`)
+				case r.Method == http.MethodGet:
+					_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+				default:
+					t.Errorf("a failed ad-set lookup must not reach a mutating call, got %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+			c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+			res, err := c.CreateCampaign(ctx, CampaignInput{
+				EventName: "E", Project: "tlf", Objective: "traffic",
+				RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+				Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+				Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+				ReconcileByName: true,
+			})
+			if err == nil {
+				t.Fatal("expected an error for a failed ad set name lookup")
+			}
+			if res == nil {
+				t.Fatal("the ad-set lookup failure returned (nil, err), discarding the adopted campaign id and the ad-set name a retry needs to reconcile against")
+			}
+			if !strings.Contains(err.Error(), "UNCONFIRMED") {
+				t.Errorf("error = %q, want it marked UNCONFIRMED", err)
+			}
+			if !createOutcomeAmbiguous(err) {
+				t.Error("createOutcomeAmbiguous is false, so the dispatcher records a clean failure and the next dispatch duplicates the ad set")
+			}
+		})
+	}
+}
