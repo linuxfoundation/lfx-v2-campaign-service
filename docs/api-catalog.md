@@ -104,10 +104,16 @@ Each optimization action is scoped to a single campaign under its brief and is i
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
 | PATCH | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/status` | `campaign_manager` | JSON | Toggle campaign ACTIVE/PAUSED (Reddit, Meta, LinkedIn, X/Twitter, Google Ads, Microsoft Ads). |
-| GET | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/metrics` | `campaign_manager` | JSON | Read live performance metrics (impressions, clicks, cost, CTR) for one campaign directly from its ad platform. Pure read — never persisted, unlike `GET .../campaigns/{id}`. `window` query param (`today`, `yesterday`, `last_7_days`, `last_14_days`, `last_30_days`, `this_month`, `last_month`; default `last_30_days`) is a closed, platform-agnostic vocabulary — each dispatcher maps it to its own platform's date-range dialect. A platform with no `MetricsReader` wired returns 400; an unprovisioned campaign returns 409. Support is per-platform (see below). |
+| GET | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/metrics` | `campaign_manager` | JSON | Read live performance metrics (impressions, clicks, cost, CTR) for one campaign directly from its ad platform. Pure read — never persisted, unlike `GET .../campaigns/{id}`. `window` query param (`today`, `yesterday`, `last_7_days`, `last_14_days`, `last_30_days`, `this_month`, `last_month`; default `last_30_days`, except X Ads which defaults to `last_7_days` since its stats endpoint caps queryable ranges at 7 days) is a closed, platform-agnostic vocabulary — each dispatcher maps it to its own platform's date-range dialect. A platform with no `MetricsReader` wired returns 400; an unprovisioned campaign returns 409. Support is per-platform (see below). |
 | POST | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/keyword-actions` | `campaign_manager` | JSON | Pause/remove Google Ads keywords for this campaign. |
 
-**Per-campaign metrics-read support by platform**: this row documents the shared `MetricsReader` capability and endpoint; per-platform `ReadMetrics` adapters land in their own PRs. Microsoft Ads is **not supported** — its only reporting surface is the Reporting API v13 (SOAP, async submit-then-poll-then-download), incompatible with this endpoint's single bounded synchronous call; see `docs/knowledge/code/internal-dispatch.md`.
+**Per-campaign metrics-read support by platform**: this row documents the shared `MetricsReader` capability and endpoint; the remaining per-platform `ReadMetrics` adapters land in their own PRs.
+
+| Platform | Supported windows |
+|----------|-------------------|
+| X (Twitter) Ads | `today`, `yesterday`, `last_7_days` only — the stats endpoint caps a queryable range at 7 days, so the wider windows return `400`. This is why X defaults to `last_7_days` rather than `last_30_days`. |
+
+Microsoft Ads is **not supported** — its only reporting surface is the Reporting API v13 (SOAP, async submit-then-poll-then-download), incompatible with this endpoint's single bounded synchronous call; see `docs/knowledge/code/internal-dispatch.md`.
 
 **Tentative** (later phases, same nesting + `campaign_manager` gating): budget adjust, bid-strategy change, per-keyword bid, ad/creative rotation, ad-copy edit, geo-target edit, audience edit, negative keywords, bid modifiers, scheduling, flight-date change. Cross-platform budget reallocation, if built, is modeled as a first-class per-project resource with its own single-target mutations — not a bulk endpoint.
 

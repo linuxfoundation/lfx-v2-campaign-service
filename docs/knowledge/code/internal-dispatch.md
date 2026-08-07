@@ -184,6 +184,16 @@ this campaign" call, so it cannot satisfy `ReadMetrics`'s one-bounded-call contr
 submit-and-poll with a hard ceiling, or a persisted/sweeper-refreshed snapshot instead of a
 live read) — deferred, not attempted here.
 
+**X/Twitter** implements it: `twitterMetricsWindow` maps the shared `model.MetricsWindow`
+vocabulary to X Ads' own `MetricsWindow` literals, then `GetCampaignMetrics(ctx, campaignID,
+window)` queries the X Ads `/stats` endpoint. **CRITICAL: X's stats endpoint caps queryable
+date ranges at 7 days per request.** Only `yesterday`, `today`, and `last_7_days` map to a
+supported X window (`YESTERDAY`/`TODAY`/`LAST_7_DAYS`); every other foundation window
+(`last_14_days`, `last_30_days`, `this_month`, `last_month`) returns `twitter.ErrUnsupportedWindow` explaining
+the platform's API limitation (NOT a reduced range, average, or extrapolation). This is a
+permanent X API constraint documented in the knowledge base. Spend is returned by X as
+`billed_charge_local_micro`, already in micro-currency units (no USD parsing or conversion).
+
 ## Channel kinds: paid ads vs email
 
 `model.ChannelKind` classifies each provider as **`paid-ads`** or **`email`** (`Provider.Kind()`,
