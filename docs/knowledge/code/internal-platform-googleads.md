@@ -280,17 +280,43 @@ before any mutate runs, so a bad input never orphans an ad group with no ad.
 
 `Client.UpdateAdGroupAndAdStatus` sends the ad group status update then the ad
 status update, stopping on the first failure without attempting the second —
-the caller owns the all-or-nothing cascade semantics, not this method. (The
-dispatcher-level cascade that calls it — `GoogleAdsDispatcher.ToggleStatus` in
-`internal/dispatch/googleads.go` — is documented separately, GA-3c.)
+the caller owns the all-or-nothing cascade semantics, not this method.
+
+## Status toggling (GA-3c)
+
+`GoogleAdsDispatcher.ToggleStatus` (`internal/dispatch/googleads.go`) implements
+PAUSE cascading for the campaign-level pause that GA-2 introduced down to the ad group +
+ad GA-3b creates, mirroring the reddit adapter's child-cascade contract:
+
+- **PAUSE flips the campaign first**, then the ad group/ad. Pausing the
+  parent stops delivery immediately regardless of whether the child update
+  that follows succeeds — if that child update fails or is UNCONFIRMED, the
+  error still surfaces to the caller (the campaign is left paused, the child
+  status is unresolved) rather than being swallowed. If either child id is
+  absent (e.g. a campaign shell with no fully-created ad group/ad — see
+  GA-3b's duplicate/ambiguous-outcome limitations), there is nothing to pause
+  downstream and only the campaign is toggled.
+
+- **ACTIVATE is unconditionally refused** in GA-3c with `domain.ErrCampaignNotProvisioned`
+  (mapped to a 409 without calling Google) because GA-3b creates the ad group/ad but no
+  targeting criteria (keywords, audiences). A campaign without targeting cannot deliver, so
+  enabling it would report false success. Targeting provisioning is deferred to GA-4; once
+  GA-4 lands, ACTIVATE will cascade with children-first ordering (children activated before
+  campaign) so a campaign never reports ENABLED before its ad group/ad already do.
+
+`googleAdsChildIDs` recovers the ad-group/ad ids from the campaign's
+persisted `Result` blob (the JSON GA-3b's create path stores) — a
+missing/unparseable blob yields empty ids, which is what drives the "nothing
+to cascade to" branches above.
 
 ## Scope
 
 GA-1 is the scaffold (auth + request layer + GAQL search); GA-2 is campaign
 creation (`:mutate`); GA-3a is ad-copy generation and final-URL building
 (`ad_copy.go`, this file's previous section); GA-3b is the ad-group/ad
-creation cascade that consumes it. The orchestrator dispatcher (registering
-`google-ads` so briefs dispatch upstream) is wired in
+creation cascade that consumes it; GA-3c is the dispatcher-level
+status-toggle cascade over that ad group/ad. The orchestrator dispatcher
+(registering `google-ads` so briefs dispatch upstream) is wired in
 `internal/dispatch/googleads.go` (LFXV2-2636). Keyword/audience targeting
 (GA-4), metrics reads, and keyword actions follow in later GA slices.
 
@@ -309,12 +335,16 @@ synchronizes to the campaign name, so a campaign-stage partial reconciles the bu
 non-nil result (retaining the claim) on an ambiguous/duplicate-name create rather than
 releasing on an empty id.
 
-It implements PAUSE only; **ACTIVATE is refused** with `ErrCampaignNotProvisioned`
-(→409, raised locally without calling Google). The create path provisions only a PAUSED
-search campaign SHELL (budget → campaign) with no ad group, ad, or keywords, so flipping
-the campaign to ENABLED would report success while nothing can serve — the exact lie that
-sentinel exists to prevent. There is no cascade for the same reason: there are no children
-to cascade to. `UpdateCampaignStatus` sends a single `campaigns:mutate` UPDATE with
-`updateMask: "status"`. Note the vocabulary: Google spells the serving state **ENABLED**,
-not ACTIVE. When GA-3+ adds ad groups/ads/keywords, this must grow BOTH a cascade and a
-real child-id-based activate guard, matching the reddit shape.
+It implements PAUSE cascading (see "Status toggling (GA-3c)" above): `ToggleStatus` reads the
+ad-group/ad ids GA-3b's create path persisted in the campaign's `Result` blob
+(`googleAdsChildIDs`) and flips the campaign FIRST via `UpdateCampaignStatus`, then the ad
+group/ad via `Client.UpdateAdGroupAndAdStatus`. **ACTIVATE is unconditionally refused** with
+`ErrCampaignNotProvisioned` (→409, raised locally without calling Google) because GA-3b's
+create path provisions the ad group + ad but no targeting criteria (keywords, audiences) — a
+campaign without targeting cannot deliver, so enabling it would report false success.
+Targeting provisioning is deferred to GA-4; once GA-4 lands, ACTIVATE will cascade with a
+children-first order (children activated before campaign) so a campaign never reports ENABLED
+before its ad group/ad already do. Note the vocabulary: Google spells the serving state
+**ENABLED**, not ACTIVE.
+
+Microsoft Ads has a creation dispatcher; its status-TOGGLE capability lands separately.
