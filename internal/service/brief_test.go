@@ -37,6 +37,9 @@ type fakeBriefRepo struct {
 	// indexPayloads records EVERY co-committed message, so a test can assert that a write was
 	// indexed at all rather than only inspecting the most recent one.
 	indexPayloads [][]byte
+	// createErr, when set, fails CreateBrief BEFORE it stores anything — the shape of a
+	// version conflict or a database error, where the handler ran but no row committed.
+	createErr error
 }
 
 func newFakeBriefRepo() *fakeBriefRepo {
@@ -77,6 +80,9 @@ func (r *fakeBriefRepo) GetBrief(_ context.Context, projectID, id string) (*mode
 }
 
 func (r *fakeBriefRepo) CreateBrief(_ context.Context, b *model.CampaignBrief, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
+	if r.createErr != nil {
+		return nil, r.createErr
+	}
 	b.ID = "b-new"
 	b.Version = 1
 	// createBriefQuery binds ONE placeholder ($11) to both created_by and updated_by, so a

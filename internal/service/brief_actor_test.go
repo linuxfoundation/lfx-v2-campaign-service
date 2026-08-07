@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
@@ -146,6 +147,47 @@ func TestBriefActor_MissingActorWarns(t *testing.T) {
 	}
 	t.Fatalf("no WARN record mentioning a missing authenticated actor was emitted; an "+
 		"unattributed write must not be silent. Records seen: %v", h.recs)
+}
+
+// TestBriefActor_MissingActorWarnsEvenWhenTheWriteFails pins the deliberate choice that the
+// warning counts ATTEMPTS, not commits.
+//
+// Whether a request carried an actor is settled at the gateway, upstream of anything the
+// repository does, so a write that fails on a version conflict or a database error is
+// evidence about the auth path in exactly the same way a successful one is. Moving the
+// warning after a successful commit would look more precise and would go silent during a
+// deploy that broke auth AND writes together — precisely when the signal is wanted.
+//
+// This test is what stops that "tightening" from being made later without noticing: without
+// it, moving the log below the repository call leaves TestBriefActor_MissingActorWarns green,
+// because that test's write succeeds.
+func TestBriefActor_MissingActorWarnsEvenWhenTheWriteFails(t *testing.T) {
+	h := &capturingHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	repo := newFakeBriefRepo()
+	repo.createErr = errors.New("write conflict: brief was modified concurrently")
+	s := newTestBriefService(repo)
+	if _, err := s.CreateBrief(context.Background(), &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{ProgramType: "events", EventSlug: "kubecon-2025"},
+	}); err == nil {
+		t.Fatal("expected the repository failure to surface; the test needs a FAILED write")
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, r := range h.recs {
+		if r.Level == slog.LevelWarn && strings.Contains(r.Message, "no authenticated actor") {
+			return
+		}
+	}
+	t.Fatalf("a write that failed downstream emitted no missing-actor warning. The warning "+
+		"counts attempts on purpose: an absent actor is a gateway fact, not a repository "+
+		"outcome, and suppressing it on failure blinds the alert during exactly the "+
+		"deploy that breaks both. Records seen: %v", h.recs)
 }
 
 // TestBriefActor_UpdateMovesOnlyUpdatedBy asserts an edit attributes itself to the editor
