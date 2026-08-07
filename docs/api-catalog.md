@@ -325,9 +325,10 @@ config — not this campaign config.
 #### GoogleAdsConfig (the `googleAdsConfig` object)
 
 Google Ads per-platform config. The dispatcher creates a PAUSED search campaign with an ad
-group + a Responsive Search Ad (GA-3); keyword/audience targeting land in a later phase (GA-4).
-**Budget is in whole units of the ad ACCOUNT's currency**, not USD — the service does no FX
-conversion (mirroring `metaConfig`).
+group + a Responsive Search Ad (GA-3), then attaches keyword/audience targeting to that ad
+group (GA-4) — without it, the ad group has zero criteria and the campaign can never serve,
+even once a human enables it. **Budget is in whole units of the ad ACCOUNT's currency**, not
+USD — the service does no FX conversion (mirroring `metaConfig`).
 
 ```
 budget: number                  — Whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…),
@@ -353,6 +354,26 @@ descriptions?: string[]         — Optional Responsive Search Ad descriptions (
                                   therefore fits 15 headline / 45 description characters, not
                                   30 / 90, and is truncated at that point. Latin text is
                                   unaffected — one character, one unit.
+keywords?: {text, matchType}[]  — OPTIONAL positive Search keyword criteria (GA-4), attached to the
+                                  ad group created above. `text` ≤80 runes; `matchType` one of EXACT,
+                                  PHRASE, BROAD (case-insensitive). At most 20 entries; duplicates
+                                  (same matchType+text) are silently deduped, but an empty text or
+                                  unsupported matchType fails the job BEFORE any Google Ads request is
+                                  made. Left empty/omitted, the ad group has no criteria and can never
+                                  serve — supply at least one for a campaign that should actually run.
+audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTING audiences to attach
+                                  to the ad group (GA-4) as observation-only criteria — bid/report on
+                                  the segment without narrowing delivery to it. This client does not
+                                  create audiences; each entry must be a Customer Match user list
+                                  (`.../userLists/{id}`) the caller already built elsewhere. Custom
+                                  audiences are not supported (limited to Display/Demand Gen/Gmail/Video/
+                                  Performance Max by Google; this client creates SEARCH campaigns only).
+                                  Any other resource-name shape (customAudiences, userInterest,
+                                  combinedAudience, etc.) is rejected. At most 20 entries; duplicates are
+                                  deduped. When non-empty, the client sets the ad group's
+                                  `targetingSetting.targetRestrictions` (AUDIENCE, bidOnly) on the ad group
+                                  create so these segments stay observation-only rather than Google's
+                                  default of restricting delivery to the audience alone.
 ```
 
 #### HubSpotConfig (the `hubspotConfig` object)
