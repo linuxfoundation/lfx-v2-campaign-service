@@ -874,6 +874,16 @@ type APIError struct {
 	Type      string
 	Code      int
 	FBTraceID string
+	// EnvelopeUnreadable marks a non-2xx whose Graph error envelope could NOT be read —
+	// the body was oversized or the read failed, so Code is absent because we never got
+	// it, not because Meta omitted it. The two are indistinguishable from the fields
+	// above, and the difference decides a create's fate: Meta reports rate limiting as an
+	// HTTP 400 carrying a rate-limit Code far more often than as a 429, so a 400 with no
+	// Code reads as a clean semantic rejection. Classify an unread envelope that way and
+	// a shed create — which Meta may already have committed — is reported as definitely
+	// failed, the claim is released, and the retry duplicates a PAID campaign.
+	// createOutcomeAmbiguous treats this as ambiguous for exactly that reason.
+	EnvelopeUnreadable bool
 }
 
 func (e *APIError) Error() string {
@@ -1001,6 +1011,15 @@ func createOutcomeAmbiguous(err error) bool {
 	// HTTP-400 throttle as a clean rejection, which is the more common shape of the
 	// two on the Marketing API, so the whole guard would miss its main case.
 	if ae.StatusCode == http.StatusTooManyRequests || graphRateLimitCodes[ae.Code] {
+		return true
+	}
+	// The rate-limit-code check above can only fire on an envelope we actually read. When
+	// the body was oversized or unreadable there is no Code to test, and the absence is
+	// evidence of nothing: the most common throttle shape on the Marketing API is a 400
+	// whose rate-limit code lives in that very body. Treating it as a clean rejection is
+	// the same duplicate-a-paid-campaign failure the check above exists to prevent, just
+	// reached by a different route — so an unread envelope is ambiguous, not clean.
+	if ae.EnvelopeUnreadable {
 		return true
 	}
 	// A 3xx on a MUTATING request reached a responder and may have committed a
@@ -1423,9 +1442,16 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 				}
 				return &transportError{Method: method, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBody)}
 			}
+			// EnvelopeUnreadable, because this branch returns BEFORE env is unmarshalled
+			// and could not have populated it anyway: raw holds only the first
+			// maxResponseBody+1 bytes of a larger body, so it is truncated JSON. Without
+			// the flag this is a bare 400, which createOutcomeAmbiguous reads as a clean
+			// semantic rejection — and Meta's most common throttle shape is a 400 whose
+			// rate-limit code sits in the body we just failed to read.
 			return &APIError{
 				StatusCode: status, Method: method, Path: path,
-				Message: fmt.Sprintf("response exceeds %d bytes", maxResponseBody),
+				Message:            fmt.Sprintf("response exceeds %d bytes", maxResponseBody),
+				EnvelopeUnreadable: true,
 			}
 		}
 
@@ -1494,6 +1520,13 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 				readErrAPI.Type = env.Error.Type
 				readErrAPI.Code = env.Error.Code
 				readErrAPI.FBTraceID = env.Error.FBTraceID
+			} else {
+				// The truncated body did NOT parse, so there is no code to carry and the
+				// paragraph above does not apply. A missing code here means "we never read
+				// it", not "Meta sent none" — the same unknowable state as the oversized
+				// branch, and it must classify the same way rather than defaulting to a
+				// bare status that reads as a clean rejection.
+				readErrAPI.EnvelopeUnreadable = true
 			}
 			return readErrAPI
 		}

@@ -3397,6 +3397,119 @@ func TestDoRequestOversizedNon2xxPreservesStatus(t *testing.T) {
 	}
 }
 
+// TestDoRequestOversized400StaysAmbiguous covers the status the 500 test above cannot.
+//
+// A 500 is ambiguous on status alone, so it passes whether or not the envelope was read —
+// it cannot detect this defect. 400 is the status that decides the question: Meta reports
+// rate limiting as an HTTP 400 carrying a Graph rate-limit code far more often than as a
+// 429, and the oversized branch returns BEFORE the envelope is unmarshalled (and could not
+// parse it anyway — the body is truncated at the cap). Without EnvelopeUnreadable this is a
+// bare 400 with Code 0, which reads as a clean semantic rejection. A create classified that
+// way has its claim released and is retried — against a campaign Meta may already have
+// committed, so the retry duplicates a PAID campaign.
+func TestDoRequestOversized400StaysAmbiguous(t *testing.T) {
+	pad := strings.Repeat("x", maxResponseBody+1024)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// A 400 whose body WOULD have carried a rate-limit code, if we could read it.
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":4,"type":"OAuthException"},"pad":"`+pad+`"}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+	var out createResponse
+	err := c.doRequest(context.Background(), http.MethodPost, "/x", map[string]any{"a": 1}, &out)
+	if err == nil {
+		t.Fatal("expected an error for an oversized body, got nil")
+	}
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if ae.StatusCode != http.StatusBadRequest {
+		t.Errorf("APIError.StatusCode = %d, want 400", ae.StatusCode)
+	}
+	if !ae.EnvelopeUnreadable {
+		t.Error("an oversized non-2xx never read its envelope; the absent Code must be marked as unknown, not sent")
+	}
+	if !createOutcomeAmbiguous(err) {
+		t.Error("a mutating 400 whose envelope could not be read must stay AMBIGUOUS — a throttle " +
+			"is indistinguishable from a rejection here, and calling it a rejection duplicates a paid campaign")
+	}
+}
+
+// TestDoRequestUnparseableBody400StaysAmbiguous is the sibling case on the read-error path.
+//
+// That path already carries a parsed envelope onto the APIError, which covers the common
+// shape (a complete JSON body followed by a connection closed on a mismatched
+// Content-Length). It does nothing when the truncation lands mid-JSON and the body does not
+// parse: Code stays 0 and the result is the same bare 400 as the oversized branch. Same
+// unknowable state, so it must classify the same way.
+func TestDoRequestUnparseableBody400StaysAmbiguous(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Declare more than we send and truncate mid-object, so the read fails AND the
+		// partial body cannot be unmarshalled into an envelope.
+		w.Header().Set("Content-Length", "512")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+	var out createResponse
+	err := c.doRequest(context.Background(), http.MethodPost, "/x", map[string]any{"a": 1}, &out)
+	if err == nil {
+		t.Fatal("expected an error for a truncated body, got nil")
+	}
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if ae.Code != 0 {
+		t.Fatalf("test setup is wrong: the body was supposed to be unparseable, but Code = %d", ae.Code)
+	}
+	if !ae.EnvelopeUnreadable {
+		t.Error("a non-2xx whose truncated body did not parse must mark the missing Code as unknown")
+	}
+	if !createOutcomeAmbiguous(err) {
+		t.Error("a mutating 400 whose envelope could not be parsed must stay AMBIGUOUS")
+	}
+}
+
+// TestReadableRejection400StaysClean is the other half of the pair, and the one that stops
+// EnvelopeUnreadable from being a blanket "every 400 is ambiguous" widening. When the
+// envelope IS readable and carries a non-throttle code, Meta gave a definite answer and the
+// create must stay a CLEAN failure — otherwise every genuine rejection would be reported as
+// unconfirmed and an operator would be sent to Ads Manager to look for a campaign that was
+// never created.
+func TestReadableRejection400StaysClean(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":100,"type":"OAuthException","message":"Invalid parameter"}}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+	var out createResponse
+	err := c.doRequest(context.Background(), http.MethodPost, "/x", map[string]any{"a": 1}, &out)
+	if err == nil {
+		t.Fatal("expected an error for a 400, got nil")
+	}
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if ae.EnvelopeUnreadable {
+		t.Error("the envelope parsed cleanly; marking it unreadable would make every rejection ambiguous")
+	}
+	if createOutcomeAmbiguous(err) {
+		t.Error("a 400 carrying a readable non-throttle code is a definite rejection and must stay a clean failure")
+	}
+}
+
 // TestDoRequestPropagatesBodyReadError verifies a truncated response (declared
 // Content-Length larger than the body sent) is reported as an error, not a
 // false success, even if the partial body would parse.
