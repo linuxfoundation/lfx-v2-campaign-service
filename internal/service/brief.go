@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -515,14 +516,14 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			// meant for an API client.
 			slog.WarnContext(ctx, "campaign metrics window unsupported by platform",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
-				"platform", existing.Platform, "window", window, "error", merr)
+				"platform", existing.Platform, "window", window, "error", safeErrSummary(merr))
 			return nil, &briefs.BadRequestError{Code: "400", Message: "this window is not supported for the campaign's platform"}
 		case errors.Is(merr, ErrCampaignNotProvisioned):
 			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id yet"}
 		default:
 			slog.WarnContext(ctx, "campaign metrics read failed on the ad platform",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
-				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID, "error", merr)
+				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID, "error", safeErrSummary(merr))
 			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "campaign metrics could not be read from the ad platform"}
 		}
 	}
@@ -970,4 +971,50 @@ func unmarshalAny(j json.RawMessage) any {
 		return nil
 	}
 	return v
+}
+
+// errSummaryMaxRunes caps how much of an ad-platform error reaches structured logs.
+// 200 runes is enough to identify the failure class (Graph's "(#100) Invalid parameter",
+// an HTTP status line, a transport error) without letting an unbounded upstream body
+// dominate a log record.
+const errSummaryMaxRunes = 200
+
+// safeErrSummary renders err for a log field after stripping the two properties that
+// make a platform error unsafe to log verbatim: non-printable characters and unbounded
+// length.
+//
+// The metrics failure path is platform-agnostic — every ReadMetrics implementation
+// funnels through it — so it cannot assume each platform client has already scrubbed
+// its response text. Meta's *meta.APIError.Error() in particular renders the Graph
+// API's Message field verbatim, and the non-Graph fallback populates that field from
+// the RAW response body (internal/platform/meta/client.go:589-612). A body that
+// reflects request material back, or that carries newlines, can otherwise forge extra
+// lines in a line-oriented log sink or bloat log storage.
+//
+// Newlines, tabs, carriage returns and every other non-graphic rune are replaced with
+// U+FFFD rather than dropped, so the substitution is visible in the record instead of
+// silently changing the text. Truncation is marked with a trailing ellipsis.
+//
+// This is deliberately scoped to the log call rather than to Meta's Error() itself:
+// that method's raw-body behavior is pre-existing, tested, and relied on elsewhere for
+// campaign-creation diagnostics.
+func safeErrSummary(err error) string {
+	if err == nil {
+		return ""
+	}
+	var b strings.Builder
+	n := 0
+	for _, r := range err.Error() {
+		if n == errSummaryMaxRunes {
+			b.WriteString("…")
+			break
+		}
+		if unicode.IsGraphic(r) {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune(unicode.ReplacementChar)
+		}
+		n++
+	}
+	return b.String()
 }
