@@ -178,14 +178,25 @@ func TestBriefCols_ColumnOrderMatchesScanBrief(t *testing.T) {
 // CreateBrief lists BOTH columns: createBriefQuery binds one placeholder to each, so a
 // freshly inserted row already answers "who touched this last" without also reading
 // created_by. Requiring only created_by here would let the updated_by half be deleted.
+//
+// Each column names the EXACT placeholder it must bind, not merely "some placeholder".
+// "Some placeholder" is satisfied by binding the wrong one: createBriefQuery's actor is
+// $11, and $10 is approvedBy — a one-character edit that persists the approver as both the
+// author and the last editor, with every positional-only assertion still green. The index
+// is the only thing tying the column to the argument the repo method actually passes, so
+// it is what gets asserted. Cross-check when editing: $11 is createdBy
+// (brief_repo.go:144-148), $9 is updatedBy (:181-185), $1 is approvedBy (:225), $3 is
+// archivedBy (:288). Changing an argument list without changing the query here is exactly
+// the regression this pins.
 var actorStampedWrites = map[string]struct {
 	query string
-	cols  []string
+	// cols maps each actor column to the placeholder that must carry it.
+	cols map[string]string
 }{
-	"CreateBrief":  {createBriefQuery, []string{"created_by", "updated_by"}},
-	"ReplaceBrief": {replaceBriefQuery, []string{"updated_by"}},
-	"Approve":      {approveBriefQuery, []string{"updated_by"}},
-	"ArchiveBrief": {archiveBriefQuery, []string{"updated_by"}},
+	"CreateBrief":  {createBriefQuery, map[string]string{"created_by": "$11", "updated_by": "$11"}},
+	"ReplaceBrief": {replaceBriefQuery, map[string]string{"updated_by": "$9"}},
+	"Approve":      {approveBriefQuery, map[string]string{"updated_by": "$1"}},
+	"ArchiveBrief": {archiveBriefQuery, map[string]string{"updated_by": "$3"}},
 }
 
 // writeClause returns the statement with its RETURNING clause removed, so assertions about
@@ -243,11 +254,9 @@ func setClause(t *testing.T, q string) string {
 	return m[1]
 }
 
-// placeholderRe matches a positional bind parameter and nothing else.
-var placeholderRe = regexp.MustCompile(`^\$\d+$`)
-
 // TestBriefWrites_StampTheActorInTheSameStatement asserts each write binds its actor column
-// to a PLACEHOLDER — not to NULL, not to another column, and not by omission.
+// to the EXACT placeholder carrying the actor — not to NULL, not to another column, not to
+// a neighbouring argument, and not by omission.
 func TestBriefWrites_StampTheActorInTheSameStatement(t *testing.T) {
 	for name, tc := range actorStampedWrites {
 		t.Run(name, func(t *testing.T) {
@@ -257,17 +266,20 @@ func TestBriefWrites_StampTheActorInTheSameStatement(t *testing.T) {
 			// statement that writes neither. (Verified: deleting the actor columns from
 			// the INSERT left this test green until the RETURNING clause was stripped.)
 			q := writeClause(t, tc.query)
-			for _, col := range tc.cols {
+			for col, want := range tc.cols {
 				bound := bindingFor(t, q, col)
 				require.NotEmpty(t, bound,
 					"%s never writes %s, so the write commits with no record of who made it. "+
 						"Campaigns run under SHARED system accounts: the ad platform reports one "+
 						"identity for every person, so if this statement does not capture the "+
 						"actor the information exists nowhere.", name, col)
-				require.Regexp(t, placeholderRe, bound,
-					"%s binds %s to %q instead of a placeholder. Only a bind parameter carries "+
-						"the actor the handler resolved; NULL erases the attribution and another "+
-						"column copies the wrong one.", name, col, bound)
+				require.Equal(t, want, bound,
+					"%s binds %s to %q, but the actor this method resolves is passed as %s. "+
+						"NULL erases the attribution; a literal or another column records the "+
+						"wrong person; and a NEIGHBOURING placeholder is the quiet failure — "+
+						"%s's arguments are all strings, so binding the approver or the project "+
+						"id here type-checks, commits, and reads back as a plausible actor.",
+					name, col, bound, want, name)
 			}
 		})
 	}
