@@ -345,10 +345,11 @@ func googleAdsRunStatus(status string) (string, error) {
 // encrypted Google Ads connection credential, returning minimal identifying
 // information (customer ID and optionally a display label).
 //
-// It is deliberately a STAGED adapter: the service-side AccountLister interface and
-// Orchestrator.ReadAccounts that will type-assert it do not exist yet, so nothing in
-// the running service calls this today. The signature matches the shape those will
-// expect, and the error contract below is what they will rely on.
+// It satisfies the service-side AccountLister interface, which Orchestrator.ReadAccounts
+// type-asserts on the dispatcher for the requested platform; a platform whose dispatcher
+// does not implement it gets domain.ErrAccountsUnsupported and the ad platform is never
+// contacted. The error contract below is what ReadAccounts and the endpoint's status
+// mapping rely on.
 func (d *GoogleAdsDispatcher) ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error) {
 	client, err := d.resolveGoogleAdsDiscoveryClient(ctx, projectID, platform)
 	if err != nil {

@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1113,4 +1115,39 @@ func TestConnectionService_AccountDiscoveryNeedsTheOrchestrator(t *testing.T) {
 	var badReq *conn.BadRequestError
 	require.ErrorAs(t, err, &badReq,
 		"after SetOrchestrator the call must reach the orchestrator, not short-circuit on the nil check")
+}
+
+// TestContainer_BothStartupPathsInjectTheOrchestrator asserts that each of the two container
+// startup paths actually performs the injection the test above proves is necessary.
+//
+// The test above drives the SERVICE: it binds the backend and calls SetOrchestrator by hand,
+// so it proves discovery is 503 without the injection — but it never executes a line of
+// container.go, and deleting either call site leaves it green. Both sites need a live
+// pgxpool to reach in a unit test, so this asserts on the source, the way the shutdown-order
+// invariants in this package are asserted. Each function body is bounded at the next
+// top-level func so its sibling cannot satisfy the assertion on its behalf.
+func TestContainer_BothStartupPathsInjectTheOrchestrator(t *testing.T) {
+	src, err := os.ReadFile("container.go")
+	require.NoError(t, err)
+
+	body := func(sig string) string {
+		i := strings.Index(string(src), sig)
+		require.NotEqual(t, -1, i, "%s not found; update this test if it was renamed", sig)
+		rest := string(src)[i+len(sig):]
+		if j := strings.Index(rest, "\nfunc "); j != -1 {
+			rest = rest[:j]
+		}
+		return rest
+	}
+
+	// The fast path: NewContainer reached a live pool and wires everything synchronously.
+	assert.Contains(t, body("func (c *Container) wireLiveBackends("), "SetOrchestrator(orch)",
+		"the live-backend path must inject the orchestrator into the connection service; without "+
+			"it every pod that starts with a reachable DB answers 503 to account discovery forever")
+	// The cold-start path: the DB was unreachable at boot, the container came up in 503 mode,
+	// and a background goroutine binds the backends when the retry finally connects. It is
+	// the easier one to forget precisely because it is not the path anyone runs locally.
+	assert.Contains(t, body("func (c *Container) retryDatabaseInit("), "SetOrchestrator(orch)",
+		"the cold-start retry must inject the orchestrator too; otherwise a pod that booted "+
+			"before the database was reachable serves 503s for account discovery for its whole life")
 }

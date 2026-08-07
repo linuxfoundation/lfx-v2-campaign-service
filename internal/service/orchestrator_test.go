@@ -1700,6 +1700,45 @@ func TestOrchestrator_CampaignIndexCoCommitsWithoutACallerToken(t *testing.T) {
 	}
 }
 
+// nilResultAccountLister is an AccountLister that returns (nil, nil) — the contract
+// violation ReadAccounts has to convert into an error.
+type nilResultAccountLister struct{}
+
+func (nilResultAccountLister) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return nil, nil
+}
+
+func (nilResultAccountLister) ListAccounts(_ context.Context, _ string, _ model.Provider) ([]model.AccessibleAccount, error) {
+	return nil, nil
+}
+
+// TestOrchestrator_ReadAccounts_NilNilListerResultIsError pins the guard that turns a
+// (nil, nil) lister into a 503.
+//
+// A nil slice with no error is indistinguishable from "no accounts" at the call site but is
+// not the same thing: the handler builds a response from the result, so a lister that lost
+// its result without reporting a failure would surface as an empty account picker and the
+// operator would conclude the credential can reach nothing. The metrics path has the exact
+// same guard and the exact same test; the account tests otherwise only cover a non-nil
+// EMPTY slice, which returns through the happy path and never evaluates this branch.
+func TestOrchestrator_ReadAccounts_NilNilListerResultIsError(t *testing.T) {
+	orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: nilResultAccountLister{},
+	})
+
+	accounts, err := orch.ReadAccounts(context.Background(), "proj-1", model.ProviderGoogleAds)
+	if err == nil {
+		t.Fatal("expected an error when the AccountLister returns (nil, nil), got nil")
+	}
+	if errors.Is(err, domain.ErrAccountsUnsupported) {
+		t.Errorf("err = %v, but ErrAccountsUnsupported is a 400 meaning the platform has no "+
+			"lister at all — this platform HAS one and it misbehaved, which is a 503", err)
+	}
+	if accounts != nil {
+		t.Errorf("accounts = %+v, want nil alongside the error", accounts)
+	}
+}
+
 // accountListerRecordingDeadline is an AccountLister that records the deadline it was
 // handed, so the bound on the synchronous platform call can be asserted rather than
 // assumed.

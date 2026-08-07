@@ -66,14 +66,13 @@ var (
 	// ErrAccountsUnsupported indicates the platform has no account-listing capability
 	// wired. The platform is never contacted.
 	//
-	// RESERVED, and unreferenced in this tree. Nothing returns or inspects it yet: the
-	// `AccountLister` interface it names, `Orchestrator.ReadAccounts`, and the 400 status
-	// mapping all land with the account-discovery ENDPOINT in the follow-up PR, which is
-	// the first code to use this sentinel. It is declared here, one PR early, for the same
-	// reason as ErrToggleUnsupported — a platform dispatcher must be able to return it
-	// without importing the orchestration layer, so it cannot live in internal/service —
-	// and declaring it with the adapter keeps the endpoint PR to the endpoint.
+	// `Orchestrator.ReadAccounts` returns it when the platform's dispatcher does not
+	// implement the service-side `AccountLister` interface, and the account-discovery
+	// handler maps it to 400 — a request for a platform this service cannot enumerate is
+	// a caller error, not a transient upstream failure.
 	//
-	// Do not infer current behaviour from this comment; grep for callers.
+	// It lives here rather than in internal/service for the same reason as
+	// ErrToggleUnsupported: a platform dispatcher must be able to return it without
+	// importing the orchestration layer.
 	ErrAccountsUnsupported = errors.New("account discovery is not supported for this platform")
 )
