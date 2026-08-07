@@ -112,6 +112,7 @@ Each optimization action is scoped to a single campaign under its brief and is i
 | Platform | Supported windows |
 |----------|-------------------|
 | X (Twitter) Ads | `today`, `yesterday`, `last_7_days` only — the stats endpoint caps a queryable range at 7 days, so the wider windows return `400`. This is why X defaults to `last_7_days` rather than `last_30_days`. |
+| LinkedIn Ads | `today`, `last_7_days`, `last_30_days`, `this_month`, `last_month`. `yesterday` and `last_14_days` return `400` — the Ad Analytics finder takes an explicit date range and these two have no mapping today. |
 | Reddit Ads | `today`, `last_7_days`, `last_30_days`, `this_month`, `last_month`. `yesterday` and `last_14_days` return `400` — no date-range mapping today. |
 
 Reddit Ads is wired but **default-OFF**: its reporting contract is unverified (LFXV2-2995 — see the Reddit Ads notes below), so the adapter returns the same 400 as an unsupported platform unless the deployment sets `REDDIT_METRICS_ENABLED=true`. That is deliberate — a guessed request/response shape and currency unit returning 200 would look authoritative to every consumer, and the caveats are not carried in the response.
