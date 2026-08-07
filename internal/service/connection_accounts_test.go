@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -212,6 +213,57 @@ func TestListGoogleAdsAccounts_NoConnectionIs404(t *testing.T) {
 	}
 	if notFound.Code != "404" {
 		t.Errorf("expected code 404, got %q", notFound.Code)
+	}
+}
+
+// TestListGoogleAdsAccounts_UnusableConnectionIs400 pins the arm that keeps the 503 below
+// honest. The connection EXISTS — so it is not the 404 case — but it cannot be used as it
+// stands, and no amount of retrying changes that until a human edits it. Without this arm
+// every such failure lands in `default` and the caller is told to retry forever.
+//
+// The three sub-cases are the three shapes the dispatcher wraps: an inactive connection, an
+// incomplete credential blob, and a malformed stored config value. They are separate here
+// because they arrive from separate call sites in resolveGoogleAdsDiscoveryClient, and a
+// refactor that drops the wrap from any ONE of them would still leave the other two green.
+//
+// The response must NOT echo the cause: one of these wraps a json.Unmarshal failure over the
+// DECRYPTED credential blob, and an unmarshal error can quote its input, which would put
+// credential bytes in an HTTP response body.
+func TestListGoogleAdsAccounts_UnusableConnectionIs400(t *testing.T) {
+	cases := []struct {
+		name  string
+		cause string
+	}{
+		{"inactive connection", "google ads connection for project p is inactive, not active"},
+		{"incomplete credentials", "google ads credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)"},
+		{"malformed manager id", `stored login_customer_id "999-999-9999" must be digits only (no dashes or spaces)`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wrapped := fmt.Errorf("%w: %s", domain.ErrConnectionNotUsable, tc.cause)
+			svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+			svc.SetOrchestrator(&Orchestrator{
+				dispatchers: map[model.Provider]PlatformDispatcher{
+					model.ProviderGoogleAds: &mockAccountListerDispatcher{err: wrapped},
+				},
+			})
+
+			result, err := svc.ListGoogleAdsAccounts(context.Background(), &conn.ListGoogleAdsAccountsPayload{ProjectID: "p"})
+			if result != nil {
+				t.Fatalf("expected nil result for an unusable connection, got %v", result)
+			}
+			badRequest, ok := err.(*conn.BadRequestError)
+			if !ok {
+				t.Fatalf("expected BadRequestError so the caller stops retrying, got %T: %v", err, err)
+			}
+			if badRequest.Code != "400" {
+				t.Errorf("expected code 400, got %q", badRequest.Code)
+			}
+			if strings.Contains(badRequest.Message, tc.cause) {
+				t.Errorf("message echoes the wrapped cause %q; the cause is logged, not returned, "+
+					"because the decode case can quote decrypted credential bytes", tc.cause)
+			}
+		})
 	}
 }
 

@@ -102,35 +102,6 @@ ambiguous mutation to protect, so there is no UNCONFIRMED classification here. T
 bounded by `metricsCallTimeout` (20s, distinct from `toggleCallTimeout`'s 45s — reads should
 fail fast rather than hold a request open).
 
-## Account discovery
-
-`ConnectionService.ListGoogleAdsAccounts` (backing `GET .../connection-google-ads/accounts`)
-enumerates the ad accounts reachable UPSTREAM with the connection's stored credential, so an
-operator can pick one instead of pasting a customer id by hand. It is a live read on the same
-never-persisted discipline as `GetCampaignMetrics`, and `Orchestrator.ReadAccounts` uses the
-same optional-capability pattern: it type-asserts the platform's dispatcher for `AccountLister`
-at call time and returns `ErrAccountsUnsupported` (400) without contacting the platform when
-that capability isn't wired.
-
-Note what it does NOT list: anything this service stores. A project holds at most one connection
-per provider, read via `GET .../connection-{provider}`.
-
-Three outcomes are distinguished deliberately, because collapsing them misdirects the caller.
-`ErrAccountsUnsupported` → **400** (the platform has no discovery capability). `domain.ErrNotFound`
-→ **404** (the project has no stored connection — a setup state; a 503 there would tell the
-caller to retry something that cannot succeed until a connection exists). Anything else → **503**.
-
-`ReadAccounts` treats a nil result from a lister as a contract violation and maps it to 503, so
-every layer must build its slice with `make(..., 0, n)`: a credential that legitimately reaches
-zero accounts is an EMPTY list, and a nil anywhere on the path — including the service layer's
-conversion loop — reports the platform as down for a correct, ordinary answer, and hands clients
-a `null` they were promised they would never see.
-
-Both cold-start guards on this handler return 503 but mean different things:
-`resolveBackendWithOrch` checks the repo first ("connection storage is unavailable") and the
-orchestrator second ("account discovery service is unavailable"). A test that leaves BOTH unset
-only ever exercises the first.
-
 The `window` query parameter is a closed, platform-agnostic vocabulary
 (`model.MetricsWindow`: `today`, `yesterday`, `last_7_days`, `last_14_days`,
 `last_30_days` [default], `this_month`, `last_month`) — never a platform's own dialect
@@ -146,6 +117,46 @@ endpoint caps queryable date ranges at 7 days per request — `last_30_days` is 
 unreachable there (see `internal/platform/twitter` and `internal/dispatch/twitter.go`
 below). A single global default would make every omitted-window request against an X
 campaign fail with a guaranteed 400.
+
+## Account discovery
+
+`ConnectionService.ListGoogleAdsAccounts` (backing `GET .../connection-google-ads/accounts`)
+enumerates the ad accounts reachable UPSTREAM with the connection's stored credential, so an
+operator can pick one instead of pasting a customer id by hand. It is a live read on the same
+never-persisted discipline as `GetCampaignMetrics`, and `Orchestrator.ReadAccounts` uses the
+same optional-capability pattern: it type-asserts the platform's dispatcher for `AccountLister`
+at call time and returns `ErrAccountsUnsupported` (400) without contacting the platform when
+that capability isn't wired.
+
+Note what it does NOT list: anything this service stores. A project holds at most one connection
+per provider, read via `GET .../connection-{provider}`.
+
+Four outcomes are distinguished deliberately, because collapsing them misdirects the caller.
+
+- `ErrAccountsUnsupported` → **400** — the platform has no discovery capability.
+- `domain.ErrNotFound` → **404** — the project has no stored connection. A setup state; a 503
+  here would tell the caller to retry something that cannot succeed until a connection exists.
+- `domain.ErrConnectionNotUsable` → **400** — the connection EXISTS but cannot be used as it
+  stands: inactive, an incomplete or undecodable credential blob, or a malformed stored config
+  value such as a dashed `login_customer_id`. The platform is never contacted. This arm is what
+  keeps the 503 below honest: a 503 promises that waiting might help, and none of these conditions
+  change until a human edits the connection. The distinction cannot be made here — a setup failure
+  and an upstream one arrive as the same type — so `internal/dispatch/googleads.go`
+  (`resolveGoogleAdsDiscoveryClient`) wraps every pre-send failure with the sentinel, and this arm
+  reads it. The cause is LOGGED, not returned: one of the wrapped errors comes from
+  `json.Unmarshal` over the decrypted credential blob, and an unmarshal error can quote its input.
+- Anything else → **503** — the platform was reached and did not answer.
+
+`ReadAccounts` treats a nil result from a lister as a contract violation and maps it to 503, so
+every layer must build its slice with `make(..., 0, n)`: a credential that legitimately reaches
+zero accounts is an EMPTY list, and a nil anywhere on the path — including the service layer's
+conversion loop — reports the platform as down for a correct, ordinary answer, and hands clients
+a `null` they were promised they would never see.
+
+Both cold-start guards on this handler return 503 but mean different things:
+`resolveBackendWithOrch` checks the repo first ("connection storage is unavailable") and the
+orchestrator second ("account discovery service is unavailable"). A test that leaves BOTH unset
+only ever exercises the first.
 
 ## Campaign delete
 

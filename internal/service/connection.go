@@ -130,6 +130,31 @@ func (s *ConnectionService) ListGoogleAdsAccounts(ctx context.Context, p *conn.L
 			// state error, not a platform outage — reporting 503 would tell the caller
 			// to retry something that can never succeed until a connection exists.
 			return nil, &conn.NotFoundError{Code: "404", Message: "no google ads connection configured for this project"}
+		case errors.Is(aerr, domain.ErrConnectionNotUsable):
+			// The connection EXISTS but cannot be used as it stands — inactive, an
+			// incomplete credential blob, or a malformed stored config value such as a
+			// dashed login_customer_id. Google is never contacted, and none of these
+			// improve with time, so the 503 below would be a false promise: it tells the
+			// caller to retry a request that cannot succeed until a human edits the
+			// connection. The dispatcher wraps every pre-send failure with this sentinel
+			// precisely so this arm can exist (internal/dispatch/googleads.go,
+			// resolveGoogleAdsDiscoveryClient) — the classification cannot be recovered
+			// here, because a setup failure and an upstream one arrive as the same type.
+			//
+			// The cause is logged, not returned. One of the wrapped errors comes from
+			// json.Unmarshal over the DECRYPTED credential blob, and an unmarshal error can
+			// quote the offending input — so echoing aerr verbatim would put credential
+			// bytes in an HTTP response body for exactly the connection whose credentials
+			// are malformed. The response instead names the three things that produce this
+			// status, which is the whole remedy surface.
+			slog.WarnContext(ctx, "google ads connection is not usable for account discovery",
+				"project_id", p.ProjectID, "error", aerr)
+			return nil, &conn.BadRequestError{
+				Code: "400",
+				Message: "the stored google ads connection cannot be used as configured: check that it " +
+					"is active, that every credential field is set, and that login_customer_id is " +
+					"digits only",
+			}
 		default:
 			slog.WarnContext(ctx, "account discovery failed on google ads",
 				"project_id", p.ProjectID, "error", aerr)

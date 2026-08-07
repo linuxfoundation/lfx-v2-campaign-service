@@ -1088,9 +1088,15 @@ func (o *Orchestrator) ReadAccounts(ctx context.Context, projectID string, platf
 		return nil, aerr
 	}
 	if accounts == nil {
-		// An AccountLister returning (nil, nil) is a contract violation, not success — the
-		// caller expects a list (possibly empty, but not nil). Convert it into an ordinary
-		// error so the handler returns a 503 instead of panicking the request.
+		// An AccountLister returning (nil, nil) is a contract violation, not success. Nothing
+		// downstream would CRASH on it — len and range are nil-safe, and the handler's
+		// conversion loop would happily produce an empty `[]`. That is exactly the problem:
+		// the caller cannot tell "this credential reaches zero ad accounts" from "the lister
+		// silently gave up", and would render an empty account picker with no error, sending
+		// the operator to look for a permissions problem at the provider that does not exist.
+		// Failing loudly here is what keeps the empty list meaningful — every lister on this
+		// path builds its slice with make(..., 0, n) precisely so an empty answer stays
+		// distinguishable from no answer.
 		return nil, fmt.Errorf("%s account lister returned a nil result with no error", platform)
 	}
 	return accounts, nil
