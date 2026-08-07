@@ -49,9 +49,10 @@ type AdAnalyticsResponse struct {
 }
 
 // GetCampaignMetrics reads live campaign metrics from LinkedIn's Ad Analytics API
-// for the given campaign during the specified time window. This method implements
-// the service.MetricsReader interface (the optional capability the orchestrator
-// discovers per dispatcher).
+// for the given campaign during the specified time window. This is the platform-client
+// helper behind dispatch.LinkedInDispatcher.ReadMetrics — the dispatcher, not this
+// method, is what satisfies service.MetricsReader (the optional capability the
+// orchestrator type-asserts for per dispatcher); the two signatures differ.
 //
 // campaignID is the bare numeric LinkedIn campaign id as persisted by
 // campaignFromLinkedIn (trailingID of the campaign URN returned on creation)
@@ -340,11 +341,13 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 // following month rather than erroring — that would silently shift both
 // this_month and last_month's boundaries on 29th/30th/31st-of-month days.
 //
-// All dates are normalized to UTC before extraction to ensure LinkedIn's API
-// receives consistent UTC dates regardless of the client's local timezone. For
-// example, a client in Asia/Tokyo (UTC+9) on Jan 15 local time will extract
-// year/month/day from UTC (Jan 15 UTC, not Jan 14 UTC), so the query requests
-// Jan 15 UTC metrics.
+// The window is anchored to the UTC calendar date, not the client's local one: now() is
+// converted with .UTC() before year/month/day are extracted, so every caller gets the same
+// range regardless of the clock's zone. This means a local date and the queried date can
+// legitimately differ — a client in Asia/Tokyo (UTC+9) at 06:00 on Jan 15 local time is at
+// 21:00 on Jan 14 UTC, so "today" queries Jan 14, not Jan 15. That is the intended contract,
+// since LinkedIn's Ad Analytics dateRange is itself a UTC calendar range; interpreting it in
+// local time would silently shift every window by a day for non-UTC callers.
 func (c *Client) dateRangeForWindow(window model.MetricsWindow) (start, end time.Time, err error) {
 	now := c.now().UTC()
 	year, month, day := now.Date()

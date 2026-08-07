@@ -1,6 +1,6 @@
 # 2026-08-05 — LFXV2-2994: LinkedIn metrics cost aggregate overflow
 
-**Fix** — Addressed a review finding (Copilot) against
+**Update** — Addressed a review finding (Copilot) against
 `internal/platform/linkedin/metrics.go`'s `GetCampaignMetrics`. Each element's
 `costInUsd` was converted to micros via `costInUsdToMicros`, which already rejects
 a single value that would overflow `int64` — but the per-element `metrics.CostMicros

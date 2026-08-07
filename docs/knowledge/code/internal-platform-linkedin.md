@@ -77,9 +77,11 @@ caller can tell a maybe-applied outcome (including a partial cascade) from a def
 
 ## Metrics read
 
-`GetCampaignMetrics(ctx, accountID, campaignID, window)` implements `service.MetricsReader`
-(the type-asserted, optional capability the orchestrator's live-read metrics endpoint
-discovers per dispatcher — see `internal/service/orchestrator.go`). `campaignID` is the BARE
+`GetCampaignMetrics(ctx, accountID, campaignID, window)` is the platform-client helper behind
+`dispatch.LinkedInDispatcher.ReadMetrics` — the dispatcher, not this method, is what satisfies
+`service.MetricsReader` (the type-asserted, optional capability the orchestrator's live-read
+metrics endpoint discovers per dispatcher — see `internal/service/orchestrator.go`); the two
+signatures differ. `campaignID` is the BARE
 NUMERIC id persisted by `campaignFromLinkedIn` (`trailingID` of the creation response's
 campaign URN, not a URN) — this method builds the `urn:li:sponsoredCampaign:{id}` and
 `urn:li:sponsoredAccount:{acctID}` URNs the Ad Analytics finder itself requires.
@@ -94,15 +96,17 @@ flat `map[string]string` param model entirely, going through a dedicated
 (`parseRetryAfter`/`retryBaseDelay`/`maxRetryWait`/`sleepCtx`), the same as `doRequest`'s
 idempotent-method retry rule. **UNVERIFIED ASSUMPTION**: the finder name (`q=analytics`),
 `pivot=CAMPAIGN`, and `timeGranularity=ALL` are LinkedIn's documented Ad Analytics contract,
-flagged in code but not yet verified against a live Marketing API account (mirrors the same
-kind of disclosed assumption in `internal/platform/googleads/metrics.go`).
+flagged in code but not yet verified against a live Marketing API account.
 
 The response's `elements` field is decoded via a `*[]AdAnalyticsElement` pointer so a
 missing/null field (malformed response — empty body, `{}`, `null`) is distinguishable from an
 explicit `{"elements": []}` (genuine zero activity in the window): a nil pointer is a decode
 error, never silently reported as zero metrics. Spend (`costInUsd`, decimal USD returned as a
-JSON string representing a BigDecimal) is parsed as a float64, then rounded — not truncated —
-into micros (`int64(math.Round(spend * 1_000_000))`).
+JSON string representing a BigDecimal) is parsed with `big.Rat`, NOT `strconv.ParseFloat`: a
+BigDecimal can carry more precision than float64 holds, so a float parse would round the
+value twice. `costInUsdToMicros` multiplies the exact rational by 1e6, rounds — not truncates
+— to the nearest integer, and rejects the result unless `big.Int.IsInt64` confirms it fits,
+so an out-of-range spend is an error rather than a silently wrapped micro value.
 
 `dateRangeForWindow` anchors both `this_month` and `last_month` off the first-of-month date
 rather than `AddDate(0, -1, 0)` on today's day-of-month, since `time.AddDate` silently

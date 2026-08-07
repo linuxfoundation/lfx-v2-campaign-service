@@ -1,6 +1,6 @@
 # 2026-08-05 — LinkedIn costInUsd: parse exact decimal, not float64
 
-**Fix** — Addressed a Copilot finding on `costInUsdToMicros`
+**Update** — Addressed a Copilot finding on `costInUsdToMicros`
 (`internal/platform/linkedin/metrics.go`). LinkedIn's Ad Analytics API returns
 `costInUsd` as a BigDecimal serialized as a JSON string. The prior
 implementation parsed it via `strconv.ParseFloat` before multiplying by

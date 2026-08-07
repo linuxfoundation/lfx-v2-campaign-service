@@ -188,8 +188,10 @@ live read) — deferred, not attempted here.
 shared `model.MetricsWindow` to a Rest.li 2.0 nested date-range literal via
 `dateRangeForWindow`, then queries the Ad Analytics `adAnalytics` finder
 (`q=analytics`) scoped to the campaign/account URNs built from the persisted bare numeric
-`PlatformCampaignID`. All windows in the shared vocabulary map to a concrete date range (no
-platform-specific unsupported-window case). Spend (`costInUsd`, decimal USD) is converted to
+`PlatformCampaignID`. Five of the shared vocabulary's seven windows map to a concrete date
+range — `today`, `last_7_days`, `last_30_days`, `this_month`, `last_month`. `yesterday` and
+`last_14_days` are NOT mapped: `dateRangeForWindow` returns `ErrUnsupportedWindow`, which the
+dispatcher translates to `ErrMetricsWindowUnsupported`. Spend (`costInUsd`, decimal USD) is converted to
 micro-currency (×1e6, rounded rather than truncated). `Ctr` is computed as clicks/impressions,
 0 when impressions is 0. A finder response with an empty (non-nil) `elements` array is
 zero-activity, not an error; a nil/missing `elements` field on a 2xx is rejected as a decode

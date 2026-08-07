@@ -132,6 +132,68 @@ func TestGetCampaignMetrics_AggregateCostOverflowIsError(t *testing.T) {
 	}
 }
 
+// TestGetCampaignMetrics_CountGuardsAreErrors covers the impressions/clicks guards in the
+// aggregation loop. TestGetCampaignMetrics_AggregateCostOverflowIsError only exercises the
+// cost sum, so before this the negative-count rejection and both running-count overflow
+// checks had no coverage — a regression that dropped them would silently understate (or
+// wrap negative) the two headline metrics on a 200 response.
+func TestGetCampaignMetrics_CountGuardsAreErrors(t *testing.T) {
+	// math.MaxInt64 = 9223372036854775807. Each element below is individually a valid
+	// int64; only the running sum trips the guard.
+	tests := []struct {
+		name     string
+		elements string
+		wantErr  string
+	}{
+		{
+			name:     "negative impressions",
+			elements: `{"impressions": -1, "clicks": 5}`,
+			wantErr:  "negative impressions or clicks",
+		},
+		{
+			name:     "negative clicks",
+			elements: `{"impressions": 10, "clicks": -1}`,
+			wantErr:  "negative impressions or clicks",
+		},
+		{
+			name: "aggregate impressions overflow",
+			elements: `{"impressions": 9223372036854775807, "clicks": 1},
+				{"impressions": 1, "clicks": 1}`,
+			wantErr: "aggregate impressions overflows int64",
+		},
+		{
+			name: "aggregate clicks overflow",
+			elements: `{"impressions": 1, "clicks": 9223372036854775807},
+				{"impressions": 1, "clicks": 1}`,
+			wantErr: "aggregate clicks overflows int64",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"elements": [%s]}`, tt.elements)
+			}))
+			defer server.Close()
+
+			client := NewClient(
+				Credentials{AccessToken: "test-token"},
+				RuntimeConfig{DefaultAccountID: "account123"},
+				WithBaseURL(server.URL),
+			)
+
+			metrics, err := client.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+			if err == nil {
+				t.Fatalf("expected an error, got metrics %+v", metrics)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("expected error containing %q, got: %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
 func TestGetCampaignMetrics_NoActivity(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -511,20 +573,16 @@ func TestDateRangeForWindow_ThisMonthAndLastMonth_MonthEndBoundary(t *testing.T)
 	}
 }
 
-// TestDateRangeForWindow_TimezoneHandling verifies that date ranges are
-// constructed correctly when the client clock is in a non-UTC timezone.
-// This tests the fix for the timezone bug: converting midnight-in-local-time
-// to UTC could shift the date (e.g. Aug 5 00:00 UTC+10 becomes Aug 4 14:00 UTC),
-// so we must NOT convert to UTC before extracting date components for the
-// LinkedIn Ad Analytics API.
+// TestDateRangeForWindow_TimezoneHandling pins the UTC-calendar contract for a
+// positive-offset (east-of-UTC) clock. dateRangeForWindow calls now().UTC() before
+// extracting year/month/day, so the window follows the UTC date and NOT the client's
+// local one. The instant below is deliberately chosen to make the two disagree: at
+// 06:00 on Aug 5 in UTC+10 it is still 20:00 on Aug 4 in UTC, so "today" must resolve
+// to Aug 4. A same-day instant (e.g. 10:30 UTC+10, which is 00:30 UTC on Aug 5) would
+// pass whether the code normalized to UTC or not, and so would not be binding.
 func TestDateRangeForWindow_TimezoneHandling(t *testing.T) {
-	// Simulate a client clock in UTC+10 (Australian Eastern time).
-	// 2025-08-05 10:30:45 in UTC+10 = 2025-08-05 00:30:45 UTC.
-	// The client's local date is Aug 5, and dateRangeForWindow normalizes to UTC
-	// before extracting date components, so the returned UTC times should reflect
-	// the client's local date (Aug 5).
 	fixedLoc := time.FixedZone("UTC+10", 10*3600)
-	fixedTime := time.Date(2025, 8, 5, 10, 30, 45, 0, fixedLoc)
+	fixedTime := time.Date(2025, 8, 5, 6, 0, 0, 0, fixedLoc)
 
 	client := NewClient(
 		Credentials{AccessToken: "test"},
@@ -532,17 +590,15 @@ func TestDateRangeForWindow_TimezoneHandling(t *testing.T) {
 		WithClock(func() time.Time { return fixedTime }),
 	)
 
-	// The dateRangeForWindow returns times in UTC, but normalized from the
-	// client's local date. Today's local date is 2025-08-05, which converts to
-	// 2025-08-05 00:30:45 UTC; extracted components are Aug 5, year 2025.
+	// Local date is Aug 5; UTC date is Aug 4. The UTC one wins.
 	start, end, err := client.dateRangeForWindow(model.MetricsWindowToday)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Extracted date components should reflect the client's local date (Aug 5),
-	// not the UTC date shifted earlier.
-	if got, want := start.Day(), 5; got != want {
+	// Extracted date components must reflect the UTC date (Aug 4), not the
+	// client's local date (Aug 5).
+	if got, want := start.Day(), 4; got != want {
 		t.Errorf("today start day: expected %d, got %d", want, got)
 	}
 	if got, want := start.Month(), time.August; got != want {
@@ -552,7 +608,7 @@ func TestDateRangeForWindow_TimezoneHandling(t *testing.T) {
 		t.Errorf("today start year: expected %d, got %d", want, got)
 	}
 
-	if got, want := end.Day(), 5; got != want {
+	if got, want := end.Day(), 4; got != want {
 		t.Errorf("today end day: expected %d, got %d", want, got)
 	}
 	if got, want := end.Month(), time.August; got != want {
