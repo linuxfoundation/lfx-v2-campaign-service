@@ -260,6 +260,12 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 		Copy:         marshalAny(in.Copy),
 		Keywords:     marshalAny(in.Keywords),
 		Targeting:    marshalAny(in.Targeting),
+		// Who wrote this brief. The ad platforms cannot answer that question later —
+		// every campaign this brief produces executes under a shared system account —
+		// so it is captured here or not at all. A nil actor (no bearer token, or claims
+		// this service could not decode) is stored as NULL rather than rejected: losing
+		// the attribution is bad, refusing the write because of it is worse.
+		CreatedBy: actorFromCtx(ctx),
 	}
 	// The index message co-commits with the row (see briefIndexPayload); the relay delivers it.
 	created, err := briefRepo.CreateBrief(ctx, b, s.briefIndexPayload(indexer.ActionCreated))
@@ -372,6 +378,9 @@ func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPay
 		Copy:         marshalAny(in.Copy),
 		Keywords:     marshalAny(in.Keywords),
 		Targeting:    marshalAny(in.Targeting),
+		// Only updated_by moves on an edit; created_by is untouched by the UPDATE and
+		// keeps naming the original author.
+		UpdatedBy: actorFromCtx(ctx),
 	}
 	updated, uerr := briefRepo.ReplaceBrief(ctx, b, version, s.briefIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
@@ -408,7 +417,7 @@ func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPay
 	// The index message is built INSIDE the archive transaction and co-committed to the
 	// outbox, so a dropped publish is recoverable by the relay. Archiving is terminal: without
 	// this, one lost message leaves the brief searchable forever.
-	_, aerr := briefRepo.ArchiveBrief(ctx, p.ProjectID, p.BriefID, s.briefIndexPayload(indexer.ActionDeleted))
+	_, aerr := briefRepo.ArchiveBrief(ctx, p.ProjectID, p.BriefID, actorFromCtx(ctx), s.briefIndexPayload(indexer.ActionDeleted))
 	if aerr != nil {
 		return mapBriefErr(aerr)
 	}

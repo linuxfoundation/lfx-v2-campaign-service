@@ -160,6 +160,52 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   rows — load-bearing for `GetCampaignByPlatform`, which the orchestrator uses to
   decide whether a pair was already dispatched.
 
+- `000015` — `created_by` / `updated_by` JSONB on `campaign_briefs` (see *Actor
+  attribution* below). `campaigns` gets the same treatment in a separate version: its
+  write paths (dispatch claim, upsert, status toggle) are a distinct change with
+  distinct failure modes.
+
+## Actor attribution
+
+Campaigns execute under **system accounts** — shared, LF-owned platform credentials —
+so every ad platform reports one identity no matter who acted. The platform can
+therefore never answer "who did this", and if this service does not record it, the
+information exists nowhere. `campaign_briefs.created_by` / `updated_by` are that record.
+
+Both are JSONB holding a `model.Actor` (`{name, email, username}`), marshalled by the
+same `marshalActor`/`unmarshalActor` pair the connection tables use, and populated from
+`actorFromCtx` — the principal `JWTAuth` best-effort decodes out of the bearer token.
+`scanBrief` surfaces corrupt actor JSON as an error rather than returning a nil audit
+trail, so data corruption fails loudly instead of looking like "not recorded".
+
+Three properties are load-bearing, and each is pinned by a test in `brief_repo_test.go`:
+
+- **The stamp is in the SAME statement as the write.** `createBriefQuery`,
+  `replaceBriefQuery`, `approveBriefQuery` and `archiveBriefQuery` are package constants
+  precisely so this can be asserted. A follow-up `UPDATE` would compile and pass every
+  other test while leaving a committed window in which the row had changed and the
+  attribution had not; a crash inside that window loses the actor for a change that
+  stuck. (`TestBriefWrites_StampTheActorInTheSameStatement`, which strips the `RETURNING`
+  clause first — every statement returns `briefCols`, which NAMES both actor columns, so
+  an unstripped match passes for a statement that writes neither.)
+- **`created_by` is written once.** No `UPDATE` assigns it, or every edit would look
+  like authorship and the row would end up claiming its last editor wrote it.
+  (`TestBriefWrites_UpdatesNeverTouchCreatedBy`.)
+- **Insert stamps BOTH** (`VALUES … ,$11,$11`). Leaving `updated_by` NULL until the
+  first edit makes "who touched this last" unanswerable without also consulting
+  `created_by`; the two diverge from the first update onwards, which is when it matters.
+
+`Approve` moves `updated_by` alongside `approved_by`, and the two then diverge:
+`ReplaceBrief` CLEARS `approved_by` (a modified brief must not stay approved) while
+`updated_by` survives — which is exactly the difference between "who signed off on this
+content" and "who touched this row last".
+
+NULL means **not recorded**, never "nobody": a request with no bearer token, or one whose
+claims could not be decoded, still writes. Losing the attribution is bad; refusing the
+write over it would turn a token-decoding regression into a total outage of brief
+creation. Neither column is exposed on the Goa surface or in the index payload, matching
+the existing `approved_by` precedent.
+
 ## DeleteCampaign's guards
 
 `DeleteCampaign` takes a `SELECT status, version … FOR UPDATE` lock inside one

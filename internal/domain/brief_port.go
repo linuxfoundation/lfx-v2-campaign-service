@@ -35,7 +35,7 @@ type BriefWriter interface {
 	// was actually committed: a concurrent ReplaceBrief/Approve can commit between a
 	// read-then-archive pair, so a separately-read snapshot would publish stale content and a
 	// version that never existed.
-	ArchiveBrief(ctx context.Context, projectID, id string, indexPayload IndexPayloadFunc) (*model.CampaignBrief, error)
+	ArchiveBrief(ctx context.Context, projectID, id string, by *model.Actor, indexPayload IndexPayloadFunc) (*model.CampaignBrief, error)
 }
 
 // CampaignIndexPayloadFunc builds the index message for a campaign that has just been written,

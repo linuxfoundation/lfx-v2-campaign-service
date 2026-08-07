@@ -57,6 +57,11 @@ type CampaignBrief struct {
 	Version      int64
 	ApprovedBy   *Actor
 	ApprovedAt   *time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// CreatedBy / UpdatedBy name the human behind the write. Nil means "not
+	// recorded" — either the row predates actor attribution, or the write was
+	// system-initiated with no person behind it. It never means "nobody".
+	CreatedBy *Actor
+	UpdatedBy *Actor
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
