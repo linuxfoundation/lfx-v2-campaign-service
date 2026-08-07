@@ -4249,3 +4249,39 @@ func TestUpdateCampaignAndChildrenStatus_PauseUpdatesCampaignFirst(t *testing.T)
 		t.Fatalf("campaign gate must be flipped FIRST on pause; sequence = %v", seq)
 	}
 }
+
+// TestRedactCredentialsHandlesPaddedBearerToken pins the alternative-detection order
+// inside redactCredentials. Base64 padding puts '=' INSIDE a bearer token, so deciding
+// which regex alternative fired by searching for a "=" or ":" delimiter splits the match
+// at the padding and emits most of the credential followed by "[REDACTED]" — a leak that
+// LOOKS redacted, which is worse than an obvious one because it survives review.
+func TestRedactCredentialsHandlesPaddedBearerToken(t *testing.T) {
+	const padded = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo="
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"padded bearer", "Authorization: Bearer " + padded, "Authorization: Bearer [REDACTED]"},
+		{"double-padded bearer", "Bearer QUJDRA==", "Bearer [REDACTED]"},
+		{"unpadded bearer", "Bearer abcDEF123", "Bearer [REDACTED]"},
+		{"lowercase scheme", "bearer " + padded, "bearer [REDACTED]"},
+		{"query pair keeps the key", "access_token=EAAlive123&x=1", "access_token=[REDACTED]&x=1"},
+		// The regex consumes the whitespace around the delimiter, so the redacted form
+		// is tighter than the input. That is fine — this is a diagnostic snippet, not
+		// re-parseable JSON.
+		{"json member keeps the key", `{"client_secret": "s3cr3t"}`, `{"client_secret":[REDACTED]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactCredentials(tc.in)
+			if got != tc.want {
+				t.Errorf("redactCredentials(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			// Belt-and-braces: no fragment of the padded token may survive anywhere.
+			if strings.Contains(tc.in, padded) && strings.Contains(got, padded[:8]) {
+				t.Errorf("token prefix survived redaction: %q", got)
+			}
+		})
+	}
+}

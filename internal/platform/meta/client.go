@@ -1660,6 +1660,10 @@ func collapseSpacesToDash(s string) string {
 // line echoes a live token. The three forms below are the ones actually
 // observed in Meta-adjacent error bodies — query/form pairs, JSON members, and
 // an Authorization header rendered in a proxy debug page.
+// bearerScheme is the Authorization scheme prefix, matched case-insensitively to
+// decide WHICH credentialRE alternative fired before any delimiter search.
+const bearerScheme = "bearer"
+
 var credentialRE = regexp.MustCompile(
 	`(?i)("?(?:access_token|appsecret_proof|client_secret|refresh_token)"?\s*[=:]\s*"?[^&\s"'<>,}]+"?)|(bearer\s+[A-Za-z0-9._~+/=-]+)`)
 
@@ -1670,11 +1674,21 @@ var credentialRE = regexp.MustCompile(
 // the error chain, the logs, or a client-facing 5xx.
 func redactCredentials(s string) string {
 	return credentialRE.ReplaceAllStringFunc(s, func(m string) string {
-		if i := strings.IndexAny(m, "=:"); i >= 0 {
-			return m[:i+1] + "[REDACTED]"
+		// Which alternative matched has to be decided BEFORE looking for a
+		// delimiter, not inferred from one. Base64 padding puts '=' INSIDE a bearer
+		// token, so a delimiter-first search on "Bearer abc==" splits at the padding
+		// and returns "Bearer abc=[REDACTED]" — nearly the whole credential, with the
+		// redaction marker present to make it look handled.
+		if len(m) >= len(bearerScheme) && strings.EqualFold(m[:len(bearerScheme)], bearerScheme) {
+			// "Bearer <token>": keep the scheme, drop everything after it.
+			if i := strings.IndexAny(m, " \t"); i >= 0 {
+				return m[:i+1] + "[REDACTED]"
+			}
+			return "[REDACTED]"
 		}
-		// "Bearer <token>": keep the scheme, drop the token.
-		if i := strings.IndexAny(m, " \t"); i >= 0 {
+		// key=value / "key": "value" — keep the key, drop the value. The key is the
+		// diagnostic; a value never is.
+		if i := strings.IndexAny(m, "=:"); i >= 0 {
 			return m[:i+1] + "[REDACTED]"
 		}
 		return "[REDACTED]"
