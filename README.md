@@ -90,6 +90,19 @@ openssl rand -base64 32
 - `JWT_ISSUER` (default `heimdall`) — expected JWT issuer
 - `NATS_URL` — NATS server URL (reserved for messaging; defaults to
   in-cluster NATS URL)
+- `REDDIT_METRICS_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to Reddit Ads metrics reads. Only the exact value
+  `true` enables them; unset or any other value (including `TRUE` or
+  a typo) fails closed, and
+  `GET .../campaigns/{campaign_id}/metrics` answers 400 "not
+  supported for this campaign's platform" for a Reddit campaign.
+  Off by default because Reddit's reporting endpoint has no public
+  documentation (LFXV2-2995) — the request shape, response shape, and
+  spend currency unit are a best-effort guess, and a guessed read
+  returning 200 would look authoritative to every consumer. The chart
+  sets it to `"false"`
+  (`charts/lfx-v2-campaign-service/values.yaml`); flip it only after
+  the contract is verified against a live Reddit ad account.
 
 ### Snowflake (optional, audience building)
 

@@ -50,11 +50,12 @@ func shrinkDBTimers(t *testing.T) {
 // can never overrun DefaultShutdownTimeout (which would risk a SIGKILL
 // mid-drain). This guards the invariant the init() in container.go panics on.
 func TestShutdownBudgetComposes(t *testing.T) {
-	// The container-close phase reserves EVERY term Close actually spends: the dispatch
-	// drain, the post-cancel grace, AND the index publisher's connection drain. The last
-	// was originally omitted, which understated the phase and let the two phases sum past
+	// The container-close phase reserves EVERY term Close actually spends: the sweeper-stop
+	// wait, the index relay's stop wait, the dispatch drain, the post-cancel grace, the
+	// index publisher's connection drain, AND the UNCONFIRMED lock cooldown stop wait.
+	// Omitting any one of these understates the phase and lets the two phases sum past
 	// DefaultShutdownTimeout — the SIGKILL-mid-drain this budget exists to prevent.
-	assert.Equal(t, dispatchDrainTimeout+service.CancelGracePeriod+indexer.DrainTimeout+relayStopTimeout+cooldownStopTimeout, ContainerCloseTimeout)
+	assert.Equal(t, sweeperStopTimeout+relayStopTimeout+dispatchDrainTimeout+service.CancelGracePeriod+indexer.DrainTimeout+cooldownStopTimeout, ContainerCloseTimeout)
 	// The HTTP phase gets a positive share of the remaining budget.
 	assert.Positive(t, HTTPShutdownTimeout, "HTTP shutdown phase must have a positive budget")
 	// The two phases together stay within the overall budget.

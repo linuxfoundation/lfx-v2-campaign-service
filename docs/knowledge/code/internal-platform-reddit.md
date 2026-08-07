@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/reddit"
-description: "Reddit Ads API v3 client: OAuth2 token refresh and Campaign -> Ad Group -> Ad creation."
+description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation, best-effort campaign metrics reads (UNVERIFIED contract)."
 resource: "internal/platform/reddit"
 tags:
   - platform-client
@@ -9,7 +9,8 @@ tags:
   - reddit-ads
   - oauth2
   - go-package
-timestamp: "2026-07-15T00:00:00Z"
+  - metrics
+timestamp: "2026-08-05T00:00:00Z"
 ---
 
 # internal/platform/reddit
@@ -102,6 +103,44 @@ safely retry it on a 429. (`UpdateCampaignStatus(ctx, campaignID, status)` toggl
 alone and is retained as the per-entity building block / for callers with only a campaign id.)
 The child ids are read from the persisted `CampaignResult` (`adGroupId`/`adId`) by the reddit
 dispatcher's `ToggleStatus`, which now receives the full persisted `*model.Campaign`.
+
+## Metrics reads — UNVERIFIED, best-effort contract (LFXV2-2995)
+
+`GetCampaignMetrics(ctx, campaignID, window)` reads impressions, clicks, and spend for a
+campaign. **It is unreachable in a default deployment**: the dispatcher above it
+(`RedditDispatcher.ReadMetrics`) is gated on `REDDIT_METRICS_ENABLED == "true"` and otherwise
+returns `domain.ErrMetricsUnsupported`, so nothing in this section ships as live production
+metrics until the contract below is verified. **Unlike every other client in this package (and unlike the Meta/LinkedIn/X
+metrics clients built against public API docs), Reddit's v3 reporting/metrics endpoint has
+NO public documentation at all** — it lives behind Reddit's gated developer portal and a
+private Postman collection (postman.com/reddit-ads-api). This was investigated and recorded
+as BLOCKED on LFXV2-2995: third-party integrations (Supermetrics, Domo, Unified.to, Bright
+Analytics) prove the capability exists but publish neither the request nor response shape.
+
+The implementation is inferred ONLY from this package's own proven, already-working v3
+conventions: `POST /ad_accounts/{account_id}/reports` with the same `{"data": {...}}`
+envelope every create/toggle call uses, a `campaign_ids`/`breakdowns`/`fields` body, and a
+response `{"data": [{"campaign_id", "impressions", "clicks", "spend"}]}` array — `spend`
+assumed to be a decimal-currency string (like Meta/LinkedIn's reporting convention) rather
+than pre-scaled to micros (like X's `billed_charge_local_micro`). **None of this has been
+verified against a live Reddit Ads account or Reddit's real (gated) contract**, and every
+field name, the request shape, and the response shape should be treated as a placeholder to
+correct once `adsapi-partner-support@reddit.com` or Postman collection access confirms the
+real endpoint. `dateRangeForWindow` maps the shared `model.MetricsWindow` literal
+(`today`/`last_7_days`/`last_30_days`/`this_month`/`last_month`) to a `YYYY-MM-DD` start/end
+pair, handling the last-month-at-month-end boundary the same way the LinkedIn client's
+`dateRangeForWindow` does. `ErrInvalidCampaignID`/`ErrUnsupportedWindow` are typed sentinels
+(`errors.Is`-discriminable), matching the LinkedIn/X metrics clients' convention.
+
+Response handling distinguishes two cases:
+- An **explicit empty `data` array** (`{"data": []}`) is treated as real "no activity" (zero metrics), not an error — the campaign existed but had no activity during the window.
+- A **missing or malformed `data` field** (absent from the response JSON, or the response is not JSON at all) causes `json.Unmarshal` to fail with a decode error (`unexpected end of JSON input` or similar). This surfaces as the same transport/decode error used for any other malformed metrics response, not as zero-activity. Consumers must not assume missing data means zero activity; they receive an error instead.
+
+CTR is calculated as clicks/impressions, or 0 when impressions is 0.
+
+The `model.MetricsWindow`/`model.CampaignMetrics` types and the `service.MetricsReader`
+interface this depends on come from the platform-agnostic metrics foundation
+(LFXV2-2997, merged to `main`), not from a per-branch copy.
 
 ## Dispatch adapter (internal/dispatch)
 
