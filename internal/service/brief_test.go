@@ -2021,10 +2021,38 @@ func TestBriefService_GetCampaignMetrics_DefaultWindowIsLast30Days(t *testing.T)
 		t.Fatalf("GetCampaignMetrics: %v", err)
 	}
 	if disp.gotWindow != model.MetricsWindowLast30Days {
-		t.Errorf("dispatcher got window %q, want last_30_days", disp.gotWindow)
+		t.Errorf("dispatcher got window %q, want last_30_days (the default for most platforms)", disp.gotWindow)
 	}
 	if res.Window != "last_30_days" {
-		t.Errorf("result Window = %q, want last_30_days", res.Window)
+		t.Errorf("response Window = %q, want last_30_days", res.Window)
+	}
+}
+
+// TestBriefService_GetCampaignMetrics_DefaultWindowIsPlatformAwareForTwitter pins the fix
+// for a platform trap: X Ads' stats endpoint caps queryable date ranges at 7 days per
+// request, so last_30_days — the default for every other platform — is a window
+// twitterMetricsWindow always rejects. If the default were a single global constant, every
+// omitted-window request against an X campaign would fail with a guaranteed 400.
+func TestBriefService_GetCampaignMetrics_DefaultWindowIsPlatformAwareForTwitter(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderTwitterAds,
+		PlatformCampaignID: "x-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	disp := &metricsOnlyDispatcher{metrics: &model.CampaignMetrics{
+		CampaignID: "x-1", Window: model.MetricsWindowLast7Days, Impressions: 100, Clicks: 10, CostMicros: 5000000, Ctr: 0.1,
+	}}
+	s := newMetricsService(camp, disp)
+	res, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if disp.gotWindow != model.MetricsWindowLast7Days {
+		t.Errorf("dispatcher got window %q, want last_7_days (X Ads' widest supported window)", disp.gotWindow)
+	}
+	if res.Window != "last_7_days" {
+		t.Errorf("response Window = %q, want last_7_days", res.Window)
 	}
 }
 
@@ -2088,6 +2116,32 @@ func TestBriefService_GetCampaignMetrics_WindowUnsupportedIs400(t *testing.T) {
 	var bad *briefs.BadRequestError
 	if !errors.As(err, &bad) {
 		t.Fatalf("expected a BadRequestError (400) for a platform rejecting this window, got %T: %v", err, err)
+	}
+}
+
+// TestBriefService_GetCampaignMetrics_TwitterWindowUnsupportedIncludesPlatformGuidance
+// verifies that when X Ads rejects an unsupported window, the error message includes
+// the 7-day API limit guidance so the caller understands the constraint.
+func TestBriefService_GetCampaignMetrics_TwitterWindowUnsupportedIncludesPlatformGuidance(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderTwitterAds,
+		PlatformCampaignID: "x-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	disp := &metricsOnlyDispatcher{err: fmt.Errorf("x ads: %w", ErrMetricsWindowUnsupported)}
+	s := newMetricsService(camp, disp)
+	window := "last_30_days"
+	_, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", Window: &window,
+	})
+	var bad *briefs.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("expected a BadRequestError (400), got %T: %v", err, err)
+	}
+	if !strings.Contains(bad.Message, "7-day") {
+		t.Errorf("expected error message to mention X's 7-day limit, got: %s", bad.Message)
+	}
+	if !strings.Contains(bad.Message, "yesterday") || !strings.Contains(bad.Message, "today") {
+		t.Errorf("expected error message to list supported windows, got: %s", bad.Message)
 	}
 }
 
