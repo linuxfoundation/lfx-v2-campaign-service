@@ -876,6 +876,49 @@ func TestGetCampaignMetrics_TransportErrorRedaction(t *testing.T) {
 			t.Errorf("dial error classification was lost; DNSError not found in chain: %v", err)
 		}
 	})
+
+	t.Run("BodyReadError_redacted_in_5xx_path", func(t *testing.T) {
+		// Create a server that returns 500 with a header that causes read to fail.
+		// The response will say it has content but close immediately, causing a read error.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Length", "10000000") // Lie about size
+			w.WriteHeader(http.StatusInternalServerError)
+			// Don't write the promised body; read will fail with EOF or connection error
+		}))
+		defer server.Close()
+
+		client := NewClient(
+			Credentials{AccessToken: "test-token"},
+			RuntimeConfig{DefaultAccountID: "account123"},
+			WithBaseURL(server.URL),
+		)
+
+		ctx := context.Background()
+		_, err := client.GetCampaignMetrics(ctx, "account123", "123456", model.MetricsWindowToday)
+		if err == nil {
+			t.Fatalf("expected an error from body-read failure with 500")
+		}
+
+		// Extract the apiError from the chain and verify its Body field is redacted.
+		// The Body field is NOT rendered by apiError.Error() but should still be safe.
+		var apiErr *apiError
+		if !errors.As(err, &apiErr) {
+			t.Fatalf("expected an apiError in the chain, got: %T", err)
+		}
+
+		// Body should contain the redacted message, not raw error details.
+		// redactBodyReadError returns "read response body failed", so the Body
+		// should be "read response body: read response body failed"
+		if !strings.Contains(apiErr.Body, "read response body failed") {
+			t.Errorf("apiError.Body missing redacted message: %s", apiErr.Body)
+		}
+
+		// Verify it does NOT contain raw I/O error details that would appear if
+		// redactBodyReadError was not applied (e.g., "EOF", "connection reset", etc.)
+		if strings.Contains(apiErr.Body, "EOF") && !strings.Contains(apiErr.Body, "read response body") {
+			t.Errorf("apiError.Body leaked raw I/O error (EOF): %s", apiErr.Body)
+		}
+	})
 }
 
 // TestRedactHTTPDoError verifies the redaction helper works correctly.

@@ -8,4 +8,11 @@ Redacted via two new helpers (metrics.go):
 
 `redactBodyReadError()`: Handles response-body I/O errors from `buf.ReadFrom`, which are local failures after connection establishment and never carry credentials/URLs. Preserves cancellation sentinels for context, otherwise returns a distinct safe message (`"read response body failed"`) so callers can distinguish body-read failures from round-trip failures.
 
-Added `TestGetCampaignMetrics_TransportErrorRedaction` with subtest `DialError_URL_redaction_preserves_classification` using a fake `RoundTripper` that returns a `*url.Error` wrapping a `*net.DNSError`. Verified binding: reverting the recursive unwrap causes test to fail showing the full URL; reverting the classification preservation causes DNSError to no longer appear in the error chain.
+Applied `redactBodyReadError()` consistently to both 2xx and 5xx branches of the body-read error path (metrics.go:353-360). The 5xx branch (`apiError.Body`) initially escaped redaction even though the same malicious/untrusted content justification applies regardless of status code — same error, same source, different error path. Now both branches call `redactBodyReadError` so the Body field contains the safe message in both cases.
+
+Added `TestGetCampaignMetrics_TransportErrorRedaction` with subtests:
+- `RoundTripper_credential_redaction`: Verifies mid-flight/RoundTripper credential markers are redacted
+- `DialError_URL_redaction_preserves_classification`: Uses a fake `RoundTripper` returning `*url.Error` wrapping `*net.DNSError`, verifies URL is absent but classification is preserved
+- `BodyReadError_redacted_in_5xx_path`: Verifies that `apiError.Body` contains the redacted message (extracted via `errors.As`) and not raw I/O error details
+
+All binding verified: reverting each redaction branch causes its test to fail with the expected leak (full URL, lost classification, or raw I/O error in Body).

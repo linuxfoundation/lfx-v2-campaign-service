@@ -356,7 +356,9 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: redactBodyReadError(err)}
 		}
-		return nil, false, 0, &apiError{StatusCode: resp.StatusCode, Method: "GET", Path: "adAnalytics", Body: fmt.Sprintf("read response body: %v", err)}
+		// Same redaction as 2xx path: body-read errors can contain malicious/untrusted content
+		// regardless of status code. Use the redacted message for the diagnostic.
+		return nil, false, 0, &apiError{StatusCode: resp.StatusCode, Method: "GET", Path: "adAnalytics", Body: fmt.Sprintf("read response body: %v", redactBodyReadError(err))}
 	}
 
 	if int64(buf.Len()) > maxResponseBytes {
