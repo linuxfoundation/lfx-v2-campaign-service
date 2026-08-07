@@ -30,13 +30,38 @@ type googleAdsCreds struct {
 	RefreshToken   string
 }
 
+// googleAdsKeywordConfig is one entry in googleAdsConfig.Keywords — the JSON shape a
+// caller supplies for a positive Search keyword criterion (GA-4). Maps 1:1 to
+// googleads.Keyword; kept as a separate JSON-tagged type here rather than importing
+// googleads' struct directly, mirroring how the rest of this file keeps the wire
+// shape and the platform client's Go type independently named.
+type googleAdsKeywordConfig struct {
+	Text      string `json:"text"`
+	MatchType string `json:"matchType"`
+}
+
 // googleAdsConfig is the per-platform campaign config the caller passes for Google Ads
-// in CreateCampaigns' Input.Config (delivered here as the Dispatch `config`). Today the
-// GA client creates a PAUSED search-campaign shell, so only the budget is caller-
-// supplied here; targeting/keywords land in GA-3+. Budget is in whole units of the ad
-// ACCOUNT's currency (NOT USD — the client does no FX), mirroring the meta client.
+// in CreateCampaigns' Input.Config (delivered here as the Dispatch `config`). The GA
+// client creates a PAUSED search campaign with an ad group + a Responsive Search Ad
+// (GA-3b) and can attach keyword/audience targeting to that ad group (GA-4). Budget is
+// in whole units of the ad ACCOUNT's currency (NOT USD — the client does no FX),
+// mirroring the meta client.
 type googleAdsConfig struct {
 	Budget float64 `json:"budget"`
+	// Headlines/Descriptions are optional Responsive Search Ad copy overrides (GA-3b).
+	// Left nil/empty, the client composes deterministic placeholder copy from the
+	// brief's EventName/Project (see googleads.composeAdCopy).
+	Headlines    []string `json:"headlines"`
+	Descriptions []string `json:"descriptions"`
+	// Keywords are optional positive Search keyword criteria (GA-4). Left empty, the
+	// ad group created by GA-3 gets no criteria and can never serve — see
+	// googleads.Keyword/validateKeywords.
+	Keywords []googleAdsKeywordConfig `json:"keywords"`
+	// AudienceSegments are optional EXISTING Google Ads audience resource names (GA-4)
+	// — Customer Match user-list resources the caller has already built elsewhere,
+	// not created by this dispatcher. See googleads.validateAudienceSegments for the
+	// accepted shapes.
+	AudienceSegments []string `json:"audienceSegments"`
 }
 
 // GoogleAdsDispatcher creates Google Ads campaigns for the orchestrator.
@@ -77,17 +102,23 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 
 	in := googleads.CampaignInput{
 		EventName: bf.EventName,
+		EventSlug: brief.EventSlug,
 		// Project is stamped from the AUTHENTICATED project scope (brief.ProjectID),
 		// never from caller JSON — the Project name segment is the data pipeline's
 		// attribution join key (docs/api-catalog.md), so it must be the canonical LFX
 		// slug (matches reddit/meta/twitter).
-		Project: brief.ProjectID,
-		Budget:  cfg.Budget,
+		Project:          brief.ProjectID,
+		Budget:           cfg.Budget,
+		RegistrationURL:  bf.RegistrationURL,
+		Headlines:        cfg.Headlines,
+		Descriptions:     cfg.Descriptions,
+		Keywords:         googleAdsKeywords(cfg.Keywords),
+		AudienceSegments: cfg.AudienceSegments,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: the
-		// GA client composes the budget/campaign names from these, and a retry with the
-		// same suffix hits Google's DUPLICATE_NAME (reported UNCONFIRMED-already-exists)
-		// rather than creating a second paid campaign — a poor-man's idempotency key
-		// until LFXV2-2665 lands provider idempotency keys.
+		// GA client composes the budget/campaign/ad-group names from these, and a retry
+		// with the same suffix hits Google's DUPLICATE_NAME (reported
+		// UNCONFIRMED-already-exists) rather than creating a second paid campaign — a
+		// poor-man's idempotency key until LFXV2-2665 lands provider idempotency keys.
 		NameSuffix: brief.ID,
 	}
 
@@ -140,6 +171,20 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		return campaignFromGoogleAds(ctx, result, cfg), fmt.Errorf("google-ads dispatch: %w", cerr)
 	}
 	return campaignFromGoogleAds(ctx, result, cfg), nil
+}
+
+// googleAdsKeywords maps the wire-shaped keyword config to the platform client's
+// Keyword type. Returns nil for an empty input so an omitted "keywords" field stays
+// nil end-to-end rather than becoming an empty-but-non-nil slice.
+func googleAdsKeywords(in []googleAdsKeywordConfig) []googleads.Keyword {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.Keyword, len(in))
+	for i, kw := range in {
+		out[i] = googleads.Keyword{Text: kw.Text, MatchType: kw.MatchType}
+	}
+	return out
 }
 
 // campaignFromGoogleAds maps the client result to the persistence model. The
@@ -239,38 +284,113 @@ func googleAdsRunStatus(status string) (string, error) {
 
 // ToggleStatus implements service.StatusToggler for Google Ads.
 //
-// PAUSE works today; ACTIVATE is REFUSED. The create path provisions only a PAUSED search
-// campaign shell (budget -> campaign) with no ad group, ad, or keywords, so flipping the
-// campaign to ENABLED would report success while NOTHING can serve. That is exactly the lie
-// ErrCampaignNotProvisioned exists to prevent (the service maps it to a 409 without calling
-// Google), and it matches the activate guards the sibling adapters apply when a child is
-// missing — the difference is that here the children are not yet built at all.
+// GA-3b created ad group + ad under the campaign; GA-3c wired the dispatcher-level cascade;
+// GA-4 enables ACTIVATE once targeting exists. Both directions cascade, in OPPOSITE orders.
 //
-// There is no cascade for the same reason: there are no children to cascade to. When GA-3+
-// adds ad groups/ads/keywords, this must grow BOTH a cascade and a real
-// child-id-based activate guard, matching the reddit shape.
+// PAUSE cascades from the campaign FIRST (stops delivery immediately, regardless of whether the
+// children can be reached) down to the ad group/ad via the persisted ids stored in the campaign's
+// Result blob.
+//
+// ACTIVATE is refused with ErrCampaignNotProvisioned (→409, raised locally without calling
+// Google) unless the Result blob shows the ad group/ad were fully provisioned AND at least one
+// keyword criterion was persisted by GA-4's targeting step. A campaign without targeting cannot
+// deliver, so activating it would report false success — the exact lie ErrCampaignNotProvisioned
+// exists to prevent. When the guard passes, ACTIVATE cascades children-first (children activated
+// before campaign) so a campaign never reports ENABLED before its children do.
 func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
 	gaStatus, err := googleAdsRunStatus(status)
 	if err != nil {
 		return err
 	}
-	// Refuse ACTIVATE up front, BEFORE resolving credentials or calling Google: a campaign
-	// with no ad group/ad cannot serve no matter what its status says, so this is a local
-	// state error (409), not a platform failure (503).
+	// Refuse ACTIVATE if targeting was not successfully provisioned: GA-4 requires at least
+	// one keyword criterion before allowing activation (audience criteria alone are
+	// observation-only and do not qualify for activation, so they don't satisfy this gate).
+	// Checked below via the persisted KeywordCriteriaIDs in the Result blob — empty means
+	// keyword targeting was never attempted or failed before any criterion resource name
+	// could be parsed.
+	adGroupID, adID := googleAdsChildIDs(campaign)
 	if gaStatus == googleads.StatusEnabled {
-		return fmt.Errorf("%w: google ads campaign %s cannot be activated because the create path provisions only a campaign shell (no ad group, ad, or keywords) — nothing would serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		// Refuse ACTIVATE if the ad group/ad were never fully provisioned: a duplicate-name
+		// orphan or unconfirmed create (see createAdGroupAndAd) leaves no id to cascade to, so
+		// enabling just the campaign would report success while nothing can serve.
+		if strings.TrimSpace(adGroupID) == "" || strings.TrimSpace(adID) == "" {
+			return fmt.Errorf("%w: google ads campaign %s cannot be activated because its ad group/ad were not fully provisioned", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
+		var result googleads.CampaignResult
+		if campaign.Result != nil {
+			_ = json.Unmarshal(campaign.Result, &result)
+		}
+		if len(result.KeywordCriteriaIDs) == 0 {
+			return fmt.Errorf("%w: google ads campaign %s cannot be activated because keyword targeting is not yet provisioned (at least one keyword criterion is required)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
 	}
 	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
 	if err != nil {
 		return err
 	}
-	if uerr := client.UpdateCampaignStatus(ctx, campaign.PlatformCampaignID, gaStatus); uerr != nil {
-		// An ambiguous outcome may have applied upstream — report "verify before retry"
-		// rather than a flat "not applied".
+
+	wrapUnconfirmed := func(uerr error) error {
 		if googleads.IsOutcomeUnconfirmed(uerr) {
 			return &unconfirmedToggleError{err: uerr}
 		}
 		return uerr
 	}
+
+	if gaStatus == googleads.StatusPaused {
+		// Campaign first: pausing the parent stops delivery immediately even if the
+		// child update below fails/is unconfirmed.
+		if uerr := client.UpdateCampaignStatus(ctx, campaign.PlatformCampaignID, gaStatus); uerr != nil {
+			return wrapUnconfirmed(uerr)
+		}
+		// If the ad group/ad ids are absent (e.g. a campaign shell with no fully-created
+		// children), there is nothing to pause downstream — only the campaign is toggled.
+		if strings.TrimSpace(adGroupID) == "" || strings.TrimSpace(adID) == "" {
+			return nil
+		}
+		if uerr := client.UpdateAdGroupAndAdStatus(ctx, adGroupID, adID, gaStatus); uerr != nil {
+			// After the campaign status succeeds, a child failure (even a definite 4xx) is a
+			// partial cascade: the parent changed but the child's outcome is unknown. Wrap it
+			// as Unconfirmed so the caller knows to verify the state before retry.
+			return &unconfirmedToggleError{err: uerr}
+		}
+		return nil
+	}
+
+	// ACTIVATE: children first (both ids are confirmed present, and keyword targeting is
+	// confirmed provisioned, by the guard above), campaign last — so the campaign only
+	// reports ENABLED once its ad group/ad already do.
+	if uerr := client.UpdateAdGroupAndAdStatus(ctx, adGroupID, adID, gaStatus); uerr != nil {
+		// UpdateAdGroupAndAdStatus tries ad group first, then ad (children-first ordering).
+		// A definite first-child failure (4xx from adGroups:mutate) is NOT a partial cascade
+		// (nothing changed). A definite second-child failure (4xx from adGroupAds:mutate after
+		// adGroups succeeded) IS a partial cascade and returns partialCascadeError, which
+		// wrapUnconfirmed correctly classifies as unconfirmed. Ambiguous outcomes (5xx/timeout)
+		// are also wrapped as unconfirmed.
+		return wrapUnconfirmed(uerr)
+	}
+	if uerr := client.UpdateCampaignStatus(ctx, campaign.PlatformCampaignID, gaStatus); uerr != nil {
+		// After the children succeed, a campaign failure (even a definite 4xx) is a partial
+		// cascade: the children already changed but the campaign's outcome is unknown. Wrap it
+		// as Unconfirmed unconditionally so the caller knows to verify state before retry —
+		// mirrors the PAUSE path's child-after-campaign wrap above.
+		return &unconfirmedToggleError{err: uerr}
+	}
 	return nil
+}
+
+// googleAdsChildIDs pulls the ad group + ad ids the create path stored in the persisted
+// CampaignResult blob (googleads.CampaignResult's AdGroupId/AdId), mirroring
+// redditChildIDs. A missing/unparseable blob yields empty ids.
+func googleAdsChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return "", ""
+	}
+	var blob struct {
+		AdGroupID string `json:"adGroupId"`
+		AdID      string `json:"adId"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return "", ""
+	}
+	return blob.AdGroupID, blob.AdID
 }

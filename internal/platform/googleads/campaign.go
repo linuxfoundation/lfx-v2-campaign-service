@@ -69,23 +69,30 @@ const (
 	errCodeDuplicateCampaignName = "DUPLICATE_CAMPAIGN_NAME"
 )
 
-// CampaignInput is the platform-agnostic request to create a Google Ads campaign.
-// Only the fields needed for a PAUSED search-campaign shell are consumed today;
-// targeting/keywords/audience are added in GA-3+.
+// CampaignInput is the platform-agnostic request to create a Google Ads campaign:
+// a PAUSED search-campaign shell (GA-2), an ad group + responsive search ad (GA-3),
+// and keyword/audience targeting on that ad group (GA-4).
 type CampaignInput struct {
 	// EventName is the human-readable campaign subject, folded into the budget and
 	// campaign names. Caller-supplied and otherwise unbounded, so it is trimmed and
 	// the composed names are length-capped before any create call.
 	EventName string
-	// EventSlug is the URL-safe event identifier, carried for struct parity with the
-	// meta/twitter/reddit clients (which use it to build UTM click-through params on
-	// the ad's final URL). GA's CreateCampaign only builds a PAUSED search-campaign
-	// shell today — no ad groups / keywords / final URLs — so this field is accepted
-	// but not yet consumed; GA-3+ (ad/keyword creation) will use it for the same UTM
-	// handling. Reserved now so the platform-agnostic input shape is stable.
+	// EventSlug is the URL-safe event identifier, used (with EventName/Project as
+	// fallbacks) to build the ad's utm_campaign click-through param — see
+	// buildAdFinalURL in ad_copy.go.
 	EventSlug string
 	// Project is folded into the composed name alongside EventName.
 	Project string
+	// RegistrationURL is the event's destination page. Required for the ad group +
+	// ad cascade (GA-3): it becomes the ad's final URL, tagged with UTM params via
+	// buildAdFinalURL. Mirrors the reddit/microsoft clients' RegistrationURL field.
+	RegistrationURL string
+	// Headlines / Descriptions are caller-supplied Responsive Search Ad copy.
+	// Optional: composeAdCopy pads missing slots with deterministic placeholders
+	// derived from EventName/Project up to the platform minimum (3 headlines, 2
+	// descriptions), so a caller may leave these nil.
+	Headlines    []string
+	Descriptions []string
 	// Budget is the campaign daily budget in whole units of the ad ACCOUNT's
 	// currency. IMPORTANT: this is NOT a USD amount and the client performs NO
 	// foreign-exchange conversion — Google interprets the resulting amountMicros in
@@ -101,6 +108,19 @@ type CampaignInput struct {
 	// retry then reuses the same name and Google rejects it with DUPLICATE_NAME,
 	// which the client reports as UNCONFIRMED-already-exists rather than re-creating.
 	NameSuffix string
+	// Keywords are positive Search keyword criteria attached to the ad group
+	// (GA-4). Optional: an ad group created with none still exists but matches
+	// no query, so a caller that wants the campaign to actually serve once
+	// enabled must supply at least one. See validateKeywords for the
+	// text/match-type/count rules.
+	Keywords []Keyword
+	// AudienceSegments are EXISTING Google Ads audience resource names (Customer
+	// Match "user list" resources the caller has already built elsewhere — this
+	// client does not create audiences) attached to the ad group as observation-only
+	// criteria (GA-4): see validateAudienceSegments for the accepted resource-name
+	// shapes and createAdGroupTargeting for why they're observation-only rather than
+	// restrictive.
+	AudienceSegments []string
 }
 
 // CampaignResult reports what CreateCampaign created. The Google Ads hierarchy is
@@ -110,14 +130,27 @@ type CampaignInput struct {
 // | … vs LFX | Search Campaign | …), so a caller reconciling a possibly-orphaned
 // budget must look it up by CampaignBudgetName — CampaignName would not find it.
 type CampaignResult struct {
-	Platform           string   `json:"platform"`
-	AccountLabel       string   `json:"accountLabel,omitempty"`
-	CampaignName       string   `json:"campaignName"`
-	CampaignBudgetName string   `json:"campaignBudgetName"`
-	CampaignID         string   `json:"campaignId"`
-	CampaignBudgetID   string   `json:"campaignBudgetId"`
-	GoogleAdsURL       string   `json:"googleAdsUrl"`
-	Steps              []string `json:"steps"`
+	Platform           string `json:"platform"`
+	AccountLabel       string `json:"accountLabel,omitempty"`
+	CampaignName       string `json:"campaignName"`
+	CampaignBudgetName string `json:"campaignBudgetName"`
+	CampaignID         string `json:"campaignId"`
+	CampaignBudgetID   string `json:"campaignBudgetId"`
+	// AdGroupName/AdGroupID/AdID are set by the GA-3 ad group + ad cascade
+	// (createAdGroupAndAd in adgroup_ad.go). AdGroupID/AdID are empty on a
+	// pre-ad-group failure; AdID alone is empty if the ad group was created but
+	// the ad step failed/is unconfirmed.
+	AdGroupName string `json:"adGroupName,omitempty"`
+	AdGroupID   string `json:"adGroupId,omitempty"`
+	AdID        string `json:"adId,omitempty"`
+	// KeywordCriteriaIDs/AudienceCriteriaIDs are set by the GA-4 targeting step
+	// (createAdGroupTargeting in targeting.go) when the corresponding input list
+	// was non-empty. Both are empty if targeting was never attempted or failed
+	// before any criterion resource name could be parsed.
+	KeywordCriteriaIDs  []string `json:"keywordCriteriaIds,omitempty"`
+	AudienceCriteriaIDs []string `json:"audienceCriteriaIds,omitempty"`
+	GoogleAdsURL        string   `json:"googleAdsUrl"`
+	Steps               []string `json:"steps"`
 }
 
 // mutateOperation is one {create: <resource>} entry in a :mutate request.
@@ -186,6 +219,31 @@ type campaignCreate struct {
 	ContainsEuPoliticalAdvertising string          `json:"containsEuPoliticalAdvertising"`
 	NetworkSettings                networkSettings `json:"networkSettings"`
 	ManualCPC                      json.RawMessage `json:"manualCpc"`
+}
+
+// targetingSetting / targetRestriction declare, per targeting dimension, whether
+// a criterion of that dimension RESTRICTS delivery or only observes it (bids/
+// reports without narrowing reach). Google requires targetingSetting be set at
+// the SAME level the criterion is attached to — an AdGroup's targetingSetting
+// cannot even be set while the parent Campaign has one, and a campaign-level
+// setting has no effect on ad-group-level criteria (see Google's
+// UpdateAudienceTargetRestriction sample, which reads/writes ad_group, not
+// campaign, targeting_setting). GA-4's audience criteria are created as
+// AdGroupCriterions (createAdGroupAndAd), so this is set on the AD GROUP
+// create, not the campaign create — see adGroupCreate in adgroup_ad.go. With
+// no targetingSetting at all, Google's default for a Search ad group's
+// AUDIENCE dimension is TARGETING (restrictive) — an audience segment added
+// for bid/reporting purposes would otherwise silently narrow delivery to that
+// segment alone, a serious, easy-to-miss behavior change. bidOnly=true keeps
+// AUDIENCE observation-only so keyword targeting (GA-4's other half) remains
+// the thing that actually controls reach.
+type targetingSetting struct {
+	TargetRestrictions []targetRestriction `json:"targetRestrictions"`
+}
+
+type targetRestriction struct {
+	TargetingDimension string `json:"targetingDimension"`
+	BidOnly            bool   `json:"bidOnly"`
 }
 
 // networkSettings selects which networks a campaign's ads serve on. For a SEARCH
@@ -352,9 +410,15 @@ func resourceID(resourceName string) string {
 	return resourceName[i+1:]
 }
 
-// CreateCampaign creates a PAUSED Google Ads search campaign: it first creates a
-// non-shared campaign budget, then a campaign referencing that budget. Everything
+// CreateCampaign creates a PAUSED Google Ads search campaign as a four-resource
+// cascade: a non-shared campaign budget, a campaign referencing that budget, an ad
+// group under the campaign, and a responsive search ad in that ad group. Everything
 // is created PAUSED so nothing serves until a human enables it.
+//
+// Each stage may leave a PARTIAL result: the returned *CampaignResult is populated
+// as far as the cascade got, and past the campaign stage a failure is returned
+// ALONGSIDE a non-nil result rather than as (nil, err), so the caller can record
+// what exists upstream. See the ad group/ad stage below for that contract.
 //
 // Because :mutate has no idempotency key, every failure is classified by whether
 // the request may have committed upstream (createOutcomeAmbiguous). An ambiguous
@@ -414,6 +478,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, err
 	}
 	if err := validateEntityName("campaign", campaignName, utf8.RuneCountInString(campaignName), maxCampaignNameRunes, "characters"); err != nil {
+		return nil, err
+	}
+	// Validate the ad-group/ad inputs (destination URL, ad copy, ad-group name,
+	// keywords/audience segments) BEFORE the first (budget) mutate: a failure
+	// here is purely local input validation, and surfacing it only after the
+	// budget+campaign already committed (inside createAdGroupAndAd, which runs
+	// last) would orphan a real paid campaign for what amounts to a bad
+	// RegistrationURL, over-length name, or invalid targeting value.
+	finalURL, headlines, descriptions, adGroupName, keywords, audienceSegments, err := precomputeAdGroupAdInputs(in)
+	if err != nil {
 		return nil, err
 	}
 
@@ -501,7 +575,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	// Step 2: create the campaign referencing the budget.
-	campaignReq := mutateRequest{Operations: []mutateOperation{{Create: campaignCreate{
+	campaignCreateVal := campaignCreate{
 		Name:                           campaignName,
 		Status:                         "PAUSED",
 		AdvertisingChannelType:         advertisingChannelSearch,
@@ -509,7 +583,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		ContainsEuPoliticalAdvertising: euPoliticalAdvertisingNo,
 		NetworkSettings:                networkSettings{TargetGoogleSearch: true},
 		ManualCPC:                      json.RawMessage(`{}`),
-	}}}}
+	}
+	campaignReq := mutateRequest{Operations: []mutateOperation{{Create: campaignCreateVal}}}
 	campaignPath := c.customerPath("campaigns:mutate")
 	campaignResp, err := c.doRequest(ctx, http.MethodPost, campaignPath, campaignReq, false)
 	if err != nil {
@@ -522,15 +597,33 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return budgetPartial(), fmt.Errorf("google-ads campaign creation failed (budget %s created): %w", budgetID, err)
 		}
 	}
-	_, campaignID, err := firstResourceName(campaignResp)
+	campaignResource, campaignID, err := firstResourceName(campaignResp)
 	if err != nil {
 		return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s created; 2xx with no/malformed resource name — a campaign may exist; verify in Google Ads before retrying): %w", budgetID, err)
+	}
+	// Validate that the campaign resource is in the exact current-account campaign shape
+	// before forwarding it to createAdGroupAndAd. A malformed 2xx such as
+	// customers/1234567890/adGroups/222 would be treated as a confirmed campaign and
+	// only fail after the real campaign has been created, persisting an untrustworthy ID.
+	if err := c.validateCampaignResource(campaignResource); err != nil {
+		return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s created; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, err)
 	}
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, SEARCH, manual CPC)", campaignID))
 
 	res := budgetPartial()
 	res.CampaignID = campaignID
 	res.Steps = steps
+
+	// The campaign+budget are now committed. GA-3: extend the shell with a PAUSED
+	// ad group + responsive search ad. Any failure here (ambiguous, duplicate, or
+	// definite) is returned ALONGSIDE the now-non-nil res — the campaign/budget
+	// exist regardless, so this can never become a (nil, err) return past this
+	// point. The caller (GoogleAdsDispatcher.Dispatch) treats a non-nil result +
+	// error as "retain the claim, record the partial" — the same contract already
+	// used for an ambiguous/duplicate budget or campaign.
+	if err := c.createAdGroupAndAd(ctx, campaignResource, campaignID, finalURL, headlines, descriptions, adGroupName, keywords, audienceSegments, res); err != nil {
+		return res, err
+	}
 	return res, nil
 }
 
@@ -554,6 +647,46 @@ func firstResourceName(body []byte) (resourceName, id string, err error) {
 		return "", "", fmt.Errorf("mutate response resource name %q is malformed (no id segment)", rn)
 	}
 	return rn, rid, nil
+}
+
+// validateCampaignResource validates that a resource name is exactly the
+// current-account campaign resource shape: customers/{currentCustomerID}/campaigns/{numericID}.
+// A malformed 2xx such as customers/1234567890/adGroups/222 could otherwise be
+// accepted as a confirmed campaign and only fail later when forwarded to adGroups:mutate,
+// after the real campaign has been created. This guard ensures that only a trustworthy
+// campaign resource is persisted.
+func (c *Client) validateCampaignResource(resourceName string) error {
+	return c.validateResourceKind("campaigns", resourceName, true)
+}
+
+// validateResourceKind validates that resourceName is exactly the current-account
+// resource shape customers/{currentCustomerID}/{kind}/{id}, checking segment count,
+// resource kind, and that the resource belongs to THIS account. A malformed or
+// wrong-account 2xx (e.g. a different customer's adGroups resource, or a campaigns
+// resource returned where an adGroups resource was expected) could otherwise be
+// accepted as confirmed and persisted, or forwarded into a later mutate/resourceName
+// only to fail confusingly downstream.
+//
+// requireNumericID validates the trailing id segment is a plain numeric id — set
+// false for composite trailing segments (e.g. adGroupAds' "{adGroupId}~{adId}"),
+// whose shape is validated separately by adGroupAdID, the only composite splitter
+// in this package.
+func (c *Client) validateResourceKind(kind, resourceName string, requireNumericID bool) error {
+	pathParts := strings.Split(resourceName, "/")
+	// Require exactly 4 segments: customers, {id}, {kind}, {id}
+	if len(pathParts) != 4 {
+		return fmt.Errorf("%s resource name %q has %d segments, want exactly 4", kind, resourceName, len(pathParts))
+	}
+	if pathParts[0] != "customers" || pathParts[2] != kind {
+		return fmt.Errorf("%s resource name %q has wrong resource kind (want customers/.../%s/...)", kind, resourceName, kind)
+	}
+	if pathParts[1] != c.account.CustomerID {
+		return fmt.Errorf("%s resource name %q is from a different account (want customers/%s/...)", kind, resourceName, c.account.CustomerID)
+	}
+	if requireNumericID && !numericID(pathParts[3]) {
+		return fmt.Errorf("%s resource name %q has a non-numeric id", kind, resourceName)
+	}
+	return nil
 }
 
 // composeName builds a deterministic budget/campaign name from the input. The
@@ -640,15 +773,22 @@ func IsOutcomeUnconfirmed(err error) bool {
 // UpdateCampaignStatus toggles a campaign between ENABLED and PAUSED via campaigns:mutate
 // with an updateMask of "status".
 //
-// NO CASCADE, unlike reddit/twitter/microsoft — but not because the tree is complete: the
-// create path provisions only a PAUSED campaign SHELL (budget -> campaign) with no ad group,
-// ad, or keywords, so there are no children to flip YET. That incompleteness is also why
-// GoogleAdsDispatcher.ToggleStatus refuses ACTIVATE outright (ErrCampaignNotProvisioned):
-// enabling a shell would report success while nothing can serve. This method still accepts
-// StatusEnabled so it stays a faithful wrapper over campaigns:mutate for a future caller
-// operating on a fully-provisioned campaign; the serving decision belongs to the dispatcher.
-// When GA-3+ adds ad groups/ads/keywords, this must grow a cascade with the same
-// children-first-on-activate ordering the other adapters use.
+// This method flips ONLY the campaign — it does not cascade to the ad group/ad. The cascade
+// is implemented in GoogleAdsDispatcher.ToggleStatus (dispatch/googleads.go), and the two
+// directions cascade in OPPOSITE order so neither leaves a parent enabled ahead of its
+// children: PAUSE goes campaign-first (stopping delivery immediately) then the ad group/ad;
+// ACTIVATE goes children-first, campaign last, so the campaign only reports ENABLED once its
+// ad group and ad already do.
+//
+// Kept as two client methods (rather than one combined call) because the ad group/ad may
+// legitimately not exist (a duplicate-name orphan from GA-3b's create path — see
+// createAdGroupAndAd) — the dispatcher's activate guard (ErrCampaignNotProvisioned) checks
+// for that BEFORE calling either method. Additionally, keeping them separate lets a caller
+// pause a campaign whose children failed to create, without that call depending on child ids
+// it may not have. ACTIVATE is no longer rejected unconditionally: with GA-4's targeting
+// provisioning in place, the dispatcher's guard now rejects only a campaign that is actually
+// missing its ad group/ad ids or its keyword criteria (ErrCampaignNotProvisioned), and
+// activates every campaign that has them.
 //
 // The mutate IS sent as idempotent (doRequest's last arg), unlike the create path. That flag
 // gates only bounded 429 retries, and the create path's reason for declining them (no

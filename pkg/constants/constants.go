@@ -28,6 +28,18 @@ const (
 	// to encrypt connection credentials. Sourced from a Kubernetes secret.
 	EnvCredentialEncryptionKey = "CREDENTIAL_ENCRYPTION_KEY"
 
+	// EnvRedditMetricsEnabled opts a deployment IN to Reddit metrics reads. Unset or any
+	// value other than "true" leaves them off, and the metrics endpoint answers 400
+	// "not supported for this campaign's platform" for Reddit campaigns.
+	//
+	// The flag exists because Reddit's reporting endpoint has no public documentation
+	// (LFXV2-2995): the request shape, response shape, and spend currency unit the client
+	// uses are a best-effort GUESS. A guessed read that returns 200 looks authoritative to
+	// every consumer, and the caveats live only in code comments the response never carries.
+	// Default-off keeps that from reaching anyone until the contract is verified against a
+	// live Reddit ad account, at which point the default flips and this constant goes away.
+	EnvRedditMetricsEnabled = "REDDIT_METRICS_ENABLED"
+
 	// Snowflake (read-only) settings, used ONLY to resolve an event's past editions when
 	// building an audience. All are OPTIONAL: with none set, audience building still works
 	// and produces a country-only audience, recording the narrower scope in its summary.

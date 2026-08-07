@@ -676,6 +676,13 @@ func (c *Client) accountURL() string {
 	return fmt.Sprintf("%s/%s/accounts/%s", c.baseURL, c.apiVersion, c.account.AccountID)
 }
 
+// statsURL is the X Ads synchronous analytics endpoint. Unlike every other
+// endpoint this client calls, stats is NOT nested under /accounts/{id} — the
+// account id is a trailing path segment instead: {base}/{version}/stats/accounts/{id}.
+func (c *Client) statsURL() string {
+	return fmt.Sprintf("%s/%s/stats/accounts/%s", c.baseURL, c.apiVersion, c.account.AccountID)
+}
+
 // request performs an account-scoped X Ads API GET/list request with OAuth1
 // signing and 429 exponential-backoff retry. Any parameters must be encoded
 // into path as a query string. Mirrors twitterRequest in the TS for reads.
@@ -696,7 +703,10 @@ func (c *Client) createRequest(ctx context.Context, path string, params map[stri
 // doRequest is the shared HTTP path with OAuth1 signing and 429
 // exponential-backoff retry. queryParams, when non-nil, are appended to the
 // request URL (create calls pass their params here); the request carries no
-// body in either mode.
+// body in either mode. path is joined under the account-scoped root
+// (accountURL) — callers whose endpoint is NOT nested under
+// /accounts/{accountID} (e.g. the stats endpoint, which is
+// /stats/accounts/{accountID}) must use doRequestAbs directly instead.
 func (c *Client) doRequest(ctx context.Context, method, path string, queryParams map[string]string) (*apiResponse, error) {
 	// An empty path targets the account root itself (accountURL) — used by
 	// verifyAccount's GET — so don't append a bare "/" that would change the URL.
@@ -704,6 +714,29 @@ func (c *Client) doRequest(ctx context.Context, method, path string, queryParams
 	if p := strings.TrimPrefix(path, "/"); p != "" {
 		reqURL += "/" + p
 	}
+
+	return c.doRequestAbs(ctx, method, reqURL, path, queryParams)
+}
+
+// drainAndClose discards a bounded amount of an unread response body before closing
+// it. net/http only returns a connection to the idle pool when its body has been read
+// to EOF and closed; closing an unread body makes the transport tear the connection
+// down instead. On the 429 retry path that is exactly the wrong moment to do it —
+// every rate-limited response would cost a fresh TCP+TLS handshake for the retry that
+// follows. The limit matches readAll's: a body larger than maxResponseBody is not
+// worth draining, so that connection is allowed to close.
+func drainAndClose(resp *http.Response) {
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBody))
+	_ = resp.Body.Close()
+}
+
+// doRequestAbs is the shared HTTP path with OAuth1 signing and 429
+// exponential-backoff retry, targeting reqURL directly (no accountURL()
+// prefixing). logPath is used only for error labeling (apiError/transportError
+// Path field), so callers whose reqURL isn't accountURL()-rooted can still
+// pass a meaningful label. queryParams, when non-nil, are appended to reqURL.
+func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath string, queryParams map[string]string) (*apiResponse, error) {
+	path := logPath
 
 	if len(queryParams) > 0 {
 		vals := url.Values{}
@@ -752,11 +785,11 @@ func (c *Client) doRequest(ctx context.Context, method, path string, queryParams
 			// non-2xx return below. Surface the intended exhausted-rate-limit
 			// error instead.
 			if attempt >= retryMax {
-				_ = resp.Body.Close()
+				drainAndClose(resp)
 				return nil, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path}
 			}
 			waitDur := c.parseRetryAfter(resp)
-			_ = resp.Body.Close()
+			drainAndClose(resp)
 			if waitDur > 0 {
 				// The server declared a reset time (Retry-After delay or
 				// X-Rate-Limit-Reset epoch). Honor it rather than clamping to a

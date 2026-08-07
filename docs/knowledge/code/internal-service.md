@@ -110,6 +110,14 @@ The `window` query parameter is a closed, platform-agnostic vocabulary
 query syntax; the mapping (and any platform-specific validation, e.g. an allow-list guard
 against GAQL injection) lives in the platform client package, not here.
 
+When the caller omits `window`, `defaultMetricsWindowFor` (`internal/service/brief.go`)
+picks the default PER PLATFORM rather than applying one global constant: `last_30_days`
+for every platform except X Ads, which defaults to `last_7_days` because its stats
+endpoint caps queryable date ranges at 7 days per request — `last_30_days` is simply
+unreachable there (see `internal/platform/twitter` and `internal/dispatch/twitter.go`
+below). A single global default would make every omitted-window request against an X
+campaign fail with a guaranteed 400.
+
 ## Campaign delete
 
 `BriefService.DeleteCampaign` (backing `DELETE .../campaigns/{id}`, `If-Match` required)

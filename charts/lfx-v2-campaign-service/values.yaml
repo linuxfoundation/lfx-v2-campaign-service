@@ -204,6 +204,18 @@ app:
     EVENTING_ENABLED:
       value: "true"
 
+    # Opt-in for Reddit campaign metrics reads. Default OFF: Reddit's reporting
+    # endpoint has no public documentation (LFXV2-2995), so the request shape,
+    # response shape, and spend currency unit the client uses are a best-effort
+    # GUESS. While this is "false", the metrics endpoint answers 400 for Reddit
+    # campaigns — the accurate response for an unverified contract — instead of a
+    # 200 that looks authoritative but may carry wrong numbers. Any value other
+    # than "true" is treated as off, so a typo fails closed.
+    # Flip to "true" only after the shape is verified against a live Reddit ad
+    # account; at that point the gate is removed and this key goes away.
+    REDDIT_METRICS_ENABLED:
+      value: "false"
+
     # AES-256-GCM key for encrypting ad-platform connection credentials at rest.
     # Required whenever a database URL is configured (PG* / DATABASE_URL), because
     # NewContainer initializes the encryptor before opening the pool used by
