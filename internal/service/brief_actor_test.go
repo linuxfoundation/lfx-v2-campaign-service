@@ -5,6 +5,9 @@ package service
 
 import (
 	"context"
+	"log/slog"
+	"strings"
+	"sync"
 	"testing"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
@@ -80,6 +83,69 @@ func TestBriefActor_MissingActorStillWrites(t *testing.T) {
 	if stored := repo.briefs[briefKey("cncf", created.ID)]; stored.CreatedBy != nil {
 		t.Errorf("CreatedBy = %+v, want nil for an unauthenticated context", stored.CreatedBy)
 	}
+}
+
+// capturingHandler records the records slog emits, so a test can assert on the WARNING
+// rather than only on the write that accompanies it.
+type capturingHandler struct {
+	mu   sync.Mutex
+	recs []slog.Record
+}
+
+func (h *capturingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *capturingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.recs = append(h.recs, r.Clone())
+	return nil
+}
+func (h *capturingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *capturingHandler) WithGroup(string) slog.Handler      { return h }
+
+// TestBriefActor_MissingActorWarns pins the warning itself, not just the write beside it.
+//
+// A lost actor fails NOTHING: the row commits with NULL attribution and every response is a
+// normal 2xx. This log line is the only signal an operator gets that a gateway change, a
+// claim rename, or a regression in actorFromToken has silently stopped attribution — and its
+// RATE is what alerting keys on, so the operation name has to be on the record too. Without
+// this test the line could be deleted or renamed and TestBriefActor_MissingActorStillWrites
+// would stay green, because it only checks that the write succeeded.
+func TestBriefActor_MissingActorWarns(t *testing.T) {
+	h := &capturingHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	s := newTestBriefService(newFakeBriefRepo())
+	if _, err := s.CreateBrief(context.Background(), &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{ProgramType: "events", EventSlug: "kubecon-2025"},
+	}); err != nil {
+		t.Fatalf("CreateBrief with no actor must still succeed, got: %v", err)
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, r := range h.recs {
+		if r.Level != slog.LevelWarn || !strings.Contains(r.Message, "no authenticated actor") {
+			continue
+		}
+		var op string
+		r.Attrs(func(a slog.Attr) bool {
+			if a.Key == "operation" {
+				op = a.Value.String()
+				return false
+			}
+			return true
+		})
+		if op == "" {
+			t.Fatalf("the missing-actor warning carries no %q attribute; without it an operator "+
+				"sees that attribution broke but not on which write path", "operation")
+		}
+		return
+	}
+	t.Fatalf("no WARN record mentioning a missing authenticated actor was emitted; an "+
+		"unattributed write must not be silent. Records seen: %v", h.recs)
 }
 
 // TestBriefActor_UpdateMovesOnlyUpdatedBy asserts an edit attributes itself to the editor
