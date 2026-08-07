@@ -938,34 +938,18 @@ func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCusto
 
 	// Convert resource names to AccessibleCustomer structs. This endpoint returns
 	// resource_names ONLY — no descriptive_name and no `manager` flag — so labels stay
-	// empty unless the manager expansion below supplies them, and a manager account in
-	// this list is indistinguishable from an ad account by its resource name alone.
+	// empty here, and a manager account in this list is indistinguishable from an ad
+	// account by its resource name alone.
 	//
-	// That matters because the caller picks ONE entry to become the connection's
-	// account_id, and a manager (MCC) account cannot hold campaigns — choosing one
-	// produces a connection that fails at the first dispatch. listManagerClients drops
-	// managers from ITS rows, but the flat list is unfiltered, and on an MCC credential
-	// the account the user can act on directly is usually the manager itself. The one
-	// manager we can identify without extra metadata is the configured login-customer-id,
-	// so drop exactly that one. Any OTHER manager in the flat list stays — there is no
-	// field here to recognise it by, and a second round-trip per row to find out would
-	// cost more than it saves on a list this short.
-	managerResName := ""
-	if c.account.LoginCustomerID != "" {
-		managerResName = "customers/" + c.account.LoginCustomerID
-	}
-	accounts := make([]AccessibleCustomer, 0, len(resp2xx.ResourceNames))
-	// at maps a resource name to its index in accounts. A plain "seen" set would force a
-	// linear scan of accounts to relabel a duplicate during the manager merge below,
-	// making that merge quadratic when the hierarchy substantially overlaps the direct
-	// list. Storing the index makes both the dedup test and the relabel O(1).
-	at := make(map[string]int, len(resp2xx.ResourceNames))
+	// Validation runs over every row regardless of which branch below consumes them: the
+	// AccessibleCustomer contract promises "customers/{digits}", a caller persists this
+	// value as the connection's account id and interpolates it into later request paths,
+	// and a malformed 2xx must not put an empty, wrong-kind, or path-bearing string on
+	// that route. Fail the read rather than hand back an account id that is unusable at
+	// best.
+	direct := make([]AccessibleCustomer, 0, len(resp2xx.ResourceNames))
+	seen := make(map[string]struct{}, len(resp2xx.ResourceNames))
 	for _, resName := range resp2xx.ResourceNames {
-		// The AccessibleCustomer contract promises "customers/{digits}", and a caller
-		// persists this value as the connection's account id and interpolates it into
-		// later request paths. A malformed 2xx must not put an empty, wrong-kind, or
-		// path-bearing string on that route: fail the read rather than hand back an
-		// account id that is unusable at best.
 		if !accessibleResourceNameRE.MatchString(resName) {
 			return nil, &transportError{
 				Method: http.MethodGet,
@@ -973,48 +957,54 @@ func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCusto
 				Err:    fmt.Errorf("resource name %q is not of the form customers/{digits}", resName),
 			}
 		}
-		if _, dup := at[resName]; dup {
+		if _, dup := seen[resName]; dup {
 			continue
 		}
-		if resName == managerResName {
-			// The configured MCC: reachable, but not selectable as an ad account. Recorded
-			// in `at` anyway so the manager merge below does not re-add it as a child.
-			at[resName] = -1
-			continue
-		}
-		at[resName] = len(accounts)
-		accounts = append(accounts, AccessibleCustomer{ResourceName: resName})
+		seen[resName] = struct{}{}
+		direct = append(direct, AccessibleCustomer{ResourceName: resName})
 	}
 
-	// listAccessibleCustomers returns the accounts the AUTHENTICATED USER can act on
-	// directly. It does not walk a manager hierarchy — a login-customer-id in the header
-	// does not make it enumerate that manager's children. For an MCC credential, which is
-	// the normal shape for an agency-managed connection, the direct list is therefore
-	// often just the manager itself and the child ad accounts (the ones a caller actually
-	// wants to pick from) are missing entirely.
+	// Without a configured manager, the direct list IS the answer: every account in it is
+	// one the credential addresses on its own behalf, and there is no hierarchy root to
+	// walk. (A manager account can still be in here and cannot hold campaigns, but with
+	// no `manager` flag on this response there is nothing to recognise it by, and a
+	// round-trip per row to find out would cost more than it saves on a list this short.)
+	if c.account.LoginCustomerID == "" {
+		return direct, nil
+	}
+
+	// MANAGER MODE. This is not a merge, and that is the whole point.
 	//
-	// So when a manager id is configured, expand it: customer_client under the manager
-	// enumerates the hierarchy, and unlike the flat list it carries descriptive_name, so
-	// those accounts come back labelled. Only the manager id can seed this — without one
-	// there is no hierarchy root to walk, and the direct list is the whole answer.
-	if c.account.LoginCustomerID != "" {
-		children, cerr := c.listManagerClients(ctx, c.account.LoginCustomerID)
-		if cerr != nil {
-			return nil, cerr
+	// listAccessibleCustomers is explicitly UNSCOPED — the login-customer-id header does
+	// not filter it, and it does not walk a hierarchy either. Every OTHER request this
+	// client makes does carry that header, so an account is only addressable through this
+	// client if it sits under the configured manager. An account the user reaches
+	// directly but which belongs to a different hierarchy therefore comes back in the
+	// flat list and then fails with PERMISSION_DENIED the moment anything is done with
+	// it. Returning it presents the caller a choice that cannot work, and the failure
+	// lands at first dispatch — long after the connection was saved — where it reads as a
+	// credential problem rather than a wrong-account one.
+	//
+	// So in manager mode the selectable set is exactly the manager's ENABLED, non-manager
+	// children. That set is also strictly better shaped: customer_client carries
+	// descriptive_name, so those accounts come back labelled, and listManagerClients has
+	// already dropped the managers the flat list cannot identify. Any account present in
+	// both lists is in the expansion too, so nothing addressable is lost.
+	children, cerr := c.listManagerClients(ctx, c.account.LoginCustomerID)
+	if cerr != nil {
+		return nil, cerr
+	}
+	accounts := make([]AccessibleCustomer, 0, len(children))
+	at := make(map[string]struct{}, len(children))
+	for _, child := range children {
+		// customer_client can report the same client twice when the hierarchy has more
+		// than one path to it (a sub-manager that is itself a client of the root). Keep
+		// the first, which is the shallowest.
+		if _, dup := at[child.ResourceName]; dup {
+			continue
 		}
-		for _, child := range children {
-			if i, dup := at[child.ResourceName]; dup {
-				// Already listed directly, but without a label. Prefer the labelled copy.
-				// i == -1 marks the configured manager, which is deliberately absent from
-				// accounts — leave it out rather than reinstating it through the merge.
-				if i >= 0 && accounts[i].DescriptiveName == "" {
-					accounts[i].DescriptiveName = child.DescriptiveName
-				}
-				continue
-			}
-			at[child.ResourceName] = len(accounts)
-			accounts = append(accounts, child)
-		}
+		at[child.ResourceName] = struct{}{}
+		accounts = append(accounts, child)
 	}
 
 	return accounts, nil
