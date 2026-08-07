@@ -184,7 +184,10 @@ this campaign" call, so it cannot satisfy `ReadMetrics`'s one-bounded-call contr
 submit-and-poll with a hard ceiling, or a persisted/sweeper-refreshed snapshot instead of a
 live read) — deferred, not attempted here.
 
-**LinkedIn** implements it: `GetCampaignMetrics(ctx, accountID, campaignID, window)` maps the
+**LinkedIn** implements it as `LinkedInDispatcher.ReadMetrics`, which resolves the account
+credentials and then delegates to the platform client helper
+`linkedin.Client.GetCampaignMetrics(ctx, accountID, campaignID, window)` — the helper is not
+itself the `MetricsReader`, its signature differs from the interface. The helper maps the
 shared `model.MetricsWindow` to a Rest.li 2.0 nested date-range literal via
 `dateRangeForWindow`, then queries the Ad Analytics `adAnalytics` finder
 (`q=analytics`) scoped to the campaign/account URNs built from the persisted bare numeric

@@ -908,17 +908,13 @@ func TestGetCampaignMetrics_TransportErrorRedaction(t *testing.T) {
 			t.Fatalf("expected an apiError in the chain, got: %T", err)
 		}
 
-		// Body should contain the redacted message, not raw error details.
-		// redactBodyReadError returns "read response body failed", so the Body
-		// should be "read response body: read response body failed"
-		if !strings.Contains(apiErr.Body, "read response body failed") {
-			t.Errorf("apiError.Body missing redacted message: %s", apiErr.Body)
-		}
-
-		// Verify it does NOT contain raw I/O error details that would appear if
-		// redactBodyReadError was not applied (e.g., "EOF", "connection reset", etc.)
-		if strings.Contains(apiErr.Body, "EOF") && !strings.Contains(apiErr.Body, "read response body") {
-			t.Errorf("apiError.Body leaked raw I/O error (EOF): %s", apiErr.Body)
+		// Assert the COMPLETE sanitized value, not just that the redacted prefix is
+		// present. A "contains prefix and not EOF" pair cannot fail: any leak that keeps
+		// the prefix and appends raw I/O detail satisfies both halves. Equality is what
+		// binds the absence of appended detail.
+		const wantBody = "read response body: read response body failed"
+		if apiErr.Body != wantBody {
+			t.Errorf("apiError.Body = %q, want exactly %q — anything appended is raw I/O detail that escaped redaction", apiErr.Body, wantBody)
 		}
 	})
 
@@ -949,15 +945,10 @@ func TestGetCampaignMetrics_TransportErrorRedaction(t *testing.T) {
 			t.Fatalf("expected a transportError in the chain, got: %T", err)
 		}
 
-		// The transportError.Err should contain the redacted message, not raw I/O error.
-		errMsg := transErr.Err.Error()
-		if !strings.Contains(errMsg, "read response body failed") {
-			t.Errorf("transportError.Err missing redacted message: %s", errMsg)
-		}
-
-		// Verify it does NOT contain raw I/O error details
-		if strings.Contains(errMsg, "EOF") && !strings.Contains(errMsg, "read response body") {
-			t.Errorf("transportError.Err leaked raw I/O error (EOF): %s", errMsg)
+		// Assert the COMPLETE sanitized value, for the same reason as the 5xx path above.
+		const wantErr = "read response body failed"
+		if errMsg := transErr.Err.Error(); errMsg != wantErr {
+			t.Errorf("transportError.Err = %q, want exactly %q — anything appended is raw I/O detail that escaped redaction", errMsg, wantErr)
 		}
 	})
 }
@@ -1012,6 +1003,56 @@ func TestRedactHTTPDoError(t *testing.T) {
 		var dnsErr *net.DNSError
 		if !errors.As(redacted, &dnsErr) {
 			t.Errorf("redacted error lost DNSError classification: %v", redacted)
+		}
+	})
+
+	t.Run("credential_wrapper_between_url_error_and_dns_cause_is_dropped", func(t *testing.T) {
+		// The layer carrying untrusted text is not necessarily the *url.Error. A custom
+		// RoundTripper can return fmt.Errorf("Bearer <token>: %w", dnsErr), which
+		// http.Client.Do then wraps in a *url.Error — so stripping only *url.Error layers
+		// leaves a credential-bearing *fmt.wrapError as the cause, reachable by anything
+		// that walks or renders the chain. The cause must be REBUILT from the
+		// classification, not forwarded.
+		const markerInWrapper = "CREDENTIAL_MARKER_IN_WRAPPER"
+		const markerInName = "CREDENTIAL_MARKER_IN_NAME"
+		wrapped := &url.Error{
+			Op:  "Get",
+			URL: "https://api.linkedin.com/rest/adAnalytics?q=analytics",
+			Err: fmt.Errorf("Bearer %s: %w", markerInWrapper, &net.DNSError{
+				Err: "no such host", Name: "api.linkedin.com/?token=" + markerInName, IsNotFound: true,
+			}),
+		}
+
+		redacted := redactHTTPDoError(wrapped)
+
+		// Walk the ENTIRE returned chain: it is not enough that the outermost Error() is
+		// clean, because errors.As/Unwrap hand callers the inner layers directly.
+		for e := redacted; e != nil; e = errors.Unwrap(e) {
+			s := e.Error()
+			if strings.Contains(s, markerInWrapper) || strings.Contains(s, markerInName) {
+				t.Fatalf("untrusted text survived into the redacted chain at %T: %s", e, s)
+			}
+			if strings.Contains(s, "https://") {
+				t.Fatalf("URL survived into the redacted chain at %T: %s", e, s)
+			}
+		}
+
+		// Classification must survive the rebuild, including the IsNotFound bit callers
+		// use to decide whether retrying could ever help.
+		var dnsErr *net.DNSError
+		if !errors.As(redacted, &dnsErr) {
+			t.Fatalf("redacted error lost DNSError classification: %v", redacted)
+		}
+		if !dnsErr.IsNotFound {
+			t.Error("rebuilt DNSError dropped IsNotFound; callers cannot tell a permanent lookup failure from a transient one")
+		}
+	})
+
+	t.Run("unrecognized_dial_cause_collapses_to_the_default_deny_sentinel", func(t *testing.T) {
+		// safeDialCause is default-deny: a classification it does not reproduce must not be
+		// passed through, even when the caller's own text looks harmless.
+		if got := safeDialCause(errors.New("UNRECOGNIZED_CAUSE_TEXT")); !errors.Is(got, errDialFailed) {
+			t.Errorf("unrecognized cause = %v, want errDialFailed", got)
 		}
 	})
 
@@ -1153,7 +1194,7 @@ func TestGetCampaignMetrics_MalformedJSONRedaction(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		// Return JSON with the marker embedded in a malformed value that json.Unmarshal
 		// will include in UnmarshalTypeError.Value
-		fmt.Fprint(w, fmt.Sprintf(`{"elements": [{"impressions": "%s", "clicks": 0, "costInUsd": "0"}]}`, maliciousJSONMarker))
+		_, _ = fmt.Fprintf(w, `{"elements": [{"impressions": "%s", "clicks": 0, "costInUsd": "0"}]}`, maliciousJSONMarker)
 	}))
 	defer server.Close()
 
