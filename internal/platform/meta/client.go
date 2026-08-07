@@ -1304,6 +1304,42 @@ func isMutatingMethod(method string) bool {
 // present), since CreateCampaign issues several sequential Graph API calls that
 // can trip Meta's per-app/account rate limits mid-flow.
 func (c *Client) doRequest(ctx context.Context, method, path string, body map[string]any, out any) error {
+	return c.do(ctx, method, path, body, out, true)
+}
+
+// doCreate is doRequest for a POST that CREATES a node, where repeating the request
+// is not safe.
+//
+// The retry loop cannot repeat a create on a throttle. This client's own premise —
+// the one createOutcomeAmbiguous is built on — is that a throttle may arrive AFTER
+// Meta committed the node: that is why an exhausted 429, and the far more common
+// HTTP-400-with-rate-limit-code form, are classified as UNCONFIRMED rather than as
+// clean rejections. Retrying inside doRequest would act on the opposite premise and
+// re-POST a create that may already exist, producing two campaigns (or ad sets, or
+// ads) with the same name inside ONE call. The find-by-name reconciliation that makes
+// creates idempotent runs at the START of the flow, not between retry attempts, so it
+// cannot see or clean up the duplicate — and a duplicate the caller never learns about
+// is exactly the outcome this whole file exists to prevent.
+//
+// So a throttled create returns the rate-limit error immediately. The caller
+// classifies it through createOutcomeAmbiguous as UNCONFIRMED, and the next run's
+// findCampaignByName / findAdSetByName either adopts the node Meta did commit or
+// creates it once. Losing the in-call retry costs an extra round trip on a throttle
+// that was a clean pre-commit rejection; keeping it risks a duplicate that no later
+// pass can distinguish from the original.
+//
+// Idempotent POSTs — the status updates in UpdateCampaignStatus and friends, which
+// assert a desired state rather than creating a node — keep using doRequest and its
+// retry, since repeating them changes nothing.
+func (c *Client) doCreate(ctx context.Context, path string, body map[string]any, out any) error {
+	return c.do(ctx, http.MethodPost, path, body, out, false)
+}
+
+// do is the shared workhorse. retryThrottle=false suppresses ONLY the throttle retry;
+// every other classification (transport ambiguity, oversized/unreadable bodies, the
+// Retry-After abort) is identical, so a create and a read disagree about repeating a
+// request and about nothing else.
+func (c *Client) do(ctx context.Context, method, path string, body map[string]any, out any, retryThrottle bool) error {
 	if c.creds.AccessToken == "" {
 		return fmt.Errorf("meta access token is not configured")
 	}
@@ -1387,6 +1423,15 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		}
 		throttled := status == http.StatusTooManyRequests ||
 			(status < 200 || status >= 300) && env.Error != nil && graphRateLimitCodes[env.Error.Code]
+		// A create never repeats itself (see doCreate). Clearing the flag rather than
+		// branching at the retry site keeps the read-error short-circuit below correct
+		// too: for a create there is no "we're about to retry, the body is discarded
+		// anyway" case, so an unreadable throttled response must be consumed as final
+		// and carry its status — otherwise a 400-coded throttle would be classified
+		// without the status createOutcomeAmbiguous needs.
+		if !retryThrottle {
+			throttled = false
+		}
 
 		// A read error (e.g. connection closed early on a mismatched Content-Length)
 		// must not be treated as a complete response: even if the partial body
@@ -2528,7 +2573,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Campaign already exists by name: %s (not re-created)", campaignID))
 	} else {
 		var campaignResp createResponse
-		err = c.doRequest(ctx, http.MethodPost, "/"+accountID+"/campaigns", map[string]any{
+		err = c.doCreate(ctx, "/"+accountID+"/campaigns", map[string]any{
 			"name":                            campaignName,
 			"objective":                       objParams.CampaignObjective,
 			"status":                          "PAUSED",
@@ -2685,7 +2730,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, fmt.Sprintf("Ad set already exists by name: %s (not re-created)", adSetID))
 	} else {
 		var adSetResp createResponse
-		if err := c.doRequest(ctx, http.MethodPost, "/"+accountID+"/adsets", adSetBody, &adSetResp); err != nil {
+		if err := c.doCreate(ctx, "/"+accountID+"/adsets", adSetBody, &adSetResp); err != nil {
 			// The campaign was already created (PAUSED). Return a partial result carrying
 			// its id so the caller can identify/clean up the orphan without parsing the
 			// error string; auto-deleting here would race a retry that reuses it.
@@ -2814,7 +2859,7 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 	}
 
 	var creativeResp createResponse
-	if err = c.doRequest(ctx, http.MethodPost, "/"+c.account.AccountID+"/adcreatives", map[string]any{
+	if err = c.doCreate(ctx, "/"+c.account.AccountID+"/adcreatives", map[string]any{
 		"name": fmt.Sprintf("%s - Variant %d", in.EventName, i+1),
 		"object_story_spec": map[string]any{
 			"page_id":   c.account.PageID,
@@ -2831,7 +2876,7 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 	}
 
 	var adResp createResponse
-	if err = c.doRequest(ctx, http.MethodPost, "/"+c.account.AccountID+"/ads", map[string]any{
+	if err = c.doCreate(ctx, "/"+c.account.AccountID+"/ads", map[string]any{
 		"name":     fmt.Sprintf("%s - Ad %d", in.EventName, i+1),
 		"adset_id": adSetID,
 		"creative": map[string]any{"creative_id": creativeResp.ID},

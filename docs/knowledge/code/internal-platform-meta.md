@@ -89,6 +89,16 @@ past start date is refused, with a same-day ad-set `start_time` nudged to
 now+buffer. `doRequest` retries HTTP 429 and Graph rate-limit envelope codes
 (4/17/32/341/613/80004) with bounded backoff, draining the body before close, and a
 truncated response body is surfaced rather than reported as a false success.
+**Creates go through `doCreate`, which suppresses that throttle retry.** The retry
+and `createOutcomeAmbiguous` would otherwise hold opposite premises about the same
+response: the classifier calls a throttle UNCONFIRMED precisely because Meta may have
+committed the node before reporting it, while the retry loop would re-POST the create
+on that same signal — producing two campaigns (or ad sets, or ads) with one name
+inside a single call, which the start-of-flow name lookup cannot see or reconcile. A
+throttled create therefore returns immediately and is classified UNCONFIRMED; the next
+run's `findCampaignByName`/`findAdSetByName` adopts what Meta committed. The
+suppression is scoped to creates, not to POST as a method — the status-update POSTs
+assert a desired state, so repeating them changes nothing and they keep the retry.
 Redirect following is force-disabled (a shared `noFollow` `CheckRedirect` policy).
 For a `WithHTTPClient`-supplied client, `NewClient` builds a FRESH `*http.Client`
 carrying the caller's reusable exported fields (`Transport`, `Jar`, `Timeout`) with

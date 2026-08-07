@@ -2964,6 +2964,87 @@ func TestDoRequestRetriesOnGraphThrottleCode(t *testing.T) {
 	}
 }
 
+// TestDoCreateDoesNotRepeatAThrottledCreate is the counterpart to
+// TestDoRequestRetriesOnGraphThrottleCode above. The retry that is correct for a read
+// is a duplicate-node bug for a create: this client's premise is that a throttle may
+// arrive AFTER Meta committed the node (which is why createOutcomeAmbiguous treats one
+// as UNCONFIRMED), so re-POSTing would produce two nodes with the same name inside a
+// single call — and the find-by-name reconciliation runs at the start of the flow, not
+// between retry attempts, so nothing would ever notice.
+//
+// Both throttle shapes are covered, because both are what createOutcomeAmbiguous
+// classifies as ambiguous: the HTTP 429, and the HTTP 400 carrying a Graph rate-limit
+// code (the form Meta actually uses most on the Marketing API).
+func TestDoCreateDoesNotRepeatAThrottledCreate(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"http 429", http.StatusTooManyRequests, `{"error":{"message":"rate limited","code":4}}`},
+		{"http 400 with rate-limit code", http.StatusBadRequest, `{"error":{"message":"rate limited","code":80004}}`},
+		{"http 400 with app-level code", http.StatusBadRequest, `{"error":{"message":"rate limited","code":341}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				atomic.AddInt32(&calls, 1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
+
+			c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+				WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+			var out createResponse
+			err := c.doCreate(context.Background(), "/act_1/campaigns", map[string]any{"name": "X"}, &out)
+			if err == nil {
+				t.Fatal("doCreate returned nil, want the rate-limit error surfaced to the caller")
+			}
+			// Exactly one POST: the create was sent once and never repeated.
+			if got := atomic.LoadInt32(&calls); got != 1 {
+				t.Errorf("server calls = %d, want 1 — a throttled create must not be re-POSTed", got)
+			}
+			// And the error the caller gets must still classify as UNCONFIRMED, so the
+			// flow records "may exist" and the next run's find-by-name adopts the node
+			// Meta may have committed. Suppressing the retry without preserving this
+			// would trade a duplicate for a silent orphan.
+			if !createOutcomeAmbiguous(err) {
+				t.Errorf("createOutcomeAmbiguous(%v) = false, want true", err)
+			}
+		})
+	}
+}
+
+// TestDoRequestStillRetriesIdempotentPostThrottle pins the negative half: the
+// suppression is scoped to creates, not to POST as a method. A status update asserts a
+// desired state rather than creating a node, so repeating it changes nothing and the
+// retry is pure availability.
+func TestDoRequestStillRetriesIdempotentPostThrottle(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"message":"rate limited","code":4}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+	if err := c.doRequest(context.Background(), http.MethodPost, "/123", map[string]any{"status": "PAUSED"}, nil); err != nil {
+		t.Fatalf("doRequest: %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("server calls = %d, want 2 (one throttled + one success)", got)
+	}
+}
+
 // TestCreateCampaignRejectsPastStartDate verifies a start date before today is
 // rejected before any mutating call.
 func TestCreateCampaignRejectsPastStartDate(t *testing.T) {
