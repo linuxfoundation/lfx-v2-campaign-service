@@ -537,7 +537,7 @@ searches: it takes an EXPLICIT customer id (validated there, since it is interpo
 resource path) rather than the client's configured one, and `gaqlSearch` is now a thin
 delegation to it.
 
-**A manager credential needs the hierarchy walked — and the flat list discarded.**
+**A manager credential needs the hierarchy walked, and the flat list is not consulted at all.**
 `customers:listAccessibleCustomers` returns the accounts the authenticated user can act on
 DIRECTLY; a `login-customer-id` header does not make it enumerate that manager's children —
 that is a property of the endpoint, not of the header. On an MCC connection the flat list is

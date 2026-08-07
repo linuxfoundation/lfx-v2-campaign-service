@@ -10,8 +10,8 @@ request count was never one. The invariant is that no request is issued whose re
 `expandManagerHierarchy` returns straight from the hierarchy query and the flat endpoint is never
 called. The ordering is the whole fix.
 
-**Why it was not merely wasteful** — The discarded call still spent request quota and the
-whatever deadline the caller passed down, and its own timeout, 429, or 5xx propagated out of
+**Why it was not merely wasteful** — The discarded call still spent request quota and whatever
+deadline the caller passed down, and its own timeout, 429, or 5xx propagated out of
 `ListAccessibleCustomers` and failed discovery outright. A call whose success is not needed
 was able to cause a failure. On an agency-managed connection — the case the expansion exists
 for — that is the common path, not an edge one.
