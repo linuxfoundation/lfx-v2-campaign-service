@@ -134,6 +134,21 @@ func TestListGoogleAdsAccounts_ZeroAccountsIsOKNotUnavailable(t *testing.T) {
 	if len(result.Accounts) != 0 {
 		t.Fatalf("expected 0 accounts, got %d", len(result.Accounts))
 	}
+	// len() alone is satisfied by nil, which is exactly the regression worth catching:
+	// the dispatcher deliberately builds its slice with make(..., 0, n) so an empty
+	// result is `[]`, and a `var connAccounts []*conn.AccessibleAccount` in the
+	// conversion loop undoes that one layer up — every client then has to special-case
+	// a null it was promised it would never see.
+	if result.Accounts == nil {
+		t.Fatal("Accounts is nil; an empty result must serialize as [], not null")
+	}
+	encoded, err := json.Marshal(result.Accounts)
+	if err != nil {
+		t.Fatalf("marshal accounts: %v", err)
+	}
+	if string(encoded) != "[]" {
+		t.Errorf("empty accounts serialized as %s, want []", encoded)
+	}
 }
 
 // TestListGoogleAdsAccounts_NoConnectionIs404 pins the missing-connection mapping. The

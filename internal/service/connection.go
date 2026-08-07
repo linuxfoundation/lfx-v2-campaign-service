@@ -136,8 +136,11 @@ func (s *ConnectionService) ListGoogleAdsAccounts(ctx context.Context, p *conn.L
 			return nil, &conn.ConnServiceUnavailableError{Code: "503", Message: "account discovery could not be completed"}
 		}
 	}
-	// Convert model.AccessibleAccount to generated conn type
-	var connAccounts []*conn.AccessibleAccount
+	// Convert model.AccessibleAccount to generated conn type. Preallocated with make so an
+	// empty result serializes as `[]`, not `null` — a nil slice here would undo the
+	// dispatcher's deliberate make([]model.AccessibleAccount, 0, len(customers)) one layer
+	// down and hand every client a null it has to special-case.
+	connAccounts := make([]*conn.AccessibleAccount, 0, len(accounts))
 	for _, acct := range accounts {
 		label := acct.Label // Convert to pointer
 		connAccounts = append(connAccounts, &conn.AccessibleAccount{
