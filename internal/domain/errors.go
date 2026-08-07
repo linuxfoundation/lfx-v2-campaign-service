@@ -115,4 +115,36 @@ var (
 	// proves nothing about the row must not be read as proving the row is at fault:
 	// mistaking an outage for user error is the expensive direction of this call.
 	ErrCredentialDecryptionFailed = errors.New("stored credentials could not be decrypted")
+
+	// The four sentinels below name WHICH stored-connection defect made a connection
+	// unusable. Each is wrapped ALONGSIDE ErrConnectionNotUsable at the point the defect
+	// is detected, so the HTTP status is decided by that one sentinel while the reason
+	// stays machine-readable.
+	//
+	// They exist for the log line, and the log line is the reason they must be sentinels
+	// rather than message text. An operator debugging a 400 needs to know which of these
+	// four it was, but the errors themselves cannot be logged: one of them is produced by
+	// decoding the DECRYPTED credential blob, and an error derived from plaintext must
+	// never reach centralized logs. `errors.Is` over a fixed vocabulary carries the
+	// diagnosis with no payload attached to carry secrets in.
+
+	// ErrConnectionInactive — the connection row exists and its credentials may be fine,
+	// but its status is not "active". Nothing was validated beyond that.
+	ErrConnectionInactive = errors.New("the stored connection is not active")
+
+	// ErrCredentialsUndecodable — the decrypted blob is not valid JSON for the platform's
+	// credential shape. Its cause is DERIVED FROM PLAINTEXT and is deliberately dropped
+	// at the point of detection rather than wrapped; see the producing validator.
+	ErrCredentialsUndecodable = errors.New("the stored credential blob could not be decoded")
+
+	// ErrCredentialsIncomplete — the blob decoded, but a required field is empty.
+	// Deliberately does not name which: the field names are a fixed, non-secret list that
+	// belongs in the API response, and naming the missing one per project adds nothing a
+	// log reader can act on.
+	ErrCredentialsIncomplete = errors.New("the stored credentials are missing a required field")
+
+	// ErrProviderConfigInvalid — a non-secret provider_config column holds a value the
+	// platform will not accept (a dashed login_customer_id, say). Distinct from the
+	// credential cases because the fix is a different form field.
+	ErrProviderConfigInvalid = errors.New("a stored provider config value is invalid")
 )

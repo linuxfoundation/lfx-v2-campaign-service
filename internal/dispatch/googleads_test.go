@@ -1409,6 +1409,110 @@ func TestGoogleAds_ListAccounts_StillRejectsUnusableConnections(t *testing.T) {
 	}
 }
 
+// TestGoogleAds_ListAccounts_UnusableReasonsAreClassifiedWithoutPlaintext pins the two
+// properties the discovery handler's log line depends on.
+//
+// FIRST: each stored-connection defect carries its own sentinel alongside
+// ErrConnectionNotUsable, so the reason survives as something `errors.Is` can read. The
+// status is still decided by the one sentinel; these only say WHICH defect it was.
+//
+// SECOND, and the reason the first matters: one of these conditions is detected by decoding
+// the DECRYPTED credential blob, and encoding/json QUOTES ITS INPUT — a *json.SyntaxError
+// names the offending character, a *json.UnmarshalTypeError names the field being read. That
+// error is dropped at the point of detection rather than wrapped, so the undecodable case
+// asserts its message by EQUALITY against the fixed text. A substring hunt for a planted
+// secret would be vacuous here: the blob most likely to leak yields only ONE character of
+// input, so "the marker is absent" can pass against a chain that still carries the json
+// error. Equality cannot: any re-wrap changes the string. The three blobs cover the two
+// error types plus a truncation.
+func TestGoogleAds_ListAccounts_UnusableReasonsAreClassifiedWithoutPlaintext(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("reached Google Ads with an unusable connection")
+	}))
+	defer apiSrv.Close()
+
+	const secretMarker = "sUp3r-s3cr3t-refresh-token"
+
+	cases := []struct {
+		name   string
+		mutate func(*model.Connection)
+		want   error
+	}{
+		{
+			name:   "inactive",
+			mutate: func(c *model.Connection) { c.Status = model.StatusInactive },
+			want:   domain.ErrConnectionInactive,
+		},
+		{
+			// A *json.SyntaxError case: trailing garbage after a valid value makes
+			// encoding/json report "invalid character '@' after top-level value", quoting
+			// a byte of the decrypted blob.
+			name:   "undecodable blob, syntax error",
+			mutate: func(c *model.Connection) { c.EncryptedCredentials = []byte(`{"RefreshToken":"tok"}@`) },
+			want:   domain.ErrCredentialsUndecodable,
+		},
+		{
+			// A *json.UnmarshalTypeError case: the error names the struct field it was
+			// reading, i.e. which credential is malformed.
+			name:   "undecodable blob, type error",
+			mutate: func(c *model.Connection) { c.EncryptedCredentials = []byte(`{"RefreshToken":123}`) },
+			want:   domain.ErrCredentialsUndecodable,
+		},
+		{
+			name:   "undecodable blob, truncated",
+			mutate: func(c *model.Connection) { c.EncryptedCredentials = []byte(`{"RefreshToken":"` + secretMarker) },
+			want:   domain.ErrCredentialsUndecodable,
+		},
+		{
+			name: "incomplete credentials",
+			mutate: func(c *model.Connection) {
+				c.EncryptedCredentials = []byte(`{"ClientID":"a","ClientSecret":"b","DeveloperToken":"c"}`)
+			},
+			want: domain.ErrCredentialsIncomplete,
+		},
+		{
+			name: "invalid provider config",
+			mutate: func(c *model.Connection) {
+				c.ProviderConfig = map[string]string{"login_customer_id": "999-999-9999"}
+			},
+			want: domain.ErrProviderConfigInvalid,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := activeGoogleAdsConn(goodGoogleAdsCreds)
+			conn.AccountID = ""
+			tc.mutate(conn)
+			d := NewGoogleAdsDispatcher(
+				fakeConnReader{conn: conn}, identityEncryptor{},
+				googleads.WithBaseURL(apiSrv.URL),
+			)
+			_, err := d.ListAccounts(context.Background(), "proj", model.ProviderGoogleAds)
+			if err == nil {
+				t.Fatal("expected a connection error, got nil")
+			}
+			if !errors.Is(err, tc.want) {
+				t.Errorf("error = %v, want errors.Is(err, %v): the handler logs a reason token "+
+					"derived from these sentinels, and an unclassified error logs nothing an "+
+					"operator can act on", err, tc.want)
+			}
+			if !errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Errorf("error = %v, want errors.Is(err, domain.ErrConnectionNotUsable): the "+
+					"reason sentinel names the defect, it does not replace the status marker", err)
+			}
+			if tc.want == domain.ErrCredentialsUndecodable {
+				const want = "the stored connection is not usable as configured: " +
+					"the stored credential blob could not be decoded: " +
+					"google ads credentials for project proj are not valid JSON"
+				if err.Error() != want {
+					t.Errorf("error = %q, want exactly %q: the decode error is derived from the "+
+						"decrypted blob and must not appear anywhere in this chain", err, want)
+				}
+			}
+		})
+	}
+}
+
 // TestGoogleAds_ListAccounts_DecryptFailureIsNotAConnectionProblem pins the other side of
 // the table above: a decrypt failure is not one condition, and the two halves ask different
 // people to act.
