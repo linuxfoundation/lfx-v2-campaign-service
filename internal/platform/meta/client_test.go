@@ -338,7 +338,7 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
 			adsetCap.set(decodeBody(t, r))
-			_, _ = io.WriteString(w, `{"id":"adset_456"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			creativeCap.set(decodeBody(t, r))
 			n := atomic.AddInt32(&creativeCount, 1)
@@ -400,7 +400,7 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 	if res.CampaignID != "120100000000123" {
 		t.Errorf("campaign id = %q, want 120100000000123", res.CampaignID)
 	}
-	if res.AdSetID != "adset_456" {
+	if res.AdSetID != "120200000000456" {
 		t.Errorf("adset id = %q, want adset_456", res.AdSetID)
 	}
 	if res.AdCount != 2 {
@@ -465,7 +465,7 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 	if adBody == nil {
 		t.Fatalf("no ad body captured")
 	}
-	if adBody["adset_id"] != "adset_456" {
+	if adBody["adset_id"] != "120200000000456" {
 		t.Errorf("ad adset_id = %v, want adset_456", adBody["adset_id"])
 	}
 	creative, ok := adBody["creative"].(map[string]any)
@@ -494,10 +494,10 @@ func TestCreateCampaignNormalizesEventName(t *testing.T) {
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
 			adsetCap.set(decodeBody(t, r))
-			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			creativeCap.set(decodeBody(t, r))
 			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
@@ -576,7 +576,7 @@ func TestCreateCampaignAdSetFailureReturnsPartialResult(t *testing.T) {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777") && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency":"USD"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_orphan"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000777"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
 			// Ad set creation fails after the campaign already exists.
 			w.WriteHeader(http.StatusBadRequest)
@@ -612,7 +612,7 @@ func TestCreateCampaignAdSetFailureReturnsPartialResult(t *testing.T) {
 	if res == nil {
 		t.Fatal("expected a non-nil partial result carrying the orphaned campaign ID, got nil")
 	}
-	if res.CampaignID != "camp_orphan" {
+	if res.CampaignID != "120100000000777" {
 		t.Errorf("partial result CampaignID = %q, want camp_orphan", res.CampaignID)
 	}
 	if res.AdSetID != "" {
@@ -637,7 +637,7 @@ func TestCreateCampaignAdSetAmbiguousIsUnconfirmed(t *testing.T) {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777") && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency":"USD"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_orphan"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000777"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
 			// 5xx — Meta may have committed the ad set before erroring.
 			w.WriteHeader(http.StatusInternalServerError)
@@ -664,7 +664,7 @@ func TestCreateCampaignAdSetAmbiguousIsUnconfirmed(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when ad set creation returns 5xx")
 	}
-	if res == nil || res.CampaignID != "camp_orphan" {
+	if res == nil || res.CampaignID != "120100000000777" {
 		t.Fatalf("expected a partial result carrying the orphaned campaign id, got %+v", res)
 	}
 	// The error must convey UNCONFIRMED, not a definite "failed".
@@ -689,7 +689,7 @@ func TestCreateCampaignAdSetNoIDIsUnconfirmed(t *testing.T) {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777") && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency":"USD"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_orphan"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000777"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
 			_, _ = io.WriteString(w, `{}`) // 2xx, no id
 		default:
@@ -714,7 +714,7 @@ func TestCreateCampaignAdSetNoIDIsUnconfirmed(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when the ad set returns a 2xx with no id")
 	}
-	if res == nil || res.CampaignID != "camp_orphan" {
+	if res == nil || res.CampaignID != "120100000000777" {
 		t.Fatalf("expected a partial result carrying the orphaned campaign id, got %+v", res)
 	}
 	if !strings.Contains(err.Error(), "UNCONFIRMED") {
@@ -936,9 +936,9 @@ func TestCreateCampaignSuccessStepsHideSecret(t *testing.T) {
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
-			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"cr_1"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -1010,9 +1010,9 @@ func TestCreateCampaignWhitespaceOnlyGeosDefaultToUS(t *testing.T) {
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
-			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -1081,10 +1081,10 @@ func TestCreateCampaignLifetimeBudget(t *testing.T) {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
 			adsetCap.set(decodeBody(t, r))
-			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/ads"):
@@ -1146,10 +1146,10 @@ func TestCreateCampaignCurrencyOffset(t *testing.T) {
 			case r.Method == http.MethodGet:
 				_, _ = io.WriteString(w, `{"name":"x"}`)
 			case strings.HasSuffix(r.URL.Path, "/campaigns"):
-				_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+				_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 			case strings.HasSuffix(r.URL.Path, "/adsets"):
 				cap.set(decodeBody(t, r))
-				_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+				_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 			case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 				_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 			case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -1320,10 +1320,10 @@ func TestCreateCampaignUsesPreflightCurrencyOffset(t *testing.T) {
 					// currency_offset field — the AdAccount node does not expose one).
 					_, _ = io.WriteString(w, `{"name":"x","account_status":1,"currency":"`+currency+`"}`)
 				case strings.HasSuffix(r.URL.Path, "/campaigns"):
-					_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+					_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 				case strings.HasSuffix(r.URL.Path, "/adsets"):
 					adsetCap.set(decodeBody(t, r))
-					_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+					_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 				case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 					_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 				case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -1372,11 +1372,11 @@ func TestCreateCampaignExplicitOffsetMustMatchPreflightCurrency(t *testing.T) {
 				_, _ = io.WriteString(w, `{"name":"x","currency":"`+currency+`"}`)
 			case strings.HasSuffix(r.URL.Path, "/campaigns"):
 				atomic.AddInt32(postCount, 1)
-				_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+				_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 			case strings.HasSuffix(r.URL.Path, "/adsets"):
 				atomic.AddInt32(postCount, 1)
 				adsetCap.set(decodeBody(t, r))
-				_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+				_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 			case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 				_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 			case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -1503,10 +1503,10 @@ func TestCreateCampaignSkipsRegulatedGeos(t *testing.T) {
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"c1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000011"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
 			adsetCap.set(decodeBody(t, r))
-			_, _ = io.WriteString(w, `{"id":"a1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000011"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"cr1"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -1554,10 +1554,10 @@ func TestCreateCampaignReportsDroppedIneligibleGeos(t *testing.T) {
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"c1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000011"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
 			adsetCap.set(decodeBody(t, r))
-			_, _ = io.WriteString(w, `{"id":"a1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000011"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"cr1"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -1752,9 +1752,9 @@ func TestCreateCampaignPerVariantFailureIsNonFatal(t *testing.T) {
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
-			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			// Fail the first creative; succeed on all subsequent ones.
 			if atomic.AddInt32(&creativeCalls, 1) == 1 {
@@ -1789,7 +1789,7 @@ func TestCreateCampaignPerVariantFailureIsNonFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCampaign should not fail when one variant fails: %v", err)
 	}
-	if res.CampaignID != "camp_1" {
+	if res.CampaignID != "120100000000001" {
 		t.Errorf("campaign id = %q, want camp_1", res.CampaignID)
 	}
 	if res.AdCount != 1 {
@@ -1837,7 +1837,8 @@ func TestCreateCampaignContextCancelDuringNameLookupRetainsPartial(t *testing.T)
 		EventName: "E", Project: "tlf", Objective: "traffic",
 		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
 		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
-		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		ReconcileByName: true,
 	})
 	if err == nil {
 		t.Fatal("expected an error when the caller context is cancelled during the name lookup")
@@ -1872,16 +1873,16 @@ func TestCreateCampaignContextCancelDuringAdsIsFatal(t *testing.T) {
 			cancel()
 			return nil, fmt.Errorf("Post %q: %w", req.URL.String(), context.Canceled)
 		}
-		body := `{"id":"x"}`
+		body := `{"id":"120100000000012"}`
 		switch {
 		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering"):
 			body = `{"data":[]}`
 		case req.Method == http.MethodGet:
 			body = `{"name":"x"}`
 		case strings.HasSuffix(req.URL.Path, "/campaigns"):
-			body = `{"id":"camp_1"}`
+			body = `{"id":"120100000000001"}`
 		case strings.HasSuffix(req.URL.Path, "/adsets"):
-			body = `{"id":"adset_1"}`
+			body = `{"id":"120200000000001"}`
 		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
@@ -1913,10 +1914,10 @@ func TestCreateCampaignContextCancelDuringAdsIsFatal(t *testing.T) {
 	if res == nil {
 		t.Fatal("expected a non-nil partial result carrying the created campaign/ad set IDs, got nil")
 	}
-	if res.CampaignID != "camp_1" {
+	if res.CampaignID != "120100000000001" {
 		t.Errorf("partial result CampaignID = %q, want camp_1", res.CampaignID)
 	}
-	if res.AdSetID != "adset_1" {
+	if res.AdSetID != "120200000000001" {
 		t.Errorf("partial result AdSetID = %q, want adset_1", res.AdSetID)
 	}
 	if !errors.Is(err, context.Canceled) {
@@ -1938,16 +1939,16 @@ func TestCreateCampaignContextCancelAfterCreativeSurfacesOrphan(t *testing.T) {
 			cancel()
 			return nil, fmt.Errorf("Post %q: %w", req.URL.String(), context.Canceled)
 		}
-		body := `{"id":"x"}`
+		body := `{"id":"120100000000012"}`
 		switch {
 		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering"):
 			body = `{"data":[]}`
 		case req.Method == http.MethodGet:
 			body = `{"name":"x"}`
 		case strings.HasSuffix(req.URL.Path, "/campaigns"):
-			body = `{"id":"camp_1"}`
+			body = `{"id":"120100000000001"}`
 		case strings.HasSuffix(req.URL.Path, "/adsets"):
-			body = `{"id":"adset_1"}`
+			body = `{"id":"120200000000001"}`
 		case strings.HasSuffix(req.URL.Path, "/adcreatives"):
 			body = `{"id":"creative_orphan_9"}`
 		}
@@ -1981,10 +1982,10 @@ func TestCreateCampaignContextCancelAfterCreativeSurfacesOrphan(t *testing.T) {
 	if res == nil {
 		t.Fatal("expected a non-nil partial result carrying the created campaign/ad set IDs, got nil")
 	}
-	if res.CampaignID != "camp_1" {
+	if res.CampaignID != "120100000000001" {
 		t.Errorf("partial result CampaignID = %q, want camp_1", res.CampaignID)
 	}
-	if res.AdSetID != "adset_1" {
+	if res.AdSetID != "120200000000001" {
 		t.Errorf("partial result AdSetID = %q, want adset_1", res.AdSetID)
 	}
 	if !errors.Is(err, context.Canceled) {
@@ -2016,16 +2017,16 @@ func TestCreateCampaignPerCreativeTimeoutIsNonFatal(t *testing.T) {
 				Err: fmt.Errorf("net/http: request canceled (Client.Timeout exceeded while awaiting headers): %w", context.DeadlineExceeded),
 			}
 		}
-		body := `{"id":"x"}`
+		body := `{"id":"120100000000012"}`
 		switch {
 		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering"):
 			body = `{"data":[]}`
 		case req.Method == http.MethodGet:
 			body = `{"name":"x"}`
 		case strings.HasSuffix(req.URL.Path, "/campaigns"):
-			body = `{"id":"camp_1"}`
+			body = `{"id":"120100000000001"}`
 		case strings.HasSuffix(req.URL.Path, "/adsets"):
-			body = `{"id":"adset_1"}`
+			body = `{"id":"120200000000001"}`
 		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
@@ -2053,7 +2054,7 @@ func TestCreateCampaignPerCreativeTimeoutIsNonFatal(t *testing.T) {
 	if res == nil {
 		t.Fatalf("expected a campaign result, got nil")
 	}
-	if res.CampaignID != "camp_1" {
+	if res.CampaignID != "120100000000001" {
 		t.Errorf("campaign id = %q, want camp_1", res.CampaignID)
 	}
 	// The creative failed, so no ad was created, but the campaign still returns.
@@ -2080,9 +2081,9 @@ func TestCreateCampaignAccountVerificationFailureIsNonFatal(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = io.WriteString(w, `{"error":{"message":"account lookup failed"}}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
-			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -2108,7 +2109,7 @@ func TestCreateCampaignAccountVerificationFailureIsNonFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("account verification failure must be non-fatal: %v", err)
 	}
-	if res.CampaignID != "camp_1" {
+	if res.CampaignID != "120100000000001" {
 		t.Errorf("campaign id = %q, want camp_1", res.CampaignID)
 	}
 	if res.AdCount != 1 {
@@ -2148,10 +2149,10 @@ func TestCreateCampaignNormalizesObjective(t *testing.T) {
 					_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 				case strings.HasSuffix(r.URL.Path, "/campaigns"):
 					campaignCap.set(decodeBody(t, r))
-					_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+					_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 				case strings.HasSuffix(r.URL.Path, "/adsets"):
 					adsetCap.set(decodeBody(t, r))
-					_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+					_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 				case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 					_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 				case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -2226,9 +2227,9 @@ func TestCreateCampaignAcceptsAnyActiveAccountStatus(t *testing.T) {
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","account_status":201,"currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"c1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000011"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
-			_, _ = io.WriteString(w, `{"id":"a1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000011"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"cr1"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -2419,7 +2420,7 @@ func TestCreateCampaignAtLimitCopyAllowed(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodPost {
 			atomic.AddInt32(&posts, 1)
-			_, _ = io.WriteString(w, `{"id":"x"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000012"}`)
 			return
 		}
 		if strings.Contains(r.URL.RawQuery, "filtering") {
@@ -2569,7 +2570,7 @@ func TestCreateCampaignAdSetFailureReportsOrphanCampaignID(t *testing.T) {
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_orphan"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000777"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = io.WriteString(w, `{"error":{"message":"bad ad set"}}`)
@@ -2594,7 +2595,7 @@ func TestCreateCampaignAdSetFailureReportsOrphanCampaignID(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected an error when the ad set fails")
 	}
-	if !strings.Contains(err.Error(), "camp_orphan") {
+	if !strings.Contains(err.Error(), "120100000000777") {
 		t.Errorf("error = %q, want it to mention the orphaned campaign id camp_orphan", err.Error())
 	}
 	if !strings.Contains(err.Error(), "PAUSED") {
@@ -2846,10 +2847,10 @@ func TestCreateCampaignSupportsLeadsObjective(t *testing.T) {
 			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
 			campaignCap.set(decodeBody(t, r))
-			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
 			adsetCap.set(decodeBody(t, r))
-			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -3027,10 +3028,10 @@ func TestCreateCampaignAcceptsLargeLowValueCurrencyBudget(t *testing.T) {
 			// VND account: zero-decimal, offset 1.
 			_, _ = io.WriteString(w, `{"name":"x","currency":"VND"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
 			adsetCap.set(decodeBody(t, r))
-			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -3441,7 +3442,7 @@ func TestCreateCampaignAdFailureSurfacesOrphanCreative(t *testing.T) {
 				Request:    req,
 			}, nil
 		}
-		body := `{"id":"x"}`
+		body := `{"id":"120100000000012"}`
 		switch {
 		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering="):
 			// Campaign/ad-set name-reconciliation lookups: no existing match, so
@@ -3450,9 +3451,9 @@ func TestCreateCampaignAdFailureSurfacesOrphanCreative(t *testing.T) {
 		case req.Method == http.MethodGet:
 			body = `{"name":"x"}`
 		case strings.HasSuffix(req.URL.Path, "/campaigns"):
-			body = `{"id":"camp_1"}`
+			body = `{"id":"120100000000001"}`
 		case strings.HasSuffix(req.URL.Path, "/adsets"):
-			body = `{"id":"adset_1"}`
+			body = `{"id":"120200000000001"}`
 		case strings.HasSuffix(req.URL.Path, "/adcreatives"):
 			body = `{"id":"creative_777"}`
 		}
@@ -4541,7 +4542,8 @@ func TestCreateCampaignLookup4xxReturnsCleanFailure(t *testing.T) {
 		EventName: "E", Project: "tlf", Objective: "traffic",
 		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
 		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
-		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		ReconcileByName: true,
 	})
 	if err == nil {
 		t.Fatal("expected an error for a 4xx campaign name lookup")
@@ -4578,7 +4580,8 @@ func TestCreateCampaignLookupMalformed2xxReturnsUnconfirmed(t *testing.T) {
 		EventName: "E", Project: "tlf", Objective: "traffic",
 		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
 		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
-		Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		ReconcileByName: true,
 	})
 	if err == nil {
 		t.Fatal("expected an error for a malformed 2xx campaign name lookup")
@@ -4599,7 +4602,7 @@ func TestCreateCampaignReusesExistingByName(t *testing.T) {
 	campaignPostCount := 0
 	adSetPostCount := 0
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		body := `{"id":"x"}`
+		body := `{"id":"120100000000012"}`
 		switch {
 		// The two by-name lookups are BOTH filtering GETs, so they must be told apart by
 		// path — /{account}/campaigns vs /{campaignID}/adsets. Answering both with the
@@ -4621,12 +4624,12 @@ func TestCreateCampaignReusesExistingByName(t *testing.T) {
 			mu.Lock()
 			campaignPostCount++
 			mu.Unlock()
-			body = `{"id":"should_not_appear"}`
+			body = `{"id":"120100000000099"}`
 		case strings.HasSuffix(req.URL.Path, "/adsets"):
 			mu.Lock()
 			adSetPostCount++
 			mu.Unlock()
-			body = `{"id":"adset_1"}`
+			body = `{"id":"120200000000001"}`
 		case strings.HasSuffix(req.URL.Path, "/adcreatives"):
 			body = `{"id":"creative_1"}`
 		case strings.HasSuffix(req.URL.Path, "/ads"):
@@ -4650,6 +4653,7 @@ func TestCreateCampaignReusesExistingByName(t *testing.T) {
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		ReconcileByName: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateCampaign error: %v", err)
@@ -4660,8 +4664,8 @@ func TestCreateCampaignReusesExistingByName(t *testing.T) {
 	// The reconciliation this feature exists for: reuse the campaign, but still create
 	// the ad set that does not exist under it. An ad set id equal to the campaign id
 	// would mean the two lookups were conflated.
-	if res.AdSetID != "adset_1" {
-		t.Errorf("ad set id = %q, want adset_1 (a NEW ad set created under the reused campaign)", res.AdSetID)
+	if res.AdSetID != "120200000000001" {
+		t.Errorf("ad set id = %q, want 120200000000001 (a NEW ad set created under the reused campaign)", res.AdSetID)
 	}
 	mu.Lock()
 	campaignPosts, adSetPosts := campaignPostCount, adSetPostCount
@@ -4686,7 +4690,7 @@ func TestCreateCampaignReusesExistingAdSetByName(t *testing.T) {
 	campaignPostCount := 0
 	adSetPostCount := 0
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		body := `{"id":"x"}`
+		body := `{"id":"120100000000012"}`
 		switch {
 		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") &&
 			strings.HasSuffix(req.URL.Path, "/campaigns"):
@@ -4701,12 +4705,12 @@ func TestCreateCampaignReusesExistingAdSetByName(t *testing.T) {
 			mu.Lock()
 			campaignPostCount++
 			mu.Unlock()
-			body = `{"id":"should_not_appear"}`
+			body = `{"id":"120100000000099"}`
 		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/adsets"):
 			mu.Lock()
 			adSetPostCount++
 			mu.Unlock()
-			body = `{"id":"should_not_appear_either"}`
+			body = `{"id":"120200000000099"}`
 		case strings.HasSuffix(req.URL.Path, "/adcreatives"):
 			body = `{"id":"creative_1"}`
 		case strings.HasSuffix(req.URL.Path, "/ads"):
@@ -4730,6 +4734,7 @@ func TestCreateCampaignReusesExistingAdSetByName(t *testing.T) {
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		ReconcileByName: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateCampaign error: %v", err)
@@ -4760,7 +4765,7 @@ func TestCreateCampaignSkipsAdSetLookupForFreshCampaign(t *testing.T) {
 	var mu sync.Mutex
 	adSetLookups := 0
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		body := `{"id":"x"}`
+		body := `{"id":"120100000000012"}`
 		switch {
 		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") &&
 			strings.HasSuffix(req.URL.Path, "/campaigns"):
@@ -4777,7 +4782,7 @@ func TestCreateCampaignSkipsAdSetLookupForFreshCampaign(t *testing.T) {
 		case strings.HasSuffix(req.URL.Path, "/campaigns"):
 			body = `{"id":"120200000000999"}`
 		case strings.HasSuffix(req.URL.Path, "/adsets"):
-			body = `{"id":"adset_1"}`
+			body = `{"id":"120200000000001"}`
 		case strings.HasSuffix(req.URL.Path, "/adcreatives"):
 			body = `{"id":"creative_1"}`
 		case strings.HasSuffix(req.URL.Path, "/ads"):
@@ -4801,11 +4806,12 @@ func TestCreateCampaignSkipsAdSetLookupForFreshCampaign(t *testing.T) {
 		StartDate:       "2026-08-01",
 		EndDate:         "2026-08-31",
 		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		ReconcileByName: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateCampaign error: %v", err)
 	}
-	if res.AdSetID != "adset_1" {
+	if res.AdSetID != "120200000000001" {
 		t.Errorf("ad set id = %q, want adset_1", res.AdSetID)
 	}
 	mu.Lock()
@@ -4975,7 +4981,7 @@ func TestFindCampaignByName_PaginationUsesCursorNotRawURL(t *testing.T) {
 // campaign when names are not unique.
 func TestFindCampaignByName_MultipleMatchesAmbiguous(t *testing.T) {
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		body := `{"data":[{"id":"camp_1"},{"id":"camp_2"}]}`
+		body := `{"data":[{"id":"120100000000001"},{"id":"120100000000002"}]}`
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -4997,5 +5003,190 @@ func TestFindCampaignByName_MultipleMatchesAmbiguous(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cannot disambiguate") {
 		t.Errorf("error message = %q, want 'cannot disambiguate'", err.Error())
+	}
+}
+
+// TestCreateCampaignWithoutReconcileByNameDoesNotLookUpOrReuse pins the gate on the
+// by-name reconciliation. It is opt-in for two reasons, and this test binds both:
+//
+//   - buildCampaignName is event/region/objective/project — NOT brief-unique. Two briefs
+//     for the same event and objective under the same project produce the same name, and
+//     an unconditional lookup would attach both to one upstream campaign.
+//   - DELETE frees the (brief, platform) slot LOCALLY and never touches the ad platform
+//     (docs/api-catalog.md), so the documented delete -> re-dispatch flow — the supported
+//     way to fix a campaign created with the wrong budget — meets a same-named campaign
+//     still living upstream. Budget is not a name segment, so reuse would silently re-run
+//     the OLD budget and report success.
+//
+// With the flag unset the client must issue NO filtering GET and must POST a new campaign,
+// even though the server here would happily return a name match.
+func TestCreateCampaignWithoutReconcileByNameDoesNotLookUpOrReuse(t *testing.T) {
+	var mu sync.Mutex
+	lookupCount := 0
+	campaignPostCount := 0
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"id":"120100000000012"}`
+		switch {
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering"):
+			mu.Lock()
+			lookupCount++
+			mu.Unlock()
+			// A name match IS available upstream. The gate, not the absence of a match,
+			// must be what stops the reuse.
+			body = `{"data":[{"id":"120200000000123","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}]}`
+		case req.Method == http.MethodGet:
+			body = `{"name":"x"}`
+		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/campaigns"):
+			mu.Lock()
+			campaignPostCount++
+			mu.Unlock()
+			body = `{"id":"120100000000099"}`
+		case strings.HasSuffix(req.URL.Path, "/adsets"):
+			body = `{"id":"120200000000001"}`
+		case strings.HasSuffix(req.URL.Path, "/adcreatives"):
+			body = `{"id":"creative_1"}`
+		case strings.HasSuffix(req.URL.Path, "/ads"):
+			body = `{"id":"ad_1"}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		Project:         "tlf",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		Budget:          10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		// ReconcileByName deliberately unset — this is the default every caller uses today.
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign error: %v", err)
+	}
+	mu.Lock()
+	lookups, posts := lookupCount, campaignPostCount
+	mu.Unlock()
+	if lookups != 0 {
+		t.Errorf("by-name lookup issued %d times with ReconcileByName unset, want 0", lookups)
+	}
+	if posts != 1 {
+		t.Errorf("campaign POST called %d times, want 1 (a fresh campaign, not a reuse)", posts)
+	}
+	if res.CampaignID != "120100000000099" {
+		t.Errorf("campaign id = %q, want the newly created 120100000000099 (not the same-named 120200000000123)", res.CampaignID)
+	}
+	if anyStepContains(res.Steps, "already exists by name") {
+		t.Errorf("no reuse step may appear when ReconcileByName is unset, got %v", res.Steps)
+	}
+}
+
+// TestCreateCampaignNonNumericCreatedIDIsUnconfirmed pins the interpolation gate on the
+// ids this client CREATES, not just the ones it looks up. A freshly created id is the only
+// one that reaches CampaignResult ungated: it is persisted and spliced into
+// "/{campaignID}/..." paths on every later call (status toggle, metrics, ad set lookup),
+// each of which would reject it far from where the campaign was made. A malformed 2xx is a
+// malformed SUCCESS — the campaign exists, it just is not addressable — so the result must
+// stay a name-carrying UNCONFIRMED partial, never a clean failure that lets a retry create
+// a duplicate paid campaign.
+func TestCreateCampaignNonNumericCreatedIDIsUnconfirmed(t *testing.T) {
+	for _, bad := range []string{"123?fields=x", "123/../../me", "12 3", "abc"} {
+		t.Run(bad, func(t *testing.T) {
+			rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				body := `{"name":"x"}`
+				if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/campaigns") {
+					b, _ := json.Marshal(map[string]string{"id": bad})
+					body = string(b)
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Request:    req,
+				}, nil
+			})
+			c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+				WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+			res, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName:       "E",
+				Project:         "tlf",
+				RegistrationURL: "https://x.example.org/e",
+				GeoTargets:      []string{"US"},
+				Budget:          10,
+				StartDate:       "2026-08-01",
+				EndDate:         "2026-08-31",
+				Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+			})
+			if err == nil {
+				t.Fatal("expected an error for a 2xx carrying a non-numeric campaign id")
+			}
+			if res == nil || res.CampaignName == "" {
+				t.Fatalf("expected a partial result carrying the campaign name so the orphan stays reconcilable, got %+v", res)
+			}
+			if res.CampaignID != "" {
+				t.Errorf("the unusable id must not be published as CampaignID, got %q", res.CampaignID)
+			}
+			// Same classification as the existing no-id branch: a non-nil partial is what
+			// makes the dispatcher report UNCONFIRMED and KEEP the claim (internal/dispatch
+			// gates on result == nil), so the pair is not freed for a duplicating retry.
+			if !anyStepContains(res.Steps, "verify by name in Meta Ads Manager") {
+				t.Errorf("expected a step telling the operator to reconcile by name, got %v", res.Steps)
+			}
+		})
+	}
+}
+
+// TestCreateCampaignNonNumericAdSetIDIsUnconfirmed is the ad-set half of the same gate.
+// The partial result must still carry the created campaign id (a real orphan the caller
+// can address) while withholding the unusable ad set id.
+func TestCreateCampaignNonNumericAdSetIDIsUnconfirmed(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"name":"x"}`
+		switch {
+		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/campaigns"):
+			body = `{"id":"120100000000099"}`
+		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/adsets"):
+			body = `{"id":"120200000000001?fields=x"}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		Project:         "tlf",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		Budget:          10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error for a 2xx carrying a non-numeric ad set id")
+	}
+	if res == nil || res.CampaignID != "120100000000099" {
+		t.Fatalf("the partial must carry the created campaign id so the orphan is addressable, got %+v", res)
+	}
+	if res.AdSetID != "" {
+		t.Errorf("the unusable ad set id must not be published as AdSetID, got %q", res.AdSetID)
+	}
+	if res.AdSetName == "" {
+		t.Error("the partial must carry the ad set NAME so the ad set stays reconcilable")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a malformed 2xx must be worded UNCONFIRMED (the ad set may exist), got %v", err)
 	}
 }

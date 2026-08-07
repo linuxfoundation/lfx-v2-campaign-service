@@ -2008,6 +2008,30 @@ type CampaignInput struct {
 	PixelID        string
 	HSToken        string
 	Variants       []AdVariant
+	// ReconcileByName opts THIS call in to looking the campaign (and its ad set) up by
+	// name before creating, and reusing a PAUSED match instead of creating a second one.
+	//
+	// It is opt-in, and deliberately false everywhere today, because the name is NOT a
+	// brief-unique key: buildCampaignName is event/region/objective/project only, so an
+	// unconditional lookup reuses any campaign that happens to share those four segments
+	// — including one belonging to a DIFFERENT brief, which would attach two briefs to
+	// one upstream campaign and make their spend indistinguishable.
+	//
+	// The reuse is also wrong on the one path that reaches a fresh create with a
+	// same-named campaign already upstream: DELETE frees the (brief, platform) slot
+	// LOCALLY and never touches the ad platform (docs/api-catalog.md), so the documented
+	// delete → re-dispatch flow — the supported way to fix a campaign created with the
+	// wrong budget — would find the old campaign by name (the budget is not a name
+	// segment), reuse it and its ad set, and silently re-run the wrong budget while
+	// reporting success.
+	//
+	// The retry case this lookup exists to protect (an ambiguous create that may have
+	// left a campaign upstream) does NOT reach it today: the orchestrator retains the
+	// partial row and answers "reconciliation required" rather than re-dispatching
+	// (internal/service/orchestrator.go, the retained-partial-orphan branch). When that
+	// reconcile path lands (LFXV2-2665) it is the caller that knows it is resuming a
+	// specific dispatch generation, so it sets this flag; the client cannot infer it.
+	ReconcileByName bool
 }
 
 // CampaignResult mirrors MetaCampaignCreateResult.
@@ -2419,13 +2443,19 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// id). Looking the name up first, instead of reacting to a duplicate-name
 	// error that Meta never sends, is the only way to close that window.
 	//
-	// NOTE: This lookup enables name-based reconciliation for ambiguous creates
-	// (LFXV2-2665). However, the orchestrator must also be wired to call this
-	// dispatcher again on retry when there is a retained partial result, rather
-	// than just returning "reconciliation required" and bailing. Without that
-	// orchestrator wiring, a retry after an ambiguous create will not reach this
-	// lookup and the retries remain blocked.
-	existingCampaignID, lookupErr := c.findCampaignByName(ctx, accountID, campaignName, objParams.CampaignObjective)
+	// GATED on in.ReconcileByName, and that flag is false everywhere today. The name is
+	// not a brief-unique key and the orchestrator does not yet re-dispatch a retained
+	// partial, so an UNCONDITIONAL lookup cannot help the retry case it was written for
+	// and does harm the two cases it can actually reach — a different brief sharing the
+	// four name segments, and the documented delete → re-dispatch flow, which exists to
+	// correct a campaign's config and would instead silently reuse the old one. See the
+	// field's doc on CampaignInput for the full reasoning and for who sets it
+	// (LFXV2-2665's reconcile path, which knows it is resuming one dispatch generation).
+	var existingCampaignID string
+	var lookupErr error
+	if in.ReconcileByName {
+		existingCampaignID, lookupErr = c.findCampaignByName(ctx, accountID, campaignName, objParams.CampaignObjective)
+	}
 	if lookupErr != nil {
 		if ctx.Err() != nil {
 			// A cancelled/deadlined caller context aborts the create, but "nothing
@@ -2512,6 +2542,30 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
 				Steps:        steps,
 			}, fmt.Errorf("meta campaign creation succeeded but returned no campaign ID (a PAUSED campaign %q may exist)", campaignName)
+		}
+		// Non-empty is not the same as usable, and this is the ONE campaign id in this
+		// client that never passes through numericIDRE: findCampaignByName gates the id
+		// it returns, and every consumer of a STORED id gates it again
+		// (UpdateCampaignStatus, findAdSetByName), but a freshly created id goes straight
+		// into the ad set body and into CampaignResult.CampaignID, which is persisted and
+		// spliced into "/{campaignID}/..." paths on later calls. A malformed 2xx carrying
+		// "123?fields=x" or a padded "123 " would therefore be stored now and rejected
+		// much later, at a call site with no idea a campaign was created. Gate it here,
+		// where the campaign name is still in hand.
+		//
+		// Classified as a malformed SUCCESS, exactly like the empty-id case above: the
+		// campaign almost certainly exists (Meta answered 2xx), it just isn't addressable
+		// by id — so the name-carrying UNCONFIRMED partial is what makes a retry reconcile
+		// by name instead of creating a duplicate paid campaign.
+		campaignID = strings.TrimSpace(campaignID)
+		if !numericIDRE.MatchString(campaignID) {
+			steps = append(steps, fmt.Sprintf("Campaign creation returned an unusable campaign ID %q (malformed response); a PAUSED campaign may exist — verify by name in Meta Ads Manager", campaignID))
+			return &CampaignResult{
+				Platform:     "meta-ads",
+				CampaignName: campaignName,
+				MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
+				Steps:        steps,
+			}, fmt.Errorf("meta campaign creation succeeded but returned a non-numeric campaign ID %q (a PAUSED campaign %q may exist; verify in Meta Ads Manager before retrying)", campaignID, campaignName)
 		}
 		steps = append(steps, fmt.Sprintf("Campaign created: %s (%s, PAUSED)", campaignID, objectiveLabel(objective)))
 	}
@@ -2630,6 +2684,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// clean failure — a blind retry could duplicate an ad set Meta already made.
 			// Mirrors the campaign/ad no-id and the ad-set error-path handling.
 			return partialResult(), fmt.Errorf("meta ad set creation UNCONFIRMED (campaign %s created, PAUSED; Meta returned a 2xx with no ad set ID — an ad set may exist; verify in Meta Ads Manager before retrying)", campaignID)
+		}
+		// Same gate, same reasoning as the campaign id above: findAdSetByName validates
+		// the id it returns, so a freshly created ad set id is the only one that reaches
+		// CampaignResult.AdSetID ungated. Treated as a malformed SUCCESS — the ad set
+		// exists, it just isn't addressable — so the partial result (which carries the
+		// campaign id and the ad set NAME) lets a retry reconcile.
+		adSetID = strings.TrimSpace(adSetID)
+		if !numericIDRE.MatchString(adSetID) {
+			unusable := adSetID
+			adSetID = "" // keep the unusable id out of the partial result
+			return partialResult(), fmt.Errorf("meta ad set creation UNCONFIRMED (campaign %s created, PAUSED; Meta returned a 2xx with a non-numeric ad set ID %q — an ad set named %q may exist; verify in Meta Ads Manager before retrying)", campaignID, unusable, adSetName)
 		}
 		budgetLabel := "daily"
 		if in.LifetimeBudget {

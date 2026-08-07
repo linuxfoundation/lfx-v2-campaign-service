@@ -107,14 +107,36 @@ Unlike Google Ads, Microsoft, and LinkedIn — which reject campaign name duplic
 and let a retry discover the existing id via a name query — Meta's Graph API does
 NOT enforce campaign-name uniqueness and exposes NO create-idempotency key. A
 blind retry would silently create a second paid campaign with the identical name.
-To close this window, `CreateCampaign` runs a "poor-man's idempotency" reconciliation:
-before POSTing to create a campaign or ad set, `findCampaignByName` / `findAdSetByName`
-(using Graph API `filtering=[{"field":"name","operator":"EQUAL","value":name}]`
-lookups) check whether the name already exists. If found, the existing id is reused
-and the resource is not re-created. If the lookup itself fails ambiguously
-(transport/5xx), an UNCONFIRMED partial result is returned (the resource MAY exist,
-verify before retrying); a pre-send failure (dial error, definite 4xx) on the lookup
-is a clean error.
+To close this window, `CreateCampaign` can run a "poor-man's idempotency"
+reconciliation: before POSTing to create a campaign or ad set,
+`findCampaignByName` / `findAdSetByName` (using Graph API
+`filtering=[{"field":"name","operator":"EQUAL","value":name}]` lookups) check
+whether the name already exists. If found, the existing id is reused and the
+resource is not re-created.
+
+The lookup is OPT-IN, gated on `CampaignInput.ReconcileByName`, which is false at
+every call site today. An unconditional lookup cannot help the case it exists for
+and can only harm the cases it does reach. It cannot help because the orchestrator
+never re-dispatches a retained partial — it answers "reconciliation required"
+(`internal/service/orchestrator.go`) — so no retry arrives here to be reconciled.
+It harms because the campaign name is not brief-unique (below), so a different
+brief sharing the four name segments would be silently adopted; and because DELETE
+frees the (brief, platform) slot LOCALLY without touching the ad platform
+(`docs/api-catalog.md`), so the documented delete → re-dispatch flow — the supported
+way to correct a campaign created with the wrong budget — would find the old
+campaign by name (budget is not a name segment), reuse it and its ad set, and report
+success while re-running the old budget. When LFXV2-2665's reconcile path lands it
+is the caller, which knows it is resuming a specific dispatch generation, that sets
+the flag; the client cannot infer it.
+
+When the lookup does run and fails ambiguously, an UNCONFIRMED partial result is
+returned (the resource MAY exist, verify before retrying). Ambiguous is broader than
+transport/5xx: a 2xx with no `data` field, a `paging.next` with no cursor, exceeding
+the page cap with pagination still pending, a single match whose id is empty or
+non-numeric, and context cancellation mid-enumeration all fail closed the same way,
+because each leaves a matching campaign possibly present but unexamined. Only a
+pre-send failure (dial error) or a definite conflict — a match that is not `PAUSED`,
+or whose objective differs from the requested one — is a clean error.
 
 Both names are deterministic, but they are composed differently and carry different
 uniqueness guarantees. The CAMPAIGN name is the attribution name (`Events | event |
@@ -130,12 +152,24 @@ matching objective is reused. The ad-set lookup runs only when the campaign was 
 fact reused — a campaign created moments ago in the same call cannot already have a
 child ad set, so the extra GET would add a failure point with nothing to find.
 
-This closes the gap from LFXV2-2665 for campaign- and ad-set-level resources at the
-client layer. Reaching it on a production retry additionally requires the orchestrator
-to re-invoke the dispatcher on a RETAINED claim; today `ClaimCampaignDispatch` hits
+Both ids the create path produces are gated with `numericIDRE` before they are used
+or published. The lookups already gate the ids they return, and every consumer of a
+STORED id gates it again, which leaves a FRESHLY CREATED id as the only one that
+would otherwise reach `CampaignResult` — and from there durable storage and
+`"/{id}/..."` paths on later calls — unvalidated. A 2xx carrying `"123?fields=x"` or
+a padded `"123 "` would be persisted now and rejected much later, at a call site with
+no idea a campaign was created. Both gates classify the outcome as a malformed
+SUCCESS rather than a failure: the resource almost certainly exists (Meta answered
+2xx), it simply is not addressable by id, so a name-carrying partial is returned and
+the dispatcher keeps the claim instead of freeing it for a duplicating retry.
+
+This builds the client-layer half of LFXV2-2665 for campaign- and ad-set-level
+resources. Reaching it on a production retry needs the other half: the orchestrator
+re-invoking the dispatcher on a RETAINED claim (today `ClaimCampaignDispatch` hits
 `ON CONFLICT DO NOTHING` and the orchestrator returns "reconciliation required"
-without calling the dispatcher, so the reconciliation path is currently exercised by
-in-call reuse and tests. Wiring the retained-claim path is tracked separately.
+without calling the dispatcher) AND that caller setting `ReconcileByName`. Until
+both land the lookup is exercised only by tests, which is the intended state — the
+capability is in place and deliberately unreached rather than on by default.
 
 ## Campaign status toggle
 

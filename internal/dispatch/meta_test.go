@@ -138,10 +138,10 @@ func TestMeta_DispatchSuccessMapsResult(t *testing.T) {
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
 			record(r)
-			_, _ = io.WriteString(w, `{"id":"camp_123"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
 			record(r)
-			_, _ = io.WriteString(w, `{"id":"adset_456"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			record(r)
 			n := atomic.AddInt32(&creativeCount, 1)
@@ -184,7 +184,7 @@ func TestMeta_DispatchSuccessMapsResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
-	if camp == nil || camp.PlatformCampaignID != "camp_123" {
+	if camp == nil || camp.PlatformCampaignID != "120100000000123" {
 		t.Fatalf("adapter must map the upstream campaign id, got %+v", camp)
 	}
 	if camp.CampaignName == "" || len(camp.Result) == 0 {
@@ -295,9 +295,9 @@ func TestMeta_DegradedSuccessSetsCreatedDegraded(t *testing.T) {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_123"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
-			_, _ = io.WriteString(w, `{"id":"adset_456"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -326,7 +326,7 @@ func TestMeta_DegradedSuccessSetsCreatedDegraded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a degraded success (campaign created, one ad failed) must NOT error: %v", err)
 	}
-	if camp == nil || camp.PlatformCampaignID != "camp_123" {
+	if camp == nil || camp.PlatformCampaignID != "120100000000123" {
 		t.Fatalf("the created campaign must still be mapped, got %+v", camp)
 	}
 	if camp.Status != campaignStatusCreatedDegraded {
@@ -348,9 +348,9 @@ func TestMeta_ConfigHSTokenTakesPrecedence(t *testing.T) {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_123"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
-			_, _ = io.WriteString(w, `{"id":"adset_456"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			b, _ := io.ReadAll(r.Body)
 			mu.Lock()
