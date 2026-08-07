@@ -195,6 +195,31 @@ func (r *fakeCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int
 	return nil, errors.New("unused")
 }
 
+// DeleteCampaign mirrors the real repo's guard ORDER and its soft-delete semantics:
+// missing/already-deleted → ErrNotFound, mid-dispatch 'pending' → ErrConflict, then
+// the version check, and finally a status flip to 'deleted' that leaves the row in
+// place (so a re-dispatch to the same pair can claim the freed slot).
+func (r *fakeCampaignRepo) DeleteCampaign(_ context.Context, _, _, campaignID string, expectedVersion int64, _ domain.CampaignIndexPayloadFunc) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c, ok := r.byID[campaignID]
+	if !ok || c.Status == model.CampaignStatusDeleted {
+		return domain.ErrNotFound
+	}
+	if c.Status == model.CampaignStatusPending {
+		return domain.ErrConflict
+	}
+	if c.Version != expectedVersion {
+		return domain.ErrPreconditionFailed
+	}
+	c.Status = model.CampaignStatusDeleted
+	c.Version++
+	// The freed slot: a deleted row no longer satisfies the live-only lookup, so
+	// GetCampaignByPlatform/ClaimCampaignDispatch see the pair as undispatched.
+	delete(r.existing, c.BriefID+"|"+string(c.Platform))
+	return nil
+}
+
 // okDispatcher always succeeds.
 type okDispatcher struct{}
 
@@ -1475,17 +1500,22 @@ func strPtr(s string) *string { return &s }
 // metricsOnlyDispatcher implements PlatformDispatcher + MetricsReader, recording the
 // ReadMetrics call. Dispatch is never expected to be exercised by these tests.
 type metricsOnlyDispatcher struct {
-	metrics   *model.CampaignMetrics
-	err       error
-	gotWindow model.MetricsWindow
+	metrics     *model.CampaignMetrics
+	err         error
+	gotWindow   model.MetricsWindow
+	gotDeadline time.Time // deadline extracted from the context passed to ReadMetrics
 }
 
 func (metricsOnlyDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
 	return nil, errors.New("Dispatch should not be called in these tests")
 }
 
-func (d *metricsOnlyDispatcher) ReadMetrics(_ context.Context, _ string, _ model.Provider, _ *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+func (d *metricsOnlyDispatcher) ReadMetrics(ctx context.Context, _ string, _ model.Provider, _ *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
 	d.gotWindow = window
+	// Record the deadline to verify the caller enforced a timeout.
+	if deadline, ok := ctx.Deadline(); ok {
+		d.gotDeadline = deadline
+	}
 	return d.metrics, d.err
 }
 
@@ -1567,6 +1597,61 @@ func TestOrchestrator_ReadCampaignMetrics_DispatcherErrorPropagates(t *testing.T
 	campaign := &model.Campaign{PlatformCampaignID: "555"}
 	if _, err := orch.ReadCampaignMetrics(context.Background(), "proj-1", model.ProviderGoogleAds, campaign, model.MetricsWindowLast30Days); !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
+	}
+}
+
+func TestOrchestrator_ReadCampaignMetrics_NilNilReaderResultIsError(t *testing.T) {
+	camps, jobs := &fakeCampaignRepo{}, newFakeJobRepo()
+	disp := &metricsOnlyDispatcher{} // metrics == nil, err == nil
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: disp,
+	})
+
+	campaign := &model.Campaign{PlatformCampaignID: "555"}
+	m, err := orch.ReadCampaignMetrics(context.Background(), "proj-1", model.ProviderGoogleAds, campaign, model.MetricsWindowLast30Days)
+	if err == nil {
+		t.Fatal("expected an error when the MetricsReader returns (nil, nil), got nil")
+	}
+	if m != nil {
+		t.Errorf("expected a nil result alongside the error, got %+v", m)
+	}
+}
+
+func TestOrchestrator_ReadCampaignMetrics_EnforcesCallTimeout(t *testing.T) {
+	camps, jobs := &fakeCampaignRepo{}, newFakeJobRepo()
+	disp := &metricsOnlyDispatcher{metrics: &model.CampaignMetrics{
+		CampaignID: "555", Window: model.MetricsWindowLast30Days, Impressions: 100, Clicks: 5, Ctr: 0.05,
+	}}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: disp,
+	})
+	campaign := &model.Campaign{PlatformCampaignID: "555"}
+
+	callCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Bracket the call itself, not just the assertion, so the tolerance window covers exactly
+	// the wall-clock span the deadline could have been derived from — computing it only after
+	// the call let slow CI scheduling between the call and the check widen the window without
+	// actually loosening the tolerance on the deadline's derivation.
+	beforeCall := time.Now()
+	_, err := orch.ReadCampaignMetrics(callCtx, "proj-1", model.ProviderGoogleAds, campaign, model.MetricsWindowLast30Days)
+	afterCall := time.Now()
+	if err != nil {
+		t.Fatalf("ReadCampaignMetrics: %v", err)
+	}
+
+	// Verify the dispatcher received a context with a deadline approximately metricsCallTimeout.
+	if disp.gotDeadline.IsZero() {
+		t.Error("dispatcher did not receive a context with a deadline")
+	}
+
+	// The deadline should be within [beforeCall, afterCall] + metricsCallTimeout (20 seconds).
+	expectedMinDeadline := beforeCall.Add(20 * time.Second)
+	expectedMaxDeadline := afterCall.Add(20 * time.Second)
+	if disp.gotDeadline.Before(expectedMinDeadline) || disp.gotDeadline.After(expectedMaxDeadline) {
+		t.Errorf("deadline %v not within [%v, %v] (beforeCall/afterCall + 20s)",
+			disp.gotDeadline, expectedMinDeadline, expectedMaxDeadline)
 	}
 }
 

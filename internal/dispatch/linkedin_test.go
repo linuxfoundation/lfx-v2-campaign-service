@@ -416,6 +416,18 @@ func TestPartialOrphanStatusValues(t *testing.T) {
 	if campaignStatusUnconfirmed != "unconfirmed" {
 		t.Errorf("campaignStatusUnconfirmed = %q; the service partialOrphanStatuses map expects %q — update both in lockstep", campaignStatusUnconfirmed, "unconfirmed")
 	}
+	// These two are also exported from the model package, where the postgres delete guard
+	// checks them via CampaignStatusDeletable's whitelist (postgres cannot import this
+	// package). A divergence would silently make a partial orphan deletable again.
+	if campaignStatusGroupCreated != model.CampaignStatusGroupCreated {
+		t.Errorf("campaignStatusGroupCreated = %q but model.CampaignStatusGroupCreated = %q; the postgres delete guard keys off the model constant — update both in lockstep", campaignStatusGroupCreated, model.CampaignStatusGroupCreated)
+	}
+	if campaignStatusUnconfirmed != model.CampaignStatusUnconfirmed {
+		t.Errorf("campaignStatusUnconfirmed = %q but model.CampaignStatusUnconfirmed = %q; the postgres delete guard keys off the model constant — update both in lockstep", campaignStatusUnconfirmed, model.CampaignStatusUnconfirmed)
+	}
+	if campaignStatusCreatedDegraded != model.CampaignStatusCreatedDegraded {
+		t.Errorf("campaignStatusCreatedDegraded = %q but model.CampaignStatusCreatedDegraded = %q — update both in lockstep", campaignStatusCreatedDegraded, model.CampaignStatusCreatedDegraded)
+	}
 }
 
 // linkedinToggleHandler routes the cascade's requests: the campaign PARTIAL_UPDATE, the
