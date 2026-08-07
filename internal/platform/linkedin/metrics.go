@@ -280,7 +280,9 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 
 // costInUsdToMicros parses a LinkedIn Ad Analytics costInUsd decimal string (e.g.
 // "25.50") into micros of USD, rounding rather than truncating so a value like
-// 25.505 doesn't silently lose a micro. It rejects anything that isn't a clean,
+// 25.5000005 doesn't silently lose a micro (truncation gives 25_500_000, rounding
+// gives 25_500_001 — a value with six or fewer fractional digits, such as 25.505,
+// converts exactly and cannot distinguish the two). It rejects anything that isn't a clean,
 // finite, non-negative decimal, or that would overflow int64 once converted to
 // micros, so a malformed value surfaces as a decode error instead of being
 // silently coerced into an understated cost.

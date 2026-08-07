@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net"
 	"net/http"
@@ -1227,13 +1228,18 @@ func TestRedactBodyReadError(t *testing.T) {
 // the server log via BriefService.GetCampaignMetrics's default error branch. The response
 // can be up to 10 MiB of unvalidated upstream content.
 func TestGetCampaignMetrics_MalformedJSONRedaction(t *testing.T) {
-	const maliciousJSONMarker = "MALICIOUS_JSON_VALUE_MARKER"
+	// The marker must be a NUMERIC literal, not a quoted string. For a string where an
+	// int64 was expected, json.UnmarshalTypeError.Value is only the literal word "string"
+	// — the offending bytes are never copied into it, so a marker-absence assertion built
+	// on a quoted value cannot fail even if the raw decode error is wrapped verbatim. An
+	// integer that overflows int64 is copied into Value as `number <literal>`, which is
+	// what actually puts untrusted response bytes on the path to the server log and makes
+	// the assertion below bind.
+	const maliciousJSONMarker = "918273645509182736455091827364550"
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		// Return JSON with the marker embedded in a malformed value that json.Unmarshal
-		// will include in UnmarshalTypeError.Value
-		_, _ = fmt.Fprintf(w, `{"elements": [{"impressions": "%s", "clicks": 0, "costInUsd": "0"}]}`, maliciousJSONMarker)
+		_, _ = fmt.Fprintf(w, `{"elements": [{"impressions": %s, "clicks": 0, "costInUsd": "0"}]}`, maliciousJSONMarker)
 	}))
 	defer server.Close()
 
@@ -1336,5 +1342,72 @@ func TestCostInUsdToMicrosBoundsDecimalLength(t *testing.T) {
 	// 9.2e12 USD, so 13 integer digits plus a 2-digit cent fraction is the practical max.
 	if _, err := costInUsdToMicros("9223372036854.77"); err != nil {
 		t.Errorf("a realistic maximum spend was rejected: %v", err)
+	}
+}
+
+// TestGetCampaignMetrics_ResponseCapBoundary pins the 10 MiB cap on the analytics path,
+// which bypasses doRequest and therefore is NOT covered by the shared path's limit tests.
+// Both sides of the boundary matter and for different reasons: a response of exactly
+// maxResponseBytes must still be ACCEPTED (an off-by-one that rejected it would fail
+// legitimate large reads), and one byte over must be REJECTED rather than decoded. The
+// over-cap case is the security-relevant half — the body is read through
+// LimitReader(maxResponseBytes+1), so a regression to LimitReader(maxResponseBytes) would
+// silently hand json.Unmarshal a TRUNCATED prefix, and a prefix that happens to be valid
+// JSON would be reported as real metrics.
+func TestGetCampaignMetrics_ResponseCapBoundary(t *testing.T) {
+	// Pad inside a string field so the body stays well-formed JSON at any length: the
+	// point is the size check, not a decode failure.
+	body := func(total int) string {
+		prefix := `{"pad":"`
+		suffix := `","elements":[{"impressions":10,"clicks":1,"costInUsd":"1.00"}]}`
+		padLen := total - len(prefix) - len(suffix)
+		if padLen < 0 {
+			t.Fatalf("target size %d is smaller than the fixed JSON scaffolding", total)
+		}
+		return prefix + strings.Repeat("x", padLen) + suffix
+	}
+
+	tests := []struct {
+		name    string
+		size    int
+		wantErr bool
+	}{
+		{"exactly at the cap is accepted", maxResponseBytes, false},
+		{"one byte over the cap is rejected", maxResponseBytes + 1, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := body(tc.size)
+			if len(payload) != tc.size {
+				t.Fatalf("fixture built %d bytes, want %d", len(payload), tc.size)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, payload)
+			}))
+			defer server.Close()
+
+			client := NewClient(
+				Credentials{AccessToken: "test-token"},
+				RuntimeConfig{DefaultAccountID: "account123"},
+				WithBaseURL(server.URL),
+			)
+			metrics, err := client.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("a %d-byte response was accepted; over-cap bodies must be rejected, not decoded from a truncated prefix", tc.size)
+				}
+				if !strings.Contains(err.Error(), "exceeds") {
+					t.Errorf("error = %v, want it to name the size cap (any other error means the cap check did not fire)", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a response of exactly maxResponseBytes must be accepted, got: %v", err)
+			}
+			if metrics.Impressions != 10 || metrics.Clicks != 1 {
+				t.Errorf("metrics = %+v, want the fixture's 10 impressions / 1 click decoded intact", metrics)
+			}
+		})
 	}
 }

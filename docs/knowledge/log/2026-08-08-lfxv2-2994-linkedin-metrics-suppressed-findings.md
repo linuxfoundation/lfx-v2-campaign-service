@@ -1,5 +1,10 @@
 # 2026-08-08 — LinkedIn metrics: the findings that were never posted as threads (LFXV2-2994)
 
+**Update** — LinkedIn's metrics read now validates the window before resolving credentials,
+rejects an element reporting clicks with zero impressions, and length-bounds `costInUsd`
+before it reaches `big.Rat`. The analytics request's hand-set headers and its raw query
+shape are covered by tests for the first time.
+
 Copilot's reviews on #73 reported "no new comments" while burying six findings inside
 `<details><summary>Suppressed comments</summary>` blocks in the review BODY. An unresolved
 thread count of zero said nothing about them. Four were real and are fixed here; two were
@@ -42,6 +47,22 @@ distinction `makeAdAnalyticsRequest` depends on — Rest.li structure LITERAL, U
 ESCAPED — so a `url.Values.Encode()` rewrite would have decoded to the same text and passed.
 Both are now asserted against `RawQuery` and the captured headers.
 
+**A second sweep after the fix found five more, and one of them was the same class again.**
+`TestGetCampaignMetrics_MalformedJSONRedaction` embedded its marker in a QUOTED value, but
+for a string where an int64 was expected `json.UnmarshalTypeError.Value` is only the literal
+word `"string"` — the offending bytes are never copied into it, so the marker-absence
+assertion could not fail even against a `%w`-wrapped raw decode error. The marker is now an
+integer literal that overflows int64, which `Value` does carry verbatim; reverting the
+redaction makes the test fail with the marker visible in the message, which is the proof the
+old fixture never had. Alongside it: the analytics path's 10 MiB cap had no boundary
+coverage at all (it bypasses `doRequest`, so the shared path's limit tests do not reach it),
+and the body is read through `LimitReader(maxResponseBytes+1)` specifically so an over-cap
+response is REJECTED rather than decoded from a truncated prefix — both sides of the
+boundary are now pinned. The `costInUsdToMicros` doc example was also simply wrong: 25.505
+converts exactly, so it could not illustrate rounding-vs-truncation; it needs more than six
+fractional digits.
+
 The general lesson is the review-reading one, not the LinkedIn one: on this repo,
 `unresolved == 0` is not evidence that there is no open feedback. The review bodies have to
-be swept.
+be swept — and swept AGAIN after each push, because the fix commit gets its own review whose
+findings land in the same invisible place.
