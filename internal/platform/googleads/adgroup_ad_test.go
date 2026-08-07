@@ -31,6 +31,8 @@ func TestAdGroupAdID(t *testing.T) {
 		{"extra tildes rejected as malformed", "customers/1/adGroupAds/111~222~333", "", ""},
 		{"non-numeric adGroup half rejected", "customers/1/adGroupAds/abc~222", "", ""},
 		{"non-numeric ad half rejected", "customers/1/adGroupAds/111~abc", "", ""},
+		{"leading plus in adGroup half rejected", "customers/1/adGroupAds/+111~222", "", ""},
+		{"leading plus in ad half rejected", "customers/1/adGroupAds/111~+222", "", ""},
 		{"wrong resource kind (campaigns instead of adGroupAds) rejected", "customers/1/campaigns/111~222", "", ""},
 		{"missing adGroupAds segment rejected", "customers/1/111~222", "", ""},
 	}
@@ -136,8 +138,11 @@ func TestCreateAdGroupAndAd_HappyPath(t *testing.T) {
 	)
 	res, err := c.CreateCampaign(context.Background(), sampleInput())
 	// Check for decode errors from handlers
-	if decodeErr != nil {
-		t.Fatalf("decode request body: %v", decodeErr)
+	mu.Lock()
+	dErr := decodeErr
+	mu.Unlock()
+	if dErr != nil {
+		t.Fatalf("decode request body: %v", dErr)
 	}
 	if err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
