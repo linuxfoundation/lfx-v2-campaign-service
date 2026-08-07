@@ -14,7 +14,9 @@ connections service (per-provider singleton credential CRUD), the briefs
 service, and the audiences service. The briefs service models the Project →
 Brief → Campaigns hierarchy: brief CRUD (the funnel unit, carrying
 `program_type`), asynchronous campaign creation (`POST .../campaigns` returns a
-job to poll), and campaign read/update. The audiences service (`design/audience.go`,
+job to poll), campaign read/update, and live campaign metrics reads (a pure
+read from the ad platform, never persisted — unlike campaign updates, which
+modify the stored row and require If-Match). The audiences service (`design/audience.go`,
 LFXV2-2773) models built campaign audiences nested under a brief
 (`.../briefs/{briefId}/audiences`): create, get, list, and update-as-PATCH (a
 load-then-merge where a nil field is unchanged; suppression lists are cleared via an

@@ -221,6 +221,69 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	return nil
 }
 
+// metaMetricsWindow maps the platform-agnostic model.MetricsWindow vocabulary to Meta's
+// own MetricsWindow literals (Insights date_preset values). All seven shared windows are
+// supported, so this is a pure rename, not a subset like X Ads' 7-day-capped mapping.
+func metaMetricsWindow(w model.MetricsWindow) (meta.MetricsWindow, error) {
+	switch w {
+	case model.MetricsWindowToday:
+		return meta.WindowToday, nil
+	case model.MetricsWindowYesterday:
+		return meta.WindowYesterday, nil
+	case model.MetricsWindowLast7Days:
+		return meta.WindowLast7Days, nil
+	case model.MetricsWindowLast14Days:
+		return meta.WindowLast14Days, nil
+	case model.MetricsWindowLast30Days:
+		return meta.WindowLast30Days, nil
+	case model.MetricsWindowThisMonth:
+		return meta.WindowThisMonth, nil
+	case model.MetricsWindowLastMonth:
+		return meta.WindowLastMonth, nil
+	default:
+		return "", fmt.Errorf("unsupported metrics window %q", w)
+	}
+}
+
+// ReadMetrics implements service.MetricsReader for Meta. It resolves the same connection
+// ToggleStatus does (no account id or page id required — a metrics read targets the
+// campaign node by id, like the status update) and reads the campaign's live Insights
+// metrics, mapping the platform-agnostic window to Meta's own vocabulary via
+// metaMetricsWindow before calling the client.
+func (d *MetaDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	if res.status != model.StatusActive {
+		return nil, fmt.Errorf("meta connection for project %s is %s, not active", projectID, res.status)
+	}
+	var creds metaCreds
+	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
+		return nil, fmt.Errorf("decode meta credentials: %w", err)
+	}
+	if strings.TrimSpace(creds.AccessToken) == "" {
+		return nil, fmt.Errorf("meta credentials are incomplete (need accessToken)")
+	}
+	metaWindow, err := metaMetricsWindow(window)
+	if err != nil {
+		return nil, err
+	}
+	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: strings.TrimSpace(res.accountID), Label: res.label}, d.opts...)
+	m, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, metaWindow)
+	if err != nil {
+		return nil, err
+	}
+	return &model.CampaignMetrics{
+		CampaignID:  m.CampaignID,
+		Window:      window,
+		Impressions: m.Impressions,
+		Clicks:      m.Clicks,
+		CostMicros:  m.CostMicros,
+		Ctr:         m.Ctr,
+	}, nil
+}
+
 // metaAdSetID pulls the ad set id the create path stored in the persisted CampaignResult
 // blob. A missing/unparseable blob yields "" (the campaign is toggled alone — the service
 // already blocks toggling a degraded campaign, and on Meta the CAMPAIGN status is the
