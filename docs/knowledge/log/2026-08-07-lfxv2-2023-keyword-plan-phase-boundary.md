@@ -24,9 +24,18 @@ reason those are there: the orchestrator discovers the capability by RUNTIME typ
 so a drifting signature would not fail the build, it would silently return 400 forever.
 
 **Fix** — The non-`*PartialMutateError` fallback marked the whole batch `unconfirmed`. Two
-large classes of error are provably "nothing applied": pre-send failures (credential
-resolution, request construction, an already-cancelled context) and definite request-level
-4xx rejections **other than 429**. The plan sets `partialFailure: true`, which makes Google
+large classes of error are provably "nothing applied": pre-send failures (request
+construction, and — only once PR 2 adds the preflight noted below — an already-cancelled
+context) and definite request-level 4xx rejections **other than 429**. Credential
+resolution is deliberately NOT in that list: it returns from the dispatcher before any
+per-action outcome exists, so it feeds the endpoint's 503 and never reaches this fallback
+at all. Nor is an already-cancelled context free — today the client hands the dead context
+to `Do` and wraps the result as `transportError`, which `IsOutcomeUnconfirmed` reports TRUE
+for. Correct for a cancellation that lands mid-flight, wrong for one that was dead before a
+byte was sent, so **the plan now requires PR 2's mutate method to check `ctx.Err()` before
+issuing the request** and return a pre-send error the helper reports false for. Without that
+the "nothing applied" classification is a claim the outlined implementation does not
+deliver, and every ordinary client disconnect yields an `unconfirmed` batch. The plan sets `partialFailure: true`, which makes Google
 evaluate the operations independently and report per-OPERATION errors at their own index — but
 only once the REQUEST is accepted. A definite 4xx on the call itself (expired credential,
 malformed request, an unauthorized customer) means no operation was evaluated at all, so

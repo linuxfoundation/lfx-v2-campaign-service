@@ -1427,9 +1427,34 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
     // `googleads.IsOutcomeUnconfirmed` (client.go / campaign.go) reports true for
     // transport failures, 5xx, EVERY 429 (`campaign.go:383` tests the status code alone,
     // with no "was it retried" qualifier), a 3xx on a mutating method, cancellation
-    // mid-flight, and malformed 2xx — and false for pre-send failures and for definite 4xx
-    // rejections other than 429. Same helper the create and
-    // toggle paths use, so keyword writes cannot drift from the rest of the dispatcher.
+    // mid-flight, and malformed 2xx — and false for definite 4xx rejections other than 429.
+    // Same helper the create and toggle paths use, so keyword writes cannot drift from the
+    // rest of the dispatcher.
+    //
+    // **Two "pre-send" cases need care, because neither behaves the way an earlier draft
+    // of this plan asserted.**
+    //
+    //   - **Credential resolution never reaches this line.** `resolveGoogleAdsClient`
+    //     returns from the dispatcher before `pending` has any outcomes to classify — it
+    //     is one of the pre-flight failures that feed the endpoint's 503 (see the
+    //     invariant at the `return outcomes, nil` site). Citing it here as a case the
+    //     fallback classifies is wrong: the fallback is not on that path at all.
+    //
+    //   - **An already-cancelled context is NOT classified as "nothing applied" for
+    //     free.** If `ctx` is already done when the mutate method runs, the existing
+    //     client hands the dead context to `Do`, and the resulting error is wrapped as a
+    //     `transportError` — for which `IsOutcomeUnconfirmed` reports TRUE. That is the
+    //     right default for a cancellation that lands mid-flight (the request may have
+    //     been received), but it is wrong for one that was dead before a byte was sent,
+    //     where nothing can have applied.
+    //
+    //     **So PR 2's mutate method MUST check `ctx.Err()` BEFORE issuing the request**
+    //     and return a distinct pre-send error that `IsOutcomeUnconfirmed` reports false
+    //     for. Without that preflight the "provably nothing applied" claim above is
+    //     simply false for this case, and every cancelled request — including an ordinary
+    //     client disconnect — produces an `unconfirmed` batch telling an operator to go
+    //     inspect Google Ads for a change that never left the process. That is the noise
+    //     this whole section exists to prevent.
     //
     // The *PartialMutateError branch asks the SAME question, and an earlier draft of this
     // plan got that wrong. It marked the whole in-flight span `unconfirmed` unconditionally,
