@@ -872,10 +872,18 @@ func TestGoogleAds_ListAccounts_EmptyUpstreamIsEmptySliceNotNil(t *testing.T) {
 	}))
 	defer tokenSrv.Close()
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// activeGoogleAdsConn carries a login_customer_id, so discovery also expands the
+		// manager hierarchy. That second request is a POST to a customer-scoped search
+		// path; capturing it would clobber the assertion below, which is about the
+		// account-agnostic discovery call specifically.
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			_, _ = io.WriteString(w, `{"results":[]}`)
+			return
+		}
 		mu.Lock()
 		gotMethod, gotPath = r.Method, r.URL.Path
 		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"resourceNames":[]}`)
 	}))
 	defer apiSrv.Close()
@@ -905,5 +913,91 @@ func TestGoogleAds_ListAccounts_EmptyUpstreamIsEmptySliceNotNil(t *testing.T) {
 	}
 	if !strings.HasSuffix(path, "/customers:listAccessibleCustomers") {
 		t.Errorf("path = %q, want the account-agnostic customers:listAccessibleCustomers", path)
+	}
+}
+
+// TestGoogleAds_ListAccounts_WorksBeforeAnAccountIsChosen pins the fix for the
+// chicken-and-egg in the discovery path. validateGoogleAdsConnection demands a non-empty
+// account id, and ListAccounts used to route through it — so a caller had to have already
+// pasted a customer id before they could ask which customer ids exist. A freshly
+// authorized connection has credentials and NO account id; that is the exact state
+// discovery is for, and it must not be rejected as a connection error.
+func TestGoogleAds_ListAccounts_WorksBeforeAnAccountIsChosen(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"resourceNames":["customers/1234567890"]}`)
+	}))
+	defer apiSrv.Close()
+
+	conn := activeGoogleAdsConn(goodGoogleAdsCreds)
+	conn.AccountID = ""       // not chosen yet — this is what discovery resolves
+	conn.ProviderConfig = nil // and no manager either, so no hierarchy to expand
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: conn}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	accounts, err := d.ListAccounts(context.Background(), "proj", model.ProviderGoogleAds)
+	if err != nil {
+		t.Fatalf("discovery must work with no account id chosen yet, got: %v", err)
+	}
+	if len(accounts) != 1 || accounts[0].ID != "1234567890" {
+		t.Errorf("accounts = %+v, want the one discovered customer id", accounts)
+	}
+}
+
+// TestGoogleAds_ListAccounts_StillRejectsUnusableConnections pins the other half: dropping
+// the account-id requirement must not drop the rest of the connection contract. An
+// inactive connection, or one whose credential blob is missing OAuth fields, is a
+// connection problem and should read as one — not as an opaque failure from Google.
+func TestGoogleAds_ListAccounts_StillRejectsUnusableConnections(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("reached Google Ads with an unusable connection")
+	}))
+	defer apiSrv.Close()
+
+	cases := []struct {
+		name    string
+		mutate  func(*model.Connection)
+		wantSub string
+	}{
+		{
+			name:    "inactive connection",
+			mutate:  func(c *model.Connection) { c.Status = model.StatusInactive },
+			wantSub: "not active",
+		},
+		{
+			name: "credentials missing the refresh token",
+			mutate: func(c *model.Connection) {
+				c.EncryptedCredentials = []byte(`{"clientId":"a","clientSecret":"b","developerToken":"c"}`)
+			},
+			wantSub: "incomplete",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := activeGoogleAdsConn(goodGoogleAdsCreds)
+			conn.AccountID = ""
+			tc.mutate(conn)
+			d := NewGoogleAdsDispatcher(
+				fakeConnReader{conn: conn}, identityEncryptor{},
+				googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+			)
+			_, err := d.ListAccounts(context.Background(), "proj", model.ProviderGoogleAds)
+			if err == nil {
+				t.Fatal("expected a connection error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("error = %v, want it to contain %q", err, tc.wantSub)
+			}
+		})
 	}
 }

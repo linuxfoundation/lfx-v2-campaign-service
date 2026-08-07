@@ -189,21 +189,39 @@ func campaignFromGoogleAds(ctx context.Context, r *googleads.CampaignResult, cfg
 // can't pass the empty check here and then fail the client's digits-only validator as a
 // confusing downstream error.
 func validateGoogleAdsConnection(projectID string, res *resolved) (googleAdsCreds, string, error) {
-	var creds googleAdsCreds
-	if res.status != model.StatusActive {
-		return creds, "", fmt.Errorf("google ads connection for project %s is %s, not active", projectID, res.status)
-	}
-	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return creds, "", fmt.Errorf("decode google ads credentials: %w", err)
-	}
-	if creds.ClientID == "" || creds.ClientSecret == "" || creds.DeveloperToken == "" || creds.RefreshToken == "" {
-		return creds, "", fmt.Errorf("google ads credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)")
+	creds, err := validateGoogleAdsCredentials(projectID, res)
+	if err != nil {
+		return creds, "", err
 	}
 	accountID := strings.TrimSpace(res.accountID)
 	if accountID == "" {
 		return creds, "", fmt.Errorf("google ads connection for project %s has no account id (customer id)", projectID)
 	}
 	return creds, accountID, nil
+}
+
+// validateGoogleAdsCredentials is validateGoogleAdsConnection WITHOUT the account-id
+// requirement, for the one operation that cannot have one yet: account discovery.
+//
+// A connection is created with credentials first and an account chosen afterwards, from
+// the list this very call produces. Demanding a non-empty account id before discovery
+// means the caller must already know the answer to the question they are asking, which
+// made the endpoint unreachable in exactly the state it exists to serve. Every other
+// check — active status, decodable blob, all four OAuth fields present — still applies,
+// because a discovery call against a stale or half-configured connection should fail as
+// a connection problem rather than as an opaque error from Google.
+func validateGoogleAdsCredentials(projectID string, res *resolved) (googleAdsCreds, error) {
+	var creds googleAdsCreds
+	if res.status != model.StatusActive {
+		return creds, fmt.Errorf("google ads connection for project %s is %s, not active", projectID, res.status)
+	}
+	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
+		return creds, fmt.Errorf("decode google ads credentials: %w", err)
+	}
+	if creds.ClientID == "" || creds.ClientSecret == "" || creds.DeveloperToken == "" || creds.RefreshToken == "" {
+		return creds, fmt.Errorf("google ads credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)")
+	}
+	return creds, nil
 }
 
 // resolveGoogleAdsClient resolves + validates the project's connection and builds a client
@@ -233,6 +251,36 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsClient(ctx context.Context, projec
 	), nil
 }
 
+// resolveGoogleAdsDiscoveryClient builds a client for the ACCOUNT-DISCOVERY path: same
+// credential resolution and the same connection checks as resolveGoogleAdsClient, minus
+// the account id, which by definition does not exist yet (see
+// validateGoogleAdsCredentials). CustomerID is left empty and the client's account-agnostic
+// path tolerates that; the manager id, when present, is what lets discovery expand an MCC
+// hierarchy rather than returning only the manager itself.
+func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, error) {
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	creds, err := validateGoogleAdsCredentials(projectID, res)
+	if err != nil {
+		return nil, err
+	}
+	return googleads.NewClient(
+		googleads.Credentials{
+			ClientID:       creds.ClientID,
+			ClientSecret:   creds.ClientSecret,
+			DeveloperToken: creds.DeveloperToken,
+			RefreshToken:   creds.RefreshToken,
+		},
+		googleads.AccountConfig{
+			LoginCustomerID: strings.TrimSpace(res.providerConfig["login_customer_id"]),
+			Label:           res.label,
+		},
+		d.opts...,
+	), nil
+}
+
 // googleAdsRunStatus maps the service's run-state vocabulary to Google's campaign status.
 // Note Google spells the serving state ENABLED, not ACTIVE.
 func googleAdsRunStatus(status string) (string, error) {
@@ -251,7 +299,7 @@ func googleAdsRunStatus(status string) (string, error) {
 // encrypted Google Ads connection credential, returning minimal identifying
 // information (customer ID and optionally a display label).
 func (d *GoogleAdsDispatcher) ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error) {
-	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
+	client, err := d.resolveGoogleAdsDiscoveryClient(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}

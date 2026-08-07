@@ -444,3 +444,195 @@ func urlHasSuffix(path string, suffix string) bool {
 	}
 	return false
 }
+
+// TestListAccessibleCustomers_WorksWithoutCustomerID pins the fix for the chicken-and-egg
+// that made account discovery unreachable. doRequest requires a digits-only
+// c.account.CustomerID, but this endpoint is HOW a caller learns one: a connection that
+// has credentials and no account chosen yet is precisely the state discovery exists to
+// serve, and demanding an account id first meant the caller had to already know the
+// answer. The client is built here with CustomerID deliberately empty.
+func TestListAccessibleCustomers_WorksWithoutCustomerID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeAccountsToken(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
+			ResourceNames: []string{"customers/1234567890"},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
+		AccountConfig{Label: "Test"}, // no CustomerID — that is the point
+		WithBaseURL(server.URL),
+		WithTokenURL(server.URL+"/token"),
+		WithAPIVersion("v23"),
+		WithClock(func() time.Time { return time.Unix(0, 0) }),
+	)
+
+	accounts, err := client.ListAccessibleCustomers(context.Background())
+	if err != nil {
+		t.Fatalf("discovery must not require a customer id, got: %v", err)
+	}
+	if len(accounts) != 1 || accounts[0].ResourceName != "customers/1234567890" {
+		t.Errorf("accounts = %+v, want one customers/1234567890", accounts)
+	}
+}
+
+// TestListAccessibleCustomers_RejectsMalformedLoginCustomerID pins that dropping the
+// customer-id precondition did NOT drop the manager-id one. login-customer-id is still
+// attached as a header on this call, so it still has to be well-formed.
+func TestListAccessibleCustomers_RejectsMalformedLoginCustomerID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeAccountsToken(w, r) {
+			return
+		}
+		t.Error("request reached the API despite an invalid login-customer-id")
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
+		AccountConfig{LoginCustomerID: "123-456-7890"},
+		WithBaseURL(server.URL),
+		WithTokenURL(server.URL+"/token"),
+		WithAPIVersion("v23"),
+		WithClock(func() time.Time { return time.Unix(0, 0) }),
+	)
+
+	_, err := client.ListAccessibleCustomers(context.Background())
+	if err == nil {
+		t.Fatal("expected a validation error for a dashed login-customer-id, got nil")
+	}
+	if !strings.Contains(err.Error(), "login-customer-id") {
+		t.Errorf("error = %v, want it to name login-customer-id", err)
+	}
+}
+
+// TestListAccessibleCustomers_ExpandsManagerHierarchy pins the MCC case.
+// customers:listAccessibleCustomers returns only what the authenticated user can act on
+// DIRECTLY — it does not walk a manager hierarchy, whatever login-customer-id says. On an
+// agency-managed connection that means the flat list is often just the manager itself and
+// every child ad account (the ones a caller actually wants to pick) is missing. The
+// customer_client expansion is what closes that gap, and it is also where labels come from.
+func TestListAccessibleCustomers_ExpandsManagerHierarchy(t *testing.T) {
+	var (
+		mu             sync.Mutex
+		searchPaths    []string
+		gotLoginHeader string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeAccountsToken(w, r) {
+			return
+		}
+		mu.Lock()
+		gotLoginHeader = r.Header.Get("login-customer-id")
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			mu.Lock()
+			searchPaths = append(searchPaths, r.URL.Path)
+			mu.Unlock()
+			// The manager itself, a child, and a nested sub-manager. Only the child is
+			// selectable: a manager account cannot hold campaigns.
+			_, _ = io.WriteString(w, `{"results":[
+				{"customerClient":{"id":"9999999999","descriptiveName":"Agency MCC","manager":true,"status":"ENABLED"}},
+				{"customerClient":{"id":"2222222222","descriptiveName":"Child Ad Account","manager":false,"status":"ENABLED"}},
+				{"customerClient":{"id":"3333333333","descriptiveName":"Sub MCC","manager":true,"status":"ENABLED"}}
+			]}`)
+			return
+		}
+		// The flat list sees only the manager — the whole reason expansion is needed.
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
+			ResourceNames: []string{"customers/9999999999"},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
+		AccountConfig{LoginCustomerID: "9999999999"},
+		WithBaseURL(server.URL),
+		WithTokenURL(server.URL+"/token"),
+		WithAPIVersion("v23"),
+		WithClock(func() time.Time { return time.Unix(0, 0) }),
+	)
+
+	accounts, err := client.ListAccessibleCustomers(context.Background())
+	if err != nil {
+		t.Fatalf("ListAccessibleCustomers failed: %v", err)
+	}
+
+	mu.Lock()
+	paths := append([]string(nil), searchPaths...)
+	loginHeader := gotLoginHeader
+	mu.Unlock()
+
+	if len(paths) != 1 {
+		t.Fatalf("customer_client search ran %d times, want exactly 1: %v", len(paths), paths)
+	}
+	if !strings.Contains(paths[0], "customers/9999999999/googleAds:search") {
+		t.Errorf("expansion ran against %s, want it scoped to the manager id", paths[0])
+	}
+	if loginHeader != "9999999999" {
+		t.Errorf("login-customer-id header = %q, want 9999999999", loginHeader)
+	}
+
+	byName := map[string]string{}
+	for _, a := range accounts {
+		byName[a.ResourceName] = a.DescriptiveName
+	}
+	// The child must be present — its absence is the whole defect.
+	if label, ok := byName["customers/2222222222"]; !ok {
+		t.Errorf("child ad account missing from %+v; the flat list never returns it", accounts)
+	} else if label != "Child Ad Account" {
+		t.Errorf("child label = %q, want the descriptive_name the expansion carries", label)
+	}
+	// Manager accounts are filtered: they cannot hold campaigns, so offering one as a
+	// choice would let a caller pick an account that fails at the first create. The
+	// manager still appears once, from the flat list, and is not duplicated by expansion.
+	if _, ok := byName["customers/3333333333"]; ok {
+		t.Errorf("sub-manager 3333333333 was offered as a selectable account: %+v", accounts)
+	}
+	if len(accounts) != 2 {
+		t.Errorf("accounts = %+v, want exactly the manager (from the flat list) and its one child", accounts)
+	}
+}
+
+// TestListAccessibleCustomers_NoManagerSkipsExpansion pins the other half of the contract:
+// without a manager id there is no hierarchy root to walk, so the flat list is the whole
+// answer and no search request may be issued.
+func TestListAccessibleCustomers_NoManagerSkipsExpansion(t *testing.T) {
+	var (
+		mu        sync.Mutex
+		sawSearch bool
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeAccountsToken(w, r) {
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			mu.Lock()
+			sawSearch = true
+			mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
+			ResourceNames: []string{"customers/1234567890"},
+		})
+	}))
+	defer server.Close()
+
+	if _, err := newAccountsTestClient(t, server).ListAccessibleCustomers(context.Background()); err != nil {
+		t.Fatalf("ListAccessibleCustomers failed: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if sawSearch {
+		t.Error("customer_client expansion ran with no login-customer-id configured")
+	}
+}
