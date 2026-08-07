@@ -167,16 +167,22 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 // fraction rather than reject as malformed.
 var decimalCostPattern = regexp.MustCompile(`^-?[0-9]+(\.[0-9]+)?$`)
 
+// None of the failure paths below interpolate s. Every one of them is reached
+// only for a value that FAILED validation, and the error propagates up through
+// GetCampaignMetrics to BriefService.GetCampaignMetrics's default branch, which
+// logs it -- so echoing the value would write unvalidated upstream response
+// content to the server log. The distinct messages plus the value's length are
+// enough to diagnose a malformed response without reproducing its bytes.
 func costInUsdToMicros(s string) (int64, error) {
 	if !decimalCostPattern.MatchString(s) {
-		return 0, fmt.Errorf("not a valid decimal: %q", s)
+		return 0, fmt.Errorf("not a valid decimal (%d bytes)", len(s))
 	}
 	r, ok := new(big.Rat).SetString(s)
 	if !ok {
-		return 0, fmt.Errorf("not a valid decimal: %q", s)
+		return 0, fmt.Errorf("decimal did not parse (%d bytes)", len(s))
 	}
 	if r.Sign() < 0 {
-		return 0, fmt.Errorf("negative value: %s", s)
+		return 0, fmt.Errorf("negative value (%d bytes)", len(s))
 	}
 	scaled := new(big.Rat).Mul(r, big.NewRat(1_000_000, 1))
 	// FloatString(0) rounds to the nearest integer (ties away from zero), giving
@@ -184,7 +190,7 @@ func costInUsdToMicros(s string) (int64, error) {
 	// but without the intermediate precision loss.
 	micros, ok := new(big.Int).SetString(scaled.FloatString(0), 10)
 	if !ok || !micros.IsInt64() {
-		return 0, fmt.Errorf("value overflows int64 micros: %s", s)
+		return 0, fmt.Errorf("value overflows int64 micros (%d bytes)", len(s))
 	}
 	return micros.Int64(), nil
 }

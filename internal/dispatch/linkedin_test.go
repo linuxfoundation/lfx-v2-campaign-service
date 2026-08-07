@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -670,9 +671,15 @@ func TestLinkedIn_ReadMetrics_UnsupportedWindowIs400(t *testing.T) {
 // an already-URN value, would have gone unnoticed. It also covers the connection's account
 // id flowing into the account URN and the decoded metrics coming back intact.
 func TestLinkedIn_ReadMetrics_HappyPathBuildsURNsAndForwardsID(t *testing.T) {
+	// gotQuery is written on the httptest handler's goroutine and read on the test's,
+	// so it is guarded -- an unsynchronized capture is a data race under -race even
+	// though the read happens after ReadMetrics returns.
+	var mu sync.Mutex
 	var gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		gotQuery = r.URL.RawQuery
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"elements":[{"impressions":1000,"clicks":40,"costInUsd":"25.50"}]}`)
 	}))
@@ -691,16 +698,20 @@ func TestLinkedIn_ReadMetrics_HappyPathBuildsURNsAndForwardsID(t *testing.T) {
 		t.Fatalf("ReadMetrics: %v", err)
 	}
 
+	mu.Lock()
+	query := gotQuery
+	mu.Unlock()
+
 	// The campaign URN must be built from the BARE persisted id, exactly once.
-	if !strings.Contains(gotQuery, url.QueryEscape("urn:li:sponsoredCampaign:555")) {
-		t.Errorf("expected the bare id 555 to be wrapped into a sponsoredCampaign URN, query was: %s", gotQuery)
+	if !strings.Contains(query, url.QueryEscape("urn:li:sponsoredCampaign:555")) {
+		t.Errorf("expected the bare id 555 to be wrapped into a sponsoredCampaign URN, query was: %s", query)
 	}
-	if strings.Contains(gotQuery, url.QueryEscape("urn:li:sponsoredCampaign:urn:li:")) {
-		t.Errorf("campaign URN was double-wrapped, query was: %s", gotQuery)
+	if strings.Contains(query, url.QueryEscape("urn:li:sponsoredCampaign:urn:li:")) {
+		t.Errorf("campaign URN was double-wrapped, query was: %s", query)
 	}
 	// The account URN comes from the resolved connection, not from the campaign row.
-	if !strings.Contains(gotQuery, url.QueryEscape("urn:li:sponsoredAccount:123456789")) {
-		t.Errorf("expected the connection's account id in a sponsoredAccount URN, query was: %s", gotQuery)
+	if !strings.Contains(query, url.QueryEscape("urn:li:sponsoredAccount:123456789")) {
+		t.Errorf("expected the connection's account id in a sponsoredAccount URN, query was: %s", query)
 	}
 
 	if metrics.Impressions != 1000 || metrics.Clicks != 40 || metrics.CostMicros != 25_500_000 {

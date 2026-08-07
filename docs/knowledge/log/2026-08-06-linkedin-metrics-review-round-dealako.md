@@ -50,3 +50,23 @@ a handler that fails the test if it is ever reached.
 Both verified binding: replacing the URN build with a pass-through fails the first with
 `campaigns=List(555)`, and neutering the account-id guard fails the third case with the client's
 opaque `account ID is required` instead of the adapter's own diagnostic.
+
+**Update** — Cursor caught that the previous round's sanitization was incomplete, and it was right.
+`GetCampaignMetrics`'s own message was made value-free, but it wraps `costInUsdToMicros`'s error
+with `%w`, and all four of that function's failure paths interpolated the input via `%q`/`%s`. The
+untrusted value therefore still reached the log through
+`BriefService.GetCampaignMetrics`'s default branch — the fix had been applied one layer above where
+the decision actually gets made.
+
+All four paths now report the failure reason plus the value's LENGTH instead of its bytes, which
+keeps a malformed response diagnosable without reproducing it.
+`TestCostInUsdToMicros_ErrorsNeverEchoTheValue` pins it using a marker string no legitimate
+`costInUsd` can contain, so the absence of a leak is evidence rather than coincidence; restoring
+any `%q` fails it.
+
+**Update** — Cursor also flagged an unsynchronized capture in
+`TestLinkedIn_ReadMetrics_HappyPathBuildsURNsAndForwardsID`: `gotQuery` was written on the httptest
+handler's goroutine and read on the test's. The read happens after `ReadMetrics` returns, so it
+never actually interleaved, but `-race` reasons about the absence of a happens-before edge rather
+than observed timing, and the sibling test in `metrics_test.go` already uses the mutex pattern.
+Guarded, and the value is copied out under the lock before the assertions.

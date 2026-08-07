@@ -743,3 +743,33 @@ func TestCostInUsdToMicros_RatioSyntaxRejected(t *testing.T) {
 		})
 	}
 }
+
+// TestCostInUsdToMicros_ErrorsNeverEchoTheValue pins the sanitization at the layer that
+// actually decides it. GetCampaignMetrics's own message was already value-free, but it
+// wraps this function's error with %w, so a %q here still put unvalidated upstream
+// response content into the server log via BriefService.GetCampaignMetrics's default
+// branch. The distinguishing marker below is a value no legitimate costInUsd contains,
+// so its absence is evidence the input was not reproduced rather than a coincidence.
+func TestCostInUsdToMicros_ErrorsNeverEchoTheValue(t *testing.T) {
+	const marker = "SENTINEL-LEAK-MARKER"
+	inputs := []string{
+		marker,                    // fails the pattern guard
+		"-1" + marker,             // fails the pattern guard, negative-looking
+		"-10.50",                  // fails the sign guard
+		"9223372036854776" + ".0", // overflows int64 micros
+	}
+	for _, in := range inputs {
+		t.Run(in, func(t *testing.T) {
+			_, err := costInUsdToMicros(in)
+			if err == nil {
+				t.Fatalf("expected an error for %q", in)
+			}
+			if strings.Contains(err.Error(), marker) {
+				t.Errorf("error echoed the untrusted value into a logged message: %v", err)
+			}
+			if strings.Contains(err.Error(), in) {
+				t.Errorf("error reproduced the raw input %q verbatim: %v", in, err)
+			}
+		})
+	}
+}
