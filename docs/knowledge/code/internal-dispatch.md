@@ -266,12 +266,12 @@ enumerates the ad accounts reachable **upstream at the provider** with the conne
 credential. It exists so an operator configuring a connection can pick the right account instead
 of pasting a customer ID by hand.
 
-**Staged, and only half-landed here.** This is the adapter alone. `internal/service/orchestrator.go`
-currently declares only `StatusToggler` and `MetricsReader`; there is no `AccountLister` interface,
-no `Orchestrator.ReadAccounts`, and therefore no unsupported-platform or nil-result mapping yet —
-those land with the endpoint in the follow-up, which is also where the optional-capability
-type-assertion pattern (the same one `MetricsReader` uses) gets applied. Until then nothing calls
-this method; it is reachable only from tests.
+**Now fully wired.** The adapter landed one PR ahead of its caller; both halves are present as of
+this change. `internal/service/orchestrator.go` declares `AccountLister` alongside `StatusToggler`
+and `MetricsReader`, and `Orchestrator.ReadAccounts` reaches it through the same optional-capability
+type assertion `MetricsReader` uses — a platform whose dispatcher does not implement the interface
+yields `ErrAccountsUnsupported`, which the service layer maps to 400 rather than to a 503 that
+invites a pointless retry.
 
 Note what it is NOT: this does not list anything this service stores. A project holds at most one
 connection per provider, and that singleton is read via `GET .../connection-{provider}`.

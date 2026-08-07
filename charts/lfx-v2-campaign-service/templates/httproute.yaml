@@ -42,10 +42,17 @@ spec:
     # only they get the free `(/.*)?` tail here. The connection-* family is ruled
     # for exactly the base, /test, and /set-credential sub-paths; per-provider
     # /metrics and google-ads/keywords|audience are ruled at the base path only.
+    #
+    # connection-google-ads is spelled out separately from the rest of the family
+    # because it carries one extra ruled sub-path the others do not have yet:
+    # /accounts (account discovery). Folding /accounts into the shared alternation
+    # would admit it for every provider, and a path the RuleSet does not rule is a
+    # route/rule parity violation. Move a provider into the google-ads branch as it
+    # gains its own discovery endpoint.
     - matches:
       - path:
           type: RegularExpression
-          value: ^/projects/[^/]+/(connection-(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads|microsoft-ads|hubspot)(/(test|set-credential))?|(briefs|jobs|hubspot)(/.*)?|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience))$
+          value: ^/projects/[^/]+/(connection-google-ads(/(test|set-credential|accounts))?|connection-(linkedin-ads|meta-ads|reddit-ads|twitter-ads|microsoft-ads|hubspot)(/(test|set-credential))?|(briefs|jobs|hubspot)(/.*)?|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience))$
       {{- if .Values.heimdall.enabled }}
       filters:
         - type: ExtensionRef

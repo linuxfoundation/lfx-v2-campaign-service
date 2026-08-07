@@ -57,11 +57,12 @@ type Client struct {
 	DeleteHubspotEndpoint             goa.Endpoint
 	TestHubspotEndpoint               goa.Endpoint
 	SetCredentialHubspotEndpoint      goa.Endpoint
+	ListGoogleAdsAccountsEndpoint     goa.Endpoint
 }
 
 // NewClient initializes a "lfx-v2-campaign-service-connections" service client
 // given the endpoints.
-func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds, createLinkedinAds, getLinkedinAds, updateLinkedinAds, deleteLinkedinAds, testLinkedinAds, setCredentialLinkedinAds, createMetaAds, getMetaAds, updateMetaAds, deleteMetaAds, testMetaAds, setCredentialMetaAds, createRedditAds, getRedditAds, updateRedditAds, deleteRedditAds, testRedditAds, setCredentialRedditAds, createTwitterAds, getTwitterAds, updateTwitterAds, deleteTwitterAds, testTwitterAds, setCredentialTwitterAds, createMicrosoftAds, getMicrosoftAds, updateMicrosoftAds, deleteMicrosoftAds, testMicrosoftAds, setCredentialMicrosoftAds, createHubspot, getHubspot, updateHubspot, deleteHubspot, testHubspot, setCredentialHubspot goa.Endpoint) *Client {
+func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds, createLinkedinAds, getLinkedinAds, updateLinkedinAds, deleteLinkedinAds, testLinkedinAds, setCredentialLinkedinAds, createMetaAds, getMetaAds, updateMetaAds, deleteMetaAds, testMetaAds, setCredentialMetaAds, createRedditAds, getRedditAds, updateRedditAds, deleteRedditAds, testRedditAds, setCredentialRedditAds, createTwitterAds, getTwitterAds, updateTwitterAds, deleteTwitterAds, testTwitterAds, setCredentialTwitterAds, createMicrosoftAds, getMicrosoftAds, updateMicrosoftAds, deleteMicrosoftAds, testMicrosoftAds, setCredentialMicrosoftAds, createHubspot, getHubspot, updateHubspot, deleteHubspot, testHubspot, setCredentialHubspot, listGoogleAdsAccounts goa.Endpoint) *Client {
 	return &Client{
 		CreateGoogleAdsEndpoint:           createGoogleAds,
 		GetGoogleAdsEndpoint:              getGoogleAds,
@@ -105,6 +106,7 @@ func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, 
 		DeleteHubspotEndpoint:             deleteHubspot,
 		TestHubspotEndpoint:               testHubspot,
 		SetCredentialHubspotEndpoint:      setCredentialHubspot,
+		ListGoogleAdsAccountsEndpoint:     listGoogleAdsAccounts,
 	}
 }
 
@@ -757,4 +759,21 @@ func (c *Client) TestHubspot(ctx context.Context, p *TestHubspotPayload) (res *C
 func (c *Client) SetCredentialHubspot(ctx context.Context, p *SetCredentialHubspotPayload) (err error) {
 	_, err = c.SetCredentialHubspotEndpoint(ctx, p)
 	return
+}
+
+// ListGoogleAdsAccounts calls the "list-google-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// ListGoogleAdsAccounts may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) ListGoogleAdsAccounts(ctx context.Context, p *ListGoogleAdsAccountsPayload) (res *ListGoogleAdsAccountsResult, err error) {
+	var ires any
+	ires, err = c.ListGoogleAdsAccountsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ListGoogleAdsAccountsResult), nil
 }

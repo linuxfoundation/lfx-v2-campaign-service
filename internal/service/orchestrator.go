@@ -141,6 +141,11 @@ const toggleCallTimeout = 45 * time.Second
 // DefaultWriteTimeout.
 const metricsCallTimeout = 20 * time.Second
 
+// accountsCallTimeout bounds the SYNCHRONOUS account-listing platform call, which — like
+// metrics and toggle — runs on the HTTP request goroutine. Account discovery is a pure read
+// with no cascade, so it can use the same ceiling as metrics reads.
+const accountsCallTimeout = 20 * time.Second
+
 // jobFinalizeTimeout bounds the terminal job-status write, which runs on a
 // context detached from the dispatch context so a cancelled run still reaches a
 // terminal state instead of being stuck queued/running.
@@ -196,6 +201,26 @@ type MetricsReader interface {
 	ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error)
 }
 
+// AccountLister is an OPTIONAL dispatcher capability: enumerate accessible ad accounts for a
+// project's stored, encrypted connection. Not every platform's dispatcher implements it, so —
+// like StatusToggler and MetricsReader — the orchestrator type-asserts for it rather than
+// adding it to PlatformDispatcher; a dispatcher that doesn't implement it yields a clean
+// "not supported" error (ErrAccountsUnsupported → 400). This is a pure read that never mutates
+// platform or DB state.
+type AccountLister interface {
+	// ListAccounts enumerates the accessible ad accounts for a project's connection.
+	// Returns a list of accessible accounts with minimal identifying information (ID and label).
+	//
+	// A successful call MUST return a NON-NIL slice, even when the credential reaches zero
+	// accounts — return an empty slice, not nil. This deviates from the usual Go convention
+	// that nil and empty are interchangeable, deliberately: the caller cannot otherwise tell
+	// "the provider authoritatively has nothing for you" from an implementation that fell
+	// through a branch and returned its zero values, and the two mean opposite things to an
+	// operator choosing an account. ReadAccounts treats (nil, nil) as a contract violation
+	// and converts it to a 503 rather than reporting an empty account list as fact.
+	ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error)
+}
+
 // Status-toggle classification sentinels. These distinguish a client/state error (the
 // toggle never reached the ad platform) from a real platform-call failure, so the service
 // can return an accurate status + message instead of blaming the platform for everything.
@@ -216,6 +241,9 @@ var (
 	// ErrCampaignAccountMismatch: the campaign was created under a different ad account
 	// than the project's current connection resolves to, so its id cannot be read safely.
 	ErrCampaignAccountMismatch = domain.ErrCampaignAccountMismatch
+
+	// ErrAccountsUnsupported: the platform has no account-listing capability wired.
+	ErrAccountsUnsupported = domain.ErrAccountsUnsupported
 )
 
 // noUpstreamCreator lets a dispatcher signal that a returned error occurred
@@ -1044,4 +1072,36 @@ func (o *Orchestrator) ReadCampaignMetrics(ctx context.Context, projectID string
 		return nil, fmt.Errorf("%s metrics reader returned a nil result with no error", platform)
 	}
 	return m, nil
+}
+
+// ReadAccounts enumerates the accessible ad accounts for a project's stored connection.
+// It never mutates the platform or the DB — a pure read, not persisted here.
+func (o *Orchestrator) ReadAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrAccountsUnsupported, platform)
+	}
+	lister, ok := d.(AccountLister)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrAccountsUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
+	defer cancel()
+	accounts, aerr := lister.ListAccounts(callCtx, projectID, platform)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if accounts == nil {
+		// An AccountLister returning (nil, nil) is a contract violation, not success. Nothing
+		// downstream would CRASH on it — len and range are nil-safe, and the handler's
+		// conversion loop would happily produce an empty `[]`. That is exactly the problem:
+		// the caller cannot tell "this credential reaches zero ad accounts" from "the lister
+		// silently gave up", and would render an empty account picker with no error, sending
+		// the operator to look for a permissions problem at the provider that does not exist.
+		// Failing loudly here is what keeps the empty list meaningful — every lister on this
+		// path builds its slice with make(..., 0, n) precisely so an empty answer stays
+		// distinguishable from no answer.
+		return nil, fmt.Errorf("%s account lister returned a nil result with no error", platform)
+	}
+	return accounts, nil
 }
