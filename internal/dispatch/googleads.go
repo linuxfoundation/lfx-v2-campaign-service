@@ -32,11 +32,16 @@ type googleAdsCreds struct {
 
 // googleAdsConfig is the per-platform campaign config the caller passes for Google Ads
 // in CreateCampaigns' Input.Config (delivered here as the Dispatch `config`). Today the
-// GA client creates a PAUSED search-campaign shell, so only the budget is caller-
-// supplied here; targeting/keywords land in GA-3+. Budget is in whole units of the ad
+// GA client creates a PAUSED search campaign with an ad group + a Responsive Search Ad
+// (GA-3b); keyword/audience targeting land in GA-4. Budget is in whole units of the ad
 // ACCOUNT's currency (NOT USD — the client does no FX), mirroring the meta client.
 type googleAdsConfig struct {
 	Budget float64 `json:"budget"`
+	// Headlines/Descriptions are optional Responsive Search Ad copy overrides (GA-3b).
+	// Left nil/empty, the client composes deterministic placeholder copy from the
+	// brief's EventName/Project (see googleads.composeAdCopy).
+	Headlines    []string `json:"headlines"`
+	Descriptions []string `json:"descriptions"`
 }
 
 // GoogleAdsDispatcher creates Google Ads campaigns for the orchestrator.
@@ -77,17 +82,21 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 
 	in := googleads.CampaignInput{
 		EventName: bf.EventName,
+		EventSlug: brief.EventSlug,
 		// Project is stamped from the AUTHENTICATED project scope (brief.ProjectID),
 		// never from caller JSON — the Project name segment is the data pipeline's
 		// attribution join key (docs/api-catalog.md), so it must be the canonical LFX
 		// slug (matches reddit/meta/twitter).
-		Project: brief.ProjectID,
-		Budget:  cfg.Budget,
+		Project:         brief.ProjectID,
+		Budget:          cfg.Budget,
+		RegistrationURL: bf.RegistrationURL,
+		Headlines:       cfg.Headlines,
+		Descriptions:    cfg.Descriptions,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: the
-		// GA client composes the budget/campaign names from these, and a retry with the
-		// same suffix hits Google's DUPLICATE_NAME (reported UNCONFIRMED-already-exists)
-		// rather than creating a second paid campaign — a poor-man's idempotency key
-		// until LFXV2-2665 lands provider idempotency keys.
+		// GA client composes the budget/campaign/ad-group names from these, and a retry
+		// with the same suffix hits Google's DUPLICATE_NAME (reported
+		// UNCONFIRMED-already-exists) rather than creating a second paid campaign — a
+		// poor-man's idempotency key until LFXV2-2665 lands provider idempotency keys.
 		NameSuffix: brief.ID,
 	}
 
@@ -272,38 +281,82 @@ func (d *GoogleAdsDispatcher) ListAccounts(ctx context.Context, projectID string
 
 // ToggleStatus implements service.StatusToggler for Google Ads.
 //
-// PAUSE works today; ACTIVATE is REFUSED. The create path provisions only a PAUSED search
-// campaign shell (budget -> campaign) with no ad group, ad, or keywords, so flipping the
-// campaign to ENABLED would report success while NOTHING can serve. That is exactly the lie
-// ErrCampaignNotProvisioned exists to prevent (the service maps it to a 409 without calling
-// Google), and it matches the activate guards the sibling adapters apply when a child is
-// missing — the difference is that here the children are not yet built at all.
+// GA-3b created ad group + ad under the campaign; this method wires the dispatcher-level
+// cascade over them. Today, only PAUSE is implemented. PAUSE cascades from the campaign FIRST (stops delivery
+// immediately, regardless of whether the children can be reached) down to the ad group/ad via the
+// persisted ids stored in the campaign's Result blob.
 //
-// There is no cascade for the same reason: there are no children to cascade to. When GA-3+
-// adds ad groups/ads/keywords, this must grow BOTH a cascade and a real
-// child-id-based activate guard, matching the reddit shape.
+// ACTIVATE is unconditionally refused with ErrCampaignNotProvisioned (→409, raised locally
+// without calling Google) because GA-4 targeting provisioning is absent. A campaign without
+// targeting cannot deliver, so activating it would report false success — the exact lie
+// ErrCampaignNotProvisioned exists to prevent. The PAUSE cascade itself IS wired below.
+// Once GA-4 adds targeting, ACTIVATE will be re-enabled with a children-first ordering
+// (children activated before campaign) to prevent a campaign from reporting ENABLED before
+// its children do.
 func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
 	gaStatus, err := googleAdsRunStatus(status)
 	if err != nil {
 		return err
 	}
-	// Refuse ACTIVATE up front, BEFORE resolving credentials or calling Google: a campaign
-	// with no ad group/ad cannot serve no matter what its status says, so this is a local
-	// state error (409), not a platform failure (503).
+	// Refuse ACTIVATE: targeting (GA-4) is not provisioned. A campaign without targeting
+	// criteria cannot deliver, so activating reports false success (exactly what
+	// ErrCampaignNotProvisioned prevents). This is the ONLY remaining reason — the PAUSE
+	// cascade is wired immediately below. Activation is re-enabled once GA-4 lands.
 	if gaStatus == googleads.StatusEnabled {
-		return fmt.Errorf("%w: google ads campaign %s cannot be activated because the create path provisions only a campaign shell (no ad group, ad, or keywords) — nothing would serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		return fmt.Errorf("%w: google ads campaign %s cannot be activated because targeting (GA-4) is not provisioned", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 	}
+	adGroupID, adID := googleAdsChildIDs(campaign)
 	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
 	if err != nil {
 		return err
 	}
-	if uerr := client.UpdateCampaignStatus(ctx, campaign.PlatformCampaignID, gaStatus); uerr != nil {
-		// An ambiguous outcome may have applied upstream — report "verify before retry"
-		// rather than a flat "not applied".
+
+	wrapUnconfirmed := func(uerr error) error {
 		if googleads.IsOutcomeUnconfirmed(uerr) {
 			return &unconfirmedToggleError{err: uerr}
 		}
 		return uerr
 	}
-	return nil
+
+	if gaStatus == googleads.StatusPaused {
+		// Campaign first: pausing the parent stops delivery immediately even if the
+		// child update below fails/is unconfirmed.
+		if uerr := client.UpdateCampaignStatus(ctx, campaign.PlatformCampaignID, gaStatus); uerr != nil {
+			return wrapUnconfirmed(uerr)
+		}
+		// If the ad group/ad ids are absent (e.g. a campaign shell with no fully-created
+		// children), there is nothing to pause downstream — only the campaign is toggled.
+		if strings.TrimSpace(adGroupID) == "" || strings.TrimSpace(adID) == "" {
+			return nil
+		}
+		if uerr := client.UpdateAdGroupAndAdStatus(ctx, adGroupID, adID, gaStatus); uerr != nil {
+			// After the campaign status succeeds, a child failure (even a definite 4xx) is a
+			// partial cascade: the parent changed but the child's outcome is unknown. Wrap it
+			// as Unconfirmed so the caller knows to verify the state before retry.
+			return &unconfirmedToggleError{err: uerr}
+		}
+		return nil
+	}
+
+	// ACTIVATE is refused by the guard at the top of this function, so this line is
+	// unreachable. It becomes reachable in GA-4, once targeting provisioning exists and the
+	// guard is lifted.
+	return fmt.Errorf("google ads: status toggle reached unexpected code path for status %s", gaStatus)
+}
+
+// googleAdsChildIDs pulls the ad group + ad ids the create path stored in the persisted
+// CampaignResult blob (googleads.CampaignResult's AdGroupId/AdId), mirroring
+// redditChildIDs. A missing/unparseable blob yields empty ids.
+func googleAdsChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return "", ""
+	}
+	var blob struct {
+		AdGroupID string `json:"adGroupId"`
+		AdID      string `json:"adId"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return "", ""
+	}
+	return blob.AdGroupID, blob.AdID
 }

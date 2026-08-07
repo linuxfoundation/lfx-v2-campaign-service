@@ -289,7 +289,9 @@ type GetCampaignMetricsPayload struct {
 	BriefID string
 	// Campaign UUID
 	CampaignID string
-	// Platform-agnostic reporting window (defaults to last_30_days when omitted)
+	// Platform-agnostic reporting window; defaults to last_30_days when omitted,
+	// except on platforms whose API cannot serve that range (e.g. X Ads, capped at
+	// 7 days), which default to the widest range they support instead
 	Window *string
 }
 
