@@ -5856,3 +5856,46 @@ func TestCreateCampaignAdSetLookupFailureIsUnconfirmed(t *testing.T) {
 		})
 	}
 }
+
+// TestCreateCampaignAdSetLookupConflictIsCleanFailure pins the AD-SET half of the
+// definite/ambiguous split. The campaign half had two tests; this half had none, and the
+// arm it covers was returning a partial result while its own comment, and
+// docs/knowledge/code/internal-platform-meta.md, both called it a clean failure.
+//
+// The partial is what made it wrong. The dispatcher releases the retained claim only when
+// the result is nil (internal/dispatch/meta.go at the CreateCampaign call) and treats every
+// non-nil result as UNCONFIRMED, so a stable non-PAUSED ad set was reported as "verify in
+// Ads Manager" on every retry forever — the exact loop errLookupConflict exists to break.
+//
+// Reaching this arm requires the campaign lookup to SUCCEED with an adoptable (PAUSED,
+// matching-objective) match, because the ad-set lookup is gated on existingCampaignID != "".
+// That gate is also why dropping the partial costs nothing: the campaign it described was
+// found by name, not created by this call.
+func TestCreateCampaignAdSetLookupConflictIsCleanFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/adsets"):
+			// The ad set exists under the adopted campaign and is ACTIVE: name taken.
+			_, _ = io.WriteString(w, `{"data":[{"id":"120200000000999","status":"ACTIVE"}]}`)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Campaign lookup: an adoptable match, so the ad-set lookup is reached.
+			_, _ = io.WriteString(w, `{"data":[{"id":"120200000000123","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}]}`)
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+		default:
+			t.Errorf("a definite ad-set name conflict must not reach a mutating call, got %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		ReconcileByName: true,
+	})
+	assertCleanConflict(t, res, err, "ad set status")
+}

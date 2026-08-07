@@ -2881,8 +2881,21 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// conflict — findAdSetByName enumerated the name and read a match that is not
 			// PAUSED — is a confirmed PRESENCE with a stated reason, so it stays a clean
 			// failure whatever the caller's context did afterwards.
+			//
+			// Clean means nil, not a partial. The dispatcher's rule is result==nil releases
+			// the claim and ANY non-nil result is retained as UNCONFIRMED (internal/dispatch/
+			// meta.go, at the CreateCampaign call) — there is no third shape for "definite
+			// failure, but here is some context". Returning partialResult() here therefore
+			// reported a stable, re-readable conflict as "verify in Ads Manager", forever:
+			// every retry re-reads the same non-PAUSED ad set and re-retains, which is the
+			// loop errLookupConflict exists to prevent.
+			//
+			// Nothing is lost by dropping the partial, because this branch is reachable only
+			// under existingCampaignID != "" — the campaign was FOUND BY NAME, not created by
+			// this call — and adSetID/adCount are still zero. The partial described a campaign
+			// that predates this dispatch entirely.
 			if errors.Is(adSetLookupErr, errLookupConflict) {
-				return partialResult(), fmt.Errorf("meta ad set lookup found the name already in use (campaign %s created, PAUSED): %w", campaignID, adSetLookupErr)
+				return nil, fmt.Errorf("meta ad set lookup found the name already in use under reused campaign %s (found by name, not created by this call; nothing was created): %w", campaignID, adSetLookupErr)
 			}
 			// Everything else is UNCONFIRMED, including a cancelled context, a pre-send
 			// dial error and a definite 4xx. An earlier version reported those as clean
@@ -2892,10 +2905,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// that never left the process establishes that no better than a timeout does.
 			// Report it as failed and the next dispatch POSTs the same deterministic name
 			// under the same campaign: a duplicate ad set, spending real budget.
+			//
+			// These two DO retain the partial: the ad set's absence is genuinely open, so a
+			// released claim lets the next dispatch POST the same deterministic ad-set name
+			// under the same campaign. They say "reused" rather than "created" for the same
+			// reason as the conflict arm — this branch only runs when the campaign was found
+			// by name.
 			if ctx.Err() != nil {
-				return partialResult(), fmt.Errorf("meta ad set lookup UNCONFIRMED (campaign %s created, PAUSED; caller context done, so ad set %q cannot be confirmed absent; verify in Meta Ads Manager before retrying): %w", campaignID, adSetName, errors.Join(errLookupAmbiguous, adSetLookupErr))
+				return partialResult(), fmt.Errorf("meta ad set lookup UNCONFIRMED (reused campaign %s, PAUSED; caller context done, so ad set %q cannot be confirmed absent; verify in Meta Ads Manager before retrying): %w", campaignID, adSetName, errors.Join(errLookupAmbiguous, adSetLookupErr))
 			}
-			return partialResult(), fmt.Errorf("meta ad set lookup UNCONFIRMED (campaign %s created, PAUSED; cannot confirm ad set %q is absent; verify in Meta Ads Manager before retrying): %w", campaignID, adSetName, errors.Join(errLookupAmbiguous, adSetLookupErr))
+			return partialResult(), fmt.Errorf("meta ad set lookup UNCONFIRMED (reused campaign %s, PAUSED; cannot confirm ad set %q is absent; verify in Meta Ads Manager before retrying): %w", campaignID, adSetName, errors.Join(errLookupAmbiguous, adSetLookupErr))
 		}
 	}
 	if existingAdSetID != "" {
