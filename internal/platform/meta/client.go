@@ -1421,17 +1421,17 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 		if status < 200 || status >= 300 {
 			_ = json.Unmarshal(raw, &env)
 		}
-		throttled := status == http.StatusTooManyRequests ||
+		// isThrottle is the CLASSIFICATION — "Meta shed this request" — and is deliberately
+		// kept separate from throttled, which is the narrower "and we are going to retry it".
+		// Collapsing the two (clearing one flag for creates) also discarded the classification,
+		// and the terminal read-error path below needs it: it is what tells
+		// createOutcomeAmbiguous that a create may have committed before the shed.
+		isThrottle := status == http.StatusTooManyRequests ||
 			(status < 200 || status >= 300) && env.Error != nil && graphRateLimitCodes[env.Error.Code]
-		// A create never repeats itself (see doCreate). Clearing the flag rather than
-		// branching at the retry site keeps the read-error short-circuit below correct
-		// too: for a create there is no "we're about to retry, the body is discarded
-		// anyway" case, so an unreadable throttled response must be consumed as final
-		// and carry its status — otherwise a 400-coded throttle would be classified
-		// without the status createOutcomeAmbiguous needs.
-		if !retryThrottle {
-			throttled = false
-		}
+		// A create never repeats itself (see doCreate), so it never enters the retry branch —
+		// but it is still a throttle, and must be consumed as final while carrying everything
+		// that says so.
+		throttled := isThrottle && retryThrottle
 
 		// A read error (e.g. connection closed early on a mismatched Content-Length)
 		// must not be treated as a complete response: even if the partial body
@@ -1459,12 +1459,26 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 			// *APIError status. Returning a plain error here would strip the status and
 			// silently turn an ambiguous create into a definite "failed" — the exact
 			// duplicate-on-retry risk the no-follow + ambiguity handling exists to close.
-			// The body couldn't be read, so no Graph envelope diagnostics are available;
-			// carry the status/method/path and note the read failure in the message.
-			return &APIError{
+			//
+			// A truncated read does NOT imply an unusable envelope: the common shape is a
+			// complete JSON body followed by a connection closed early on a mismatched
+			// Content-Length, so `raw` often parses. Whatever did parse is carried onto the
+			// APIError — and for a shed create that is load-bearing, not decoration. Meta
+			// reports rate limiting as an HTTP 400 with a Graph rate-limit code far more often
+			// than as a 429, and createOutcomeAmbiguous classifies on Code for exactly that
+			// reason. Dropping the code here would hand it a bare 400, which reads as a clean
+			// semantic rejection — and a blind retry on a create that Meta may already have
+			// committed duplicates a PAID campaign.
+			readErrAPI := &APIError{
 				StatusCode: status, Method: method, Path: path,
 				Message: fmt.Sprintf("read response body: %v", readErr),
 			}
+			if env.Error != nil {
+				readErrAPI.Type = env.Error.Type
+				readErrAPI.Code = env.Error.Code
+				readErrAPI.FBTraceID = env.Error.FBTraceID
+			}
+			return readErrAPI
 		}
 
 		if throttled && attempt < retryMax {

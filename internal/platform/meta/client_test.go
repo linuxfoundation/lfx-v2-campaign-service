@@ -5365,3 +5365,88 @@ func TestCreateCampaignNonNumericAdSetIDIsUnconfirmed(t *testing.T) {
 		t.Errorf("a malformed 2xx must be worded UNCONFIRMED (the ad set may exist), got %v", err)
 	}
 }
+
+// TestDoCreateTruncatedGraphThrottleStaysAmbiguous covers the intersection of two paths that
+// each work on their own: a create (which never retries a throttle) whose throttled response
+// body fails to read.
+//
+// Meta reports rate limiting as an HTTP 400 carrying a Graph rate-limit code far more often
+// than as a 429, and `createOutcomeAmbiguous` recognises the shed by that CODE — a bare 400
+// is an ordinary semantic rejection. A truncated read does not mean the envelope was
+// unusable: the common shape is a complete JSON body followed by a connection closed early on
+// a mismatched Content-Length, so the code is right there in the bytes we did get. Dropping it
+// from the returned *APIError leaves 400/code 0, which classifies as a CLEAN failure — the
+// dispatcher then releases the claim and the next attempt re-POSTs a create Meta may already
+// have committed, duplicating a PAID campaign.
+//
+// The 429 subtest is the control: it stays ambiguous on the status alone, so a regression that
+// only drops the Graph code fails the 400 case and not this one, which is what localises it.
+func TestDoCreateTruncatedGraphThrottleStaysAmbiguous(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		// wantCode is the Graph code the *APIError must carry out of the truncated read; 0
+		// means the response had no envelope to preserve.
+		wantCode int
+	}{
+		{
+			name:     "HTTP 400 with a Graph rate-limit envelope",
+			status:   http.StatusBadRequest,
+			body:     `{"error":{"message":"User request limit reached","type":"OAuthException","code":17,"fbtrace_id":"AbC"}}`,
+			wantCode: 17,
+		},
+		{
+			name:     "HTTP 429 with no envelope",
+			status:   http.StatusTooManyRequests,
+			body:     `{"error":`,
+			wantCode: 0,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				// Advertise more than we send, then hijack and close: the body that DID
+				// arrive is complete JSON, but the read fails.
+				w.Header().Set("Content-Length", "100000")
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
+				if hj, ok := w.(http.Hijacker); ok {
+					if conn, _, err := hj.Hijack(); err == nil {
+						_ = conn.Close()
+					}
+				}
+			}))
+			defer srv.Close()
+
+			c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+				WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+			var out createResponse
+			err := c.doCreate(context.Background(), "/x", map[string]any{"a": 1}, &out)
+			if err == nil {
+				t.Fatal("expected an error, got nil — a truncated body is never a successful create")
+			}
+
+			var ae *APIError
+			if !errors.As(err, &ae) {
+				t.Fatalf("want *APIError, got %T: %v", err, err)
+			}
+			if ae.StatusCode != tc.status {
+				t.Errorf("APIError.StatusCode = %d, want %d", ae.StatusCode, tc.status)
+			}
+			if ae.Code != tc.wantCode {
+				t.Errorf("APIError.Code = %d, want %d — the Graph code parsed from the bytes that "+
+					"DID arrive must survive the read failure; it is what identifies the shed",
+					ae.Code, tc.wantCode)
+			}
+			if !createOutcomeAmbiguous(err) {
+				t.Errorf("createOutcomeAmbiguous = false for a throttled create with an unreadable "+
+					"body; Meta may have committed the node before shedding, so classifying this as "+
+					"a clean failure invites a duplicate paid campaign (err: %v)", err)
+			}
+		})
+	}
+}

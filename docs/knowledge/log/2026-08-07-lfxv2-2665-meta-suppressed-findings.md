@@ -49,3 +49,39 @@ transport/5xx but also a 2xx with no `data` field, a `paging.next` with no curso
 page cap reached with pagination pending, a match with an empty or non-numeric id, and
 cancellation mid-enumeration. Only a dial error or a definite conflict (a match that is
 not `PAUSED`, or whose objective differs) is a clean failure.
+
+## Second pass — the throttle classification was collapsed into the retry decision
+
+`do` computed one `throttled` flag and then, for creates, CLEARED it:
+`if !retryThrottle { throttled = false }`. That reads as "creates are never throttled",
+which is false — creates are shed exactly like everything else; what is different is only
+that a create must not be REPEATED. The two facts were being carried in one variable, and
+the terminal read-error path needs the one that got erased.
+
+The concrete failure: Meta reports rate limiting as an HTTP 400 with a Graph rate-limit code
+far more often than as a 429, and `createOutcomeAmbiguous` recognises the 400 shape by that
+CODE — a bare 400 is an ordinary semantic rejection. On the truncated-read path the returned
+`*APIError` carried only status/method/path, so a shed create whose body arrived complete but
+whose read failed on a mismatched `Content-Length` (the common truncation shape — the JSON is
+all there, the connection just closed early) classified as 400/code 0: a CLEAN failure. The
+dispatcher then releases the claim, and the next attempt re-POSTs a create Meta may already
+have committed. Duplicate PAID campaign, from a response we had the bytes to classify
+correctly.
+
+Two separate names now: `isThrottle` is the classification, `throttled := isThrottle &&
+retryThrottle` is the retry decision, and the terminal `*APIError` carries whatever Graph
+envelope did parse (`Type`, `Code`, `FBTraceID`). Preserving diagnostics on a read failure is
+right on its own terms — support needs them precisely when a rate limit is hit — but here it
+is load-bearing rather than cosmetic. `TestDoCreateTruncatedGraphThrottleStaysAmbiguous`
+pins both shapes, with the 429 case as a control: it stays ambiguous on the STATUS alone, so
+a regression that drops only the Graph code fails the 400 subtest and not the 429 one, which
+is what localises it. Revert-verified in exactly that pattern.
+
+**The dormant-capability claim leaked back into one sentence.** The reconcile-by-name lookup
+is opt-in, false at every call site, and `internal-platform-meta.md` says so at length in two
+places. The throttle paragraph nonetheless still ended "the next run's `findCampaignByName`/
+`findAdSetByName` adopts what Meta committed" — describing an automatic reconciliation that
+does not happen, in the one paragraph a reader hits FIRST. An UNCONFIRMED throttled create is
+surfaced for verification in Ads Manager; nothing re-dispatches a retained partial. The
+sentence now says that and points at the section that explains why the lookup is gated,
+rather than contradicting it seventy lines later.

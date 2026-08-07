@@ -95,8 +95,12 @@ response: the classifier calls a throttle UNCONFIRMED precisely because Meta may
 committed the node before reporting it, while the retry loop would re-POST the create
 on that same signal — producing two campaigns (or ad sets, or ads) with one name
 inside a single call, which the start-of-flow name lookup cannot see or reconcile. A
-throttled create therefore returns immediately and is classified UNCONFIRMED; the next
-run's `findCampaignByName`/`findAdSetByName` adopts what Meta committed. The
+throttled create therefore returns immediately and is classified UNCONFIRMED. What
+happens to whatever Meta committed is then an OPERATOR question, not an automatic one:
+`findCampaignByName`/`findAdSetByName` is the mechanism that could adopt it, but that
+lookup is opt-in and off at every call site today (see "Campaign and ad-set idempotency
+by name" below), and nothing re-dispatches a retained partial — so the UNCONFIRMED result
+is surfaced for verification in Ads Manager rather than reconciled on a next run. The
 suppression is scoped to creates, not to POST as a method — the status-update POSTs
 assert a desired state, so repeating them changes nothing and they keep the retry.
 Redirect following is force-disabled (a shared `noFollow` `CheckRedirect` policy).
