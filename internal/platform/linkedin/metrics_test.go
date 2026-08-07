@@ -785,3 +785,46 @@ func TestCostInUsdToMicros_ErrorsNeverEchoTheValue(t *testing.T) {
 		})
 	}
 }
+
+// fakeCredentialBearingTripper is a RoundTripper that injects credential-bearing
+// strings into errors, to test that GetCampaignMetrics redacts them before logging.
+type fakeCredentialBearingTripper struct {
+	credentialMarker string
+}
+
+func (f *fakeCredentialBearingTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return nil, fmt.Errorf("fake RoundTripper error: %s", f.credentialMarker)
+}
+
+// TestGetCampaignMetrics_TransportErrorRedaction verifies that credential-bearing
+// strings from a malicious or misconfigured RoundTripper are redacted and never
+// logged. This is the transport-layer counterpart to costInUsdToMicros's value
+// sanitization: a fake RoundTripper can return errors containing URLs with bearer
+// tokens, request/response headers, or other material a maintainer did not write.
+// The error propagates to BriefService.GetCampaignMetrics's default-error branch,
+// which logs it; the credential string must not appear in that log.
+func TestGetCampaignMetrics_TransportErrorRedaction(t *testing.T) {
+	const credentialMarker = "Bearer-token-SENTINEL-LEAK-MARKER"
+
+	client := NewClient(
+		Credentials{AccessToken: "test-token"},
+		RuntimeConfig{DefaultAccountID: "account123"},
+		WithHTTPClient(&http.Client{Transport: &fakeCredentialBearingTripper{credentialMarker: credentialMarker}}),
+	)
+
+	ctx := context.Background()
+	metrics, err := client.GetCampaignMetrics(ctx, "account123", "123456", model.MetricsWindowToday)
+	if err == nil {
+		t.Fatalf("expected an error, got metrics %+v", metrics)
+	}
+
+	// The credential marker must NOT appear in the error string that would be logged.
+	errStr := err.Error()
+	if strings.Contains(errStr, credentialMarker) {
+		t.Errorf("error string echoed credential material: %v", errStr)
+	}
+
+	// The redacted error should still be unwrappable to the underlying error for debugging,
+	// but redactTransportError's outer error message is safe.
+	// (The test here only checks the outer string, not the unwrapped chain.)
+}

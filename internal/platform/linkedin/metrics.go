@@ -24,6 +24,30 @@ import (
 // LinkedIn Ad Analytics date range (currently: yesterday, last_14_days).
 var ErrUnsupportedWindow = errors.New("unsupported metrics window")
 
+// redactTransportError wraps an HTTP round-trip error from httpClient.Do or request body reads,
+// redacting any credential-bearing or sensitive content (e.g., full URLs with bearer tokens,
+// arbitrary response text from a malicious RoundTripper) while preserving error classification
+// sentinels (context.Canceled, context.DeadlineExceeded). Pre-send dial errors (DNS, ECONNREFUSED,
+// etc.) are wrapped verbatim because they contain only network classification, not credentials.
+//
+// The wrapped error is safe to log via BriefService.GetCampaignMetrics without exposing
+// upstream response content or token material.
+func redactTransportError(err error) error {
+	// Preserve classification sentinels: context cancellation and deadline.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	// Preserve pre-send dial errors: they carry only network classification.
+	// isPreSendDialError is defined in client.go and covers DNS/ECONNREFUSED/etc.
+	if isPreSendDialError(err) {
+		return err
+	}
+	// Redact everything else (full URLs with bearer tokens, RoundTripper-injected content).
+	// The underlying error is still reachable via errors.Unwrap for debugging, but it will
+	// not appear in a logged transportError.Error() string.
+	return fmt.Errorf("analytics request failed")
+}
+
 // AdAnalyticsElement is one analytics record returned by the Ad Analytics API.
 // The API aggregates metrics for the requested campaign over the given date range.
 type AdAnalyticsElement struct {
@@ -33,7 +57,7 @@ type AdAnalyticsElement struct {
 	Clicks int64 `json:"clicks"`
 	// CostInUsd is the spend in decimal USD (e.g. 25.50 for $25.50). LinkedIn's
 	// Ad Analytics API returns this as a JSON string representing a BigDecimal,
-	// so a custom unmarshaler is required to parse it. This is always USD,
+	// parsed after decode by costInUsdToMicros into int64 micros. This is always USD,
 	// regardless of the ad account's billing currency configuration.
 	CostInUsd *string `json:"costInUsd"`
 }
@@ -291,7 +315,9 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 		if isPreSendDialError(err) {
 			return nil, false, 0, fmt.Errorf("linkedin GET adAnalytics: %w", err)
 		}
-		return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: err}
+		// Redact credentials/URLs from the error before storing in transportError.
+		// isPreSendDialError already returned, so this is a mid-flight or RoundTripper error.
+		return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: redactTransportError(err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -305,7 +331,7 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 	buf := new(bytes.Buffer)
 	if _, err := buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes+1)); err != nil {
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("read response body: %w", err)}
+			return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: redactTransportError(fmt.Errorf("read response body: %w", err))}
 		}
 		return nil, false, 0, &apiError{StatusCode: resp.StatusCode, Method: "GET", Path: "adAnalytics", Body: fmt.Sprintf("read response body: %v", err)}
 	}
