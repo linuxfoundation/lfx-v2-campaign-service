@@ -26,11 +26,15 @@ so a drifting signature would not fail the build, it would silently return 400 f
 **Fix** — The non-`*PartialMutateError` fallback marked the whole batch `unconfirmed`. Two
 large classes of error are provably "nothing applied": pre-send failures (credential
 resolution, request construction, an already-cancelled context) and definite request-level
-4xx rejections. The plan sets `partialFailure: true`, which makes Google evaluate the
-operations independently and report per-OPERATION errors at their own index — but only once
-the REQUEST is accepted. A 4xx on the call itself (expired credential, malformed request,
-quota refusal) means no operation was evaluated at all, so partial failure does not soften
-it. Reporting those as `unconfirmed` is not conservative — it tells the operator to go
+4xx rejections **other than 429**. The plan sets `partialFailure: true`, which makes Google
+evaluate the operations independently and report per-OPERATION errors at their own index — but
+only once the REQUEST is accepted. A definite 4xx on the call itself (expired credential,
+malformed request, an unauthorized customer) means no operation was evaluated at all, so
+partial failure does not soften it. 429 is deliberately NOT in that set and must not be used
+as the example: `createOutcomeAmbiguous` (`campaign.go:383`) tests the status code alone and
+classifies every 429 as ambiguous, because a rate-limit refusal may be applied before the API
+sees the request or after it has accepted and counted it, and the response does not say which.
+Reporting the rest as `unconfirmed` is not conservative — it tells the operator to go
 check Google Ads for a change that certainly did not happen, and an `unconfirmed` that fires
 on every expired credential is noise that gets ignored, including the once it was real. The
 fallback now defers to `googleads.IsOutcomeUnconfirmed`, the same helper the create and

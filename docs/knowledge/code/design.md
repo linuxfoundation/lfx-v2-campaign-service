@@ -38,11 +38,21 @@ corresponding handler therefore does not build; there is no "design-only" PR for
 OpenAPI copies under `cmd/campaign-service/kodata/gen/http/` stale, and `cmd/okfgen` regenerates
 the knowledge bundle, not Goa output.
 
-**An optional attribute generates a pointer field.** Marking an always-present response field
-optional does not merely mis-document it in OpenAPI: the generated struct field is `*T` and a
-handler assigning a plain value does not compile. Only genuinely nullable values should stay
-optional. The same holds on the request side — an optional request attribute is `*T`, so the
-domain type it converts into must be a pointer too, or the "omitted" and "explicitly zero"
-cases collapse into one.
+**An optional attribute generates a pointer field, and optional means ABSENT — not `null`.**
+Marking an always-present response field optional does not merely mis-document it in OpenAPI: the
+generated struct field is `*T` and a handler assigning a plain value does not compile. Only
+values the service genuinely omits should stay optional. The same holds on the request side — an
+optional request attribute is `*T`, so the domain type it converts into must be a pointer too, or
+the "omitted" and "explicitly zero" cases collapse into one.
+
+The distinction between *absent* and *null* is the part that reaches consumers. Goa generates the
+HTTP field with `omitempty` (`gen/http/lfx_v2_campaign_service_briefs/server/types.go:225`), so a
+nil pointer drops the property from the JSON object entirely; it never serialises as
+`"field": null`, and Goa's DSL has no way to model "present with a null value". A UI contract
+written as `field: T | null` is therefore a DIFFERENT shape from what an optional attribute
+produces, and the gap has to be closed deliberately — normally by coalescing at the client
+boundary (`value ?? null`), since `undefined ?? null` is already `null` and the rendered result
+is identical. Say which one the endpoint means in its own documentation; do not leave the first
+consumer to infer it from a missing key.
 
 See [design](../../../design).

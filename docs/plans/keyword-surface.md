@@ -3,7 +3,13 @@ SPDX-License-Identifier: MIT -->
 
 # Keyword Surface Implementation Plan (LFXV2-2023 Roadmap Item 4)
 
-**Status:** Research phase complete. Plan ready for human decision on dependencies and phasing.
+**Status:** Research complete. Dependencies and phasing are **settled inside this plan** — PR #69
+has merged, so nothing here is blocked, and the three-PR split below is fixed. Four decisions
+remain genuinely open and are the only things a human still has to answer; they are stated in full
+under *Open Questions for Human Decision*: **1** bid currency and precision (Phase 2 only),
+**3** pagination for large keyword sets, **4** metrics-window alignment (which day counts, and
+whether the window ends today or yesterday), and **8** the `ctr` ratio-vs-percent identity gap,
+which is the only one that changes the delivery shape.
 
 **Goal:** Expose keywords for a campaign and actions to manage them, replacing the UI's direct Google Ads API calls at:
 - `GET /api/campaigns/keywords` (list keywords with metrics)
@@ -386,7 +392,7 @@ var CampaignKeyword = Type("campaign-keyword", func() {
   Attribute("status", String, "Keyword status (enabled, paused, removed)", func() {
     Enum("enabled", "paused", "removed")
   })
-  Attribute("quality_score", Int32, "Google Ads quality score (1–10, or null if unavailable)")
+  Attribute("quality_score", Int32, "Google Ads quality score (1–10; the property is ABSENT when Google withholds it, not present as null)")
   Attribute("ad_group_id", String, "Google Ads ad group ID that owns this criterion (numeric, stringified) — required to address the criterion on a later action")
   Attribute("ad_group_name", String, "Ad group name (for display)")
   Attribute("impressions", Int64, "Impressions in window")
@@ -412,14 +418,32 @@ var CampaignKeyword = Type("campaign-keyword", func() {
   // UNDER-reports the metric the keyword table exists to optimise against. Float64 all the way
   // through — model, totals, and dispatcher accumulation.
   Attribute("conversions", Float64, "Conversions in window (fractional; Google attributes partial conversions)")
-  Attribute("max_cpc_micros", Int64, "Criterion-level max CPC bid in micros of the ad account's currency (null when the keyword bids at ad-group level)")
+  Attribute("max_cpc_micros", Int64, "Criterion-level max CPC bid in micros of the ad account's currency; the property is ABSENT when the keyword bids at ad-group level")
   Attribute("google_ads_url", String, "Direct link to keyword in Google Ads UI")
   // Everything the report always returns is Required. An optional attribute generates a
   // POINTER field, so leaving avg_cpc_micros / spend_micros / conversions / google_ads_url
   // optional both fails to compile against a handler assigning plain values AND tells the
-  // OpenAPI consumer that always-present data may be absent. Only genuinely nullable
-  // values stay optional: quality_score (Google withholds it for new keywords) and
+  // OpenAPI consumer that always-present data may be absent. Only the two values Google
+  // genuinely omits stay optional: quality_score (withheld for new keywords) and
   // max_cpc_micros (unset when the ad group bids at group level).
+  //
+  // OPTIONAL MEANS OMITTED, NOT NULL — and the UI contract transcribed at the top of this
+  // plan says `qualityScore: number | null`, which is a DIFFERENT shape. A Goa optional
+  // response attribute generates its HTTP field with `omitempty` (see
+  // `gen/http/lfx_v2_campaign_service_briefs/server/types.go:225`), so a nil pointer drops
+  // the property from the JSON object entirely; it never serialises as `"quality_score":
+  // null`. Goa's DSL has no "present but null" modelling, so there are exactly two honest
+  // options and the choice is Open Question 8's smaller sibling:
+  //   - ACCEPT OMISSION (recommended). `quality_score` and `max_cpc_micros` are absent
+  //     rather than null, and the UI reads them as `value ?? null` at the boundary — one
+  //     line per field, and `undefined ?? null` is already `null`, so the rendered result
+  //     is identical. The migration note must say so; a consumer doing `'quality_score' in
+  //     row` or `Object.keys` comparisons will see a different shape.
+  //   - MODEL EXPLICIT NULLABILITY. Requires a hand-maintained OpenAPI override or a
+  //     sentinel value (`-1`) that every consumer must special-case. Both cost more than
+  //     the boundary coalesce and neither is idiomatic here.
+  // Whichever lands, it is stated in the UI cutover doc — not left for the first consumer
+  // to discover from a missing key.
   Required("criterion_id", "keyword", "match_type", "status", "ad_group_id", "ad_group_name",
     "impressions", "clicks", "ctr", "avg_cpc_micros", "spend_micros", "conversions", "google_ads_url")
 })
@@ -479,6 +503,15 @@ var KeywordActionResult = Type("keyword-action-result", func() {
 
 // Response for update-campaign-keywords
 var CampaignKeywordActionResult = Type("campaign-keyword-action-result", func() {
+  // Deprecated, and RETAINED for the same reason as the per-item `success` below it: the
+  // current UI reads a top-level boolean off this response, and dropping it here while
+  // claiming per-item compatibility would break the client this surface exists to replace.
+  // Defined as "every outcome is applied" — so a batch containing ANY failed or unconfirmed
+  // operation is false. It is deliberately NOT `failed == 0`: that would report a batch with
+  // unconfirmed operations as a clean success, which is the exact fold the three-state design
+  // exists to prevent. New consumers read the counts and `results`; this is the field to drop
+  // once the UI migrates, together with the per-item one.
+  Attribute("success", Boolean, "Deprecated: true iff succeeded == total. Read the counts instead")
   Attribute("total", Int32, "Total actions requested")
   Attribute("succeeded", Int32, "Number with outcome == applied")
   Attribute("failed", Int32, "Number with outcome == failed (does NOT include unconfirmed)")
@@ -488,7 +521,7 @@ var CampaignKeywordActionResult = Type("campaign-keyword-action-result", func() 
   // total == succeeded + failed + unconfirmed, always.
   Attribute("unconfirmed", Int32, "Number whose fate is unknown — verify in Google Ads before retrying")
   Attribute("results", ArrayOf(KeywordActionResult), "Per-action outcome")
-  Required("total", "succeeded", "failed", "unconfirmed", "results")
+  Required("success", "total", "succeeded", "failed", "unconfirmed", "results")
 })
 ```
 
@@ -1031,14 +1064,21 @@ const keywordReportQuery = `
          metrics.average_cpc
   FROM keyword_view
   WHERE campaign.id = %s
-    AND segments.date BETWEEN '%s' AND '%s'
+    AND segments.date DURING %s
   ORDER BY metrics.impressions DESC`
 ```
 
-`campaignID` and the two dates must be validated before interpolation — the same GAQL-injection
-guard `internal/platform/googleads/metrics.go` already applies to its window literal. `campaignID`
-is digits-only; the dates are produced internally by `dateRangeForDays` and are never
-caller-supplied.
+`campaignID` and the window literal must be validated before interpolation — the same
+GAQL-injection guard `internal/platform/googleads/metrics.go` already applies to its own window
+literal. `campaignID` is digits-only. The window is **not** a caller-supplied string and not a
+computed date pair: `days` arrives as a closed `Enum(7, 14, 30)` and maps to exactly one of
+`LAST_7_DAYS` / `LAST_14_DAYS` / `LAST_30_DAYS` through a total switch whose default is an error,
+so nothing outside that three-element set can ever reach the query text.
+
+Using the literals rather than interpolated dates is a correctness decision, not a stylistic one —
+see the note on `dateRangeForDays` below: GAQL resolves `segments.date` in the **customer
+account's** timezone, and dates computed from `time.Now().UTC()` disagree with it for several
+hours of every day.
 
 ```go
 // ---- criterion authorization ------------------------------------------------------
@@ -1081,8 +1121,13 @@ func (d *GoogleAdsDispatcher) ListKeywords(ctx context.Context, projectID string
     return nil, fmt.Errorf("could not resolve google ads client: %w", err)
   }
 
-  startDate, endDate := dateRangeForDays(days)
-  rows, err := client.ListCampaignKeywords(ctx, campaign.PlatformCampaignID, startDate, endDate)
+  // The Goa enum already constrains `days`, but this switch is total with an erroring
+  // default so the client cannot be handed an unmapped window by a direct (non-HTTP) caller.
+  window, err := gaqlWindowForDays(days)
+  if err != nil {
+    return nil, err
+  }
+  rows, err := client.ListCampaignKeywords(ctx, campaign.PlatformCampaignID, window)
   if err != nil {
     return nil, err
   }
@@ -1218,6 +1263,18 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
   // round trips will not fit the 30s keywordCallTimeout and burns 100x the API quota for
   // one user gesture. MutateKeywordCriteria chunks internally at the upstream operation
   // limit; the results slice stays index-aligned with ops across chunks.
+  //
+  // Nothing survived authorization and the action-vocabulary check, so there is nothing to
+  // mutate. Returning here is not an optimisation: `ops` is empty only when EVERY requested
+  // criterion was refused, and the foreign-criterion test asserts precisely that such a
+  // request "must fail, not mutate". Falling through would send an empty mutate — a call
+  // Google Ads is entitled to reject as malformed, and one that would put a request-level
+  // error in front of per-action outcomes that are already decided and correct. `outcomes`
+  // is index-aligned with `actions` and every entry is already `failed` with its reason.
+  if len(ops) == 0 {
+    return outcomes, nil
+  }
+
   res, merr := client.MutateKeywordCriteria(ctx, ops)
   switch {
   case merr != nil:
@@ -1251,13 +1308,22 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
     //   - PRE-SEND failures. Credential resolution, account validation, request
     //     construction, a context already cancelled — no HTTP request left this process,
     //     so no keyword changed.
-    //   - DEFINITE upstream REJECTIONS. `partialFailure: true` makes Google apply the
-    //     operations INDEPENDENTLY and report per-operation errors at their own index —
-    //     but only once the request itself is accepted. A request-level 4xx (expired
-    //     credential, malformed request, a quota refusal) is a rejection of the CALL, so
-    //     no operation in it was evaluated and none committed. Partial failure changes
-    //     how a bad OPERATION is reported; it does not make a rejected REQUEST partly
-    //     apply.
+    //   - DEFINITE upstream REJECTIONS — a request-level 4xx OTHER THAN 429. `partialFailure:
+    //     true` makes Google apply the operations INDEPENDENTLY and report per-operation
+    //     errors at their own index, but only once the request itself is accepted. A
+    //     definite 4xx (expired credential, malformed request, an unauthorized customer) is
+    //     a rejection of the CALL, so no operation in it was evaluated and none committed.
+    //     Partial failure changes how a bad OPERATION is reported; it does not make a
+    //     rejected REQUEST partly apply.
+    //
+    //     429 IS THE EXCEPTION, and it is deliberate rather than an oversight:
+    //     `IsOutcomeUnconfirmed` classifies it as AMBIGUOUS. Google Ads returns 429 for
+    //     throttling that can be applied at the load balancer (nothing reached the API) or
+    //     after the request was accepted and counted, and the response body does not say
+    //     which. So a rate-limit refusal is not usable as the example of a definite
+    //     rejection — it is the one 4xx that behaves like a 5xx. This prose must not be
+    //     read as authorising a `429 → failed` mapping; the helper is the authority and it
+    //     says unconfirmed.
     //
     // Blanket-marking those `unconfirmed` is not conservative, it is wrong in the
     // expensive direction: it tells the operator "check Google Ads before retrying" for
@@ -1268,8 +1334,10 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
     //
     // So the fallback asks the client, which already owns this classification:
     // `googleads.IsOutcomeUnconfirmed` (client.go / campaign.go) reports true for
-    // transport failures, 5xx, 429-after-send, cancellation mid-flight, and malformed 2xx —
-    // and false for pre-send and definite-rejection errors. Same helper the create and
+    // transport failures, 5xx, EVERY 429 (`campaign.go:383` tests the status code alone,
+    // with no "was it retried" qualifier), a 3xx on a mutating method, cancellation
+    // mid-flight, and malformed 2xx — and false for pre-send failures and for definite 4xx
+    // rejections other than 429. Same helper the create and
     // toggle paths use, so keyword writes cannot drift from the rest of the dispatcher.
     //
     // The *PartialMutateError branch asks the SAME question, and an earlier draft of this
@@ -1355,41 +1423,90 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
   return outcomes, nil
 }
 
-// dateRangeForDays returns an INCLUSIVE start/end pair for a reporting window.
+// USE THE GAQL LITERALS. `segments.date DURING LAST_30_DAYS` is what this window should be,
+// and the explicit-date helper below is kept only to show why.
 //
-// GAQL's `segments.date BETWEEN a AND b` includes both endpoints, so a 30-day window is
-// `now-29 .. now`, not `now-30 .. now` — the latter is 31 calendar dates and would
-// disagree with Google's own LAST_30_DAYS and with this service's MetricsWindow mapping.
-// The clock is read ONCE: two separate time.Now() calls can straddle midnight UTC and
-// produce a window one day wider than requested.
-func dateRangeForDays(days int32) (string, string) {
-  now := time.Now().UTC()
-  end := now.Format("2006-01-02")
-  start := now.AddDate(0, 0, -(int(days) - 1)).Format("2006-01-02")
-  return start, end
+// GAQL interprets `segments.date` as a CALENDAR DATE in the Google Ads customer account's own
+// timezone (`customer.time_zone`), which is set per account and is very often not UTC. The
+// helper derives its dates from `time.Now().UTC()`, so for every hour between the account's
+// local midnight and UTC midnight the two disagree about what "today" is, and the requested
+// window silently shifts by a day — in a period of the day that is guaranteed to occur daily.
+// That defeats the very legacy-window alignment Open Question 4(b) is about: the window is
+// off by one on one side or the other for part of every day, which is worse than either
+// choice made deliberately.
+//
+// Two correct options, in order of preference:
+//
+//  1. `DURING LAST_7_DAYS | LAST_14_DAYS | LAST_30_DAYS`. Google resolves the calendar in the
+//     account's timezone, which is the definition the data is stored under; there is no
+//     clock in this process at all, so there is nothing to get wrong and nothing to test
+//     around midnight. This also gives completed-day semantics for free, which is Open
+//     Question 4(b)'s recommendation, and it is exactly what the UI's `resolveDateRange`
+//     already emits — so the numbers tie out against the screen being replaced.
+//  2. If include-today ever wins 4(b), resolve `customer.time_zone` first (one extra field on
+//     the account query, cached with the client) and compute the dates in THAT location, not
+//     UTC. `LAST_30_DAYS` excludes today, so the literals cannot express include-today and
+//     explicit dates become unavoidable — but they must then be account-local dates.
+//
+// So the implementation is option 1, and it has no clock in it:
+func gaqlWindowForDays(days int32) (string, error) {
+  switch days {
+  case 7:
+    return "LAST_7_DAYS", nil
+  case 14:
+    return "LAST_14_DAYS", nil
+  case 30:
+    return "LAST_30_DAYS", nil
+  default:
+    // Unreachable through the HTTP surface — the Goa Enum(7, 14, 30) rejects anything else
+    // before the handler runs — but total, so a direct caller cannot interpolate an
+    // unvalidated window into GAQL. The literal returned is one of three constants; it is
+    // never derived from input.
+    return "", fmt.Errorf("google-ads: unsupported keyword window %d days (want 7, 14 or 30)", days)
+  }
 }
+
+// The explicit-date form below is what NOT to write. It is option 2 with the timezone step
+// MISSING — the shape a reader reaches for first — kept so it is not reintroduced:
+//
+//   func dateRangeForDays(days int32) (string, string) {
+//     now := time.Now().UTC()                                             // WRONG: UTC, not the account
+//     return now.AddDate(0, 0, -(int(days)-1)).Format("2006-01-02"), now.Format("2006-01-02")
+//   }
+//
+// For the record on the arithmetic, which is right and stays right if option 2 is ever
+// needed: `segments.date BETWEEN a AND b` includes both endpoints, so a 30-day window is
+// `now-29 .. now`, not `now-30 .. now` — the latter is 31 calendar dates. And the clock is
+// read ONCE, because two separate `time.Now()` calls can straddle a midnight and produce a
+// window one day wider than requested. Both remain true; the timezone the clock is read in
+// is the part that was wrong.
 ```
 
-**Note on `LAST_30_DAYS` semantics — this CHANGES the reporting window.** Google's own
-`LAST_30_DAYS` excludes today, and so does the current UI: `resolveDateRange` maps `days` to the
-GAQL literals `LAST_7_DAYS` / `LAST_14_DAYS` / `LAST_30_DAYS`
-(`campaign-metrics.service.ts:128-132`), all of which end YESTERDAY. The window computed above
-*includes* the partial current day, so the same `days=30` request returns a different set of
-rows than the screen it is meant to replace — numbers will not tie out against the existing view
-during any overlap.
+**Note on `LAST_30_DAYS` semantics — the window ends YESTERDAY.** Google's own `LAST_30_DAYS`
+excludes today, and so does the current UI: `resolveDateRange` maps `days` to the same three GAQL
+literals (`campaign-metrics.service.ts:128-132`). Emitting the literals therefore matches the
+screen this endpoint replaces, row for row, which is the outcome Open Question 4(b) recommends —
+"the new page disagrees with the old page" is the failure mode that costs the most trust.
 
-That may still be the right call: the keyword table is used for intra-day decisions, and a
-30-day window that silently stops at midnight is a real complaint. But it is a **behaviour
-change requiring an explicit decision and a test**, not a note. Open Question 4 as originally
-written asked only which day COUNTS to allow, which is the smaller question; it now also has to
-answer include-today vs. completed-days. Whichever way it lands, pin it:
+It also removes the timezone hazard entirely, and that is the stronger reason. Explicit dates
+computed from `time.Now().UTC()` are compared by GAQL against calendar dates in the **customer
+account's** timezone, so between the account's local midnight and UTC midnight they name a
+different day — every day, for as many hours as the offset. A window that is quietly off by one
+for part of each day is worse than either boundary chosen on purpose.
 
-- If completed-days wins, `dateRangeForDays` ends at `now-1` and a test asserts the end date is
-  not today.
-- If include-today wins, a test asserts the end date IS today, and the migration note says
-  plainly that keyword numbers will differ from the legacy endpoint by one partial day.
+Open Question 4(b) stays open, because include-today is a defensible product call for a surface
+used in the optimize loop. But the cost is now explicit and larger than it looked: choosing
+include-today means giving up the literals, resolving `customer.time_zone` per account, caching
+it with the client, and computing dates in that location. Whichever way it lands, pin it with a
+test:
 
-Either way the divergence from `MetricsWindow`'s Google-aligned semantics elsewhere in this
+- Completed-days (the current design): assert the emitted GAQL contains the expected `DURING
+  LAST_N_DAYS` literal and no interpolated date, so nobody swaps a clock back in.
+- Include-today: assert the end date IS today **in the account's timezone**, with a fake clock and
+  a non-UTC location — a test that reads `time.Now().UTC()` on both sides passes against the very
+  defect it should catch.
+
+Either way the relationship to `MetricsWindow`'s Google-aligned semantics elsewhere in this
 service is documented at the endpoint, so a reader comparing two surfaces is not left guessing.
 
 **File to edit:** `internal/dispatch/status_toggler_guard_test.go` — **not** `googleads.go`.
@@ -1703,17 +1820,29 @@ payload. This question only existed while authorization was missing from the des
 
 **Decision Needed (b) — where the window ENDS.** This is the larger half and was missing from the
 original framing. The UI's `resolveDateRange` (`campaign-metrics.service.ts:128-132`) emits
-`LAST_7_DAYS` / `LAST_14_DAYS` / `LAST_30_DAYS`, all of which END YESTERDAY. The explicit-date
-computation proposed above ends TODAY. Same `days=30`, different rows.
+`LAST_7_DAYS` / `LAST_14_DAYS` / `LAST_30_DAYS`, all of which END YESTERDAY. An explicit-date
+computation ends TODAY. Same `days=30`, different rows.
 
-- Preserve completed-day semantics (end at `now-1`): numbers tie out against the existing screen;
-  intra-day changes are invisible until the next day.
+- Preserve completed-day semantics: numbers tie out against the existing screen; intra-day
+  changes are invisible until the next day. **This is what the design above implements**, by
+  emitting the GAQL literals rather than dates.
 - Include today: better for the optimize loop this surface exists for, but keyword numbers will
   not reconcile with the legacy endpoint, and that has to be stated in the UI.
 - **Recommendation:** preserve completed-day semantics for the first cut, because "the new page
   disagrees with the old page" is the failure mode that costs the most trust, and switching to
-  include-today later is additive. **Either choice ships with a test asserting the end date**, so
-  the window cannot drift silently.
+  include-today later is additive.
+
+**The cost of include-today is higher than it looks, and it is a timezone cost, not a date-math
+cost.** `LAST_N_DAYS` excludes today, so include-today cannot be expressed with the literals and
+forces explicit dates — and GAQL compares `segments.date` against calendar dates in the
+**customer account's** timezone (`customer.time_zone`), which is per-account and usually not UTC.
+Dates derived from `time.Now().UTC()` therefore name a different day for every hour between the
+account's local midnight and UTC midnight, shifting the window by one on some fraction of every
+single day. Choosing include-today means also resolving `customer.time_zone`, caching it with the
+client, and computing in that location. **Either choice ships with a test** — for the literals,
+that the emitted GAQL carries `DURING LAST_N_DAYS` and no interpolated date; for include-today,
+that the end date is today *in a non-UTC account timezone*, using a fake clock, since a test that
+reads `time.Now().UTC()` on both sides passes against the exact defect it exists to catch.
 
 ### 5. Criterion ID vs. Resource Name
 
