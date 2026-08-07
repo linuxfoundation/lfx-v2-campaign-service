@@ -1028,5 +1028,17 @@ func (o *Orchestrator) ReadCampaignMetrics(ctx context.Context, projectID string
 	}
 	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
 	defer cancel()
-	return reader.ReadMetrics(callCtx, projectID, platform, campaign, window)
+	m, rerr := reader.ReadMetrics(callCtx, projectID, platform, campaign, window)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if m == nil {
+		// A MetricsReader returning (nil, nil) is a contract violation, not success — the
+		// caller (GetCampaignMetrics) dereferences the result unconditionally on a nil error,
+		// same as the dispatch path already guards against a nil successful Dispatch result
+		// (see the analogous check for CampaignBrief dispatch). Convert it into an ordinary
+		// error so the handler returns its declared 503 instead of panicking the request.
+		return nil, fmt.Errorf("%s metrics reader returned a nil result with no error", platform)
+	}
+	return m, nil
 }

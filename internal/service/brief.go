@@ -495,6 +495,7 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 	if gerr != nil {
 		return nil, mapBriefErr(gerr)
 	}
+	// Default to last_30_days when no window is specified by the caller.
 	window := model.MetricsWindowLast30Days
 	if p.Window != nil {
 		window = model.MetricsWindow(*p.Window)
@@ -508,7 +509,14 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 		case errors.Is(merr, ErrMetricsUnsupported):
 			return nil, &briefs.BadRequestError{Code: "400", Message: "metrics reads are not supported for this campaign's platform"}
 		case errors.Is(merr, ErrMetricsWindowUnsupported):
-			return nil, &briefs.BadRequestError{Code: "400", Message: "this window is not supported for the campaign's platform: " + merr.Error()}
+			// merr's wrapped detail (from the adapter) is logged server-side, not concatenated
+			// into the client-facing message: an adapter error can carry internal detail (a
+			// platform API's own error text, an allow-list of internal literals) that isn't
+			// meant for an API client.
+			slog.WarnContext(ctx, "campaign metrics window unsupported by platform",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "window", window, "error", merr)
+			return nil, &briefs.BadRequestError{Code: "400", Message: "this window is not supported for the campaign's platform"}
 		case errors.Is(merr, ErrCampaignNotProvisioned):
 			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id yet"}
 		default:
@@ -521,11 +529,14 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 	return &briefs.CampaignMetrics{
 		CampaignID:         existing.ID,
 		PlatformCampaignID: existing.PlatformCampaignID,
-		Window:             string(m.Window),
-		Impressions:        m.Impressions,
-		Clicks:             m.Clicks,
-		CostMicros:         m.CostMicros,
-		Ctr:                m.Ctr,
+		// The validated request window, not m.Window: adapters are not required to echo it
+		// back, and trusting them would emit "" for one that doesn't, violating the response
+		// enum and causing generated clients to reject an otherwise successful 200.
+		Window:      string(window),
+		Impressions: m.Impressions,
+		Clicks:      m.Clicks,
+		CostMicros:  m.CostMicros,
+		Ctr:         m.Ctr,
 	}, nil
 }
 

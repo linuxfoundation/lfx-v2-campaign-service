@@ -2005,6 +2005,29 @@ func TestBriefService_GetCampaignMetrics_HappyPath(t *testing.T) {
 	}
 }
 
+func TestBriefService_GetCampaignMetrics_DefaultWindowIsLast30Days(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	disp := &metricsOnlyDispatcher{metrics: &model.CampaignMetrics{
+		CampaignID: "ga-1", Window: model.MetricsWindowLast30Days, Impressions: 200, Clicks: 20, CostMicros: 9000000, Ctr: 0.1,
+	}}
+	s := newMetricsService(camp, disp)
+	res, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if disp.gotWindow != model.MetricsWindowLast30Days {
+		t.Errorf("dispatcher got window %q, want last_30_days", disp.gotWindow)
+	}
+	if res.Window != "last_30_days" {
+		t.Errorf("result Window = %q, want last_30_days", res.Window)
+	}
+}
+
 func TestBriefService_GetCampaignMetrics_PlatformUnsupportedIs400(t *testing.T) {
 	camp := &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
