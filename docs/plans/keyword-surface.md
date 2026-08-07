@@ -155,10 +155,16 @@ Method("list-campaign-keywords", func() {
     briefIDAttr()
     campaignIDAttr()
     
-    // Reporting window, defaults to 30 days
-    Attribute("days", Int32, "Reporting window in days (7, 14, 30)", func() {
+    // Reporting window. NO `Default(30)` here, deliberately: a Goa attribute with a
+    // default is generated as a VALUE (`Days int32`), not a pointer, because Goa fills
+    // the default in during decoding so the field can never be absent. The handler below
+    // checks `p.Days != nil` and dereferences it, which does not compile against a
+    // non-pointer field. Either the DSL owns the default or the handler does, and the
+    // handler is the better owner here: it already validates the enum a second time for
+    // non-generated callers, so keeping both the default and the validation in one place
+    // means there is exactly one statement of what "unspecified" means.
+    Attribute("days", Int32, "Reporting window in days (7, 14, 30); defaults to 30", func() {
       Enum(7, 14, 30)
-      Default(30)
     })
     
     Required("project_id", "brief_id", "campaign_id")
@@ -1352,7 +1358,9 @@ contract. The plan is itself a durable decision record, so it ships with:
 
 - `docs/knowledge/log/2026-08-06-lfxv2-2023-keyword-surface-plan.md` — what was decided and, more
   usefully, the contract facts the first drafts got wrong (GAQL is snake_case; criterion resource
-  names are composite; `make apigen` not `okfgen`; optional Goa attributes generate pointers; a
+  names are composite; `make apigen` not `okfgen`; optional Goa attributes generate pointers while
+  DEFAULTED ones generate values, so a `Default()` and a `!= nil` handler check cannot both be
+  right; a
   Goa design PR cannot land without its handlers; `cpc_bid_micros` is not
   `effective_cpc_bid_micros`; the bulk-mutation rule needs answering, not citing).
 
