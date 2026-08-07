@@ -350,8 +350,15 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 	// Checking the stored value where it is read is what makes it classifiable.
 	loginCustomerID := strings.TrimSpace(res.providerConfig["login_customer_id"])
 	if loginCustomerID != "" && !storedCustomerIDRE.MatchString(loginCustomerID) {
-		return nil, fmt.Errorf("%w: %w: stored login_customer_id %q must be digits only (no dashes or spaces)",
-			domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid, loginCustomerID)
+		// The offending VALUE is deliberately not echoed. A manager id is
+		// account-identifying configuration, this error reaches the discovery
+		// endpoint's log, and the rest of this path keeps error text to a fixed
+		// sentinel vocabulary with no payload attached (see the unusable-reason
+		// vocabulary log fragment). Naming the field and the rule is everything an
+		// operator needs to go fix the row; the value adds nothing they do not
+		// already have and puts account data in a log line.
+		return nil, fmt.Errorf("%w: %w: stored login_customer_id is invalid (must be digits only, no dashes or spaces)",
+			domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid)
 	}
 	return googleads.NewClient(
 		googleads.Credentials{

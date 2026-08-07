@@ -1800,8 +1800,8 @@ func TestGoogleAds_ListAccounts_UnusableReasonsAreClassifiedWithoutPlaintext(t *
 			}
 			if !errors.Is(err, tc.want) {
 				t.Errorf("error = %v, want errors.Is(err, %v): the handler logs a reason token "+
-					"derived from these sentinels, and an unclassified error logs nothing an "+
-					"operator can act on", err, tc.want)
+					"derived from these sentinels, and an unclassified error logs nothing that "+
+					"an operator can act on", err, tc.want)
 			}
 			if !errors.Is(err, domain.ErrConnectionNotUsable) {
 				t.Errorf("error = %v, want errors.Is(err, domain.ErrConnectionNotUsable): the "+
