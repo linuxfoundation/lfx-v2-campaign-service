@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -314,7 +315,7 @@ func TestBuildUTMURLPreservesSlashInQueryValue(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCreateCampaignHappyPath(t *testing.T) {
-	authCapture := make(chan string, 8)
+	authCapture := make(chan string, 16)
 	campaignCap := newBodyCapture()
 	adsetCap := newBodyCapture()
 	creativeCap := newBodyCapture()
@@ -326,14 +327,18 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch {
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777") && strings.Contains(r.URL.RawQuery, "account_status"):
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Campaign/ad-set name lookup for reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777"):
+			// Account preflight check
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
 			campaignCap.set(decodeBody(t, r))
-			_, _ = io.WriteString(w, `{"id":"camp_123"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
 			adsetCap.set(decodeBody(t, r))
-			_, _ = io.WriteString(w, `{"id":"adset_456"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			creativeCap.set(decodeBody(t, r))
 			n := atomic.AddInt32(&creativeCount, 1)
@@ -392,10 +397,10 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 	if gotAuth != "Bearer tok-abc" {
 		t.Errorf("Authorization header = %q", gotAuth)
 	}
-	if res.CampaignID != "camp_123" {
-		t.Errorf("campaign id = %q, want camp_123", res.CampaignID)
+	if res.CampaignID != "120100000000123" {
+		t.Errorf("campaign id = %q, want 120100000000123", res.CampaignID)
 	}
-	if res.AdSetID != "adset_456" {
+	if res.AdSetID != "120200000000456" {
 		t.Errorf("adset id = %q, want adset_456", res.AdSetID)
 	}
 	if res.AdCount != 2 {
@@ -460,7 +465,7 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 	if adBody == nil {
 		t.Fatalf("no ad body captured")
 	}
-	if adBody["adset_id"] != "adset_456" {
+	if adBody["adset_id"] != "120200000000456" {
 		t.Errorf("ad adset_id = %v, want adset_456", adBody["adset_id"])
 	}
 	creative, ok := adBody["creative"].(map[string]any)
@@ -483,13 +488,16 @@ func TestCreateCampaignNormalizesEventName(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
 			adsetCap.set(decodeBody(t, r))
-			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			creativeCap.set(decodeBody(t, r))
 			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
@@ -562,10 +570,13 @@ func TestCreateCampaignAdSetFailureReturnsPartialResult(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777") && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency":"USD"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_orphan"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000777"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
 			// Ad set creation fails after the campaign already exists.
 			w.WriteHeader(http.StatusBadRequest)
@@ -601,7 +612,7 @@ func TestCreateCampaignAdSetFailureReturnsPartialResult(t *testing.T) {
 	if res == nil {
 		t.Fatal("expected a non-nil partial result carrying the orphaned campaign ID, got nil")
 	}
-	if res.CampaignID != "camp_orphan" {
+	if res.CampaignID != "120100000000777" {
 		t.Errorf("partial result CampaignID = %q, want camp_orphan", res.CampaignID)
 	}
 	if res.AdSetID != "" {
@@ -620,10 +631,13 @@ func TestCreateCampaignAdSetAmbiguousIsUnconfirmed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777") && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency":"USD"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_orphan"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000777"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
 			// 5xx — Meta may have committed the ad set before erroring.
 			w.WriteHeader(http.StatusInternalServerError)
@@ -650,7 +664,7 @@ func TestCreateCampaignAdSetAmbiguousIsUnconfirmed(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when ad set creation returns 5xx")
 	}
-	if res == nil || res.CampaignID != "camp_orphan" {
+	if res == nil || res.CampaignID != "120100000000777" {
 		t.Fatalf("expected a partial result carrying the orphaned campaign id, got %+v", res)
 	}
 	// The error must convey UNCONFIRMED, not a definite "failed".
@@ -669,10 +683,13 @@ func TestCreateCampaignAdSetNoIDIsUnconfirmed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777") && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1,"currency":"USD"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_orphan"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000777"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
 			_, _ = io.WriteString(w, `{}`) // 2xx, no id
 		default:
@@ -697,7 +714,7 @@ func TestCreateCampaignAdSetNoIDIsUnconfirmed(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when the ad set returns a 2xx with no id")
 	}
-	if res == nil || res.CampaignID != "camp_orphan" {
+	if res == nil || res.CampaignID != "120100000000777" {
 		t.Fatalf("expected a partial result carrying the orphaned campaign id, got %+v", res)
 	}
 	if !strings.Contains(err.Error(), "UNCONFIRMED") {
@@ -715,6 +732,9 @@ func TestCreateCampaignNoIDReturnsPartial(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -751,6 +771,9 @@ func TestCreateCampaignAmbiguousCampaignCreateReturnsPartial(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -832,6 +855,9 @@ func TestCreateCampaign4xxCampaignCreateReturnsNoPartial(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -904,12 +930,15 @@ func TestCreateCampaignSuccessStepsHideSecret(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
-			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"cr_1"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -975,12 +1004,15 @@ func TestCreateCampaignWhitespaceOnlyGeosDefaultToUS(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
-			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -1043,13 +1075,16 @@ func TestCreateCampaignLifetimeBudget(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
 			adsetCap.set(decodeBody(t, r))
-			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/ads"):
@@ -1105,13 +1140,16 @@ func TestCreateCampaignCurrencyOffset(t *testing.T) {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			switch {
+			case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+				// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+				_, _ = io.WriteString(w, `{"data":[]}`)
 			case r.Method == http.MethodGet:
 				_, _ = io.WriteString(w, `{"name":"x"}`)
 			case strings.HasSuffix(r.URL.Path, "/campaigns"):
-				_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+				_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 			case strings.HasSuffix(r.URL.Path, "/adsets"):
 				cap.set(decodeBody(t, r))
-				_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+				_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 			case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 				_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 			case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -1274,15 +1312,18 @@ func TestCreateCampaignUsesPreflightCurrencyOffset(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch {
+				case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+					// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+					_, _ = io.WriteString(w, `{"data":[]}`)
 				case r.Method == http.MethodGet:
 					// Preflight returns the account ISO currency code (NOT a
 					// currency_offset field — the AdAccount node does not expose one).
 					_, _ = io.WriteString(w, `{"name":"x","account_status":1,"currency":"`+currency+`"}`)
 				case strings.HasSuffix(r.URL.Path, "/campaigns"):
-					_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+					_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 				case strings.HasSuffix(r.URL.Path, "/adsets"):
 					adsetCap.set(decodeBody(t, r))
-					_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+					_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 				case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 					_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 				case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -1324,15 +1365,18 @@ func TestCreateCampaignExplicitOffsetMustMatchPreflightCurrency(t *testing.T) {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			switch {
+			case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+				// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+				_, _ = io.WriteString(w, `{"data":[]}`)
 			case r.Method == http.MethodGet:
 				_, _ = io.WriteString(w, `{"name":"x","currency":"`+currency+`"}`)
 			case strings.HasSuffix(r.URL.Path, "/campaigns"):
 				atomic.AddInt32(postCount, 1)
-				_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+				_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 			case strings.HasSuffix(r.URL.Path, "/adsets"):
 				atomic.AddInt32(postCount, 1)
 				adsetCap.set(decodeBody(t, r))
-				_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+				_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 			case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 				_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 			case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -1453,13 +1497,16 @@ func TestCreateCampaignSkipsRegulatedGeos(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"c1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000011"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
 			adsetCap.set(decodeBody(t, r))
-			_, _ = io.WriteString(w, `{"id":"a1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000011"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"cr1"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -1501,13 +1548,16 @@ func TestCreateCampaignReportsDroppedIneligibleGeos(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"c1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000011"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
 			adsetCap.set(decodeBody(t, r))
-			_, _ = io.WriteString(w, `{"id":"a1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000011"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"cr1"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -1574,6 +1624,9 @@ func TestGraphAPIErrorMapping(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
@@ -1703,6 +1756,9 @@ func TestNonGraphErrorBodyRedactsReflectedCredentials(t *testing.T) {
 func TestNonGraphErrorBodySurfaces(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"name":"x"}`)
@@ -1756,12 +1812,15 @@ func TestCreateCampaignPerVariantFailureIsNonFatal(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
-			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			// Fail the first creative; succeed on all subsequent ones.
 			if atomic.AddInt32(&creativeCalls, 1) == 1 {
@@ -1796,7 +1855,7 @@ func TestCreateCampaignPerVariantFailureIsNonFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCampaign should not fail when one variant fails: %v", err)
 	}
-	if res.CampaignID != "camp_1" {
+	if res.CampaignID != "120100000000001" {
 		t.Errorf("campaign id = %q, want camp_1", res.CampaignID)
 	}
 	if res.AdCount != 1 {
@@ -1807,6 +1866,60 @@ func TestCreateCampaignPerVariantFailureIsNonFatal(t *testing.T) {
 	}
 	if !anyStepContains(res.Steps, "Ad 2 created") {
 		t.Errorf("expected an 'Ad 2 created' step, got %v", res.Steps)
+	}
+}
+
+// TestCreateCampaignContextCancelDuringNameLookupRetainsPartial pins that a caller context
+// cancelled DURING the by-name campaign lookup is reported as UNCONFIRMED with the
+// name-carrying partial retained, not as a clean "nothing created" failure.
+//
+// The lookup's whole purpose is to find a campaign a PRIOR ambiguous attempt may already
+// have created under the same deterministic name. A cancel leaves that unanswered, so it is
+// ambiguous in exactly the way a transport failure is. Returning a bare (nil, err) would make
+// IsOutcomeUnconfirmed false, the dispatcher would record a clean failure and release the
+// claim, and the retry would POST the same name again — and Meta enforces no name
+// uniqueness, so that is a duplicate PAID campaign, the defect this lookup exists to prevent.
+func TestCreateCampaignContextCancelDuringNameLookupRetainsPartial(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") {
+			cancel()
+			return nil, fmt.Errorf("Get %q: %w", req.URL.String(), context.Canceled)
+		}
+		if req.Method == http.MethodPost {
+			t.Errorf("no mutating call may be made after the lookup was cut short: %s %s", req.Method, req.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"name":"x"}`)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(ctx, CampaignInput{
+		EventName: "E", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		ReconcileByName: true,
+	})
+	if err == nil {
+		t.Fatal("expected an error when the caller context is cancelled during the name lookup")
+	}
+	if res == nil || res.CampaignName == "" {
+		t.Fatalf("expected a partial result carrying the campaign name so a retry can reconcile, got %+v", res)
+	}
+	if !IsOutcomeUnconfirmed(err) {
+		t.Errorf("error must classify as UNCONFIRMED so the dispatcher keeps the claim, got %v", err)
+	}
+	if !anyStepContains(res.Steps, "UNCONFIRMED") && !anyStepContains(res.Steps, "CUT SHORT") {
+		t.Errorf("expected a step recording the unconfirmed lookup, got %v", res.Steps)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("the cancellation cause must stay reachable, got %v", err)
 	}
 }
 
@@ -1826,14 +1939,16 @@ func TestCreateCampaignContextCancelDuringAdsIsFatal(t *testing.T) {
 			cancel()
 			return nil, fmt.Errorf("Post %q: %w", req.URL.String(), context.Canceled)
 		}
-		body := `{"id":"x"}`
+		body := `{"id":"120100000000012"}`
 		switch {
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering"):
+			body = `{"data":[]}`
 		case req.Method == http.MethodGet:
 			body = `{"name":"x"}`
 		case strings.HasSuffix(req.URL.Path, "/campaigns"):
-			body = `{"id":"camp_1"}`
+			body = `{"id":"120100000000001"}`
 		case strings.HasSuffix(req.URL.Path, "/adsets"):
-			body = `{"id":"adset_1"}`
+			body = `{"id":"120200000000001"}`
 		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
@@ -1865,10 +1980,10 @@ func TestCreateCampaignContextCancelDuringAdsIsFatal(t *testing.T) {
 	if res == nil {
 		t.Fatal("expected a non-nil partial result carrying the created campaign/ad set IDs, got nil")
 	}
-	if res.CampaignID != "camp_1" {
+	if res.CampaignID != "120100000000001" {
 		t.Errorf("partial result CampaignID = %q, want camp_1", res.CampaignID)
 	}
-	if res.AdSetID != "adset_1" {
+	if res.AdSetID != "120200000000001" {
 		t.Errorf("partial result AdSetID = %q, want adset_1", res.AdSetID)
 	}
 	if !errors.Is(err, context.Canceled) {
@@ -1890,14 +2005,16 @@ func TestCreateCampaignContextCancelAfterCreativeSurfacesOrphan(t *testing.T) {
 			cancel()
 			return nil, fmt.Errorf("Post %q: %w", req.URL.String(), context.Canceled)
 		}
-		body := `{"id":"x"}`
+		body := `{"id":"120100000000012"}`
 		switch {
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering"):
+			body = `{"data":[]}`
 		case req.Method == http.MethodGet:
 			body = `{"name":"x"}`
 		case strings.HasSuffix(req.URL.Path, "/campaigns"):
-			body = `{"id":"camp_1"}`
+			body = `{"id":"120100000000001"}`
 		case strings.HasSuffix(req.URL.Path, "/adsets"):
-			body = `{"id":"adset_1"}`
+			body = `{"id":"120200000000001"}`
 		case strings.HasSuffix(req.URL.Path, "/adcreatives"):
 			body = `{"id":"creative_orphan_9"}`
 		}
@@ -1931,10 +2048,10 @@ func TestCreateCampaignContextCancelAfterCreativeSurfacesOrphan(t *testing.T) {
 	if res == nil {
 		t.Fatal("expected a non-nil partial result carrying the created campaign/ad set IDs, got nil")
 	}
-	if res.CampaignID != "camp_1" {
+	if res.CampaignID != "120100000000001" {
 		t.Errorf("partial result CampaignID = %q, want camp_1", res.CampaignID)
 	}
-	if res.AdSetID != "adset_1" {
+	if res.AdSetID != "120200000000001" {
 		t.Errorf("partial result AdSetID = %q, want adset_1", res.AdSetID)
 	}
 	if !errors.Is(err, context.Canceled) {
@@ -1966,14 +2083,16 @@ func TestCreateCampaignPerCreativeTimeoutIsNonFatal(t *testing.T) {
 				Err: fmt.Errorf("net/http: request canceled (Client.Timeout exceeded while awaiting headers): %w", context.DeadlineExceeded),
 			}
 		}
-		body := `{"id":"x"}`
+		body := `{"id":"120100000000012"}`
 		switch {
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering"):
+			body = `{"data":[]}`
 		case req.Method == http.MethodGet:
 			body = `{"name":"x"}`
 		case strings.HasSuffix(req.URL.Path, "/campaigns"):
-			body = `{"id":"camp_1"}`
+			body = `{"id":"120100000000001"}`
 		case strings.HasSuffix(req.URL.Path, "/adsets"):
-			body = `{"id":"adset_1"}`
+			body = `{"id":"120200000000001"}`
 		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
@@ -2001,7 +2120,7 @@ func TestCreateCampaignPerCreativeTimeoutIsNonFatal(t *testing.T) {
 	if res == nil {
 		t.Fatalf("expected a campaign result, got nil")
 	}
-	if res.CampaignID != "camp_1" {
+	if res.CampaignID != "120100000000001" {
 		t.Errorf("campaign id = %q, want camp_1", res.CampaignID)
 	}
 	// The creative failed, so no ad was created, but the campaign still returns.
@@ -2020,14 +2139,17 @@ func TestCreateCampaignAccountVerificationFailureIsNonFatal(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			// Account verification fails.
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = io.WriteString(w, `{"error":{"message":"account lookup failed"}}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
-			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -2053,7 +2175,7 @@ func TestCreateCampaignAccountVerificationFailureIsNonFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("account verification failure must be non-fatal: %v", err)
 	}
-	if res.CampaignID != "camp_1" {
+	if res.CampaignID != "120100000000001" {
 		t.Errorf("campaign id = %q, want camp_1", res.CampaignID)
 	}
 	if res.AdCount != 1 {
@@ -2086,14 +2208,17 @@ func TestCreateCampaignNormalizesObjective(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch {
+				case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+					// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+					_, _ = io.WriteString(w, `{"data":[]}`)
 				case r.Method == http.MethodGet:
 					_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
 				case strings.HasSuffix(r.URL.Path, "/campaigns"):
 					campaignCap.set(decodeBody(t, r))
-					_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+					_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 				case strings.HasSuffix(r.URL.Path, "/adsets"):
 					adsetCap.set(decodeBody(t, r))
-					_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+					_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 				case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 					_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 				case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -2162,12 +2287,15 @@ func TestCreateCampaignAcceptsAnyActiveAccountStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x","account_status":201,"currency":"USD"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"c1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000011"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
-			_, _ = io.WriteString(w, `{"id":"a1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000011"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"cr1"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -2358,7 +2486,11 @@ func TestCreateCampaignAtLimitCopyAllowed(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodPost {
 			atomic.AddInt32(&posts, 1)
-			_, _ = io.WriteString(w, `{"id":"x"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000012"}`)
+			return
+		}
+		if strings.Contains(r.URL.RawQuery, "filtering") {
+			_, _ = io.WriteString(w, `{"data":[]}`)
 			return
 		}
 		_, _ = io.WriteString(w, `{"name":"x"}`)
@@ -2498,10 +2630,13 @@ func TestCreateCampaignAdSetFailureReportsOrphanCampaignID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_orphan"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000777"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = io.WriteString(w, `{"error":{"message":"bad ad set"}}`)
@@ -2526,7 +2661,7 @@ func TestCreateCampaignAdSetFailureReportsOrphanCampaignID(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected an error when the ad set fails")
 	}
-	if !strings.Contains(err.Error(), "camp_orphan") {
+	if !strings.Contains(err.Error(), "120100000000777") {
 		t.Errorf("error = %q, want it to mention the orphaned campaign id camp_orphan", err.Error())
 	}
 	if !strings.Contains(err.Error(), "PAUSED") {
@@ -2771,14 +2906,17 @@ func TestCreateCampaignSupportsLeadsObjective(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
 			campaignCap.set(decodeBody(t, r))
-			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
 			adsetCap.set(decodeBody(t, r))
-			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -2892,6 +3030,89 @@ func TestDoRequestRetriesOnGraphThrottleCode(t *testing.T) {
 	}
 }
 
+// TestDoCreateDoesNotRepeatAThrottledCreate is the counterpart to
+// TestDoRequestRetriesOnGraphThrottleCode above. The retry that is correct for a read
+// is a duplicate-node bug for a create: this client's premise is that a throttle may
+// arrive AFTER Meta committed the node (which is why createOutcomeAmbiguous treats one
+// as UNCONFIRMED), so re-POSTing would produce two nodes with the same name inside a
+// single call — and the find-by-name reconciliation runs at the start of the flow, not
+// between retry attempts, so nothing would ever notice.
+//
+// Both throttle shapes are covered, because both are what createOutcomeAmbiguous
+// classifies as ambiguous: the HTTP 429, and the HTTP 400 carrying a Graph rate-limit
+// code (the form Meta actually uses most on the Marketing API).
+func TestDoCreateDoesNotRepeatAThrottledCreate(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"http 429", http.StatusTooManyRequests, `{"error":{"message":"rate limited","code":4}}`},
+		{"http 400 with rate-limit code", http.StatusBadRequest, `{"error":{"message":"rate limited","code":80004}}`},
+		{"http 400 with app-level code", http.StatusBadRequest, `{"error":{"message":"rate limited","code":341}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				atomic.AddInt32(&calls, 1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
+
+			c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+				WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+			var out createResponse
+			err := c.doCreate(context.Background(), "/act_1/campaigns", map[string]any{"name": "X"}, &out)
+			if err == nil {
+				t.Fatal("doCreate returned nil, want the rate-limit error surfaced to the caller")
+			}
+			// Exactly one POST: the create was sent once and never repeated.
+			if got := atomic.LoadInt32(&calls); got != 1 {
+				t.Errorf("server calls = %d, want 1 — a throttled create must not be re-POSTed", got)
+			}
+			// And the error the caller gets must still classify as UNCONFIRMED, so the
+			// flow records "may exist" and an operator is sent to Ads Manager to check
+			// for the node Meta may have committed. (The find-by-name reconciliation is
+			// gated on ReconcileByName, which no caller sets, so it does NOT adopt the
+			// node automatically.) Suppressing the retry without preserving this would
+			// trade a duplicate for a silent orphan.
+			if !createOutcomeAmbiguous(err) {
+				t.Errorf("createOutcomeAmbiguous(%v) = false, want true", err)
+			}
+		})
+	}
+}
+
+// TestDoRequestStillRetriesIdempotentPostThrottle pins the negative half: the
+// suppression is scoped to creates, not to POST as a method. A status update asserts a
+// desired state rather than creating a node, so repeating it changes nothing and the
+// retry is pure availability.
+func TestDoRequestStillRetriesIdempotentPostThrottle(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"message":"rate limited","code":4}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+	if err := c.doRequest(context.Background(), http.MethodPost, "/123", map[string]any{"status": "PAUSED"}, nil); err != nil {
+		t.Fatalf("doRequest: %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("server calls = %d, want 2 (one throttled + one success)", got)
+	}
+}
+
 // TestCreateCampaignRejectsPastStartDate verifies a start date before today is
 // rejected before any mutating call.
 func TestCreateCampaignRejectsPastStartDate(t *testing.T) {
@@ -2949,14 +3170,17 @@ func TestCreateCampaignAcceptsLargeLowValueCurrencyBudget(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Name lookup for campaign/ad-set reconciliation: no match, proceed with creation.
+			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet:
 			// VND account: zero-decimal, offset 1.
 			_, _ = io.WriteString(w, `{"name":"x","currency":"VND"}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			_, _ = io.WriteString(w, `{"id":"camp_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
 			adsetCap.set(decodeBody(t, r))
-			_, _ = io.WriteString(w, `{"id":"adset_1"}`)
+			_, _ = io.WriteString(w, `{"id":"120200000000001"}`)
 		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
 		case strings.HasSuffix(r.URL.Path, "/ads"):
@@ -3173,6 +3397,119 @@ func TestDoRequestOversizedNon2xxPreservesStatus(t *testing.T) {
 	}
 }
 
+// TestDoRequestOversized400StaysAmbiguous covers the status the 500 test above cannot.
+//
+// A 500 is ambiguous on status alone, so it passes whether or not the envelope was read —
+// it cannot detect this defect. 400 is the status that decides the question: Meta reports
+// rate limiting as an HTTP 400 carrying a Graph rate-limit code far more often than as a
+// 429, and the oversized branch returns BEFORE the envelope is unmarshalled (and could not
+// parse it anyway — the body is truncated at the cap). Without EnvelopeUnreadable this is a
+// bare 400 with Code 0, which reads as a clean semantic rejection. A create classified that
+// way has its claim released and is retried — against a campaign Meta may already have
+// committed, so the retry duplicates a PAID campaign.
+func TestDoRequestOversized400StaysAmbiguous(t *testing.T) {
+	pad := strings.Repeat("x", maxResponseBody+1024)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// A 400 whose body WOULD have carried a rate-limit code, if we could read it.
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":4,"type":"OAuthException"},"pad":"`+pad+`"}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+	var out createResponse
+	err := c.doRequest(context.Background(), http.MethodPost, "/x", map[string]any{"a": 1}, &out)
+	if err == nil {
+		t.Fatal("expected an error for an oversized body, got nil")
+	}
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if ae.StatusCode != http.StatusBadRequest {
+		t.Errorf("APIError.StatusCode = %d, want 400", ae.StatusCode)
+	}
+	if !ae.EnvelopeUnreadable {
+		t.Error("an oversized non-2xx never read its envelope; the absent Code must be marked as unknown, not sent")
+	}
+	if !createOutcomeAmbiguous(err) {
+		t.Error("a mutating 400 whose envelope could not be read must stay AMBIGUOUS — a throttle " +
+			"is indistinguishable from a rejection here, and calling it a rejection duplicates a paid campaign")
+	}
+}
+
+// TestDoRequestUnparseableBody400StaysAmbiguous is the sibling case on the read-error path.
+//
+// That path already carries a parsed envelope onto the APIError, which covers the common
+// shape (a complete JSON body followed by a connection closed on a mismatched
+// Content-Length). It does nothing when the truncation lands mid-JSON and the body does not
+// parse: Code stays 0 and the result is the same bare 400 as the oversized branch. Same
+// unknowable state, so it must classify the same way.
+func TestDoRequestUnparseableBody400StaysAmbiguous(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Declare more than we send and truncate mid-object, so the read fails AND the
+		// partial body cannot be unmarshalled into an envelope.
+		w.Header().Set("Content-Length", "512")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+	var out createResponse
+	err := c.doRequest(context.Background(), http.MethodPost, "/x", map[string]any{"a": 1}, &out)
+	if err == nil {
+		t.Fatal("expected an error for a truncated body, got nil")
+	}
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if ae.Code != 0 {
+		t.Fatalf("test setup is wrong: the body was supposed to be unparseable, but Code = %d", ae.Code)
+	}
+	if !ae.EnvelopeUnreadable {
+		t.Error("a non-2xx whose truncated body did not parse must mark the missing Code as unknown")
+	}
+	if !createOutcomeAmbiguous(err) {
+		t.Error("a mutating 400 whose envelope could not be parsed must stay AMBIGUOUS")
+	}
+}
+
+// TestReadableRejection400StaysClean is the other half of the pair, and the one that stops
+// EnvelopeUnreadable from being a blanket "every 400 is ambiguous" widening. When the
+// envelope IS readable and carries a non-throttle code, Meta gave a definite answer and the
+// create must stay a CLEAN failure — otherwise every genuine rejection would be reported as
+// unconfirmed and an operator would be sent to Ads Manager to look for a campaign that was
+// never created.
+func TestReadableRejection400StaysClean(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":100,"type":"OAuthException","message":"Invalid parameter"}}`)
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+		WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+	var out createResponse
+	err := c.doRequest(context.Background(), http.MethodPost, "/x", map[string]any{"a": 1}, &out)
+	if err == nil {
+		t.Fatal("expected an error for a 400, got nil")
+	}
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if ae.EnvelopeUnreadable {
+		t.Error("the envelope parsed cleanly; marking it unreadable would make every rejection ambiguous")
+	}
+	if createOutcomeAmbiguous(err) {
+		t.Error("a 400 carrying a readable non-throttle code is a definite rejection and must stay a clean failure")
+	}
+}
+
 // TestDoRequestPropagatesBodyReadError verifies a truncated response (declared
 // Content-Length larger than the body sent) is reported as an error, not a
 // false success, even if the partial body would parse.
@@ -3367,14 +3704,18 @@ func TestCreateCampaignAdFailureSurfacesOrphanCreative(t *testing.T) {
 				Request:    req,
 			}, nil
 		}
-		body := `{"id":"x"}`
+		body := `{"id":"120100000000012"}`
 		switch {
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering="):
+			// Campaign/ad-set name-reconciliation lookups: no existing match, so
+			// creation proceeds normally.
+			body = `{"data":[]}`
 		case req.Method == http.MethodGet:
 			body = `{"name":"x"}`
 		case strings.HasSuffix(req.URL.Path, "/campaigns"):
-			body = `{"id":"camp_1"}`
+			body = `{"id":"120100000000001"}`
 		case strings.HasSuffix(req.URL.Path, "/adsets"):
-			body = `{"id":"adset_1"}`
+			body = `{"id":"120200000000001"}`
 		case strings.HasSuffix(req.URL.Path, "/adcreatives"):
 			body = `{"id":"creative_777"}`
 		}
@@ -3701,6 +4042,74 @@ func TestNoFollowRedirectPolicy(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_ThrottledNameLookupIsUnconfirmed is the end-to-end half of the 429
+// classification. The unit table proves createOutcomeAmbiguous's verdict; this proves the
+// verdict actually reaches the caller as a PARTIAL RESULT with the "verify in Ads Manager"
+// step, rather than a bare error that reads like "nothing happened".
+//
+// The distinction is the whole point of the name lookup: it exists to establish that the
+// campaign name is ABSENT, and a lookup that never got past Meta's throttle establishes
+// nothing. Handing that back as a clean failure tells the operator the opposite of what is
+// known.
+func TestCreateCampaign_ThrottledNameLookupIsUnconfirmed(t *testing.T) {
+	// atomic: the handler runs on net/http's goroutine while the assertions below run on
+	// the test goroutine. Returning from CreateCampaign is not a happens-before edge for a
+	// plain int, so -race reports this — and the neighbouring call-count tests already use
+	// atomics for exactly this reason.
+	var gets atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			gets.Add(1)
+			// No Retry-After: the client falls back to its (shrunk) capped backoff and
+			// exhausts the retry budget, which is the state under test.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"message":"User request limit reached","type":"OAuthException","code":17}}`)
+			return
+		}
+		t.Errorf("no mutating call may be attempted after an unresolved name lookup; got %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL(srv.URL), WithClock(fixedMetaClock()), withRetryBaseDelay(time.Millisecond))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		Project:         "tlf",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		Budget:          10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		// The lookup is gated on this flag (false everywhere today), so without it the
+		// create runs unconditionally and this path is never entered.
+		ReconcileByName: true,
+	})
+	if err == nil {
+		t.Fatal("expected the throttled lookup to surface as an error")
+	}
+	if n := gets.Load(); n < 2 {
+		t.Errorf("the lookup was retried %d time(s); the test must exercise an EXHAUSTED retry budget", n)
+	}
+	if res == nil {
+		t.Fatal("a throttled lookup must return an UNCONFIRMED partial result, not (nil, err): the caller cannot tell whether the name is absent")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("error = %q, want it marked UNCONFIRMED", err.Error())
+	}
+	var sawStep bool
+	for _, step := range res.Steps {
+		if strings.Contains(step, "UNCONFIRMED") && strings.Contains(step, "Ads Manager") {
+			sawStep = true
+		}
+	}
+	if !sawStep {
+		t.Errorf("Steps = %q, want one telling the operator to verify in Ads Manager before retrying", res.Steps)
+	}
+}
+
 // TestCreateOutcomeAmbiguous_3xxIsAmbiguous verifies a mutating 3xx (now surfaced
 // as an APIError because redirect following is disabled) is classified AMBIGUOUS
 // alongside 5xx — Meta may have committed the create before returning the redirect,
@@ -3717,8 +4126,33 @@ func TestCreateOutcomeAmbiguous_3xxIsAmbiguous(t *testing.T) {
 		{http.StatusBadGateway, true},          // 502
 		{http.StatusBadRequest, false},         // 400 — definite rejection
 		{http.StatusNotFound, false},           // 404
-		{http.StatusTooManyRequests, false},    // 429 handled by retry, not here
+		{http.StatusTooManyRequests, true},     // 429 — retry budget exhausted; a throttle is not a rejection
 	}
+	// Meta reports throttling as an HTTP 400 carrying a Graph rate-limit CODE at least
+	// as often as it reports a 429, and doRequest already retries both. A status-only
+	// check would classify the exhausted 400 form as a definite rejection — releasing
+	// the claim on a create that may have committed.
+	codeCases := []struct {
+		code int
+		want bool
+	}{
+		{4, true},     // application request-limit reached
+		{17, true},    // user request-limit reached
+		{32, true},    // page-level throttling
+		{341, true},   // temporary app-level limit
+		{613, true},   // ad-account rate limit
+		{80004, true}, // business-use-case throttling (Marketing API)
+		{100, false},  // invalid parameter — a genuine rejection
+		{190, false},  // invalid access token — a genuine rejection
+		{0, false},    // no Graph envelope at all
+	}
+	for _, tc := range codeCases {
+		err := &APIError{StatusCode: http.StatusBadRequest, Code: tc.code, Method: http.MethodPost, Path: "/campaigns"}
+		if got := createOutcomeAmbiguous(err); got != tc.want {
+			t.Errorf("createOutcomeAmbiguous(400 with Graph code %d) = %v, want %v", tc.code, got, tc.want)
+		}
+	}
+
 	for _, tc := range cases {
 		err := &APIError{StatusCode: tc.status, Method: http.MethodPost, Path: "/campaigns"}
 		if got := createOutcomeAmbiguous(err); got != tc.want {
@@ -3739,6 +4173,11 @@ func TestCreateOutcomeAmbiguous_3xxIsAmbiguous(t *testing.T) {
 		{http.MethodGet, http.StatusInternalServerError, true},  // GET 500 — still ambiguous
 		{http.MethodPost, http.StatusFound, true},               // POST 302 — mutating redirect
 		{http.MethodDelete, http.StatusTemporaryRedirect, true}, // DELETE 307 — mutating
+		// 429 is NOT method-gated: on a mutating call Meta may have shed the request
+		// after committing, and on the name-lookup GET a throttle leaves ABSENCE
+		// unestablished, which is the thing that lookup exists to establish.
+		{http.MethodGet, http.StatusTooManyRequests, true},
+		{http.MethodPost, http.StatusTooManyRequests, true},
 	}
 	for _, tc := range methodCases {
 		err := &APIError{StatusCode: tc.status, Method: tc.method, Path: "/campaigns"}
@@ -4250,6 +4689,196 @@ func TestUpdateCampaignAndChildrenStatus_PauseUpdatesCampaignFirst(t *testing.T)
 	}
 }
 
+// TestFindCampaignByName_Match verifies that a campaign name lookup returns the
+// matched campaign's ID when found.
+func TestFindCampaignByName_Match(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"data":[{"id":"120100000000123","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}]}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}))
+	id, err := c.findCampaignByName(context.Background(), "act_1", "My Campaign", "OUTCOME_TRAFFIC")
+	if err != nil {
+		t.Fatalf("findCampaignByName error: %v", err)
+	}
+	if id != "120100000000123" {
+		t.Errorf("id = %q, want 120100000000123", id)
+	}
+}
+
+// TestFindByName_NonNumericIDIsAmbiguousNotUsable pins the interpolation gate on BOTH
+// lookups. A matched id goes straight into a request path ("/{campaignID}/adsets",
+// "/{adSetID}/ads"), so non-empty is not the same as safe — this client already gates every
+// other id-interpolating call on numericIDRE. The classification matters as much as the
+// rejection: a resource with this name DOES exist upstream, so the error must be ambiguous
+// (errLookupAmbiguous → UNCONFIRMED), never a clean "absent" that lets a retry duplicate it.
+func TestFindByName_NonNumericIDIsAmbiguousNotUsable(t *testing.T) {
+	for _, bad := range []string{"camp_123", "123/../../me", "123?fields=x", "12 3"} {
+		t.Run(bad, func(t *testing.T) {
+			rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				body, _ := json.Marshal(map[string]any{"data": []map[string]string{
+					{"id": bad, "status": "PAUSED", "objective": "OUTCOME_TRAFFIC"},
+				}})
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(string(body))),
+					Request:    req,
+				}, nil
+			})
+			c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+				WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}))
+
+			id, err := c.findCampaignByName(context.Background(), "act_1", "My Campaign", "OUTCOME_TRAFFIC")
+			if id != "" {
+				t.Errorf("findCampaignByName returned an unusable id %q for interpolation", id)
+			}
+			if !errors.Is(err, errLookupAmbiguous) {
+				t.Errorf("findCampaignByName error must be ambiguous, got %v", err)
+			}
+
+			id, err = c.findAdSetByName(context.Background(), "120100000000123", "My Ad Set")
+			if id != "" {
+				t.Errorf("findAdSetByName returned an unusable id %q for interpolation", id)
+			}
+			if !errors.Is(err, errLookupAmbiguous) {
+				t.Errorf("findAdSetByName error must be ambiguous, got %v", err)
+			}
+		})
+	}
+}
+
+// TestFindCampaignByName_NoMatch verifies that a campaign name lookup returns
+// empty string and nil error when no campaign is found.
+func TestFindCampaignByName_NoMatch(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"data":[]}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}))
+	id, err := c.findCampaignByName(context.Background(), "act_1", "My Campaign", "OUTCOME_TRAFFIC")
+	if err != nil {
+		t.Fatalf("findCampaignByName error: %v", err)
+	}
+	if id != "" {
+		t.Errorf("id = %q, want empty string", id)
+	}
+}
+
+// TestFindCampaignByName_MalformedData verifies that a lookup returning a 2xx
+// with no data field is treated as a non-recoverable error — fail closed.
+func TestFindCampaignByName_MalformedData(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}))
+	id, err := c.findCampaignByName(context.Background(), "act_1", "My Campaign", "OUTCOME_TRAFFIC")
+	if err == nil {
+		t.Fatal("findCampaignByName error = nil, want non-nil error for malformed response")
+	}
+	if id != "" {
+		t.Errorf("id = %q, want empty string on error", id)
+	}
+	if !strings.Contains(err.Error(), "cannot confirm absence") {
+		t.Errorf("error message = %q, want 'cannot confirm absence'", err.Error())
+	}
+}
+
+// TestFindByName_UnfinishableEnumerationIsAmbiguous verifies that a lookup which
+// cannot finish enumerating — a next link with no cursor, or the page cap reached
+// with pages still pending — is errLookupAmbiguous, NOT a clean failure. Both mean
+// unexamined matches may remain, so absence is unconfirmed; classifying either as
+// clean lets the dispatcher release the claim and the retry re-POST the same
+// deterministic name, duplicating a PAID campaign.
+func TestFindByName_UnfinishableEnumerationIsAmbiguous(t *testing.T) {
+	tests := []struct {
+		name string
+		// body returns the response for the nth request (0-indexed).
+		body func(n int) string
+		want string
+	}{
+		{
+			name: "next link with no cursor",
+			body: func(int) string {
+				return `{"data":[],"paging":{"next":"http://meta.test/next","cursors":{"after":"  "}}}`
+			},
+			want: "no cursor",
+		},
+		{
+			name: "page cap reached with pages pending",
+			// Every page advertises another, so the loop exits on the cap with
+			// `after` still set.
+			body: func(n int) string {
+				return fmt.Sprintf(`{"data":[],"paging":{"next":"http://meta.test/next","cursors":{"after":"cur%d"}}}`, n)
+			},
+			want: "exceeded",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, lookup := range []string{"campaign", "adset"} {
+				n := 0
+				rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					body := tc.body(n)
+					n++
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": []string{"application/json"}},
+						Body:       io.NopCloser(strings.NewReader(body)),
+						Request:    req,
+					}, nil
+				})
+				c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+					WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}))
+
+				var id string
+				var err error
+				if lookup == "campaign" {
+					id, err = c.findCampaignByName(context.Background(), "act_1", "My Campaign", "OUTCOME_TRAFFIC")
+				} else {
+					id, err = c.findAdSetByName(context.Background(), "120100000000123", "My Ad Set")
+				}
+				if err == nil {
+					t.Fatalf("%s lookup error = nil, want ambiguous error", lookup)
+				}
+				if id != "" {
+					t.Errorf("%s lookup id = %q, want empty on error", lookup, id)
+				}
+				if !errors.Is(err, errLookupAmbiguous) {
+					t.Errorf("%s lookup error must wrap errLookupAmbiguous, got %v", lookup, err)
+				}
+				// The classification only matters because createOutcomeAmbiguous reads it:
+				// assert the consequence, not just the sentinel.
+				if !createOutcomeAmbiguous(err) {
+					t.Errorf("%s lookup: createOutcomeAmbiguous = false, want true for %v", lookup, err)
+				}
+				if !strings.Contains(err.Error(), tc.want) {
+					t.Errorf("%s lookup error = %q, want it to mention %q", lookup, err.Error(), tc.want)
+				}
+			}
+		})
+	}
+}
+
 // TestRedactCredentialsHandlesPaddedBearerToken pins the alternative-detection order
 // inside redactCredentials. Base64 padding puts '=' INSIDE a bearer token, so deciding
 // which regex alternative fired by searching for a "=" or ":" delimiter splits the match
@@ -4281,6 +4910,781 @@ func TestRedactCredentialsHandlesPaddedBearerToken(t *testing.T) {
 			// Belt-and-braces: no fragment of the padded token may survive anywhere.
 			if strings.Contains(tc.in, padded) && strings.Contains(got, padded[:8]) {
 				t.Errorf("token prefix survived redaction: %q", got)
+			}
+		})
+	}
+}
+
+// TestCreateCampaignLookup4xxIsStillUnconfirmed pins the case most likely to be
+// "tightened" back into a clean failure, because it reads like one: Meta cleanly
+// rejected the lookup GET, and a GET creates nothing.
+//
+// It is not the create that is in question. The lookup exists to establish that the
+// campaign NAME IS ABSENT, and a rejected lookup establishes nothing about absence —
+// exactly as little as a timeout does. Return (nil, err) here and
+// IsOutcomeUnconfirmed goes false, the dispatcher records a clean failure and
+// releases the retained partial, and the next dispatch POSTs the same deterministic
+// name into an account where Meta enforces no name uniqueness. The cost of being
+// wrong in this direction is a duplicate PAID campaign; in the other, one look in
+// Ads Manager.
+func TestCreateCampaignLookup4xxIsStillUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"bad filter","type":"OAuthException","code":100}}`)
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		ReconcileByName: true,
+	})
+	if err == nil {
+		t.Fatal("expected an error for a 4xx campaign name lookup")
+	}
+	if res == nil {
+		t.Fatal("a 4xx lookup returned (nil, err), so the campaign name is discarded and the " +
+			"dispatcher will release the retained partial — the next dispatch re-POSTs the same " +
+			"name and duplicates a PAID campaign. It must return the name-carrying partial.")
+	}
+	if res.CampaignName == "" {
+		t.Error("the partial carries no CampaignName, so a retry has nothing to reconcile against")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("error = %q, want it marked UNCONFIRMED: a rejected lookup confirms nothing about absence", err)
+	}
+	if !createOutcomeAmbiguous(err) {
+		t.Error("createOutcomeAmbiguous is false, so IsOutcomeUnconfirmed is too and the " +
+			"dispatcher treats this as a clean failure regardless of the message")
+	}
+}
+
+// TestCreateCampaignLookupMalformed2xxReturnsUnconfirmed verifies that a
+// malformed-but-2xx lookup response (Meta responded, but the body can't confirm
+// absence) is classified ambiguous — an UNCONFIRMED partial, not a clean failure —
+// because Meta DID receive and answer the request.
+func TestCreateCampaignLookupMalformed2xxReturnsUnconfirmed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// 2xx with no "data" field: cannot confirm absence.
+			_, _ = io.WriteString(w, `{}`)
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		ReconcileByName: true,
+	})
+	if err == nil {
+		t.Fatal("expected an error for a malformed 2xx campaign name lookup")
+	}
+	if res == nil || res.CampaignName == "" {
+		t.Fatalf("expected a non-nil partial result carrying the campaign name, got %+v", res)
+	}
+	if !anyStepContains(res.Steps, "UNCONFIRMED") {
+		t.Errorf("expected an UNCONFIRMED step, got %v", res.Steps)
+	}
+}
+
+// TestCreateCampaignReusesExistingByName verifies that when a campaign with the
+// given name already exists, CreateCampaign reuses its ID instead of creating a
+// new one.
+func TestCreateCampaignReusesExistingByName(t *testing.T) {
+	var mu sync.Mutex
+	campaignPostCount := 0
+	adSetPostCount := 0
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"id":"120100000000012"}`
+		switch {
+		// The two by-name lookups are BOTH filtering GETs, so they must be told apart by
+		// path — /{account}/campaigns vs /{campaignID}/adsets. Answering both with the
+		// same campaign-shaped payload would make findAdSetByName "find" the campaign id
+		// as an ad set, skip the ad set POST entirely, and leave the reconciliation path
+		// this test exists to cover (existing campaign + a genuinely new ad set) unexercised.
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") &&
+			strings.HasSuffix(req.URL.Path, "/campaigns"):
+			// Existing campaign found by name.
+			body = `{"data":[{"id":"120200000000123","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}]}`
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") &&
+			strings.HasSuffix(req.URL.Path, "/adsets"):
+			// No ad set under that campaign yet: the reuse path must still CREATE one.
+			body = `{"data":[],"paging":{}}`
+		case req.Method == http.MethodGet:
+			body = `{"name":"x"}`
+		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/campaigns"):
+			// Track POST attempts — should NOT be called for reused campaign.
+			mu.Lock()
+			campaignPostCount++
+			mu.Unlock()
+			body = `{"id":"120100000000099"}`
+		case strings.HasSuffix(req.URL.Path, "/adsets"):
+			mu.Lock()
+			adSetPostCount++
+			mu.Unlock()
+			body = `{"id":"120200000000001"}`
+		case strings.HasSuffix(req.URL.Path, "/adcreatives"):
+			body = `{"id":"creative_1"}`
+		case strings.HasSuffix(req.URL.Path, "/ads"):
+			body = `{"id":"ad_1"}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		Project:         "tlf",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		Budget:          10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		ReconcileByName: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign error: %v", err)
+	}
+	if res.CampaignID != "120200000000123" {
+		t.Errorf("campaign id = %q, want 120200000000123", res.CampaignID)
+	}
+	// The reconciliation this feature exists for: reuse the campaign, but still create
+	// the ad set that does not exist under it. An ad set id equal to the campaign id
+	// would mean the two lookups were conflated.
+	if res.AdSetID != "120200000000001" {
+		t.Errorf("ad set id = %q, want 120200000000001 (a NEW ad set created under the reused campaign)", res.AdSetID)
+	}
+	mu.Lock()
+	campaignPosts, adSetPosts := campaignPostCount, adSetPostCount
+	mu.Unlock()
+	if campaignPosts != 0 {
+		t.Errorf("campaign POST called %d times, want 0 (should reuse by name)", campaignPosts)
+	}
+	if adSetPosts != 1 {
+		t.Errorf("ad set POST called %d times, want 1 (no ad set exists yet under the reused campaign)", adSetPosts)
+	}
+	if !anyStepContains(res.Steps, "Campaign already exists by name") {
+		t.Errorf("expected 'Campaign already exists by name' step, got %v", res.Steps)
+	}
+}
+
+// TestCreateCampaignReusesExistingAdSetByName covers the other half of the reuse path:
+// the campaign was reconciled by name AND an ad set already exists under it (a prior
+// attempt got that far). The existing ad set id must be adopted and the ad set POST must
+// not be issued at all.
+func TestCreateCampaignReusesExistingAdSetByName(t *testing.T) {
+	var mu sync.Mutex
+	campaignPostCount := 0
+	adSetPostCount := 0
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"id":"120100000000012"}`
+		switch {
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") &&
+			strings.HasSuffix(req.URL.Path, "/campaigns"):
+			body = `{"data":[{"id":"120200000000123","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}]}`
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") &&
+			strings.HasSuffix(req.URL.Path, "/adsets"):
+			// A prior attempt already created the ad set under this campaign.
+			body = `{"data":[{"id":"120300000000456","status":"PAUSED"}],"paging":{}}`
+		case req.Method == http.MethodGet:
+			body = `{"name":"x"}`
+		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/campaigns"):
+			mu.Lock()
+			campaignPostCount++
+			mu.Unlock()
+			body = `{"id":"120100000000099"}`
+		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/adsets"):
+			mu.Lock()
+			adSetPostCount++
+			mu.Unlock()
+			body = `{"id":"120200000000099"}`
+		case strings.HasSuffix(req.URL.Path, "/adcreatives"):
+			body = `{"id":"creative_1"}`
+		case strings.HasSuffix(req.URL.Path, "/ads"):
+			body = `{"id":"ad_1"}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		Project:         "tlf",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		Budget:          10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		ReconcileByName: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign error: %v", err)
+	}
+	if res.AdSetID != "120300000000456" {
+		t.Errorf("ad set id = %q, want 120300000000456 (the pre-existing ad set)", res.AdSetID)
+	}
+	mu.Lock()
+	campaignPosts, adSetPosts := campaignPostCount, adSetPostCount
+	mu.Unlock()
+	if campaignPosts != 0 {
+		t.Errorf("campaign POST called %d times, want 0", campaignPosts)
+	}
+	if adSetPosts != 0 {
+		t.Errorf("ad set POST called %d times, want 0 (an ad set already exists by name)", adSetPosts)
+	}
+	if !anyStepContains(res.Steps, "Ad set already exists by name") {
+		t.Errorf("expected 'Ad set already exists by name' step, got %v", res.Steps)
+	}
+}
+
+// TestCreateCampaignSkipsAdSetLookupForFreshCampaign pins the gate on the ad-set
+// reconciliation: when the campaign is created by THIS call, its id was allocated by Meta
+// moments ago, so no prior attempt can have parented an ad set to it. Issuing the lookup
+// anyway would be a network call that can only return empty — but can still fail and
+// strand the campaign as an orphan. Assert no adsets filtering GET is made.
+func TestCreateCampaignSkipsAdSetLookupForFreshCampaign(t *testing.T) {
+	var mu sync.Mutex
+	adSetLookups := 0
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"id":"120100000000012"}`
+		switch {
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") &&
+			strings.HasSuffix(req.URL.Path, "/campaigns"):
+			// No existing campaign by that name: this call creates one.
+			body = `{"data":[],"paging":{}}`
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") &&
+			strings.HasSuffix(req.URL.Path, "/adsets"):
+			mu.Lock()
+			adSetLookups++
+			mu.Unlock()
+			body = `{"data":[],"paging":{}}`
+		case req.Method == http.MethodGet:
+			body = `{"name":"x"}`
+		case strings.HasSuffix(req.URL.Path, "/campaigns"):
+			body = `{"id":"120200000000999"}`
+		case strings.HasSuffix(req.URL.Path, "/adsets"):
+			body = `{"id":"120200000000001"}`
+		case strings.HasSuffix(req.URL.Path, "/adcreatives"):
+			body = `{"id":"creative_1"}`
+		case strings.HasSuffix(req.URL.Path, "/ads"):
+			body = `{"id":"ad_1"}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		Project:         "tlf",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		Budget:          10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		ReconcileByName: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign error: %v", err)
+	}
+	if res.AdSetID != "120200000000001" {
+		t.Errorf("ad set id = %q, want adset_1", res.AdSetID)
+	}
+	mu.Lock()
+	lookups := adSetLookups
+	mu.Unlock()
+	if lookups != 0 {
+		t.Errorf("ad set by-name lookup issued %d times, want 0 for a campaign created by this call", lookups)
+	}
+}
+
+// TestFindCampaignByName_PaginationEmptyFirstPage verifies that an empty first
+// page with a next link does NOT trick the lookup into reporting "no match" — it
+// follows pagination and finds a match on a later page. This guards against
+// false absence when Meta's filtering returns an empty first page but has more
+// results under pagination.
+func TestFindCampaignByName_PaginationEmptyFirstPage(t *testing.T) {
+	// callOrder is written from the RoundTripper's goroutine and read by the test's, so it
+	// carries its own mutex rather than relying on the client happening to make these calls
+	// sequentially — -race reasons about happens-before edges, not observed interleaving.
+	var mu sync.Mutex
+	callOrder := 0
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		mu.Lock()
+		callOrder++
+		order := callOrder
+		mu.Unlock()
+		body := ""
+		switch {
+		case order == 1 && strings.Contains(req.URL.RawQuery, "filtering"):
+			// First call: empty page with a next link.
+			body = `{"data":[],"paging":{"cursors":{"after":"CUR2"},"next":"https://graph.example/x?after=CUR2"}}`
+		case order == 2 && strings.Contains(req.URL.RawQuery, "filtering"):
+			// Second call: match on second page.
+			body = `{"data":[{"id":"120300000000456","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}],"paging":{}}`
+		default:
+			t.Errorf("unexpected call %d: %s %s", order, req.Method, req.URL.Path)
+			return &http.Response{StatusCode: http.StatusNotFound}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}))
+	id, err := c.findCampaignByName(context.Background(), "act_1", "My Campaign", "OUTCOME_TRAFFIC")
+	if err != nil {
+		t.Fatalf("findCampaignByName error: %v", err)
+	}
+	if id != "120300000000456" {
+		t.Errorf("id = %q, want 120300000000456 (from second page)", id)
+	}
+	mu.Lock()
+	calls := callOrder
+	mu.Unlock()
+	if calls != 2 {
+		t.Errorf("made %d calls, want 2 (pagination followed)", calls)
+	}
+}
+
+// TestFindCampaignByName_PaginationNoMatchMultiplePages verifies that pagination
+// is exhausted even when there's no match, and the function returns empty string
+// when fully enumerated with no match found.
+func TestFindCampaignByName_PaginationNoMatchMultiplePages(t *testing.T) {
+	// callOrder is written from the RoundTripper's goroutine and read by the test's, so it
+	// carries its own mutex rather than relying on the client happening to make these calls
+	// sequentially — -race reasons about happens-before edges, not observed interleaving.
+	var mu sync.Mutex
+	callOrder := 0
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		mu.Lock()
+		callOrder++
+		order := callOrder
+		mu.Unlock()
+		body := ""
+		switch {
+		case order == 1 && strings.Contains(req.URL.RawQuery, "filtering"):
+			// First call: empty page with a next link.
+			body = `{"data":[],"paging":{"cursors":{"after":"CUR2"},"next":"https://graph.example/x?after=CUR2"}}`
+		case order == 2 && strings.Contains(req.URL.RawQuery, "filtering"):
+			// Second call: still empty, no next link — fully enumerated.
+			body = `{"data":[],"paging":{}}`
+		default:
+			t.Errorf("unexpected call %d: %s %s", order, req.Method, req.URL.Path)
+			return &http.Response{StatusCode: http.StatusNotFound}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}))
+	id, err := c.findCampaignByName(context.Background(), "act_1", "My Campaign", "OUTCOME_TRAFFIC")
+	if err != nil {
+		t.Fatalf("findCampaignByName error: %v", err)
+	}
+	if id != "" {
+		t.Errorf("id = %q, want empty string (no match after exhausting all pages)", id)
+	}
+	mu.Lock()
+	calls := callOrder
+	mu.Unlock()
+	if calls != 2 {
+		t.Errorf("made %d calls, want 2 (pagination exhausted)", calls)
+	}
+}
+
+// TestFindCampaignByName_PaginationUsesCursorNotRawURL verifies that pagination
+// advances via the opaque `after` cursor built into our path, never reusing Meta's
+// raw paging.next URL — so a credential in paging.next can't leak into the request
+// path. Mirrors the listAdIDs pagination security model.
+func TestFindCampaignByName_PaginationUsesCursorNotRawURL(t *testing.T) {
+	// callOrder is written from the RoundTripper's goroutine and read by the test's, so it
+	// carries its own mutex rather than relying on the client happening to make these calls
+	// sequentially — -race reasons about happens-before edges, not observed interleaving.
+	var mu sync.Mutex
+	callOrder := 0
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		mu.Lock()
+		callOrder++
+		order := callOrder
+		mu.Unlock()
+		body := ""
+		switch {
+		case order == 1 && strings.Contains(req.URL.RawQuery, "filtering"):
+			// First call: empty page with a next link that would carry a credential.
+			body = `{"data":[],"paging":{"cursors":{"after":"OPAQUE_CURSOR"},"next":"https://graph.example/x?access_token=SECRET&after=OPAQUE_CURSOR"}}`
+		case order == 2 && strings.Contains(req.URL.RawQuery, "filtering"):
+			// Second call: verify the URL does NOT contain the credential.
+			if strings.Contains(req.URL.RawQuery, "access_token") || strings.Contains(req.URL.RawQuery, "SECRET") {
+				t.Errorf("pagination leaked credential into query string: %q", req.URL.RawQuery)
+			}
+			if !strings.Contains(req.URL.RawQuery, "after=OPAQUE_CURSOR") {
+				t.Errorf("pagination did not use the cursor; query: %q", req.URL.RawQuery)
+			}
+			body = `{"data":[{"id":"120400000000789","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}]}`
+		default:
+			t.Errorf("unexpected call %d: %s %s", order, req.Method, req.URL.Path)
+			return &http.Response{StatusCode: http.StatusNotFound}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}))
+	id, err := c.findCampaignByName(context.Background(), "act_1", "My Campaign", "OUTCOME_TRAFFIC")
+	if err != nil {
+		t.Fatalf("findCampaignByName error: %v", err)
+	}
+	if id != "120400000000789" {
+		t.Errorf("id = %q, want 120400000000789", id)
+	}
+}
+
+// TestFindCampaignByName_MultipleMatchesAmbiguous verifies that when multiple
+// campaigns have the same name, the lookup fails closed (returns error) rather
+// than silently selecting the first one. This prevents attaching to an unrelated
+// campaign when names are not unique.
+func TestFindCampaignByName_MultipleMatchesAmbiguous(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"data":[{"id":"120100000000001"},{"id":"120100000000002"}]}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}))
+	id, err := c.findCampaignByName(context.Background(), "act_1", "My Campaign", "OUTCOME_TRAFFIC")
+	if err == nil {
+		t.Fatal("findCampaignByName error = nil, want non-nil error for multiple matches")
+	}
+	if id != "" {
+		t.Errorf("id = %q, want empty string on error", id)
+	}
+	if !strings.Contains(err.Error(), "matched 2 existing campaigns") {
+		t.Errorf("error message = %q, want 'matched 2 existing campaigns'", err.Error())
+	}
+	if !strings.Contains(err.Error(), "cannot disambiguate") {
+		t.Errorf("error message = %q, want 'cannot disambiguate'", err.Error())
+	}
+}
+
+// TestCreateCampaignWithoutReconcileByNameDoesNotLookUpOrReuse pins the gate on the
+// by-name reconciliation. It is opt-in for two reasons, and this test binds both:
+//
+//   - buildCampaignName is event/region/objective/project — NOT brief-unique. Two briefs
+//     for the same event and objective under the same project produce the same name, and
+//     an unconditional lookup would attach both to one upstream campaign.
+//   - DELETE frees the (brief, platform) slot LOCALLY and never touches the ad platform
+//     (docs/api-catalog.md), so the documented delete -> re-dispatch flow — the supported
+//     way to fix a campaign created with the wrong budget — meets a same-named campaign
+//     still living upstream. Budget is not a name segment, so reuse would silently re-run
+//     the OLD budget and report success.
+//
+// With the flag unset the client must issue NO filtering GET and must POST a new campaign,
+// even though the server here would happily return a name match.
+func TestCreateCampaignWithoutReconcileByNameDoesNotLookUpOrReuse(t *testing.T) {
+	var mu sync.Mutex
+	lookupCount := 0
+	campaignPostCount := 0
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"id":"120100000000012"}`
+		switch {
+		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering"):
+			mu.Lock()
+			lookupCount++
+			mu.Unlock()
+			// A name match IS available upstream. The gate, not the absence of a match,
+			// must be what stops the reuse.
+			body = `{"data":[{"id":"120200000000123","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}]}`
+		case req.Method == http.MethodGet:
+			body = `{"name":"x"}`
+		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/campaigns"):
+			mu.Lock()
+			campaignPostCount++
+			mu.Unlock()
+			body = `{"id":"120100000000099"}`
+		case strings.HasSuffix(req.URL.Path, "/adsets"):
+			body = `{"id":"120200000000001"}`
+		case strings.HasSuffix(req.URL.Path, "/adcreatives"):
+			body = `{"id":"creative_1"}`
+		case strings.HasSuffix(req.URL.Path, "/ads"):
+			body = `{"id":"ad_1"}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		Project:         "tlf",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		Budget:          10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		// ReconcileByName deliberately unset — this is the default every caller uses today.
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign error: %v", err)
+	}
+	mu.Lock()
+	lookups, posts := lookupCount, campaignPostCount
+	mu.Unlock()
+	if lookups != 0 {
+		t.Errorf("by-name lookup issued %d times with ReconcileByName unset, want 0", lookups)
+	}
+	if posts != 1 {
+		t.Errorf("campaign POST called %d times, want 1 (a fresh campaign, not a reuse)", posts)
+	}
+	if res.CampaignID != "120100000000099" {
+		t.Errorf("campaign id = %q, want the newly created 120100000000099 (not the same-named 120200000000123)", res.CampaignID)
+	}
+	if anyStepContains(res.Steps, "already exists by name") {
+		t.Errorf("no reuse step may appear when ReconcileByName is unset, got %v", res.Steps)
+	}
+}
+
+// TestCreateCampaignNonNumericCreatedIDIsUnconfirmed pins the interpolation gate on the
+// ids this client CREATES, not just the ones it looks up. A freshly created id is the only
+// one that reaches CampaignResult ungated: it is persisted and spliced into
+// "/{campaignID}/..." paths on every later call (status toggle, metrics, ad set lookup),
+// each of which would reject it far from where the campaign was made. A malformed 2xx is a
+// malformed SUCCESS — the campaign exists, it just is not addressable — so the result must
+// stay a name-carrying UNCONFIRMED partial, never a clean failure that lets a retry create
+// a duplicate paid campaign.
+func TestCreateCampaignNonNumericCreatedIDIsUnconfirmed(t *testing.T) {
+	for _, bad := range []string{"123?fields=x", "123/../../me", "12 3", "abc"} {
+		t.Run(bad, func(t *testing.T) {
+			rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				body := `{"name":"x"}`
+				if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/campaigns") {
+					b, _ := json.Marshal(map[string]string{"id": bad})
+					body = string(b)
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Request:    req,
+				}, nil
+			})
+			c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+				WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+			res, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName:       "E",
+				Project:         "tlf",
+				RegistrationURL: "https://x.example.org/e",
+				GeoTargets:      []string{"US"},
+				Budget:          10,
+				StartDate:       "2026-08-01",
+				EndDate:         "2026-08-31",
+				Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+			})
+			if err == nil {
+				t.Fatal("expected an error for a 2xx carrying a non-numeric campaign id")
+			}
+			if res == nil || res.CampaignName == "" {
+				t.Fatalf("expected a partial result carrying the campaign name so the orphan stays reconcilable, got %+v", res)
+			}
+			if res.CampaignID != "" {
+				t.Errorf("the unusable id must not be published as CampaignID, got %q", res.CampaignID)
+			}
+			// Same classification as the existing no-id branch: a non-nil partial is what
+			// makes the dispatcher report UNCONFIRMED and KEEP the claim (internal/dispatch
+			// gates on result == nil), so the pair is not freed for a duplicating retry.
+			if !anyStepContains(res.Steps, "verify by name in Meta Ads Manager") {
+				t.Errorf("expected a step telling the operator to reconcile by name, got %v", res.Steps)
+			}
+		})
+	}
+}
+
+// TestCreateCampaignNonNumericAdSetIDIsUnconfirmed is the ad-set half of the same gate.
+// The partial result must still carry the created campaign id (a real orphan the caller
+// can address) while withholding the unusable ad set id.
+func TestCreateCampaignNonNumericAdSetIDIsUnconfirmed(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"name":"x"}`
+		switch {
+		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/campaigns"):
+			body = `{"id":"120100000000099"}`
+		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/adsets"):
+			body = `{"id":"120200000000001?fields=x"}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+		WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		Project:         "tlf",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		Budget:          10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error for a 2xx carrying a non-numeric ad set id")
+	}
+	if res == nil || res.CampaignID != "120100000000099" {
+		t.Fatalf("the partial must carry the created campaign id so the orphan is addressable, got %+v", res)
+	}
+	if res.AdSetID != "" {
+		t.Errorf("the unusable ad set id must not be published as AdSetID, got %q", res.AdSetID)
+	}
+	if res.AdSetName == "" {
+		t.Error("the partial must carry the ad set NAME so the ad set stays reconcilable")
+	}
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a malformed 2xx must be worded UNCONFIRMED (the ad set may exist), got %v", err)
+	}
+}
+
+// TestDoCreateTruncatedGraphThrottleStaysAmbiguous covers the intersection of two paths that
+// each work on their own: a create (which never retries a throttle) whose throttled response
+// body fails to read.
+//
+// Meta reports rate limiting as an HTTP 400 carrying a Graph rate-limit code far more often
+// than as a 429, and `createOutcomeAmbiguous` recognises the shed by that CODE — a bare 400
+// is an ordinary semantic rejection. A truncated read does not mean the envelope was
+// unusable: the common shape is a complete JSON body followed by a connection closed early on
+// a mismatched Content-Length, so the code is right there in the bytes we did get. Dropping it
+// from the returned *APIError leaves 400/code 0, which classifies as a CLEAN failure — the
+// dispatcher then releases the claim and the next attempt re-POSTs a create Meta may already
+// have committed, duplicating a PAID campaign.
+//
+// The 429 subtest is the control: it stays ambiguous on the status alone, so a regression that
+// only drops the Graph code fails the 400 case and not this one, which is what localises it.
+func TestDoCreateTruncatedGraphThrottleStaysAmbiguous(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		// wantCode is the Graph code the *APIError must carry out of the truncated read; 0
+		// means the response had no envelope to preserve.
+		wantCode int
+	}{
+		{
+			name:     "HTTP 400 with a Graph rate-limit envelope",
+			status:   http.StatusBadRequest,
+			body:     `{"error":{"message":"User request limit reached","type":"OAuthException","code":17,"fbtrace_id":"AbC"}}`,
+			wantCode: 17,
+		},
+		{
+			name:     "HTTP 429 with no envelope",
+			status:   http.StatusTooManyRequests,
+			body:     `{"error":`,
+			wantCode: 0,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				// Advertise more than we send, then hijack and close: the body that DID
+				// arrive is complete JSON, but the read fails.
+				w.Header().Set("Content-Length", "100000")
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
+				if hj, ok := w.(http.Hijacker); ok {
+					if conn, _, err := hj.Hijack(); err == nil {
+						_ = conn.Close()
+					}
+				}
+			}))
+			defer srv.Close()
+
+			c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1"},
+				WithBaseURL(srv.URL), withRetryBaseDelay(time.Millisecond))
+			var out createResponse
+			err := c.doCreate(context.Background(), "/x", map[string]any{"a": 1}, &out)
+			if err == nil {
+				t.Fatal("expected an error, got nil — a truncated body is never a successful create")
+			}
+
+			var ae *APIError
+			if !errors.As(err, &ae) {
+				t.Fatalf("want *APIError, got %T: %v", err, err)
+			}
+			if ae.StatusCode != tc.status {
+				t.Errorf("APIError.StatusCode = %d, want %d", ae.StatusCode, tc.status)
+			}
+			if ae.Code != tc.wantCode {
+				t.Errorf("APIError.Code = %d, want %d — the Graph code parsed from the bytes that "+
+					"DID arrive must survive the read failure; it is what identifies the shed",
+					ae.Code, tc.wantCode)
+			}
+			if !createOutcomeAmbiguous(err) {
+				t.Errorf("createOutcomeAmbiguous = false for a throttled create with an unreadable "+
+					"body; Meta may have committed the node before shedding, so classifying this as "+
+					"a clean failure invites a duplicate paid campaign (err: %v)", err)
 			}
 		})
 	}
@@ -4331,4 +5735,167 @@ func TestRedactSecretsRemovesTheConfiguredTokenVerbatim(t *testing.T) {
 	if got := short.redactSecrets("unable to reach ab.example.com"); got != "unable to reach ab.example.com" {
 		t.Errorf("short secret was substring-replaced, destroying the snippet: %q", got)
 	}
+}
+
+// TestCreateCampaignLookupStatusConflictIsCleanFailure and its objective sibling pin the
+// OTHER half of the "every failed lookup is UNCONFIRMED" rule: a definite conflict is not
+// a failed lookup. findCampaignByName enumerated the name successfully and READ the
+// match's status, so the name is known to be occupied by a campaign this create cannot
+// adopt. Absence is not unconfirmed — presence is confirmed, with a stated reason.
+//
+// Classifying it UNCONFIRMED would be worse than noisy. The dispatcher would retain a
+// partial and send an operator to Ads Manager to verify a fact the error already states,
+// and every retry would repeat it, because the conflict is stable: the name stays taken
+// until someone renames or deletes the live campaign.
+func TestCreateCampaignLookupStatusConflictIsCleanFailure(t *testing.T) {
+	res, err := runConflictLookup(t, `{"data":[{"id":"120200000000123","status":"ACTIVE","objective":"OUTCOME_TRAFFIC"}]}`)
+	assertCleanConflict(t, res, err, "status")
+}
+
+func TestCreateCampaignLookupObjectiveConflictIsCleanFailure(t *testing.T) {
+	res, err := runConflictLookup(t, `{"data":[{"id":"120200000000123","status":"PAUSED","objective":"OUTCOME_LEADS"}]}`)
+	assertCleanConflict(t, res, err, "objective")
+}
+
+func runConflictLookup(t *testing.T, lookupBody string) (*CampaignResult, error) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			_, _ = io.WriteString(w, lookupBody)
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+		default:
+			t.Errorf("a definite name conflict must not reach a mutating call, got %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	return c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		ReconcileByName: true,
+	})
+}
+
+func assertCleanConflict(t *testing.T, res *CampaignResult, err error, kind string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected an error for a %s conflict on the name lookup", kind)
+	}
+	if !errors.Is(err, errLookupConflict) {
+		t.Errorf("error does not carry errLookupConflict, so the definite/ambiguous split is not expressible by callers: %v", err)
+	}
+	if createOutcomeAmbiguous(err) {
+		t.Errorf("a %s conflict is reported UNCONFIRMED; the lookup completed and read the match, so the name is KNOWN to be taken — an operator would be sent to verify what the error already says, on every retry, forever: %v", kind, err)
+	}
+	if res != nil {
+		t.Errorf("a clean failure returned a partial result (%+v); nothing was created, so there is nothing to reconcile", res)
+	}
+}
+
+// TestCreateCampaignAdSetLookupFailureIsUnconfirmed covers the ad-set half of the same
+// rule, which an earlier revision left on the opposite side of it: it reported a
+// pre-send/4xx ad-set lookup failure as a clean failure because "the ad set was
+// definitely not looked up". True, and beside the point. This lookup runs only when the
+// campaign was ADOPTED from a prior attempt, so a prior attempt may well have parented an
+// ad set under it; a lookup that never left the process establishes that no better than a
+// timeout does. Reported as failed, the next dispatch POSTs the same deterministic ad-set
+// name under the same campaign and duplicates real spend.
+func TestCreateCampaignAdSetLookupFailureIsUnconfirmed(t *testing.T) {
+	for _, tc := range []struct{ name, kind string }{{"4xx", "4xx"}, {"cancelled context", "cancel"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering") &&
+					strings.HasSuffix(r.URL.Path, "/campaigns"):
+					// An adoptable campaign: this is what makes the ad-set lookup run at all.
+					_, _ = io.WriteString(w, `{"data":[{"id":"120200000000123","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}]}`)
+				case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering") &&
+					strings.HasSuffix(r.URL.Path, "/adsets"):
+					if tc.kind == "cancel" {
+						cancel()
+					}
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = io.WriteString(w, `{"error":{"message":"bad filter","type":"OAuthException","code":100}}`)
+				case r.Method == http.MethodGet:
+					_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+				default:
+					t.Errorf("a failed ad-set lookup must not reach a mutating call, got %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+			c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+			res, err := c.CreateCampaign(ctx, CampaignInput{
+				EventName: "E", Project: "tlf", Objective: "traffic",
+				RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+				Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+				Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+				ReconcileByName: true,
+			})
+			if err == nil {
+				t.Fatal("expected an error for a failed ad set name lookup")
+			}
+			if res == nil {
+				t.Fatal("the ad-set lookup failure returned (nil, err), discarding the adopted campaign id and the ad-set name a retry needs to reconcile against")
+			}
+			if !strings.Contains(err.Error(), "UNCONFIRMED") {
+				t.Errorf("error = %q, want it marked UNCONFIRMED", err)
+			}
+			if !createOutcomeAmbiguous(err) {
+				t.Error("createOutcomeAmbiguous is false, so the dispatcher records a clean failure and the next dispatch duplicates the ad set")
+			}
+		})
+	}
+}
+
+// TestCreateCampaignAdSetLookupConflictIsCleanFailure pins the AD-SET half of the
+// definite/ambiguous split. The campaign half had two tests; this half had none, and the
+// arm it covers was returning a partial result while its own comment, and
+// docs/knowledge/code/internal-platform-meta.md, both called it a clean failure.
+//
+// The partial is what made it wrong. The dispatcher releases the retained claim only when
+// the result is nil (internal/dispatch/meta.go at the CreateCampaign call) and treats every
+// non-nil result as UNCONFIRMED, so a stable non-PAUSED ad set was reported as "verify in
+// Ads Manager" on every retry forever — the exact loop errLookupConflict exists to break.
+//
+// Reaching this arm requires the campaign lookup to SUCCEED with an adoptable (PAUSED,
+// matching-objective) match, because the ad-set lookup is gated on existingCampaignID != "".
+// That gate is also why dropping the partial costs nothing: the campaign it described was
+// found by name, not created by this call.
+func TestCreateCampaignAdSetLookupConflictIsCleanFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/adsets"):
+			// The ad set exists under the adopted campaign and is ACTIVE: name taken.
+			_, _ = io.WriteString(w, `{"data":[{"id":"120200000000999","status":"ACTIVE"}]}`)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			// Campaign lookup: an adoptable match, so the ad-set lookup is reached.
+			_, _ = io.WriteString(w, `{"data":[{"id":"120200000000123","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}]}`)
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+		default:
+			t.Errorf("a definite ad-set name conflict must not reach a mutating call, got %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "E", Project: "tlf", Objective: "traffic",
+		RegistrationURL: "https://x.example.org/e", GeoTargets: []string{"US"},
+		Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+		ReconcileByName: true,
+	})
+	assertCleanConflict(t, res, err, "ad set status")
 }
