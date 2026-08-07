@@ -941,6 +941,38 @@ func TestBriefService_ToggleCampaignStatus_NotProvisionedIs409(t *testing.T) {
 	}
 }
 
+// A toggle refused because the campaign belongs to a different ad account than the project's
+// current connection is a STATE error the dispatcher raises BEFORE contacting the platform —
+// a retry now is refused identically. It must map to 409, not the 503 the default branch
+// would give it, and the client message must not leak either customer id.
+func TestBriefService_ToggleCampaignStatus_AccountMismatchIs409(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	// Google Ads raises this today, but the mapping is platform-neutral and the shared
+	// toggle harness wires its stub under Reddit — so the campaign is Reddit and only the
+	// sentinel identifies the condition, which is the contract being pinned.
+	tog := &stubToggler{err: fmt.Errorf(
+		"toggle campaign status: campaign ga-1 was created under ad account 5555555555 but the project's current connection resolves to ad account 1234567890: %w",
+		ErrCampaignAccountMismatch)}
+	s, camps := newToggleService(camp, tog)
+	im := "1"
+	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected a ConflictError (409) for a foreign-account campaign, got %T: %v", err, err)
+	}
+	if strings.Contains(conflict.Message, "5555555555") || strings.Contains(conflict.Message, "1234567890") {
+		t.Errorf("client message must not carry ad account ids, got %q", conflict.Message)
+	}
+	if camps.replaced != nil {
+		t.Error("the row must not be modified when the toggle was refused before the platform was contacted")
+	}
+}
+
 // unconfirmedErr implements the Unconfirmed() behavioral interface the toggle handler
 // checks (mirrors the dispatch layer's unconfirmedToggleError).
 type unconfirmedErr struct{}
@@ -2105,6 +2137,30 @@ func TestBriefService_GetCampaignMetrics_PlatformFailureIs503(t *testing.T) {
 	}
 }
 
+// A campaign whose ad account no longer matches the project's connection is a STATE error,
+// not a transport one — a retry now fails identically — so it must map to 409, not the 503
+// the default branch would give it. The message must also not leak either customer id.
+func TestBriefService_GetCampaignMetrics_AccountMismatchIs409(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	disp := &metricsOnlyDispatcher{err: fmt.Errorf(
+		"campaign ga-1 was created under customer 5555555555 but the project's current connection resolves to customer 1234567890: %w",
+		ErrCampaignAccountMismatch)}
+	s := newMetricsService(camp, disp)
+	_, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected a ConflictError (409) for a foreign-account campaign, got %T: %v", err, err)
+	}
+	if strings.Contains(conflict.Message, "5555555555") || strings.Contains(conflict.Message, "1234567890") {
+		t.Errorf("client message must not carry ad account ids, got %q", conflict.Message)
+	}
+}
+
 func TestBriefService_GetCampaignMetrics_WindowUnsupportedIs400(t *testing.T) {
 	camp := &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderTwitterAds,
@@ -2428,6 +2484,82 @@ func TestGetCampaignMetrics_WindowUnsupportedErrorIsScrubbedBeforeLogging(t *tes
 	}
 	if len(logged) > 1000 {
 		t.Errorf("the unbounded upstream body reached the log sink: record is %d bytes", len(logged))
+	}
+	if !strings.Contains(logged, "\\ufffd") && !strings.ContainsRune(logged, unicode.ReplacementChar) {
+		t.Errorf("the control character was not normalized before logging:\n%s", logged)
+	}
+}
+
+// The two account-mismatch branches — metrics read and status toggle — log an error that
+// embeds client.CustomerID(), sourced from the connection's account_id. That attribute
+// carries no Pattern, MaxLength, or charset constraint in design/connection.go, unlike
+// Meta's act_<digits> or X's alphanumeric ids, so the value is arbitrary operator-supplied
+// text. It is also worse than the default branch: this guard fires BEFORE any request, so
+// the client's own validateAccountIDs has not run for the instance yet — nothing upstream
+// of this log line has ever looked at the string.
+//
+// One test per branch. Both branches wrap the same sentinel and read almost identically,
+// which is exactly why a single test would leave the other logging verbatim: they are
+// separate switch arms in separate handlers.
+func TestGetCampaignMetrics_AccountMismatchErrorIsScrubbedBeforeLogging(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	// An account_id the design layer would accept unchanged: a control character and a
+	// body far longer than any useful diagnostic.
+	raw := "connection resolves to customer boom\nlevel=ERROR msg=forged " + strings.Repeat("x", 5000)
+	disp := &metricsOnlyDispatcher{err: fmt.Errorf("%s: %w", raw, ErrCampaignAccountMismatch)}
+	s := newMetricsService(camp, disp)
+	if _, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	}); err == nil {
+		t.Fatal("expected the account mismatch to surface as an error")
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "boom") {
+		t.Fatalf("scrubbing dropped the diagnostic text entirely:\n%s", logged)
+	}
+	if len(logged) > 1000 {
+		t.Errorf("the unbounded account_id reached the log sink: record is %d bytes", len(logged))
+	}
+	if !strings.Contains(logged, "\\ufffd") && !strings.ContainsRune(logged, unicode.ReplacementChar) {
+		t.Errorf("the control character was not normalized before logging:\n%s", logged)
+	}
+}
+
+func TestToggleCampaignStatus_AccountMismatchErrorIsScrubbedBeforeLogging(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	raw := "connection resolves to ad account boom\nlevel=ERROR msg=forged " + strings.Repeat("x", 5000)
+	tog := &stubToggler{err: fmt.Errorf("%s: %w", raw, ErrCampaignAccountMismatch)}
+	s, _ := newToggleService(camp, tog)
+	im := "1"
+	if _, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	}); err == nil {
+		t.Fatal("expected the account mismatch to surface as an error")
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "boom") {
+		t.Fatalf("scrubbing dropped the diagnostic text entirely:\n%s", logged)
+	}
+	if len(logged) > 1000 {
+		t.Errorf("the unbounded account_id reached the log sink: record is %d bytes", len(logged))
 	}
 	if !strings.Contains(logged, "\\ufffd") && !strings.ContainsRune(logged, unicode.ReplacementChar) {
 		t.Errorf("the control character was not normalized before logging:\n%s", logged)

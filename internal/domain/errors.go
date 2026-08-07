@@ -62,4 +62,14 @@ var (
 	// adapter wraps its own typed "unsupported window" error with this sentinel
 	// (%w) so the service layer can map it without importing every platform package.
 	ErrMetricsWindowUnsupported = errors.New("this window is not supported for the campaign's platform")
+
+	// ErrCampaignAccountMismatch indicates the campaign was created under one ad
+	// account but the project's CURRENT connection for that platform resolves to a
+	// different one. Platform campaign ids are unique only WITHIN an account, so an
+	// account-scoped request issued under the wrong account is not merely unauthorized —
+	// it is silently WRONG: the id most often matches nothing (indistinguishable from a
+	// campaign with genuinely zero activity) and, on a collision, matches somebody
+	// else's campaign. The platform is never contacted. It is a state error, not a
+	// transport one — a retry now fails identically — so it maps to 409, not 503.
+	ErrCampaignAccountMismatch = errors.New("the campaign belongs to a different ad account than the project's current connection")
 )
