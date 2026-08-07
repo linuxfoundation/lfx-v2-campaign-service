@@ -273,6 +273,13 @@ func TestListAccessibleCustomers_SendsNoRequestBody(t *testing.T) {
 // classification: the caller must receive an *apiError carrying the upstream status and
 // the parsed Google Ads error codes, not an opaque error. Without this, a 403
 // (bad developer token) is indistinguishable from a 500 at the call site.
+//
+// The `@type` in the detail is load-bearing, not decoration. parseErrorCodes skips any
+// detail whose type does not end in `GoogleAdsFailure`, so a fixture without it yields an
+// EMPTY ErrorCodes slice — and a test that asserts only the status code passes just as
+// happily against a parser that never extracts anything. The exact code is asserted below
+// for the same reason: a non-empty slice carrying the wrong value would satisfy a length
+// check while `hasErrorCode` still answered false at every call site that matters.
 func TestListAccessibleCustomers_APIErrorCarriesStatusAndCodes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if writeAccountsToken(w, r) {
@@ -280,7 +287,9 @@ func TestListAccessibleCustomers_APIErrorCarriesStatusAndCodes(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"error":{"code":403,"message":"denied","details":[{"errors":[{"errorCode":{"authorizationError":"DEVELOPER_TOKEN_NOT_APPROVED"}}]}]}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":403,"message":"denied","details":[` +
+			`{"@type":"type.googleapis.com/google.ads.googleads.v23.errors.GoogleAdsFailure",` +
+			`"errors":[{"errorCode":{"authorizationError":"DEVELOPER_TOKEN_NOT_APPROVED"}}]}]}}`))
 	}))
 	defer server.Close()
 
@@ -306,6 +315,13 @@ func TestListAccessibleCustomers_APIErrorCarriesStatusAndCodes(t *testing.T) {
 	// upstream failed without inspecting the concrete type.
 	if !strings.Contains(apiErr.Error(), "google-ads") {
 		t.Errorf("expected the message to identify the platform, got %q", apiErr.Error())
+	}
+	// The codes are what the name of this test promises. hasErrorCode is the accessor every
+	// classification site uses, so assert through it rather than indexing the slice.
+	if !apiErr.hasErrorCode("DEVELOPER_TOKEN_NOT_APPROVED") {
+		t.Errorf("ErrorCodes = %v, want it to carry DEVELOPER_TOKEN_NOT_APPROVED — an unparsed "+
+			"403 leaves the caller unable to tell a bad developer token from any other denial",
+			apiErr.ErrorCodes)
 	}
 }
 
@@ -473,6 +489,7 @@ func TestListAccessibleCustomers_ExpandsManagerHierarchy(t *testing.T) {
 	var (
 		mu             sync.Mutex
 		searchPaths    []string
+		searchQueries  []string
 		gotLoginHeader string
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -485,8 +502,19 @@ func TestListAccessibleCustomers_ExpandsManagerHierarchy(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			// Decode the GAQL the client actually sent. Every fixture in this file returns
+			// pre-filtered ENABLED rows, so nothing else in the suite can tell whether the
+			// status predicate is in the query at all — a fake that answers the same way
+			// regardless of what it was asked is exactly the vacuous-test shape.
+			var body struct {
+				Query string `json:"query"`
+			}
+			if derr := json.NewDecoder(r.Body).Decode(&body); derr != nil {
+				t.Errorf("decode search request body: %v", derr)
+			}
 			mu.Lock()
 			searchPaths = append(searchPaths, r.URL.Path)
+			searchQueries = append(searchQueries, body.Query)
 			mu.Unlock()
 			// The manager itself, a child, and a nested sub-manager. Only the child is
 			// selectable: a manager account cannot hold campaigns.
@@ -511,6 +539,7 @@ func TestListAccessibleCustomers_ExpandsManagerHierarchy(t *testing.T) {
 
 	mu.Lock()
 	paths := append([]string(nil), searchPaths...)
+	queries := append([]string(nil), searchQueries...)
 	loginHeader := gotLoginHeader
 	mu.Unlock()
 
@@ -522,6 +551,22 @@ func TestListAccessibleCustomers_ExpandsManagerHierarchy(t *testing.T) {
 	}
 	if loginHeader != "9999999999" {
 		t.Errorf("login-customer-id header = %q, want 9999999999", loginHeader)
+	}
+
+	// The status predicate is server-side filtering, and it is the ONLY thing keeping
+	// cancelled/closed accounts out of the picker: nothing downstream re-checks
+	// customerClient.status, so dropping the WHERE clause would silently start offering
+	// accounts a campaign can never run in. Assert it is on the wire.
+	if len(queries) != 1 {
+		t.Fatalf("captured %d search queries, want 1", len(queries))
+	}
+	if !strings.Contains(queries[0], "FROM customer_client") {
+		t.Errorf("query = %q, want it to select FROM customer_client", queries[0])
+	}
+	if !strings.Contains(queries[0], "WHERE customer_client.status = 'ENABLED'") {
+		t.Errorf("query = %q, want the ENABLED status predicate: it is the only filter that "+
+			"keeps cancelled or closed accounts out of the result, and no later stage re-checks it",
+			queries[0])
 	}
 
 	byName := map[string]string{}
@@ -695,11 +740,17 @@ func TestListAccessibleCustomers_MalformedResourceNameIsAnError(t *testing.T) {
 	}
 }
 
-// TestListAccessibleCustomers_DedupPrefersLabelledCopy exercises the branch where the
-// SAME account arrives twice: unlabelled from the flat list, labelled from the manager
-// expansion. Every other test returns the child only from the expansion, so appending
-// both copies — or keeping the unlabelled one — would pass them all.
-func TestListAccessibleCustomers_DedupPrefersLabelledCopy(t *testing.T) {
+// TestListAccessibleCustomers_ManagerModeIgnoresTheFlatCopyOfAChild covers the case where
+// the SAME account is reachable both ways: unlabelled from the flat list, labelled from the
+// manager expansion.
+//
+// Manager mode does not merge — it answers from the expansion alone — and this is the case
+// that would tempt a merge back in, because here the flat list is not wrong, merely
+// redundant and unlabelled. Reinstating a union would return the account twice; preferring
+// the first-seen copy would return it unlabelled and cost the operator every label, since
+// customer_client is the only source of descriptive_name. The sibling exclusion test uses an
+// account that is NOT under the manager, so it would stay green under either mistake.
+func TestListAccessibleCustomers_ManagerModeIgnoresTheFlatCopyOfAChild(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if writeAccountsToken(w, r) {
 			return
@@ -726,16 +777,17 @@ func TestListAccessibleCustomers_DedupPrefersLabelledCopy(t *testing.T) {
 		t.Fatalf("ListAccessibleCustomers failed: %v", err)
 	}
 	if len(accounts) != 1 {
-		t.Fatalf("accounts = %+v, want exactly one entry — the duplicate must be merged, not appended", accounts)
+		t.Fatalf("accounts = %+v, want exactly one entry — manager mode answers from the expansion "+
+			"alone, so the flat copy of the same child must not be appended", accounts)
 	}
 	if accounts[0].ResourceName != "customers/2222222222" {
 		t.Fatalf("got %+v, want the child ad account", accounts[0])
 	}
-	// The expansion is the ONLY source of descriptive_name, so a dedup that keeps the
-	// first-seen (flat, unlabelled) copy silently costs the operator every label.
+	// The expansion is the ONLY source of descriptive_name, so returning the flat copy —
+	// or keeping the first-seen one under a reinstated merge — silently costs every label.
 	if accounts[0].DescriptiveName != "Child Ad Account" {
-		t.Errorf("DescriptiveName = %q, want the expansion's label to win over the unlabelled flat copy",
-			accounts[0].DescriptiveName)
+		t.Errorf("DescriptiveName = %q, want the expansion's label; an unlabelled result means the "+
+			"flat list was consulted", accounts[0].DescriptiveName)
 	}
 }
 

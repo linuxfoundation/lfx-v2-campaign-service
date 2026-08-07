@@ -1138,6 +1138,218 @@ func TestGoogleAds_DispatchWiresKeywordsAndAudienceSegments(t *testing.T) {
 	mu.Unlock()
 }
 
+// ---- ReadMetrics --------------------------------------------------------
+
+func TestGoogleAds_ReadMetrics_HappyPath(t *testing.T) {
+	var mu sync.Mutex
+	var gotBody string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		gotBody = string(b)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"777"},"metrics":{"impressions":"1000","clicks":"40","costMicros":"25000000"}}]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	camp := &model.Campaign{Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+	m, err := d.ReadMetrics(context.Background(), "proj", model.ProviderGoogleAds, camp, model.MetricsWindowLast30Days)
+	if err != nil {
+		t.Fatalf("ReadMetrics: %v", err)
+	}
+	// Window echoes the platform-agnostic request value, NOT the GAQL literal the query
+	// carried — the dialect must not escape the platform package (the DURING assertion
+	// below pins that it still reaches the wire).
+	if m.CampaignID != "777" || m.Window != model.MetricsWindowLast30Days || m.Impressions != 1000 || m.Clicks != 40 || m.CostMicros != 25_000_000 {
+		t.Errorf("got %+v", m)
+	}
+	if want := 0.04; m.Ctr != want {
+		t.Errorf("Ctr = %v, want %v", m.Ctr, want)
+	}
+	mu.Lock()
+	body := gotBody
+	mu.Unlock()
+	if !strings.Contains(body, "campaign.id = 777") || !strings.Contains(body, "DURING LAST_30_DAYS") {
+		t.Errorf("query body = %s", body)
+	}
+}
+
+// TestGoogleAds_ReadMetrics_ConnectionUnresolvedPropagates pins that a broken/inactive
+// connection surfaces as a plain error (NOT wrapped with notCreated, unlike Dispatch) — a
+// metrics read has no create-claim semantics to protect.
+func TestGoogleAds_ReadMetrics_ConnectionUnresolvedPropagates(t *testing.T) {
+	d := NewGoogleAdsDispatcher(fakeConnReader{err: errors.New("no connection")}, identityEncryptor{})
+	camp := &model.Campaign{Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+	if _, err := d.ReadMetrics(context.Background(), "proj", model.ProviderGoogleAds, camp, model.MetricsWindowLast30Days); err == nil {
+		t.Fatal("expected an error when the connection cannot be resolved")
+	}
+}
+
+// TestGoogleAds_ReadMetrics_UnmappableWindowIs400AndNeverContactsPlatform pins the
+// translation boundary: a window outside the closed model vocabulary is caller input, so it
+// must surface as domain.ErrMetricsWindowUnsupported (400) and the platform must never be
+// contacted for it. The connection reader fails the test if it is ever consulted, which
+// proves the guard runs BEFORE credential resolution rather than after a wasted round trip.
+func TestGoogleAds_ReadMetrics_UnmappableWindowIs400AndNeverContactsPlatform(t *testing.T) {
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{err: errors.New("connection reader must not be consulted for an unmappable window")},
+		identityEncryptor{},
+	)
+	camp := &model.Campaign{Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+	// "LAST_30_DAYS" is Google's own GAQL literal — valid downstream, but NOT a member of
+	// the platform-agnostic vocabulary, so it must be rejected at this boundary.
+	for _, w := range []model.MetricsWindow{"LAST_30_DAYS", "last_90_days", ""} {
+		_, err := d.ReadMetrics(context.Background(), "proj", model.ProviderGoogleAds, camp, w)
+		if err == nil {
+			t.Fatalf("window %q: expected an error", w)
+		}
+		if !errors.Is(err, domain.ErrMetricsWindowUnsupported) {
+			t.Errorf("window %q: error must wrap ErrMetricsWindowUnsupported (400), got %v", w, err)
+		}
+		if !errors.Is(err, googleads.ErrUnsupportedWindow) {
+			t.Errorf("window %q: error must also keep the client's cause reachable, got %v", w, err)
+		}
+	}
+}
+
+// TestGoogleAds_ReadMetrics_ForeignAccountIs409AndNeverQueries pins the account-identity
+// guard. The campaign row records the customer it was created under; the connection the
+// project resolves TODAY points somewhere else (UpdateGoogleAds can re-point it). Google
+// would answer that query with an empty result set — indistinguishable from a campaign with
+// genuinely zero activity — so the read must fail with domain.ErrCampaignAccountMismatch
+// (409) instead, and must not reach the API at all.
+func TestGoogleAds_ReadMetrics_ForeignAccountIs409AndNeverQueries(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("the Google Ads API must not be queried for a campaign owned by another customer")
+	}))
+	defer apiSrv.Close()
+
+	// The connection resolves to customer 1234567890 (activeGoogleAdsConn); both rows below
+	// record 5555555555 — one via the modern customerId field, one via a legacy row that
+	// only has the ocid in its console URL.
+	for _, tc := range []struct {
+		name   string
+		result string
+	}{
+		{"customerId field", `{"customerId":"5555555555","campaignId":"777"}`},
+		{"legacy ocid fallback", `{"campaignId":"777","googleAdsUrl":"https://ads.google.com/aw/campaigns?ocid=5555555555"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := NewGoogleAdsDispatcher(
+				fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+				googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+			)
+			camp := &model.Campaign{
+				Platform:           model.ProviderGoogleAds,
+				PlatformCampaignID: "777",
+				Result:             json.RawMessage(tc.result),
+			}
+			_, err := d.ReadMetrics(context.Background(), "proj", model.ProviderGoogleAds, camp, model.MetricsWindowLast30Days)
+			if err == nil {
+				t.Fatal("expected a mismatch error")
+			}
+			if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+				t.Errorf("error must wrap ErrCampaignAccountMismatch (409), got %v", err)
+			}
+		})
+	}
+}
+
+// TestGoogleAds_ReadMetrics_UnknownOrMatchingAccountStillReads is the other half of the
+// guard: it must not become a wall. A row with no recoverable customer id (every row created
+// before the field existed and before the console URL carried an ocid) cannot PROVE a
+// mismatch, and a row recording the same customer the connection resolves to is not one — so
+// both still read.
+func TestGoogleAds_ReadMetrics_UnknownOrMatchingAccountStillReads(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"777"},"metrics":{"impressions":"10","clicks":"1","costMicros":"5"}}]}`)
+	}))
+	defer apiSrv.Close()
+
+	for _, tc := range []struct {
+		name   string
+		result json.RawMessage
+	}{
+		{"no result blob", nil},
+		{"blob without a customer id", json.RawMessage(`{"campaignId":"777"}`)},
+		{"unparseable blob", json.RawMessage(`not json`)},
+		{"matching customer id", json.RawMessage(`{"customerId":"1234567890"}`)},
+		{"matching legacy ocid", json.RawMessage(`{"googleAdsUrl":"https://ads.google.com/aw/campaigns?ocid=1234567890"}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := NewGoogleAdsDispatcher(
+				fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+				googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+			)
+			camp := &model.Campaign{
+				Platform:           model.ProviderGoogleAds,
+				PlatformCampaignID: "777",
+				Result:             tc.result,
+			}
+			m, err := d.ReadMetrics(context.Background(), "proj", model.ProviderGoogleAds, camp, model.MetricsWindowLast30Days)
+			if err != nil {
+				t.Fatalf("ReadMetrics: %v", err)
+			}
+			if m.Impressions != 10 {
+				t.Errorf("got %+v", m)
+			}
+		})
+	}
+}
+
+// ---- googleAdsCreationCustomerID --------------------------------------------
+
+func TestGoogleAdsCreationCustomerID(t *testing.T) {
+	cases := []struct {
+		name     string
+		campaign *model.Campaign
+		want     string
+	}{
+		{"nil campaign", nil, ""},
+		{"empty result", &model.Campaign{}, ""},
+		{"unparseable json", &model.Campaign{Result: json.RawMessage(`not json`)}, ""},
+		{"explicit field", &model.Campaign{Result: json.RawMessage(`{"customerId":"111"}`)}, "111"},
+		{
+			"legacy ocid fallback",
+			&model.Campaign{Result: json.RawMessage(`{"googleAdsUrl":"https://ads.google.com/aw/campaigns?ocid=222"}`)},
+			"222",
+		},
+		{
+			// The explicit field wins: the URL is a derived rendering, the field is the record.
+			"field beats ocid",
+			&model.Campaign{Result: json.RawMessage(`{"customerId":"111","googleAdsUrl":"https://ads.google.com/aw/campaigns?ocid=222"}`)},
+			"111",
+		},
+		{"url without ocid", &model.Campaign{Result: json.RawMessage(`{"googleAdsUrl":"https://ads.google.com/aw/campaigns"}`)}, ""},
+		{"unparseable url", &model.Campaign{Result: json.RawMessage(`{"googleAdsUrl":"://nope"}`)}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := googleAdsCreationCustomerID(tc.campaign); got != tc.want {
+				t.Errorf("googleAdsCreationCustomerID = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // ---- googleAdsChildIDs ------------------------------------------------------
 
 func TestGoogleAdsChildIDs(t *testing.T) {
@@ -1158,6 +1370,101 @@ func TestGoogleAdsChildIDs(t *testing.T) {
 			gotAdGroup, gotAd := googleAdsChildIDs(tc.campaign)
 			if gotAdGroup != tc.wantAdGroup || gotAd != tc.wantAd {
 				t.Errorf("googleAdsChildIDs(%v) = (%q, %q), want (%q, %q)", tc.campaign, gotAdGroup, gotAd, tc.wantAdGroup, tc.wantAd)
+			}
+		})
+	}
+}
+
+// TestGoogleAds_ToggleStatus_ForeignAccountIs409AndNeverMutates is the mutation-side twin of
+// TestGoogleAds_ReadMetrics_ForeignAccountIs409AndNeverQueries, and the sharper of the two: a
+// read against the wrong customer returns another account's numbers, but a MUTATE against the
+// wrong customer pauses or enables another account's live campaign. Both PAUSE and ACTIVATE
+// must be refused before any Google call, with a non-retryable ErrCampaignAccountMismatch.
+func TestGoogleAds_ToggleStatus_ForeignAccountIs409AndNeverMutates(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("the Google Ads API must not be mutated for a campaign owned by another customer (got %s %s)", r.Method, r.URL.Path)
+	}))
+	defer apiSrv.Close()
+
+	// The connection resolves to customer 1234567890 (activeGoogleAdsConn); both rows below
+	// record 5555555555 — one via the modern customerId field, one via a legacy row that only
+	// has the ocid in its console URL. Both carry fully-provisioned children and keyword
+	// criteria so the ACTIVATE pre-guards pass and the account guard is what fires.
+	for _, tc := range []struct {
+		name   string
+		result string
+	}{
+		{"customerId field", `{"customerId":"5555555555","campaignId":"777","adGroupId":"888","adId":"999","keywordCriteriaIds":["kw-1"]}`},
+		{"legacy ocid fallback", `{"campaignId":"777","adGroupId":"888","adId":"999","keywordCriteriaIds":["kw-1"],"googleAdsUrl":"https://ads.google.com/aw/campaigns?ocid=5555555555"}`},
+	} {
+		for _, status := range []string{"paused", "active"} {
+			t.Run(tc.name+"/"+status, func(t *testing.T) {
+				d := NewGoogleAdsDispatcher(
+					fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+					googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+				)
+				camp := &model.Campaign{
+					Platform:           model.ProviderGoogleAds,
+					PlatformCampaignID: "777",
+					Result:             json.RawMessage(tc.result),
+				}
+				err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, status)
+				if err == nil {
+					t.Fatal("expected a mismatch error")
+				}
+				if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+					t.Errorf("error must wrap ErrCampaignAccountMismatch (409), got %v", err)
+				}
+				// A refusal that never reached Google changed nothing upstream, so it must NOT
+				// be reported as an unconfirmed outcome — that would send the caller
+				// reconciling a mutation that provably did not happen.
+				var unconfirmed interface{ Unconfirmed() bool }
+				if errors.As(err, &unconfirmed) && unconfirmed.Unconfirmed() {
+					t.Errorf("a pre-flight refusal must not be classified as unconfirmed, got %v", err)
+				}
+			})
+		}
+	}
+}
+
+// TestGoogleAds_ToggleStatus_UnknownOrMatchingAccountStillToggles is the other half of the
+// toggle guard: a row with no recoverable customer id (created before the field and before
+// the console URL carried an ocid) cannot PROVE a mismatch, and a row recording the same
+// customer the connection resolves to is not one — both must still toggle.
+func TestGoogleAds_ToggleStatus_UnknownOrMatchingAccountStillToggles(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/777"}]}`)
+	}))
+	defer apiSrv.Close()
+
+	for _, tc := range []struct {
+		name   string
+		result string
+	}{
+		{"no customer id recorded", `{"campaignId":"777","adGroupId":"888","adId":"999","keywordCriteriaIds":["kw-1"]}`},
+		{"same customer id", `{"customerId":"1234567890","campaignId":"777","adGroupId":"888","adId":"999","keywordCriteriaIds":["kw-1"]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := NewGoogleAdsDispatcher(
+				fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+				googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+			)
+			camp := &model.Campaign{
+				Platform:           model.ProviderGoogleAds,
+				PlatformCampaignID: "777",
+				Result:             json.RawMessage(tc.result),
+			}
+			if err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, "paused"); err != nil {
+				t.Fatalf("toggle must proceed when no mismatch is provable, got %v", err)
 			}
 		})
 	}

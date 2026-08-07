@@ -594,3 +594,62 @@ func TestMeta_ToggleStatus_NoPageIDNeeded(t *testing.T) {
 		t.Fatalf("ToggleStatus must work without a page_id: %v", err)
 	}
 }
+
+// ---- ReadMetrics --------------------------------------------------------
+
+func TestMeta_ReadMetrics_HappyPath(t *testing.T) {
+	var mu sync.Mutex
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotPath = r.URL.Path + "?" + r.URL.RawQuery
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[{"impressions":"1000","clicks":"40","spend":"25.00"}]}`)
+	}))
+	defer srv.Close()
+
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{}, meta.WithBaseURL(srv.URL))
+	camp := &model.Campaign{Platform: model.ProviderMetaAds, PlatformCampaignID: "777"}
+	m, err := d.ReadMetrics(context.Background(), "proj", model.ProviderMetaAds, camp, model.MetricsWindowLast30Days)
+	if err != nil {
+		t.Fatalf("ReadMetrics: %v", err)
+	}
+	if m.CampaignID != "777" || m.Window != model.MetricsWindowLast30Days || m.Impressions != 1000 || m.Clicks != 40 || m.CostMicros != 25_000_000 {
+		t.Errorf("got %+v", m)
+	}
+	if want := 0.04; m.Ctr != want {
+		t.Errorf("Ctr = %v, want %v", m.Ctr, want)
+	}
+	mu.Lock()
+	path := gotPath
+	mu.Unlock()
+	if !strings.HasPrefix(path, "/777/insights?") || !strings.Contains(path, "date_preset=last_30d") {
+		t.Errorf("request path = %s", path)
+	}
+}
+
+// TestMeta_ReadMetrics_ConnectionUnresolvedPropagates pins that a broken/inactive
+// connection surfaces as a plain error (NOT wrapped with notCreated, unlike Dispatch) — a
+// metrics read has no create-claim semantics to protect. Mirrors the Google Ads dispatcher.
+func TestMeta_ReadMetrics_ConnectionUnresolvedPropagates(t *testing.T) {
+	d := NewMetaDispatcher(fakeConnReader{err: errors.New("no connection")}, identityEncryptor{})
+	camp := &model.Campaign{Platform: model.ProviderMetaAds, PlatformCampaignID: "777"}
+	if _, err := d.ReadMetrics(context.Background(), "proj", model.ProviderMetaAds, camp, model.MetricsWindowLast30Days); err == nil {
+		t.Fatal("expected an error when the connection cannot be resolved")
+	}
+}
+
+func TestMeta_ReadMetrics_InactiveConnectionErrors(t *testing.T) {
+	conn := &model.Connection{
+		Provider:             model.ProviderMetaAds,
+		AccountID:            "act_777",
+		EncryptedCredentials: []byte(goodMetaCreds),
+		Status:               model.StatusInactive,
+	}
+	d := NewMetaDispatcher(fakeConnReader{conn: conn}, identityEncryptor{})
+	camp := &model.Campaign{Platform: model.ProviderMetaAds, PlatformCampaignID: "777"}
+	if _, err := d.ReadMetrics(context.Background(), "proj", model.ProviderMetaAds, camp, model.MetricsWindowLast30Days); err == nil {
+		t.Fatal("expected an error for an inactive connection")
+	}
+}

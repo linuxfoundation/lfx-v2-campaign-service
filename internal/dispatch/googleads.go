@@ -6,8 +6,10 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -464,6 +466,17 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 	if err != nil {
 		return err
 	}
+	// Same identity invariant ReadMetrics enforces, and it matters MORE here because this
+	// path MUTATES. The stored campaign/ad-group/ad ids are bare numerics, unique only
+	// within the customer they were created under, while the connection just resolved is the
+	// project's CURRENT one — UpdateGoogleAds can re-point it between create and toggle. On
+	// an id collision the mutate succeeds against ANOTHER account's resources, pausing or
+	// enabling something this project does not own. Fail before contacting Google, for both
+	// PAUSE and ACTIVATE (the check sits above both branches deliberately).
+	if created := googleAdsCreationCustomerID(campaign); created != "" && created != client.CustomerID() {
+		return fmt.Errorf("toggle google ads campaign status: campaign %s was created under customer %s but the project's current connection resolves to customer %s: %w",
+			campaign.PlatformCampaignID, created, client.CustomerID(), domain.ErrCampaignAccountMismatch)
+	}
 
 	wrapUnconfirmed := func(uerr error) error {
 		if googleads.IsOutcomeUnconfirmed(uerr) {
@@ -512,6 +525,79 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 		return &unconfirmedToggleError{err: uerr}
 	}
 	return nil
+}
+
+// ReadMetrics implements service.MetricsReader for Google Ads. It resolves the same
+// connection ToggleStatus does and reads the campaign's live GAQL metrics.
+//
+// The platform-agnostic window is translated to Google's GAQL literal by
+// googleads.WindowFor — in the platform package, not here, so the GAQL dialect stays behind
+// that boundary. A window Google cannot express is reported as
+// domain.ErrMetricsWindowUnsupported (400, caller input) rather than a 503, and the platform
+// is never contacted for it.
+func (d *GoogleAdsDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+	gaWindow, err := googleads.WindowFor(window)
+	if err != nil {
+		return nil, fmt.Errorf("read google ads metrics: %w", errors.Join(domain.ErrMetricsWindowUnsupported, err))
+	}
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	// The stored PlatformCampaignID is a bare numeric id, unique only within the customer it
+	// was created under, and the connection just resolved is the project's CURRENT one —
+	// UpdateGoogleAds can re-point it at a different account between create and read. Querying
+	// the id under the wrong customer does not error: it returns no rows, which is
+	// indistinguishable from a campaign with genuinely zero activity, and on an id collision
+	// it returns ANOTHER account's numbers. Fail loudly instead, before contacting Google.
+	if created := googleAdsCreationCustomerID(campaign); created != "" && created != client.CustomerID() {
+		return nil, fmt.Errorf("read google ads metrics: campaign %s was created under customer %s but the project's current connection resolves to customer %s: %w",
+			campaign.PlatformCampaignID, created, client.CustomerID(), domain.ErrCampaignAccountMismatch)
+	}
+	m, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, gaWindow)
+	if err != nil {
+		return nil, err
+	}
+	return &model.CampaignMetrics{
+		CampaignID: m.CampaignID,
+		// The request window, not the client's echoed GAQL literal: the API contract is the
+		// platform-agnostic vocabulary, and translating back would reintroduce the dialect.
+		Window:      window,
+		Impressions: m.Impressions,
+		Clicks:      m.Clicks,
+		CostMicros:  m.CostMicros,
+		Ctr:         m.Ctr,
+	}, nil
+}
+
+// googleAdsCreationCustomerID recovers the ad account the campaign was CREATED under from
+// the persisted googleads.CampaignResult blob, mirroring googleAdsChildIDs.
+//
+// Rows written before CampaignResult carried customerId have no such field, so it falls back
+// to the ocid query parameter of the stored googleAdsUrl — the create path builds that URL as
+// ".../aw/campaigns?ocid=" + customerID, making it a faithful record of the same value. An
+// empty return means "unknown", and the caller must treat that as permission to proceed: a
+// legacy row cannot prove a mismatch, and refusing every one of them would break reads that
+// work today.
+func googleAdsCreationCustomerID(campaign *model.Campaign) string {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return ""
+	}
+	var blob struct {
+		CustomerID   string `json:"customerId"`
+		GoogleAdsURL string `json:"googleAdsUrl"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return ""
+	}
+	if blob.CustomerID != "" {
+		return blob.CustomerID
+	}
+	u, err := url.Parse(blob.GoogleAdsURL)
+	if err != nil {
+		return ""
+	}
+	return u.Query().Get("ocid")
 }
 
 // googleAdsChildIDs pulls the ad group + ad ids the create path stored in the persisted

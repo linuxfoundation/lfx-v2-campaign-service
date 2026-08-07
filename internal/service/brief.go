@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -520,7 +521,7 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			// meant for an API client.
 			slog.WarnContext(ctx, "campaign metrics window unsupported by platform",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
-				"platform", existing.Platform, "window", window, "error", merr)
+				"platform", existing.Platform, "window", window, "error", safeErrSummary(merr))
 			// Provide platform-specific guidance on window support (e.g., X Ads' 7-day limit)
 			msg := "this window is not supported for the campaign's platform"
 			if existing.Platform == model.ProviderTwitterAds {
@@ -529,10 +530,25 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			return nil, &briefs.BadRequestError{Code: "400", Message: msg}
 		case errors.Is(merr, ErrCampaignNotProvisioned):
 			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id yet"}
+		case errors.Is(merr, ErrCampaignAccountMismatch):
+			// The two customer ids stay server-side: which ad account a project is connected
+			// to is connection configuration, not something a metrics reader needs told.
+			//
+			// The LOG is scrubbed too, for a separate reason. merr embeds
+			// client.CustomerID(), which comes from the connection's account_id — a design
+			// attribute with no Pattern, MaxLength, or charset constraint (unlike Meta's
+			// act_<digits> or X's alphanumeric ids). This guard also runs BEFORE any request,
+			// so the client's own validateAccountIDs has not executed for this instance yet.
+			// The value reaching this line is therefore arbitrary operator-supplied text, and
+			// safeErrSummary is what keeps it from being written verbatim into a log record.
+			slog.WarnContext(ctx, "campaign metrics read blocked: campaign belongs to a different ad account than the current connection",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "error", safeErrSummary(merr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "the campaign belongs to a different ad account than this project's current connection — reconnect the original account to read its metrics"}
 		default:
 			slog.WarnContext(ctx, "campaign metrics read failed on the ad platform",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
-				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID, "error", merr)
+				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID, "error", safeErrSummary(merr))
 			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "campaign metrics could not be read from the ad platform"}
 		}
 	}
@@ -681,6 +697,18 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			// the same way, so this is a 409, not a 503. It avoids "wait" (a campaign missing a
 			// child never gains one by waiting) and points at the actual remedy.
 			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id yet, or it lacks the child entities needed to change its status (e.g. its ad group/ad, ad set, or creatives); finish or recreate the campaign before toggling its status"}
+		case errors.Is(terr, ErrCampaignAccountMismatch):
+			// The campaign belongs to a different ad account than the project's current
+			// connection, so the mutation was refused BEFORE the platform was contacted —
+			// nothing changed upstream, and a retry would be refused identically, so this is a
+			// non-retryable 409 rather than a 503 or an UNCONFIRMED outcome. The two customer
+			// ids stay server-side (connection configuration, not client business), and the
+			// log goes through safeErrSummary for the same unvalidated-account_id reason
+			// spelled out on the metrics branch above.
+			slog.WarnContext(ctx, "campaign status toggle blocked: campaign belongs to a different ad account than the current connection",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "status", p.Status, "error", safeErrSummary(terr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "the campaign belongs to a different ad account than this project's current connection — reconnect the original account to change its status"}
 		case errors.As(terr, &unconfirmed) && unconfirmed.Unconfirmed():
 			// UNCONFIRMED: a transport/5xx/redirect error means the PATCH MAY already have
 			// applied on the platform. Do NOT say "not modified" (it might be) and do NOT
@@ -996,4 +1024,54 @@ func unmarshalAny(j json.RawMessage) any {
 		return nil
 	}
 	return v
+}
+
+// errSummaryMaxRunes caps how much of an ad-platform error reaches structured logs.
+// 200 runes is enough to identify the failure class (Graph's "(#100) Invalid parameter",
+// an HTTP status line, a transport error) without letting an unbounded upstream body
+// dominate a log record.
+const errSummaryMaxRunes = 200
+
+// safeErrSummary renders err for a log field after stripping the two properties that
+// make a platform error unsafe to log verbatim: non-printable characters and unbounded
+// length.
+//
+// The metrics failure path is platform-agnostic — every ReadMetrics implementation
+// funnels through it — so it cannot assume each platform client has already scrubbed
+// its response text. Meta's *meta.APIError.Error() in particular renders the Graph
+// API's Message field verbatim, and the non-Graph fallback populates that field from
+// the RAW response body (internal/platform/meta/client.go:589-612). Unbounded upstream
+// text bloats log storage, and control characters make a record unreadable — or, in a
+// LINE-ORIENTED sink, can split one record into several. That last effect is
+// handler-dependent, not universal: slog's TextHandler and JSONHandler both quote and
+// escape string values, so neither forges a line on its own. The guard is here because
+// the sink is not this package's to choose, and the cost of normalising is a single
+// pass over at most 200 runes.
+//
+// Newlines, tabs, carriage returns and every other non-graphic rune are replaced with
+// U+FFFD rather than dropped, so the substitution is visible in the record instead of
+// silently changing the text. Truncation is marked with a trailing ellipsis.
+//
+// This is deliberately scoped to the log call rather than to Meta's Error() itself:
+// that method's raw-body behavior is pre-existing, tested, and relied on elsewhere for
+// campaign-creation diagnostics.
+func safeErrSummary(err error) string {
+	if err == nil {
+		return ""
+	}
+	var b strings.Builder
+	n := 0
+	for _, r := range err.Error() {
+		if n == errSummaryMaxRunes {
+			b.WriteString("…")
+			break
+		}
+		if unicode.IsGraphic(r) {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune(unicode.ReplacementChar)
+		}
+		n++
+	}
+	return b.String()
 }

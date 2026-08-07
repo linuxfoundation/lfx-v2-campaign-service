@@ -34,10 +34,15 @@ it. That contradiction matters: the whole reason `listManagerClients` exists is 
 header will NOT enumerate children, so a reader who believed the response comment would
 conclude the expansion is redundant and delete it.
 
-**The dedup merge was quadratic.** `seen` was a set, so relabelling a duplicate meant a full
-linear scan of `accounts`. It is now a resource-name → index map, making both the dedup test
-and the relabel O(1). The configured manager is recorded at index `-1` — present for dedup,
-deliberately absent from the result — so the merge cannot reinstate it as a child.
+**The dedup merge was quadratic** — and then it was deleted. `seen` was a set, so relabelling
+a duplicate meant a full linear scan of `accounts`; the fix at the time was a resource-name →
+index map. A later round in the same branch removed the merge entirely: manager mode now
+answers from the expansion alone (see the review pass in
+[the accessible-customers-client entry](2026-08-07-lfxv2-2023-accessible-customers-client.md)),
+so there is no cross-source relabelling left to be quadratic. What survives is a plain
+`map[string]struct{}` deduplicating the expansion's own repeated children, which
+`customer_client` can report more than once when the hierarchy has several paths to the same
+account.
 
 Both new guards revert-verified individually. Reverting the resource-name check fails all
 five subtests; reverting the id check to the old emptiness-only form fails exactly the two

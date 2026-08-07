@@ -103,6 +103,12 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 	if res.Platform != "google-ads" {
 		t.Errorf("platform = %q", res.Platform)
 	}
+	// The account the campaign was created under is part of the result, not just the
+	// console URL: campaign ids are unique only within a customer, so a later
+	// account-scoped read has to be able to confirm it is talking to the same one.
+	if res.CustomerID != "1234567890" {
+		t.Errorf("CustomerID = %q, want the creating account 1234567890", res.CustomerID)
+	}
 	// Budget body assertions: micros conversion + non-shared + STANDARD.
 	op := firstCreate(t, budgetBody)
 	if op["amountMicros"] != float64(50*microsPerUnit) {
@@ -216,6 +222,11 @@ func TestCreateCampaign_BudgetAmbiguous5xxIsUnconfirmed(t *testing.T) {
 	}
 	if res.CampaignBudgetID != "" {
 		t.Errorf("budget id must be empty (never confirmed), got %q", res.CampaignBudgetID)
+	}
+	// A partial is exactly when knowing the account matters most: reconciling by name
+	// means knowing which Google Ads account to look in.
+	if res.CustomerID != "1234567890" {
+		t.Errorf("partial must carry the creating CustomerID, got %q", res.CustomerID)
 	}
 }
 

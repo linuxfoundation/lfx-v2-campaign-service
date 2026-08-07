@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/meta"
-description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation."
+description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, campaign status toggle, and live campaign metrics reads."
 resource: "internal/platform/meta"
 tags:
   - platform-client
@@ -130,6 +130,61 @@ accepted values; ids are validated numeric (`numericIDRE`) before interpolation.
 building block. `IsOutcomeUnconfirmed(err)` exposes the shared ambiguity classifier (and honors
 the `Unconfirmed()` behavioral interface) so a caller can tell a maybe-applied outcome
 (transport/5xx/3xx-mutating, or a partial cascade) from a definite rejection.
+
+## Metrics reads
+
+`GetCampaignMetrics` (in `metrics.go`) reads live impressions, clicks, spend (cost), and
+CTR for one campaign over a predefined date-range window (e.g. `LAST_30_DAYS`) via a single
+Graph API `GET /{campaignID}/insights` read with a `date_preset` parameter. Both interpolated
+values are validated BEFORE they reach the request string, but by DIFFERENT means: the window
+is checked against an allow-list of supported presets (`supportedMetricsWindows`), since Meta's
+insights endpoint has a fixed preset vocabulary, while the campaign id is checked against a
+numeric pattern (`numericIDRE`) — there is no enumerable set of valid ids to allow-list.
+Numeric metric fields arrive as JSON strings. `impressions` and `clicks` (integers) are
+parsed via `parseMetricInt`, which treats empty strings (Meta omits zero-valued optional
+fields) as zeros rather than parse errors, and rejects both unparseable and negative values.
+`spend` (decimal) is parsed separately via `strconv.ParseFloat`, then scaled to micros (cost
+in whole units → ×1,000,000) and rounded (not truncated) to `CostMicros`, guarding against
+non-finite (`NaN`/`Inf`) results.
+
+No malformed-value error echoes the offending bytes. `parseMetricInt` and the spend guards
+report the field name, the reason, and the value's byte LENGTH only, because these errors reach
+`BriefService.GetCampaignMetrics`'s default branch and are logged — and `safeErrSummary` bounds
+and normalises text without knowing whether the text is ours, so a short printable secret
+sitting in an upstream field would pass through it intact. The tests that pin this pick
+their inputs to REACH each guard: a value like `-1SECRETMARKER` never parses, so it lands on
+the syntax branch and leaves `n < 0` untested while looking covered — the negative and
+overflow cases plant a distinctive numeric literal instead. Cost
+is expressed in micros of the ad account's currency (consistent with the Google Ads metrics
+path, so a platform-agnostic dispatcher can normalize all platforms to the same unit). CTR
+is computed client-side (Clicks/Impressions, 0 when Impressions is 0 — never divides by
+zero). The return type `CampaignMetrics` is distinct from the domain type
+`model.CampaignMetrics` (an application-level platform-agnostic staging area), converted at
+the dispatcher boundary.
+
+## Credential scrubbing on error bodies
+
+When an error response is NOT a Graph diagnostic — a proxy page, a WAF block, a
+reflection of the request — the raw body is truncated into `APIError.Message`, and a
+reflection can echo the `Authorization` header. Scrubbing runs in two passes, in this
+order, and both are needed.
+
+`Client.redactSecrets` replaces this client's OWN configured `Credentials.AccessToken`
+by exact value first. That pass exists because the shape-based one cannot cover it:
+`credentialRE`'s Bearer alternative matches `[A-Za-z0-9._~+/=-]`, while the access
+token is accepted after trimming and nothing else. Meta's app access tokens are
+`{app-id}|{app-secret}`, and `|` is outside that alphabet — shape-based redaction alone
+turns `Bearer 12345|SECRET` into `Bearer [REDACTED]|SECRET`, carrying the app secret
+through while wearing a redaction marker. Exact-value replacement cannot be defeated by
+an unanticipated character. Secrets shorter than `minRedactableSecretLen` (8) are left
+alone: at that length a substring replace matches ordinary prose and destroys the
+diagnostic without protecting anything.
+
+`redactCredentials` then runs the shape-based pass, which still matters — a reflected
+body can carry credentials this client never held, such as a Meta-constructed
+`paging.next` URL with its own `access_token`. It keeps the KEY and drops the VALUE,
+and decides which alternative fired by scheme prefix rather than by delimiter search,
+because base64 padding puts `=` inside a bearer token.
 
 ## Dispatch adapter (internal/dispatch)
 
