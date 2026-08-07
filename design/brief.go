@@ -414,7 +414,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			projectIDAttr()
 			briefIDAttr()
 			campaignIDAttr()
-			Attribute("window", String, "Platform-agnostic reporting window (defaults to last_30_days when omitted)", metricsWindowEnum)
+			Attribute("window", String, "Platform-agnostic reporting window; defaults to last_30_days when omitted, except on platforms whose API cannot serve that range (e.g. X Ads, capped at 7 days), which default to the widest range they support instead", metricsWindowEnum)
 			Required("project_id", "brief_id", "campaign_id")
 		})
 		Result(CampaignMetrics)
