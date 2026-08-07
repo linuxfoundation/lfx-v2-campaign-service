@@ -20,8 +20,17 @@ import (
 )
 
 // newCampaignClient wires a token server + an API server whose budget/campaign
-// mutate handlers are supplied per-test.
+// mutate handlers are supplied per-test. adGroups:mutate/adGroupAds:mutate get
+// default "happy" handlers (okAdGroup/okAdGroupAd) unless the test needs to
+// exercise the ad-group/ad cascade itself — see newCampaignClientFull.
 func newCampaignClient(t *testing.T, budgetH, campaignH http.HandlerFunc) *Client {
+	t.Helper()
+	return newCampaignClientFull(t, budgetH, campaignH, okAdGroup, okAdGroupAd)
+}
+
+// newCampaignClientFull is newCampaignClient with the ad-group/ad mutate handlers
+// also supplied per-test, for tests that exercise the GA-3 cascade itself.
+func newCampaignClientFull(t *testing.T, budgetH, campaignH, adGroupH, adGroupAdH http.HandlerFunc) *Client {
 	t.Helper()
 	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
 	t.Cleanup(tokenSrv.Close)
@@ -31,6 +40,10 @@ func newCampaignClient(t *testing.T, budgetH, campaignH http.HandlerFunc) *Clien
 			budgetH(w, r)
 		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
 			campaignH(w, r)
+		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
+			adGroupH(w, r)
+		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
+			adGroupAdH(w, r)
 		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -48,6 +61,12 @@ func okBudget(w http.ResponseWriter, _ *http.Request) {
 func okCampaign(w http.ResponseWriter, _ *http.Request) {
 	_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
 }
+func okAdGroup(w http.ResponseWriter, _ *http.Request) {
+	_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroups/333"}]}`)
+}
+func okAdGroupAd(w http.ResponseWriter, _ *http.Request) {
+	_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupAds/333~444"}]}`)
+}
 
 func gaqlError(status int, category, code string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
@@ -59,7 +78,13 @@ func gaqlError(status int, category, code string) http.HandlerFunc {
 }
 
 func sampleInput() CampaignInput {
-	return CampaignInput{EventName: "KubeCon", Project: "CNCF", Budget: 50, NameSuffix: "brief-1"}
+	return CampaignInput{
+		EventName:       "KubeCon",
+		Project:         "CNCF",
+		Budget:          50,
+		NameSuffix:      "brief-1",
+		RegistrationURL: "https://events.linuxfoundation.org/kubecon",
+	}
 }
 
 func TestCreateCampaign_HappyPath(t *testing.T) {
@@ -402,6 +427,30 @@ func TestCreateCampaign_RejectsBadInput(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_RejectsBadAdGroupAdInputBeforeAnyMutate confirms the
+// ad-group/ad inputs (destination URL, ad copy, ad-group name) are validated
+// BEFORE the first (budget) mutate — a bad RegistrationURL must not leave an
+// orphaned budget+campaign committed in Google Ads for what is purely a local
+// input-validation failure.
+func TestCreateCampaign_RejectsBadAdGroupAdInputBeforeAnyMutate(t *testing.T) {
+	c := newCampaignClient(t,
+		func(w http.ResponseWriter, _ *http.Request) { t.Error("no budget call expected"); okBudget(w, nil) },
+		func(w http.ResponseWriter, _ *http.Request) { t.Error("no campaign call expected"); okCampaign(w, nil) },
+	)
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		Project:         "P",
+		EventName:       "E",
+		Budget:          50,
+		RegistrationURL: "not-a-valid-url",
+	})
+	if err == nil {
+		t.Fatal("an invalid RegistrationURL should be rejected before any mutate call")
+	}
+	if res != nil {
+		t.Errorf("a preflight ad-group/ad input rejection must return a nil result (nothing was created), got %+v", res)
+	}
+}
+
 // --- unit tests for the pure helpers ---
 
 func TestResourceID(t *testing.T) {
@@ -687,11 +736,22 @@ func TestFirstResourceName(t *testing.T) {
 // decode reads a JSON request body into a map.
 func decode(t *testing.T, r *http.Request) map[string]any {
 	t.Helper()
-	var m map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+	m, err := decodeRequest(r)
+	if err != nil {
 		t.Fatalf("decode request body: %v", err)
 	}
 	return m
+}
+
+// decodeRequest is a handler-safe decoder that returns an error instead of calling t.Fatal.
+// Use this inside httptest.Server handler goroutines to avoid calling t.Fatalf/FailNow from
+// a non-test goroutine, which is not safe. See test-hygiene.md:httptest-handler-state-needs-synchronized-handoff.
+func decodeRequest(r *http.Request) (map[string]any, error) {
+	var m map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // firstCreate returns operations[0].create from a decoded :mutate request body.
@@ -931,5 +991,48 @@ func TestUpdateCampaignStatus_AlreadyCanceledContextWithCachedToken(t *testing.T
 	// caller to go verify a mutation that never left the process.
 	if IsOutcomeUnconfirmed(err) {
 		t.Errorf("nothing was sent, so the outcome must not be UNCONFIRMED: %v", err)
+	}
+}
+
+// TestValidateResourceKind_WrongCustomerRejected covers the account-ownership branch of
+// validateResourceKind for every kind that reaches it: a 2xx mutate response naming a
+// resource under a DIFFERENT customer must be rejected before the id is persisted.
+//
+// Without this, removing the `pathParts[1] != c.account.CustomerID` comparison would leave
+// the suite green while the client persisted ids belonging to another Google Ads account —
+// ids a later mutate would then address, or an operator would then chase in the wrong
+// account. The existing negative cases only cover wrong KINDS and malformed composite ids,
+// neither of which exercises this comparison.
+func TestValidateResourceKind_WrongCustomerRejected(t *testing.T) {
+	c := NewClient(testCreds(), testAccount(), WithClock(fixedClock()))
+	const otherCustomer = "9999999999"
+
+	cases := []struct {
+		name             string
+		kind             string
+		resourceName     string
+		requireNumericID bool
+	}{
+		{"campaign from another account", "campaigns", "customers/" + otherCustomer + "/campaigns/111", true},
+		{"ad group from another account", "adGroups", "customers/" + otherCustomer + "/adGroups/222", true},
+		{"ad group ad from another account", "adGroupAds", "customers/" + otherCustomer + "/adGroupAds/222~333", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := c.validateResourceKind(tc.kind, tc.resourceName, tc.requireNumericID)
+			if err == nil {
+				t.Fatalf("expected %s resource under customer %s to be rejected, got nil", tc.kind, otherCustomer)
+			}
+			if !strings.Contains(err.Error(), "different account") {
+				t.Errorf("expected a different-account diagnostic, got: %v", err)
+			}
+			// The same shape under the CORRECT customer must still pass, so the test
+			// fails on a broken ownership check rather than on an unrelated rejection.
+			ok := strings.Replace(tc.resourceName, otherCustomer, testAccount().CustomerID, 1)
+			if err := c.validateResourceKind(tc.kind, ok, tc.requireNumericID); err != nil {
+				t.Errorf("expected %q to be accepted, got: %v", ok, err)
+			}
+		})
 	}
 }

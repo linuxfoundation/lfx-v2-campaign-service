@@ -77,15 +77,22 @@ type CampaignInput struct {
 	// campaign names. Caller-supplied and otherwise unbounded, so it is trimmed and
 	// the composed names are length-capped before any create call.
 	EventName string
-	// EventSlug is the URL-safe event identifier, carried for struct parity with the
-	// meta/twitter/reddit clients (which use it to build UTM click-through params on
-	// the ad's final URL). GA's CreateCampaign only builds a PAUSED search-campaign
-	// shell today — no ad groups / keywords / final URLs — so this field is accepted
-	// but not yet consumed; GA-3+ (ad/keyword creation) will use it for the same UTM
-	// handling. Reserved now so the platform-agnostic input shape is stable.
+	// EventSlug is the URL-safe event identifier, used (with EventName/Project as
+	// fallbacks) to build the ad's utm_campaign click-through param — see
+	// buildAdFinalURL in ad_copy.go.
 	EventSlug string
 	// Project is folded into the composed name alongside EventName.
 	Project string
+	// RegistrationURL is the event's destination page. Required for the ad group +
+	// ad cascade (GA-3): it becomes the ad's final URL, tagged with UTM params via
+	// buildAdFinalURL. Mirrors the reddit/microsoft clients' RegistrationURL field.
+	RegistrationURL string
+	// Headlines / Descriptions are caller-supplied Responsive Search Ad copy.
+	// Optional: composeAdCopy pads missing slots with deterministic placeholders
+	// derived from EventName/Project up to the platform minimum (3 headlines, 2
+	// descriptions), so a caller may leave these nil.
+	Headlines    []string
+	Descriptions []string
 	// Budget is the campaign daily budget in whole units of the ad ACCOUNT's
 	// currency. IMPORTANT: this is NOT a USD amount and the client performs NO
 	// foreign-exchange conversion — Google interprets the resulting amountMicros in
@@ -110,14 +117,25 @@ type CampaignInput struct {
 // | … vs LFX | Search Campaign | …), so a caller reconciling a possibly-orphaned
 // budget must look it up by CampaignBudgetName — CampaignName would not find it.
 type CampaignResult struct {
-	Platform           string   `json:"platform"`
-	AccountLabel       string   `json:"accountLabel,omitempty"`
-	CampaignName       string   `json:"campaignName"`
-	CampaignBudgetName string   `json:"campaignBudgetName"`
-	CampaignID         string   `json:"campaignId"`
-	CampaignBudgetID   string   `json:"campaignBudgetId"`
-	GoogleAdsURL       string   `json:"googleAdsUrl"`
-	Steps              []string `json:"steps"`
+	Platform           string `json:"platform"`
+	AccountLabel       string `json:"accountLabel,omitempty"`
+	CampaignName       string `json:"campaignName"`
+	CampaignBudgetName string `json:"campaignBudgetName"`
+	CampaignID         string `json:"campaignId"`
+	CampaignBudgetID   string `json:"campaignBudgetId"`
+	// AdGroupName/AdGroupID/AdID are set by the GA-3 ad group + ad cascade
+	// (createAdGroupAndAd in adgroup_ad.go). The fields indicate which IDs were
+	// successfully KNOWN to the client, not necessarily whether upstream resources
+	// were created: a 2xx response with a missing/malformed resource name means the
+	// ad group may exist while AdGroupID remains empty (and thus AdID also remains
+	// empty since the cascade stops). AdGroupName is always populated when AdGroupID
+	// is (for reconciliation by name on retry); AdID alone is empty if the ad group
+	// ID is known but the ad step failed/is unconfirmed.
+	AdGroupName  string   `json:"adGroupName,omitempty"`
+	AdGroupID    string   `json:"adGroupId,omitempty"`
+	AdID         string   `json:"adId,omitempty"`
+	GoogleAdsURL string   `json:"googleAdsUrl"`
+	Steps        []string `json:"steps"`
 }
 
 // mutateOperation is one {create: <resource>} entry in a :mutate request.
@@ -352,9 +370,15 @@ func resourceID(resourceName string) string {
 	return resourceName[i+1:]
 }
 
-// CreateCampaign creates a PAUSED Google Ads search campaign: it first creates a
-// non-shared campaign budget, then a campaign referencing that budget. Everything
+// CreateCampaign creates a PAUSED Google Ads search campaign as a four-resource
+// cascade: a non-shared campaign budget, a campaign referencing that budget, an ad
+// group under the campaign, and a responsive search ad in that ad group. Everything
 // is created PAUSED so nothing serves until a human enables it.
+//
+// Each stage may leave a PARTIAL result: the returned *CampaignResult is populated
+// as far as the cascade got, and past the campaign stage a failure is returned
+// ALONGSIDE a non-nil result rather than as (nil, err), so the caller can record
+// what exists upstream. See the ad group/ad stage below for that contract.
 //
 // Because :mutate has no idempotency key, every failure is classified by whether
 // the request may have committed upstream (createOutcomeAmbiguous). An ambiguous
@@ -414,6 +438,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, err
 	}
 	if err := validateEntityName("campaign", campaignName, utf8.RuneCountInString(campaignName), maxCampaignNameRunes, "characters"); err != nil {
+		return nil, err
+	}
+	// Validate the ad-group/ad inputs (destination URL, ad copy, ad-group name)
+	// BEFORE the first (budget) mutate: a failure here is purely local
+	// input validation, and surfacing it only after the budget+campaign already
+	// committed (inside createAdGroupAndAd, which runs last) would orphan a real
+	// paid campaign for what amounts to a bad RegistrationURL or over-length name.
+	finalURL, headlines, descriptions, adGroupName, err := precomputeAdGroupAdInputs(in)
+	if err != nil {
 		return nil, err
 	}
 
@@ -522,15 +555,33 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return budgetPartial(), fmt.Errorf("google-ads campaign creation failed (budget %s created): %w", budgetID, err)
 		}
 	}
-	_, campaignID, err := firstResourceName(campaignResp)
+	campaignResource, campaignID, err := firstResourceName(campaignResp)
 	if err != nil {
 		return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s created; 2xx with no/malformed resource name — a campaign may exist; verify in Google Ads before retrying): %w", budgetID, err)
+	}
+	// Validate that the campaign resource is in the exact current-account campaign shape
+	// before forwarding it to createAdGroupAndAd. A malformed 2xx such as
+	// customers/1234567890/adGroups/222 would be treated as a confirmed campaign and
+	// only fail after the real campaign has been created, persisting an untrustworthy ID.
+	if err := c.validateCampaignResource(campaignResource); err != nil {
+		return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s created; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, err)
 	}
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, SEARCH, manual CPC)", campaignID))
 
 	res := budgetPartial()
 	res.CampaignID = campaignID
 	res.Steps = steps
+
+	// The campaign+budget are now committed. GA-3: extend the shell with a PAUSED
+	// ad group + responsive search ad. Any failure here (ambiguous, duplicate, or
+	// definite) is returned ALONGSIDE the now-non-nil res — the campaign/budget
+	// exist regardless, so this can never become a (nil, err) return past this
+	// point. The caller (GoogleAdsDispatcher.Dispatch) treats a non-nil result +
+	// error as "retain the claim, record the partial" — the same contract already
+	// used for an ambiguous/duplicate budget or campaign.
+	if err := c.createAdGroupAndAd(ctx, campaignResource, campaignID, finalURL, headlines, descriptions, adGroupName, res); err != nil {
+		return res, err
+	}
 	return res, nil
 }
 
@@ -554,6 +605,46 @@ func firstResourceName(body []byte) (resourceName, id string, err error) {
 		return "", "", fmt.Errorf("mutate response resource name %q is malformed (no id segment)", rn)
 	}
 	return rn, rid, nil
+}
+
+// validateCampaignResource validates that a resource name is exactly the
+// current-account campaign resource shape: customers/{currentCustomerID}/campaigns/{numericID}.
+// A malformed 2xx such as customers/1234567890/adGroups/222 could otherwise be
+// accepted as a confirmed campaign and only fail later when forwarded to adGroups:mutate,
+// after the real campaign has been created. This guard ensures that only a trustworthy
+// campaign resource is persisted.
+func (c *Client) validateCampaignResource(resourceName string) error {
+	return c.validateResourceKind("campaigns", resourceName, true)
+}
+
+// validateResourceKind validates that resourceName is exactly the current-account
+// resource shape customers/{currentCustomerID}/{kind}/{id}, checking segment count,
+// resource kind, and that the resource belongs to THIS account. A malformed or
+// wrong-account 2xx (e.g. a different customer's adGroups resource, or a campaigns
+// resource returned where an adGroups resource was expected) could otherwise be
+// accepted as confirmed and persisted, or forwarded into a later mutate/resourceName
+// only to fail confusingly downstream.
+//
+// requireNumericID validates the trailing id segment is a plain numeric id — set
+// false for composite trailing segments (e.g. adGroupAds' "{adGroupId}~{adId}"),
+// whose shape is validated separately by adGroupAdID, the only composite splitter
+// in this package.
+func (c *Client) validateResourceKind(kind, resourceName string, requireNumericID bool) error {
+	pathParts := strings.Split(resourceName, "/")
+	// Require exactly 4 segments: customers, {id}, {kind}, {id}
+	if len(pathParts) != 4 {
+		return fmt.Errorf("%s resource name %q has %d segments, want exactly 4", kind, resourceName, len(pathParts))
+	}
+	if pathParts[0] != "customers" || pathParts[2] != kind {
+		return fmt.Errorf("%s resource name %q has wrong resource kind (want customers/.../%s/...)", kind, resourceName, kind)
+	}
+	if pathParts[1] != c.account.CustomerID {
+		return fmt.Errorf("%s resource name %q is from a different account (want customers/%s/...)", kind, resourceName, c.account.CustomerID)
+	}
+	if requireNumericID && !numericID(pathParts[3]) {
+		return fmt.Errorf("%s resource name %q has a non-numeric id", kind, resourceName)
+	}
+	return nil
 }
 
 // composeName builds a deterministic budget/campaign name from the input. The
@@ -640,15 +731,19 @@ func IsOutcomeUnconfirmed(err error) bool {
 // UpdateCampaignStatus toggles a campaign between ENABLED and PAUSED via campaigns:mutate
 // with an updateMask of "status".
 //
-// NO CASCADE, unlike reddit/twitter/microsoft — but not because the tree is complete: the
-// create path provisions only a PAUSED campaign SHELL (budget -> campaign) with no ad group,
-// ad, or keywords, so there are no children to flip YET. That incompleteness is also why
-// GoogleAdsDispatcher.ToggleStatus refuses ACTIVATE outright (ErrCampaignNotProvisioned):
-// enabling a shell would report success while nothing can serve. This method still accepts
-// StatusEnabled so it stays a faithful wrapper over campaigns:mutate for a future caller
-// operating on a fully-provisioned campaign; the serving decision belongs to the dispatcher.
-// When GA-3+ adds ad groups/ads/keywords, this must grow a cascade with the same
-// children-first-on-activate ordering the other adapters use.
+// This method flips ONLY the campaign — it does not cascade to the ad group/ad. The cascade
+// is implemented in GoogleAdsDispatcher.ToggleStatus (dispatch/googleads.go): PAUSE cascades
+// campaign-first (stops delivery immediately) then the ad group/ad; ACTIVATE is deferred
+// until GA-4 provisions targeting criteria.
+//
+// Kept as two client methods (rather than one combined call) because the ad group/ad may
+// legitimately not exist (a duplicate-name orphan from GA-3b's create path — see
+// createAdGroupAndAd) — the dispatcher's activate guard (ErrCampaignNotProvisioned) checks
+// for that BEFORE calling either method. Additionally, keeping them separate lets a caller
+// pause a campaign whose children failed to create, without that call depending on child ids
+// it may not have. Note: today the dispatcher rejects ACTIVATE unconditionally because GA-4
+// targeting provisioning is absent — that is the only remaining reason; the PAUSE cascade
+// itself is wired.
 //
 // The mutate IS sent as idempotent (doRequest's last arg), unlike the create path. That flag
 // gates only bounded 429 retries, and the create path's reason for declining them (no
