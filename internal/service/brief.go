@@ -483,6 +483,63 @@ func (s *BriefService) GetCampaign(ctx context.Context, p *briefs.GetCampaignPay
 	return campaignResult(c), nil
 }
 
+// GetCampaignMetrics reads live performance metrics for a campaign directly from its ad
+// platform. Unlike GetCampaign, this is a pure read: nothing is persisted, so there is no
+// If-Match/version to check.
+func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCampaignMetricsPayload) (*briefs.CampaignMetrics, error) {
+	_, campaignRepo, _, orch, err := s.ready()
+	if err != nil {
+		return nil, err
+	}
+	existing, gerr := campaignRepo.GetCampaign(ctx, p.ProjectID, p.BriefID, p.CampaignID)
+	if gerr != nil {
+		return nil, mapBriefErr(gerr)
+	}
+	// Default to last_30_days when no window is specified by the caller.
+	window := model.MetricsWindowLast30Days
+	if p.Window != nil {
+		window = model.MetricsWindow(*p.Window)
+		if !model.IsValidMetricsWindow(window) {
+			return nil, &briefs.BadRequestError{Code: "400", Message: "window must be one of: today, yesterday, last_7_days, last_14_days, last_30_days, this_month, last_month"}
+		}
+	}
+	m, merr := orch.ReadCampaignMetrics(ctx, p.ProjectID, existing.Platform, existing, window)
+	if merr != nil {
+		switch {
+		case errors.Is(merr, ErrMetricsUnsupported):
+			return nil, &briefs.BadRequestError{Code: "400", Message: "metrics reads are not supported for this campaign's platform"}
+		case errors.Is(merr, ErrMetricsWindowUnsupported):
+			// merr's wrapped detail (from the adapter) is logged server-side, not concatenated
+			// into the client-facing message: an adapter error can carry internal detail (a
+			// platform API's own error text, an allow-list of internal literals) that isn't
+			// meant for an API client.
+			slog.WarnContext(ctx, "campaign metrics window unsupported by platform",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "window", window, "error", merr)
+			return nil, &briefs.BadRequestError{Code: "400", Message: "this window is not supported for the campaign's platform"}
+		case errors.Is(merr, ErrCampaignNotProvisioned):
+			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id yet"}
+		default:
+			slog.WarnContext(ctx, "campaign metrics read failed on the ad platform",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID, "error", merr)
+			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "campaign metrics could not be read from the ad platform"}
+		}
+	}
+	return &briefs.CampaignMetrics{
+		CampaignID:         existing.ID,
+		PlatformCampaignID: existing.PlatformCampaignID,
+		// The validated request window, not m.Window: adapters are not required to echo it
+		// back, and trusting them would emit "" for one that doesn't, violating the response
+		// enum and causing generated clients to reject an otherwise successful 200.
+		Window:      string(window),
+		Impressions: m.Impressions,
+		Clicks:      m.Clicks,
+		CostMicros:  m.CostMicros,
+		Ctr:         m.Ctr,
+	}, nil
+}
+
 func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampaignPayload) (*briefs.Campaign, error) {
 	_, campaignRepo, _, _, err := s.ready()
 	if err != nil {
