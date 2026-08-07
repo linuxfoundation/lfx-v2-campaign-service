@@ -75,7 +75,8 @@ interface KeywordMetricsResponse {
 }
 ```
 
-**Error Cases:** 200, 400 (invalid days), 503 (Google Ads unreachable)
+**Error Cases:** 200, 400 (invalid days), 409 (campaign not provisioned, or created under a
+different ad account than the project's current connection), 503 (Google Ads unreachable)
 
 ### POST `/api/campaigns/keywords/actions` — Manage Keywords
 
@@ -120,7 +121,9 @@ interface BulkKeywordActionResponse {
 **Action Types Current:** Only `'pause'` and `'remove'` are exposed in the UI.
 **Roadmap:** Plan MUST accommodate future `'enable'` (resume paused) and `'change-bid'` (adjust max CPC).
 
-**Error Cases:** 200 (partial success OK), 400 (validation), 503 (platform failure)
+**Error Cases:** 200 (partial success OK), 400 (validation), 409 (campaign not provisioned, or
+created under a different ad account — refused before the platform is contacted, so nothing was
+mutated), 503 (platform failure)
 
 ### The identity gap — this endpoint cannot be a drop-in replacement
 
@@ -800,10 +803,24 @@ func (s *BriefService) ListCampaignKeywords(ctx context.Context,
       // upstream yet, so there is nothing to read. 409, not 503 — retrying will not help
       // until the campaign is dispatched.
       return nil, &briefs.ConflictError{Code: "409", Message: "campaign has not been provisioned on the ad platform yet"}
+    case errors.Is(merr, ErrCampaignAccountMismatch):
+      // Verbatim from GetCampaignMetrics (internal/service/brief.go:533-547), including the
+      // scrubbing, because the same two values are in the error for the same reason. The
+      // customer id pair stays server-side (connection configuration, not the reader's
+      // business), and even the LOG goes through safeErrSummary: the id comes from the
+      // connection's account_id, a design attribute with no Pattern/MaxLength/charset
+      // constraint, and this guard runs BEFORE any request so the client's validateAccountIDs
+      // has not run on this instance yet. It is arbitrary operator-supplied text.
+      slog.WarnContext(ctx, "campaign keywords read blocked: campaign belongs to a different ad account than the current connection",
+        "project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+        "platform", existing.Platform, "error", safeErrSummary(merr))
+      return nil, &briefs.ConflictError{Code: "409", Message: "the campaign belongs to a different ad account than this project's current connection — reconnect the original account to read its keywords"}
     default:
       slog.WarnContext(ctx, "campaign keywords read failed on the ad platform",
         "project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
-        "platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID, "error", merr)
+        // safeErrSummary, not merr — every other platform-error log in this file scrubs
+        // (brief.go:551, :711), and a keyword read's error can carry GAQL text and account ids.
+        "platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID, "error", safeErrSummary(merr))
       return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "campaign keywords could not be read from the ad platform"}
     }
   }
@@ -893,11 +910,20 @@ func (s *BriefService) UpdateCampaignKeywords(ctx context.Context,
     // and a reviewer could not tell whether the mapping was ever exercised.
     case errors.Is(aerr, ErrCampaignNotProvisioned):
       return nil, &briefs.ConflictError{Code: "409", Message: "campaign has not been provisioned on the ad platform yet"}
+    case errors.Is(aerr, ErrCampaignAccountMismatch):
+      // Same arm as ToggleCampaignStatus (brief.go:700-709), and it carries the same weight:
+      // the guard refused the mutation BEFORE the platform was contacted, so nothing changed
+      // upstream and a retry is refused identically — a non-retryable 409, never a 503 and
+      // never an UNCONFIRMED outcome. Scrubbed for the reason spelled out on the read handler.
+      slog.WarnContext(ctx, "campaign keywords update blocked: campaign belongs to a different ad account than the current connection",
+        "project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+        "platform", existing.Platform, "action_count", len(actions), "error", safeErrSummary(aerr))
+      return nil, &briefs.ConflictError{Code: "409", Message: "the campaign belongs to a different ad account than this project's current connection — reconnect the original account to update its keywords"}
     default:
       slog.WarnContext(ctx, "campaign keywords update failed on the ad platform",
         "project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
         "platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,
-        "action_count", len(actions), "error", aerr)
+        "action_count", len(actions), "error", safeErrSummary(aerr))
       return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "campaign keywords could not be updated on the ad platform"}
     }
   }
@@ -974,12 +1000,18 @@ customer/account fields are all **unexported**. `resolveGoogleAdsClient` returns
 So the keyword work is **two layers, not one**, and PR 2 must contain both:
 
 1. `internal/platform/googleads/keywords.go` — two new *semantic* methods on `*Client`:
-   `ListCampaignKeywords(ctx, campaignID string, startDate, endDate string) ([]KeywordRow, error)`
+   `ListCampaignKeywords(ctx, campaignID string, window string) ([]KeywordRow, error)` — `window`
+   is one of the three GAQL literals `gaqlWindowForDays` returns, never a caller-supplied string
+   (see "USE THE GAQL LITERALS" below; an earlier draft of this line took `startDate, endDate`,
+   which that section supersedes — explicit dates reintroduce the account-timezone bug and the
+   clock read the literals exist to remove)
    and `MutateKeywordCriteria(ctx, ops []KeywordCriterionOp) ([]KeywordCriterionResult, error)`.
    These own the GAQL text, the resource-name construction, the response decoding, and the
    malformed-response classification — exactly where `CreateCampaign` and `UpdateCampaignStatus`
    already put that work. `KeywordRow` also carries the finished `GoogleAdsURL`, built here from
-   the client's own (unexported) customer ID, so the dispatcher never needs an account accessor.
+   the client's own customer ID, so the dispatcher never has to assemble a URL. It does still read
+   `Client.CustomerID()` — the accessor exists on `main`, added with the metrics read — but only for
+   the creation-account guard below, never to build platform strings.
 
    Because `MutateKeywordCriteria` chunks internally, its error has to say **how far it got**,
    or the caller cannot tell "nothing was applied" from "the first two chunks committed and the
@@ -1133,6 +1165,18 @@ func (d *GoogleAdsDispatcher) ListKeywords(ctx context.Context, projectID string
     return nil, fmt.Errorf("could not resolve google ads client: %w", err)
   }
 
+  // Same guard ReadMetrics and ToggleStatus already carry (internal/dispatch/googleads.go,
+  // above both branches of each). PlatformCampaignID is a bare numeric, unique only within
+  // the customer it was created under, and the connection just resolved is the project's
+  // CURRENT one — UpdateGoogleAds can re-point it between create and read. A keyword query
+  // scoped to that id under the wrong customer does not error: it returns no rows, which is
+  // indistinguishable from a campaign with genuinely no keywords, and on an id collision it
+  // returns ANOTHER account's keywords and spend. Fail before contacting Google.
+  if created := googleAdsCreationCustomerID(campaign); created != "" && created != client.CustomerID() {
+    return nil, fmt.Errorf("list google ads keywords: campaign %s was created under customer %s but the project's current connection resolves to customer %s: %w",
+      campaign.PlatformCampaignID, created, client.CustomerID(), domain.ErrCampaignAccountMismatch)
+  }
+
   // The Goa enum already constrains `days`, but this switch is total with an erroring
   // default so the client cannot be handed an unmapped window by a direct (non-HTTP) caller.
   window, err := gaqlWindowForDays(days)
@@ -1168,12 +1212,12 @@ func (d *GoogleAdsDispatcher) ListKeywords(ctx context.Context, projectID string
       Conversions:  row.Conversions,
       // CpcBidMicros, not the effective bid: nil here MEANS "bids at ad-group level".
       MaxCpcMicros: row.CpcBidMicros,
-      // The deep link is built by the client and arrives on the row. It cannot be built
-      // here: the URL needs the customer ID, `Client.account` is unexported, and there is
-      // no CustomerID() accessor — the same boundary this plan states at lines 739–743.
-      // Adding an accessor purely to leak the account outward would widen the client's
-      // surface for one string; returning the finished URL keeps account-awareness inside
-      // the package that already owns it.
+      // The deep link is built by the client and arrives on the row. `Client.CustomerID()`
+      // does exist (it landed with the metrics read), so this is a design choice, not a
+      // boundary: the URL is one of several account-shaped strings the client already
+      // assembles, and building it here would put URL construction in two packages. The
+      // accessor's purpose is the mismatch guard above — one comparison, not a general
+      // licence to reach for the account from the dispatcher.
       GoogleAdsURL: row.GoogleAdsURL,
     })
     result.Impressions += row.Impressions
@@ -1206,6 +1250,16 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
   client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
   if err != nil {
     return nil, fmt.Errorf("could not resolve google ads client: %w", err)
+  }
+
+  // The same guard as ListKeywords, and it matters MORE here because this path MUTATES.
+  // AuthorizeKeywordCriteria is not a substitute: it proves each criterion lives under this
+  // campaign id, but the campaign id itself is only meaningful within a customer. Under the
+  // wrong customer the authorize either finds nothing (every action fails, merely confusing)
+  // or, on a collision, authorizes and then PAUSES/REMOVES another account's criteria.
+  if created := googleAdsCreationCustomerID(campaign); created != "" && created != client.CustomerID() {
+    return nil, fmt.Errorf("update google ads keywords: campaign %s was created under customer %s but the project's current connection resolves to customer %s: %w",
+      campaign.PlatformCampaignID, created, client.CustomerID(), domain.ErrCampaignAccountMismatch)
   }
 
   // Authorize BEFORE building any operation. Anything not resolvable inside this campaign
@@ -1608,6 +1662,13 @@ state and not a gap: the capability is optional, so both endpoints return a clea
 - `TestBriefService_UpdateCampaignKeywords_PlatformUnsupportedIs400`
 - `TestBriefService_UpdateCampaignKeywords_EmptyActionsIs400`
 - `TestBriefService_UpdateCampaignKeywords_PlatformFailureIs503`
+- `TestBriefService_ListCampaignKeywords_AccountMismatchIs409`
+- `TestBriefService_UpdateCampaignKeywords_AccountMismatchIs409`
+
+  Both mismatch tests assert the **response message does not contain either customer id**, not
+  merely that the status is 409. Status alone passes against a handler that maps correctly and
+  then leaks the pair in the message — which is the failure mode the scrub exists to prevent,
+  and the one a reader of the switch statement cannot see is being tested.
 
 ### PR 2: Google Ads Keyword Operations — Phase 1 (≈750 lines)
 
@@ -1625,7 +1686,10 @@ client, not just the adapter)**, `internal/platform/googleads/keywords_test.go`,
   composite resource-name construction, the `GoogleAdsURL` deep link, GAQL text (snake_case,
   campaign-scoped), response length validation
 - Dispatcher: model translation, totals accumulation with a guarded CTR, per-action outcomes
-- Add date-range parsing for days ∈ {7, 14, 30} (inclusive, single clock read)
+- Map days ∈ {7, 14, 30} to a GAQL window literal via `gaqlWindowForDays` — a total switch, no
+  date parsing and **no clock read at all** (see "USE THE GAQL LITERALS": deriving dates from
+  `time.Now().UTC()` shifts the window by a day for part of every day, because `segments.date`
+  is a calendar date in the account's own timezone)
 - Use `d.resolveGoogleAdsClient` (`internal/dispatch/googleads.go:202`); `ToggleStatus` (`:252`) is the closest existing caller to model on
 
 **Test cases:**
@@ -1657,7 +1721,18 @@ client, not just the adapter)**, `internal/platform/googleads/keywords_test.go`,
   in the same customer must fail, not mutate)
 - `TestDispatcher_UpdateKeywords_MixedPhase1`
 - `TestDispatcher_UpdateKeywords_GoogleAdsFailure`
-- `TestDateRangeForDays_IsInclusiveAndExactlyNDays`
+- `TestGaqlWindowForDays_IsTotalAndReadsNoClock` (the switch is exhaustive over {7,14,30} and
+  the mapping is a pure function — a replacement that derives dates from `time.Now()` fails it)
+- `TestDispatcher_ListKeywords_AccountMismatchIsRejectedBeforeAnyRequest`
+- `TestDispatcher_UpdateKeywords_AccountMismatchIsRejectedBeforeAnyRequest`
+
+  Both mismatch tests point the httptest server at a handler that calls `t.Error` and must
+  therefore record **zero requests** — asserting only on the returned error would pass against
+  a guard placed AFTER the platform call, which for the update path means the criteria were
+  already paused or removed in the wrong account before the error was produced. The read test
+  matters for the same reason in reverse: a mismatched read that reaches Google returns an
+  empty row set, indistinguishable from a campaign with no keywords, so there is no error to
+  assert on at all unless the guard fires first.
 
 **Lines:** ~750 (platform client ~300 + dispatcher ~200 + tests ~250). Over the ~600 originally
 budgeted because the platform-client layer was missing from that estimate; still under the
