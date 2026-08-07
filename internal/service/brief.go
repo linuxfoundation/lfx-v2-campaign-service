@@ -1013,9 +1013,13 @@ const errSummaryMaxRunes = 200
 // funnels through it — so it cannot assume each platform client has already scrubbed
 // its response text. Meta's *meta.APIError.Error() in particular renders the Graph
 // API's Message field verbatim, and the non-Graph fallback populates that field from
-// the RAW response body (internal/platform/meta/client.go:589-612). A body that
-// reflects request material back, or that carries newlines, can otherwise forge extra
-// lines in a line-oriented log sink or bloat log storage.
+// the RAW response body (internal/platform/meta/client.go:589-612). Unbounded upstream
+// text bloats log storage, and control characters make a record unreadable — or, in a
+// LINE-ORIENTED sink, can split one record into several. That last effect is
+// handler-dependent, not universal: slog's TextHandler and JSONHandler both quote and
+// escape string values, so neither forges a line on its own. The guard is here because
+// the sink is not this package's to choose, and the cost of normalising is a single
+// pass over at most 200 runes.
 //
 // Newlines, tabs, carriage returns and every other non-graphic rune are replaced with
 // U+FFFD rather than dropped, so the substitution is visible in the record instead of

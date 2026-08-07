@@ -282,3 +282,77 @@ func TestGetCampaignMetrics_NegativeSpendIsRejected(t *testing.T) {
 		t.Errorf("error = %v, want it to name the negative spend", err)
 	}
 }
+
+// TestGetCampaignMetrics_MalformedValuesAreNotEchoed pins the property that every
+// malformed-row error reports the field and the reason but never the VALUE.
+//
+// These errors travel to BriefService.GetCampaignMetrics's default branch and are
+// logged there. safeErrSummary bounds and normalises the text but cannot tell whose
+// text it is, so a printable secret sitting in an upstream field would survive it
+// unchanged — the only place that can stop it is here, at the point the error is
+// built. Each case therefore plants a distinctive marker in the offending field and
+// asserts it does not appear anywhere in the error chain.
+//
+// The cases cover every malformed branch: both counters (unparseable and negative)
+// and all four spend guards (unparseable, non-finite, negative, overflow).
+func TestGetCampaignMetrics_MalformedValuesAreNotEchoed(t *testing.T) {
+	const marker = "SECRETMARKER"
+
+	cases := map[string]struct {
+		body string
+		want string // a substring the error MUST still carry, so it stays diagnostic
+	}{
+		"unparseable impressions": {
+			body: `{"data":[{"impressions":"` + marker + `","clicks":"1","spend":"1.00"}]}`,
+			want: "impressions not an integer",
+		},
+		"negative impressions": {
+			body: `{"data":[{"impressions":"-1` + marker + `","clicks":"1","spend":"1.00"}]}`,
+			want: "impressions",
+		},
+		"unparseable clicks": {
+			body: `{"data":[{"impressions":"1","clicks":"` + marker + `","spend":"1.00"}]}`,
+			want: "clicks not an integer",
+		},
+		"both counters malformed": {
+			body: `{"data":[{"impressions":"` + marker + `","clicks":"` + marker + `","spend":"1.00"}]}`,
+			want: "clicks", // both are named; the clicks half proves the second is not dropped
+		},
+		"unparseable spend": {
+			body: `{"data":[{"impressions":"1","clicks":"1","spend":"` + marker + `"}]}`,
+			want: "spend is not a number",
+		},
+		"non-finite spend": {
+			body: `{"data":[{"impressions":"1","clicks":"1","spend":"NaN"}]}`,
+			want: "spend is not finite",
+		},
+		"negative spend": {
+			body: `{"data":[{"impressions":"1","clicks":"1","spend":"-1.00"}]}`,
+			want: "spend is negative",
+		},
+		"overflowing spend": {
+			body: `{"data":[{"impressions":"1","clicks":"1","spend":"1e300"}]}`,
+			want: "spend overflows int64 micros",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := newMetricsTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, tc.body)
+			})
+
+			m, err := c.GetCampaignMetrics(context.Background(), "23847290", WindowToday)
+			if err == nil {
+				t.Fatalf("expected a malformed row to be rejected, got %+v", m)
+			}
+			if strings.Contains(err.Error(), marker) {
+				t.Errorf("error echoed the raw upstream value: %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want it to contain %q so it stays diagnostic", err, tc.want)
+			}
+		})
+	}
+}

@@ -98,10 +98,14 @@ func parseMetricInt(s string) (int64, error) {
 	}
 	n, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
-		return 0, err
+		// strconv's own error interpolates the input ("parsing \"...\": invalid syntax"),
+		// so it cannot be returned as-is: this error reaches BriefService's default
+		// branch and is LOGGED, which would write unvalidated upstream response bytes
+		// into the server log. The length is enough to diagnose the shape.
+		return 0, fmt.Errorf("not an integer (%d bytes)", len(s))
 	}
 	if n < 0 {
-		return 0, fmt.Errorf("negative counter %q", s)
+		return 0, fmt.Errorf("negative counter (%d bytes)", len(s))
 	}
 	return n, nil
 }
@@ -153,28 +157,27 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		return nil, &transportError{
 			Method: http.MethodGet,
 			Path:   path,
-			Err:    fmt.Errorf("decode campaign metrics row: impressions %q (%v), clicks %q (%v)", row.Impressions, errImpressions, row.Clicks, errClicks),
+			Err:    fmt.Errorf("decode campaign metrics row: %s", malformedCounterSummary(errImpressions, errClicks)),
 		}
 	}
 	// Spend is decimal (e.g. "12.34"), unlike Google Ads' integer cost_micros —
 	// Meta reports it in whole currency units, not minor units. Parsed as a float
 	// and scaled to micros (×1e6) rather than reusing parseMetricInt.
-	var spend float64
+	var costMicros int64
 	if row.Spend != "" {
-		var err error
-		spend, err = strconv.ParseFloat(row.Spend, 64)
+		spend, err := strconv.ParseFloat(row.Spend, 64)
 		if err != nil {
 			return nil, &transportError{
 				Method: http.MethodGet,
 				Path:   path,
-				Err:    fmt.Errorf("decode campaign metrics row: spend %q: %w", row.Spend, err),
+				Err:    fmt.Errorf("decode campaign metrics row: spend is not a number (%d bytes)", len(row.Spend)),
 			}
 		}
 		if math.IsNaN(spend) || math.IsInf(spend, 0) {
 			return nil, &transportError{
 				Method: http.MethodGet,
 				Path:   path,
-				Err:    fmt.Errorf("decode campaign metrics row: spend %q is not a finite number", row.Spend),
+				Err:    fmt.Errorf("decode campaign metrics row: spend is not finite (%d bytes)", len(row.Spend)),
 			}
 		}
 		// Finite is not enough: spend is non-negative by definition, so a negative
@@ -186,7 +189,7 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 			return nil, &transportError{
 				Method: http.MethodGet,
 				Path:   path,
-				Err:    fmt.Errorf("decode campaign metrics row: spend %q is negative", row.Spend),
+				Err:    fmt.Errorf("decode campaign metrics row: spend is negative (%d bytes)", len(row.Spend)),
 			}
 		}
 		// Scale and check for overflow: a finite value like 1e307 can become +Inf
@@ -206,12 +209,10 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 			return nil, &transportError{
 				Method: http.MethodGet,
 				Path:   path,
-				Err:    fmt.Errorf("decode campaign metrics row: spend %q overflows int64 when scaled to micros", row.Spend),
+				Err:    fmt.Errorf("decode campaign metrics row: spend overflows int64 micros (%d bytes)", len(row.Spend)),
 			}
 		}
-		spend = scaled
-	} else {
-		spend = 0
+		costMicros = int64(scaled)
 	}
 
 	m := &CampaignMetrics{
@@ -219,10 +220,34 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		Window:      w,
 		Impressions: impressions,
 		Clicks:      clicks,
-		CostMicros:  int64(math.Round(spend)),
+		CostMicros:  costMicros,
 	}
 	if impressions > 0 {
 		m.Ctr = float64(clicks) / float64(impressions)
 	}
 	return m, nil
+}
+
+// malformedCounterSummary names which of the two integer counters failed and why,
+// reporting BOTH when both did — the single-field form would hide a second
+// malformed field behind the first.
+//
+// Neither this function nor parseMetricInt echoes a value. These errors propagate
+// to BriefService.GetCampaignMetrics's default branch, which LOGS them, so
+// interpolating the raw strings would write unvalidated upstream response content
+// into the server log — a short printable secret sitting in the field would survive
+// safeErrSummary's bounding and normalisation untouched, since that helper bounds
+// and normalises text without knowing whether the text is ours. The field name, the
+// reason, and the byte length are enough to diagnose a malformed response; the bytes
+// themselves are neither needed nor safe. Same discipline as the LinkedIn parser's
+// costInUsdToMicros.
+func malformedCounterSummary(errImpressions, errClicks error) string {
+	switch {
+	case errImpressions != nil && errClicks != nil:
+		return fmt.Sprintf("impressions %v; clicks %v", errImpressions, errClicks)
+	case errImpressions != nil:
+		return fmt.Sprintf("impressions %v", errImpressions)
+	default:
+		return fmt.Sprintf("clicks %v", errClicks)
+	}
 }

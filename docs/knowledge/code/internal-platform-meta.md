@@ -135,14 +135,23 @@ the `Unconfirmed()` behavioral interface) so a caller can tell a maybe-applied o
 
 `GetCampaignMetrics` (in `metrics.go`) reads live impressions, clicks, spend (cost), and
 CTR for one campaign over a predefined date-range window (e.g. `LAST_30_DAYS`) via a single
-Graph API `GET /{campaignID}/insights` read with a `date_preset` parameter. The window and
-campaign id are both validated against an allow-list of supported values BEFORE string
-interpolation into the request, since Meta's insights endpoint has fixed preset values.
+Graph API `GET /{campaignID}/insights` read with a `date_preset` parameter. Both interpolated
+values are validated BEFORE they reach the request string, but by DIFFERENT means: the window
+is checked against an allow-list of supported presets (`supportedMetricsWindows`), since Meta's
+insights endpoint has a fixed preset vocabulary, while the campaign id is checked against a
+numeric pattern (`numericIDRE`) — there is no enumerable set of valid ids to allow-list.
 Numeric metric fields arrive as JSON strings. `impressions` and `clicks` (integers) are
 parsed via `parseMetricInt`, which treats empty strings (Meta omits zero-valued optional
-fields) as zeros rather than parse errors. `spend` (decimal) is parsed separately via
-`strconv.ParseFloat`, then scaled to micros (cost in whole units → ×1,000,000) and rounded
-(not truncated) to `CostMicros`, guarding against non-finite (`NaN`/`Inf`) results. Cost
+fields) as zeros rather than parse errors, and rejects both unparseable and negative values.
+`spend` (decimal) is parsed separately via `strconv.ParseFloat`, then scaled to micros (cost
+in whole units → ×1,000,000) and rounded (not truncated) to `CostMicros`, guarding against
+non-finite (`NaN`/`Inf`) results.
+
+No malformed-value error echoes the offending bytes. `parseMetricInt` and the spend guards
+report the field name, the reason, and the value's byte LENGTH only, because these errors reach
+`BriefService.GetCampaignMetrics`'s default branch and are logged — and `safeErrSummary` bounds
+and normalises text without knowing whether the text is ours, so a short printable secret
+sitting in an upstream field would pass through it intact. Cost
 is expressed in micros of the ad account's currency (consistent with the Google Ads metrics
 path, so a platform-agnostic dispatcher can normalize all platforms to the same unit). CTR
 is computed client-side (Clicks/Impressions, 0 when Impressions is 0 — never divides by
