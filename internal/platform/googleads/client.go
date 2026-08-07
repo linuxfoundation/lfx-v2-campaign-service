@@ -893,12 +893,24 @@ type listAccessibleCustomersResponse struct {
 // customer ids exist, so requiring one would be circular — and it is the reason
 // doRequestValidated exists.
 //
-// Two sources are merged. customers:listAccessibleCustomers gives the accounts the
-// authenticated user can act on DIRECTLY; it does not walk a manager hierarchy, so on an
-// MCC credential it typically yields the manager and none of the child ad accounts. When
-// a login-customer-id is configured, customer_client under that manager supplies the
-// children (labelled, and with manager accounts filtered out). Without a manager id there
-// is no hierarchy root to walk and the direct list stands alone.
+// There are two MODES, and they do not merge — which source answers depends entirely on
+// whether a login-customer-id is configured.
+//
+// Without one: customers:listAccessibleCustomers stands alone. It gives the accounts the
+// authenticated user can act on DIRECTLY, unlabelled (the response carries resource names
+// only), and there is no hierarchy root to walk.
+//
+// With one: the answer is the manager's ENABLED, non-manager children from
+// customer_client, and the flat list is DISCARDED rather than merged. Every other request
+// this client makes carries the login-customer-id header, so an account outside that
+// hierarchy is not addressable through this client even though the unscoped flat list
+// returns it — offering it would present a choice that fails at first dispatch. The
+// expansion is also labelled and already has managers filtered out. See the MANAGER MODE
+// comment in the body for the full reasoning.
+//
+// Resource-name validation runs over the flat list in BOTH modes: a malformed 2xx must
+// fail the read rather than yield an account id a caller would persist and interpolate
+// into later request paths.
 func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCustomer, error) {
 	// The ListAccessibleCustomers endpoint is account-agnostic; it does NOT have a
 	// customer_id path segment. The path is just customers:listAccessibleCustomers.

@@ -695,11 +695,17 @@ func TestListAccessibleCustomers_MalformedResourceNameIsAnError(t *testing.T) {
 	}
 }
 
-// TestListAccessibleCustomers_DedupPrefersLabelledCopy exercises the branch where the
-// SAME account arrives twice: unlabelled from the flat list, labelled from the manager
-// expansion. Every other test returns the child only from the expansion, so appending
-// both copies — or keeping the unlabelled one — would pass them all.
-func TestListAccessibleCustomers_DedupPrefersLabelledCopy(t *testing.T) {
+// TestListAccessibleCustomers_ManagerModeIgnoresTheFlatCopyOfAChild covers the case where
+// the SAME account is reachable both ways: unlabelled from the flat list, labelled from the
+// manager expansion.
+//
+// Manager mode does not merge — it answers from the expansion alone — and this is the case
+// that would tempt a merge back in, because here the flat list is not wrong, merely
+// redundant and unlabelled. Reinstating a union would return the account twice; preferring
+// the first-seen copy would return it unlabelled and cost the operator every label, since
+// customer_client is the only source of descriptive_name. The sibling exclusion test uses an
+// account that is NOT under the manager, so it would stay green under either mistake.
+func TestListAccessibleCustomers_ManagerModeIgnoresTheFlatCopyOfAChild(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if writeAccountsToken(w, r) {
 			return
@@ -726,16 +732,17 @@ func TestListAccessibleCustomers_DedupPrefersLabelledCopy(t *testing.T) {
 		t.Fatalf("ListAccessibleCustomers failed: %v", err)
 	}
 	if len(accounts) != 1 {
-		t.Fatalf("accounts = %+v, want exactly one entry — the duplicate must be merged, not appended", accounts)
+		t.Fatalf("accounts = %+v, want exactly one entry — manager mode answers from the expansion "+
+			"alone, so the flat copy of the same child must not be appended", accounts)
 	}
 	if accounts[0].ResourceName != "customers/2222222222" {
 		t.Fatalf("got %+v, want the child ad account", accounts[0])
 	}
-	// The expansion is the ONLY source of descriptive_name, so a dedup that keeps the
-	// first-seen (flat, unlabelled) copy silently costs the operator every label.
+	// The expansion is the ONLY source of descriptive_name, so returning the flat copy —
+	// or keeping the first-seen one under a reinstated merge — silently costs every label.
 	if accounts[0].DescriptiveName != "Child Ad Account" {
-		t.Errorf("DescriptiveName = %q, want the expansion's label to win over the unlabelled flat copy",
-			accounts[0].DescriptiveName)
+		t.Errorf("DescriptiveName = %q, want the expansion's label; an unlabelled result means the "+
+			"flat list was consulted", accounts[0].DescriptiveName)
 	}
 }
 
