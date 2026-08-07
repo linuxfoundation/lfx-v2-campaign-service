@@ -248,30 +248,29 @@ func googleAdsRunStatus(status string) (string, error) {
 
 // ToggleStatus implements service.StatusToggler for Google Ads.
 //
-// GA-3b created ad group + ad under the campaign; GA-3c wires the dispatcher-level cascade.
-// Today, only PAUSE is implemented. PAUSE cascades from the campaign FIRST (stops delivery
+// GA-3b created ad group + ad under the campaign; this method wires the dispatcher-level
+// cascade over them. Today, only PAUSE is implemented. PAUSE cascades from the campaign FIRST (stops delivery
 // immediately, regardless of whether the children can be reached) down to the ad group/ad via the
 // persisted ids stored in the campaign's Result blob.
 //
 // ACTIVATE is unconditionally refused with ErrCampaignNotProvisioned (→409, raised locally
-// without calling Google) because the dispatcher-level cascade wiring (GA-3c) is not yet complete
-// and GA-4 targeting provisioning is absent. A campaign without targeting cannot deliver, so
-// activating it would report false success — the exact lie ErrCampaignNotProvisioned exists to
-// prevent. Once GA-3c wiring lands and GA-4 adds targeting, ACTIVATE will be reconsidered with
-// a children-first ordering (children activated before campaign) to prevent a campaign from
-// reporting ENABLED before its children do.
+// without calling Google) because GA-4 targeting provisioning is absent. A campaign without
+// targeting cannot deliver, so activating it would report false success — the exact lie
+// ErrCampaignNotProvisioned exists to prevent. The PAUSE cascade itself IS wired below.
+// Once GA-4 adds targeting, ACTIVATE will be re-enabled with a children-first ordering
+// (children activated before campaign) to prevent a campaign from reporting ENABLED before
+// its children do.
 func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
 	gaStatus, err := googleAdsRunStatus(status)
 	if err != nil {
 		return err
 	}
-	// Refuse ACTIVATE: the dispatcher-level cascade (GA-3c) is not wired and targeting
-	// (GA-4) is not provisioned. A campaign without both its cascade infrastructure and
-	// targeting criteria cannot deliver, so activating reports false success (exactly what
-	// ErrCampaignNotProvisioned prevents). Activation will be reconsidered once GA-3c
-	// wiring and GA-4 targeting provisioning both land.
+	// Refuse ACTIVATE: targeting (GA-4) is not provisioned. A campaign without targeting
+	// criteria cannot deliver, so activating reports false success (exactly what
+	// ErrCampaignNotProvisioned prevents). This is the ONLY remaining reason — the PAUSE
+	// cascade is wired immediately below. Activation is re-enabled once GA-4 lands.
 	if gaStatus == googleads.StatusEnabled {
-		return fmt.Errorf("%w: google ads campaign %s cannot be activated because the dispatcher cascade (GA-3c) is not wired and targeting (GA-4) is not provisioned", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		return fmt.Errorf("%w: google ads campaign %s cannot be activated because targeting (GA-4) is not provisioned", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 	}
 	adGroupID, adID := googleAdsChildIDs(campaign)
 	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
@@ -306,8 +305,9 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 		return nil
 	}
 
-	// ACTIVATE is refused by the guard above (line 271) for all GA-3c requests; this code is
-	// unreachable. It will be re-enabled in GA-4 once targeting provisioning is implemented.
+	// ACTIVATE is refused by the guard at the top of this function, so this line is
+	// unreachable. It becomes reachable in GA-4, once targeting provisioning exists and the
+	// guard is lifted.
 	return fmt.Errorf("google ads: status toggle reached unexpected code path for status %s", gaStatus)
 }
 
