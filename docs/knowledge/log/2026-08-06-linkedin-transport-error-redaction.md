@@ -1,14 +1,11 @@
 # 2026-08-06 — LinkedIn metrics: redact credential-bearing transport errors before logging
 
-**Update** — The transport layer still preserved untrusted error strings from `httpClient.Do` and response-body reads, matching the `costInUsdToMicros` vulnerability this PR already fixed. `http.Client.Do` returns `*url.Error` carrying the full analytics URL (with bearer tokens in the Authorization header), and injected `RoundTripper` implementations can include request/response headers or credential material in their error text. Both paths propagate to `transportError.Err`, which `BriefService.GetCampaignMetrics` logs verbatim.
+**Update** — The transport layer preserved untrusted error strings from `httpClient.Do` and response-body reads, matching the `costInUsdToMicros` vulnerability this PR already fixed. `http.Client.Do` returns `*url.Error` carrying the full analytics URL with campaign/account URNs and query parameters, and injected `RoundTripper` implementations can include request/response headers or credential material in their error text. Both paths propagated to `transportError.Err`, which `BriefService.GetCampaignMetrics` logs verbatim.
 
-Redacted via new `redactTransportError()` helper (metrics.go) that:
-- Preserves classification sentinels (`context.Canceled`, `context.DeadlineExceeded`) so the caller can still classify unrecoverable retries
-- Preserves pre-send dial errors (DNS, ECONNREFUSED, etc.) — they contain only network classification, not credentials
-- Replaces all other errors (mid-flight, RoundTripper-injected) with a fixed safe message (`"analytics request failed"`)
+Redacted via two new helpers (metrics.go):
 
-Applied to both `httpClient.Do` error path (line 312-319) and response-body read error path (line 333).
+`redactHTTPDoError()`: Handles `httpClient.Do` errors. Preserves classification sentinels (`context.Canceled`, `context.DeadlineExceeded`) and pre-send dial errors (DNS, ECONNREFUSED, etc.) by recursively unwrapping any `*url.Error` layers and returning the innermost dial error. This preserves `errors.Is`/`errors.As` classification for retryability while removing the URL. `http.Client.Do` may wrap a `RoundTripper` error in a `*url.Error`, and a `RoundTripper` itself may return a `*url.Error` — the recursive unwrap handles both layers. Mid-flight/RoundTripper errors (where no dial classification is reachable) return a fixed, safe message (`"analytics request failed"`). The cause is intentionally discarded; no `%w` verb, no errors.Unwrap reachability.
 
-Added `TestGetCampaignMetrics_TransportErrorRedaction` (metrics_test.go) with a fake `RoundTripper` that injects credential-bearing strings. Confirmed binding: reverting the redaction call causes the test to fail, showing the credential marker in the error string.
+`redactBodyReadError()`: Handles response-body I/O errors from `buf.ReadFrom`, which are local failures after connection establishment and never carry credentials/URLs. Preserves cancellation sentinels for context, otherwise returns a distinct safe message (`"read response body failed"`) so callers can distinguish body-read failures from round-trip failures.
 
-No behavioral change: the underlying error is still unwrappable for debugging via `errors.Unwrap`, only the logged string is safe.
+Added `TestGetCampaignMetrics_TransportErrorRedaction` with subtest `DialError_URL_redaction_preserves_classification` using a fake `RoundTripper` that returns a `*url.Error` wrapping a `*net.DNSError`. Verified binding: reverting the recursive unwrap causes test to fail showing the full URL; reverting the classification preservation causes DNSError to no longer appear in the error chain.

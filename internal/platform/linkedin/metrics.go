@@ -24,28 +24,54 @@ import (
 // LinkedIn Ad Analytics date range (currently: yesterday, last_14_days).
 var ErrUnsupportedWindow = errors.New("unsupported metrics window")
 
-// redactTransportError wraps an HTTP round-trip error from httpClient.Do or request body reads,
-// redacting any credential-bearing or sensitive content (e.g., full URLs with bearer tokens,
-// arbitrary response text from a malicious RoundTripper) while preserving error classification
-// sentinels (context.Canceled, context.DeadlineExceeded). Pre-send dial errors (DNS, ECONNREFUSED,
-// etc.) are wrapped verbatim because they contain only network classification, not credentials.
+// redactHTTPDoError redacts an error from httpClient.Do, which may carry full URLs with bearer
+// tokens in a *url.Error wrapper. Preserves classification sentinels and pre-send dial errors
+// so callers can still distinguish retryable vs permanent failures via errors.Is/errors.As,
+// but returns the unwrapped dial error (without the URL) or a safe generic message for
+// mid-flight/RoundTripper errors. The cause is intentionally discarded: no errors.Unwrap.
 //
-// The wrapped error is safe to log via BriefService.GetCampaignMetrics without exposing
-// upstream response content or token material.
-func redactTransportError(err error) error {
+// http.Client.Do returns a *url.Error when the round-trip fails. If it's a pre-send dial
+// error (DNS, ECONNREFUSED), the *url.Error wraps the inner error but includes the full
+// URL. isPreSendDialError traverses the wrapper via errors.As/errors.Is, but err.Error()
+// still renders the URL verbatim. Unwrap the dial error and return it classifiable but safe.
+func redactHTTPDoError(err error) error {
 	// Preserve classification sentinels: context cancellation and deadline.
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	// Preserve pre-send dial errors: they carry only network classification.
-	// isPreSendDialError is defined in client.go and covers DNS/ECONNREFUSED/etc.
+	// If this is a pre-send dial error (DNSError, ECONNREFUSED, etc.), it may be wrapped
+	// in one or more *url.Error layers (http.Client.Do wraps RoundTripper errors, and a
+	// RoundTripper might return an already-wrapped error). Unwrap all layers and return
+	// the innermost dial error classifiable but URL-free.
 	if isPreSendDialError(err) {
+		// Recursively unwrap *url.Error layers to get to the actual dial error.
+		unwrapped := err
+		for {
+			var ue *url.Error
+			if errors.As(unwrapped, &ue) {
+				unwrapped = ue.Err
+			} else {
+				// No more *url.Error wrapping; return what we have.
+				return unwrapped
+			}
+		}
+	}
+	// Mid-flight or RoundTripper error: no classification possible, return safe generic message.
+	return fmt.Errorf("analytics request failed")
+}
+
+// redactBodyReadError redacts an error from buf.ReadFrom (response body I/O). Body-read errors
+// are local I/O failures after the connection is established, carrying no credentials or URLs,
+// but the actual error may include details a malicious RoundTripper or local I/O path injected.
+// Returns a fixed, distinct message so callers can distinguish body-read failures from
+// round-trip failures. The cause is intentionally discarded: no errors.Unwrap.
+func redactBodyReadError(err error) error {
+	// Body reads can only fail due to local I/O or response frame issues, never credentials,
+	// but preserve cancellation sentinels so the caller knows the context was canceled.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	// Redact everything else (full URLs with bearer tokens, RoundTripper-injected content).
-	// The underlying error is still reachable via errors.Unwrap for debugging, but it will
-	// not appear in a logged transportError.Error() string.
-	return fmt.Errorf("analytics request failed")
+	return fmt.Errorf("read response body failed")
 }
 
 // AdAnalyticsElement is one analytics record returned by the Ad Analytics API.
@@ -312,12 +338,9 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		cancel()
-		if isPreSendDialError(err) {
-			return nil, false, 0, fmt.Errorf("linkedin GET adAnalytics: %w", err)
-		}
-		// Redact credentials/URLs from the error before storing in transportError.
-		// isPreSendDialError already returned, so this is a mid-flight or RoundTripper error.
-		return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: redactTransportError(err)}
+		// Redact URLs/credentials: if this is a dial error wrapped in *url.Error, unwrap it
+		// so callers can still classify via errors.Is/As. Mid-flight errors get a safe message.
+		return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: redactHTTPDoError(err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -331,7 +354,7 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 	buf := new(bytes.Buffer)
 	if _, err := buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes+1)); err != nil {
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: redactTransportError(fmt.Errorf("read response body: %w", err))}
+			return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: redactBodyReadError(err)}
 		}
 		return nil, false, 0, &apiError{StatusCode: resp.StatusCode, Method: "GET", Path: "adAnalytics", Body: fmt.Sprintf("read response body: %v", err)}
 	}

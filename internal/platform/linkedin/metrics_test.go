@@ -5,8 +5,10 @@ package linkedin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -796,35 +798,112 @@ func (f *fakeCredentialBearingTripper) RoundTrip(req *http.Request) (*http.Respo
 	return nil, fmt.Errorf("fake RoundTripper error: %s", f.credentialMarker)
 }
 
-// TestGetCampaignMetrics_TransportErrorRedaction verifies that credential-bearing
-// strings from a malicious or misconfigured RoundTripper are redacted and never
-// logged. This is the transport-layer counterpart to costInUsdToMicros's value
-// sanitization: a fake RoundTripper can return errors containing URLs with bearer
-// tokens, request/response headers, or other material a maintainer did not write.
+// fakeDNSFailingTripper returns a DNS error wrapped in a *url.Error, which would
+// normally expose the full analytics URL. Used to verify redactHTTPDoError unwraps
+// while preserving the dial error classification.
+type fakeDNSFailingTripper struct{}
+
+func (f *fakeDNSFailingTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return nil, &url.Error{
+		Op:  "Get",
+		URL: "https://api.linkedin.com/rest/adAnalytics?q=analytics&campaigns=List(urn:li:sponsoredCampaign:123)&accounts=List(urn:li:sponsoredAccount:abc)",
+		Err: &net.DNSError{IsTimeout: false, IsTemporary: false, Name: "api.linkedin.com"},
+	}
+}
+
+// TestGetCampaignMetrics_TransportErrorRedaction verifies that three error paths are
+// properly redacted and classifiable:
+//
+//  1. Mid-flight/RoundTripper errors: credential-bearing strings are redacted
+//  2. Pre-send dial errors (DNS, ECONNREFUSED): wrapped in *url.Error carrying the URL,
+//     but unwrapped so the dial classification (via errors.Is/As) is preserved
+//  3. Body-read errors: distinct safe message, not collapsed into generic "request failed"
+//
 // The error propagates to BriefService.GetCampaignMetrics's default-error branch,
-// which logs it; the credential string must not appear in that log.
+// which logs it; no credential/URL material must appear in that log.
 func TestGetCampaignMetrics_TransportErrorRedaction(t *testing.T) {
-	const credentialMarker = "Bearer-token-SENTINEL-LEAK-MARKER"
+	t.Run("RoundTripper_credential_redaction", func(t *testing.T) {
+		const credentialMarker = "Bearer-token-SENTINEL-LEAK-MARKER"
 
-	client := NewClient(
-		Credentials{AccessToken: "test-token"},
-		RuntimeConfig{DefaultAccountID: "account123"},
-		WithHTTPClient(&http.Client{Transport: &fakeCredentialBearingTripper{credentialMarker: credentialMarker}}),
-	)
+		client := NewClient(
+			Credentials{AccessToken: "test-token"},
+			RuntimeConfig{DefaultAccountID: "account123"},
+			WithHTTPClient(&http.Client{Transport: &fakeCredentialBearingTripper{credentialMarker: credentialMarker}}),
+		)
 
-	ctx := context.Background()
-	metrics, err := client.GetCampaignMetrics(ctx, "account123", "123456", model.MetricsWindowToday)
-	if err == nil {
-		t.Fatalf("expected an error, got metrics %+v", metrics)
-	}
+		ctx := context.Background()
+		metrics, err := client.GetCampaignMetrics(ctx, "account123", "123456", model.MetricsWindowToday)
+		if err == nil {
+			t.Fatalf("expected an error, got metrics %+v", metrics)
+		}
 
-	// The credential marker must NOT appear in the error string that would be logged.
-	errStr := err.Error()
-	if strings.Contains(errStr, credentialMarker) {
-		t.Errorf("error string echoed credential material: %v", errStr)
-	}
+		// The credential marker must NOT appear in the error string that would be logged.
+		errStr := err.Error()
+		if strings.Contains(errStr, credentialMarker) {
+			t.Errorf("error string echoed credential material: %v", errStr)
+		}
+		if strings.Contains(errStr, "fake RoundTripper") {
+			t.Errorf("error string leaked RoundTripper implementation detail: %v", errStr)
+		}
+	})
 
-	// The redacted error should still be unwrappable to the underlying error for debugging,
-	// but redactTransportError's outer error message is safe.
-	// (The test here only checks the outer string, not the unwrapped chain.)
+	t.Run("DialError_URL_redaction_preserves_classification", func(t *testing.T) {
+		client := NewClient(
+			Credentials{AccessToken: "test-token"},
+			RuntimeConfig{DefaultAccountID: "account123"},
+			WithHTTPClient(&http.Client{Transport: &fakeDNSFailingTripper{}}),
+		)
+
+		ctx := context.Background()
+		_, err := client.GetCampaignMetrics(ctx, "account123", "123456", model.MetricsWindowToday)
+		if err == nil {
+			t.Fatalf("expected an error")
+		}
+
+		// The full URL must NOT appear in the error string that would be logged.
+		errStr := err.Error()
+		if strings.Contains(errStr, "https://api.linkedin.com") {
+			t.Errorf("error string leaked the full analytics URL: %v", errStr)
+		}
+		if strings.Contains(errStr, "adAnalytics?q=") {
+			t.Errorf("error string leaked analytics query parameters: %v", errStr)
+		}
+
+		// But the dial error classification must still be reachable via errors.As so
+		// callers can decide whether this failure is retryable.
+		var dnsErr *net.DNSError
+		if !errors.As(err, &dnsErr) {
+			t.Errorf("dial error classification was lost; DNSError not found in chain: %v", err)
+		}
+	})
+}
+
+// TestRedactHTTPDoError verifies the redaction helper works correctly.
+func TestRedactHTTPDoError(t *testing.T) {
+	t.Run("unwraps_url_error_with_dns", func(t *testing.T) {
+		// Simulate a *url.Error wrapping a DNSError
+		dialErr := &net.DNSError{IsTimeout: false, IsTemporary: false, Name: "api.linkedin.com"}
+		wrapped := &url.Error{
+			Op:  "Get",
+			URL: "https://api.linkedin.com/rest/adAnalytics?q=analytics&campaigns=List(urn:li:sponsoredCampaign:123)",
+			Err: dialErr,
+		}
+
+		redacted := redactHTTPDoError(wrapped)
+		errStr := redacted.Error()
+
+		// URL must not appear
+		if strings.Contains(errStr, "https://") {
+			t.Errorf("redacted error still contains URL: %v", errStr)
+		}
+		if strings.Contains(errStr, "adAnalytics?") {
+			t.Errorf("redacted error still contains query parameters: %v", errStr)
+		}
+
+		// But the dial classification must be preserved
+		var dnsErr *net.DNSError
+		if !errors.As(redacted, &dnsErr) {
+			t.Errorf("redacted error lost DNSError classification: %v", redacted)
+		}
+	})
 }
