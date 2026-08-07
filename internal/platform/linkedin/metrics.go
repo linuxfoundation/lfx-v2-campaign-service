@@ -489,6 +489,13 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 	}
 
 	if int64(buf.Len()) > maxResponseBytes {
+		// The cap+1 read stopped the moment the body went over, so the remainder is still
+		// on the wire. Closing on an unread body makes net/http tear the connection down
+		// instead of returning it to the idle pool, so every later metrics read pays a
+		// fresh TCP+TLS handshake — the same reason the 429 path above discards. Bounded
+		// by maxResponseBytes for the same reason the read was: an unbounded discard would
+		// let an adversarial or runaway response hold the goroutine indefinitely.
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("response exceeds %d bytes", maxResponseBytes)}
 		}

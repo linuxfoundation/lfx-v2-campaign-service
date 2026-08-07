@@ -62,6 +62,16 @@ boundary are now pinned. The `costInUsdToMicros` doc example was also simply wro
 converts exactly, so it could not illustrate rounding-vs-truncation; it needs more than six
 fractional digits.
 
+**A third sweep found one more, and it is why the cap-boundary fixture had to be resized.**
+Detecting an over-cap body stops the read with the remainder still on the wire, and closing
+a response body that has unread bytes makes net/http tear the connection down rather than
+return it to the idle pool — so every later metrics read pays a fresh TCP+TLS handshake for
+as long as the upstream keeps oversizing. The over-cap path now performs a bounded discard
+before closing, matching the 429 path. Note the trap in testing it: the read is
+`LimitReader(maxResponseBytes+1)`, so a fixture sized at exactly `maxResponseBytes+1` is
+consumed IN FULL and leaves nothing unread — it passes with or without the drain. The
+connection-reuse test overshoots by 4 KiB so there is genuinely something left to discard.
+
 The general lesson is the review-reading one, not the LinkedIn one: on this repo,
 `unresolved == 0` is not evidence that there is no open feedback. The review bodies have to
 be swept — and swept AGAIN after each push, because the fix commit gets its own review whose

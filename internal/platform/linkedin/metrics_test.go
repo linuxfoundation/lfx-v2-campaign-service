@@ -1411,3 +1411,49 @@ func TestGetCampaignMetrics_ResponseCapBoundary(t *testing.T) {
 		})
 	}
 }
+
+// TestGetCampaignMetrics_OverCapResponseKeepsConnectionReusable pins the drain on the
+// over-cap path. The body is read through LimitReader(maxResponseBytes+1), so detection
+// stops the read the moment the response goes over and leaves the remainder on the wire.
+// Closing a response body that still has unread bytes makes net/http tear the connection
+// down rather than return it to the idle pool, so every later metrics read pays a fresh
+// TCP+TLS handshake — a steady cost for as long as the upstream keeps oversizing. Two
+// requests against a keep-alive server must therefore land on ONE connection.
+func TestGetCampaignMetrics_OverCapResponseKeepsConnectionReusable(t *testing.T) {
+	// The excess must be more than ONE byte. The read is LimitReader(maxResponseBytes+1),
+	// so a body of exactly maxResponseBytes+1 is consumed in full and nothing is left on
+	// the wire — a fixture sized that way passes with or without the drain and proves
+	// nothing. overBy is the number of bytes that genuinely remain unread.
+	const overBy = 4096
+	prefix := `{"pad":"`
+	suffix := `","elements":[{"impressions":10,"clicks":1,"costInUsd":"1.00"}]}`
+	payload := prefix + strings.Repeat("x", maxResponseBytes+overBy-len(prefix)-len(suffix)) + suffix
+
+	var mu sync.Mutex
+	conns := map[string]struct{}{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		conns[r.RemoteAddr] = struct{}{}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, payload)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		Credentials{AccessToken: "test-token"},
+		RuntimeConfig{DefaultAccountID: "account123"},
+		WithBaseURL(server.URL),
+	)
+	for i := 0; i < 2; i++ {
+		if _, err := client.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday); err == nil {
+			t.Fatalf("call %d: over-cap response was accepted", i)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(conns) != 1 {
+		t.Errorf("two over-cap reads used %d connections, want 1 — the unread remainder is preventing keep-alive reuse", len(conns))
+	}
+}
