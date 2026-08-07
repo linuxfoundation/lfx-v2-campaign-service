@@ -1,6 +1,6 @@
 # 2026-08-06 — LFXV2-2901: fix Cursor Bugbot deadlock finding
 
-**Finding** — `toggleCampaignRepo` (added in the prior fake-fidelity fix)
+**Update** — `toggleCampaignRepo` (added in the prior fake-fidelity fix)
 holds `claimMu` from a successful `ClaimCampaignVersion` until
 `ReleaseCampaignLock` unlocks it, but never overrode
 `ReleaseCampaignLockAfterCooldown` and kept the embedded

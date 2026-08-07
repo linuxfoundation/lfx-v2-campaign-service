@@ -20,6 +20,7 @@ func resetCooldownState(t *testing.T) {
 	cooldownShutdown = make(chan struct{})
 	cooldownOnce = sync.Once{}
 	cooldownStopped = false
+	cooldownReleaseBoundNanos.Store(0)
 	cooldownMu.Unlock()
 }
 
@@ -102,5 +103,42 @@ func runningCooldownGoroutines() int {
 		return 0
 	case <-time.After(200 * time.Millisecond):
 		return 1
+	}
+}
+
+// TestStopCooldownsForShutdown_PublishesReleaseBoundBeforeWaking pins the hand-off that makes
+// cooldownStopTimeout bound the CONNECTION and not merely the wait. A cooldown release cut
+// short by shutdown must unlock under the same budget Close is waiting on; if it fell back to
+// lockReleaseTimeout, Close would return while the connection stayed checked out and
+// pgxpool.Close would block on it for the difference — outside ContainerCloseTimeout.
+//
+// The publish must also happen BEFORE the channel close that wakes the goroutines, or a
+// goroutine that wakes first reads a zero and falls back to the default. This test asserts the
+// bound is already visible to anything the close wakes.
+func TestStopCooldownsForShutdown_PublishesReleaseBoundBeforeWaking(t *testing.T) {
+	resetCooldownState(t)
+
+	if got := shutdownReleaseBound(); got != lockReleaseTimeout {
+		t.Fatalf("before shutdown, bound = %v, want the %v fallback", got, lockReleaseTimeout)
+	}
+
+	const budget = 250 * time.Millisecond
+	// Observed from a goroutine parked on cooldownShutdown, i.e. exactly what a cut-short
+	// release sees at wake time — not merely what is readable after Stop returns.
+	observed := make(chan time.Duration, 1)
+	go func() {
+		<-cooldownShutdown
+		observed <- shutdownReleaseBound()
+	}()
+
+	StopCooldownsForShutdown(budget)
+
+	select {
+	case got := <-observed:
+		if got != budget {
+			t.Errorf("a cooldown woken by shutdown would unlock with a %v budget, want %v (Close's own wait)", got, budget)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("goroutine parked on cooldownShutdown was never woken")
 	}
 }

@@ -37,6 +37,10 @@ type fakeBriefRepo struct {
 	// indexPayloads records EVERY co-committed message, so a test can assert that a write was
 	// indexed at all rather than only inspecting the most recent one.
 	indexPayloads [][]byte
+	// claims counts ClaimCampaignVersion calls. The claim deliberately does NOT bump the
+	// version (production keeps the increment inside ReplaceCampaign's outbox transaction),
+	// so "was the claim taken?" cannot be inferred from the version — it must be observed.
+	claims int
 }
 
 func newFakeBriefRepo() *fakeBriefRepo {
@@ -543,6 +547,10 @@ type campaignEditRepo struct {
 	// indexPayloads records the co-committed index messages, so a test can assert the update
 	// is indexed rather than only persisted.
 	indexPayloads [][]byte
+	// claims counts ClaimCampaignVersion calls. The claim deliberately does NOT bump the
+	// version — production keeps the increment inside ReplaceCampaign's outbox transaction —
+	// so "was the claim taken?" cannot be inferred from the version; it must be observed.
+	claims int
 }
 
 func (r *campaignEditRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
@@ -563,6 +571,10 @@ func (r *campaignEditRepo) UpsertCampaign(_ context.Context, c *model.Campaign, 
 }
 func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64, _ domain.CampaignLockToken, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	r.got = c
+	// The version bump lives here, not in the claim — mirroring the real repo, which
+	// increments inside the same transaction that writes the outbox event.
+	r.cur.Version++
+	c.Version = r.cur.Version
 	return c, r.recordIndex(c, indexPayload)
 }
 
@@ -580,10 +592,11 @@ func (r *campaignEditRepo) recordIndex(c *model.Campaign, indexPayload domain.Ca
 	return nil
 }
 func (r *campaignEditRepo) ClaimCampaignVersion(_ context.Context, _, _, campaignID string, expectedVersion int64) (*model.Campaign, domain.CampaignLockToken, error) {
+	r.claims++
 	if r.cur.Version != expectedVersion {
 		return nil, domain.CampaignLockToken{}, domain.ErrPreconditionFailed
 	}
-	r.cur.Version++
+	// No bump: the real claim takes an advisory lock and leaves the version alone.
 	cp := *r.cur
 	return &cp, domain.NewCampaignLockToken(campaignID, &cp), nil
 }
@@ -593,11 +606,11 @@ func (r *campaignEditRepo) ReleaseCampaignLock(context.Context, domain.CampaignL
 func (r *campaignEditRepo) ReleaseCampaignLockAfterCooldown(domain.CampaignLockToken, time.Duration) {
 }
 
-// UpdateCampaign must validate status before claiming the version, so a rejected
-// request (400 validation error) does not bump the version. If validation failed
-// after claiming, a retry of the same rejected request would get 412
-// PreconditionFailed instead of the original validation error, and other callers
-// with the prior version would be wrongly rejected.
+// UpdateCampaign must validate status BEFORE claiming. The claim takes the campaign's
+// advisory lock on a dedicated pooled connection and blocks every other writer for that
+// campaign until release, so a request that is going to be rejected anyway must never take
+// it. (The claim does not bump the version — only ReplaceCampaign does — so this is about
+// not blocking legitimate writers, not about ETag invalidation.)
 func TestBriefService_UpdateCampaign_ValidationBeforeClaim(t *testing.T) {
 	camps := &campaignEditRepo{cur: &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Version: 5,
@@ -614,9 +627,15 @@ func TestBriefService_UpdateCampaign_ValidationBeforeClaim(t *testing.T) {
 	if !errors.As(err, &badReq) {
 		t.Fatalf("expected 400 BadRequestError, got %T: %v", err, err)
 	}
-	// Verify that ClaimCampaignVersion was NOT called (version should still be 5)
+	// Observe the claim directly. The version cannot stand in for it: the real claim takes
+	// an advisory lock and leaves the version untouched, so a version of 5 here is equally
+	// consistent with "never claimed" and "claimed, then rejected" — only the counter tells
+	// the two apart.
+	if camps.claims != 0 {
+		t.Errorf("ClaimCampaignVersion was called %d times before validation rejected the request, want 0", camps.claims)
+	}
 	if camps.cur.Version != 5 {
-		t.Errorf("version was bumped even though validation failed: got %d, want 5 (unchanged)", camps.cur.Version)
+		t.Errorf("version changed on a rejected request: got %d, want 5", camps.cur.Version)
 	}
 }
 
@@ -875,6 +894,43 @@ type toggleCampaignRepo struct {
 	claimStatusErr error
 	// indexPayloads records the co-committed index messages for the toggle path.
 	indexPayloads [][]byte
+	// reads, when set, makes GetCampaign a rendezvous point so a concurrency test can
+	// GUARANTEE that every racing caller read the same pre-claim version, instead of
+	// hoping a sleep was long enough. Nil for the sequential tests.
+	reads *readBarrier
+}
+
+// readBarrier is an n-party rendezvous. The first n callers of wait all block until the
+// n-th arrives; every later call returns immediately. Used to pin down the interleaving a
+// concurrency test depends on: without it, one goroutine can finish its whole
+// claim→platform→persist→release cycle before the other has even read, so the second
+// caller fails on a version it never observed and the test passes while proving nothing
+// about serialization.
+type readBarrier struct {
+	mu      sync.Mutex
+	n       int
+	arrived int
+	release chan struct{}
+}
+
+func newReadBarrier(n int) *readBarrier {
+	return &readBarrier{n: n, release: make(chan struct{})}
+}
+
+func (b *readBarrier) wait() {
+	b.mu.Lock()
+	if b.arrived >= b.n {
+		b.mu.Unlock()
+		return
+	}
+	b.arrived++
+	tripped := b.arrived == b.n
+	b.mu.Unlock()
+	if tripped {
+		close(b.release)
+		return
+	}
+	<-b.release
 }
 
 func (r *toggleCampaignRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
@@ -882,8 +938,14 @@ func (r *toggleCampaignRepo) GetCampaign(context.Context, string, string, string
 		return nil, r.getErr
 	}
 	r.dataMu.Lock()
-	defer r.dataMu.Unlock()
 	cp := *r.got
+	r.dataMu.Unlock()
+	// Rendezvous AFTER the snapshot is taken and dataMu is dropped: holding dataMu here
+	// would deadlock against the claim holder's ReplaceCampaign. No write can land in
+	// between, because every party is still parked on this barrier and no one has claimed.
+	if r.reads != nil {
+		r.reads.wait()
+	}
 	return &cp, nil
 }
 func (r *toggleCampaignRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, expectedVersion int64, _ domain.CampaignLockToken, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
@@ -1067,6 +1129,9 @@ func (d *concurrentStubToggler) ToggleStatus(context.Context, string, model.Prov
 		}
 	}
 	// Widen the window a broken (unserialized) claim would let a second call overlap in.
+	// This only sharpens the maxInFlight probe; the test's guarantees do not rest on it.
+	// What both callers observing the same pre-claim version rests on is the read barrier
+	// in toggleCampaignRepo.GetCampaign, which is a rendezvous, not a duration.
 	time.Sleep(20 * time.Millisecond)
 	atomic.AddInt32(&d.inFlight, -1)
 	d.mu.Lock()
@@ -1090,7 +1155,9 @@ func TestBriefService_ToggleCampaignStatus_ConcurrentTogglesSerialize(t *testing
 	}
 	tog := &concurrentStubToggler{}
 	repo := newFakeBriefRepo()
-	camps := &toggleCampaignRepo{got: camp}
+	// Both goroutines must read version 3 BEFORE either claims — otherwise the loser is
+	// rejected on a version it never saw and nothing about serialization is proven.
+	camps := &toggleCampaignRepo{got: camp, reads: newReadBarrier(2)}
 	jobs := newFakeJobRepo()
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderRedditAds: tog})
 	s := NewBriefService(repo, camps, jobs, orch)

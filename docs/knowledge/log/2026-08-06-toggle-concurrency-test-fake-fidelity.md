@@ -1,6 +1,6 @@
 # 2026-08-06 — LFXV2-2901: fix vacuous concurrency test (Cursor Bugbot)
 
-**Finding** — Cursor Bugbot flagged
+**Update** — Cursor Bugbot flagged
 `TestBriefService_ToggleCampaignStatus_ConcurrentTogglesSerialize`
 (`internal/service/brief_test.go`) as non-binding: it made its two
 `ToggleCampaignStatus` calls sequentially, one after the other, so it could

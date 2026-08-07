@@ -582,8 +582,12 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	// specific toggle-endpoint message; every other mismatch (a provisioning state, or an
 	// unknown value) is rejected as unsupported on this path.
 	//
-	// VALIDATION MUST HAPPEN BEFORE CLAIMING. If validation fails and returns 400, we must not
-	// bump the version; otherwise a rejected request unexpectedly invalidates the caller's ETag.
+	// VALIDATION MUST HAPPEN BEFORE CLAIMING. A rejected request has no business taking the
+	// campaign's write lock: claiming acquires a dedicated pooled connection and blocks every
+	// other writer for this campaign until it is released, so validating first keeps an
+	// invalid request from queueing behind — or ahead of — legitimate writers. (The claim
+	// itself does not bump the version; only ReplaceCampaign does. So the ETag a rejected
+	// caller holds stays valid either way.)
 	if p.Campaign.Status != existing.Status {
 		if model.IsCampaignRunStatus(p.Campaign.Status) {
 			return nil, &briefs.BadRequestError{Code: "400", Message: "run status (active/paused) cannot be changed via update-campaign; use the status-toggle endpoint so the change is applied on the ad platform first"}
@@ -676,11 +680,13 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 		return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not in a toggleable state (it is still provisioning or needs reconciliation); resolve its status before toggling"}
 	}
 
-	// VALIDATION MUST HAPPEN BEFORE CLAIMING. If validation fails and returns 400/409, we
-	// must not bump the version; otherwise a rejected request unexpectedly invalidates the
-	// caller's ETag. A stale If-Match on retry would then get 412 instead of the original
-	// validation error. Check platform-independent errors here; platform-specific errors
-	// (like UNCONFIRMED from transport) must still go through the platform call.
+	// VALIDATION MUST HAPPEN BEFORE CLAIMING, for the same reason as UpdateCampaign above:
+	// claiming takes the campaign's write lock on a dedicated pooled connection and blocks
+	// every other writer for this campaign until release, so a request that is going to be
+	// rejected anyway must never take it. (The claim leaves the version unchanged — only
+	// ReplaceCampaign bumps it — so a rejected caller's ETag survives either way.) Check
+	// platform-independent errors here; platform-specific errors (like UNCONFIRMED from
+	// transport) must still go through the platform call.
 	if existing.Platform.Kind() == model.ChannelEmail {
 		return nil, &briefs.BadRequestError{Code: "400", Message: "status toggle does not apply to the email channel: it stages a draft for a human to send, so there is no running campaign to pause or resume"}
 	}

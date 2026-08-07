@@ -133,9 +133,19 @@ type CampaignWriter interface {
 	// holder's own connection for this write MUST use lockToken's own handle, never a lookup by
 	// campaign ID, so a write can never attach to a different claimant's connection.
 	ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64, lockToken CampaignLockToken, indexPayload CampaignIndexPayloadFunc) (*model.Campaign, error)
-	// ClaimCampaignVersion atomically reserves write ownership of a campaign row by
-	// bumping its version, gated on expectedVersion. It returns ErrPreconditionFailed
-	// if expectedVersion is stale, or ErrNotFound if the row is gone.
+	// ClaimCampaignVersion reserves EXCLUSIVE write ownership of a campaign row, gated on
+	// expectedVersion, and returns the row plus a CampaignLockToken. It returns
+	// ErrPreconditionFailed if expectedVersion is stale, or ErrNotFound if the row is gone;
+	// the two must be told apart while ownership is still held, or a concurrent delete
+	// racing the release turns a stale-version caller's 412 into a 404.
+	//
+	// Ownership is a LOCK, not a version bump. The claim explicitly leaves version
+	// UNCHANGED: the increment belongs to ReplaceCampaign, inside the same transaction that
+	// writes the outbox event, so the invariant that every campaign write co-commits its
+	// index event is preserved. Implementations must therefore hold ownership across the
+	// caller's external I/O (the Postgres implementation takes a session advisory lock on a
+	// dedicated connection) and must not rely on the version alone to exclude a second
+	// writer.
 	//
 	// Every writer that must do external I/O (an ad-platform call) BETWEEN reading
 	// the row and persisting its outcome — currently only BriefService.

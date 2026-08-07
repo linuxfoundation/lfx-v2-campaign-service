@@ -483,6 +483,30 @@ func (r *CampaignRepo) ClaimCampaignVersion(ctx context.Context, projectID, brie
 		WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND version=$4`
 	c, err := scanCampaign(conn.QueryRow(ctx, q, campaignID, briefID, projectID, expectedVersion))
 	if err != nil {
+		// Classify no-rows as 404 vs 412 BEFORE unlocking, on the SAME locked connection.
+		// The advisory lock is what makes the classification trustworthy: once it is
+		// released a waiting delete can run, and a row that was merely at the wrong
+		// version at claim time would then be reported ErrNotFound (404) instead of the
+		// contract's ErrPreconditionFailed (412). Probing under the lock pins the row's
+		// existence to the same instant the version comparison was made.
+		claimErr := fmt.Errorf("claim campaign version: %w", err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			var exists bool
+			probeErr := conn.QueryRow(ctx,
+				`SELECT EXISTS (SELECT 1 FROM campaigns WHERE id=$1 AND brief_id=$2 AND project_id=$3)`,
+				campaignID, briefID, projectID).Scan(&exists)
+			switch {
+			case probeErr != nil:
+				// Cannot tell the two apart; surface the probe failure rather than
+				// guessing a status the caller would act on.
+				claimErr = fmt.Errorf("classify campaign claim failure: %w", probeErr)
+			case exists:
+				claimErr = domain.ErrPreconditionFailed
+			default:
+				claimErr = domain.ErrNotFound
+			}
+		}
+
 		// Release the lock immediately on error, on a detached bounded context: the
 		// caller's ctx may already be cancelled (e.g. the read above failed because the
 		// request context expired), and an unlock issued with a dead context fails
@@ -504,21 +528,7 @@ func (r *CampaignRepo) ClaimCampaignVersion(ctx context.Context, projectID, brie
 		}
 		conn.Release()
 
-		if errors.Is(err, pgx.ErrNoRows) {
-			// Disambiguate: not-found vs. precondition-failed by checking if the row exists
-			// at any version. If GetCampaign returns not-found, the row is gone; if it
-			// returns a row, the version mismatch is the issue.
-			_, gerr := r.GetCampaign(ctx, projectID, briefID, campaignID)
-			switch {
-			case errors.Is(gerr, domain.ErrNotFound):
-				return nil, domain.CampaignLockToken{}, domain.ErrNotFound
-			case gerr != nil:
-				return nil, domain.CampaignLockToken{}, gerr
-			default:
-				return nil, domain.CampaignLockToken{}, domain.ErrPreconditionFailed
-			}
-		}
-		return nil, domain.CampaignLockToken{}, fmt.Errorf("claim campaign version: %w", err)
+		return nil, domain.CampaignLockToken{}, claimErr
 	}
 
 	// Store the lock in the package-level map. The advisory lock ensures only
@@ -539,6 +549,22 @@ func (r *CampaignRepo) ClaimCampaignVersion(ctx context.Context, projectID, brie
 // CompareAndDelete below). Callers MUST call this after claiming, either directly or via defer,
 // to allow other writers to proceed.
 func (r *CampaignRepo) ReleaseCampaignLock(ctx context.Context, token domain.CampaignLockToken) error {
+	return r.releaseCampaignLock(ctx, token, lockReleaseTimeout)
+}
+
+// lockReleaseTimeout bounds the pg_advisory_unlock round-trip on the ordinary release path.
+// Generous, because the alternative to a slow-but-successful unlock is destroying the
+// connection.
+const lockReleaseTimeout = 5 * time.Second
+
+// releaseCampaignLock is ReleaseCampaignLock with the unlock round-trip's bound supplied by
+// the caller. Exposed internally only so the shutdown path can pass Close's own (much
+// smaller) budget: if the unlock cannot finish inside it, the Exec fails and the branch
+// below DESTROYS the connection — which is what actually returns the pool slot pgxpool.Close
+// blocks on. A destroyed connection at shutdown is strictly better than a Close that
+// overruns its budget and gets SIGKILLed mid-drain (Postgres drops a dead session's advisory
+// locks on its own, so nothing is stranded upstream either).
+func (r *CampaignRepo) releaseCampaignLock(ctx context.Context, token domain.CampaignLockToken, timeout time.Duration) error {
 	lock, ok := token.Handle().(*campaignLock)
 	if !ok || lock == nil {
 		// No lock claimed (zero token), or a token from a different implementation.
@@ -572,8 +598,11 @@ func (r *CampaignRepo) ReleaseCampaignLock(ctx context.Context, token domain.Cam
 
 	// Release on a bounded detached context to guarantee the unlock runs even
 	// if the original context was cancelled (which may happen during platform
-	// calls or other operations with independent lifecycle).
-	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	// calls or other operations with independent lifecycle). The bound is
+	// explicit rather than fixed at lockReleaseTimeout so the shutdown path can
+	// hold the round-trip inside Close's much smaller budget — see
+	// releaseTimeoutForShutdown.
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 	defer cancel()
 
 	if _, err := lock.conn.Exec(releaseCtx, "SELECT pg_advisory_unlock($1)", lock.lockKey); err != nil {
@@ -612,7 +641,22 @@ var (
 	// observe it), or observes stopped already set and skips the WaitGroup entirely.
 	cooldownMu      sync.Mutex
 	cooldownStopped bool
+	// cooldownReleaseBoundNanos carries the timeout StopCooldownsForShutdown was given, so a
+	// cooldown goroutine woken by shutdown can bound its unlock by the SAME budget Close is
+	// waiting on rather than by lockReleaseTimeout. Read via shutdownReleaseBound.
+	cooldownReleaseBoundNanos atomic.Int64
 )
+
+// shutdownReleaseBound returns the unlock budget for a cooldown release that was cut short by
+// shutdown: whatever StopCooldownsForShutdown was given, or lockReleaseTimeout if a release
+// somehow runs before that is published (belt-and-braces; the store happens before the channel
+// close that wakes these goroutines).
+func shutdownReleaseBound() time.Duration {
+	if d := cooldownReleaseBoundNanos.Load(); d > 0 {
+		return time.Duration(d)
+	}
+	return lockReleaseTimeout
+}
 
 // ReleaseCampaignLockAfterCooldown releases the advisory lock identified by token after
 // cooldown elapses, or immediately if StopCooldownsForShutdown is called first — whichever
@@ -637,9 +681,15 @@ func (r *CampaignRepo) ReleaseCampaignLockAfterCooldown(token domain.CampaignLoc
 		defer cooldownWG.Done()
 		select {
 		case <-time.After(cooldown):
+			_ = r.ReleaseCampaignLock(context.Background(), token)
 		case <-cooldownShutdown:
+			// Woken by shutdown: StopCooldownsForShutdown only waits so long for this
+			// goroutine, so the unlock must be bounded by that same budget rather than by
+			// lockReleaseTimeout. Otherwise Close returns after its wait elapses while this
+			// connection stays checked out for up to lockReleaseTimeout, and pool.Close
+			// blocks on it — pushing shutdown past ContainerCloseTimeout by the difference.
+			_ = r.releaseCampaignLock(context.Background(), token, shutdownReleaseBound())
 		}
-		_ = r.ReleaseCampaignLock(context.Background(), token)
 	}()
 }
 
@@ -651,6 +701,10 @@ func (r *CampaignRepo) ReleaseCampaignLockAfterCooldown(token domain.CampaignLoc
 // unconfirmedLockCooldown. Safe to call more than once; only the first call's close takes
 // effect, and every call still waits for outstanding releases.
 func StopCooldownsForShutdown(timeout time.Duration) {
+	// Publish the budget BEFORE closing the channel: the woken goroutines read it to bound
+	// their own unlock, and a goroutine that woke first and read a zero would fall back to
+	// the default rather than to Close's actual budget.
+	cooldownReleaseBoundNanos.Store(int64(timeout))
 	cooldownMu.Lock()
 	cooldownStopped = true
 	cooldownMu.Unlock()

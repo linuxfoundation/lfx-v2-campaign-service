@@ -1,6 +1,6 @@
 # 2026-08-05 — LFXV2-2901: idempotent lock release, token-scoped ReplaceCampaign connection
 
-**Fix** — Addressed two review findings against `internal/infrastructure/postgres/campaign_repo.go`:
+**Update** — Addressed two review findings against `internal/infrastructure/postgres/campaign_repo.go`:
 
 1. **`ReleaseCampaignLock` was not idempotent** (Cursor). It unconditionally executed the
    advisory unlock and disposed of `lock.conn` regardless of whether the preceding

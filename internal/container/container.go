@@ -104,6 +104,13 @@ const dispatchDrainTimeout = 4 * time.Second
 // signalled to cut short. Deliberately SMALL, same as sweeperStopTimeout: the signal makes
 // every pending release happen essentially immediately, so this only covers the time for that
 // release's own bounded DB round-trip, not the cooldown itself.
+//
+// It really does bound the connection, not just the wait. StopCooldownsForShutdown passes this
+// value down as the unlock round-trip's own deadline, so a stalled unlock fails inside the
+// budget and its connection is DESTROYED rather than left checked out — which is what
+// pgxpool.Close actually blocks on. Without that hand-off, Close would return after this wait
+// while the release ran on for its ordinary 5s bound, and pool.Close below would sit through
+// the difference OUTSIDE ContainerCloseTimeout.
 const cooldownStopTimeout = 250 * time.Millisecond
 
 // ContainerCloseTimeout is the wall-clock budget for Container.Close: the
