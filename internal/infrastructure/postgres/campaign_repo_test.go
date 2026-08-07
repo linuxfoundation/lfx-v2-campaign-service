@@ -5,6 +5,7 @@ package postgres
 
 import (
 	"io/fs"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -170,3 +171,49 @@ func TestMigration000014_GuardChecksIndexDefinition(t *testing.T) {
 // normalizeWS collapses all whitespace runs to a single space so assertions are
 // insensitive to the SQL literals' line breaks and indentation.
 func normalizeWS(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// TestDeleteCampaign_ParticipatesInAdvisoryLockProtocol pins that DeleteCampaign takes
+// the campaign advisory lock, and that it runs its transaction on the SAME connection
+// that holds it.
+//
+// This repo has no DB-backed test harness (see TestDeleteCampaign_LocksRowBeforeGuards),
+// so this asserts on the source of the method body rather than by racing two real
+// transactions. Both properties it pins are structural, and both were real defects:
+//
+//  1. Without the advisory lock, FOR UPDATE serializes delete against the dispatch path
+//     (which UPDATEs the row) but NOT against an in-flight run-state toggle. A toggle
+//     holds its claim ACROSS the platform call, and between ClaimCampaignVersion and
+//     ReplaceCampaign it holds no row lock at all. A delete committing inside that
+//     window bumps version, so the toggle's ReplaceCampaign(expectedVersion) fails after
+//     the paid side effect already landed upstream.
+//
+//  2. Beginning the transaction with r.db.Begin would take a SECOND pool connection
+//     while this one is held, self-deadlocking whenever the pool is saturated
+//     (pool_max_conns=1 guarantees it) — the delete would block waiting for a
+//     connection only it could release.
+func TestDeleteCampaign_ParticipatesInAdvisoryLockProtocol(t *testing.T) {
+	src, err := os.ReadFile("campaign_repo.go")
+	require.NoError(t, err)
+
+	const start = "func (r *CampaignRepo) DeleteCampaign("
+	i := strings.Index(string(src), start)
+	require.NotEqual(t, -1, i, "DeleteCampaign not found; update this test if the method was renamed")
+	body := string(src)[i:]
+	// Bound the body at the next top-level func so later methods cannot satisfy these
+	// assertions on DeleteCampaign's behalf.
+	if j := strings.Index(body[len(start):], "\nfunc "); j != -1 {
+		body = body[:len(start)+j]
+	}
+
+	require.Contains(t, body, "pg_advisory_lock",
+		"DeleteCampaign must take the campaign advisory lock: FOR UPDATE alone does not serialize it "+
+			"against an in-flight toggle, which holds its claim across the platform call and no row lock at all.")
+	require.Contains(t, body, "pg_advisory_unlock",
+		"DeleteCampaign must release the advisory lock; a session lock left held strands every future "+
+			"claim and delete for this campaign.")
+	require.Contains(t, body, "conn.Begin(ctx)",
+		"the delete transaction must begin on the connection already holding the advisory lock")
+	require.NotContains(t, body, "r.db.Begin(",
+		"beginning on the pool takes a SECOND connection while holding the lock, which self-deadlocks "+
+			"on a saturated pool")
+}

@@ -99,17 +99,26 @@ const relayStopTimeout = 250 * time.Millisecond
 
 const dispatchDrainTimeout = 4 * time.Second
 
+// cooldownStopTimeout bounds how long Close waits for in-flight UNCONFIRMED lock cooldowns
+// (postgres.ReleaseCampaignLockAfterCooldown) to release their held connection after being
+// signalled to cut short. Deliberately SMALL, same as sweeperStopTimeout: the signal makes
+// every pending release happen essentially immediately, so this only covers the time for that
+// release's own bounded DB round-trip, not the cooldown itself.
+const cooldownStopTimeout = 250 * time.Millisecond
+
 // ContainerCloseTimeout is the wall-clock budget for Container.Close: the
 // orchestrator drain (dispatchDrainTimeout), its post-cancel grace
 // (service.CancelGracePeriod), the index publisher's connection drain
-// (indexer.DrainTimeout), AND the index relay's stop wait (relayStopTimeout). The last term is not optional bookkeeping — Close really
+// (indexer.DrainTimeout), the index relay's stop wait (relayStopTimeout), AND the UNCONFIRMED
+// lock cooldown stop wait (cooldownStopTimeout). The relayStopTimeout term is not optional
+// bookkeeping — Close really
 // does drain NATS after the pool closes, so omitting it understated the phase by
 // that much and let the two phases sum PAST DefaultShutdownTimeout (they already
 // consumed all 25s with zero headroom), which is exactly the SIGKILL-mid-drain
 // this budget exists to prevent. The server budgets the HTTP-shutdown phase and
 // this container-close phase separately (see HTTPShutdownTimeout), so the total
 // graceful shutdown is a true sum bounded by constants.DefaultShutdownTimeout.
-const ContainerCloseTimeout = dispatchDrainTimeout + service.CancelGracePeriod + indexer.DrainTimeout + relayStopTimeout
+const ContainerCloseTimeout = dispatchDrainTimeout + service.CancelGracePeriod + indexer.DrainTimeout + relayStopTimeout + cooldownStopTimeout
 
 // HTTPShutdownTimeout is the wall-clock budget for draining in-flight HTTP
 // handlers before the container is closed. It is whatever remains of the overall
@@ -918,6 +927,12 @@ func (c *Container) Close(ctx context.Context) error {
 			shutdownErr = fmt.Errorf("drain in-flight dispatch: %w", err)
 		}
 	}
+	// Cut short any in-flight UNCONFIRMED lock cooldown (postgres.ReleaseCampaignLockAfterCooldown)
+	// before closing the pool: each one holds a checked-out connection for up to
+	// unconfirmedLockCooldown (30s), and pgxpool.Close blocks until every checked-out
+	// connection is returned, so an unsignalled cooldown would otherwise make pool.Close below
+	// overrun the shutdown budget on its own. Same reasoning as the sweeper stop above.
+	postgres.StopCooldownsForShutdown(cooldownStopTimeout)
 	c.mu.Lock()
 	pool := c.pool
 	c.mu.Unlock()

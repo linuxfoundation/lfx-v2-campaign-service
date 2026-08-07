@@ -54,7 +54,7 @@ func TestShutdownBudgetComposes(t *testing.T) {
 	// drain, the post-cancel grace, AND the index publisher's connection drain. The last
 	// was originally omitted, which understated the phase and let the two phases sum past
 	// DefaultShutdownTimeout — the SIGKILL-mid-drain this budget exists to prevent.
-	assert.Equal(t, dispatchDrainTimeout+service.CancelGracePeriod+indexer.DrainTimeout+relayStopTimeout, ContainerCloseTimeout)
+	assert.Equal(t, dispatchDrainTimeout+service.CancelGracePeriod+indexer.DrainTimeout+relayStopTimeout+cooldownStopTimeout, ContainerCloseTimeout)
 	// The HTTP phase gets a positive share of the remaining budget.
 	assert.Positive(t, HTTPShutdownTimeout, "HTTP shutdown phase must have a positive budget")
 	// The two phases together stay within the overall budget.
@@ -124,12 +124,19 @@ func (stubCampaignRepo) DeleteDispatchClaim(context.Context, string, model.Provi
 func (stubCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, _ domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	return c, nil
 }
+func (stubCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64, domain.CampaignLockToken, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	return nil, domain.ErrNotFound
+}
 func (stubCampaignRepo) DeleteCampaign(context.Context, string, string, string, int64, domain.CampaignIndexPayloadFunc) error {
 	return nil
 }
-func (stubCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
-	return nil, domain.ErrNotFound
+func (stubCampaignRepo) ClaimCampaignVersion(context.Context, string, string, string, int64) (*model.Campaign, domain.CampaignLockToken, error) {
+	return nil, domain.CampaignLockToken{}, domain.ErrNotFound
 }
+func (stubCampaignRepo) ReleaseCampaignLock(context.Context, domain.CampaignLockToken) error {
+	return nil
+}
+func (stubCampaignRepo) ReleaseCampaignLockAfterCooldown(domain.CampaignLockToken, time.Duration) {}
 
 // TestClose_PropagatesShutdownError verifies Container.Close returns (does not
 // swallow) the orchestrator shutdown error when a dispatch is still running at

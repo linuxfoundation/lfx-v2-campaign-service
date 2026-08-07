@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	briefsclient "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/client"
 	briefsserver "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/server"
@@ -558,9 +559,22 @@ func (r *campaignEditRepo) DeleteDispatchClaim(context.Context, string, model.Pr
 func (r *campaignEditRepo) UpsertCampaign(_ context.Context, c *model.Campaign, _ domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	return c, nil
 }
-func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+func (r *campaignEditRepo) ReplaceCampaign(_ context.Context, c *model.Campaign, _ int64, _ domain.CampaignLockToken, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	r.got = c
 	return c, r.recordIndex(c, indexPayload)
+}
+func (r *campaignEditRepo) ClaimCampaignVersion(_ context.Context, _, _, campaignID string, expectedVersion int64) (*model.Campaign, domain.CampaignLockToken, error) {
+	if r.cur.Version != expectedVersion {
+		return nil, domain.CampaignLockToken{}, domain.ErrPreconditionFailed
+	}
+	r.cur.Version++
+	cp := *r.cur
+	return &cp, domain.NewCampaignLockToken(campaignID, &cp), nil
+}
+func (r *campaignEditRepo) ReleaseCampaignLock(context.Context, domain.CampaignLockToken) error {
+	return nil
+}
+func (r *campaignEditRepo) ReleaseCampaignLockAfterCooldown(domain.CampaignLockToken, time.Duration) {
 }
 
 // recordIndex runs the payload builder the way the real repo does — inside the "transaction",

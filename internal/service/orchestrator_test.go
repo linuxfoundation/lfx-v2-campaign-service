@@ -112,6 +112,8 @@ type fakeCampaignRepo struct {
 	// byID, when set, backs GetCampaign so a test can drive the service's campaign-scoped
 	// handlers (e.g. the status toggle) which look a campaign up by its own id.
 	byID map[string]*model.Campaign
+	// claimVersionErr, when set, is returned by ClaimCampaignVersion.
+	claimVersionErr error
 }
 
 func (r *fakeCampaignRepo) GetCampaign(_ context.Context, _, _, campaignID string) (*model.Campaign, error) {
@@ -191,8 +193,36 @@ func (r *fakeCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, 
 	r.existing[c.BriefID+"|"+string(c.Platform)] = c
 	return c, nil
 }
-func (r *fakeCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+func (r *fakeCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64, domain.CampaignLockToken, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	return nil, errors.New("unused")
+}
+
+// ClaimCampaignVersion simulates the atomic version-gated UPDATE against byID: it
+// bumps the stored row's version on a match, or reports precondition-failed /
+// not-found, mirroring CampaignRepo.ClaimCampaignVersion.
+func (r *fakeCampaignRepo) ClaimCampaignVersion(_ context.Context, _, _, campaignID string, expectedVersion int64) (*model.Campaign, domain.CampaignLockToken, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.claimVersionErr != nil {
+		return nil, domain.CampaignLockToken{}, r.claimVersionErr
+	}
+	c, ok := r.byID[campaignID]
+	if !ok {
+		return nil, domain.CampaignLockToken{}, domain.ErrNotFound
+	}
+	if c.Version != expectedVersion {
+		return nil, domain.CampaignLockToken{}, domain.ErrPreconditionFailed
+	}
+	c.Version++
+	cp := *c
+	return &cp, domain.NewCampaignLockToken(campaignID, &cp), nil
+}
+
+func (r *fakeCampaignRepo) ReleaseCampaignLock(context.Context, domain.CampaignLockToken) error {
+	return nil
+}
+
+func (r *fakeCampaignRepo) ReleaseCampaignLockAfterCooldown(domain.CampaignLockToken, time.Duration) {
 }
 
 // DeleteCampaign mirrors the real repo's guard ORDER and its soft-delete semantics:

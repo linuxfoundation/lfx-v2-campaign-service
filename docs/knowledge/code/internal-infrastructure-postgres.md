@@ -169,6 +169,25 @@ commits just before a guarded `UPDATE` runs is invisible to its predicate — an
 the claim INSERTs a new row rather than updating this one, there is no row-level conflict
 for Postgres to serialize on. Pinned by `TestDeleteCampaign_LocksRowBeforeGuards`.
 
+The row lock alone is NOT sufficient, so `DeleteCampaign` first takes the same campaign
+advisory lock `ClaimCampaignVersion` uses. `FOR UPDATE` serializes delete against the
+dispatch path, which UPDATEs the row, but not against an in-flight run-state toggle: a
+toggle holds its claim ACROSS the platform call, and between `ClaimCampaignVersion` and
+`ReplaceCampaign` it holds no row lock at all. A delete committing in that window bumps
+`version`, so the toggle's `ReplaceCampaign(expectedVersion)` fails AFTER the paid side
+effect already landed upstream. Holding the advisory lock makes delete wait for the
+toggle, then observe the bumped version and return an actionable 412.
+
+The delete transaction begins on the connection already holding that advisory lock
+(`conn.Begin`), never on the pool (`r.db.Begin`) — beginning on the pool would take a
+SECOND connection while the first is held, self-deadlocking on a saturated pool
+(`pool_max_conns=1` guarantees it). The unlock is deferred on a context detached from
+the request, destroying the connection if the unlock fails, exactly as
+`ClaimCampaignVersion` does: a session advisory lock is not released by returning the
+connection to the pool, so a failed unlock strands it and blocks every future claim and
+delete for that campaign. Pinned by
+`TestDeleteCampaign_ParticipatesInAdvisoryLockProtocol`.
+
 The guards, in order: `deleted` → `ErrNotFound` (a second DELETE is a 404, matching
 `GetCampaign`, not a silent success); an unresolved reconciliation marker →
 `ErrConflict`; then `version != expectedVersion` → `ErrPreconditionFailed` (checked LAST

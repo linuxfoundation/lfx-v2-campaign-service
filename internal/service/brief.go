@@ -584,7 +584,7 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if p.Campaign.Config != nil {
 		existing.ConfigSnapshot = marshalAny(p.Campaign.Config)
 	}
-	updated, uerr := campaignRepo.ReplaceCampaign(ctx, existing, version, s.campaignIndexPayload(indexer.ActionUpdated))
+	updated, uerr := campaignRepo.ReplaceCampaign(ctx, existing, version, domain.CampaignLockToken{}, s.campaignIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
 		return nil, mapBriefErr(uerr)
 	}
@@ -688,7 +688,7 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	existing.Status = p.Status
 	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 	defer cancel()
-	updated, uerr := campaignRepo.ReplaceCampaign(persistCtx, existing, version, s.campaignIndexPayload(indexer.ActionUpdated))
+	updated, uerr := campaignRepo.ReplaceCampaign(persistCtx, existing, version, domain.CampaignLockToken{}, s.campaignIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
 		// The platform WAS changed but the row write failed → platform and DB now diverge.
 		// Log it loudly as an operational reconcile signal (the run state on the platform is
