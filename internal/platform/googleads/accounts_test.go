@@ -590,42 +590,108 @@ func TestListAccessibleCustomers_NoManagerSkipsExpansion(t *testing.T) {
 // the tempting alternative and is the wrong one: the operator would be shown a SHORT
 // list with no indication that it is short, and would then conclude the missing account
 // is not reachable by this credential — a false negative that looks authoritative.
-func TestListAccessibleCustomers_CustomerClientRowWithoutIDIsAnError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if writeAccountsToken(w, r) {
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
-			// A well-formed row followed by one with no id: the good row ahead of it is
-			// what makes a silent drop plausible — the call would still "succeed".
-			_, _ = io.WriteString(w, `{"results":[
-				{"customerClient":{"id":"2222222222","descriptiveName":"Child","manager":false,"status":"ENABLED"}},
-				{"customerClient":{"descriptiveName":"Nameless","manager":false,"status":"ENABLED"}}
-			]}`)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{ResourceNames: []string{"customers/9999999999"}})
-	}))
-	defer server.Close()
+// TestListAccessibleCustomers_CustomerClientRowWithUnusableIDIsAnError covers both
+// unusable shapes. Absent is the obvious one; NON-NUMERIC is the one an emptiness check
+// misses, and it is the dangerous one — the id is concatenated straight into
+// "customers/"+id, so "1/other" forges a resource name pointing at a different account
+// than the row describes, and a caller persists it as the connection's account id.
+func TestListAccessibleCustomers_CustomerClientRowWithUnusableIDIsAnError(t *testing.T) {
+	cases := []struct {
+		name string
+		row  string
+	}{
+		{"absent id", `{"customerClient":{"descriptiveName":"Nameless","manager":false,"status":"ENABLED"}}`},
+		{"non-numeric id forging a path", `{"customerClient":{"id":"1/other","descriptiveName":"Forged","manager":false,"status":"ENABLED"}}`},
+		{"id with dashes as shown in the UI", `{"customerClient":{"id":"123-456-7890","descriptiveName":"Dashed","manager":false,"status":"ENABLED"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if writeAccountsToken(w, r) {
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+					// A well-formed row FIRST: the good row ahead of it is what makes a
+					// silent drop plausible — the call would still "succeed".
+					_, _ = io.WriteString(w, `{"results":[
+						{"customerClient":{"id":"2222222222","descriptiveName":"Child","manager":false,"status":"ENABLED"}},
+						`+tc.row+`
+					]}`)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{ResourceNames: []string{"customers/9999999999"}})
+			}))
+			defer server.Close()
 
-	client := newManagerTestClient(t, server)
+			client := newManagerTestClient(t, server)
 
-	accounts, err := client.ListAccessibleCustomers(context.Background())
-	if err == nil {
-		t.Fatalf("a customer_client row with no id must fail the call, got accounts %+v", accounts)
+			accounts, err := client.ListAccessibleCustomers(context.Background())
+			if err == nil {
+				t.Fatalf("an unusable customer_client id must fail the call, got accounts %+v", accounts)
+			}
+			if accounts != nil {
+				t.Errorf("accounts must be nil on error, got %+v", accounts)
+			}
+			// It is a malformed RESPONSE, not a rejected request — the distinction is what
+			// the dispatcher maps to a 503-with-retry rather than a client error.
+			var te *transportError
+			if !errors.As(err, &te) {
+				t.Fatalf("error must unwrap to *transportError, got %T: %v", err, err)
+			}
+			if !strings.Contains(te.Err.Error(), "numeric customer id") {
+				t.Errorf("diagnostic must name the defect, got %q", te.Err.Error())
+			}
+		})
 	}
-	if accounts != nil {
-		t.Errorf("accounts must be nil on error, got %+v", accounts)
+}
+
+// TestListAccessibleCustomers_MalformedResourceNameIsAnError pins the same contract one
+// layer up. AccessibleCustomer promises "customers/{digits}"; the flat list is the other
+// source of those values and had no validation at all, so a malformed 2xx could return an
+// empty, wrong-kind, or path-bearing string as a selectable account.
+func TestListAccessibleCustomers_MalformedResourceNameIsAnError(t *testing.T) {
+	cases := []struct {
+		name    string
+		resName string
+	}{
+		{"empty", ""},
+		{"bare id, no prefix", "9999999999"},
+		{"wrong resource kind", "customerClients/9999999999"},
+		{"extra path segment", "customers/9999999999/campaigns/1"},
+		{"non-numeric id", "customers/abc"},
 	}
-	// It is a malformed RESPONSE, not a rejected request — the distinction is what the
-	// dispatcher maps to a 503-with-retry rather than a client error.
-	var te *transportError
-	if !errors.As(err, &te) {
-		t.Fatalf("error must unwrap to *transportError, got %T: %v", err, err)
-	}
-	if !strings.Contains(te.Err.Error(), "no id") {
-		t.Errorf("diagnostic must name the defect, got %q", te.Err.Error())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if writeAccountsToken(w, r) {
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				// A valid name first, for the same reason as above.
+				_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
+					ResourceNames: []string{"customers/1111111111", tc.resName},
+				})
+			}))
+			defer server.Close()
+
+			client := newAccountsTestClient(t, server)
+
+			accounts, err := client.ListAccessibleCustomers(context.Background())
+			if err == nil {
+				t.Fatalf("resource name %q must fail the call, got accounts %+v", tc.resName, accounts)
+			}
+			if accounts != nil {
+				t.Errorf("accounts must be nil on error, got %+v", accounts)
+			}
+			var te *transportError
+			if !errors.As(err, &te) {
+				t.Fatalf("error must unwrap to *transportError, got %T: %v", err, err)
+			}
+			if !strings.Contains(te.Err.Error(), "customers/{digits}") {
+				t.Errorf("diagnostic must name the expected shape, got %q", te.Err.Error())
+			}
+		})
 	}
 }
 
@@ -670,5 +736,99 @@ func TestListAccessibleCustomers_DedupPrefersLabelledCopy(t *testing.T) {
 	if accounts[0].DescriptiveName != "Child Ad Account" {
 		t.Errorf("DescriptiveName = %q, want the expansion's label to win over the unlabelled flat copy",
 			accounts[0].DescriptiveName)
+	}
+}
+
+// TestListAccessibleCustomers_ManagerModeExcludesAccountsOutsideTheHierarchy pins the
+// rule that makes manager mode useful: in manager mode the SELECTABLE set is the
+// manager's children, not the union of those with the flat list.
+//
+// listAccessibleCustomers is unscoped — the login-customer-id header does not filter
+// it — but every other request this client makes DOES carry that header. So an account
+// the user can reach directly while it sits under a different manager comes back in the
+// flat list and then fails with PERMISSION_DENIED as soon as anything addresses it.
+// Offering it is offering a choice that cannot work, and the failure surfaces at first
+// dispatch, long after the connection was saved, where it reads as a credential problem
+// rather than a wrong-account one.
+//
+// The flat list here deliberately contains three things: the configured manager, a
+// child that IS under it, and an outsider that is not. Only the child may survive.
+func TestListAccessibleCustomers_ManagerModeExcludesAccountsOutsideTheHierarchy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeAccountsToken(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			// The hierarchy under 9999999999 contains only 2222222222.
+			_, _ = io.WriteString(w, `{"results":[
+				{"customerClient":{"id":"2222222222","descriptiveName":"In Hierarchy","manager":false,"status":"ENABLED"}}
+			]}`)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
+			ResourceNames: []string{
+				"customers/9999999999", // the configured manager itself
+				"customers/2222222222", // reachable directly AND under the manager
+				"customers/7777777777", // reachable directly, under a DIFFERENT manager
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := newManagerTestClient(t, server)
+
+	accounts, err := client.ListAccessibleCustomers(context.Background())
+	if err != nil {
+		t.Fatalf("ListAccessibleCustomers failed: %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("accounts = %+v, want exactly the one account inside the configured hierarchy", accounts)
+	}
+	if accounts[0].ResourceName != "customers/2222222222" {
+		t.Fatalf("got %+v, want customers/2222222222", accounts[0])
+	}
+	if accounts[0].DescriptiveName != "In Hierarchy" {
+		t.Errorf("DescriptiveName = %q, want the expansion's label", accounts[0].DescriptiveName)
+	}
+	for _, a := range accounts {
+		if a.ResourceName == "customers/7777777777" {
+			t.Errorf("an account outside the configured manager hierarchy was offered as selectable: %+v", a)
+		}
+		if a.ResourceName == "customers/9999999999" {
+			t.Errorf("the configured manager account was offered as selectable: %+v", a)
+		}
+	}
+}
+
+// TestListAccessibleCustomers_ManagerModeDedupsRepeatedChildren covers the one dedup
+// that survives in manager mode. customer_client reports a client once per path through
+// the hierarchy, so a client of a sub-manager that is itself a client of the root
+// appears twice. Appending both would put the same account in the picker twice.
+func TestListAccessibleCustomers_ManagerModeDedupsRepeatedChildren(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeAccountsToken(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			_, _ = io.WriteString(w, `{"results":[
+				{"customerClient":{"id":"2222222222","descriptiveName":"Reachable Two Ways","manager":false,"status":"ENABLED"}},
+				{"customerClient":{"id":"2222222222","descriptiveName":"Reachable Two Ways","manager":false,"status":"ENABLED"}}
+			]}`)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
+			ResourceNames: []string{"customers/9999999999"},
+		})
+	}))
+	defer server.Close()
+
+	accounts, err := newManagerTestClient(t, server).ListAccessibleCustomers(context.Background())
+	if err != nil {
+		t.Fatalf("ListAccessibleCustomers failed: %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("accounts = %+v, want the repeated child collapsed to one entry", accounts)
 	}
 }
