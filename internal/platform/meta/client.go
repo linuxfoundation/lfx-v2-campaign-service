@@ -1184,9 +1184,20 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			if env.Error != nil && env.Error.Message != "" {
 				apiErr.Message = env.Error.Message
 			} else if snippet := strings.TrimSpace(string(raw)); snippet != "" {
-				// Non-Graph or malformed error body: surface a truncated snippet of
-				// the raw body so the real reason isn't lost.
-				apiErr.Message = truncate(snippet, 300)
+				// Non-Graph or malformed error body: surface a truncated snippet of the
+				// raw body so the real reason isn't lost. REDACT FIRST. This branch is
+				// reached exactly when the body is NOT a Graph diagnostic — a proxy/CDN/WAF
+				// page, an HTML error, or a reflection of the request we just sent. This
+				// client authenticates with an `Authorization: Bearer` HEADER (doRequest
+				// sets it and never appends access_token to the query), so a reflection
+				// that echoes request headers echoes a live token — which is why
+				// redactCredentials handles the Bearer form as well as key=value. The
+				// query-string form is not this client's own auth, but it still appears in
+				// bodies that echo a Meta-constructed paging.next URL, so both are covered.
+				// safeErrSummary at the log call bounds and sanitizes this text but does NOT
+				// redact it, so the only place the credential can be removed is here, before
+				// it enters the error chain at all.
+				apiErr.Message = truncate(c.redactSecrets(snippet), 300)
 			}
 			return apiErr
 		}
@@ -1645,6 +1656,76 @@ var wsRE = regexp.MustCompile(`\s+`)
 // the TS `.replace(/\s+/g, '-')`.
 func collapseSpacesToDash(s string) string {
 	return wsRE.ReplaceAllString(s, "-")
+}
+
+// credentialRE matches credential-shaped material that a reflected or proxied
+// error body can carry back: this client authenticates with access_token and
+// appsecret_proof as QUERY PARAMETERS, so any upstream that echoes the request
+// line echoes a live token. The three forms below are the ones actually
+// observed in Meta-adjacent error bodies — query/form pairs, JSON members, and
+// an Authorization header rendered in a proxy debug page.
+// bearerScheme is the Authorization scheme prefix, matched case-insensitively to
+// decide WHICH credentialRE alternative fired before any delimiter search.
+const bearerScheme = "bearer"
+
+var credentialRE = regexp.MustCompile(
+	`(?i)("?(?:access_token|appsecret_proof|client_secret|refresh_token)"?\s*[=:]\s*"?[^&\s"'<>,}]+"?)|(bearer\s+[A-Za-z0-9._~+/=-]+)`)
+
+// minRedactableSecretLen is the shortest configured secret that redactSecrets will
+// substring-replace. A one- or two-character token would match all over an ordinary
+// error body and turn the snippet into confetti, destroying the diagnostic without
+// protecting anything worth protecting.
+const minRedactableSecretLen = 8
+
+// redactSecrets scrubs an untrusted upstream body for this client's own credential
+// FIRST, by exact value, and only then applies the shape-based pass.
+//
+// The order matters, and the shape-based pass alone is not sufficient. credentialRE's
+// Bearer alternative matches a restricted token alphabet ([A-Za-z0-9._~+/=-]), but
+// Credentials.AccessToken is accepted after trimming and nothing else — it is sent
+// verbatim. Meta's own app access tokens are of the form "{app-id}|{app-secret}", and
+// '|' is outside that alphabet: shape-based redaction of "Bearer 12345|SECRET" stops
+// at the pipe and yields "Bearer [REDACTED]|SECRET", which carries the app secret into
+// APIError.Message while LOOKING handled. Replacing the configured token by exact
+// value cannot be defeated by an unanticipated character, because it does not guess at
+// the token's shape at all.
+//
+// The shape-based pass still runs afterwards, because a reflected body can also carry
+// credentials this client never held — a Meta-constructed paging.next URL with its own
+// access_token, or another tenant's token echoed by a shared proxy.
+func (c *Client) redactSecrets(s string) string {
+	if tok := c.creds.AccessToken; len(tok) >= minRedactableSecretLen {
+		s = strings.ReplaceAll(s, tok, "[REDACTED]")
+	}
+	return redactCredentials(s)
+}
+
+// redactCredentials removes credential values from an untrusted upstream body
+// before it is stored in an error. The KEY is kept — knowing that the body
+// echoed an access_token is itself diagnostic — and only the VALUE is replaced,
+// so the snippet stays useful for debugging without carrying a live secret into
+// the error chain, the logs, or a client-facing 5xx.
+func redactCredentials(s string) string {
+	return credentialRE.ReplaceAllStringFunc(s, func(m string) string {
+		// Which alternative matched has to be decided BEFORE looking for a
+		// delimiter, not inferred from one. Base64 padding puts '=' INSIDE a bearer
+		// token, so a delimiter-first search on "Bearer abc==" splits at the padding
+		// and returns "Bearer abc=[REDACTED]" — nearly the whole credential, with the
+		// redaction marker present to make it look handled.
+		if len(m) >= len(bearerScheme) && strings.EqualFold(m[:len(bearerScheme)], bearerScheme) {
+			// "Bearer <token>": keep the scheme, drop everything after it.
+			if i := strings.IndexAny(m, " \t"); i >= 0 {
+				return m[:i+1] + "[REDACTED]"
+			}
+			return "[REDACTED]"
+		}
+		// key=value / "key": "value" — keep the key, drop the value. The key is the
+		// diagnostic; a value never is.
+		if i := strings.IndexAny(m, "=:"); i >= 0 {
+			return m[:i+1] + "[REDACTED]"
+		}
+		return "[REDACTED]"
+	})
 }
 
 // truncateErr renders an error's message for inclusion in a user-visible step,
