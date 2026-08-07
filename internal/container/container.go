@@ -49,6 +49,9 @@ type readinessSetter interface {
 }
 type backendSetter interface {
 	SetBackend(domain.ConnectionRepository, domain.Encryptor)
+	// SetOrchestrator injects the orchestrator for account-listing operations.
+	// Called by the container after the orchestrator is constructed.
+	SetOrchestrator(*service.Orchestrator)
 }
 
 // briefBackendSetter is the interface the container needs to late-bind the brief
@@ -654,6 +657,12 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	c.startStuckClaimSweeper(campaignRepo)
 	orch := c.newOrchestrator(campaignRepo, jobRepo, dispatchers)
 	c.orch = orch
+	// Inject the orchestrator into the connection service for account-listing operations.
+	// Through backendSetter, not a *service.ConnectionService cast: the cold-start path
+	// below binds through that same interface, so both injection sites are held to one
+	// declared contract and a signature change breaks both at compile time rather than
+	// leaving this one silently behind.
+	c.Connections.(backendSetter).SetOrchestrator(orch)
 	c.Briefs = c.newBriefService(briefRepo, campaignRepo, jobRepo, orch)
 	c.Audiences = c.newAudienceService(audienceRepo, briefRepo)
 
@@ -729,6 +738,8 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			c.orch = orch
 			bb.SetBackend(briefRepo, campaignRepo, jobRepo, orch)
 			ab.SetBackend(audienceRepo)
+			// Inject the orchestrator into the connection service for account-listing operations.
+			b.SetOrchestrator(orch)
 			// The audience service was constructed in 503 mode with no brief repo and no
 			// builder, so binding only the repo leaves BuildAudience permanently 503 on this
 			// path. Bind the other two here (the builder was created just above).

@@ -50,6 +50,13 @@ starts the periodic sweeper the fast path does. Readiness is flipped LAST, so
 retry succeeds, the connection, brief/job, AND audiences endpoints go live WITHOUT a
 pod restart.
 
+The orchestrator is late-bound the same way and on BOTH paths: `SetOrchestrator` wires it into
+the connection service on the fast path and again after a cold-start retry succeeds. Until it
+runs, account discovery returns its own typed 503 ("account discovery service is unavailable"),
+distinct from the storage-unavailable one — the connection service can have a live repo and no
+dispatchers yet, and the two states are reported separately so an operator can tell which
+dependency is still coming up.
+
 `initDatabase` opens the pool FIRST (`NewPool` does a context-bounded `Ping`) and
 runs `Migrate` only after a reachable ping. This is deliberate: golang-migrate's
 `Up()` takes no context and blocks until the DB responds, so running it against a

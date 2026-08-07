@@ -13,8 +13,11 @@ package service
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
@@ -110,6 +113,115 @@ func (s *ConnectionService) TestGoogleAds(ctx context.Context, p *conn.TestGoogl
 
 func (s *ConnectionService) SetCredentialGoogleAds(ctx context.Context, p *conn.SetCredentialGoogleAdsPayload) error {
 	return s.setCredential(ctx, p.ProjectID, model.ProviderGoogleAds, p.Credentials, actorFromCtx(ctx))
+}
+
+// unusableConnectionReason maps an ErrConnectionNotUsable chain onto the fixed vocabulary
+// the discovery handler logs. It exists because the errors themselves cannot be logged: one
+// of these conditions is detected by decoding the decrypted credential blob, and an
+// encoding/json error quotes its input. The dispatch layer therefore wraps a reason sentinel
+// alongside the status sentinel (internal/domain/errors.go), and this reads it.
+//
+// The returned strings are a stable, greppable vocabulary — treat them as an interface, not
+// as prose, and add a case here rather than a new free-text log line when a new reason
+// appears. "unclassified" is the honest answer for a chain carrying no reason sentinel: an
+// invented guess would be worse than the absence, because it would read as a diagnosis.
+func unusableConnectionReason(err error) string {
+	switch {
+	case errors.Is(err, domain.ErrConnectionInactive):
+		return "connection_inactive"
+	case errors.Is(err, domain.ErrCredentialsUndecodable):
+		return "credentials_undecodable"
+	case errors.Is(err, domain.ErrCredentialsIncomplete):
+		return "credentials_incomplete"
+	case errors.Is(err, domain.ErrProviderConfigInvalid):
+		return "provider_config_invalid"
+	case errors.Is(err, domain.ErrCredentialsMalformed):
+		return "credential_blob_malformed"
+	default:
+		return "unclassified"
+	}
+}
+
+func (s *ConnectionService) ListGoogleAdsAccounts(ctx context.Context, p *conn.ListGoogleAdsAccountsPayload) (*conn.ListGoogleAdsAccountsResult, error) {
+	_, _, orch, err := s.resolveBackendWithOrch()
+	if err != nil {
+		return nil, err
+	}
+	accounts, aerr := orch.ReadAccounts(ctx, p.ProjectID, model.ProviderGoogleAds)
+	if aerr != nil {
+		switch {
+		case errors.Is(aerr, ErrAccountsUnsupported):
+			return nil, &conn.BadRequestError{Code: "400", Message: "account discovery is not supported for this platform"}
+		case errors.Is(aerr, domain.ErrNotFound):
+			// The project has no stored Google Ads connection. That is a client-side
+			// state error, not a platform outage — reporting 503 would tell the caller
+			// to retry something that can never succeed until a connection exists.
+			return nil, &conn.NotFoundError{Code: "404", Message: "no google ads connection configured for this project"}
+		case errors.Is(aerr, domain.ErrCredentialDecryptionFailed):
+			// A well-formed credential blob that FAILED authenticated decryption. This is
+			// not the caller's problem and there is nothing for them to edit: it means a
+			// wrong or rotated application key, or tampering, and that key is
+			// deployment-wide — so this same failure is hitting every project's connection
+			// at this instant. 400 would blame each of their rows in turn; 503 would
+			// promise that waiting helps. Neither is true, and both hide an outage.
+			//
+			// Logged at ERROR because this is the arm that should page someone. The cause
+			// is safe to log here: it is produced by the encryptor from ciphertext and key
+			// material only, never from plaintext.
+			slog.ErrorContext(ctx, "stored credentials failed authenticated decryption; check the application encryption key",
+				"project_id", p.ProjectID, "provider", string(model.ProviderGoogleAds), "error", aerr)
+			return nil, &conn.InternalServerError{Code: "500", Message: "account discovery could not be completed"}
+		case errors.Is(aerr, domain.ErrConnectionNotUsable):
+			// The connection EXISTS but cannot be used as it stands — inactive, an
+			// incomplete credential blob, or a malformed stored config value such as a
+			// dashed login_customer_id. Google is never contacted, and none of these
+			// improve with time, so the 503 below would be a false promise: it tells the
+			// caller to retry a request that cannot succeed until a human edits the
+			// connection. The dispatcher wraps every pre-send failure with this sentinel
+			// precisely so this arm can exist (internal/dispatch/googleads.go,
+			// resolveGoogleAdsDiscoveryClient) — the classification cannot be recovered
+			// here, because a setup failure and an upstream one arrive as the same type.
+			//
+			// NEITHER the cause nor its text leaves this function — not in the response,
+			// and not in the log. One of the conditions behind this arm is detected by
+			// decoding the DECRYPTED credential blob, and an unmarshal error quotes its
+			// input, so echoing aerr would put credential-derived bytes into an HTTP body
+			// and into centralized logs for exactly the connection whose credentials are
+			// malformed. A response body and a log line are different exposures, but the
+			// material is the same and so is the answer.
+			//
+			// What is logged instead is a classification from a FIXED vocabulary
+			// (unusableConnectionReason) plus project metadata. That is not a downgrade:
+			// the dispatch layer wraps a reason sentinel precisely so this line stays
+			// actionable, and a fixed token is what an alert or a grep wants anyway. The
+			// response body names the remedy surface, which is the same for all of them.
+			slog.WarnContext(ctx, "google ads connection is not usable for account discovery",
+				"project_id", p.ProjectID, "reason", unusableConnectionReason(aerr))
+			return nil, &conn.BadRequestError{
+				Code: "400",
+				Message: "the stored google ads connection cannot be used as configured: check that it " +
+					"is active, that the stored credential is valid json with every field set, and " +
+					"that login_customer_id is digits only",
+			}
+		default:
+			slog.WarnContext(ctx, "account discovery failed on google ads",
+				"project_id", p.ProjectID, "error", aerr)
+			return nil, &conn.ConnServiceUnavailableError{Code: "503", Message: "account discovery could not be completed"}
+		}
+	}
+	// Convert model.AccessibleAccount to generated conn type. Preallocated with make so an
+	// empty result serializes as `[]`, not `null` — a nil slice here would undo the
+	// dispatcher's deliberate make([]model.AccessibleAccount, 0, len(customers)) one layer
+	// down and hand every client a null it has to special-case.
+	connAccounts := make([]*conn.AccessibleAccount, 0, len(accounts))
+	for _, acct := range accounts {
+		label := acct.Label // Convert to pointer
+		connAccounts = append(connAccounts, &conn.AccessibleAccount{
+			ID:    acct.ID,
+			Label: &label,
+		})
+	}
+	return &conn.ListGoogleAdsAccountsResult{Accounts: connAccounts}, nil
 }
 
 // ─── LinkedinAds ───
