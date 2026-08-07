@@ -23,10 +23,14 @@ import (
 func TestGetCampaignMetrics_HappyPath(t *testing.T) {
 	var mu sync.Mutex
 	var gotPath, gotQuery string
+	var gotAuth, gotVersion, gotRestLi string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		gotPath = r.URL.Path
 		gotQuery = r.URL.RawQuery
+		gotAuth = r.Header.Get("Authorization")
+		gotVersion = r.Header.Get("LinkedIn-Version")
+		gotRestLi = r.Header.Get("X-RestLi-Protocol-Version")
 		mu.Unlock()
 		if r.URL.Path != "/adAnalytics" {
 			http.Error(w, fmt.Sprintf("unexpected path: %s", r.URL.Path), http.StatusNotFound)
@@ -81,10 +85,43 @@ func TestGetCampaignMetrics_HappyPath(t *testing.T) {
 
 	mu.Lock()
 	path, query := gotPath, gotQuery
+	auth, version, restLi := gotAuth, gotVersion, gotRestLi
 	mu.Unlock()
 	if path != "/adAnalytics" {
 		t.Fatalf("unexpected request path: %s", path)
 	}
+
+	// The analytics path builds its own request rather than going through doRequest, so
+	// it re-sets these three headers by hand. Nothing else in this package's tests covers
+	// THAT copy — the shared-path contract is pinned separately in client_findings_test.go
+	// — so deleting one of these lines would make every live metrics call fail while the
+	// happy-path assertions above stayed green.
+	if auth != "Bearer test-token" {
+		t.Errorf("Authorization = %q, want %q", auth, "Bearer test-token")
+	}
+	if version != apiVersion {
+		t.Errorf("LinkedIn-Version = %q, want %q", version, apiVersion)
+	}
+	if restLi != "2.0.0" {
+		t.Errorf("X-RestLi-Protocol-Version = %q, want %q", restLi, "2.0.0")
+	}
+
+	// Assert the RAW query too, not only the decoded one. Decoding erases the exact
+	// distinction makeAdAnalyticsRequest depends on: a query built with
+	// url.Values.Encode() would percent-encode the Rest.li structural parentheses and
+	// colons, yet decode to the same text and satisfy every check below. LinkedIn's
+	// finder needs the structure LITERAL and the URN values ESCAPED, so both halves are
+	// pinned here.
+	if !strings.Contains(query, "dateRange=(start:(day:") {
+		t.Errorf("Rest.li dateRange structure was escaped in the raw query: %s", query)
+	}
+	if !strings.Contains(query, "campaigns=List(urn%3Ali%3AsponsoredCampaign%3A123456)") {
+		t.Errorf("campaign URN was not escaped inside a literal List() in the raw query: %s", query)
+	}
+	if !strings.Contains(query, "accounts=List(urn%3Ali%3AsponsoredAccount%3Aaccount123)") {
+		t.Errorf("account URN was not escaped inside a literal List() in the raw query: %s", query)
+	}
+
 	decodedQuery, err := url.QueryUnescape(query)
 	if err != nil {
 		t.Fatalf("unescape query: %v", err)
@@ -1224,5 +1261,80 @@ func TestGetCampaignMetrics_MalformedJSONRedaction(t *testing.T) {
 	}
 	if !strings.Contains(errStr, "malformed JSON") {
 		t.Errorf("error missing 'malformed JSON' safe message: %v", errStr)
+	}
+}
+
+// TestValidateMetricsWindowMatchesDateRangeForWindow pins that the clock-free validator
+// and the mapper agree for EVERY window in the shared vocabulary. They are two separate
+// pieces of code answering the same question — the dispatcher asks the validator before
+// resolving credentials, the client asks the mapper after — so a window added to one and
+// not the other would produce a 400 at the gate and a working range downstream, or the
+// reverse. Iterating over the full vocabulary rather than a hand-listed subset is what
+// makes a NEW model.MetricsWindow fail here instead of silently defaulting to unsupported.
+func TestValidateMetricsWindowMatchesDateRangeForWindow(t *testing.T) {
+	all := []model.MetricsWindow{
+		model.MetricsWindowToday,
+		model.MetricsWindowYesterday,
+		model.MetricsWindowLast7Days,
+		model.MetricsWindowLast14Days,
+		model.MetricsWindowLast30Days,
+		model.MetricsWindowThisMonth,
+		model.MetricsWindowLastMonth,
+		model.MetricsWindow("not_a_window"),
+	}
+	c := NewClient(Credentials{AccessToken: "t"}, RuntimeConfig{DefaultAccountID: "a"})
+	for _, w := range all {
+		validErr := ValidateMetricsWindow(w)
+		_, _, mapErr := c.dateRangeForWindow(w)
+		if (validErr == nil) != (mapErr == nil) {
+			t.Errorf("window %q: ValidateMetricsWindow err=%v but dateRangeForWindow err=%v — the two must agree", w, validErr, mapErr)
+		}
+		if validErr != nil && !errors.Is(validErr, ErrUnsupportedWindow) {
+			t.Errorf("window %q: ValidateMetricsWindow returned %v, want ErrUnsupportedWindow", w, validErr)
+		}
+	}
+}
+
+// TestClicksWithZeroImpressionsIsRejected covers the one metric relationship that stays
+// decidable when a JSON key is absent: a click cannot happen without the impression that
+// carried it. Without the guard, an element missing "impressions" decodes to zero and the
+// read returns 200 with a non-zero click count beside Ctr=0 — a figure that looks real.
+func TestClicksWithZeroImpressionsIsRejected(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"elements":[{"clicks":5,"costInUsd":"1.00"}]}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		Credentials{AccessToken: "test-token"},
+		RuntimeConfig{DefaultAccountID: "account123"},
+		WithBaseURL(server.URL),
+	)
+	_, err := client.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+	if err == nil {
+		t.Fatalf("expected an error for clicks with zero impressions, got nil")
+	}
+	if !strings.Contains(err.Error(), "clicks with zero impressions") {
+		t.Errorf("error = %v, want it to name the clicks/impressions inconsistency", err)
+	}
+}
+
+// TestCostInUsdToMicrosBoundsDecimalLength pins the length bound that keeps an
+// adversarial decimal out of big.Rat. The 10 MiB response cap does not bound a single
+// value, and the parse/scale path is super-linear in digit count and ignores the request
+// context, so it keeps running past the 20s call deadline. Rejection must happen on
+// LENGTH, before the value reaches big.Rat at all.
+func TestCostInUsdToMicrosBoundsDecimalLength(t *testing.T) {
+	long := strings.Repeat("9", maxCostDecimalLen+1)
+	if _, err := costInUsdToMicros(long); err == nil {
+		t.Fatalf("expected an error for a %d-byte decimal, got nil", len(long))
+	} else if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("error = %v, want it to name the length bound (a later big.Rat rejection means the bound did not fire first)", err)
+	}
+	// The bound must not reject a realistic figure: int64 micros tops out around
+	// 9.2e12 USD, so 13 integer digits plus a 2-digit cent fraction is the practical max.
+	if _, err := costInUsdToMicros("9223372036854.77"); err != nil {
+		t.Errorf("a realistic maximum spend was rejected: %v", err)
 	}
 }

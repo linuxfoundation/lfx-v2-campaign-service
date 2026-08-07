@@ -220,6 +220,20 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 		if elem.Impressions < 0 || elem.Clicks < 0 {
 			return nil, fmt.Errorf("get campaign metrics: negative impressions or clicks in response element")
 		}
+		// Clicks without impressions is not a low number, it is an impossible one: every
+		// click is preceded by the impression that carried it. Reaching here means the
+		// element is incomplete (a metric key omitted from the JSON decodes to the zero
+		// value, indistinguishable from a real zero) and reporting it would publish
+		// Ctr=0 alongside a non-zero click count — a plausible-looking figure derived
+		// from data we could not confirm.
+		//
+		// Presence tracking (*int64 per metric) is deliberately NOT the fix here: we
+		// cannot tell an omitted-because-zero field from an omitted-because-malformed
+		// one, so requiring every key would reject responses that are genuinely fine.
+		// This guard keys on the one relationship that stays decidable either way.
+		if elem.Clicks > 0 && elem.Impressions == 0 {
+			return nil, fmt.Errorf("get campaign metrics: response element reports clicks with zero impressions")
+		}
 		if elem.Impressions > math.MaxInt64-metrics.Impressions {
 			return nil, fmt.Errorf("get campaign metrics: aggregate impressions overflows int64")
 		}
@@ -284,13 +298,53 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 // fraction rather than reject as malformed.
 var decimalCostPattern = regexp.MustCompile(`^-?[0-9]+(\.[0-9]+)?$`)
 
+// supportedMetricsWindows is exactly the set dateRangeForWindow maps to an Ad Analytics
+// date range. It is package-level and clock-free precisely so a caller can decide
+// "LinkedIn cannot serve this window" without a Client, credentials, or a network call.
+var supportedMetricsWindows = map[model.MetricsWindow]struct{}{
+	model.MetricsWindowToday:      {},
+	model.MetricsWindowLast7Days:  {},
+	model.MetricsWindowLast30Days: {},
+	model.MetricsWindowThisMonth:  {},
+	model.MetricsWindowLastMonth:  {},
+}
+
+// ValidateMetricsWindow reports whether this client can map window to an Ad Analytics
+// date range, returning ErrUnsupportedWindow if it cannot.
+//
+// It exists so the dispatcher can reject an unsupported window BEFORE resolving
+// credentials. Order matters for the status code the caller sees: an unsupported window
+// is a permanent 400 no matter what state the connection is in, but if credential
+// resolution runs first, a project whose connection is inactive or incomplete fails with
+// a connection error that BriefService maps to 503 — telling the caller to retry a
+// request that can never succeed. The X adapter already validates in this order
+// (internal/dispatch/twitter.go).
+func ValidateMetricsWindow(window model.MetricsWindow) error {
+	if _, ok := supportedMetricsWindows[window]; !ok {
+		return fmt.Errorf("%w: %q", ErrUnsupportedWindow, window)
+	}
+	return nil
+}
+
 // None of the failure paths below interpolate s. Every one of them is reached
 // only for a value that FAILED validation, and the error propagates up through
 // GetCampaignMetrics to BriefService.GetCampaignMetrics's default branch, which
 // logs it -- so echoing the value would write unvalidated upstream response
 // content to the server log. The distinct messages plus the value's length are
 // enough to diagnose a malformed response without reproducing its bytes.
+// maxCostDecimalLen bounds the costInUsd string before any big.Rat work. The 10 MiB
+// response cap is not a bound on this: a single well-formed decimal can fill it, and
+// while decimalCostPattern's scan is linear, big.Rat.SetString, the 1e6 multiply, and
+// FloatString(0) are super-linear in digit count AND do not observe the request
+// context, so they keep burning CPU after the 20s call deadline has passed. 40 bytes
+// is far above any real spend figure — int64 micros tops out at ~9.2e12 USD, 13
+// integer digits — while leaving no room for an adversarial one.
+const maxCostDecimalLen = 40
+
 func costInUsdToMicros(s string) (int64, error) {
+	if len(s) > maxCostDecimalLen {
+		return 0, fmt.Errorf("decimal exceeds %d bytes (%d bytes)", maxCostDecimalLen, len(s))
+	}
 	if !decimalCostPattern.MatchString(s) {
 		return 0, fmt.Errorf("not a valid decimal (%d bytes)", len(s))
 	}
@@ -486,6 +540,12 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 // since LinkedIn's Ad Analytics dateRange is itself a UTC calendar range; interpreting it in
 // local time would silently shift every window by a day for non-UTC callers.
 func (c *Client) dateRangeForWindow(window model.MetricsWindow) (start, end time.Time, err error) {
+	// Checked first so this method and ValidateMetricsWindow can never disagree about
+	// which windows are supported — TestValidateMetricsWindowMatchesDateRangeForWindow
+	// pins that they agree for every model.MetricsWindow.
+	if err := ValidateMetricsWindow(window); err != nil {
+		return time.Time{}, time.Time{}, err
+	}
 	now := c.now().UTC()
 	year, month, day := now.Date()
 	today := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)

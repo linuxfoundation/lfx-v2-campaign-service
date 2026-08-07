@@ -769,3 +769,42 @@ func TestLinkedIn_ReadMetrics_PreflightErrorsNeverContactPlatform(t *testing.T) 
 		})
 	}
 }
+
+// TestLinkedIn_ReadMetrics_UnsupportedWindowBeatsUnusableConnection pins the ORDER of the
+// two preflight checks, which the individual tests above cannot: each of them holds the
+// other input valid. An unsupported window is a permanent 400 whatever state the
+// connection is in, but if credential resolution ran first, a project with an inactive or
+// incomplete connection would fail with a connection error that brief.go maps to 503 —
+// telling the caller to retry a request that can never succeed. Every combination of an
+// unmapped window with an unusable connection must still surface as 400.
+func TestLinkedIn_ReadMetrics_UnsupportedWindowBeatsUnusableConnection(t *testing.T) {
+	inactive := activeLinkedInConn(goodLinkedInCreds)
+	inactive.Status = model.StatusInactive
+	noAccount := activeLinkedInConn(goodLinkedInCreds)
+	noAccount.AccountID = "   "
+	badCreds := activeLinkedInConn(`{"accessToken":""}`)
+
+	conns := map[string]*model.Connection{
+		"inactive connection":               inactive,
+		"connection without account id":     noAccount,
+		"connection with empty accessToken": badCreds,
+	}
+	for _, window := range []model.MetricsWindow{model.MetricsWindowYesterday, model.MetricsWindowLast14Days} {
+		for name, c := range conns {
+			t.Run(string(window)+"/"+name, func(t *testing.T) {
+				d := NewLinkedInDispatcher(fakeConnReader{conn: c}, identityEncryptor{})
+				_, err := d.ReadMetrics(
+					context.Background(), "proj", model.ProviderLinkedInAds,
+					&model.Campaign{PlatformCampaignID: "555"}, window,
+				)
+				if err == nil {
+					t.Fatal("expected an error")
+				}
+				if !errors.Is(err, domain.ErrMetricsWindowUnsupported) {
+					t.Errorf("window %q with an unusable connection produced %v — the window check must run "+
+						"BEFORE credential resolution, or brief.go reports a retryable 503 for a permanent 400", window, err)
+				}
+			})
+		}
+	}
+}

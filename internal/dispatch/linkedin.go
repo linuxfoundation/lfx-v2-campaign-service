@@ -257,6 +257,15 @@ func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, 
 		return nil, fmt.Errorf("campaign has no platform campaign ID")
 	}
 
+	// Validated BEFORE credential resolution, and this order is load-bearing. An
+	// unsupported window is a permanent 400 whatever the connection looks like; resolving
+	// credentials first means a project with an inactive or incomplete connection fails
+	// with a connection error that BriefService maps to 503, telling the caller to retry a
+	// request that can never succeed. Same order as the X adapter (twitter.go).
+	if werr := linkedin.ValidateMetricsWindow(window); werr != nil {
+		return nil, fmt.Errorf("get campaign metrics from linkedin: %w", errors.Join(domain.ErrMetricsWindowUnsupported, werr))
+	}
+
 	res, err := d.creds.resolve(ctx, projectID, platform)
 	if err != nil {
 		return nil, err

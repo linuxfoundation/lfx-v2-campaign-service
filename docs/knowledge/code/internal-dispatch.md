@@ -193,12 +193,25 @@ shared `model.MetricsWindow` to a Rest.li 2.0 nested date-range literal via
 (`q=analytics`) scoped to the campaign/account URNs built from the persisted bare numeric
 `PlatformCampaignID`. Five of the shared vocabulary's seven windows map to a concrete date
 range — `today`, `last_7_days`, `last_30_days`, `this_month`, `last_month`. `yesterday` and
-`last_14_days` are NOT mapped: `dateRangeForWindow` returns `ErrUnsupportedWindow`, which the
-dispatcher translates to `ErrMetricsWindowUnsupported`. Spend (`costInUsd`, decimal USD) is converted to
-micro-currency (×1e6, rounded rather than truncated). `Ctr` is computed as clicks/impressions,
-0 when impressions is 0. A finder response with an empty (non-nil) `elements` array is
-zero-activity, not an error; a nil/missing `elements` field on a 2xx is rejected as a decode
-error rather than silently reported as zero.
+`last_14_days` are NOT mapped, and `ErrUnsupportedWindow` for them is raised by the clock-free
+`linkedin.ValidateMetricsWindow`, which the dispatcher calls BEFORE `creds.resolve` and
+translates to `ErrMetricsWindowUnsupported`. That order is load-bearing rather than stylistic:
+an unsupported window is a permanent 400 whatever state the connection is in, but resolving
+credentials first makes a project with an inactive or incomplete connection fail with a
+connection error that `BriefService` maps to 503 — telling the caller to retry a request that
+can never succeed. `dateRangeForWindow` calls the same validator first, so the two cannot drift.
+Spend (`costInUsd`, decimal USD) is converted to
+micro-currency (×1e6, rounded rather than truncated) after a `maxCostDecimalLen` (40-byte) bound
+— the 10 MiB response cap does not bound a single decimal, and `big.Rat` parsing/scaling is
+super-linear in digit count and does not observe the request context. `Ctr` is computed as
+clicks/impressions, 0 when impressions is 0. A finder response with an empty (non-nil)
+`elements` array is zero-activity, not an error; a nil/missing `elements` field on a 2xx is
+rejected as a decode error rather than silently reported as zero. An element reporting clicks
+with zero impressions is likewise rejected: a click implies the impression that carried it, so
+that shape means the element is incomplete and publishing it would report `Ctr=0` beside a
+non-zero click count. Per-metric presence tracking is deliberately not used — an
+omitted-because-zero key is indistinguishable from an omitted-because-malformed one, so
+requiring every key would reject responses that are genuinely fine.
 
 **X/Twitter** implements it: `twitterMetricsWindow` maps the shared `model.MetricsWindow`
 vocabulary to X Ads' own `MetricsWindow` literals, then `GetCampaignMetrics(ctx, campaignID,
