@@ -929,8 +929,20 @@ func (s *BriefService) UpdateCampaignKeywords(ctx context.Context,
     }
   }
   
+  total := int32(len(outcomes))
   return &briefs.CampaignKeywordActionResult{
-    Total:       int32(len(outcomes)),
+    // success is REQUIRED by the design and deprecated, so it has to be assigned here even
+    // though nothing new should read it. Leaving it out does not fail to compile — it takes
+    // Go's zero value and reports `success: false` for every batch, including one where every
+    // action applied. A deprecated field that is silently always-false is worse than one that
+    // is merely redundant: a UI still reading it shows a failed batch that fully succeeded.
+    //
+    // It is `succeeded == total` exactly as specified, which makes an empty batch trivially
+    // true. That case is unreachable — an empty actions list is rejected in validation above —
+    // and encoding an extra `total > 0` term here would make this field disagree with its own
+    // documented definition, which is how a deprecated field starts needing its own tests.
+    Success:     succeeded == total,
+    Total:       total,
     Succeeded:   succeeded,
     Failed:      failed,
     Unconfirmed: unconfirmed,
