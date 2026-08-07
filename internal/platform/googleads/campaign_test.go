@@ -993,3 +993,46 @@ func TestUpdateCampaignStatus_AlreadyCanceledContextWithCachedToken(t *testing.T
 		t.Errorf("nothing was sent, so the outcome must not be UNCONFIRMED: %v", err)
 	}
 }
+
+// TestValidateResourceKind_WrongCustomerRejected covers the account-ownership branch of
+// validateResourceKind for every kind that reaches it: a 2xx mutate response naming a
+// resource under a DIFFERENT customer must be rejected before the id is persisted.
+//
+// Without this, removing the `pathParts[1] != c.account.CustomerID` comparison would leave
+// the suite green while the client persisted ids belonging to another Google Ads account —
+// ids a later mutate would then address, or an operator would then chase in the wrong
+// account. The existing negative cases only cover wrong KINDS and malformed composite ids,
+// neither of which exercises this comparison.
+func TestValidateResourceKind_WrongCustomerRejected(t *testing.T) {
+	c := NewClient(testCreds(), testAccount(), WithClock(fixedClock()))
+	const otherCustomer = "9999999999"
+
+	cases := []struct {
+		name             string
+		kind             string
+		resourceName     string
+		requireNumericID bool
+	}{
+		{"campaign from another account", "campaigns", "customers/" + otherCustomer + "/campaigns/111", true},
+		{"ad group from another account", "adGroups", "customers/" + otherCustomer + "/adGroups/222", true},
+		{"ad group ad from another account", "adGroupAds", "customers/" + otherCustomer + "/adGroupAds/222~333", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := c.validateResourceKind(tc.kind, tc.resourceName, tc.requireNumericID)
+			if err == nil {
+				t.Fatalf("expected %s resource under customer %s to be rejected, got nil", tc.kind, otherCustomer)
+			}
+			if !strings.Contains(err.Error(), "different account") {
+				t.Errorf("expected a different-account diagnostic, got: %v", err)
+			}
+			// The same shape under the CORRECT customer must still pass, so the test
+			// fails on a broken ownership check rather than on an unrelated rejection.
+			ok := strings.Replace(tc.resourceName, otherCustomer, testAccount().CustomerID, 1)
+			if err := c.validateResourceKind(tc.kind, ok, tc.requireNumericID); err != nil {
+				t.Errorf("expected %q to be accepted, got: %v", ok, err)
+			}
+		})
+	}
+}
