@@ -157,7 +157,11 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 	conn, err := s.repo.Get(ctx, projectID, provider)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, notCreated(fmt.Errorf("no %s connection configured for project %s", provider, projectID))
+			// Wrap the sentinel rather than dropping it: read-only callers such as
+			// account discovery need to tell "this project has no connection" (404)
+			// apart from "the platform call failed" (503). The dispatch paths only
+			// consult NoUpstreamCreate, so preserving it changes nothing for them.
+			return nil, notCreated(fmt.Errorf("no %s connection configured for project %s: %w", provider, projectID, domain.ErrNotFound))
 		}
 		// A repo error (DB down) is NOT a pre-create signal we can prove, but no
 		// upstream call was made either — the create never started. Treat as

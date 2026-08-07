@@ -218,6 +218,60 @@ the platform's API limitation (NOT a reduced range, average, or extrapolation). 
 permanent X API constraint documented in the knowledge base. Spend is returned by X as
 `billed_charge_local_micro`, already in micro-currency units (no USD parsing or conversion).
 
+## Account discovery (optional capability)
+
+`AccountLister` is a third OPTIONAL dispatcher interface, alongside `StatusToggler` and
+`MetricsReader` — `ListAccounts(ctx, projectID, platform) ([]model.AccessibleAccount, error)` —
+enumerating the ad accounts reachable **upstream at the provider** with the connection's stored
+credential. It exists so an operator configuring a connection can pick the right account instead
+of pasting a customer ID by hand. Same shape as the other two: the orchestrator's `ReadAccounts`
+type-asserts it and returns `ErrAccountsUnsupported` when a platform's dispatcher does not
+implement it, without contacting the platform.
+
+Note what it is NOT: this does not list anything this service stores. A project holds at most one
+connection per provider, and that singleton is read via `GET .../connection-{provider}`.
+`AccessibleAccount` (`ID`, `Label`) is a live projection of the provider's own account list, never
+persisted — the same live-read-only discipline as `ReadMetrics`. Errors propagate verbatim (a read
+has no ambiguous mutation to protect), surfacing as 400 for an unsupported platform and 503 for a
+provider failure.
+
+Google Ads is the only implementation today, via
+`Client.ListAccessibleCustomers` → `customers:listAccessibleCustomers`. That endpoint is
+**account-agnostic** — it has no `customers/{id}` path segment, unlike every other Google Ads call
+— and it is sent with a nil body (so no `Content-Type`) and `idempotent=true` (a pure read, so
+retrying a 429 cannot double-apply anything).
+
+**Discovery runs without an account id, deliberately, at both layers.** A connection is created
+with credentials first and an account chosen afterwards — from the list this call produces — so
+requiring a customer id before discovery means the caller must already know the answer to the
+question they are asking. Two preconditions used to enforce exactly that, and both were relaxed
+in a targeted way rather than removed:
+
+- The dispatcher's `validateGoogleAdsConnection` demands a non-empty `accountID`. Discovery now
+  routes through `validateGoogleAdsCredentials` (via `resolveGoogleAdsDiscoveryClient`) instead,
+  which keeps every other check — active status, decodable blob, all four OAuth fields — so a
+  discovery call against a stale or half-configured connection still fails as a *connection*
+  problem rather than as an opaque error from Google.
+- `Client.doRequest` validates `c.account.CustomerID` as digits-only. The account-agnostic paths
+  call `doRequestValidated` instead, which is `doRequest` with the id precondition discharged by
+  the caller. It exists ONLY so those paths can share one copy of the URL construction, header
+  set, body bounding, retry gating, and `apiError`/`transportError` classification. The
+  `login-customer-id` header is still attached and still validated (`validateLoginCustomerID`).
+
+**A manager credential needs the hierarchy walked, because the flat list does not do it.**
+`customers:listAccessibleCustomers` returns the accounts the authenticated user can act on
+DIRECTLY; a `login-customer-id` header does not make it enumerate that manager's children. On an
+MCC connection — the normal shape for agency-managed accounts — the flat list is therefore often
+just the manager itself, and every child ad account the caller actually wants to pick is missing.
+So when a manager id is configured, `listManagerClients` expands it with a `customer_client` GAQL
+query scoped to the manager (`gaqlSearchForCustomer`, which takes an explicit customer id rather
+than the client's empty one). Manager rows are filtered out of the result: a manager account
+cannot hold campaigns, so offering one would let a caller select an account that fails at the
+first create. Only `status = 'ENABLED'` clients are requested. The expansion also supplies
+`descriptive_name`, which the flat endpoint does not return at all — so labels appear only for
+accounts reached this way. Without a manager id there is no hierarchy root to walk and the direct
+list is the whole answer.
+
 ## Channel kinds: paid ads vs email
 
 `model.ChannelKind` classifies each provider as **`paid-ads`** or **`email`** (`Provider.Kind()`,

@@ -62,4 +62,10 @@ var (
 	// adapter wraps its own typed "unsupported window" error with this sentinel
 	// (%w) so the service layer can map it without importing every platform package.
 	ErrMetricsWindowUnsupported = errors.New("this window is not supported for the campaign's platform")
+
+	// ErrAccountsUnsupported indicates the platform has no account-listing capability
+	// wired (no dispatcher, or the dispatcher is not an AccountLister). The platform is
+	// never contacted. Maps to 400. Lives here for the same reason as ErrToggleUnsupported:
+	// a platform dispatcher can return it directly without importing the orchestration layer.
+	ErrAccountsUnsupported = errors.New("account discovery is not supported for this platform")
 )
