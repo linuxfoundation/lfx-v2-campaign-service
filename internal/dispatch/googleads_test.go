@@ -517,3 +517,53 @@ func TestGoogleAds_ToggleStatus_AlreadyCanceledContextSendsNothing(t *testing.T)
 		t.Errorf("nothing was sent, so the outcome must NOT be ambiguous: %v", err)
 	}
 }
+
+// TestGoogleAds_ListAccounts_EmptyUpstreamIsEmptySliceNotNil pins the empty-discovery
+// case end to end through the real dispatcher and the real client. A credential that
+// legitimately reaches zero ad accounts must produce an EMPTY slice, not nil:
+// Orchestrator.ReadAccounts treats a nil result as a lister contract violation and turns
+// it into a 503, so building the slice with `var accounts []model.AccessibleAccount`
+// would report the platform as down for a correct, ordinary answer.
+func TestGoogleAds_ListAccounts_EmptyUpstreamIsEmptySliceNotNil(t *testing.T) {
+	var mu sync.Mutex
+	var gotMethod, gotPath string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotMethod, gotPath = r.Method, r.URL.Path
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"resourceNames":[]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	accounts, err := d.ListAccounts(context.Background(), "proj", model.ProviderGoogleAds)
+	if err != nil {
+		t.Fatalf("ListAccounts: %v", err)
+	}
+	if accounts == nil {
+		t.Fatal("ListAccounts returned nil for an empty upstream result; it must return an empty slice")
+	}
+	if len(accounts) != 0 {
+		t.Fatalf("expected 0 accounts, got %d", len(accounts))
+	}
+
+	// The REST binding for ListAccessibleCustomers is GET on an account-agnostic path —
+	// no customers/{id} segment, unlike every other Google Ads call this client makes.
+	mu.Lock()
+	method, path := gotMethod, gotPath
+	mu.Unlock()
+	if method != http.MethodGet {
+		t.Errorf("method = %q, want GET", method)
+	}
+	if !strings.HasSuffix(path, "/customers:listAccessibleCustomers") {
+		t.Errorf("path = %q, want the account-agnostic customers:listAccessibleCustomers", path)
+	}
+}

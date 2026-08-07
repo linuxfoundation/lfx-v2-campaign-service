@@ -11,13 +11,27 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 // TestListAccessibleCustomers_Success tests the happy path of discovering accessible accounts.
 func TestListAccessibleCustomers_Success(t *testing.T) {
-	tokenFetched := false
+	// Everything the handler observes is captured under a mutex and asserted on the
+	// TEST goroutine after the call returns. Two reasons: the handler runs on the
+	// httptest server's goroutine, so unsynchronized capture is a data race the moment
+	// a retry or a lingering keep-alive overlaps the read; and t.Fatal* is only legal
+	// on the goroutine running the test — calling it from a handler skips the assertion
+	// silently instead of failing.
+	var (
+		mu           sync.Mutex
+		tokenFetched bool
+		gotMethod    string
+		gotPath      string
+		gotAuth      string
+		gotDevToken  string
+	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Route to token endpoint
 		if r.URL.Path == "/token" {
@@ -27,25 +41,18 @@ func TestListAccessibleCustomers_Success(t *testing.T) {
 				"expires_in":   3600,
 				"token_type":   "Bearer",
 			})
+			mu.Lock()
 			tokenFetched = true
+			mu.Unlock()
 			return
 		}
 
-		// Verify the request properties for listAccessibleCustomers
-		if r.Method != http.MethodPost {
-			t.Fatalf("expected POST, got %s", r.Method)
-		}
-		if !urlHasSuffix(r.URL.Path, "/customers:listAccessibleCustomers") {
-			t.Fatalf("expected listAccessibleCustomers endpoint, got %s", r.URL.Path)
-		}
-
-		// Verify headers
-		if r.Header.Get("Authorization") == "" {
-			t.Fatal("missing Authorization header")
-		}
-		if r.Header.Get("developer-token") == "" {
-			t.Fatal("missing developer-token header")
-		}
+		mu.Lock()
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		gotDevToken = r.Header.Get("developer-token")
+		mu.Unlock()
 
 		// Return mock customer list
 		resp := listAccessibleCustomersResponse{
@@ -74,8 +81,26 @@ func TestListAccessibleCustomers_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAccessibleCustomers failed: %v", err)
 	}
+
+	mu.Lock()
+	defer mu.Unlock()
 	if !tokenFetched {
 		t.Fatal("token was not fetched")
+	}
+	// GET, not POST: CustomerService.ListAccessibleCustomers is bound to GET in the
+	// Google Ads REST API and takes no body. Pinning the verb here is what stops the
+	// :search/:mutate POST habit from silently reappearing and 404ing in production.
+	if gotMethod != http.MethodGet {
+		t.Errorf("expected GET, got %s", gotMethod)
+	}
+	if !urlHasSuffix(gotPath, "/customers:listAccessibleCustomers") {
+		t.Errorf("expected listAccessibleCustomers endpoint, got %s", gotPath)
+	}
+	if gotAuth == "" {
+		t.Error("missing Authorization header")
+	}
+	if gotDevToken == "" {
+		t.Error("missing developer-token header")
 	}
 	if len(accounts) != 2 {
 		t.Fatalf("expected 2 accounts, got %d", len(accounts))
@@ -240,14 +265,18 @@ func writeAccountsToken(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// TestListAccessibleCustomers_SendsNoRequestBody asserts the discovery POST carries no
+// TestListAccessibleCustomers_SendsNoRequestBody asserts the discovery request carries no
 // request body. The endpoint is account-agnostic and takes no payload; sending one (or a
 // stray Content-Type announcing one) would be a protocol error the Google Ads API may
 // reject. doRequest omits Content-Type exactly when the body is nil, so this also pins
 // that branch of doRequest for the nil-body caller.
 func TestListAccessibleCustomers_SendsNoRequestBody(t *testing.T) {
+	// Captured under a mutex and asserted after the call — see the note in
+	// TestListAccessibleCustomers_Success.
 	var (
+		mu             sync.Mutex
 		gotBody        []byte
+		gotBodyErr     error
 		gotContentType string
 		sawAPICall     bool
 	)
@@ -255,13 +284,12 @@ func TestListAccessibleCustomers_SendsNoRequestBody(t *testing.T) {
 		if writeAccountsToken(w, r) {
 			return
 		}
+		b, err := io.ReadAll(r.Body)
+		mu.Lock()
 		sawAPICall = true
 		gotContentType = r.Header.Get("Content-Type")
-		b, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Errorf("reading request body: %v", err)
-		}
-		gotBody = b
+		gotBody, gotBodyErr = b, err
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{ResourceNames: []string{"customers/1"}})
 	}))
@@ -270,8 +298,14 @@ func TestListAccessibleCustomers_SendsNoRequestBody(t *testing.T) {
 	if _, err := newAccountsTestClient(t, server).ListAccessibleCustomers(context.Background()); err != nil {
 		t.Fatalf("ListAccessibleCustomers failed: %v", err)
 	}
+
+	mu.Lock()
+	defer mu.Unlock()
 	if !sawAPICall {
 		t.Fatal("the API endpoint was never called")
+	}
+	if gotBodyErr != nil {
+		t.Errorf("reading request body: %v", gotBodyErr)
 	}
 	if len(gotBody) != 0 {
 		t.Errorf("expected an empty request body, got %d bytes: %q", len(gotBody), gotBody)
@@ -308,8 +342,8 @@ func TestListAccessibleCustomers_APIErrorCarriesStatusAndCodes(t *testing.T) {
 	if apiErr.StatusCode != http.StatusForbidden {
 		t.Errorf("expected StatusCode 403, got %d", apiErr.StatusCode)
 	}
-	if apiErr.Method != http.MethodPost {
-		t.Errorf("expected Method POST, got %q", apiErr.Method)
+	if apiErr.Method != http.MethodGet {
+		t.Errorf("expected Method GET, got %q", apiErr.Method)
 	}
 	if !strings.Contains(apiErr.Path, "listAccessibleCustomers") {
 		t.Errorf("expected Path to name the endpoint, got %q", apiErr.Path)

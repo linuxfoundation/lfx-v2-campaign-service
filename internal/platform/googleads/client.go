@@ -849,6 +849,10 @@ func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCusto
 	// The ListAccessibleCustomers endpoint is account-agnostic; it does NOT have a
 	// customer_id path segment. The path is just customers:listAccessibleCustomers.
 	//
+	// The REST binding for CustomerService.ListAccessibleCustomers is GET, not the
+	// POST used by the :search and :mutate custom methods — it takes no request
+	// body at all. Sending POST here fails against the real API.
+	//
 	// This goes through doRequest like every other call: the URL construction,
 	// header set, body bounding, and apiError/transportError classification are
 	// identical, so duplicating them here would be a second copy to keep in sync.
@@ -857,14 +861,14 @@ func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCusto
 	// anything, which is exactly the case doRequest's retry is gated on.
 	const path = "customers:listAccessibleCustomers"
 
-	raw, err := c.doRequest(ctx, http.MethodPost, path, nil, true)
+	raw, err := c.doRequest(ctx, http.MethodGet, path, nil, true)
 	if err != nil {
 		return nil, err
 	}
 
 	var resp2xx listAccessibleCustomersResponse
 	if err := json.Unmarshal(raw, &resp2xx); err != nil {
-		return nil, &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("decode response: %w", err)}
+		return nil, &transportError{Method: http.MethodGet, Path: path, Err: fmt.Errorf("decode response: %w", err)}
 	}
 
 	// Convert resource names to AccessibleCustomer structs. The API only returns

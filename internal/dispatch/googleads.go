@@ -253,7 +253,12 @@ func (d *GoogleAdsDispatcher) ListAccounts(ctx context.Context, projectID string
 	// Convert Google Ads customers to the common AccessibleAccount shape.
 	// Each customer's descriptive_name is used as the label; the resource_name
 	// (customers/DIGITS) is parsed to extract the numeric customer_id.
-	var accounts []model.AccessibleAccount
+	//
+	// make(..., 0, n) rather than a nil var: a credential that legitimately reaches
+	// zero accounts is an empty list, not an error. Orchestrator.ReadAccounts treats
+	// a nil result as a contract violation and turns it into a 503, so a nil slice
+	// here would report the platform as down for a perfectly valid empty answer.
+	accounts := make([]model.AccessibleAccount, 0, len(customers))
 	for _, cust := range customers {
 		// Parse "customers/1234567890" → "1234567890"
 		id := strings.TrimPrefix(cust.ResourceName, "customers/")

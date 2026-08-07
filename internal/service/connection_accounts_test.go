@@ -110,6 +110,61 @@ func TestListGoogleAdsAccounts_LabelsAreDistinctPerAccount(t *testing.T) {
 	}
 }
 
+// TestListGoogleAdsAccounts_ZeroAccountsIsOKNotUnavailable pins the empty case. A
+// credential that legitimately reaches no ad accounts is a valid 200 with an empty list —
+// NOT a platform failure. Orchestrator.ReadAccounts converts a nil result into an error
+// (it cannot tell "no accounts" from "the lister forgot to return anything"), so a
+// dispatcher that builds its slice with `var accounts []T` reports 503 for a correct
+// answer. This test fails the moment the conversion loop stops pre-allocating.
+func TestListGoogleAdsAccounts_ZeroAccountsIsOKNotUnavailable(t *testing.T) {
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	orch := &Orchestrator{
+		dispatchers: map[model.Provider]PlatformDispatcher{
+			model.ProviderGoogleAds: &mockAccountListerDispatcher{
+				accounts: []model.AccessibleAccount{},
+			},
+		},
+	}
+	svc.SetOrchestrator(orch)
+
+	result, err := svc.ListGoogleAdsAccounts(context.Background(), &conn.ListGoogleAdsAccountsPayload{ProjectID: "p"})
+	if err != nil {
+		t.Fatalf("zero accessible accounts must succeed, got error: %v", err)
+	}
+	if len(result.Accounts) != 0 {
+		t.Fatalf("expected 0 accounts, got %d", len(result.Accounts))
+	}
+}
+
+// TestListGoogleAdsAccounts_NoConnectionIs404 pins the missing-connection mapping. The
+// project simply has no stored Google Ads connection — a client-side state error the
+// caller fixes by creating one, not a platform outage. Reporting 503 would tell the UI to
+// retry something that can never succeed. This works only because credsSource.resolve
+// WRAPS domain.ErrNotFound instead of flattening it into an opaque message.
+func TestListGoogleAdsAccounts_NoConnectionIs404(t *testing.T) {
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	orch := &Orchestrator{
+		dispatchers: map[model.Provider]PlatformDispatcher{
+			model.ProviderGoogleAds: &mockAccountListerDispatcher{
+				err: domain.ErrNotFound,
+			},
+		},
+	}
+	svc.SetOrchestrator(orch)
+
+	result, err := svc.ListGoogleAdsAccounts(context.Background(), &conn.ListGoogleAdsAccountsPayload{ProjectID: "p"})
+	if result != nil {
+		t.Fatalf("expected nil result when no connection exists, got %v", result)
+	}
+	notFound, ok := err.(*conn.NotFoundError)
+	if !ok {
+		t.Fatalf("expected NotFound error, got %T: %v", err, err)
+	}
+	if notFound.Code != "404" {
+		t.Errorf("expected code 404, got %q", notFound.Code)
+	}
+}
+
 // Mock types for testing
 
 // mockAccountListerDispatcher is a dispatcher that DOES implement AccountLister, so
@@ -117,6 +172,9 @@ func TestListGoogleAdsAccounts_LabelsAreDistinctPerAccount(t *testing.T) {
 // ErrAccountsUnsupported like mockDispatcher does.
 type mockAccountListerDispatcher struct {
 	accounts []model.AccessibleAccount
+	// err, when set, is returned instead of accounts — used to exercise the handler's
+	// error classification (missing connection vs. platform failure).
+	err error
 }
 
 func (m *mockAccountListerDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
@@ -124,6 +182,9 @@ func (m *mockAccountListerDispatcher) Dispatch(ctx context.Context, brief *model
 }
 
 func (m *mockAccountListerDispatcher) ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
 	return m.accounts, nil
 }
 

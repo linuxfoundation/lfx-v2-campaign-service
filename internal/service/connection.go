@@ -17,6 +17,7 @@ import (
 	"log/slog"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
@@ -124,6 +125,11 @@ func (s *ConnectionService) ListGoogleAdsAccounts(ctx context.Context, p *conn.L
 		switch {
 		case errors.Is(aerr, ErrAccountsUnsupported):
 			return nil, &conn.BadRequestError{Code: "400", Message: "account discovery is not supported for this platform"}
+		case errors.Is(aerr, domain.ErrNotFound):
+			// The project has no stored Google Ads connection. That is a client-side
+			// state error, not a platform outage — reporting 503 would tell the caller
+			// to retry something that can never succeed until a connection exists.
+			return nil, &conn.NotFoundError{Code: "404", Message: "no google ads connection configured for this project"}
 		default:
 			slog.WarnContext(ctx, "account discovery failed on google ads",
 				"project_id", p.ProjectID, "error", aerr)
