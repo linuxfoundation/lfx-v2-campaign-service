@@ -335,7 +335,7 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
 			campaignCap.set(decodeBody(t, r))
-			_, _ = io.WriteString(w, `{"id":"camp_123"}`)
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
 			adsetCap.set(decodeBody(t, r))
 			_, _ = io.WriteString(w, `{"id":"adset_456"}`)
@@ -397,8 +397,8 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 	if gotAuth != "Bearer tok-abc" {
 		t.Errorf("Authorization header = %q", gotAuth)
 	}
-	if res.CampaignID != "camp_123" {
-		t.Errorf("campaign id = %q, want camp_123", res.CampaignID)
+	if res.CampaignID != "120100000000123" {
+		t.Errorf("campaign id = %q, want 120100000000123", res.CampaignID)
 	}
 	if res.AdSetID != "adset_456" {
 		t.Errorf("adset id = %q, want adset_456", res.AdSetID)
@@ -4332,7 +4332,7 @@ func TestUpdateCampaignAndChildrenStatus_PauseUpdatesCampaignFirst(t *testing.T)
 // matched campaign's ID when found.
 func TestFindCampaignByName_Match(t *testing.T) {
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		body := `{"data":[{"id":"camp_123","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}]}`
+		body := `{"data":[{"id":"120100000000123","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}]}`
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -4346,8 +4346,50 @@ func TestFindCampaignByName_Match(t *testing.T) {
 	if err != nil {
 		t.Fatalf("findCampaignByName error: %v", err)
 	}
-	if id != "camp_123" {
-		t.Errorf("id = %q, want camp_123", id)
+	if id != "120100000000123" {
+		t.Errorf("id = %q, want 120100000000123", id)
+	}
+}
+
+// TestFindByName_NonNumericIDIsAmbiguousNotUsable pins the interpolation gate on BOTH
+// lookups. A matched id goes straight into a request path ("/{campaignID}/adsets",
+// "/{adSetID}/ads"), so non-empty is not the same as safe — this client already gates every
+// other id-interpolating call on numericIDRE. The classification matters as much as the
+// rejection: a resource with this name DOES exist upstream, so the error must be ambiguous
+// (errLookupAmbiguous → UNCONFIRMED), never a clean "absent" that lets a retry duplicate it.
+func TestFindByName_NonNumericIDIsAmbiguousNotUsable(t *testing.T) {
+	for _, bad := range []string{"camp_123", "123/../../me", "123?fields=x", "12 3"} {
+		t.Run(bad, func(t *testing.T) {
+			rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				body, _ := json.Marshal(map[string]any{"data": []map[string]string{
+					{"id": bad, "status": "PAUSED", "objective": "OUTCOME_TRAFFIC"},
+				}})
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(string(body))),
+					Request:    req,
+				}, nil
+			})
+			c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100},
+				WithBaseURL("http://meta.test"), WithHTTPClient(&http.Client{Transport: rt}))
+
+			id, err := c.findCampaignByName(context.Background(), "act_1", "My Campaign", "OUTCOME_TRAFFIC")
+			if id != "" {
+				t.Errorf("findCampaignByName returned an unusable id %q for interpolation", id)
+			}
+			if !errors.Is(err, errLookupAmbiguous) {
+				t.Errorf("findCampaignByName error must be ambiguous, got %v", err)
+			}
+
+			id, err = c.findAdSetByName(context.Background(), "120100000000123", "My Ad Set")
+			if id != "" {
+				t.Errorf("findAdSetByName returned an unusable id %q for interpolation", id)
+			}
+			if !errors.Is(err, errLookupAmbiguous) {
+				t.Errorf("findAdSetByName error must be ambiguous, got %v", err)
+			}
+		})
 	}
 }
 
@@ -4491,7 +4533,7 @@ func TestCreateCampaignReusesExistingByName(t *testing.T) {
 		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") &&
 			strings.HasSuffix(req.URL.Path, "/campaigns"):
 			// Existing campaign found by name.
-			body = `{"data":[{"id":"existing_camp_123","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}]}`
+			body = `{"data":[{"id":"120200000000123","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}]}`
 		case req.Method == http.MethodGet && strings.Contains(req.URL.RawQuery, "filtering") &&
 			strings.HasSuffix(req.URL.Path, "/adsets"):
 			// No ad set under that campaign yet: the reuse path must still CREATE one.
@@ -4536,8 +4578,8 @@ func TestCreateCampaignReusesExistingByName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCampaign error: %v", err)
 	}
-	if res.CampaignID != "existing_camp_123" {
-		t.Errorf("campaign id = %q, want existing_camp_123", res.CampaignID)
+	if res.CampaignID != "120200000000123" {
+		t.Errorf("campaign id = %q, want 120200000000123", res.CampaignID)
 	}
 	// The reconciliation this feature exists for: reuse the campaign, but still create
 	// the ad set that does not exist under it. An ad set id equal to the campaign id
@@ -4582,7 +4624,7 @@ func TestFindCampaignByName_PaginationEmptyFirstPage(t *testing.T) {
 			body = `{"data":[],"paging":{"cursors":{"after":"CUR2"},"next":"https://graph.example/x?after=CUR2"}}`
 		case order == 2 && strings.Contains(req.URL.RawQuery, "filtering"):
 			// Second call: match on second page.
-			body = `{"data":[{"id":"camp_from_page_2","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}],"paging":{}}`
+			body = `{"data":[{"id":"120300000000456","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}],"paging":{}}`
 		default:
 			t.Errorf("unexpected call %d: %s %s", order, req.Method, req.URL.Path)
 			return &http.Response{StatusCode: http.StatusNotFound}, nil
@@ -4600,8 +4642,8 @@ func TestFindCampaignByName_PaginationEmptyFirstPage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("findCampaignByName error: %v", err)
 	}
-	if id != "camp_from_page_2" {
-		t.Errorf("id = %q, want camp_from_page_2 (from second page)", id)
+	if id != "120300000000456" {
+		t.Errorf("id = %q, want 120300000000456 (from second page)", id)
 	}
 	mu.Lock()
 	calls := callOrder
@@ -4689,7 +4731,7 @@ func TestFindCampaignByName_PaginationUsesCursorNotRawURL(t *testing.T) {
 			if !strings.Contains(req.URL.RawQuery, "after=OPAQUE_CURSOR") {
 				t.Errorf("pagination did not use the cursor; query: %q", req.URL.RawQuery)
 			}
-			body = `{"data":[{"id":"camp_found","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}]}`
+			body = `{"data":[{"id":"120400000000789","status":"PAUSED","objective":"OUTCOME_TRAFFIC"}]}`
 		default:
 			t.Errorf("unexpected call %d: %s %s", order, req.Method, req.URL.Path)
 			return &http.Response{StatusCode: http.StatusNotFound}, nil
@@ -4707,8 +4749,8 @@ func TestFindCampaignByName_PaginationUsesCursorNotRawURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("findCampaignByName error: %v", err)
 	}
-	if id != "camp_found" {
-		t.Errorf("id = %q, want camp_found", id)
+	if id != "120400000000789" {
+		t.Errorf("id = %q, want 120400000000789", id)
 	}
 }
 

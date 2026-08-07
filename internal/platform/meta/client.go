@@ -433,6 +433,21 @@ type createResponse struct {
 // the chance of reusing an unrelated campaign, but a name collision across
 // distinct briefs remains possible and is accepted as a known limitation.
 //
+// REACHABILITY — which retries actually reach this lookup, and which do not:
+//
+//	REACHED: a retry after a CLEAN dispatch failure. The claim is released, so the
+//	orchestrator re-dispatches, CreateCampaign runs again, and the lookup finds whatever
+//	the failed attempt may nevertheless have created. This is the path that used to
+//	duplicate paid campaigns, and the one this lookup closes.
+//
+//	NOT REACHED: a retry that finds a RETAINED PARTIAL orphan (a row carrying a
+//	PlatformCampaignID or a Result reconcile blob). ProcessJob reports those as
+//	"reconciliation required" and never calls the dispatcher — deliberately, since a
+//	human may already be reconciling the row upstream. Making Meta's name-idempotent
+//	create re-dispatch such a row is a change to the SHARED retry path (it must not
+//	re-dispatch a platform whose create is not idempotent), so it is its own piece of
+//	work, not part of this lookup. Tracked under LFXV2-2665.
+//
 // errLookupAmbiguous marks a malformed-but-2xx lookup response (missing data
 // field, or a matched row with no usable id): Meta DID respond, so this is
 // classified ambiguous by createOutcomeAmbiguous like a 5xx, not a clean failure.
@@ -520,6 +535,15 @@ func (c *Client) findCampaignByName(ctx context.Context, accountID, name, expect
 	id := strings.TrimSpace(allMatches[0].ID)
 	if id == "" {
 		return "", fmt.Errorf("meta campaign lookup for %q matched an existing campaign with no usable id: %w", name, errLookupAmbiguous)
+	}
+	// Non-empty is not the same as safe to interpolate. The caller splices this id
+	// straight into "/{campaignID}/adsets", so it gets the same numericIDRE gate every
+	// other id-interpolating path in this client applies (UpdateCampaignStatus,
+	// createAdSet). Ambiguous rather than a clean failure: a campaign with this name DOES
+	// exist upstream — we just cannot address it — and reporting "nothing here" would let
+	// a retry create a duplicate.
+	if !numericIDRE.MatchString(id) {
+		return "", fmt.Errorf("meta campaign lookup for %q matched an existing campaign with a non-numeric id %q; cannot use it: %w", name, id, errLookupAmbiguous)
 	}
 	// Validate the matched campaign is in PAUSED state. A non-PAUSED campaign is a
 	// definite conflict (name already taken by a live campaign), not an ambiguous
@@ -619,6 +643,12 @@ func (c *Client) findAdSetByName(ctx context.Context, campaignID, name string) (
 	id := strings.TrimSpace(allMatches[0].ID)
 	if id == "" {
 		return "", fmt.Errorf("meta ad set lookup for %q matched an existing ad set with no usable id: %w", name, errLookupAmbiguous)
+	}
+	// Same gate as the campaign lookup above: this id is interpolated into ad-create
+	// paths, and an ad set with this name existing but being unaddressable is ambiguous,
+	// not absent.
+	if !numericIDRE.MatchString(id) {
+		return "", fmt.Errorf("meta ad set lookup for %q matched an existing ad set with a non-numeric id %q; cannot use it: %w", name, id, errLookupAmbiguous)
 	}
 	// Validate the matched ad set is in PAUSED state. A non-PAUSED ad set is a
 	// definite conflict (name already taken by a live ad set), not an ambiguous
