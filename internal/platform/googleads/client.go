@@ -904,9 +904,11 @@ type listAccessibleCustomersResponse struct {
 // customer ids exist, so requiring one would be circular — and it is the reason
 // doRequestValidated exists.
 //
-// There are two MODES, and exactly ONE request is issued in each — which source answers
+// There are two MODES, and each consults exactly ONE data source — which source answers
 // depends entirely on whether a login-customer-id is configured, and the mode is decided
-// BEFORE anything goes over the wire.
+// BEFORE anything goes over the wire. One SOURCE is not one HTTP request: a GAQL read
+// pages until its nextPageToken is empty, and either mode retries a 429. The invariant is
+// that a mode never issues a request whose response it will not read.
 //
 // Without one: customers:listAccessibleCustomers stands alone. It gives the accounts the
 // authenticated user can act on DIRECTLY, unlabelled (the response carries resource names

@@ -2,7 +2,9 @@
 
 **Update** — `ListAccessibleCustomers` issued `customers:listAccessibleCustomers` on every
 call, then, when a `login_customer_id` was configured, discarded the result entirely and
-answered from `listManagerClients`. Two Google Ads round-trips where one was needed.
+answered from `listManagerClients`. Two Google Ads data sources consulted where one was needed.
+(Not "two requests where one was needed" — the hierarchy read pages and a 429 is retried, so the
+request count was never one. The invariant is that no request is issued whose response is unread.)
 
 **Fix** — The mode branch moved ABOVE the flat request: with a manager configured, a new
 `expandManagerHierarchy` returns straight from the hierarchy query and the flat endpoint is never

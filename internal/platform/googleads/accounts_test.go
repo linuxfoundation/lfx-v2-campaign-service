@@ -480,12 +480,17 @@ func TestListAccessibleCustomers_RejectsMalformedLoginCustomerID(t *testing.T) {
 }
 
 // TestListAccessibleCustomers_ManagerModeNeverCallsTheFlatList pins that manager mode
-// issues exactly ONE Google Ads request.
+// consults exactly ONE data source, the customer_client hierarchy query.
+//
+// It asserts a zero hit count on customers:listAccessibleCustomers specifically, NOT a
+// total request count of one — the hierarchy read pages while nextPageToken is non-empty
+// and a 429 is retried, so "one request" was never the invariant. The invariant is that a
+// mode issues no request whose response it will not read.
 //
 // Every other manager-mode test in this file serves both endpoints, so all of them pass
 // whether the flat list is fetched-then-discarded or never fetched at all. That made the
 // wasted round-trip invisible to the suite. It is not a cosmetic waste: the flat call
-// spends request quota and the caller's shared 20s discovery budget, and its own timeout,
+// spends request quota and whatever deadline the caller passed down, and its own timeout,
 // 429, or 5xx propagates out of ListAccessibleCustomers and fails discovery even though
 // its result would have been thrown away.
 //

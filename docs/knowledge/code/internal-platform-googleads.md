@@ -543,9 +543,11 @@ DIRECTLY; a `login-customer-id` header does not make it enumerate that manager's
 that is a property of the endpoint, not of the header. On an MCC connection the flat list is
 therefore often just the manager itself, with every child ad account missing.
 
-So `ListAccessibleCustomers` has two modes, they do not merge, and **each issues exactly one
-Google Ads request**. The mode is decided from `login_customer_id` before anything goes over
-the wire:
+So `ListAccessibleCustomers` has two modes, they do not merge, and **each consults exactly one
+data source**. That is not the same as one HTTP request: the manager mode's GAQL read pages
+until `nextPageToken` is empty, and either mode retries a 429. What the invariant rules out is
+a mode issuing a request whose response it will not read. The mode is decided from
+`login_customer_id` before anything goes over the wire:
 
 - **No `login_customer_id`.** The direct list IS the answer. Every account in it is one the
   credential addresses on its own behalf. A manager account can still be in there and cannot
@@ -579,8 +581,8 @@ paths. That validation used to run in manager mode too, on rows nothing would co
 only meant the discarded response had one more way to fail the request. Manager-mode ids are
 validated inside `listManagerClients` instead.
 
-**Only one call means only one failure mode.** Fetching the flat list and then throwing it
-away spent request quota and the caller's shared 20s discovery budget, but the behavioural
+**Only one data source means only one failure mode.** Fetching the flat list and then throwing
+it away spent request quota and whatever deadline the caller passed down, but the behavioural
 cost was worse: a timeout, 429, or 5xx on a response that was never going to be read still
 propagated out and failed the whole discovery, even though the hierarchy query alone would
 have answered correctly. `TestListAccessibleCustomers_ManagerModeNeverCallsTheFlatList` pins
