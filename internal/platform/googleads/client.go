@@ -928,8 +928,23 @@ func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCusto
 	}
 
 	// Convert resource names to AccessibleCustomer structs. This endpoint returns
-	// resource_names ONLY — no descriptive_name — so labels stay empty unless the manager
-	// expansion below supplies them.
+	// resource_names ONLY — no descriptive_name and no `manager` flag — so labels stay
+	// empty unless the manager expansion below supplies them, and a manager account in
+	// this list is indistinguishable from an ad account by its resource name alone.
+	//
+	// That matters because the caller picks ONE entry to become the connection's
+	// account_id, and a manager (MCC) account cannot hold campaigns — choosing one
+	// produces a connection that fails at the first dispatch. listManagerClients drops
+	// managers from ITS rows, but the flat list is unfiltered, and on an MCC credential
+	// the account the user can act on directly is usually the manager itself. The one
+	// manager we can identify without extra metadata is the configured login-customer-id,
+	// so drop exactly that one. Any OTHER manager in the flat list stays — there is no
+	// field here to recognise it by, and a second round-trip per row to find out would
+	// cost more than it saves on a list this short.
+	managerResName := ""
+	if c.account.LoginCustomerID != "" {
+		managerResName = "customers/" + c.account.LoginCustomerID
+	}
 	accounts := make([]AccessibleCustomer, 0, len(resp2xx.ResourceNames))
 	seen := make(map[string]struct{}, len(resp2xx.ResourceNames))
 	for _, resName := range resp2xx.ResourceNames {
@@ -937,6 +952,9 @@ func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCusto
 			continue
 		}
 		seen[resName] = struct{}{}
+		if resName == managerResName {
+			continue // the configured MCC: reachable, but not selectable as an ad account
+		}
 		accounts = append(accounts, AccessibleCustomer{ResourceName: resName})
 	}
 

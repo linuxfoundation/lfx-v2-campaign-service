@@ -592,13 +592,20 @@ func TestListAccessibleCustomers_ExpandsManagerHierarchy(t *testing.T) {
 		t.Errorf("child label = %q, want the descriptive_name the expansion carries", label)
 	}
 	// Manager accounts are filtered: they cannot hold campaigns, so offering one as a
-	// choice would let a caller pick an account that fails at the first create. The
-	// manager still appears once, from the flat list, and is not duplicated by expansion.
+	// choice would let a caller pick an account that fails at the first create.
 	if _, ok := byName["customers/3333333333"]; ok {
 		t.Errorf("sub-manager 3333333333 was offered as a selectable account: %+v", accounts)
 	}
-	if len(accounts) != 2 {
-		t.Errorf("accounts = %+v, want exactly the manager (from the flat list) and its one child", accounts)
+	// The CONFIGURED manager is filtered too, and it takes the other path to get here: it
+	// arrives in the FLAT list (listAccessibleCustomers returns what the user can act on
+	// directly, which for an MCC credential is the manager itself), where there is no
+	// `manager` flag to recognise it by. Its own id is what identifies it. Leaving it in
+	// would offer the caller an account that fails at the first campaign create.
+	if _, ok := byName["customers/9999999999"]; ok {
+		t.Errorf("the configured MCC 9999999999 was offered as a selectable account: %+v", accounts)
+	}
+	if len(accounts) != 1 {
+		t.Errorf("accounts = %+v, want exactly the one child ad account", accounts)
 	}
 }
 

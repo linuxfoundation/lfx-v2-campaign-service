@@ -386,7 +386,17 @@ therefore often just the manager itself, with every child ad account missing. Wh
 is configured, `listManagerClients` expands it with a `customer_client` GAQL query scoped to the
 manager, requesting only `status = 'ENABLED'` clients and dropping rows where
 `customer_client.manager` is true — a manager account cannot hold campaigns, so offering one
-would let a caller select an account that fails at the first create. The expansion is also the
+would let a caller select an account that fails at the first create.
+
+That filter covers the expansion's own rows; the FLAT list needs its own, because it carries no
+`manager` flag — a manager and an ad account are indistinguishable there by resource name alone,
+and on an MCC credential the manager is precisely what the flat list returns. The one manager
+identifiable without extra metadata is the configured `login_customer_id`, so exactly that
+resource name is dropped from the direct results. Any other manager in the flat list survives:
+there is no field to recognise it by, and a per-row round-trip to find out would cost more than
+it saves on a list this short.
+
+The expansion is also the
 only source of `descriptive_name`: the flat endpoint returns resource names alone, so accounts
 reached only through the direct list carry no label. Results are deduplicated by resource name,
 with the labelled copy preferred. A row with no id is a hard error rather than a silent drop,
