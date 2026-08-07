@@ -162,7 +162,14 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	// hour boundary; using a non-aligned value like 23:59:59 will be rejected or
 	// silently rounded, causing queries to fail or under-report. Common practice
 	// is to use an exclusive next-midnight bound (the start of the next day).
-	endDateParsed, _ := time.Parse("2006-01-02", endDate)
+	endDateParsed, perr := time.Parse("2006-01-02", endDate)
+	if perr != nil {
+		// Unreachable while dateRangeForWindow returns Format("2006-01-02") output, but
+		// nothing enforces that invariant across a future refactor of it. Report rather
+		// than swallow, so a format change surfaces here instead of silently producing a
+		// zero-time end_time that would under-report every window.
+		return nil, fmt.Errorf("parse end date %q: %w", endDate, perr)
+	}
 	endTimestamp := endDateParsed.AddDate(0, 0, 1).Format("2006-01-02") + "T00:00:00Z"
 
 	// Query the X Ads stats endpoint. Per the X Ads v12 analytics contract:

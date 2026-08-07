@@ -316,6 +316,47 @@ func TestGetCampaignMetrics_EndTimeIsHourAligned(t *testing.T) {
 	}
 }
 
+// TestGetCampaignMetrics_Last7DaysQueryParams pins the whole dateRangeForWindow →
+// query-string chain for LAST_7_DAYS against a fixed clock. The existing coverage
+// checks each link in isolation — TestDateRangeForWindow_Last7Days does the date math
+// without an HTTP request, TestGetCampaignMetricsHappyPath checks the non-date params,
+// and TestGetCampaignMetrics_EndTimeIsHourAligned only covers TODAY — so a regression
+// in the LAST_7_DAYS wiring specifically could pass every one of them.
+func TestGetCampaignMetrics_Last7DaysQueryParams(t *testing.T) {
+	var mu sync.Mutex
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotQuery = r.URL.RawQuery
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"data":[]}`)
+	}))
+	defer server.Close()
+
+	client := testClient(server.URL)
+	// now = 2025-01-15; LAST_7_DAYS covers the 7 calendar days INCLUDING today
+	// (2025-01-09 through 2025-01-15), so end_time is the exclusive next-midnight
+	// bound 2025-01-16 — a 7-day span, not 8.
+	client.timeFn = func() time.Time { return time.Date(2025, 1, 15, 14, 30, 0, 0, time.UTC) }
+
+	if _, err := client.GetCampaignMetrics(context.Background(), "12345", WindowLast7Days); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	mu.Lock()
+	query := gotQuery
+	mu.Unlock()
+	decoded, _ := url.QueryUnescape(query)
+
+	if !strings.Contains(decoded, "start_time=2025-01-09T00:00:00Z") {
+		t.Errorf("expected start_time=2025-01-09T00:00:00Z in query, got %s", decoded)
+	}
+	if !strings.Contains(decoded, "end_time=2025-01-16T00:00:00Z") {
+		t.Errorf("expected end_time=2025-01-16T00:00:00Z (exclusive next-midnight bound), got %s", decoded)
+	}
+}
+
 func TestGetCampaignMetrics_InvalidAccountID(t *testing.T) {
 	// Regression test: account ID must be validated before interpolating into URL.
 	// Other Twitter client paths guard the stored account ID with accountIDRe to
