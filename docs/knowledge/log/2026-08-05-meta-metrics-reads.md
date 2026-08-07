@@ -13,7 +13,7 @@ matching Google Ads' unit so a platform-agnostic dispatcher can normalize all pl
 scale. The existing platform-agnostic `/metrics` endpoint (wired via the orchestrator's optional-capability
 type assertion) now works for Meta campaigns, same as Google Ads (LFXV2-2993).
 
-**Fix** — Resolve outstanding Copilot review thread on PR #72 Meta metrics reads
+**Update** — Resolve outstanding Copilot review thread on PR #72 Meta metrics reads
 (`internal/platform/meta/metrics.go:160`).
 
 The spend-overflow guard compared the UNROUNDED `spend * 1_000_000` product against
@@ -29,7 +29,7 @@ Added `TestGetCampaignMetrics_SpendAtInt64BoundaryOverflows`, pinning a spend va
 scaled product rounds to exactly `2^63`; verified it fails without the fix and passes
 with it.
 
-**Fix** — Copilot flagged that `GetCampaignMetrics`'s failure-path log (`internal/service/brief.go`)
+**Update** — Copilot flagged that `GetCampaignMetrics`'s failure-path log (`internal/service/brief.go`)
 wrote `merr` — the ad-platform read error — into structured logs unbounded and unscrubbed.
 Meta's `*APIError.Error()` renders the Graph API's `Message` field verbatim (the parsed error
 message, or the raw response body when the envelope isn't a Graph error), which is untrusted:
