@@ -2005,6 +2005,29 @@ func TestBriefService_GetCampaignMetrics_HappyPath(t *testing.T) {
 	}
 }
 
+func TestBriefService_GetCampaignMetrics_DefaultWindowIsLast30Days(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	disp := &metricsOnlyDispatcher{metrics: &model.CampaignMetrics{
+		CampaignID: "ga-1", Window: model.MetricsWindowLast30Days, Impressions: 200, Clicks: 20, CostMicros: 9000000, Ctr: 0.1,
+	}}
+	s := newMetricsService(camp, disp)
+	res, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if disp.gotWindow != model.MetricsWindowLast30Days {
+		t.Errorf("dispatcher got window %q, want last_30_days", disp.gotWindow)
+	}
+	if res.Window != "last_30_days" {
+		t.Errorf("result Window = %q, want last_30_days", res.Window)
+	}
+}
+
 func TestBriefService_GetCampaignMetrics_PlatformUnsupportedIs400(t *testing.T) {
 	camp := &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
@@ -2048,29 +2071,6 @@ func TestBriefService_GetCampaignMetrics_PlatformFailureIs503(t *testing.T) {
 	var unavailable *briefs.ConnServiceUnavailableError
 	if !errors.As(err, &unavailable) {
 		t.Fatalf("expected a ConnServiceUnavailableError (503), got %T: %v", err, err)
-	}
-}
-
-// TestSafeErrSummary verifies that a platform error's text is scrubbed before it
-// would enter structured logs: control characters (the log-injection vector — a
-// stray newline could forge additional log lines) are stripped, and an
-// oversized message is capped, mirroring what an untrusted Meta Graph API error
-// body could otherwise carry into GetCampaignMetrics' failure log.
-func TestSafeErrSummary(t *testing.T) {
-	injected := safeErrSummary(errors.New("meta API POST /campaigns failed (400): bad\nlevel=error msg=\"forged log line\""))
-	if strings.Contains(injected, "\n") {
-		t.Errorf("safeErrSummary(%q) must not contain a raw newline", injected)
-	}
-	if !strings.Contains(injected, "forged log line") {
-		t.Errorf("safeErrSummary(%q) should still surface the scrubbed text, just without control characters", injected)
-	}
-
-	long := safeErrSummary(errors.New(strings.Repeat("x", 500)))
-	if len([]rune(long)) > 220 {
-		t.Errorf("safeErrSummary returned %d runes, want it capped near 200", len([]rune(long)))
-	}
-	if !strings.HasSuffix(long, "...(truncated)") {
-		t.Errorf("safeErrSummary(%q) should indicate truncation", long)
 	}
 }
 

@@ -245,7 +245,9 @@ type GetCampaignMetricsResponseBody struct {
 	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
 	// Clicks in window
 	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
-	// Cost in window, in micros of the ad account's currency
+	// Cost in window, in micro-units of the platform's native currency
+	// (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter,
+	// etc.)
 	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
@@ -2483,6 +2485,11 @@ func ValidateGetCampaignMetricsResponseBody(body *GetCampaignMetricsResponseBody
 	}
 	if body.Ctr == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
+	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days" || *body.Window == "last_14_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
+		}
 	}
 	return
 }
