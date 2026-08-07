@@ -98,9 +98,11 @@ func firstOrZero(metrics []int64) int64 {
 
 // dateRangeForWindow computes the start and end dates for a metrics window,
 // returning them as YYYY-MM-DD strings suitable for X Ads API parameters.
-// The X Ads stats endpoint uses exclusive-end-time boundaries: the returned
-// endDate is incremented by one day so that when combined with T00:00:00Z it
-// represents the start of the next day (exclusive upper bound of the range).
+// endDate is the LAST INCLUDED day, returned unincremented. The X Ads stats
+// endpoint uses an exclusive end boundary, so GetCampaignMetrics — not this
+// function — adds the day (AddDate(0, 0, 1)) when it builds end_time. Keep the
+// increment in exactly one place; adding it here too would silently widen every
+// window by a day.
 func dateRangeForWindow(window MetricsWindow, now time.Time) (startDate, endDate string) {
 	// Normalize to UTC for consistent date computation
 	now = now.UTC()

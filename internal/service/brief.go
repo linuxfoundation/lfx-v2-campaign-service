@@ -553,8 +553,8 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 // defaultMetricsWindowFor returns the window GetCampaignMetrics uses when the caller omits
 // the window parameter, for the given platform. last_30_days is the default for every
 // platform except X Ads: its stats endpoint caps queryable date ranges at 7 days per
-// request, so last_30_days always fails there (twitterMetricsWindow only maps today and
-// last_7_days). Falling through to last_30_days for any platform not listed here is
+// request, so last_30_days always fails there (twitterMetricsWindow only maps yesterday,
+// today, and last_7_days). Falling through to last_30_days for any platform not listed here is
 // intentional — a future platform with its own similarly narrow window support should add
 // a case rather than silently omit one and rediscover this the same way.
 func defaultMetricsWindowFor(platform model.Provider) model.MetricsWindow {

@@ -162,9 +162,8 @@ that report spend as a decimal-USD string. X omits a metric field entirely (not 
 there's no activity for it — a nil/missing array is read as 0, which is real "no data", not a
 decode failure. **UNVERIFIED ASSUMPTION**: the required `metric_groups=ENGAGEMENT,BILLING` and
 `placement=ALL_ON_TWITTER` params and this response shape follow the documented X Ads v12
-`stats/accounts/:account_id` contract, but have not been verified against a live X Ads account
-— mirrors the same disclosed-assumption convention in `internal/platform/googleads/metrics.go`
-and `internal/platform/linkedin/metrics.go`. CTR is computed as clicks/impressions (0 when
+`stats/accounts/:account_id` contract, but have not been verified against a live X Ads account.
+CTR is computed as clicks/impressions (0 when
 impressions is 0, never dividing by zero). Campaigns with zero activity in the window return
 zero-value metrics (not an error).
 
