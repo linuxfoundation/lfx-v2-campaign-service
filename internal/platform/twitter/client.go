@@ -718,6 +718,18 @@ func (c *Client) doRequest(ctx context.Context, method, path string, queryParams
 	return c.doRequestAbs(ctx, method, reqURL, path, queryParams)
 }
 
+// drainAndClose discards a bounded amount of an unread response body before closing
+// it. net/http only returns a connection to the idle pool when its body has been read
+// to EOF and closed; closing an unread body makes the transport tear the connection
+// down instead. On the 429 retry path that is exactly the wrong moment to do it —
+// every rate-limited response would cost a fresh TCP+TLS handshake for the retry that
+// follows. The limit matches readAll's: a body larger than maxResponseBody is not
+// worth draining, so that connection is allowed to close.
+func drainAndClose(resp *http.Response) {
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBody))
+	_ = resp.Body.Close()
+}
+
 // doRequestAbs is the shared HTTP path with OAuth1 signing and 429
 // exponential-backoff retry, targeting reqURL directly (no accountURL()
 // prefixing). logPath is used only for error labeling (apiError/transportError
@@ -773,11 +785,11 @@ func (c *Client) doRequestAbs(ctx context.Context, method, reqURL, logPath strin
 			// non-2xx return below. Surface the intended exhausted-rate-limit
 			// error instead.
 			if attempt >= retryMax {
-				_ = resp.Body.Close()
+				drainAndClose(resp)
 				return nil, &apiError{StatusCode: http.StatusTooManyRequests, Method: method, Path: path}
 			}
 			waitDur := c.parseRetryAfter(resp)
-			_ = resp.Body.Close()
+			drainAndClose(resp)
 			if waitDur > 0 {
 				// The server declared a reset time (Retry-After delay or
 				// X-Rate-Limit-Reset epoch). Honor it rather than clamping to a

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -117,6 +118,35 @@ func TestGetCampaignMetrics_NoActivity(t *testing.T) {
 	}
 	if metrics.Impressions != 0 || metrics.Clicks != 0 || metrics.CostMicros != 0 || metrics.Ctr != 0 {
 		t.Errorf("expected all zero-value metrics, got impressions=%d clicks=%d costMicros=%d ctr=%f", metrics.Impressions, metrics.Clicks, metrics.CostMicros, metrics.Ctr)
+	}
+}
+
+// TestGetCampaignMetrics_ZeroImpressionsWithClicksIsZeroCtr binds the `impressions > 0`
+// divide-by-zero guard. TestGetCampaignMetrics_NoActivity cannot: it returns through the
+// earlier `len(entities) == 0` branch and never reaches the CTR computation at all. Here
+// the response carries a real entity whose impressions bucket is explicitly [0] alongside
+// nonzero clicks, so the guard is the only thing standing between the caller and
+// +Inf — which json.Marshal rejects outright, breaking the metrics endpoint's response
+// serialization rather than merely reporting a wrong number.
+func TestGetCampaignMetrics_ZeroImpressionsWithClicksIsZeroCtr(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"data":[{"id":"12345","id_data":[{"metrics":{"impressions":[0],"clicks":[3],"billed_charge_local_micro":[0]}}]}]}`)
+	}))
+	defer server.Close()
+
+	metrics, err := testClient(server.URL).GetCampaignMetrics(context.Background(), "12345", WindowToday)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if metrics.Impressions != 0 || metrics.Clicks != 3 {
+		t.Fatalf("fixture did not reach the CTR computation: impressions=%d clicks=%d, want 0 and 3", metrics.Impressions, metrics.Clicks)
+	}
+	if metrics.Ctr != 0 {
+		t.Errorf("Ctr = %f, want 0 — clicks with zero impressions must not divide", metrics.Ctr)
+	}
+	if math.IsInf(metrics.Ctr, 0) || math.IsNaN(metrics.Ctr) {
+		t.Errorf("Ctr = %f is not JSON-serializable; json.Marshal fails on Inf/NaN", metrics.Ctr)
 	}
 }
 

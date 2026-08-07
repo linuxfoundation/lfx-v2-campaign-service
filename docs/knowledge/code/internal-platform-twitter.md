@@ -68,6 +68,10 @@ context expires DURING that backoff sleep, the client returns the 429 as a typed
 it would report "not modified" for a write that may have applied. This is reachable —
 `maxRetryWait` (90s) exceeds the orchestrator's `toggleCallTimeout` (45s), so a
 server-declared `Retry-After` in between is accepted for sleeping and then interrupted.
+Both 429 branches — the retry and the exhaustion — hand the response to `drainAndClose`,
+which discards up to `maxResponseBody` before closing. `net/http` only returns a
+connection to the idle pool after its body reaches EOF and is closed, so closing a 429's
+unread error envelope would make the very next retry reopen TCP and TLS.
 Redirect
 following is force-disabled (a shared `noFollow` `CheckRedirect` policy). For a
 `WithHTTPClient`-supplied client, `NewClient` builds a FRESH `*http.Client`
