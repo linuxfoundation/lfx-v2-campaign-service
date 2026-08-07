@@ -126,6 +126,53 @@ func TestBriefActor_UpdateMovesOnlyUpdatedBy(t *testing.T) {
 	}
 }
 
+// TestBriefActor_ApproveMovesApprovedByAndUpdatedBy covers the approval path end to end.
+//
+// Nothing else reaches it: the other service tests approve on context.Background(), and the
+// SQL-text test only proves approveBriefQuery binds updated_by to a placeholder — it cannot
+// tell whether the handler passes the context actor or nil into that placeholder. Approving is
+// the sign-off that lets a brief be dispatched to paid platforms, so "who signed off" and "who
+// touched this last" both have to name the approver, and the two columns are stamped from the
+// SAME bind parameter ($1).
+func TestBriefActor_ApproveMovesApprovedByAndUpdatedBy(t *testing.T) {
+	repo := newFakeBriefRepo()
+	s := newTestBriefService(repo)
+
+	author := &model.Actor{Name: "Ada Lovelace", Email: "ada@lf.dev", Username: "ada"}
+	approver := &model.Actor{Name: "Grace Hopper", Email: "grace@lf.dev", Username: "grace"}
+
+	created, err := s.CreateBrief(ctxWithActor(author), &briefs.CreateBriefPayload{
+		ProjectID: "cncf",
+		Brief:     &briefs.BriefInput{ProgramType: "events", EventSlug: "kubecon-2025"},
+	})
+	if err != nil {
+		t.Fatalf("CreateBrief: %v", err)
+	}
+
+	version := `"1"`
+	if _, err = s.ApproveBrief(ctxWithActor(approver), &briefs.ApproveBriefPayload{
+		ProjectID: "cncf", BriefID: created.ID, IfMatch: &version,
+	}); err != nil {
+		t.Fatalf("ApproveBrief: %v", err)
+	}
+
+	stored := repo.briefs[briefKey("cncf", created.ID)]
+	if stored.Status != model.BriefApproved {
+		t.Fatalf("status = %q, want approved", stored.Status)
+	}
+	if stored.ApprovedBy == nil || stored.ApprovedBy.Username != approver.Username {
+		t.Errorf("ApprovedBy = %+v, want the approver %+v", stored.ApprovedBy, approver)
+	}
+	if stored.UpdatedBy == nil || stored.UpdatedBy.Username != approver.Username {
+		t.Errorf("UpdatedBy = %+v, want the approver %+v — approving is a write, so it moves "+
+			"\"who touched this last\" as well as \"who signed off\"", stored.UpdatedBy, approver)
+	}
+	// Approving does not rewrite authorship: approveBriefQuery never names created_by.
+	if stored.CreatedBy == nil || stored.CreatedBy.Username != author.Username {
+		t.Errorf("CreatedBy = %+v, want the original author %+v", stored.CreatedBy, author)
+	}
+}
+
 // TestBriefActor_DeleteAttributesTheArchive covers the write most worth attributing: archiving
 // removes a brief from every list and cannot be undone through the API.
 func TestBriefActor_DeleteAttributesTheArchive(t *testing.T) {
