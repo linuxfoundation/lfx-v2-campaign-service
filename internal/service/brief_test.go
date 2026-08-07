@@ -2396,6 +2396,44 @@ func TestSafeErrSummary(t *testing.T) {
 // fix. What the handler does NOT do is bound the value, and it does not normalize
 // control characters for a handler that writes values unquoted. Those two are
 // safeErrSummary's guarantees, so those are what this test pins.
+// TestGetCampaignMetrics_WindowUnsupportedErrorIsScrubbedBeforeLogging covers the OTHER
+// failure-path log in this handler. The 2026-08-06 fragment claimed both call sites went
+// through safeErrSummary; only the default branch did. The window-unsupported branch is
+// reachable with the SAME kind of payload — its wrapped detail comes from the adapter,
+// which for Meta can carry the raw non-Graph response body — so an unbounded, control-
+// character-bearing string reached the sink through it. One test per call site, because a
+// test on either one alone passes while the other logs verbatim.
+func TestGetCampaignMetrics_WindowUnsupportedErrorIsScrubbedBeforeLogging(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderMetaAds,
+		PlatformCampaignID: "meta-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	raw := "window rejected upstream\nlevel=ERROR msg=forged " + strings.Repeat("x", 5000)
+	disp := &metricsOnlyDispatcher{err: fmt.Errorf("%w: %s", ErrMetricsWindowUnsupported, raw)}
+	s := newMetricsService(camp, disp)
+	if _, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	}); err == nil {
+		t.Fatal("expected the unsupported window to surface as an error")
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "window rejected upstream") {
+		t.Fatalf("scrubbing dropped the diagnostic text entirely:\n%s", logged)
+	}
+	if len(logged) > 1000 {
+		t.Errorf("the unbounded upstream body reached the log sink: record is %d bytes", len(logged))
+	}
+	if !strings.Contains(logged, "\\ufffd") && !strings.ContainsRune(logged, unicode.ReplacementChar) {
+		t.Errorf("the control character was not normalized before logging:\n%s", logged)
+	}
+}
+
 func TestGetCampaignMetrics_PlatformErrorIsScrubbedBeforeLogging(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()

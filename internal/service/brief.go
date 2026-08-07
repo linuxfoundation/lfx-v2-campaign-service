@@ -521,7 +521,7 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			// meant for an API client.
 			slog.WarnContext(ctx, "campaign metrics window unsupported by platform",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
-				"platform", existing.Platform, "window", window, "error", merr)
+				"platform", existing.Platform, "window", window, "error", safeErrSummary(merr))
 			// Provide platform-specific guidance on window support (e.g., X Ads' 7-day limit)
 			msg := "this window is not supported for the campaign's platform"
 			if existing.Platform == model.ProviderTwitterAds {

@@ -1184,9 +1184,16 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			if env.Error != nil && env.Error.Message != "" {
 				apiErr.Message = env.Error.Message
 			} else if snippet := strings.TrimSpace(string(raw)); snippet != "" {
-				// Non-Graph or malformed error body: surface a truncated snippet of
-				// the raw body so the real reason isn't lost.
-				apiErr.Message = truncate(snippet, 300)
+				// Non-Graph or malformed error body: surface a truncated snippet of the
+				// raw body so the real reason isn't lost. REDACT FIRST. This branch is
+				// reached exactly when the body is NOT a Graph diagnostic — a proxy/CDN/WAF
+				// page, an HTML error, or a reflection of the request we just sent — and
+				// this client authenticates by putting access_token (and appsecret_proof)
+				// in the query string, so a reflected request line carries live credentials.
+				// safeErrSummary at the log call bounds and sanitizes this text but does NOT
+				// redact it, so the only place the credential can be removed is here, before
+				// it enters the error chain at all.
+				apiErr.Message = truncate(redactCredentials(snippet), 300)
 			}
 			return apiErr
 		}
@@ -1645,6 +1652,33 @@ var wsRE = regexp.MustCompile(`\s+`)
 // the TS `.replace(/\s+/g, '-')`.
 func collapseSpacesToDash(s string) string {
 	return wsRE.ReplaceAllString(s, "-")
+}
+
+// credentialRE matches credential-shaped material that a reflected or proxied
+// error body can carry back: this client authenticates with access_token and
+// appsecret_proof as QUERY PARAMETERS, so any upstream that echoes the request
+// line echoes a live token. The three forms below are the ones actually
+// observed in Meta-adjacent error bodies — query/form pairs, JSON members, and
+// an Authorization header rendered in a proxy debug page.
+var credentialRE = regexp.MustCompile(
+	`(?i)("?(?:access_token|appsecret_proof|client_secret|refresh_token)"?\s*[=:]\s*"?[^&\s"'<>,}]+"?)|(bearer\s+[A-Za-z0-9._~+/=-]+)`)
+
+// redactCredentials removes credential values from an untrusted upstream body
+// before it is stored in an error. The KEY is kept — knowing that the body
+// echoed an access_token is itself diagnostic — and only the VALUE is replaced,
+// so the snippet stays useful for debugging without carrying a live secret into
+// the error chain, the logs, or a client-facing 5xx.
+func redactCredentials(s string) string {
+	return credentialRE.ReplaceAllStringFunc(s, func(m string) string {
+		if i := strings.IndexAny(m, "=:"); i >= 0 {
+			return m[:i+1] + "[REDACTED]"
+		}
+		// "Bearer <token>": keep the scheme, drop the token.
+		if i := strings.IndexAny(m, " \t"); i >= 0 {
+			return m[:i+1] + "[REDACTED]"
+		}
+		return "[REDACTED]"
+	})
 }
 
 // truncateErr renders an error's message for inclusion in a user-visible step,

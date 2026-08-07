@@ -1628,6 +1628,72 @@ func TestGraphAPIErrorMapping(t *testing.T) {
 	}
 }
 
+// TestNonGraphErrorBodyRedactsReflectedCredentials is the other half of
+// TestNonGraphErrorBodySurfaces. That test pins that the raw body is NOT dropped; this
+// one pins WHAT MUST BE DROPPED FROM IT. The two constrain each other: a fix that
+// satisfies this one by discarding the snippet fails that one, and vice versa.
+//
+// The vector is specific to this client: it authenticates by putting access_token (and
+// appsecret_proof) in the QUERY STRING, so any upstream that echoes the request line —
+// a WAF block page, a proxy debug page, an API gateway 4xx — hands a LIVE credential
+// straight back in the response body, which the non-Graph fallback then stores in
+// APIError.Message and every log/5xx downstream inherits. safeErrSummary in
+// internal/service bounds and sanitizes that text but does not redact it, so the
+// redaction has to happen here, before it enters the error chain.
+func TestNonGraphErrorBodyRedactsReflectedCredentials(t *testing.T) {
+	const sentinel = "EAAGsentinelLIVETOKEN123"
+	// Deliberately printable and free of control characters: safeErrSummary would pass
+	// this through untouched, which is the point.
+	body := `<html>403 blocked by proxy: GET /v21.0/act_1/campaigns?access_token=` + sentinel +
+		`&appsecret_proof=` + sentinel + `abc (header "Authorization: Bearer ` + sentinel + `")</html>`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"name":"x"}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, body)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: sentinel}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		Project:         "tlf",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US"},
+		Budget:          10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err == nil {
+		t.Fatalf("expected an error")
+	}
+	if strings.Contains(err.Error(), sentinel) {
+		t.Errorf("the reflected credential survived into the error chain:\n%s", err.Error())
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error type = %T, want an unwrappable *APIError", err)
+	}
+	if strings.Contains(apiErr.Message, sentinel) {
+		t.Errorf("APIError.Message = %q, want the credential values redacted", apiErr.Message)
+	}
+	// The diagnostic value has to survive, or the redaction is just deletion: the
+	// operator still needs to see that a proxy blocked the call and that the body
+	// echoed a token.
+	for _, want := range []string{"403 blocked by proxy", "access_token", "[REDACTED]"} {
+		if !strings.Contains(apiErr.Message, want) {
+			t.Errorf("APIError.Message = %q, want it to still contain %q", apiErr.Message, want)
+		}
+	}
+}
+
 // TestNonGraphErrorBodySurfaces verifies that a non-2xx response whose body is
 // NOT a Graph error envelope still surfaces the raw body in the error, rather
 // than pointing at nonexistent server logs. A 5xx on the campaign create is
