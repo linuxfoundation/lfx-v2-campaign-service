@@ -34,5 +34,4 @@ that `$11`→`$10` edit.
 only", which contradicted `docs/channel-connections-schema.md` and
 `audience_repo.go:30,73,97`: `campaign_audiences` has carried `created_by` since it landed.
 The row now states the coverage precisely — briefs and connections carry both columns,
-audiences `created_by` only (there is no update path; an audience is rebuilt, not edited),
-campaigns neither.
+audiences `created_by` only, campaigns neither.
