@@ -17,6 +17,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // ---- fakes ----------------------------------------------------------------
@@ -601,5 +602,120 @@ func TestReddit_ToggleStatus_5xxIsUnconfirmed(t *testing.T) {
 	var unconf interface{ Unconfirmed() bool }
 	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
 		t.Errorf("a 5xx toggle must be Unconfirmed(), got %T: %v", err, err)
+	}
+}
+
+// TestReddit_ReadMetrics_UnsupportedWindowIs400 verifies ReadMetrics wraps the platform
+// client's window-rejection error with domain.ErrMetricsWindowUnsupported, so brief.go's
+// GetCampaignMetrics maps it to 400 (caller input) instead of falling through to 503
+// (upstream failure) — Reddit's reporting endpoint has no "yesterday" or "last_14_days"
+// date-range mapping (see dateRangeForWindow), and the platform is never contacted.
+func TestReddit_ReadMetrics_UnsupportedWindowIs400(t *testing.T) {
+	// Reddit metrics are default-OFF while the reporting contract is unverified;
+	// opt this test in so it exercises the read path rather than the gate.
+	t.Setenv(constants.EnvRedditMetricsEnabled, "true")
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+	)
+	_, err := d.ReadMetrics(
+		context.Background(), "proj", model.ProviderRedditAds,
+		toggleCampaign("t3_c", "t5_ag", "t6_ad"),
+		model.MetricsWindowYesterday,
+	)
+	if err == nil {
+		t.Fatal("expected an error for a window Reddit cannot map to a date range")
+	}
+	if !errors.Is(err, domain.ErrMetricsWindowUnsupported) {
+		t.Errorf("expected err to wrap domain.ErrMetricsWindowUnsupported (so brief.go maps it to 400), got: %v", err)
+	}
+	if !errors.Is(err, reddit.ErrUnsupportedWindow) {
+		t.Errorf("expected err to still wrap reddit.ErrUnsupportedWindow, got: %v", err)
+	}
+}
+
+// TestReddit_ReadMetrics_Success verifies the happy path: resolveRedditClient succeeds
+// and ReadMetrics delegates to the client, returning its result unmodified.
+func TestReddit_ReadMetrics_Success(t *testing.T) {
+	// Reddit metrics are default-OFF while the reporting contract is unverified;
+	// opt this test in so it exercises the read path rather than the gate.
+	t.Setenv(constants.EnvRedditMetricsEnabled, "true")
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"campaign_id":"t3_c","impressions":1000,"clicks":10,"spend":"5.00"}]}`))
+	}))
+	defer api.Close()
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+	}))
+	defer tok.Close()
+
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+		reddit.WithBaseURL(api.URL+"/api/v3"), reddit.WithTokenURL(tok.URL),
+	)
+	metrics, err := d.ReadMetrics(
+		context.Background(), "proj", model.ProviderRedditAds,
+		toggleCampaign("t3_c", "t5_ag", "t6_ad"),
+		model.MetricsWindowToday,
+	)
+	if err != nil {
+		t.Fatalf("ReadMetrics: %v", err)
+	}
+	if metrics.Impressions != 1000 || metrics.Clicks != 10 || metrics.CostMicros != 5_000_000 {
+		t.Errorf("unexpected metrics: %+v", metrics)
+	}
+}
+
+// TestReddit_ReadMetrics_MissingPlatformCampaignID verifies the guard against dispatching
+// to a campaign that was never provisioned (or is otherwise missing its platform id) —
+// resolveRedditClient is never reached, and the connection is never contacted.
+func TestReddit_ReadMetrics_MissingPlatformCampaignID(t *testing.T) {
+	// Reddit metrics are default-OFF while the reporting contract is unverified;
+	// opt this test in so it exercises the read path rather than the gate.
+	t.Setenv(constants.EnvRedditMetricsEnabled, "true")
+	d := NewRedditDispatcher(
+		fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{},
+	)
+	camp := toggleCampaign("", "t5_ag", "t6_ad")
+	_, err := d.ReadMetrics(context.Background(), "proj", model.ProviderRedditAds, camp, model.MetricsWindowToday)
+	if err == nil {
+		t.Fatal("expected an error for a campaign with no platform campaign ID")
+	}
+}
+
+// TestReddit_ReadMetrics_ResolutionErrorPropagates verifies that a connection-resolution
+// failure (e.g. no connection on file) is returned to the caller instead of being masked.
+func TestReddit_ReadMetrics_ResolutionErrorPropagates(t *testing.T) {
+	// Reddit metrics are default-OFF while the reporting contract is unverified;
+	// opt this test in so it exercises the read path rather than the gate.
+	t.Setenv(constants.EnvRedditMetricsEnabled, "true")
+	wantErr := errors.New("connection lookup failed")
+	d := NewRedditDispatcher(fakeConnReader{err: wantErr}, identityEncryptor{})
+	_, err := d.ReadMetrics(
+		context.Background(), "proj", model.ProviderRedditAds,
+		toggleCampaign("t3_c", "t5_ag", "t6_ad"),
+		model.MetricsWindowToday,
+	)
+	if !errors.Is(err, wantErr) {
+		t.Errorf("expected the resolution error to propagate, got: %v", err)
+	}
+}
+
+// TestReddit_ReadMetrics_DisabledByDefault pins the gate. Reddit's reporting contract is a
+// guess (LFXV2-2995): a 200 from a guessed shape looks authoritative and the response carries
+// none of the caveats, so the capability must stay off until the shape is verified against a
+// live ad account. This asserts BOTH halves — the default is off with no env set, and any
+// value other than "true" is also off, so a typo'd "1"/"yes" fails closed rather than open.
+func TestReddit_ReadMetrics_DisabledByDefault(t *testing.T) {
+	for _, val := range []string{"", "1", "yes", "TRUE", "false"} {
+		t.Run("REDDIT_METRICS_ENABLED="+val, func(t *testing.T) {
+			t.Setenv(constants.EnvRedditMetricsEnabled, val)
+			d := NewRedditDispatcher(fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{})
+			camp := &model.Campaign{PlatformCampaignID: "camp_123"}
+			_, err := d.ReadMetrics(context.Background(), "p1", model.ProviderRedditAds, camp, model.MetricsWindowLast7Days)
+			if !errors.Is(err, domain.ErrMetricsUnsupported) {
+				t.Fatalf("expected ErrMetricsUnsupported so the endpoint answers 400, got %v", err)
+			}
+		})
 	}
 }

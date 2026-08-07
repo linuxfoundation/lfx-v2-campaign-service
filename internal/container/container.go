@@ -84,17 +84,20 @@ func (notReady) Ready(context.Context) bool { return false }
 
 // dispatchDrainTimeout bounds how long Container.Close waits for in-flight
 // campaign dispatch to finish before the pool is closed. Together with the
-// orchestrator's post-cancel grace (service.CancelGracePeriod) it forms
-// ContainerCloseTimeout, which is reserved out of the overall graceful-shutdown
-// budget (constants.DefaultShutdownTimeout) so the HTTP-drain phase and this
-// phase can't sum past it and get SIGKILLed. Validated by the init() below.
+// orchestrator's post-cancel grace (service.CancelGracePeriod) and the sweeper-stop
+// wait (sweeperStopTimeout) it forms ContainerCloseTimeout, which is reserved out of
+// the overall graceful-shutdown budget (constants.DefaultShutdownTimeout) so the
+// HTTP-drain phase and this phase can't sum past it and get SIGKILLed. Validated by
+// the init() below.
 //
-// Sized so dispatchDrainTimeout + CancelGracePeriod leaves a positive HTTP-drain
-// budget: CancelGracePeriod grew to cover the post-provider persist AND the
-// terminal finalize write (both detached, both must complete during grace), so
-// the drain window is trimmed to keep the total within DefaultShutdownTimeout. Trimmed
-// again (6s -> 4s) when indexer.DrainTimeout joined ContainerCloseTimeout, so the HTTP phase
-// keeps a positive budget rather than the total overrunning.
+// Sized so sweeperStopTimeout + relayStopTimeout + dispatchDrainTimeout +
+// CancelGracePeriod + indexer.DrainTimeout leaves a positive HTTP-drain budget:
+// CancelGracePeriod grew to cover the post-provider persist AND the terminal
+// finalize write (both detached, both must complete during grace), so the drain
+// window is trimmed to keep the total within DefaultShutdownTimeout. Trimmed again
+// (6s -> 4s) when indexer.DrainTimeout joined ContainerCloseTimeout, so the HTTP
+// phase keeps a positive budget rather than the total overrunning.
+//
 // relayStopTimeout bounds the wait for the index relay's in-flight pass at shutdown. Small
 // deliberately: this precedes the dispatch drain, and abandoning a pass is safe because
 // unpublished rows stay pending for the next process — that is what the outbox is for.
@@ -102,17 +105,17 @@ const relayStopTimeout = 250 * time.Millisecond
 
 const dispatchDrainTimeout = 4 * time.Second
 
-// ContainerCloseTimeout is the wall-clock budget for Container.Close: the
+// ContainerCloseTimeout is the wall-clock budget for Container.Close: the sweeper-stop
+// wait (sweeperStopTimeout), the index relay's stop wait (relayStopTimeout), the
 // orchestrator drain (dispatchDrainTimeout), its post-cancel grace
-// (service.CancelGracePeriod), the index publisher's connection drain
-// (indexer.DrainTimeout), AND the index relay's stop wait (relayStopTimeout). The last term is not optional bookkeeping — Close really
-// does drain NATS after the pool closes, so omitting it understated the phase by
-// that much and let the two phases sum PAST DefaultShutdownTimeout (they already
-// consumed all 25s with zero headroom), which is exactly the SIGKILL-mid-drain
-// this budget exists to prevent. The server budgets the HTTP-shutdown phase and
-// this container-close phase separately (see HTTPShutdownTimeout), so the total
-// graceful shutdown is a true sum bounded by constants.DefaultShutdownTimeout.
-const ContainerCloseTimeout = dispatchDrainTimeout + service.CancelGracePeriod + indexer.DrainTimeout + relayStopTimeout
+// (service.CancelGracePeriod), AND the index publisher's connection drain
+// (indexer.DrainTimeout). None of these terms are optional bookkeeping — Close really
+// does wait on all of them in sequence, so omitting any one understates the phase and
+// lets the two phases sum PAST DefaultShutdownTimeout, which is exactly the
+// SIGKILL-mid-drain this budget exists to prevent. The server budgets the HTTP-shutdown
+// phase and this container-close phase separately (see HTTPShutdownTimeout), so the
+// total graceful shutdown is a true sum bounded by constants.DefaultShutdownTimeout.
+const ContainerCloseTimeout = sweeperStopTimeout + relayStopTimeout + dispatchDrainTimeout + service.CancelGracePeriod + indexer.DrainTimeout
 
 // HTTPShutdownTimeout is the wall-clock budget for draining in-flight HTTP
 // handlers before the container is closed. It is whatever remains of the overall
@@ -840,17 +843,20 @@ func initDatabase(parent context.Context, dsn string) (*postgres.Pool, error) {
 var migrateMu sync.Mutex
 
 // Close releases any resources held by the container. It first stops the background
-// DB-init goroutine (if a cold start is still retrying), then drains in-flight
-// campaign dispatch so a dispatch that already created an upstream campaign isn't
-// cut off before it persists, THEN closes the database pool.
+// DB-init goroutine (if a cold start is still retrying), then stops the periodic
+// stuck-claim sweeper, then drains in-flight campaign dispatch so a dispatch that
+// already created an upstream campaign isn't cut off before it persists, THEN closes
+// the database pool.
 //
-// Orchestrator.Shutdown runs two separately-budgeted phases: a clean drain
-// bounded by dispatchDrainTimeout, then (only if that elapses) a post-cancel
-// grace bounded by CancelGracePeriod. Both must fit within ctx, so ctx MUST
-// carry the full ContainerCloseTimeout (= dispatchDrainTimeout +
-// CancelGracePeriod), not just the drain timeout — otherwise the grace phase
-// would have zero budget and the pool could close while a just-cancelled
-// dispatch is still finalizing job/campaign state.
+// The stuck-claim sweeper stop (sweeperStopTimeout) is waited on HERE, by Close, before
+// Shutdown is called — Orchestrator.Shutdown owns only two separately-budgeted phases: a
+// clean dispatch drain (dispatchDrainTimeout), then (only if that elapses) a post-cancel
+// grace (CancelGracePeriod). (Shutdown does cancel its own periodic recovery sweeper, but
+// that is an unbudgeted cancel, not a wait.) All of these must fit within ctx, so ctx MUST
+// carry the full ContainerCloseTimeout (= sweeperStopTimeout + relayStopTimeout +
+// dispatchDrainTimeout + CancelGracePeriod + indexer.DrainTimeout), not just the drain
+// timeout — otherwise the grace phase would have zero budget and the pool could close
+// while a just-cancelled dispatch is still finalizing job/campaign state.
 // setIndexRelay installs and starts a relay under c.mu. The 503 cold-start path assigns from the
 // init goroutine while Close may read concurrently, so the field is mutex-guarded like c.pool.
 func (c *Container) setIndexRelay(relay *indexer.Relay) {

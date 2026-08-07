@@ -644,13 +644,42 @@ func TestGoogleAds_ToggleStatus_AlreadyCanceledContextSendsNothing(t *testing.T)
 	}
 }
 
-// provisionedGoogleAdsCampaign returns a campaign whose persisted Result blob carries the
-// ad group/ad ids the GA-3b create path stores, so ToggleStatus's cascade has children to flip.
-func provisionedGoogleAdsCampaign() *model.Campaign {
+// googleAdsCampaignWithChildrenNoTargeting returns a campaign whose persisted Result blob
+// carries the ad group/ad ids the GA-3b create path stores, so ToggleStatus's PAUSE cascade
+// has children to flip — but NO keywordCriteriaIds. It is deliberately not fully
+// provisioned: this is the shape that exercises every PAUSE path (which does not care about
+// targeting) and, on ACTIVATE, the provisioning guard's second condition. Use the inline
+// blob with keywordCriteriaIds (see ActivateSucceedsChildrenFirst) for the activatable shape.
+func googleAdsCampaignWithChildrenNoTargeting() *model.Campaign {
 	return &model.Campaign{
 		Platform:           model.ProviderGoogleAds,
 		PlatformCampaignID: "777",
 		Result:             json.RawMessage(`{"adGroupId":"333","adId":"444"}`),
+	}
+}
+
+// TestGoogleAds_ToggleStatus_ActivateRefusedWhenChildIDsMissing pins the multi-entity cascade
+// rule for the case Bugbot flagged: keyword targeting alone is not enough to activate. A
+// campaign whose ad group/ad create hit a duplicate-name orphan or unconfirmed outcome (see
+// createAdGroupAndAd) has keyword criteria recorded but no ad group/ad id to cascade to.
+// ACTIVATE must refuse locally with ErrCampaignNotProvisioned rather than reaching
+// UpdateAdGroupAndAdStatus with an empty id, which would surface as a plain client error.
+func TestGoogleAds_ToggleStatus_ActivateRefusedWhenChildIDsMissing(t *testing.T) {
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+	)
+	camp := &model.Campaign{
+		Platform:           model.ProviderGoogleAds,
+		PlatformCampaignID: "777",
+		// Keyword targeting is provisioned, but the ad group/ad ids are absent.
+		Result: json.RawMessage(`{"keywordCriteriaIds":["111"]}`),
+	}
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected ACTIVATE to be refused when ad group/ad ids are missing")
+	}
+	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
+		t.Errorf("expected ErrCampaignNotProvisioned, got %T: %v", err, err)
 	}
 }
 
@@ -683,7 +712,7 @@ func TestGoogleAds_ToggleStatus_PauseCascadesToChildren(t *testing.T) {
 		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
 		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
 	)
-	camp := provisionedGoogleAdsCampaign()
+	camp := googleAdsCampaignWithChildrenNoTargeting()
 	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunPaused); err != nil {
 		t.Fatalf("ToggleStatus: %v", err)
 	}
@@ -701,17 +730,20 @@ func TestGoogleAds_ToggleStatus_PauseCascadesToChildren(t *testing.T) {
 	}
 }
 
-// TestGoogleAds_ToggleStatus_ActivateCascadesChildrenFirst_Refused verifies that
-// ACTIVATE is refused in GA-3c until GA-4 provisions targeting criteria. GA-3b creates
-// ad group + ad but no keywords/audience targeting, so activating would report false success.
-func TestGoogleAds_ToggleStatus_ActivateCascadesChildrenFirst_Refused(t *testing.T) {
+// TestGoogleAds_ToggleStatus_ActivateWithoutKeywordCriteriaIsNotProvisioned pins the second
+// condition of the activation guard, the one this slice adds: ad group + ad ids alone are not
+// enough. A campaign created before targeting was provisioned has children to cascade to but
+// no keyword criteria, so enabling it would report success for a campaign that cannot serve.
+// The refusal is local — no dispatcher client is configured here, so any API call would fail
+// with a connection error rather than ErrCampaignNotProvisioned.
+func TestGoogleAds_ToggleStatus_ActivateWithoutKeywordCriteriaIsNotProvisioned(t *testing.T) {
 	d := NewGoogleAdsDispatcher(
 		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
 	)
-	camp := provisionedGoogleAdsCampaign()
+	camp := googleAdsCampaignWithChildrenNoTargeting()
 	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive)
 	if err == nil {
-		t.Fatal("expected ACTIVATE to be refused in GA-3c (targeting criteria not yet provisioned)")
+		t.Fatal("expected ACTIVATE to be refused: keyword criteria are not provisioned")
 	}
 	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
 		t.Errorf("expected ErrCampaignNotProvisioned, got %v", err)
@@ -747,7 +779,7 @@ func TestGoogleAds_ToggleStatus_PauseCascadeStopsOnChildFailure(t *testing.T) {
 		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
 		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
 	)
-	camp := provisionedGoogleAdsCampaign()
+	camp := googleAdsCampaignWithChildrenNoTargeting()
 	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunPaused)
 	if err == nil {
 		t.Fatal("expected an error when the child ad-group mutate fails")
@@ -797,7 +829,7 @@ func TestGoogleAds_ToggleStatus_PauseCascadeChildDefiniteFailureIsUnconfirmed(t 
 		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
 		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
 	)
-	camp := provisionedGoogleAdsCampaign()
+	camp := googleAdsCampaignWithChildrenNoTargeting()
 	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunPaused)
 	if err == nil {
 		t.Fatal("expected an error when the child ad-group mutate fails")
@@ -817,20 +849,291 @@ func TestGoogleAds_ToggleStatus_PauseCascadeChildDefiniteFailureIsUnconfirmed(t 
 	}
 }
 
-// TestGoogleAds_ToggleStatus_ActivateCascadeStopsOnCampaignFailure_Refused verifies that
-// ACTIVATE is refused (it's re-enabled in GA-4 once targeting is provisioned).
-func TestGoogleAds_ToggleStatus_ActivateCascadeStopsOnCampaignFailure_Refused(t *testing.T) {
+// TestGoogleAds_ToggleStatus_ActivateGuardRunsBeforeAnyMutate pins the ORDERING of the
+// activation guard: an unprovisioned campaign is refused before the cascade starts, so no
+// child is left enabled by a run that then refuses. The dispatcher here has no client
+// options at all, so if the guard were checked after the first mutate the error would be a
+// connection failure instead of ErrCampaignNotProvisioned.
+func TestGoogleAds_ToggleStatus_ActivateGuardRunsBeforeAnyMutate(t *testing.T) {
 	d := NewGoogleAdsDispatcher(
 		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
 	)
-	camp := provisionedGoogleAdsCampaign()
+	camp := googleAdsCampaignWithChildrenNoTargeting()
 	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive)
 	if err == nil {
-		t.Fatal("expected ACTIVATE to be refused in GA-3c")
+		t.Fatal("expected ACTIVATE to be refused before any mutate is sent")
 	}
 	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
 		t.Errorf("expected ErrCampaignNotProvisioned, got %v", err)
 	}
+}
+
+// TestGoogleAds_ToggleStatus_ActivateChildDefiniteFailureIsNotUnconfirmed verifies that on
+// ACTIVATE (children-first), a definite child failure (4xx) is NOT wrapped as unconfirmed.
+// The child mutate happens before the campaign gate is opened; a definite error means the
+// change was not applied upstream, so the failure is clean (not a partial cascade).
+func TestGoogleAds_ToggleStatus_ActivateChildDefiniteFailureIsNotUnconfirmed(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		// Ad group/ad mutate fails with definite 4xx (validation error)
+		if strings.HasSuffix(r.URL.Path, "adGroups:mutate") || strings.HasSuffix(r.URL.Path, "adGroupAds:mutate") {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"invalid targeting"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	// Must have targeting criteria provisioned for ACTIVATE to be allowed
+	camp := &model.Campaign{
+		Platform:           model.ProviderGoogleAds,
+		PlatformCampaignID: "777",
+		Result:             json.RawMessage(`{"adGroupId":"333","adId":"444","keywordCriteriaIds":["999"]}`),
+	}
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected an error when the child ad-group mutate fails")
+	}
+	// Verify the error is NOT wrapped as unconfirmed
+	var unconf interface{ Unconfirmed() bool }
+	if errors.As(err, &unconf) && unconf.Unconfirmed() {
+		t.Errorf("a definite 4xx child failure must NOT be reported UNCONFIRMED, got: %v", err)
+	}
+	mu.Lock()
+	gotPaths := append([]string(nil), paths...)
+	mu.Unlock()
+	// Should only have the child mutate, no campaign mutate (campaign gate never opened)
+	if len(gotPaths) != 1 {
+		t.Fatalf("issued %d calls, want 1 (ad group mutate only — no campaign mutate after definite failure): %v", len(gotPaths), gotPaths)
+	}
+	if !strings.HasSuffix(gotPaths[0], "adGroups:mutate") {
+		t.Errorf("path = %v, want adGroups:mutate", gotPaths[0])
+	}
+}
+
+// TestGoogleAds_ToggleStatus_ActivateSecondChildDefiniteFailureIsUnconfirmed verifies that a
+// definite second-child failure (adGroupAds:mutate 4xx) on ACTIVATE is a partial cascade: the
+// first child (ad group) has already been changed, so the outcome of the second child is
+// definitively unknown — must be wrapped as unconfirmed.
+func TestGoogleAds_ToggleStatus_ActivateSecondChildDefiniteFailureIsUnconfirmed(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		// Only the second child (adGroupAds:mutate) fails; ad group succeeds
+		if strings.HasSuffix(r.URL.Path, "adGroupAds:mutate") {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"invalid ad status"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/adGroups/333"}]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	// Must have targeting criteria provisioned for ACTIVATE to be allowed
+	camp := &model.Campaign{
+		Platform:           model.ProviderGoogleAds,
+		PlatformCampaignID: "777",
+		Result:             json.RawMessage(`{"adGroupId":"333","adId":"444","keywordCriteriaIds":["999"]}`),
+	}
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected an error when the second child (ad) mutate fails")
+	}
+	// Verify the error IS wrapped as unconfirmed (partial cascade)
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a definite 4xx second-child failure must be reported UNCONFIRMED, got: %v", err)
+	}
+	mu.Lock()
+	gotPaths := append([]string(nil), paths...)
+	mu.Unlock()
+	// Should have ad-group mutate and ad mutate, but no campaign mutate (stopped by ad failure)
+	if len(gotPaths) != 2 {
+		t.Fatalf("issued %d calls, want 2 (ad group, then ad — no campaign mutate after ad failure): %v", len(gotPaths), gotPaths)
+	}
+	if !strings.HasSuffix(gotPaths[0], "adGroups:mutate") || !strings.HasSuffix(gotPaths[1], "adGroupAds:mutate") {
+		t.Errorf("paths = %v, want [adGroups:mutate, adGroupAds:mutate]", gotPaths)
+	}
+}
+
+// TestGoogleAds_ToggleStatus_ActivateCampaignDefiniteFailureIsUnconfirmed pins the reverse
+// case: on ACTIVATE, once the children have already succeeded, ANY campaign mutate failure —
+// including a definite 4xx — is a genuine partial cascade (the children already changed, the
+// campaign's outcome is unknown) and must be reported Unconfirmed, the same as the PAUSE
+// path's child-after-campaign wrap.
+func TestGoogleAds_ToggleStatus_ActivateCampaignDefiniteFailureIsUnconfirmed(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		if strings.HasSuffix(r.URL.Path, "campaigns:mutate") {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"invalid campaign status"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	camp := &model.Campaign{
+		Platform:           model.ProviderGoogleAds,
+		PlatformCampaignID: "777",
+		Result:             json.RawMessage(`{"adGroupId":"333","adId":"444","keywordCriteriaIds":["999"]}`),
+	}
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected an error when the campaign mutate fails")
+	}
+	var unconf interface{ Unconfirmed() bool }
+	if !errors.As(err, &unconf) || !unconf.Unconfirmed() {
+		t.Errorf("a definite 4xx campaign failure after the children already succeeded must be reported UNCONFIRMED, got %T: %v", err, err)
+	}
+	mu.Lock()
+	gotPaths := append([]string(nil), paths...)
+	mu.Unlock()
+	// adGroups + adGroupAds mutate (children) then the failing campaigns mutate.
+	if len(gotPaths) != 3 {
+		t.Fatalf("issued %d calls, want 3 (adGroups, adGroupAds, then the failing campaign mutate): %v", len(gotPaths), gotPaths)
+	}
+	if !strings.HasSuffix(gotPaths[2], "campaigns:mutate") {
+		t.Errorf("path = %v, want campaigns:mutate", gotPaths[2])
+	}
+}
+
+func TestGoogleAds_DispatchWiresKeywordsAndAudienceSegments(t *testing.T) {
+	// Verify that the dispatcher wires keywords and audience segments from the config
+	// through to the client, and that both reach the criteria endpoint. A typo or dropped
+	// mapping in either field would leave this test green while the feature was broken.
+	var mu sync.Mutex
+	var sawCriteria bool
+	var criteriaOps []map[string]any
+	opts, _ := googleAdsServers(t,
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+		},
+	)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
+		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroups/333"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupAds/333~444"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroupCriteria:mutate"):
+			var body struct {
+				Operations []map[string]any `json:"operations"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			mu.Lock()
+			sawCriteria = true
+			criteriaOps = body.Operations
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"results":[`+
+				`{"resourceName":"customers/1234567890/adGroupCriteria/333~1"},`+
+				`{"resourceName":"customers/1234567890/adGroupCriteria/333~2"},`+
+				`{"resourceName":"customers/1234567890/adGroupCriteria/333~3"}]}`)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(apiSrv.Close)
+	opts = append(opts, googleads.WithBaseURL(apiSrv.URL))
+
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	cfg := json.RawMessage(`{
+		"googleAdsConfig":{
+			"budget":50,
+			"keywords":[
+				{"text":"kubernetes","matchType":"EXACT"},
+				{"text":"go programming","matchType":"PHRASE"}
+			],
+			"audienceSegments":["customers/123/userLists/456"]
+		}
+	}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if camp == nil {
+		t.Fatal("expected a campaign result")
+	}
+	mu.Lock()
+	if !sawCriteria {
+		mu.Unlock()
+		t.Error("adGroupCriteria:mutate must be called when keywords/audience segments are supplied")
+		return
+	}
+	if len(criteriaOps) != 3 {
+		mu.Unlock()
+		t.Fatalf("criteria operations count = %d, want 3 (2 keywords + 1 audience segment)", len(criteriaOps))
+	}
+	// Verify the keyword operations have the correct shape
+	kw1 := criteriaOps[0]["create"].(map[string]any)
+	if kw, ok := kw1["keyword"].(map[string]any); !ok || kw["text"] != "kubernetes" || kw["matchType"] != "EXACT" {
+		mu.Unlock()
+		t.Errorf("keyword[0] = %v, want {text: kubernetes, matchType: EXACT}", kw1["keyword"])
+		return
+	}
+	kw2 := criteriaOps[1]["create"].(map[string]any)
+	if kw, ok := kw2["keyword"].(map[string]any); !ok || kw["text"] != "go programming" || kw["matchType"] != "PHRASE" {
+		mu.Unlock()
+		t.Errorf("keyword[1] = %v, want {text: go programming, matchType: PHRASE}", kw2["keyword"])
+		return
+	}
+	// Verify the audience segment operation has the correct shape
+	aud := criteriaOps[2]["create"].(map[string]any)
+	if ul, ok := aud["userList"].(map[string]any); !ok || ul["userList"] != "customers/123/userLists/456" {
+		mu.Unlock()
+		t.Errorf("audience segment = %v, want {userList: customers/123/userLists/456}", aud["userList"])
+		return
+	}
+	mu.Unlock()
 }
 
 // ---- googleAdsChildIDs ------------------------------------------------------
@@ -855,6 +1158,53 @@ func TestGoogleAdsChildIDs(t *testing.T) {
 				t.Errorf("googleAdsChildIDs(%v) = (%q, %q), want (%q, %q)", tc.campaign, gotAdGroup, gotAd, tc.wantAdGroup, tc.wantAd)
 			}
 		})
+	}
+}
+
+// TestGoogleAds_ToggleStatus_ActivateSucceedsChildrenFirst pins the GA-4 happy path that the
+// refusal tests above cannot cover: with targeting criteria provisioned, ACTIVATE issues all
+// three mutates, children FIRST (ad group, then ad, then campaign), and returns nil. The
+// ordering is the safety property — the campaign gate is opened last so no traffic is served
+// against an ad group or ad that is still paused.
+func TestGoogleAds_ToggleStatus_ActivateSucceedsChildrenFirst(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	camp := &model.Campaign{
+		Platform:           model.ProviderGoogleAds,
+		PlatformCampaignID: "777",
+		Result:             json.RawMessage(`{"adGroupId":"333","adId":"444","keywordCriteriaIds":["999"]}`),
+	}
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive); err != nil {
+		t.Fatalf("ACTIVATE with provisioned targeting must succeed, got: %v", err)
+	}
+	mu.Lock()
+	gotPaths := append([]string(nil), paths...)
+	mu.Unlock()
+	if len(gotPaths) != 3 {
+		t.Fatalf("issued %d calls, want 3 (ad group, ad, campaign): %v", len(gotPaths), gotPaths)
+	}
+	wantSuffixes := []string{"adGroups:mutate", "adGroupAds:mutate", "campaigns:mutate"}
+	for i, want := range wantSuffixes {
+		if !strings.HasSuffix(gotPaths[i], want) {
+			t.Errorf("call %d = %v, want %v (children must be enabled before the campaign gate opens)", i, gotPaths[i], want)
+		}
 	}
 }
 
