@@ -1251,9 +1251,13 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
     //   - PRE-SEND failures. Credential resolution, account validation, request
     //     construction, a context already cancelled — no HTTP request left this process,
     //     so no keyword changed.
-    //   - DEFINITE upstream REJECTIONS. `adGroupCriteria:mutate` is atomic per request
-    //     unless partial_failure is set (this client does not set it), so a 4xx means
-    //     Google evaluated the batch and committed none of it.
+    //   - DEFINITE upstream REJECTIONS. `partialFailure: true` makes Google apply the
+    //     operations INDEPENDENTLY and report per-operation errors at their own index —
+    //     but only once the request itself is accepted. A request-level 4xx (expired
+    //     credential, malformed request, a quota refusal) is a rejection of the CALL, so
+    //     no operation in it was evaluated and none committed. Partial failure changes
+    //     how a bad OPERATION is reported; it does not make a rejected REQUEST partly
+    //     apply.
     //
     // Blanket-marking those `unconfirmed` is not conservative, it is wrong in the
     // expensive direction: it tells the operator "check Google Ads before retrying" for
@@ -1268,17 +1272,21 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
     // and false for pre-send and definite-rejection errors. Same helper the create and
     // toggle paths use, so keyword writes cannot drift from the rest of the dispatcher.
     //
-    // Note the asymmetry with the *PartialMutateError branch, and that it is deliberate:
-    // there, the in-flight chunk is unconfirmed even when the terminal error is a definite
-    // 4xx, because the 4xx describes the LAST chunk while EARLIER chunks were separate
-    // requests whose fate the error does not speak to. `ConfirmedThrough` is what records
-    // that, which is why the client encodes the span rather than leaving the dispatcher to
-    // infer it from the error alone.
+    // The *PartialMutateError branch asks the SAME question, and an earlier draft of this
+    // plan got that wrong. It marked the whole in-flight span `unconfirmed` unconditionally,
+    // reasoning that the terminal error describes only the last chunk. But the span
+    // `[ConfirmedThrough, UnsentFrom)` IS the last chunk — that is what `ConfirmedThrough`
+    // means. Earlier chunks already carry their own verdicts from `pe.Results`, and
+    // operations past `UnsentFrom` never left. So the terminal error speaks to exactly the
+    // span, and a definite rejection of that one request makes the span `failed`, not
+    // `unconfirmed`. The classification is the same helper in both branches; only the RANGE
+    // it applies to differs, which is the whole reason the client encodes the range.
     //
     // The platform client already classifies and redacts upstream errors; do not
     // re-render the raw response body into a user-visible message.
     var pe *googleads.PartialMutateError
     confirmedThrough, unsentFrom := 0, len(pending)
+    ambiguous := googleads.IsOutcomeUnconfirmed(merr)
     if errors.As(merr, &pe) {
       confirmedThrough, unsentFrom = pe.ConfirmedThrough, pe.UnsentFrom
       for i, r := range pe.Results {
@@ -1289,7 +1297,7 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
         }
         pending[i].Message = r.Message
       }
-    } else if !googleads.IsOutcomeUnconfirmed(merr) {
+    } else if !ambiguous {
       // Nothing reached Google, or Google rejected the whole batch. Every operation
       // failed, and retrying after fixing the cause is safe.
       for _, outcome := range pending {
@@ -1300,6 +1308,15 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
       break
     }
     for i := confirmedThrough; i < unsentFrom; i++ {
+      if !ambiguous {
+        // Google received this chunk and rejected the request. Nothing in it was
+        // evaluated, so "check Google Ads" would send the operator to look at a change
+        // that provably did not happen.
+        pending[i].State = model.KeywordActionFailed
+        pending[i].Message = "not applied: this keyword was in the request Google rejected — " +
+          "fix the cause and retry it"
+        continue
+      }
       pending[i].State = model.KeywordActionUnconfirmed
       pending[i].Message = "unconfirmed: this keyword was in the request that failed after " +
         "it was sent, so it may or may not have been changed — check Google Ads before retrying"
@@ -1469,8 +1486,10 @@ state and not a gap: the capability is optional, so both endpoints return a clea
 **Base:** `origin/main`, opened once PR 1 has merged
 **Files:** `internal/platform/googleads/keywords.go` **(new — this PR must include the platform
 client, not just the adapter)**, `internal/platform/googleads/keywords_test.go`,
-`internal/dispatch/googleads.go` (add `ListKeywords`/`UpdateKeywords` plus the `KeywordManager`
-assertion), `internal/dispatch/googleads_test.go`
+`internal/dispatch/googleads.go` (add `ListKeywords`/`UpdateKeywords` — **methods only**),
+`internal/dispatch/status_toggler_guard_test.go` (the `KeywordManager` assertion goes HERE, so the
+`internal/service` import stays test-only — see "File to edit" above),
+`internal/dispatch/googleads_test.go`
 
 - Platform client: `ListCampaignKeywords`, `AuthorizeKeywordCriteria`, `MutateKeywordCriteria`
   (single batched mutate with `partialFailure: true`, chunked at the upstream operation limit),

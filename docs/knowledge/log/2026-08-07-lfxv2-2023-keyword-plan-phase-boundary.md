@@ -25,15 +25,22 @@ so a drifting signature would not fail the build, it would silently return 400 f
 
 **Fix** — The non-`*PartialMutateError` fallback marked the whole batch `unconfirmed`. Two
 large classes of error are provably "nothing applied": pre-send failures (credential
-resolution, request construction, an already-cancelled context) and definite 4xx rejections
-(`adGroupCriteria:mutate` is atomic without `partial_failure`, which this client does not
-set). Reporting those as `unconfirmed` is not conservative — it tells the operator to go
+resolution, request construction, an already-cancelled context) and definite request-level
+4xx rejections. The plan sets `partialFailure: true`, which makes Google evaluate the
+operations independently and report per-OPERATION errors at their own index — but only once
+the REQUEST is accepted. A 4xx on the call itself (expired credential, malformed request,
+quota refusal) means no operation was evaluated at all, so partial failure does not soften
+it. Reporting those as `unconfirmed` is not conservative — it tells the operator to go
 check Google Ads for a change that certainly did not happen, and an `unconfirmed` that fires
 on every expired credential is noise that gets ignored, including the once it was real. The
 fallback now defers to `googleads.IsOutcomeUnconfirmed`, the same helper the create and
-toggle paths use. The asymmetry with the partial branch is deliberate and documented: there,
-an in-flight chunk stays unconfirmed even under a definite 4xx, because the 4xx describes
-only the last chunk. Four separate tests replace the one that would have passed either way.
+toggle paths use, and so does the `*PartialMutateError` branch. An earlier draft claimed an
+asymmetry there — that the in-flight chunk stays unconfirmed even under a definite 4xx,
+because the error "describes only the last chunk". That reasoning was wrong: the span
+`[ConfirmedThrough, UnsentFrom)` IS the last chunk, which is what `ConfirmedThrough` means.
+Earlier chunks already carry verdicts from `pe.Results` and operations past `UnsentFrom`
+never left, so the terminal error speaks to exactly that span. Same helper in both branches;
+only the range differs. Four separate tests replace the one that would have passed either way.
 
 **Fix** — The 409 guard's rationale rested on a false invariant: "`platform_campaign_id`
 stays empty until the platform call succeeds." It does not — `internal-service.md:37-41`

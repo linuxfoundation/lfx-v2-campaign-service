@@ -109,6 +109,8 @@ This is the create-path discipline applied to a mutate: an ambiguous upstream ou
 reported as ambiguous. Assuming failure is the more dangerous default precisely because it
 reads as safe.
 
-Left open for the owning team: whether `KeywordActionResult` should carry an explicit
-three-state `outcome` field rather than encoding the distinction in the `message` prose. It
-would be cleaner for the UI, but it changes a response shape the UI already consumes.
+This was left open for the owning team at the time — whether `KeywordActionResult` should
+carry an explicit three-state `outcome` field rather than encoding the distinction in the
+`message` prose. The plan as merged resolves it: `outcome` is added as the explicit field and
+the boolean `success` the UI already consumes is retained but deprecated and derived from it,
+so the response shape widens rather than breaking. Nothing here is still open.
