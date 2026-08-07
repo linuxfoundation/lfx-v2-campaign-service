@@ -14,14 +14,25 @@ import (
 
 // resetCooldownState restores the package-level cooldown vars to a fresh state, since they are
 // shared across every test in this package (including StopCooldownsForShutdown's sync.Once).
+//
+// It DRAINS before it replaces. Tests that wait on the observer callback are satisfied the
+// instant a bound is recorded, but the goroutine that recorded it is still running: it has yet
+// to reach its deferred cooldownWG.Done. Assigning a fresh sync.WaitGroup underneath that
+// goroutine is WaitGroup misuse — the Done lands on a counter that never saw the matching Add —
+// and it is the kind that surfaces as a flake in an unrelated test rather than here. Stopping
+// and joining first makes the handoff total: every goroutine from the previous test is finished
+// before the vars it touches are swapped.
 func resetCooldownState(t *testing.T) {
 	t.Helper()
+	// Idempotent and safe on the first call: cooldownOnce closes the channel at most once, and
+	// with nothing in flight the Wait returns immediately.
+	StopCooldownsForShutdown(2 * time.Second)
 	cooldownMu.Lock()
 	cooldownWG = sync.WaitGroup{}
 	cooldownShutdown = make(chan struct{})
 	cooldownOnce = sync.Once{}
 	cooldownStopped = false
-	cooldownReleaseBoundNanos.Store(0)
+	cooldownReleaseDeadlineNanos.Store(0)
 	cooldownMu.Unlock()
 }
 
@@ -136,11 +147,26 @@ func TestStopCooldownsForShutdown_PublishesReleaseBoundBeforeWaking(t *testing.T
 
 	select {
 	case got := <-observed:
-		if got != budget {
-			t.Errorf("a cooldown woken by shutdown would unlock with a %v budget, want %v (Close's own wait)", got, budget)
-		}
+		assertWithinShutdownBudget(t, got, budget)
 	case <-time.After(2 * time.Second):
 		t.Fatal("goroutine parked on cooldownShutdown was never woken")
+	}
+}
+
+// assertWithinShutdownBudget checks a release bound against the SHARED shutdown deadline.
+//
+// It is a range, not an equality, and that is the property under test rather than a tolerance
+// for slow CI: the bound is what remains of StopCooldownsForShutdown's wait at the moment this
+// particular goroutine woke, so it is always at most the full budget and shrinks as stragglers
+// are scheduled later. An equality assertion would pass only for a per-goroutine allowance —
+// exactly the shape that lets N wake-ups spend N × budget and outlive pgxpool.Close.
+func assertWithinShutdownBudget(t *testing.T, got, budget time.Duration) {
+	t.Helper()
+	if got > budget {
+		t.Errorf("release bound %v EXCEEDS the shutdown budget %v; a per-goroutine allowance lets stragglers outlive pgxpool.Close's wait", got, budget)
+	}
+	if got <= 0 {
+		t.Errorf("release bound %v is already spent; the deadline was stamped too early or the wait overran", got)
 	}
 }
 
@@ -193,9 +219,7 @@ func TestReleaseCampaignLockAfterCooldown_EveryShutdownPathUsesTheShutdownBound(
 		if len(got) != 1 {
 			t.Fatalf("expected exactly one release, got %d: %v", len(got), got)
 		}
-		if got[0] != budget {
-			t.Errorf("straggler released with a %v budget, want %v (Close's own wait); a 5s unlock here outlives pgxpool.Close's wait", got[0], budget)
-		}
+		assertWithinShutdownBudget(t, got[0], budget)
 	})
 
 	t.Run("cooldown elapsed during shutdown", func(t *testing.T) {
@@ -207,7 +231,7 @@ func TestReleaseCampaignLockAfterCooldown_EveryShutdownPathUsesTheShutdownBound(
 		// of 0 so time.After fires immediately: cooldownShutdown is never ready, so the
 		// select can only take the elapsed branch. That isolates the branch under test —
 		// racing the two ready cases would leave which one ran up to Go's random choice.
-		cooldownReleaseBoundNanos.Store(int64(budget))
+		cooldownReleaseDeadlineNanos.Store(time.Now().Add(budget).UnixNano())
 		r.ReleaseCampaignLockAfterCooldown(domain.CampaignLockToken{}, 0)
 		deadline := time.Now().Add(2 * time.Second)
 		for len(recorded()) == 0 && time.Now().Before(deadline) {
@@ -218,8 +242,34 @@ func TestReleaseCampaignLockAfterCooldown_EveryShutdownPathUsesTheShutdownBound(
 		if len(got) != 1 {
 			t.Fatalf("expected exactly one release, got %d: %v", len(got), got)
 		}
-		if got[0] != budget {
-			t.Errorf("cooldown-elapsed release used a %v budget, want %v; this branch is reachable during shutdown because both select cases can be ready at once", got[0], budget)
+		assertWithinShutdownBudget(t, got[0], budget)
+	})
+
+	// The budget is a SHARED deadline, not a fresh allowance handed to each goroutine. A
+	// straggler scheduled late must inherit only what is LEFT of StopCooldownsForShutdown's
+	// wait: with a per-goroutine duration, one that wakes most of the way through the wait
+	// starts a full-length unlock of its own, keeps its connection checked out past the point
+	// Stop returned, and pgxpool.Close then blocks on it outside ContainerCloseTimeout — the
+	// exact overrun this budget exists to prevent, reintroduced by however many stragglers
+	// there happen to be.
+	t.Run("later stragglers inherit the remaining budget, not a fresh one", func(t *testing.T) {
+		resetCooldownState(t)
+		recorded := observeReleaseBounds(t)
+		r := &CampaignRepo{}
+		StopCooldownsForShutdown(budget)
+
+		r.ReleaseCampaignLockAfterCooldown(domain.CampaignLockToken{}, time.Hour)
+		time.Sleep(budget / 5)
+		r.ReleaseCampaignLockAfterCooldown(domain.CampaignLockToken{}, time.Hour)
+
+		got := recorded()
+		if len(got) != 2 {
+			t.Fatalf("expected 2 releases, got %d: %v", len(got), got)
+		}
+		assertWithinShutdownBudget(t, got[0], budget)
+		assertWithinShutdownBudget(t, got[1], budget)
+		if got[1] >= got[0] {
+			t.Errorf("the later straggler got %v and the earlier %v; a straggler scheduled later must get LESS, or the bound is a per-goroutine allowance rather than a shared deadline", got[1], got[0])
 		}
 	})
 }

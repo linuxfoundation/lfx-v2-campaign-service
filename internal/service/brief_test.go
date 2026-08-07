@@ -2565,3 +2565,247 @@ func TestBriefService_DeleteCampaign_MapsRepoErrors(t *testing.T) {
 		}
 	})
 }
+
+// sequencedToggler returns a scripted error per call, so a test can make the FIRST
+// platform call UNCONFIRMED and a later one succeed. stubToggler cannot: it returns the
+// same err forever, so a second toggle could never get past the platform.
+type sequencedToggler struct {
+	mu   sync.Mutex
+	errs []error
+	n    int
+}
+
+func (d *sequencedToggler) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
+	return nil, errors.New("unused")
+}
+
+func (d *sequencedToggler) ToggleStatus(context.Context, string, model.Provider, *model.Campaign, string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	i := d.n
+	d.n++
+	if i < len(d.errs) {
+		return d.errs[i]
+	}
+	return nil
+}
+
+func (d *sequencedToggler) count() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.n
+}
+
+// cooldownToggleRepo makes the UNCONFIRMED cooldown OBSERVABLE.
+//
+// toggleCampaignRepo's ReleaseCampaignLockAfterCooldown unlocks IMMEDIATELY — deliberately,
+// so the sequential toggle tests don't deadlock — but that is exactly what makes those tests
+// unable to bind the guarantee this cooldown exists for. With an immediate release, a
+// ToggleCampaignStatus that (wrongly) took the ordinary release path would behave
+// identically and every existing test would still pass. This repo instead holds the lock
+// until the test says so, which is what turns "was the cooldown release used?" into an
+// observable difference rather than an implementation detail.
+type cooldownToggleRepo struct {
+	*toggleCampaignRepo
+	// releaseNow stands in for the cooldown elapsing. Closed by the test.
+	releaseNow chan struct{}
+	// cooldowns records each ReleaseCampaignLockAfterCooldown call and its duration.
+	cooldowns chan time.Duration
+	// immediate counts ordinary ReleaseCampaignLock calls, which the UNCONFIRMED path must
+	// NOT make — releasing inline is precisely the defect the cooldown replaces.
+	immediate atomic.Int32
+}
+
+func (r *cooldownToggleRepo) ReleaseCampaignLock(ctx context.Context, tok domain.CampaignLockToken) error {
+	r.immediate.Add(1)
+	return r.toggleCampaignRepo.ReleaseCampaignLock(ctx, tok)
+}
+
+func (r *cooldownToggleRepo) ReleaseCampaignLockAfterCooldown(tok domain.CampaignLockToken, d time.Duration) {
+	r.cooldowns <- d
+	go func() {
+		<-r.releaseNow
+		// Not the counted override: this release IS the cooldown completing, not the
+		// inline release the assertions are looking for.
+		_ = r.toggleCampaignRepo.ReleaseCampaignLock(context.Background(), tok)
+	}()
+}
+
+// TestBriefService_ToggleCampaignStatus_UnconfirmedHoldsTheClaimForTheCooldown pins the
+// guarantee the UNCONFIRMED path's `releaseNow = false` exists to make: while a toggle's
+// outcome is unknown, a second writer must NOT be able to claim the same still-unbumped
+// version and call the platform again. Doubling up on an already-ambiguous change is the
+// one thing the cooldown prevents, and it is invisible to every other toggle test because
+// their fake releases the lock immediately.
+//
+// The second caller here is legitimate in every other respect — it reads the same version 3
+// the first caller did, because the UNCONFIRMED path deliberately writes nothing — so
+// nothing but the held claim stops it.
+func TestBriefService_ToggleCampaignStatus_UnconfirmedHoldsTheClaimForTheCooldown(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", Status: "created", Version: 3,
+	}
+	tog := &sequencedToggler{errs: []error{unconfirmedErr{}}} // first call UNCONFIRMED, later calls succeed
+	camps := &cooldownToggleRepo{
+		toggleCampaignRepo: &toggleCampaignRepo{got: camp},
+		releaseNow:         make(chan struct{}),
+		cooldowns:          make(chan time.Duration, 4),
+	}
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderRedditAds: tog})
+	s := NewBriefService(newFakeBriefRepo(), camps, jobs, orch)
+	s.SetIndexer(&failingIndexer{})
+	orch.SetIndexer(&failingIndexer{})
+
+	im := "3"
+	toggle := func(status string) error {
+		_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+			ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: status,
+		})
+		return err
+	}
+
+	if err := toggle(model.CampaignRunPaused); err == nil {
+		t.Fatal("expected the UNCONFIRMED toggle to surface an error")
+	} else if _, ok := err.(*briefs.ConnServiceUnavailableError); !ok {
+		t.Fatalf("expected a 503 ConnServiceUnavailableError, got %T: %v", err, err)
+	}
+	select {
+	case d := <-camps.cooldowns:
+		if d != unconfirmedLockCooldown {
+			t.Errorf("cooldown = %v, want %v", d, unconfirmedLockCooldown)
+		}
+	default:
+		t.Fatal("the UNCONFIRMED path did not request a cooldown release; the claim was handed back the instant the outcome became ambiguous")
+	}
+	if n := camps.immediate.Load(); n != 0 {
+		t.Fatalf("ReleaseCampaignLock was called %d times on the UNCONFIRMED path, want 0 — the deferred inline release must be skipped so the cooldown is what governs the lock", n)
+	}
+
+	// A second toggle, same still-unbumped version. It must park on the claim.
+	second := make(chan error, 1)
+	go func() { second <- toggle(model.CampaignRunActive) }()
+	select {
+	case err := <-second:
+		t.Fatalf("the second toggle completed (err=%v) while the first outcome was still UNCONFIRMED — it was allowed to claim version 3 and call the platform a second time on an ambiguous change", err)
+	case <-time.After(150 * time.Millisecond):
+		// Still blocked, which is the point.
+	}
+	if n := tog.count(); n != 1 {
+		t.Fatalf("the platform was called %d times during the cooldown, want 1", n)
+	}
+
+	close(camps.releaseNow) // the cooldown elapses
+	select {
+	case err := <-second:
+		if err != nil {
+			t.Fatalf("the second toggle failed after the cooldown released the claim: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the second toggle never proceeded after the cooldown released the claim")
+	}
+	if n := tog.count(); n != 2 {
+		t.Fatalf("the platform was called %d times after the cooldown, want 2 — the cooldown must DELAY the second writer, not cancel it", n)
+	}
+}
+
+// blockingToggler parks inside the platform call until the test releases it, so another
+// writer can be observed arriving while the claim is genuinely held across external I/O.
+type blockingToggler struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (d *blockingToggler) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
+	return nil, errors.New("unused")
+}
+
+func (d *blockingToggler) ToggleStatus(context.Context, string, model.Provider, *model.Campaign, string) error {
+	close(d.entered)
+	<-d.release
+	return nil
+}
+
+// TestBriefService_UpdateCampaignBlocksDuringAToggle is the cross-endpoint half of
+// LFXV2-2901. The existing concurrency test races two TOGGLES; this one races the two
+// DIFFERENT writers, which is the interleaving that motivated adding the claim to
+// UpdateCampaign in the first place.
+//
+// Without the claim in UpdateCampaign, a name edit that arrives while a toggle is inside
+// its platform call would take version 3 for itself and commit; the toggle's own
+// post-platform persist would then find version 4 and fail — leaving the ad platform
+// paused while the row says otherwise, even though each request was individually
+// consistent. The rendezvous makes that ordering deterministic rather than probable: the
+// update starts only once the platform call has been entered, and the toggle's platform
+// call does not return until the update has been observed parked on the claim.
+func TestBriefService_UpdateCampaignBlocksDuringAToggle(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", CampaignName: "original", Status: "created", Version: 3,
+	}
+	tog := &blockingToggler{entered: make(chan struct{}), release: make(chan struct{})}
+	camps := &toggleCampaignRepo{got: camp}
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderRedditAds: tog})
+	s := NewBriefService(newFakeBriefRepo(), camps, jobs, orch)
+	s.SetIndexer(&failingIndexer{})
+	orch.SetIndexer(&failingIndexer{})
+
+	im := "3"
+	toggleErr := make(chan error, 1)
+	go func() {
+		_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+			ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+		})
+		toggleErr <- err
+	}()
+
+	<-tog.entered // the toggle holds the claim and is inside the platform call
+
+	updateErr := make(chan error, 1)
+	go func() {
+		_, err := s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
+			ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im,
+			// Same version the toggle claimed, and the same status round-tripped, so this
+			// request is rejected by the CLAIM and nothing else.
+			Campaign: &briefs.CampaignUpdateInput{CampaignName: "renamed", Status: "created"},
+		})
+		updateErr <- err
+	}()
+
+	select {
+	case err := <-updateErr:
+		t.Fatalf("UpdateCampaign completed (err=%v) while a toggle held the claim for the same campaign; it would have taken the version the toggle already reserved", err)
+	case <-time.After(150 * time.Millisecond):
+		// Parked on the claim, which is the guarantee.
+	}
+
+	close(tog.release) // the platform call returns; the toggle persists and releases
+
+	if err := <-toggleErr; err != nil {
+		t.Fatalf("the toggle failed: %v — a blocked update must not disturb the writer that holds the claim", err)
+	}
+	select {
+	case err := <-updateErr:
+		var precond *briefs.PreconditionFailedError
+		if !errors.As(err, &precond) {
+			t.Fatalf("expected the blocked update to fail with 412 once it saw the toggle's bumped version, got %T: %v", err, err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the blocked update never resumed after the toggle released the claim")
+	}
+
+	if camps.replaced == nil {
+		t.Fatal("the toggle never persisted")
+	}
+	if camps.replaced.Version != 4 {
+		t.Errorf("persisted version = %d, want 4 (the toggle claimed 3; ReplaceCampaign bumped it)", camps.replaced.Version)
+	}
+	if camps.replaced.Status != model.CampaignRunPaused {
+		t.Errorf("persisted status = %q, want %q — the platform change must be what lands", camps.replaced.Status, model.CampaignRunPaused)
+	}
+	if camps.replaced.CampaignName != "original" {
+		t.Errorf("persisted name = %q, want %q — the losing update must not have written", camps.replaced.CampaignName, "original")
+	}
+}

@@ -206,6 +206,27 @@ context to bound its wait, and on cooldown paths `ctx` is `context.Background()`
 `TestReleaseCampaignLockAfterCooldown_EveryShutdownPathUsesTheShutdownBound` and
 `TestReleaseCampaignLock_OrdinaryPathKeepsTheGenerousBound`.
 
+That `Close` rule is not confined to the release paths. `closeLockConn` applies it to every
+site on the CLAIM path that destroys a possibly-lock-bearing connection — a failed
+`pg_advisory_lock`, a failed unlock after a failed guarded read, and the delete path's two
+equivalents. Each is reached precisely BECAUSE something already failed or was cancelled,
+so the caller's `ctx` is routinely dead; `context.WithoutCancel` alone strips the deadline
+along with the cancellation and leaves the wait unbounded exactly where it is most likely
+to be taken. The pool slot is not returned until `Close` returns, so an unbounded `Close`
+here is a held slot, not just a slow log line.
+
+**The shutdown budget is an absolute deadline, not a duration.**
+`StopCooldownsForShutdown` stamps `time.Now().Add(timeout)` where the wait STARTS, and
+`shutdownReleaseBound` returns `time.Until` that instant. A stored duration would hand
+every straggler that woke afterwards a fresh full-length allowance — N stragglers costing
+N × timeout, from the one call whose purpose is to cap the wait — and only an absolute
+instant composes across an unknown number of wake-ups. A non-positive remainder is returned
+as is rather than floored: the resulting already-expired context destroys the connection,
+and destroying the connection is what actually frees the slot, so it is the FASTER answer
+on the out-of-budget path. The tests assert `got <= budget` rather than equality, which is
+the property itself and not a CI tolerance — equality cannot tell a shared deadline from a
+per-goroutine allowance.
+
 **Releasing a superseded token is a no-op for the SUCCESSOR, not for the caller's own
 connection.** When a delayed release finds that its `campaignID` slot now holds a different
 `*campaignLock`, `CompareAndDelete` deliberately fails and the successor's lock and

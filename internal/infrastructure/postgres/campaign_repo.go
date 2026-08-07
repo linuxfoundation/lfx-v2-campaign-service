@@ -505,12 +505,20 @@ type campaignLock struct {
 // POOL COST — the second thing to know before adding callers. The claim checks a connection
 // out of the SERVICE-WIDE pool and holds it for the whole guarded operation: the platform
 // call (up to 45s) plus, on an UNCONFIRMED result, unconfirmedLockCooldown after that. It is
-// therefore not free to spread this claim over more code paths. Concurrent guarded toggles —
+// therefore not free to spread this claim over more code paths. Concurrent guarded writes —
 // on different campaigns, or waiters queued behind the same advisory key — consume one pool
 // slot each, and enough of them starve ordinary reads, readiness probes, and every other
-// write in the process. Today the only caller is service.ToggleCampaignStatus, one operation
-// per campaign per request, which keeps the concurrent claim count bounded by the toggle
-// traffic rather than by request volume. Making that bound structural instead of incidental
+// write in the process.
+//
+// The two callers today cost very different amounts, and the cheap one is why the hold time
+// above is stated as an upper bound rather than a typical one. service.ToggleCampaignStatus
+// is the expensive one: it holds the claim ACROSS the ad-platform call, which is where the
+// 45s and the UNCONFIRMED cooldown come from. service.UpdateCampaign claims too — it must,
+// or a name/config edit could take the version a toggle already reserved — but it performs
+// no I/O between the claim and ReplaceCampaign, so its hold is a single local round-trip.
+// What bounds the concurrent claim count is that both are one operation per campaign per
+// request; it is not bounded by request volume, and it is not bounded by anything
+// structural. Making that bound structural instead of incidental
 // (a reserved sub-pool, or a durable lease that holds no connection across external I/O)
 // belongs to the same tracked design change as durable ownership above; a new caller added
 // before then must be weighed against pool capacity, not just against correctness.
@@ -533,10 +541,7 @@ func (r *CampaignRepo) ClaimCampaignVersion(ctx context.Context, projectID, brie
 		// held on its session — permanently stranding it, since a session advisory lock is NOT
 		// released just by returning the connection. Destroy the connection instead, mirroring
 		// the pattern used below when the guarded read fails after a successful lock acquire.
-		if closeErr := conn.Conn().Close(context.WithoutCancel(ctx)); closeErr != nil {
-			slog.WarnContext(ctx, "failed to close campaign connection after advisory lock acquire error",
-				"campaign_id", campaignID, "error", closeErr)
-		}
+		closeLockConn(ctx, conn, campaignID, "failed to close campaign connection after advisory lock acquire error")
 		conn.Release()
 		return nil, domain.CampaignLockToken{}, fmt.Errorf("claim advisory lock: %w", err)
 	}
@@ -582,10 +587,7 @@ func (r *CampaignRepo) ClaimCampaignVersion(ctx context.Context, projectID, brie
 		if unlockErr != nil {
 			slog.WarnContext(ctx, "failed to release campaign advisory lock after claim error; destroying connection",
 				"campaign_id", campaignID, "error", unlockErr)
-			if closeErr := conn.Conn().Close(context.WithoutCancel(ctx)); closeErr != nil {
-				slog.WarnContext(ctx, "failed to close campaign advisory lock connection after unlock failure",
-					"campaign_id", campaignID, "error", closeErr)
-			}
+			closeLockConn(ctx, conn, campaignID, "failed to close campaign advisory lock connection after unlock failure")
 		}
 		conn.Release()
 
@@ -727,19 +729,32 @@ var (
 	// observe it), or observes stopped already set and skips the WaitGroup entirely.
 	cooldownMu      sync.Mutex
 	cooldownStopped bool
-	// cooldownReleaseBoundNanos carries the timeout StopCooldownsForShutdown was given, so a
-	// cooldown goroutine woken by shutdown can bound its unlock by the SAME budget Close is
-	// waiting on rather than by lockReleaseTimeout. Read via shutdownReleaseBound.
-	cooldownReleaseBoundNanos atomic.Int64
+	// cooldownReleaseDeadlineNanos carries the ABSOLUTE instant StopCooldownsForShutdown's
+	// wait expires, so a cooldown goroutine woken by shutdown bounds its unlock by the budget
+	// Close actually has LEFT rather than by lockReleaseTimeout. Read via shutdownReleaseBound.
+	//
+	// Absolute, not the relative duration: goroutines do not all wake at the same instant, and
+	// each one creates its unlock timeout only when it is scheduled. Handing every straggler a
+	// fresh full-length budget means one that wakes 200ms in can keep its connection for the
+	// whole timeout AGAIN, past the point StopCooldownsForShutdown returned — and pgxpool.Close
+	// then blocks on that connection outside ContainerCloseTimeout, which is the exact overrun
+	// this budget exists to prevent. A shared deadline is the only form that composes across an
+	// unknown number of wake-ups.
+	cooldownReleaseDeadlineNanos atomic.Int64
 )
 
-// shutdownReleaseBound returns the unlock budget for a cooldown release that was cut short by
-// shutdown: whatever StopCooldownsForShutdown was given, or lockReleaseTimeout if a release
-// somehow runs before that is published (belt-and-braces; the store happens before the channel
-// close that wakes these goroutines).
+// shutdownReleaseBound returns the unlock budget REMAINING for a cooldown release cut short by
+// shutdown, or lockReleaseTimeout if a release somehow runs before the deadline is published
+// (belt-and-braces; the store happens before the channel close that wakes these goroutines).
+//
+// A non-positive remainder is returned as-is rather than floored. The resulting context is
+// already expired, so the unlock fails immediately and releaseCampaignLock destroys the
+// connection — which is precisely what frees the pool slot. Waiting politely for a graceful
+// unlock past the point Close stopped waiting would hold the slot pgxpool.Close is blocked on,
+// so out-of-budget is the one case where destroying the connection is the FASTER answer.
 func shutdownReleaseBound() time.Duration {
-	if d := cooldownReleaseBoundNanos.Load(); d > 0 {
-		return time.Duration(d)
+	if d := cooldownReleaseDeadlineNanos.Load(); d > 0 {
+		return time.Until(time.Unix(0, d))
 	}
 	return lockReleaseTimeout
 }
@@ -800,10 +815,11 @@ func (r *CampaignRepo) ReleaseCampaignLockAfterCooldown(token domain.CampaignLoc
 // unconfirmedLockCooldown. Safe to call more than once; only the first call's close takes
 // effect, and every call still waits for outstanding releases.
 func StopCooldownsForShutdown(timeout time.Duration) {
-	// Publish the budget BEFORE closing the channel: the woken goroutines read it to bound
+	// Publish the deadline BEFORE closing the channel: the woken goroutines read it to bound
 	// their own unlock, and a goroutine that woke first and read a zero would fall back to
-	// the default rather than to Close's actual budget.
-	cooldownReleaseBoundNanos.Store(int64(timeout))
+	// the default rather than to Close's actual budget. It is stamped here, where the wait
+	// starts, so every straggler shares one expiry no matter when it is scheduled.
+	cooldownReleaseDeadlineNanos.Store(time.Now().Add(timeout).UnixNano())
 	cooldownMu.Lock()
 	cooldownStopped = true
 	cooldownMu.Unlock()
@@ -818,6 +834,25 @@ func StopCooldownsForShutdown(timeout time.Duration) {
 	case <-time.After(timeout):
 		slog.Warn("pending UNCONFIRMED lock cooldowns did not release promptly; pool close may block",
 			"timeout", timeout)
+	}
+}
+
+// closeLockConn destroys a connection that may still hold a session advisory lock, on a
+// bounded context of its own.
+//
+// Close's context is not decoration: pgx uses it to bound how long Close waits for a
+// graceful shutdown of the session, and the pool slot is NOT returned until Close returns.
+// Every call site below is reached precisely BECAUSE something already failed or was
+// cancelled, so the caller's ctx is routinely dead — and context.WithoutCancel strips the
+// deadline along with the cancellation, handing Close no bound at all. That is backwards:
+// it turns a failure path into one that can hold a request goroutine and a pool slot
+// indefinitely, and can push pgxpool.Close past ContainerCloseTimeout during shutdown. An
+// expired context still closes the underlying socket, which is what actually frees the slot.
+func closeLockConn(ctx context.Context, conn *pgxpool.Conn, campaignID, msg string) {
+	closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimRollbackTimeout)
+	defer cancel()
+	if closeErr := conn.Conn().Close(closeCtx); closeErr != nil {
+		slog.WarnContext(ctx, msg, "campaign_id", campaignID, "error", closeErr)
 	}
 }
 
@@ -906,10 +941,7 @@ func (r *CampaignRepo) DeleteCampaign(ctx context.Context, projectID, briefID, i
 		// failure (e.g. the request context was cancelled mid-call). Returning this
 		// connection to the pool would strand a session-scoped lock on it forever, so
 		// destroy it instead — same reasoning as ClaimCampaignVersion.
-		if closeErr := conn.Conn().Close(context.WithoutCancel(ctx)); closeErr != nil {
-			slog.WarnContext(ctx, "failed to close campaign connection after delete advisory lock acquire error",
-				"campaign_id", id, "error", closeErr)
-		}
+		closeLockConn(ctx, conn, id, "failed to close campaign connection after delete advisory lock acquire error")
 		conn.Release()
 		return fmt.Errorf("delete campaign: claim advisory lock: %w", lerr)
 	}
@@ -925,10 +957,7 @@ func (r *CampaignRepo) DeleteCampaign(ctx context.Context, projectID, briefID, i
 		if unlockErr != nil {
 			slog.WarnContext(ctx, "failed to release campaign advisory lock after delete; destroying connection",
 				"campaign_id", id, "error", unlockErr)
-			if closeErr := conn.Conn().Close(context.WithoutCancel(ctx)); closeErr != nil {
-				slog.WarnContext(ctx, "failed to close campaign connection after delete unlock failure",
-					"campaign_id", id, "error", closeErr)
-			}
+			closeLockConn(ctx, conn, id, "failed to close campaign connection after delete unlock failure")
 		}
 		conn.Release()
 	}()
