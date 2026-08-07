@@ -45,6 +45,11 @@ type credCapture struct {
 	developerToken string
 	sawToken       bool
 	sawAPI         bool
+	// Raw :mutate request bodies for the two cascade stages. Captured for every test
+	// (the handlers below are canned), so a test that cares can assert the dispatcher's
+	// field mappings actually reach the wire rather than only that the call happened.
+	adGroupBody   []byte
+	adGroupAdBody []byte
 }
 
 // :mutate handlers are supplied per-test, returning the base URLs as client options. The
@@ -77,8 +82,16 @@ func googleAdsServers(t *testing.T, budgetH, campaignH http.HandlerFunc) ([]goog
 		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
 			campaignH(w, r)
 		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
+			body, _ := io.ReadAll(r.Body)
+			cap.mu.Lock()
+			cap.adGroupBody = body
+			cap.mu.Unlock()
 			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroups/333"}]}`)
 		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
+			body, _ := io.ReadAll(r.Body)
+			cap.mu.Lock()
+			cap.adGroupAdBody = body
+			cap.mu.Unlock()
 			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupAds/333~444"}]}`)
 		default:
 			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
@@ -255,6 +268,112 @@ func TestGoogleAds_DispatchSuccessMapsResult(t *testing.T) {
 	}
 	if len(camp.ConfigSnapshot) == 0 {
 		t.Error("ConfigSnapshot must capture the validated googleAdsConfig")
+	}
+}
+
+// TestGoogleAds_AdCopyMappingsReachTheWire pins the four field mappings GA-3b adds to
+// CampaignInput — RegistrationURL, Headlines, Descriptions, and EventSlug. The client-level
+// tests construct CampaignInput directly, so they cannot catch a dispatcher that drops or
+// swaps one of these; and the cascade's fake handlers accept anything, so without body
+// assertions a dropped mapping leaves `go test ./...` green while every ad ships with
+// generated fallback copy and a bare registration URL.
+//
+// The values below are deliberately distinctive so a swap between Headlines and Descriptions
+// fails rather than coincidentally matching.
+func TestGoogleAds_AdCopyMappingsReachTheWire(t *testing.T) {
+	opts, cap := googleAdsServers(t,
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+		},
+	)
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,` +
+		`"headlines":["ZebraHeadlineOne","ZebraHeadlineTwo","ZebraHeadlineThree"],` +
+		`"descriptions":["QuokkaDescriptionOne","QuokkaDescriptionTwo"]}}`)
+	brief := testBrief() // EventSlug "kubecon-na-2026", registrationUrl https://events.example/kc
+	if _, err := d.Dispatch(context.Background(), brief, model.ProviderGoogleAds, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	cap.mu.Lock()
+	adGroupAdBody := string(cap.adGroupAdBody)
+	adGroupBody := string(cap.adGroupBody)
+	cap.mu.Unlock()
+
+	if adGroupBody == "" {
+		t.Fatal("no adGroups:mutate body captured — the cascade did not run")
+	}
+	if adGroupAdBody == "" {
+		t.Fatal("no adGroupAds:mutate body captured — the ad was never created")
+	}
+
+	// Headlines and Descriptions must land in their OWN asset lists. Decoding rather than
+	// substring-matching the whole body is what makes a swap detectable.
+	var payload struct {
+		Operations []struct {
+			Create struct {
+				Ad struct {
+					ResponsiveSearchAd struct {
+						Headlines []struct {
+							Text string `json:"text"`
+						} `json:"headlines"`
+						Descriptions []struct {
+							Text string `json:"text"`
+						} `json:"descriptions"`
+					} `json:"responsiveSearchAd"`
+					FinalUrls []string `json:"finalUrls"`
+				} `json:"ad"`
+			} `json:"create"`
+		} `json:"operations"`
+	}
+	if err := json.Unmarshal(cap.adGroupAdBody, &payload); err != nil || len(payload.Operations) == 0 {
+		t.Fatalf("decode adGroupAds:mutate body: %v (body %s)", err, adGroupAdBody)
+	}
+	rsa := payload.Operations[0].Create.Ad.ResponsiveSearchAd
+
+	texts := func(assets []struct {
+		Text string `json:"text"`
+	}) string {
+		var b strings.Builder
+		for _, a := range assets {
+			b.WriteString(a.Text)
+			b.WriteString("|")
+		}
+		return b.String()
+	}
+	gotHeadlines, gotDescriptions := texts(rsa.Headlines), texts(rsa.Descriptions)
+
+	for _, want := range []string{"ZebraHeadlineOne", "ZebraHeadlineTwo", "ZebraHeadlineThree"} {
+		if !strings.Contains(gotHeadlines, want) {
+			t.Errorf("configured headline %q did not reach the ad payload; headlines were %q", want, gotHeadlines)
+		}
+		if strings.Contains(gotDescriptions, want) {
+			t.Errorf("headline %q landed in the DESCRIPTIONS list — the two mappings are swapped", want)
+		}
+	}
+	for _, want := range []string{"QuokkaDescriptionOne", "QuokkaDescriptionTwo"} {
+		if !strings.Contains(gotDescriptions, want) {
+			t.Errorf("configured description %q did not reach the ad payload; descriptions were %q", want, gotDescriptions)
+		}
+		if strings.Contains(gotHeadlines, want) {
+			t.Errorf("description %q landed in the HEADLINES list — the two mappings are swapped", want)
+		}
+	}
+
+	// RegistrationURL is the base of the ad's final URL, and EventSlug is woven into its
+	// tracking parameters — dropping either would send traffic to an untagged or wrong page.
+	if len(payload.Operations[0].Create.Ad.FinalUrls) == 0 {
+		t.Fatalf("ad has no finalUrls; body %s", adGroupAdBody)
+	}
+	finalURL := payload.Operations[0].Create.Ad.FinalUrls[0]
+	if !strings.Contains(finalURL, "events.example/kc") {
+		t.Errorf("final URL %q must be built from the brief's registrationUrl", finalURL)
+	}
+	if !strings.Contains(finalURL, brief.EventSlug) {
+		t.Errorf("final URL %q must carry the brief's event slug %q", finalURL, brief.EventSlug)
 	}
 }
 

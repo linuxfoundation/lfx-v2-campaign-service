@@ -240,12 +240,39 @@ func TestCreateAdGroupAndAd_AdCreationFails(t *testing.T) {
 		okAdGroup,
 		gaqlError(http.StatusBadRequest, "adError", "INVALID_AD_TYPE"),
 	)
-	_, err := c.CreateCampaign(context.Background(), sampleInput())
+	res, err := c.CreateCampaign(context.Background(), sampleInput())
 	if err == nil {
 		t.Fatal("expected an error on ad creation failure")
 	}
 	if !strings.Contains(err.Error(), "ad group 333 created") {
 		t.Errorf("error = %v, want it to acknowledge the ad group was created", err)
+	}
+	// The load-bearing contract on this path is the PARTIAL result, not the error
+	// text: the campaign and ad group really exist upstream, so the dispatcher must
+	// receive their ids to reconcile. Returning (nil, err) here — or dropping
+	// AdGroupID — would strand a created hierarchy the service can never find again.
+	assertPartialAdGroupResult(t, res)
+}
+
+// assertPartialAdGroupResult pins the shape CreateCampaign must return when the ad group
+// was created but the ad was not: everything up to the ad group is populated, AdID is
+// empty. AdID being empty is what tells the caller the cascade stopped short.
+func assertPartialAdGroupResult(t *testing.T, res *CampaignResult) {
+	t.Helper()
+	if res == nil {
+		t.Fatal("result must not be nil: the campaign and ad group exist upstream and the dispatcher needs their ids to reconcile")
+	}
+	if res.CampaignID == "" {
+		t.Error("CampaignID must be populated: the campaign was created before the ad failed")
+	}
+	if res.AdGroupID == "" {
+		t.Error("AdGroupID must be populated: the ad group was created before the ad failed")
+	}
+	if res.AdGroupName == "" {
+		t.Error("AdGroupName must be populated so the ad group is findable by name on retry")
+	}
+	if res.AdID != "" {
+		t.Errorf("AdID must be empty — the ad mutate failed — got %q", res.AdID)
 	}
 }
 
@@ -254,13 +281,17 @@ func TestCreateAdGroupAndAd_AdAmbiguous5xx(t *testing.T) {
 		okAdGroup,
 		func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) },
 	)
-	_, err := c.CreateCampaign(context.Background(), sampleInput())
+	res, err := c.CreateCampaign(context.Background(), sampleInput())
 	if err == nil {
 		t.Fatal("expected an error on a 5xx ad mutate")
 	}
 	if !strings.Contains(err.Error(), "UNCONFIRMED") {
 		t.Errorf("error = %v, want it classified as UNCONFIRMED", err)
 	}
+	// An ambiguous ad mutate is the case where the partial result matters MOST: the ad
+	// may or may not exist, so reconciliation is the only way to find out, and it needs
+	// the ad group id to look under.
+	assertPartialAdGroupResult(t, res)
 }
 
 func TestCreateAdGroupAndAd_MalformedAdGroupAdResourceName(t *testing.T) {
@@ -356,6 +387,55 @@ func TestUpdateAdGroupAndAdStatus(t *testing.T) {
 			if strings.HasSuffix(p, "adGroupAds:mutate") {
 				t.Errorf("must not attempt the ad mutate after the ad group mutate failed, got %v", gotPaths)
 			}
+		}
+	})
+
+	// The partial-cascade branch: the ad group really was paused upstream, but the ad
+	// was not. adgroup_ad.go wraps that in partialCascadeError precisely so the
+	// dispatcher learns the toggle was PARTIALLY applied rather than not applied at
+	// all — the two demand different recovery. Driving both mutates to 5xx (as the
+	// failure sub-test above does) never reaches this branch, so a regression that
+	// dropped the wrapping would leave the suite green.
+	t.Run("ad group succeeds and ad fails is UNCONFIRMED, not a clean failure", func(t *testing.T) {
+		var mu sync.Mutex
+		var paths []string
+		tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
+		t.Cleanup(tokenSrv.Close)
+		apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			paths = append(paths, r.URL.Path)
+			mu.Unlock()
+			if strings.HasSuffix(r.URL.Path, "adGroupAds:mutate") {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"ok"}]}`)
+		}))
+		t.Cleanup(apiSrv.Close)
+		c := NewClient(testCreds(), testAccount(),
+			WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
+
+		err := c.UpdateAdGroupAndAdStatus(context.Background(), "111", "222", StatusPaused)
+		if err == nil {
+			t.Fatal("expected an error when the ad mutate fails after the ad group mutate succeeded")
+		}
+		if !IsOutcomeUnconfirmed(err) {
+			t.Errorf("err must satisfy IsOutcomeUnconfirmed so the dispatcher treats the toggle as partially applied, got: %v", err)
+		}
+		var pce *partialCascadeError
+		if !errors.As(err, &pce) {
+			t.Errorf("err must be a *partialCascadeError so the stage is recoverable, got %T: %v", err, err)
+		} else if pce.stage != "ad" {
+			t.Errorf("partialCascadeError.stage = %q, want \"ad\"", pce.stage)
+		}
+
+		mu.Lock()
+		gotPaths := append([]string(nil), paths...)
+		mu.Unlock()
+		// The ad group mutate must have actually happened — that is what makes the
+		// outcome partial rather than a no-op.
+		if len(gotPaths) == 0 || !strings.HasSuffix(gotPaths[0], "adGroups:mutate") {
+			t.Errorf("first call = %v, want the ad group mutate to have been applied", gotPaths)
 		}
 	})
 
