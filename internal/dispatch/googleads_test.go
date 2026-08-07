@@ -1210,10 +1210,10 @@ func TestGoogleAds_ToggleStatus_ActivateSucceedsChildrenFirst(t *testing.T) {
 
 // TestGoogleAds_ListAccounts_EmptyUpstreamIsEmptySliceNotNil pins the empty-discovery
 // case end to end through the real dispatcher and the real client. A credential that
-// legitimately reaches zero ad accounts must produce an EMPTY slice, not nil:
-// Orchestrator.ReadAccounts treats a nil result as a lister contract violation and turns
-// it into a 503, so building the slice with `var accounts []model.AccessibleAccount`
-// would report the platform as down for a correct, ordinary answer.
+// legitimately reaches zero ad accounts must produce an EMPTY slice, not nil: the two
+// have to stay distinguishable at the service boundary, or the caller that lands next
+// reads "no answer" and reports the platform as down for a correct, ordinary answer.
+// Building the slice with `var accounts []model.AccessibleAccount` would do exactly that.
 func TestGoogleAds_ListAccounts_EmptyUpstreamIsEmptySliceNotNil(t *testing.T) {
 	var mu sync.Mutex
 	var gotMethod, gotPath string
@@ -1350,4 +1350,139 @@ func TestGoogleAds_ListAccounts_StillRejectsUnusableConnections(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestGoogleAds_ListAccounts_MissingConnectionKeepsErrNotFound pins the ONE error
+// distinction this staged adapter owes the service layer that lands next. Discovery is a
+// read, and its two failure modes ask the operator to do opposite things: "this project has
+// no Google Ads connection" is a setup state the operator fixes by creating one (404), while
+// "the call to Google failed" is an outage worth retrying (503). Both arrive here as a
+// non-nil error, so the only thing separating them is whether domain.ErrNotFound survives
+// the credential resolution — resolve() wraps it with %w for precisely this reason, and a
+// future refactor that flattens the wrap to a plain string error would silently collapse
+// the 404 into a 503 with every existing test still green.
+//
+// The test also asserts Google is never contacted: a missing connection has no credential
+// to send, so reaching upstream at all would mean the guard ran too late.
+func TestGoogleAds_ListAccounts_MissingConnectionKeepsErrNotFound(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("contacted Google Ads for a project with no stored connection")
+	}))
+	defer apiSrv.Close()
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{err: domain.ErrNotFound}, identityEncryptor{},
+		googleads.WithBaseURL(apiSrv.URL),
+	)
+	accounts, err := d.ListAccounts(context.Background(), "proj", model.ProviderGoogleAds)
+	if err == nil {
+		t.Fatal("expected an error for a project with no connection, got nil")
+	}
+	if accounts != nil {
+		t.Errorf("accounts = %+v, want nil on error", accounts)
+	}
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("error = %v, want it to still satisfy errors.Is(err, domain.ErrNotFound) "+
+			"so the caller can answer 404 rather than 503", err)
+	}
+}
+
+// TestGoogleAds_ListAccounts_TranslatesIDAndLabel pins the actual translation this adapter
+// performs. AccessibleAccount is a two-field projection, and each field comes from a
+// different upstream shape: the ID is the trailing segment of a `customers/{id}` resource
+// name, and the Label is the descriptiveName that only exists on rows returned by the
+// manager-hierarchy expansion. The existing empty and no-account-chosen tests exercise the
+// paths but never a populated Label, so a change that dropped DescriptiveName on the way
+// through the adapter — the field an operator actually reads when picking an account —
+// would leave every discovery test passing.
+func TestGoogleAds_ListAccounts_TranslatesIDAndLabel(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// The hierarchy expansion is where a display name is available at all; the flat
+		// listAccessibleCustomers response carries resource names and nothing else.
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			_, _ = io.WriteString(w, `{"results":[{"customerClient":{"id":"2222222222","descriptiveName":"CNCF Ad Account"}}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"resourceNames":["customers/2222222222"]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	accounts, err := d.ListAccounts(context.Background(), "proj", model.ProviderGoogleAds)
+	if err != nil {
+		t.Fatalf("ListAccounts: %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("accounts = %+v, want exactly 1", accounts)
+	}
+	// Bare numeric id, NOT the customers/ resource name: the id is what a caller pastes
+	// back as the connection's AccountID.
+	if accounts[0].ID != "2222222222" {
+		t.Errorf("ID = %q, want the bare numeric customer id", accounts[0].ID)
+	}
+	if accounts[0].Label != "CNCF Ad Account" {
+		t.Errorf("Label = %q, want the descriptiveName from the expanded row", accounts[0].Label)
+	}
+}
+
+// TestValidateGoogleAdsCredentials_WhitespaceOnlyIsIncomplete pins the trim. A credential
+// pasted into a form arrives with surrounding whitespace routinely, and a field that is
+// ONLY whitespace is the empty case wearing a disguise: `!= ""` accepts it, and the value
+// then reaches Google, which rejects it as an opaque upstream failure rather than the local
+// "incomplete credentials" error that names the field to fix.
+//
+// The second half matters as much as the first: trimming must happen IN PLACE, so the
+// strings checked for emptiness are the same strings handed to NewClient. Trimming only
+// inside the check would pass the guard and still send the padded value.
+func TestValidateGoogleAdsCredentials_WhitespaceOnlyIsIncomplete(t *testing.T) {
+	for _, field := range []string{"ClientID", "ClientSecret", "DeveloperToken", "RefreshToken"} {
+		t.Run(field+" whitespace only", func(t *testing.T) {
+			creds := googleAdsCreds{ClientID: "cid", ClientSecret: "csec", DeveloperToken: "dev", RefreshToken: "rt"}
+			switch field {
+			case "ClientID":
+				creds.ClientID = "   "
+			case "ClientSecret":
+				creds.ClientSecret = "\t\n"
+			case "DeveloperToken":
+				creds.DeveloperToken = " "
+			case "RefreshToken":
+				creds.RefreshToken = "\n  "
+			}
+			raw, err := json.Marshal(creds)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			res := &resolved{plaintext: raw, status: model.StatusActive}
+			if _, err := validateGoogleAdsCredentials("proj", res); err == nil {
+				t.Fatalf("a whitespace-only %s passed as present; want an incomplete-credentials error", field)
+			} else if !strings.Contains(err.Error(), "incomplete") {
+				t.Errorf("error = %v, want the local incomplete-credentials error", err)
+			}
+		})
+	}
+
+	t.Run("padded values are returned trimmed", func(t *testing.T) {
+		raw, err := json.Marshal(googleAdsCreds{
+			ClientID: " cid ", ClientSecret: "\tcsec\n", DeveloperToken: " dev", RefreshToken: "rt ",
+		})
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		got, err := validateGoogleAdsCredentials("proj", &resolved{plaintext: raw, status: model.StatusActive})
+		if err != nil {
+			t.Fatalf("validateGoogleAdsCredentials: %v", err)
+		}
+		want := googleAdsCreds{ClientID: "cid", ClientSecret: "csec", DeveloperToken: "dev", RefreshToken: "rt"}
+		if got != want {
+			t.Errorf("creds = %+v, want %+v (the trimmed values must be what reaches NewClient)", got, want)
+		}
+	})
 }

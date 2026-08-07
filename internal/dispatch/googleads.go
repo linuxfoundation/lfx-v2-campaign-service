@@ -254,6 +254,17 @@ func validateGoogleAdsCredentials(projectID string, res *resolved) (googleAdsCre
 	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
 		return creds, fmt.Errorf("decode google ads credentials: %w", err)
 	}
+	// Trim ONCE, in place, so the emptiness check and the values handed to NewClient are
+	// the same strings. Checking the untrimmed value lets a whitespace-only field — the
+	// normal result of a copy-paste into a credential form — pass as present and reach
+	// Google, where it fails as an opaque upstream error instead of the local
+	// incomplete-credentials error that tells the operator what to fix. Trimming only at
+	// the check would be worse still: the check would pass and the untrimmed value would
+	// then be sent.
+	creds.ClientID = strings.TrimSpace(creds.ClientID)
+	creds.ClientSecret = strings.TrimSpace(creds.ClientSecret)
+	creds.DeveloperToken = strings.TrimSpace(creds.DeveloperToken)
+	creds.RefreshToken = strings.TrimSpace(creds.RefreshToken)
 	if creds.ClientID == "" || creds.ClientSecret == "" || creds.DeveloperToken == "" || creds.RefreshToken == "" {
 		return creds, fmt.Errorf("google ads credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)")
 	}
@@ -330,10 +341,14 @@ func googleAdsRunStatus(status string) (string, error) {
 	}
 }
 
-// ListAccounts implements service.AccountLister for Google Ads.
-// It discovers accessible ad accounts reachable via the project's stored,
+// ListAccounts discovers the ad accounts reachable via the project's stored,
 // encrypted Google Ads connection credential, returning minimal identifying
 // information (customer ID and optionally a display label).
+//
+// It is deliberately a STAGED adapter: the service-side AccountLister interface and
+// Orchestrator.ReadAccounts that will type-assert it do not exist yet, so nothing in
+// the running service calls this today. The signature matches the shape those will
+// expect, and the error contract below is what they will rely on.
 func (d *GoogleAdsDispatcher) ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error) {
 	client, err := d.resolveGoogleAdsDiscoveryClient(ctx, projectID, platform)
 	if err != nil {
@@ -348,9 +363,10 @@ func (d *GoogleAdsDispatcher) ListAccounts(ctx context.Context, projectID string
 	// (customers/DIGITS) is parsed to extract the numeric customer_id.
 	//
 	// make(..., 0, n) rather than a nil var: a credential that legitimately reaches
-	// zero accounts is an empty list, not an error. Orchestrator.ReadAccounts treats
-	// a nil result as a contract violation and turns it into a 503, so a nil slice
-	// here would report the platform as down for a perfectly valid empty answer.
+	// zero accounts is an empty list, not an error, and the two must stay
+	// distinguishable at the service boundary — a nil slice invites the caller that
+	// lands next to read it as "no answer" and report the platform as down for a
+	// perfectly valid empty one.
 	accounts := make([]model.AccessibleAccount, 0, len(customers))
 	for _, cust := range customers {
 		// Parse "customers/1234567890" → "1234567890"
