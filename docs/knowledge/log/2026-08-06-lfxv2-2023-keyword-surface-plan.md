@@ -57,6 +57,21 @@ resolved against the one campaign before any operation is built. Without that au
 the rule's objection is simply correct. The exception has to be written into the catalog itself in
 the implementing PR; an exception argued only in a plan reads later as an oversight.
 
+**One mutate per action was the wrong reflex.** The draft sent a separate HTTP mutate for each
+keyword action, justified as preserving per-action attribution because a batched mutate is atomic.
+That justification holds only with partial failure OFF. `partialFailure: true` makes Google Ads
+apply each operation independently and return a per-operation error at its own index — the same
+attribution, one round trip. The serial version bought nothing and cost the documented scale: 100
+actions is 100 sequential calls, which does not fit a 30s call budget and burns 100× the quota for
+a single user gesture.
+
+**A generated `Description` is API surface.** It is emitted verbatim into OpenAPI, so it has to
+name the actions the method actually accepts. The draft's description said "pause, enable, or
+change bid" while the Phase 1 enum was `pause`/`remove` — contradicting both the next sentence and
+the request schema, and omitting a core operation. The same class of error put "USD" in the
+micros field descriptions: Google Ads micros are denominated in the ad account's own currency
+(`docs/api-catalog.md:318-321`) and this service does no FX conversion.
+
 Two behavioural gaps found in the same pass, both now written into the plan: criterion IDs
 arriving in a request body must be authorized against the campaign before any mutate operation is
 built (otherwise a campaign-scoped route lets a caller mutate any campaign under the same

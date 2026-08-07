@@ -29,4 +29,20 @@ the immutable platform. Every method is gated on `campaign_manager` at the gatew
 and audience method declares `BadRequest` regardless of whether it accepts a body.
 The binding `platforms` selection is constrained to the known provider enum.
 
+**Adding a method to a service design is not a separable change.** `make apigen`
+(`Makefile:63-68`) puts the new method on the generated `<service>.Service` interface,
+and each implementation asserts satisfaction at compile time — `internal/service/brief.go:48`
+declares `var _ briefs.Service = (*BriefService)(nil)`. A commit that lands DSL without the
+corresponding handler therefore does not build; there is no "design-only" PR for a new method.
+`make apigen` is also the only correct generator here: `goa gen` alone leaves the ko-embedded
+OpenAPI copies under `cmd/campaign-service/kodata/gen/http/` stale, and `cmd/okfgen` regenerates
+the knowledge bundle, not Goa output.
+
+**An optional attribute generates a pointer field.** Marking an always-present response field
+optional does not merely mis-document it in OpenAPI: the generated struct field is `*T` and a
+handler assigning a plain value does not compile. Only genuinely nullable values should stay
+optional. The same holds on the request side — an optional request attribute is `*T`, so the
+domain type it converts into must be a pointer too, or the "omitted" and "explicitly zero"
+cases collapse into one.
+
 See [design](../../../design).

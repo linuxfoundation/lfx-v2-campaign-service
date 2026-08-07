@@ -214,7 +214,10 @@ future reviewer will read as an oversight.
 
 ```goa
 Method("update-campaign-keywords", func() {
-  Description("Pause, enable, or change bid on keywords in a campaign. Phase 1 supports pause and remove; enable and change-bid follow in Phase 2 (LFXV2-2023). Returns 400 when the campaign's platform has no keyword-manager capability wired.")
+  // The description is generated verbatim into the OpenAPI document, so it must name the
+  // actions this method ACCEPTS. "Pause, enable, or change bid" contradicted both the next
+  // sentence and the request enum, and omitted `remove` — a core Phase 1 operation.
+  Description("Pause or remove keywords in a campaign. Returns 400 when the campaign's platform has no keyword-manager capability wired. Phase 2 (LFXV2-2023) widens this to enable and change-bid, in the same commit that implements them.")
   
   Payload(func() {
     bearerToken()
@@ -304,10 +307,13 @@ var CampaignKeyword = Type("campaign-keyword", func() {
   Attribute("impressions", Int64, "Impressions in window")
   Attribute("clicks", Int64, "Clicks in window")
   Attribute("ctr", Float64, "Click-through rate (clicks/impressions; 0 when impressions=0)")
-  Attribute("avg_cpc_micros", Int64, "Average CPC in micros (currency-dependent; USD for Google Ads)")
-  Attribute("spend_micros", Int64, "Total spend in micros")
+  // Micros are denominated in the AD ACCOUNT's own currency, not USD — the same fact
+  // docs/api-catalog.md:318-321 records for Google Ads budgets. The service does no FX
+  // conversion, so naming USD in the generated schema would mislead every non-USD account.
+  Attribute("avg_cpc_micros", Int64, "Average CPC in micros of the ad account's currency")
+  Attribute("spend_micros", Int64, "Total spend in micros of the ad account's currency")
   Attribute("conversions", Int64, "Conversions in window")
-  Attribute("max_cpc_micros", Int64, "Current max CPC bid in micros (or null if not set)")
+  Attribute("max_cpc_micros", Int64, "Criterion-level max CPC bid in micros of the ad account's currency (null when the keyword bids at ad-group level)")
   Attribute("google_ads_url", String, "Direct link to keyword in Google Ads UI")
   // Everything the report always returns is Required. An optional attribute generates a
   // POINTER field, so leaving avg_cpc_micros / spend_micros / conversions / google_ads_url
@@ -700,9 +706,12 @@ func (s *BriefService) UpdateCampaignKeywords(ctx context.Context,
       AdGroupID:   act.AdGroupID,
       CriterionID: act.CriterionID,
       Action:      act.Action,
-      // Phase 2. BidMicros is *int64 on BOTH sides, so this is a straight pointer copy —
-      // no dereference, which would panic for every pause/remove action.
-      BidMicros:   act.BidMicros,
+      // BidMicros is deliberately NOT assigned here. Phase 1's KeywordActionPayload has no
+      // bid_micros attribute, so the generated payload struct has no BidMicros field and
+      // this line would not compile. The domain field exists and stays nil until Phase 2
+      // adds the attribute; the assignment is a one-line addition in the same commit that
+      // widens the enum. It is a straight pointer copy when it arrives — *int64 on both
+      // sides — never a dereference, which would panic for every pause/remove action.
     }
   }
   
@@ -952,7 +961,12 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
     return nil, aerr
   }
 
+  // outcomes is index-aligned with `actions` and returned whole. `ops`/`pending` hold only
+  // the subset that survives authorization and action-vocabulary checks, so `pending[i]`
+  // corresponds to `ops[i]` and to the upstream result at the same index.
   outcomes := make([]*model.KeywordActionOutcome, 0, len(actions))
+  ops := make([]googleads.KeywordCriterionOp, 0, len(actions))
+  pending := make([]*model.KeywordActionOutcome, 0, len(actions))
   for _, action := range actions {
     ref := googleads.KeywordCriterionRef{AdGroupID: action.AdGroupID, CriterionID: action.CriterionID}
     outcome := &model.KeywordActionOutcome{
@@ -985,28 +999,49 @@ func (d *GoogleAdsDispatcher) UpdateKeywords(ctx context.Context, projectID stri
       continue
     }
 
-    // One operation per call keeps per-action attribution exact: a batched mutate fails
-    // atomically, so a single bad criterion would report every other action as failed.
-    res, merr := client.MutateKeywordCriteria(ctx, []googleads.KeywordCriterionOp{op})
-    switch {
-    case merr != nil:
-      outcome.Success = false
-      // The platform client already classifies and redacts upstream errors; do not
-      // re-render the raw response body into a user-visible message.
-      outcome.Message = merr.Error()
-    case len(res) == 0:
-      // A 2xx with no results is a malformed response, not a success. Indexing res[0]
-      // here — as an earlier draft of this plan did, and again into Errors[0] — panics
-      // the request instead of producing a controlled platform error. Length checks
-      // belong in the client, which is why MutateKeywordCriteria returns a typed slice.
-      outcome.Success = false
-      outcome.Message = "google ads returned no result for this operation"
-    default:
-      outcome.Success = res[0].OK
-      outcome.Message = res[0].Message
-    }
-
+    // Collect; the mutate is issued ONCE, after the loop. See below.
+    ops = append(ops, op)
+    pending = append(pending, outcome)
     outcomes = append(outcomes, outcome)
+  }
+
+  // ONE mutate for every operation, with partial failure enabled.
+  //
+  // An earlier draft sent one HTTP call per action, reasoning that a batched mutate is
+  // atomic so a single bad criterion would report every other action as failed. That is
+  // true only with partial failure OFF. With `partialFailure: true` Google Ads applies
+  // each operation independently and returns a per-operation error at its own index, which
+  // is exactly the attribution the outcome array needs — so the serial version bought
+  // nothing and cost a great deal: the documented scale is 100 actions, and 100 sequential
+  // round trips will not fit the 30s keywordCallTimeout and burns 100x the API quota for
+  // one user gesture. MutateKeywordCriteria chunks internally at the upstream operation
+  // limit; the results slice stays index-aligned with ops across chunks.
+  res, merr := client.MutateKeywordCriteria(ctx, ops)
+  switch {
+  case merr != nil:
+    // A transport-level failure fails every operation in the batch — none was applied.
+    // The platform client already classifies and redacts upstream errors; do not
+    // re-render the raw response body into a user-visible message.
+    for _, outcome := range pending {
+      outcome.Success = false
+      outcome.Message = merr.Error()
+    }
+  case len(res) != len(ops):
+    // A 2xx whose result count does not match the operation count is a malformed
+    // response, not a success. Indexing res[i] under that assumption — as an earlier
+    // draft did, and again into Errors[0] — panics the request instead of producing a
+    // controlled platform error. Length checks belong in the client, which is why
+    // MutateKeywordCriteria returns a typed slice and validates the count itself; this
+    // is the caller-side backstop.
+    for _, outcome := range pending {
+      outcome.Success = false
+      outcome.Message = "google ads returned an incomplete result set for this batch"
+    }
+  default:
+    for i, outcome := range pending {
+      outcome.Success = res[i].OK
+      outcome.Message = res[i].Message
+    }
   }
 
   return outcomes, nil
@@ -1111,9 +1146,10 @@ client, not just the adapter)**, `internal/platform/googleads/keywords_test.go`,
 `internal/dispatch/googleads.go` (add `ListKeywords`/`UpdateKeywords` plus the `KeywordManager`
 assertion), `internal/dispatch/googleads_test.go`
 
-- Platform client: `ListCampaignKeywords`, `AuthorizeKeywordCriteria`, `MutateKeywordCriteria`,
-  composite resource-name construction, GAQL text (snake_case, campaign-scoped), response
-  length validation
+- Platform client: `ListCampaignKeywords`, `AuthorizeKeywordCriteria`, `MutateKeywordCriteria`
+  (single batched mutate with `partialFailure: true`, chunked at the upstream operation limit),
+  composite resource-name construction, the `GoogleAdsURL` deep link, GAQL text (snake_case,
+  campaign-scoped), response length validation
 - Dispatcher: model translation, totals accumulation with a guarded CTR, per-action outcomes
 - Add date-range parsing for days ∈ {7, 14, 30} (inclusive, single clock read)
 - Use `d.resolveGoogleAdsClient` (`internal/dispatch/googleads.go:202`); `ToggleStatus` (`:252`) is the closest existing caller to model on
@@ -1122,7 +1158,10 @@ assertion), `internal/dispatch/googleads_test.go`
 - `TestClient_ListCampaignKeywords_QueryIsSnakeCaseAndCampaignScoped` (pins the GAQL text —
   camelCase paths are rejected upstream and no unit test would otherwise notice)
 - `TestClient_KeywordCriterionResourceName_IsComposite`
-- `TestClient_MutateKeywordCriteria_EmptyResultsIsErrorNotPanic`
+- `TestClient_MutateKeywordCriteria_ShortResultSetIsErrorNotPanic`
+- `TestClient_MutateKeywordCriteria_SendsOneRequestForManyOperations` (pins the batch:
+  a regression to one-call-per-action passes every behavioural test but blows the budget)
+- `TestDispatcher_UpdateKeywords_PartialFailureAttributesPerAction`
 - `TestDispatcher_ListKeywords_HappyPath`
 - `TestDispatcher_ListKeywords_EmptyResultIsEmptySliceNotNil`
 - `TestDispatcher_ListKeywords_ZeroImpressionsCtrIsZeroNotNaN`
