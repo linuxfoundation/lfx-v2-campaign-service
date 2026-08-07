@@ -205,3 +205,80 @@ func TestGetCampaignMetrics_UpstreamErrorPropagates(t *testing.T) {
 		t.Fatal("expected the upstream error to propagate")
 	}
 }
+
+// TestGetCampaignMetrics_MissingDataFieldIsNotZeroActivity pins the distinction the
+// pointer slice exists for. `{"data":[]}` is Meta stating the campaign had no delivery;
+// `{}` or `{"data":null}` is a malformed 2xx that states nothing. Both decode to length
+// zero, so collapsing them would publish a confident "0 impressions, 0 clicks, $0 spend"
+// for a campaign that may be spending — indistinguishable, to every consumer, from a
+// measured zero. The counterpart is
+// TestGetCampaignMetrics_NoActivityInWindowReturnsZeroValue above, which pins that the
+// REAL empty case still succeeds; a fix that rejects both fails that one.
+func TestGetCampaignMetrics_MissingDataFieldIsNotZeroActivity(t *testing.T) {
+	for _, body := range []string{`{}`, `{"data":null}`} {
+		t.Run(body, func(t *testing.T) {
+			c := newMetricsTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, body)
+			})
+
+			m, err := c.GetCampaignMetrics(context.Background(), "23847290", WindowToday)
+			if err == nil {
+				t.Fatalf("expected an error for a 2xx with no data field, got metrics %+v", m)
+			}
+			if m != nil {
+				t.Errorf("expected nil metrics alongside the error, got %+v", m)
+			}
+			if !strings.Contains(err.Error(), "no data field") {
+				t.Errorf("error = %v, want it to name the missing data field", err)
+			}
+		})
+	}
+}
+
+// TestGetCampaignMetrics_NegativeCountersAreRejected covers impressions and clicks.
+// These are counters: a negative one is malformed upstream data, not a small number.
+// Passing it through yields a negative CTR in the public response — a value no consumer
+// validates because it cannot legitimately occur. Matches the LinkedIn and Reddit
+// readers, which reject the same shape.
+func TestGetCampaignMetrics_NegativeCountersAreRejected(t *testing.T) {
+	cases := map[string]string{
+		"negative impressions": `{"data":[{"impressions":"-5","clicks":"1","spend":"1.00"}]}`,
+		"negative clicks":      `{"data":[{"impressions":"5","clicks":"-1","spend":"1.00"}]}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := newMetricsTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, body)
+			})
+
+			m, err := c.GetCampaignMetrics(context.Background(), "23847290", WindowToday)
+			if err == nil {
+				t.Fatalf("expected a negative counter to be rejected, got %+v", m)
+			}
+			if !strings.Contains(err.Error(), "negative") {
+				t.Errorf("error = %v, want it to name the negative counter", err)
+			}
+		})
+	}
+}
+
+// TestGetCampaignMetrics_NegativeSpendIsRejected is the spend half. Finite was already
+// checked; finite is not enough, since spend is non-negative by definition. A negative
+// CostMicros would be absorbed as a credit by every downstream cost-per-click, pacing,
+// and roll-up computation rather than rejected.
+func TestGetCampaignMetrics_NegativeSpendIsRejected(t *testing.T) {
+	c := newMetricsTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[{"impressions":"10","clicks":"1","spend":"-3.50"}]}`)
+	})
+
+	m, err := c.GetCampaignMetrics(context.Background(), "23847290", WindowToday)
+	if err == nil {
+		t.Fatalf("expected negative spend to be rejected, got %+v", m)
+	}
+	if !strings.Contains(err.Error(), "negative") {
+		t.Errorf("error = %v, want it to name the negative spend", err)
+	}
+}

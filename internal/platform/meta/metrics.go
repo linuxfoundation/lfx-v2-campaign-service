@@ -69,7 +69,15 @@ type CampaignMetrics struct {
 // numeric fields as JSON strings (impressions/clicks/spend), same convention as
 // the Google Ads REST client's metrics rows.
 type insightsResponse struct {
-	Data []struct {
+	// Data is a POINTER slice so an ABSENT/null `data` field is distinguishable from a
+	// present-but-empty `{"data":[]}`. Both decode to len 0, and the difference decides
+	// what this read is allowed to claim: `{"data":[]}` is Meta authoritatively saying
+	// the campaign had no delivery in the window, while `{}` or `null` is a malformed
+	// 2xx that proves nothing. Reporting the second as zeros would publish a confident
+	// "0 impressions, 0 clicks, $0 spend" for a campaign that may be spending — the most
+	// misleading answer available, since a caller cannot tell it from a real zero.
+	// Mirrors the ad-discovery path in client.go, which fails closed on the same shape.
+	Data *[]struct {
 		Impressions string `json:"impressions"`
 		Clicks      string `json:"clicks"`
 		Spend       string `json:"spend"`
@@ -79,11 +87,23 @@ type insightsResponse struct {
 // parseMetricInt parses a metric string value, treating empty string as zero.
 // Meta omits zero-valued numeric fields from some responses, same as Google
 // Ads REST; empty is treated as 0 rather than a parse error.
+//
+// Negative values are rejected: impressions and clicks are counters, so a negative
+// one is malformed upstream data, not a small number. Accepting it would produce a
+// negative CTR in the public response and a nonsensical row that reads as authoritative.
+// Matches the guards in the LinkedIn and Reddit metrics readers.
 func parseMetricInt(s string) (int64, error) {
 	if s == "" {
 		return 0, nil
 	}
-	return strconv.ParseInt(s, 10, 64)
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("negative counter %q", s)
+	}
+	return n, nil
 }
 
 // GetCampaignMetrics reads impressions/clicks/spend for one campaign over window
@@ -111,11 +131,22 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
 		return nil, fmt.Errorf("get campaign metrics: %w", err)
 	}
-	if len(resp.Data) == 0 {
+	if resp.Data == nil {
+		// 2xx with no `data` field at all: the body is malformed and cannot establish
+		// that the campaign had no delivery. Fail rather than return zeros a caller
+		// would read as a measured result. transportError (not a plain error) because
+		// the read is genuinely unresolved, not a rejection.
+		return nil, &transportError{
+			Method: http.MethodGet,
+			Path:   path,
+			Err:    fmt.Errorf("insights returned a 2xx response with no data field; cannot confirm the campaign had no delivery"),
+		}
+	}
+	if len(*resp.Data) == 0 {
 		return &CampaignMetrics{CampaignID: id, Window: w}, nil
 	}
 
-	row := resp.Data[0]
+	row := (*resp.Data)[0]
 	impressions, errImpressions := parseMetricInt(row.Impressions)
 	clicks, errClicks := parseMetricInt(row.Clicks)
 	if errImpressions != nil || errClicks != nil {
@@ -144,6 +175,18 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 				Method: http.MethodGet,
 				Path:   path,
 				Err:    fmt.Errorf("decode campaign metrics row: spend %q is not a finite number", row.Spend),
+			}
+		}
+		// Finite is not enough: spend is non-negative by definition, so a negative
+		// value is malformed upstream data. Passing it through would surface a negative
+		// CostMicros, which every consumer — cost-per-click, pacing, roll-ups — would
+		// silently absorb as a credit rather than reject. Same guard as the LinkedIn and
+		// Reddit readers.
+		if spend < 0 {
+			return nil, &transportError{
+				Method: http.MethodGet,
+				Path:   path,
+				Err:    fmt.Errorf("decode campaign metrics row: spend %q is negative", row.Spend),
 			}
 		}
 		// Scale and check for overflow: a finite value like 1e307 can become +Inf

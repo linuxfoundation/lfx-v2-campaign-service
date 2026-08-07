@@ -111,6 +111,7 @@ Each optimization action is scoped to a single campaign under its brief and is i
 
 | Platform | Supported windows |
 |----------|-------------------|
+| Meta Ads | All seven. Each maps to a Graph Insights `date_preset` (`last_30_days` → `last_30d`, and so on) through a fixed allow-list, so an unrecognized literal fails locally rather than reaching Meta. |
 | X (Twitter) Ads | `today`, `yesterday`, `last_7_days` only — the stats endpoint caps a queryable range at 7 days, so the wider windows return `400`. This is why X defaults to `last_7_days` rather than `last_30_days`. |
 | LinkedIn Ads | `today`, `last_7_days`, `last_30_days`, `this_month`, `last_month`. `yesterday` and `last_14_days` return `400` — the Ad Analytics finder takes an explicit date range and these two have no mapping today. |
 | Reddit Ads | `today`, `last_7_days`, `last_30_days`, `this_month`, `last_month`. `yesterday` and `last_14_days` return `400` — no date-range mapping today. |
