@@ -89,7 +89,7 @@ func (b *AudienceBuilder) ResolvePastEditions(ctx context.Context, eventTerm, lo
 	// brief's OWN edition through as a "past" one. Without a real year, return no editions —
 	// the caller degrades to a country-only audience and records the gap.
 	year := strings.TrimSpace(currentYear)
-	if !isFourDigitYear(year) {
+	if !isSupportedYear(year) {
 		year = yearIn(eventTerm)
 	}
 	if year == "" {
@@ -220,7 +220,7 @@ func (b *AudienceBuilder) client(ctx context.Context, projectID string) (*hubspo
 func yearIn(s string) string {
 	for i := 0; i+4 <= len(s); i++ {
 		c := s[i : i+4]
-		if isFourDigitYear(c) && (c[0] == '1' || c[0] == '2') {
+		if isSupportedYear(c) {
 			// Reject a longer digit run (e.g. a 6-digit id) that merely contains 4 digits.
 			if (i == 0 || s[i-1] < '0' || s[i-1] > '9') && (i+4 == len(s) || s[i+4] < '0' || s[i+4] > '9') {
 				return c
@@ -230,16 +230,25 @@ func yearIn(s string) string {
 	return ""
 }
 
-// isFourDigitYear mirrors the warehouse client's own guard so the fallback above produces a
-// value it will accept.
-func isFourDigitYear(s string) bool {
+// isSupportedYear reports whether s is a 4-digit year in the 19xx/20xx range.
+//
+// The range is not decoration, and it is deliberately the FULL two-byte prefix rather than a
+// first-digit check (which would accept 1000-2999). yearIn can only ever EXTRACT a 19xx/20xx
+// year from an event name, so a year outside that range is not comparable with the years it
+// is compared AGAINST. Above the range a currentYear of "9999" leaves every real edition
+// strictly below it and the exclusion never fires — "past editions only" quietly starts
+// returning future ones; below it ("0202") every edition is excluded and the resolve returns
+// nothing. The two predicates must be one, which is why the range lives here rather than at
+// each comparison.
+//
+// It mirrors the warehouse client's own guard so the fallback above produces a value it
+// will accept.
+func isSupportedYear(s string) bool {
 	if len(s) != 4 {
 		return false
 	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
+	if s[0:2] != "19" && s[0:2] != "20" {
+		return false
 	}
-	return true
+	return s[2] >= '0' && s[2] <= '9' && s[3] >= '0' && s[3] <= '9'
 }
