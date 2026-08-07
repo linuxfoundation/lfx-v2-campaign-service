@@ -29,3 +29,25 @@ This PR is the service wiring and the HTTP surface. It sits on the dispatch adap
 (`feat/LFXV2-2023-accounts-dispatch`), which sits on the platform client
 (`feat/LFXV2-2023-accounts-platform`). Split into three because the original single PR reached
 1944 hand-written lines against a 1000-line cap.
+
+## Review pass — the retry branch had no test
+
+The three-status mapping above was tested at two of its three arms: 400 (no capability
+wired) and 404 (no stored connection), plus a 503 for the dependency-unavailable case —
+no orchestrator wired at all, which returns before the switch is ever reached. The arm
+that actually fires in production, a wired dispatcher whose provider call failed, had
+no coverage. It is also the only one of the three that tells the caller to **retry**,
+so getting it wrong is the expensive direction.
+
+`TestListGoogleAdsAccounts_ProviderFailureIs503` covers it, and pins the boundary rather
+than the happy path. Its second subtest returns an error whose message reads
+`"customer 123 not found upstream"` but wraps no sentinel, and asserts **503, not 404**.
+The 404 branch is gated on `errors.Is(aerr, domain.ErrNotFound)`; if that ever loosened
+into string matching, a transient provider failure would be reported as permanent
+client-side state and the UI would stop retrying a call that would have succeeded.
+Revert-verified by loosening exactly that gate — the subtest fails, the plain-failure
+one still passes, which is what makes it a boundary test rather than a duplicate.
+
+It also asserts the upstream text does not appear in the returned message. A provider
+error can carry customer ids and account state the caller has no relation to; it is
+logged with the project id and answered generically.

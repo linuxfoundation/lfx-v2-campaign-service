@@ -6,6 +6,8 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
@@ -210,6 +212,56 @@ func TestListGoogleAdsAccounts_NoConnectionIs404(t *testing.T) {
 	}
 	if notFound.Code != "404" {
 		t.Errorf("expected code 404, got %q", notFound.Code)
+	}
+}
+
+// TestListGoogleAdsAccounts_ProviderFailureIs503 pins the `default` branch — the only
+// one of the three that tells the caller to RETRY. The existing 503 test covers the
+// dependency-unavailable case (no orchestrator wired at all), which never reaches this
+// switch; this one covers a wired dispatcher whose upstream call failed, which is the
+// case that actually happens in production.
+//
+// The two subtests exist to pin the boundary rather than the happy path. An error that
+// merely READS like a missing connection must NOT be mapped to 404: the 404 branch is
+// gated on `errors.Is(aerr, domain.ErrNotFound)`, and if it ever loosened into string
+// matching, a transient Google Ads failure whose message happened to say "not found"
+// would be reported as permanent client-side state and the UI would stop retrying a
+// call that would have succeeded.
+func TestListGoogleAdsAccounts_ProviderFailureIs503(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"plain upstream failure", errors.New("google ads: 500 internal error")},
+		// Reads like the 404 case, is not the 404 case: the sentinel is absent.
+		{"message mentions not found but wraps no sentinel", errors.New("customer 123 not found upstream")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+			svc.SetOrchestrator(&Orchestrator{
+				dispatchers: map[model.Provider]PlatformDispatcher{
+					model.ProviderGoogleAds: &mockAccountListerDispatcher{err: tc.err},
+				},
+			})
+
+			result, err := svc.ListGoogleAdsAccounts(context.Background(), &conn.ListGoogleAdsAccountsPayload{ProjectID: "p"})
+			if result != nil {
+				t.Fatalf("expected nil result on provider failure, got %v", result)
+			}
+			unavailable, ok := err.(*conn.ConnServiceUnavailableError)
+			if !ok {
+				t.Fatalf("expected ConnServiceUnavailableError, got %T: %v", err, err)
+			}
+			if unavailable.Code != "503" {
+				t.Errorf("expected code 503, got %q", unavailable.Code)
+			}
+			// The upstream text is logged, not returned. A provider message can carry
+			// customer ids and account state the caller has no relation to.
+			if strings.Contains(unavailable.Message, tc.err.Error()) {
+				t.Errorf("upstream error text leaked into the response message: %q", unavailable.Message)
+			}
+		})
 	}
 }
 
