@@ -1,6 +1,6 @@
 # 2026-08-05 — Platform-aware default window for GetCampaignMetrics
 
-**Fix** — Addressed a Mandatory Copilot finding on `GetCampaignMetrics`
+**Update** — Addressed a Mandatory Copilot finding on `GetCampaignMetrics`
 (`internal/service/brief.go`). The omitted-`window` default was a single
 global constant, `model.MetricsWindowLast30Days`. X Ads' stats endpoint caps
 queryable date ranges at 7 days per request (`internal/platform/twitter`,
