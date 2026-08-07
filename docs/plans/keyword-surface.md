@@ -1749,6 +1749,7 @@ platform client is internal, so it can land ahead of both without publishing any
 |---|---|---|---|
 | **A** | `internal/platform/googleads/keywords.go` + tests. No design, no handler, no dispatcher method. | none — nothing reachable changes | ≈600 (platform client ~300 + tests ~300) |
 | **B** | `design/brief.go`, `model/keyword.go`, `errors.go`, orchestrator, handlers, **and** the `internal/dispatch/googleads.go` `ListKeywords`/`UpdateKeywords` methods + the `KeywordManager` guard assertion. | two endpoints that WORK for Google Ads | ≈650 (service ~450 + dispatcher ~200) |
+| **C** | `internal/dispatch/googleads_keywords_integration_test.go` — the `### PR 3` section below, unchanged. Tests only. | unchanged from B | ≈200 |
 
 The two estimates are the ≈500 and ≈750 in the `### PR n` headings below, re-cut along the new
 boundary rather than re-guessed: PR 2's own breakdown (`~750 = platform client ~300 + dispatcher
@@ -1767,8 +1768,14 @@ correct and not the same defect: the endpoint genuinely works, and 400 is the ac
 a platform with no keyword-manager capability. The defect was publishing an endpoint that
 answered 400 for **every** platform including the one it named.
 
-The two sections below are kept for their file lists and test lists, which are unchanged — read
-"PR 1" as PR B's service half and "PR 2" as PR A plus PR B's dispatcher half.
+**PR C is the `### PR 3` section below, renamed and nothing else.** It was written as a tests-only
+follow-up to "PR 2", and the reorder does not touch it: it exercises the two endpoints end to end,
+so its only real precondition is that both endpoints work, which is true from B onward. It could
+equally be folded into B; it is kept separate because B is already ≈650 and an integration suite is
+the one thing that can be added after the fact without ever leaving `main` in a wrong state.
+
+The three sections below are kept for their file lists and test lists, which are unchanged — read
+"PR 1" as PR B's service half, "PR 2" as PR A plus PR B's dispatcher half, and "PR 3" as PR C.
 
 ### PR 1: Goa Design + Domain Model + Orchestrator + Handlers (≈500 lines)
 
@@ -1902,10 +1909,12 @@ client, not just the adapter)**, `internal/platform/googleads/keywords_test.go`,
 budgeted because the platform-client layer was missing from that estimate; still under the
 1000-line cap, but if it grows, split the platform client into its own PR ahead of the adapter.
 
-### PR 3: Integration Tests (≈200 lines)
+### PR 3: Integration Tests (≈200 lines) — this is **PR C**
 
 **Branch:** `feat/LFXV2-2023-keyword-integration-phase1`
-**Base:** `origin/main`, opened once PR 2 has merged
+**Base:** `origin/main`, opened once **PR B** has merged (the corrected sequence above renames
+"once PR 2 has merged" — B is where both endpoints become reachable, which is what these tests
+require)
 **Files:** `internal/service/brief_test.go` (new E2E-style tests) — **tests only**
 
 > **No generated specs in this PR.** An earlier draft assigned "the OpenAPI snapshot" here.
