@@ -13,19 +13,52 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// TestListGoogleAdsAccounts_Unavailable tests that account listing returns 503 when orchestrator is not wired.
+// TestListGoogleAdsAccounts_Unavailable tests that account listing returns 503 during
+// cold start, covering BOTH unwired dependencies separately.
+//
+// The two matter independently and the distinction is easy to lose: resolveBackendWithOrch
+// checks repo first and orchestrator second, and both return 503, so a service built with
+// NewConnectionService(nil, nil) returns at the repo check and the orchestrator branch is
+// never executed at all. That is why each case wires everything except the one dependency
+// under test, and why the messages are asserted — the status code alone cannot tell the two
+// branches apart.
 func TestListGoogleAdsAccounts_Unavailable(t *testing.T) {
-	svc := NewConnectionService(nil, nil)
-	// Do not call SetOrchestrator - leave it nil to simulate startup mode
-
-	payload := &conn.ListGoogleAdsAccountsPayload{ProjectID: "test-project"}
-	result, err := svc.ListGoogleAdsAccounts(context.Background(), payload)
-
-	if result != nil {
-		t.Fatalf("expected nil result on unavailable, got %v", result)
+	tests := []struct {
+		name    string
+		svc     func() *ConnectionService
+		wantMsg string
+	}{
+		{
+			name:    "storage not wired",
+			svc:     func() *ConnectionService { return NewConnectionService(nil, &mockEncryptor{}) },
+			wantMsg: "connection storage is unavailable",
+		},
+		{
+			name: "orchestrator not wired",
+			svc: func() *ConnectionService {
+				// Live repo, SetOrchestrator deliberately not called: this is the
+				// cold-start window where storage is up but dispatchers are not.
+				return NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+			},
+			wantMsg: "account discovery service is unavailable",
+		},
 	}
-	if _, ok := err.(*conn.ConnServiceUnavailableError); !ok {
-		t.Fatalf("expected ServiceUnavailable error, got %T: %v", err, err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := &conn.ListGoogleAdsAccountsPayload{ProjectID: "test-project"}
+			result, err := tc.svc().ListGoogleAdsAccounts(context.Background(), payload)
+
+			if result != nil {
+				t.Fatalf("expected nil result on unavailable, got %v", result)
+			}
+			unavailable, ok := err.(*conn.ConnServiceUnavailableError)
+			if !ok {
+				t.Fatalf("expected ServiceUnavailable error, got %T: %v", err, err)
+			}
+			if unavailable.Message != tc.wantMsg {
+				t.Errorf("message = %q, want %q — the wrong guard fired, so this case is not covering what it names", unavailable.Message, tc.wantMsg)
+			}
+		})
 	}
 }
 
