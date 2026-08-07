@@ -846,74 +846,24 @@ type listAccessibleCustomersResponse struct {
 // (it is account-agnostic), so it differs from the typical customers/{id}/...
 // pattern used by other client methods.
 func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCustomer, error) {
-	if err := c.validateAccountIDs(); err != nil {
-		return nil, err
-	}
+	// The ListAccessibleCustomers endpoint is account-agnostic; it does NOT have a
+	// customer_id path segment. The path is just customers:listAccessibleCustomers.
+	//
+	// This goes through doRequest like every other call: the URL construction,
+	// header set, body bounding, and apiError/transportError classification are
+	// identical, so duplicating them here would be a second copy to keep in sync.
+	// The nil body means doRequest omits Content-Type, and idempotent=true is
+	// correct because this is a pure read — retrying a 429 cannot double-apply
+	// anything, which is exactly the case doRequest's retry is gated on.
+	const path = "customers:listAccessibleCustomers"
 
-	// The ListAccessibleCustomers endpoint is account-agnostic; it does NOT have
-	// a customer_id path segment. The path is just customers:listAccessibleCustomers.
-	path := "customers:listAccessibleCustomers"
-	u := c.baseURL + "/" + c.apiVersion + "/" + path
-
-	token, err := c.accessTokenValue(ctx)
+	raw, err := c.doRequest(ctx, http.MethodPost, path, nil, true)
 	if err != nil {
 		return nil, err
-	}
-
-	callCtx, cancel := context.WithTimeout(ctx, googleAdsRequestTimeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(callCtx, http.MethodPost, u, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("developer-token", c.creds.DeveloperToken)
-	if c.account.LoginCustomerID != "" {
-		req.Header.Set("login-customer-id", c.account.LoginCustomerID)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		if isPreSendDialError(err) {
-			return nil, fmt.Errorf("google-ads POST %s: %w", path, err)
-		}
-		return nil, &transportError{Method: http.MethodPost, Path: path, Err: err}
-	}
-
-	buf := new(bytes.Buffer)
-	if _, err := buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes+1)); err != nil {
-		_ = resp.Body.Close()
-		cancel()
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return nil, &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("read response body: %w", err)}
-		}
-		return nil, &apiError{StatusCode: resp.StatusCode, Method: http.MethodPost, Path: path, Body: fmt.Sprintf("read response body: %v", err)}
-	}
-	_ = resp.Body.Close()
-	cancel()
-
-	if int64(buf.Len()) > maxResponseBytes {
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return nil, &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBytes)}
-		}
-		return nil, &apiError{StatusCode: resp.StatusCode, Method: http.MethodPost, Path: path, Body: fmt.Sprintf("response exceeds %d bytes", maxResponseBytes)}
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		raw := buf.Bytes()
-		codes := parseErrorCodes(raw)
-		snap := raw
-		if len(snap) > maxErrorBodyChars {
-			snap = snap[:maxErrorBodyChars]
-		}
-		text := string(snap)
-		return nil, &apiError{StatusCode: resp.StatusCode, Method: http.MethodPost, Path: path, Body: text, ErrorCodes: codes}
 	}
 
 	var resp2xx listAccessibleCustomersResponse
-	if err := json.Unmarshal(buf.Bytes(), &resp2xx); err != nil {
+	if err := json.Unmarshal(raw, &resp2xx); err != nil {
 		return nil, &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("decode response: %w", err)}
 	}
 

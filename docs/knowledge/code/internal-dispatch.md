@@ -184,6 +184,31 @@ this campaign" call, so it cannot satisfy `ReadMetrics`'s one-bounded-call contr
 submit-and-poll with a hard ceiling, or a persisted/sweeper-refreshed snapshot instead of a
 live read) — deferred, not attempted here.
 
+## Account discovery (optional capability)
+
+`AccountLister` is a third OPTIONAL dispatcher interface, alongside `StatusToggler` and
+`MetricsReader` — `ListAccounts(ctx, projectID, platform) ([]model.AccessibleAccount, error)` —
+enumerating the ad accounts reachable **upstream at the provider** with the connection's stored
+credential. It exists so an operator configuring a connection can pick the right account instead
+of pasting a customer ID by hand. Same shape as the other two: the orchestrator's `ReadAccounts`
+type-asserts it and returns `ErrAccountsUnsupported` when a platform's dispatcher does not
+implement it, without contacting the platform.
+
+Note what it is NOT: this does not list anything this service stores. A project holds at most one
+connection per provider, and that singleton is read via `GET .../connection-{provider}`.
+`AccessibleAccount` (`ID`, `Label`) is a live projection of the provider's own account list, never
+persisted — the same live-read-only discipline as `ReadMetrics`. Errors propagate verbatim (a read
+has no ambiguous mutation to protect), surfacing as 400 for an unsupported platform and 503 for a
+provider failure.
+
+Google Ads is the only implementation today, via
+`Client.ListAccessibleCustomers` → `customers:listAccessibleCustomers`. That endpoint is
+**account-agnostic** — it has no `customers/{id}` path segment, unlike every other Google Ads call
+— but it still goes through the shared `doRequest` helper, with a nil body (so no `Content-Type`
+is sent) and `idempotent=true` (a pure read, so retrying a 429 cannot double-apply anything).
+Routing it through `doRequest` rather than hand-rolling the transport keeps one copy of the URL
+construction, body bounding, and `apiError`/`transportError` classification.
+
 ## Channel kinds: paid ads vs email
 
 `model.ChannelKind` classifies each provider as **`paid-ads`** or **`email`** (`Provider.Kind()`,
