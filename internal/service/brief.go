@@ -514,7 +514,14 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 		case errors.Is(merr, ErrMetricsUnsupported):
 			return nil, &briefs.BadRequestError{Code: "400", Message: "metrics reads are not supported for this campaign's platform"}
 		case errors.Is(merr, ErrMetricsWindowUnsupported):
-			return nil, &briefs.BadRequestError{Code: "400", Message: "this window is not supported for the campaign's platform: " + merr.Error()}
+			// merr's wrapped detail (from the adapter) is logged server-side, not concatenated
+			// into the client-facing message: an adapter error can carry internal detail (a
+			// platform API's own error text, an allow-list of internal literals) that isn't
+			// meant for an API client.
+			slog.WarnContext(ctx, "campaign metrics window unsupported by platform",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "window", window, "error", merr)
+			return nil, &briefs.BadRequestError{Code: "400", Message: "this window is not supported for the campaign's platform"}
 		case errors.Is(merr, ErrCampaignNotProvisioned):
 			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id yet"}
 		default:
@@ -527,11 +534,14 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 	return &briefs.CampaignMetrics{
 		CampaignID:         existing.ID,
 		PlatformCampaignID: existing.PlatformCampaignID,
-		Window:             string(m.Window),
-		Impressions:        m.Impressions,
-		Clicks:             m.Clicks,
-		CostMicros:         m.CostMicros,
-		Ctr:                m.Ctr,
+		// The validated request window, not m.Window: adapters are not required to echo it
+		// back, and trusting them would emit "" for one that doesn't, violating the response
+		// enum and causing generated clients to reject an otherwise successful 200.
+		Window:      string(window),
+		Impressions: m.Impressions,
+		Clicks:      m.Clicks,
+		CostMicros:  m.CostMicros,
+		Ctr:         m.Ctr,
 	}, nil
 }
 
@@ -715,6 +725,43 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	// written while the publish was dropped, leaving the status right in the database and
 	// stale in search for exactly the requests most likely to need reconciling.
 	return campaignResult(updated), nil
+}
+
+// DeleteCampaign soft-deletes a campaign LOCALLY, freeing its (brief, platform) slot
+// so the brief can be re-dispatched to that platform.
+//
+// It deliberately does NOT touch the ad platform. Removing the local row while a real
+// paid campaign keeps spending is the worst available outcome, so the alternative —
+// deleting upstream — would need a verified delete/remove API on every provider
+// adapter, and none of the platform clients in internal/platform implement one. Rather
+// than invent an unverified upstream call, this endpoint is explicitly local-only and
+// says so in its API description: a campaign already created upstream keeps running
+// until it is stopped there (the status-toggle endpoint pauses it).
+//
+// That is also why the delete is SOFT: the row carries platform_campaign_id, the only
+// local pointer to whatever may still exist upstream. Hard-deleting would free the slot
+// but destroy the sole record needed to find and stop the campaign that is still
+// spending — the audit trail matters most in exactly the case that motivates deleting.
+func (s *BriefService) DeleteCampaign(ctx context.Context, p *briefs.DeleteCampaignPayload) error {
+	_, campaignRepo, _, _, err := s.ready()
+	if err != nil {
+		return err
+	}
+	version, err := parseBriefIfMatch(p.IfMatch)
+	if err != nil {
+		return err
+	}
+	derr := campaignRepo.DeleteCampaign(ctx, p.ProjectID, p.BriefID, p.CampaignID, version, s.campaignIndexPayload(indexer.ActionDeleted))
+	if errors.Is(derr, domain.ErrConflict) {
+		// The repo returns ErrConflict only when the campaign's status is an unresolved
+		// reconciliation marker — a mid-dispatch 'pending' claim, or a
+		// 'group_created'/'unconfirmed' partial orphan. mapBriefErr would render that as
+		// "the resource already exists", which describes a uniqueness violation and tells
+		// the caller nothing actionable. Name the real cause and both remedies instead: an
+		// in-flight dispatch clears on its own, an orphan needs reconciling.
+		return &briefs.ConflictError{Code: "409", Message: "the campaign cannot be deleted while its dispatch is unresolved; if a dispatch is in flight, wait for it to finish and retry, otherwise the campaign is a partially-created orphan that must be reconciled first"}
+	}
+	return mapBriefErr(derr)
 }
 
 func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*briefs.JobPollResponse, error) {

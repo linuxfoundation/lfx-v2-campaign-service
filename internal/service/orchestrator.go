@@ -52,9 +52,13 @@ const campaignStatusPending = "pending"
 // PRESERVES these on the persisted row (rather than flattening every partial to
 // "pending") so the row surfaces WHAT went wrong, and treats them as NON-reusable so a
 // retry re-attempts the incomplete create.
+// The two literals are exported from the model package (as
+// CampaignStatusGroupCreated/CampaignStatusUnconfirmed) so the postgres repo's delete
+// guard can share this vocabulary; referenced here rather than re-spelled so the two
+// definitions cannot drift apart.
 var partialOrphanStatuses = map[string]bool{
-	"group_created": true,
-	"unconfirmed":   true,
+	model.CampaignStatusGroupCreated: true,
+	model.CampaignStatusUnconfirmed:  true,
 }
 
 // preservableErrorStatuses are the dispatcher-set statuses that are PRESERVED on the
@@ -70,9 +74,9 @@ var partialOrphanStatuses = map[string]bool{
 // package's campaignStatusCreatedDegraded; the group_created/unconfirmed literals are
 // drift-guarded by TestPartialOrphanStatusValues in the dispatch package.
 var preservableErrorStatuses = map[string]bool{
-	"group_created":    true,
-	"unconfirmed":      true,
-	"created_degraded": true,
+	model.CampaignStatusGroupCreated:    true,
+	model.CampaignStatusUnconfirmed:     true,
+	model.CampaignStatusCreatedDegraded: true,
 }
 
 // isReusableCampaign reports whether an existing campaign row is a completed upstream
@@ -185,8 +189,6 @@ type StatusToggler interface {
 // PlatformDispatcher; a dispatcher that doesn't implement it yields a clean "not supported"
 // error (ErrMetricsUnsupported → 400). Unlike ToggleStatus this never mutates platform or DB
 // state — it is a pure read, never persisted by the orchestrator.
-// ReadCampaignMetrics is the orchestrator's entry point, type-asserting the dispatcher
-// for this capability at call time (see lines 920–939).
 type MetricsReader interface {
 	// ReadMetrics fetches the platform campaign's metrics for window (a closed,
 	// platform-agnostic vocabulary — see model.MetricsWindow). campaign is the persisted row
@@ -1026,5 +1028,17 @@ func (o *Orchestrator) ReadCampaignMetrics(ctx context.Context, projectID string
 	}
 	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
 	defer cancel()
-	return reader.ReadMetrics(callCtx, projectID, platform, campaign, window)
+	m, rerr := reader.ReadMetrics(callCtx, projectID, platform, campaign, window)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if m == nil {
+		// A MetricsReader returning (nil, nil) is a contract violation, not success — the
+		// caller (GetCampaignMetrics) dereferences the result unconditionally on a nil error,
+		// same as the dispatch path already guards against a nil successful Dispatch result
+		// (see the analogous check for CampaignBrief dispatch). Convert it into an ordinary
+		// error so the handler returns its declared 503 instead of panicking the request.
+		return nil, fmt.Errorf("%s metrics reader returned a nil result with no error", platform)
+	}
+	return m, nil
 }

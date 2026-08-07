@@ -1,0 +1,368 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package googleads
+
+import (
+	"net/url"
+	"strings"
+	"testing"
+)
+
+// ---- pure-logic helpers ----------------------------------------------------
+
+func TestTruncateRunes(t *testing.T) {
+	cases := []struct {
+		name string
+		s    string
+		n    int
+		want string
+	}{
+		{"under limit", "hello", 10, "hello"},
+		{"exact limit", "hello", 5, "hello"},
+		{"over limit ascii", "hello world", 5, "hello"},
+		{"multibyte not split", "日本語テスト", 3, "日本語"},
+		{"empty", "", 5, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := truncateRunes(tc.s, tc.n); got != tc.want {
+				t.Errorf("truncateRunes(%q, %d) = %q, want %q", tc.s, tc.n, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTruncateWeighted(t *testing.T) {
+	cases := []struct {
+		name      string
+		s         string
+		maxWeight int
+		want      string
+	}{
+		{"ascii under limit counts 1 per rune", "hello", 10, "hello"},
+		{"ascii over limit truncates by rune count", "hello world", 5, "hello"},
+		{"CJK counts 2 per rune, not 1", "日本語テスト", 6, "日本語"},
+		{"CJK never exceeds maxWeight, partial rune dropped entirely", "日本語", 5, "日本"},
+		{"fullwidth forms count 2 like CJK", "ＡＢＣ", 4, "ＡＢ"},
+		{"empty", "", 5, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := truncateWeighted(tc.s, tc.maxWeight)
+			if got != tc.want {
+				t.Errorf("truncateWeighted(%q, %d) = %q, want %q", tc.s, tc.maxWeight, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestComposeAdCopy_CJKHeadlineStaysUnderEffectiveWidth pins the actual bug: a CJK-heavy
+// eventName must not survive composeAdCopy with a headline whose double-width Google Ads weight
+// exceeds maxHeadlineWeight (30), even though its plain rune count is far under 30. A caller that
+// only rune-counts before dispatch would ship a headline Google Ads rejects at mutate time with
+// LINE_TOO_WIDE, orphaning the ad group/ad tree GA-3b builds around it.
+func TestComposeAdCopy_CJKHeadlineStaysUnderEffectiveWidth(t *testing.T) {
+	eventName := strings.Repeat("日本語テスト", 4) // 24 runes, weight 48 — below 30 by rune count but
+	// above 30 by Google's double-width weight (48 > 30).
+	headlines, _, err := composeAdCopy(nil, nil, eventName, "Project")
+	if err != nil {
+		t.Fatalf("composeAdCopy: %v", err)
+	}
+	for _, h := range headlines {
+		weight := 0
+		for _, r := range h {
+			weight += googleAdsCharWeight(r)
+		}
+		if weight > maxHeadlineWeight {
+			t.Errorf("headline %q has Google Ads weight %d, want <= %d (LINE_TOO_WIDE risk)", h, weight, maxHeadlineWeight)
+		}
+	}
+}
+
+func TestBoundedUniqueCopy(t *testing.T) {
+	cases := []struct {
+		name       string
+		candidates []string
+		maxRunes   int
+		maxCount   int
+		want       []string
+	}{
+		{"trims and drops empties", []string{"  a  ", "", "   ", "b"}, 10, 10, []string{"a", "b"}},
+		{"dedupes after truncation", []string{"abcdef", "abcxyz"}, 3, 10, []string{"abc"}},
+		{"caps at maxCount", []string{"a", "b", "c", "d"}, 10, 2, []string{"a", "b"}},
+		{"nil input", nil, 10, 10, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := boundedUniqueCopy(tc.candidates, tc.maxRunes, tc.maxCount)
+			if !strSliceEqual(got, tc.want) {
+				t.Errorf("boundedUniqueCopy(%v, %d, %d) = %v, want %v", tc.candidates, tc.maxRunes, tc.maxCount, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPadUnique(t *testing.T) {
+	cases := []struct {
+		name     string
+		base     []string
+		fallback []string
+		maxRunes int
+		min      int
+		max      int
+		want     []string
+	}{
+		{"already at min, no padding", []string{"a", "b", "c"}, []string{"d"}, 10, 3, 5, []string{"a", "b", "c"}},
+		{"pads until min", []string{"a"}, []string{"b", "c", "d"}, 10, 3, 5, []string{"a", "b", "c"}},
+		{"skips duplicates in fallback", []string{"a"}, []string{"a", "b"}, 10, 2, 5, []string{"a", "b"}},
+		{"stops at max even if below min", []string{}, []string{"a", "b", "c"}, 10, 5, 2, []string{"a", "b"}},
+		{"empty fallback entries skipped", []string{"a"}, []string{"  ", "b"}, 10, 2, 5, []string{"a", "b"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := padUnique(tc.base, tc.fallback, tc.maxRunes, tc.min, tc.max)
+			if !strSliceEqual(got, tc.want) {
+				t.Errorf("padUnique(%v, %v, %d, %d, %d) = %v, want %v", tc.base, tc.fallback, tc.maxRunes, tc.min, tc.max, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDefaultHeadlinesAndDescriptions(t *testing.T) {
+	if got := defaultHeadlines(""); got != nil {
+		t.Errorf("defaultHeadlines(\"\") = %v, want nil", got)
+	}
+	if got := defaultHeadlines("  "); got != nil {
+		t.Errorf("defaultHeadlines(whitespace) = %v, want nil", got)
+	}
+	headlines := defaultHeadlines("KubeCon")
+	if len(headlines) == 0 || headlines[0] != "KubeCon" {
+		t.Errorf("defaultHeadlines(%q) = %v, want a non-empty slice starting with the event name", "KubeCon", headlines)
+	}
+
+	if got := defaultDescriptions("", "CNCF"); got != nil {
+		t.Errorf("defaultDescriptions(empty event) = %v, want nil", got)
+	}
+	withProject := defaultDescriptions("KubeCon", "CNCF")
+	if len(withProject) == 0 {
+		t.Fatalf("defaultDescriptions with a project must return at least one entry, got empty slice")
+	}
+	if !strings.Contains(withProject[0], "CNCF") {
+		t.Errorf("defaultDescriptions with a project must mention it in the first entry, got %v", withProject)
+	}
+	withoutProject := defaultDescriptions("KubeCon", "")
+	if len(withoutProject) == 0 {
+		t.Errorf("defaultDescriptions without a project must still return entries")
+	}
+	if len(withoutProject) >= len(withProject) || withProject[0] == withoutProject[0] {
+		t.Errorf("omitting the project should drop the project-specific description")
+	}
+}
+
+func TestComposeAdCopy(t *testing.T) {
+	t.Run("caller copy used verbatim when sufficient", func(t *testing.T) {
+		headlines := []string{"H1", "H2", "H3"}
+		descriptions := []string{"D1", "D2"}
+		gotH, gotD, err := composeAdCopy(headlines, descriptions, "KubeCon", "CNCF")
+		if err != nil {
+			t.Fatalf("composeAdCopy: %v", err)
+		}
+		if !strSliceEqual(gotH, headlines) {
+			t.Errorf("headlines = %v, want %v", gotH, headlines)
+		}
+		if !strSliceEqual(gotD, descriptions) {
+			t.Errorf("descriptions = %v, want %v", gotD, descriptions)
+		}
+	})
+
+	t.Run("pads short caller copy with placeholders", func(t *testing.T) {
+		gotH, gotD, err := composeAdCopy([]string{"Only One"}, nil, "KubeCon", "CNCF")
+		if err != nil {
+			t.Fatalf("composeAdCopy: %v", err)
+		}
+		if len(gotH) < minHeadlines {
+			t.Errorf("headlines = %v, want at least %d", gotH, minHeadlines)
+		}
+		if gotH[0] != "Only One" {
+			t.Errorf("caller-supplied headline must be preserved first, got %v", gotH)
+		}
+		if len(gotD) < minDescriptions {
+			t.Errorf("descriptions = %v, want at least %d", gotD, minDescriptions)
+		}
+	})
+
+	t.Run("no caller copy, no event name is a hard error", func(t *testing.T) {
+		_, _, err := composeAdCopy(nil, nil, "", "")
+		if err == nil {
+			t.Error("expected an error when there is no usable copy at all")
+		}
+	})
+
+	t.Run("empty caller descriptions still padded even with headlines present", func(t *testing.T) {
+		_, gotD, err := composeAdCopy([]string{"H1", "H2", "H3"}, nil, "KubeCon", "CNCF")
+		if err != nil {
+			t.Fatalf("composeAdCopy: %v", err)
+		}
+		if len(gotD) < minDescriptions {
+			t.Errorf("descriptions = %v, want at least %d", gotD, minDescriptions)
+		}
+	})
+}
+
+func strSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// ---- buildAdFinalURL / setIfAbsent -----------------------------------------
+
+func TestBuildAdFinalURL(t *testing.T) {
+	t.Run("empty registration URL is an error", func(t *testing.T) {
+		if _, err := buildAdFinalURL("", "slug", "Event", "Proj", "suffix"); err == nil {
+			t.Error("expected an error for an empty registration URL")
+		}
+	})
+
+	t.Run("invalid scheme is rejected", func(t *testing.T) {
+		if _, err := buildAdFinalURL("ftp://example.com/register", "slug", "Event", "Proj", "suffix"); err == nil {
+			t.Error("expected an error for a non-http(s) scheme")
+		}
+	})
+
+	t.Run("no host is rejected", func(t *testing.T) {
+		if _, err := buildAdFinalURL("https:///register", "slug", "Event", "Proj", "suffix"); err == nil {
+			t.Error("expected an error for a URL with no host")
+		}
+	})
+
+	t.Run("tags utm params using the event slug", func(t *testing.T) {
+		got, err := buildAdFinalURL("https://example.com/register", "kubecon-na-2026", "KubeCon NA", "CNCF", "brief-1")
+		if err != nil {
+			t.Fatalf("buildAdFinalURL: %v", err)
+		}
+		u, _ := url.Parse(got)
+		q := u.Query()
+		if q.Get("utm_source") != "google" {
+			t.Errorf("utm_source = %q, want google", q.Get("utm_source"))
+		}
+		if q.Get("utm_medium") != "cpc" {
+			t.Errorf("utm_medium = %q, want cpc", q.Get("utm_medium"))
+		}
+		if q.Get("utm_campaign") != "kubecon-na-2026" {
+			t.Errorf("utm_campaign = %q, want the event slug", q.Get("utm_campaign"))
+		}
+		if q.Get("utm_content") != "CNCF" {
+			t.Errorf("utm_content = %q, want the project", q.Get("utm_content"))
+		}
+	})
+
+	t.Run("falls back from slug to event name to name suffix", func(t *testing.T) {
+		got, err := buildAdFinalURL("https://example.com/register", "", "KubeCon NA", "CNCF", "brief-1")
+		if err != nil {
+			t.Fatalf("buildAdFinalURL: %v", err)
+		}
+		u, _ := url.Parse(got)
+		if u.Query().Get("utm_campaign") == "" {
+			t.Error("utm_campaign should fall back to a sanitized event name")
+		}
+
+		got, err = buildAdFinalURL("https://example.com/register", "", "", "CNCF", "brief-1")
+		if err != nil {
+			t.Fatalf("buildAdFinalURL: %v", err)
+		}
+		u, _ = url.Parse(got)
+		if u.Query().Get("utm_campaign") == "" {
+			t.Error("utm_campaign should fall back to the name suffix when slug and event name are both empty")
+		}
+	})
+
+	t.Run("overwrites utm_source and utm_medium but preserves other params", func(t *testing.T) {
+		got, err := buildAdFinalURL("https://example.com/register?utm_source=newsletter&utm_medium=email&ref=abc", "slug", "Event", "Proj", "suffix")
+		if err != nil {
+			t.Fatalf("buildAdFinalURL: %v", err)
+		}
+		u, _ := url.Parse(got)
+		q := u.Query()
+		if q.Get("utm_source") != "google" {
+			t.Errorf("utm_source = %q, want google (overwrite pre-existing for accurate attribution)", q.Get("utm_source"))
+		}
+		if q.Get("utm_medium") != "cpc" {
+			t.Errorf("utm_medium = %q, want cpc (overwrite pre-existing for accurate attribution)", q.Get("utm_medium"))
+		}
+		if q.Get("ref") != "abc" {
+			t.Errorf("ref = %q, want the pre-existing non-utm param preserved", q.Get("ref"))
+		}
+		if q.Get("utm_campaign") != "slug" {
+			t.Errorf("utm_campaign = %q, want slug", q.Get("utm_campaign"))
+		}
+	})
+}
+
+func TestRedactURLForError(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"strips query and fragment", "https://example.com/register?token=secret&utm_source=x#frag", "https://example.com/register"},
+		{"strips userinfo", "https://user:pass@example.com/register", "https://example.com/register"}, // secretlint-disable-line -- fixture asserting userinfo is stripped, not a real credential
+		{"preserves port", "https://example.com:8443/register", "https://example.com:8443/register"},
+		{"unparseable input redacted", "https://[::1", "(redacted)"},
+		{"empty input redacted", "", "(redacted)"},
+		{"whitespace-only input redacted", "   ", "(redacted)"},
+		{"relative path redacted", "/register?token=secret", "(redacted)"},
+		{"scheme with no host is redacted", "mailto:", "(redacted)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := redactURLForError(tc.raw); got != tc.want {
+				t.Errorf("redactURLForError(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBuildAdFinalURL_RejectsUserinfoAndMalformedQuery(t *testing.T) {
+	t.Run("embedded userinfo is rejected", func(t *testing.T) {
+		_, err := buildAdFinalURL("https://user:pass@example.com/register", "slug", "Event", "Proj", "suffix") // secretlint-disable-line -- fixture asserting embedded userinfo is rejected, not a real credential
+		if err == nil {
+			t.Fatal("expected an error for a registration URL with embedded userinfo")
+		}
+		if !strings.Contains(err.Error(), "userinfo") {
+			t.Errorf("error = %v, want it to mention userinfo", err)
+		}
+		if strings.Contains(err.Error(), "user:pass") {
+			t.Errorf("error = %v, must not echo the embedded credentials", err)
+		}
+	})
+
+	t.Run("malformed query is rejected rather than silently dropped", func(t *testing.T) {
+		_, err := buildAdFinalURL("https://example.com/register?%zz", "slug", "Event", "Proj", "suffix")
+		if err == nil {
+			t.Fatal("expected an error for a malformed query string")
+		}
+		if !strings.Contains(err.Error(), "malformed query") {
+			t.Errorf("error = %v, want it to mention the malformed query", err)
+		}
+	})
+}
+
+func TestSetIfAbsent(t *testing.T) {
+	q := url.Values{"utm_source": []string{"existing"}}
+	setIfAbsent(q, "utm_source", "new")
+	if q.Get("utm_source") != "existing" {
+		t.Errorf("setIfAbsent must not overwrite an existing key, got %q", q.Get("utm_source"))
+	}
+	setIfAbsent(q, "utm_medium", "cpc")
+	if q.Get("utm_medium") != "cpc" {
+		t.Errorf("setIfAbsent must set an absent key, got %q", q.Get("utm_medium"))
+	}
+}

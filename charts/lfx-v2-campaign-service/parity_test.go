@@ -262,6 +262,11 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// rule. This row pins that coverage so a future narrowing of the briefs match/rule
 		// can't leave the /status endpoint routed-but-unauthorized (or unreachable).
 		{"/projects/p1/briefs/b-42/campaigns/c-9/status", true},
+		// The campaign metrics read (LFXV2-3001) is the same shape as /status above: a
+		// deeper subroute under a campaign, inheriting the `briefs(/.*)?` HTTPRoute match
+		// and the `/briefs/**` campaign_manager rule rather than a separate route/rule
+		// entry. This row pins that coverage the same way.
+		{"/projects/p1/briefs/b-42/campaigns/c-9/metrics", true},
 		// campaign_audiences (LFXV2-2783) is subordinate to a brief, so it inherits both
 		// the HTTPRoute `briefs(/.*)?` match and the Heimdall `/briefs/**` campaign_manager
 		// rule — no separate route/rule entry. These rows pin that coverage so a future
@@ -442,6 +447,49 @@ func TestRouteRuleSetParityWitnesses(t *testing.T) {
 		if !routeRe.MatchString(w) {
 			t.Errorf("RuleSet authorizes %q (witness %q) but the route regex does NOT forward it — one-sided RuleSet edit (a dead rule, or a route gap)", p, w)
 		}
+	}
+}
+
+// TestDeploymentUsesRecreateStrategy pins the rollout strategy, because this service runs
+// its own schema migrations at boot and migration 000014 is BACKWARD-INCOMPATIBLE: it drops
+// UNIQUE (brief_id, platform), after which the previous release's bare
+// `ON CONFLICT (brief_id, platform)` matches no index and errors on every dispatch claim.
+//
+// Kubernetes' default RollingUpdate surges the new pod BEFORE terminating the old one
+// (maxSurge 25% rounds up to 1), so the new pod would migrate the shared database while the
+// old pod still serves writes against it. Recreate orders it the other way, so the
+// incompatible schema is never live under the old code.
+//
+// Why this is pinned rather than left to convention: 000013 and 000014 cannot be staged
+// apart to remove the need for it. Verified on PostgreSQL 16.10 — with the drop deferred,
+// the old full constraint still covers soft-deleted rows, so a re-dispatch after delete is
+// SILENTLY swallowed by ON CONFLICT DO NOTHING (RowsAffected 0, read back as "already
+// claimed"). So the ordering guarantee has to come from the rollout strategy, and a future
+// edit that "restores the default" would quietly reopen the window.
+func TestDeploymentUsesRecreateStrategy(t *testing.T) {
+	deployment := helmTemplate(t, "templates/deployment.yaml")
+
+	// Strip comment lines before asserting. The template's own comments explain WHY
+	// RollingUpdate is wrong here, so a naive substring search over the raw render would
+	// match the prose rather than the setting.
+	var yamlOnly strings.Builder
+	for _, line := range strings.Split(deployment, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			yamlOnly.WriteString(line)
+			yamlOnly.WriteString("\n")
+		}
+	}
+	rendered := yamlOnly.String()
+
+	if !strings.Contains(rendered, "type: Recreate") {
+		t.Errorf("deployment must set `strategy.type: Recreate`; rendered chart does not.\n"+
+			"RollingUpdate surges the new pod before terminating the old one, letting the previous "+
+			"release run against the post-000014 schema where its bare ON CONFLICT (brief_id, platform) "+
+			"fails on every dispatch claim.\nrendered:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "RollingUpdate") {
+		t.Errorf("deployment must NOT use RollingUpdate while a backward-incompatible migration "+
+			"(000014, DROP CONSTRAINT) ships in this release.\nrendered:\n%s", rendered)
 	}
 }
 

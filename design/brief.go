@@ -199,10 +199,10 @@ var Campaign = Type("campaign", func() {
 var CampaignMetrics = Type("campaign-metrics", func() {
 	Attribute("campaign_id", String, "Campaign UUID")
 	Attribute("platform_campaign_id", String, "ID returned by the ad platform")
-	Attribute("window", String, "Platform-agnostic reporting window the metrics were read for")
+	Attribute("window", String, "Platform-agnostic reporting window the metrics were read for", metricsWindowEnum)
 	Attribute("impressions", Int64, "Impressions in window")
 	Attribute("clicks", Int64, "Clicks in window")
-	Attribute("cost_micros", Int64, "Cost in window, in micros of the ad account's currency")
+	Attribute("cost_micros", Int64, "Cost in window, in micro-units of the platform's native currency (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter, etc.)")
 	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0")
 	Required("campaign_id", "platform_campaign_id", "window", "impressions", "clicks", "cost_micros", "ctr")
 })
@@ -414,9 +414,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			projectIDAttr()
 			briefIDAttr()
 			campaignIDAttr()
-			Attribute("window", String, "Platform-agnostic reporting window; defaults to last_30_days when omitted, except on platforms whose API cannot serve that range (e.g. X Ads, capped at 7 days), which default to the widest range they support instead", func() {
-				Enum("today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month")
-			})
+			Attribute("window", String, "Platform-agnostic reporting window; defaults to last_30_days when omitted, except on platforms whose API cannot serve that range (e.g. X Ads, capped at 7 days), which default to the widest range they support instead", metricsWindowEnum)
 			Required("project_id", "brief_id", "campaign_id")
 		})
 		Result(CampaignMetrics)
@@ -482,6 +480,30 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		})
 	})
 
+	Method("delete-campaign", func() {
+		Description("Delete a campaign (soft delete, requires If-Match). LOCAL ONLY: this removes the campaign from this service and frees its (brief, platform) slot so the brief can be re-dispatched to that platform. It does NOT delete, pause, or otherwise modify the campaign on the ad platform — a campaign already created upstream keeps running and spending until it is stopped there. Use the status-toggle endpoint to pause it first. A campaign that is mid-dispatch returns 409.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			ifMatchAttr()
+			Required("project_id", "brief_id", "campaign_id")
+		})
+		commonBriefErrors(false)
+		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
+		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
+		HTTP(func() {
+			DELETE("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}")
+			Header("bearer_token:Authorization")
+			Header("if_match:If-Match")
+			Response(StatusNoContent)
+			briefErrorResponses(false)
+			Response("PreconditionFailed", StatusPreconditionFailed)
+			Response("PreconditionRequired", StatusPreconditionRequired)
+		})
+	})
+
 	Method("get-job", func() {
 		Description("Poll campaign-creation job status.")
 		Payload(func() {
@@ -509,6 +531,15 @@ func briefIDAttr() {
 
 func campaignIDAttr() {
 	Attribute("campaign_id", String, "Campaign UUID", func() { Format(FormatUUID) })
+}
+
+// metricsWindowEnum applies the platform-agnostic reporting-window vocabulary
+// (model.MetricsWindow's seven values) to the current attribute. Shared between
+// get-campaign-metrics' request parameter and CampaignMetrics' result attribute so
+// the two stay in lockstep — a window value the request accepts but the result type
+// can't represent (or vice versa) would silently diverge otherwise.
+func metricsWindowEnum() {
+	Enum("today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month")
 }
 
 // commonBriefErrors declares the standard error set for a brief method.

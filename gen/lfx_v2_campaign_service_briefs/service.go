@@ -49,6 +49,14 @@ type Service interface {
 	// has no status-toggle dispatcher wired returns 400 (Reddit is wired in this
 	// change; other platforms follow).
 	ToggleCampaignStatus(context.Context, *ToggleCampaignStatusPayload) (res *Campaign, err error)
+	// Delete a campaign (soft delete, requires If-Match). LOCAL ONLY: this removes
+	// the campaign from this service and frees its (brief, platform) slot so the
+	// brief can be re-dispatched to that platform. It does NOT delete, pause, or
+	// otherwise modify the campaign on the ad platform — a campaign already
+	// created upstream keeps running and spending until it is stopped there. Use
+	// the status-toggle endpoint to pause it first. A campaign that is
+	// mid-dispatch returns 409.
+	DeleteCampaign(context.Context, *DeleteCampaignPayload) (err error)
 	// Poll campaign-creation job status.
 	GetJob(context.Context, *GetJobPayload) (res *JobPollResponse, err error)
 }
@@ -73,7 +81,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [12]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "create-campaigns", "get-campaign", "get-campaign-metrics", "update-campaign", "toggle-campaign-status", "get-job"}
+var MethodNames = [13]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "create-campaigns", "get-campaign", "get-campaign-metrics", "update-campaign", "toggle-campaign-status", "delete-campaign", "get-job"}
 
 // ApproveBriefPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service approve-brief method.
@@ -183,7 +191,9 @@ type CampaignMetrics struct {
 	Impressions int64
 	// Clicks in window
 	Clicks int64
-	// Cost in window, in micros of the ad account's currency
+	// Cost in window, in micro-units of the platform's native currency
+	// (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter,
+	// etc.)
 	CostMicros int64
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr float64
@@ -229,6 +239,21 @@ type DeleteBriefPayload struct {
 	ProjectID string
 	// Brief UUID
 	BriefID string
+}
+
+// DeleteCampaignPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service delete-campaign method.
+type DeleteCampaignPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+	// If-Match header carrying the current ETag/version
+	IfMatch *string
 }
 
 // FindBriefPayload is the payload type of the lfx-v2-campaign-service-briefs
