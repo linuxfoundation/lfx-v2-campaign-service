@@ -85,8 +85,23 @@ a relay on the cold-start path, so reading the field first loses the race: a ret
 the gap starts a relay nothing stops, which then reads the outbox straight through `pool.Close`.
 `indexRelay` is mutex-guarded like `pool` for the same reason — it is written from the init
 goroutine and read by `Close`. Every timeout `Close` actually spends is a term of
-`ContainerCloseTimeout` (including `relayStopTimeout`); the container test asserts the full sum,
-so a timeout added to `Close` but not the budget fails a test rather than shipping a shutdown
-that can overrun `DefaultShutdownTimeout` and get SIGKILLed mid-drain.
+`ContainerCloseTimeout` (`sweeperStopTimeout` + `relayStopTimeout` + `dispatchDrainTimeout` +
+`service.CancelGracePeriod` + `indexer.DrainTimeout` + `cooldownStopTimeout` — all six, in the
+order the constant declares them); the container test
+asserts the full sum, so a timeout added to `Close` but not the budget fails a test rather
+than shipping a shutdown that can overrun `DefaultShutdownTimeout` and get SIGKILLed
+mid-drain.
+
+**Cooldown stop, then pool close — in that order.** An UNCONFIRMED status toggle keeps its
+campaign advisory lock past the request via `postgres.ReleaseCampaignLockAfterCooldown`, which
+holds a checked-out connection for up to `unconfirmedLockCooldown` (30s). `pgxpool.Close`
+blocks until every checked-out connection is returned, so `Close` calls
+`postgres.StopCooldownsForShutdown(cooldownStopTimeout)` first to make each pending release
+happen immediately. That budget bounds the CONNECTION, not just the wait:
+`StopCooldownsForShutdown` passes it down as the `pg_advisory_unlock` round-trip's own
+deadline, so an unlock that cannot finish in time fails and its connection is DESTROYED rather
+than left checked out. Without that hand-off the release would run on under its ordinary
+`lockReleaseTimeout` (5s) while `Close` had already moved on, and `pool.Close` would absorb
+the difference outside `ContainerCloseTimeout`.
 
 See [internal/container](../../../internal/container).
