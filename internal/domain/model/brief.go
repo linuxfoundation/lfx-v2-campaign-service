@@ -65,11 +65,20 @@ type CampaignBrief struct {
 	//   3. a request principal WAS present but could not be decoded, so
 	//      attributedActor returned nil after logging a warning.
 	//
-	// Case 3 is a regression signal, not a normal absence — it means a real user
-	// made this write and the audit trail lost them. Anyone diagnosing missing
-	// attribution must not read a nil as proof of case 1 or 2; correlate with the
-	// "could not decode request principal" warning before concluding the row is
-	// simply old or system-written. Nil never means "nobody".
+	// Case 3 is a regression signal, not a normal absence — a real person made this
+	// write and the audit trail lost them — but NOTHING IN THIS SERVICE SEPARATES IT
+	// FROM CASE 2. `attributedActor` logs one warning, "write attempted with no
+	// authenticated actor", for every nil, and the request context carries only the
+	// decoded actor: there is no record of whether a token was present and
+	// undecodable versus absent entirely, so the warning cannot tell you which. Do
+	// not go looking for a per-cause log line; there isn't one.
+	//
+	// What separates them is evidence from OUTSIDE this service — gateway or ingress
+	// logs showing whether the request carried an Authorization header — plus the
+	// SHAPE of the warning rate: a steady trickle is ordinary unauthenticated or
+	// system traffic, a step change across every write is the auth path having
+	// broken. Read a nil as "unattributed, cause not yet determined", never as proof
+	// the row is simply old or system-written. Nil never means "nobody".
 	//
 	// These claims are decoded from the bearer token WITHOUT verifying its
 	// signature; Heimdall validates the token at the gateway before the request
