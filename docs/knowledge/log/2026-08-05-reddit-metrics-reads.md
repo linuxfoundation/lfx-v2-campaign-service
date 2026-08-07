@@ -36,7 +36,7 @@ goroutine); the knowledge doc now explicitly distinguishes an explicit empty `da
 `internal/dispatch/reddit_test.go` has full `ReadMetrics` coverage (success path, missing
 platform campaign ID guard, connection-resolution error propagation, unsupported window).
 
-**Fix** — `GetCampaignMetrics` aggregated report rows without checking that a row's
+**Update** — `GetCampaignMetrics` aggregated report rows without checking that a row's
 `campaign_id` actually matched the requested campaign (Copilot finding, PR #75
 review). Since both the report contract and the `campaign_ids` filter are explicitly
 UNVERIFIED (see the reporting-contract caveat above), an extra row or a silently
