@@ -208,7 +208,7 @@ context to bound its wait, and on cooldown paths `ctx` is `context.Background()`
 
 That `Close` rule is not confined to the release paths. `closeLockConn` applies it to every
 site on the CLAIM path that destroys a possibly-lock-bearing connection — a failed
-`pg_advisory_lock`, a failed unlock after a failed guarded read, and the delete path's two
+`pg_try_advisory_lock`, a failed unlock after a failed guarded read, and the delete path's two
 equivalents. Each is reached precisely BECAUSE something already failed or was cancelled,
 so the caller's `ctx` is routinely dead; `context.WithoutCancel` alone strips the deadline
 along with the cancellation and leaves the wait unbounded exactly where it is most likely

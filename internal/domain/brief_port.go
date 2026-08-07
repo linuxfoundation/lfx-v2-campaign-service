@@ -156,8 +156,14 @@ type CampaignWriter interface {
 	// update-campaign) can both pass the check and both mutate the platform before
 	// either persists. The claim closes that window by EXCLUSION, not by bumping the
 	// version: while one caller holds the claim for a campaign, a second caller's claim
-	// blocks, so the second one is stopped before it ever reaches the platform rather
-	// than after. Do not read this as durable ownership — the exclusion lasts only as
+	// FAILS, so the second one is stopped before it ever reaches the platform rather
+	// than after. Implementations must not make the loser WAIT: the claim is held across
+	// external I/O, so a waiter would tie up whatever resource the claim itself consumes
+	// (for Postgres, a second pooled connection) for that whole span, and a burst against
+	// one campaign could exhaust a finite pool. Answer immediately with
+	// ErrCampaignWriteInProgress, which the service maps to a retryable 409 — not
+	// ErrPreconditionFailed, since the loser's expectedVersion may be perfectly current.
+	// Do not read this as durable ownership — the exclusion lasts only as
 	// long as the implementation's lock (for Postgres, the lifetime of the session
 	// holding it), and what makes a lost lock safe is the compare-and-swap in the
 	// subsequent ReplaceCampaign, which rejects any writer whose expectedVersion has

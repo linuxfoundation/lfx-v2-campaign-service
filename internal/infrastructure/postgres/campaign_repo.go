@@ -533,17 +533,33 @@ func (r *CampaignRepo) ClaimCampaignVersion(ctx context.Context, projectID, brie
 
 	// Acquire an advisory lock on the dedicated connection. Use a deterministic
 	// hash of the campaign ID so the same campaign always gets the same lock key.
+	//
+	// TRY, never wait. pg_advisory_lock blocks only AFTER this request has checked out a
+	// dedicated pool connection, so every loser would sit on a second pooled connection for
+	// as long as the winner's platform call runs (up to 45s). A small burst against one
+	// campaign would then exhaust a finite pool and stall unrelated API work and the
+	// readiness probe. pg_try_advisory_lock returns immediately and the loser gets its
+	// connection back, so contention costs one held connection per campaign rather than one
+	// per request. See domain.ErrCampaignWriteInProgress.
 	lockKey := int64(hashCampaignID(campaignID))
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", lockKey); err != nil {
-		// pg_advisory_lock itself can be reported as failed to the client (e.g. the request
-		// context is cancelled mid-call) while Postgres actually granted the lock server-side.
-		// A plain conn.Release() would return that connection to the pool with the lock still
-		// held on its session — permanently stranding it, since a session advisory lock is NOT
-		// released just by returning the connection. Destroy the connection instead, mirroring
-		// the pattern used below when the guarded read fails after a successful lock acquire.
+	var acquired bool
+	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", lockKey).Scan(&acquired); err != nil {
+		// pg_try_advisory_lock itself can be reported as failed to the client (e.g. the
+		// request context is cancelled mid-call) while Postgres actually granted the lock
+		// server-side. A plain conn.Release() would return that connection to the pool with
+		// the lock still held on its session — permanently stranding it, since a session
+		// advisory lock is NOT released just by returning the connection. Destroy the
+		// connection instead, mirroring the pattern used below when the guarded read fails
+		// after a successful lock acquire.
 		closeLockConn(ctx, conn, campaignID, "failed to close campaign connection after advisory lock acquire error")
 		conn.Release()
 		return nil, domain.CampaignLockToken{}, fmt.Errorf("claim advisory lock: %w", err)
+	}
+	if !acquired {
+		// A definite "someone else holds it": Postgres answered, so no lock is stranded on
+		// this session and the connection is safe to return to the pool as-is.
+		conn.Release()
+		return nil, domain.CampaignLockToken{}, domain.ErrCampaignWriteInProgress
 	}
 
 	// Read the campaign at the expected version. Do NOT bump the version yet; that
@@ -898,7 +914,7 @@ func closeLockConn(ctx context.Context, conn *pgxpool.Conn, campaignID, msg stri
 // Postgres advisory lock key. Uses a simple hash to produce an int64.
 func hashCampaignID(id string) int64 {
 	// Use Go's built-in hash for strings, then convert to a positive int64
-	// suitable for pg_advisory_lock. The UUID format ensures good distribution.
+	// suitable for pg_try_advisory_lock. The UUID format ensures good distribution.
 	h := int64(0)
 	for i := 0; i < len(id); i++ {
 		h = h*31 + int64(id[i])
@@ -967,14 +983,21 @@ func (r *CampaignRepo) DeleteCampaign(ctx context.Context, projectID, briefID, i
 	// ReplaceCampaign it holds no row lock at all. Deleting inside that window bumps
 	// version, so the toggle's ReplaceCampaign(expectedVersion) then fails AFTER the
 	// paid side effect already landed upstream — the campaign is changed on the
-	// platform with no local record of it. Blocking here until the toggle releases
-	// means we observe its bumped version and return a 412 the caller can act on.
+	// platform with no local record of it. Refusing here while the toggle holds its claim
+	// keeps the delete out of that window entirely.
+	//
+	// TRY, never wait — same reason as ClaimCampaignVersion: this connection is already
+	// checked out of the pool, so blocking would pin a second pooled connection for the
+	// length of the winner's platform call. The caller gets 409 and retries once the toggle
+	// finishes, which is also a better answer than the 412 that waiting would produce: the
+	// delete never had a stale ETag, it merely arrived mid-toggle.
 	conn, err := r.db.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("delete campaign: acquire connection: %w", err)
 	}
 	lockKey := hashCampaignID(id)
-	if _, lerr := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", lockKey); lerr != nil {
+	var acquired bool
+	if lerr := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", lockKey).Scan(&acquired); lerr != nil {
 		// Postgres may have granted the lock server-side even though the client saw a
 		// failure (e.g. the request context was cancelled mid-call). Returning this
 		// connection to the pool would strand a session-scoped lock on it forever, so
@@ -982,6 +1005,11 @@ func (r *CampaignRepo) DeleteCampaign(ctx context.Context, projectID, briefID, i
 		closeLockConn(ctx, conn, id, "failed to close campaign connection after delete advisory lock acquire error")
 		conn.Release()
 		return fmt.Errorf("delete campaign: claim advisory lock: %w", lerr)
+	}
+	if !acquired {
+		// Postgres answered, so nothing is stranded on this session: release, don't destroy.
+		conn.Release()
+		return domain.ErrCampaignWriteInProgress
 	}
 	// Unlock on a context detached from the request: the caller's ctx may already be
 	// cancelled by the time we get here, and an unlock issued on a dead context fails

@@ -239,9 +239,19 @@ func TestDeleteCampaign_ParticipatesInAdvisoryLockProtocol(t *testing.T) {
 		body = body[:len(start)+j]
 	}
 
-	require.Contains(t, body, "pg_advisory_lock",
+	require.Contains(t, body, "pg_try_advisory_lock",
 		"DeleteCampaign must take the campaign advisory lock: FOR UPDATE alone does not serialize it "+
 			"against an in-flight toggle, which holds its claim across the platform call and no row lock at all.")
+	// The TRY form, never the blocking one. This connection is already checked out of the
+	// pool, so waiting here would pin a SECOND pooled connection for the length of the
+	// winner's platform call (up to 45s) — a small burst against one campaign could then
+	// exhaust the pool and stall unrelated requests and the readiness probe.
+	require.NotContains(t, body, `"SELECT pg_advisory_lock(`,
+		"DeleteCampaign must not BLOCK on the advisory lock; use pg_try_advisory_lock and return "+
+			"ErrCampaignWriteInProgress so a loser never holds a pooled connection while it waits")
+	require.Contains(t, body, "domain.ErrCampaignWriteInProgress",
+		"a lost claim must surface as 409 retry-shortly, not as a 412 that would send a caller with "+
+			"a perfectly current ETag off to refetch")
 	require.Contains(t, body, "pg_advisory_unlock",
 		"DeleteCampaign must release the advisory lock; a session lock left held strands every future "+
 			"claim and delete for this campaign.")

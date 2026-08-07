@@ -550,6 +550,10 @@ type campaignEditRepo struct {
 	// version — production keeps the increment inside ReplaceCampaign's outbox transaction —
 	// so "was the claim taken?" cannot be inferred from the version; it must be observed.
 	claims int
+	// claimErr, when set, is returned by ClaimCampaignVersion instead of a token. It models
+	// the try-lock losing: the real repo answers ErrCampaignWriteInProgress immediately
+	// rather than waiting for the holder.
+	claimErr error
 }
 
 func (r *campaignEditRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
@@ -592,6 +596,9 @@ func (r *campaignEditRepo) recordIndex(c *model.Campaign, indexPayload domain.Ca
 }
 func (r *campaignEditRepo) ClaimCampaignVersion(_ context.Context, _, _, campaignID string, expectedVersion int64) (*model.Campaign, domain.CampaignLockToken, error) {
 	r.claims++
+	if r.claimErr != nil {
+		return nil, domain.CampaignLockToken{}, r.claimErr
+	}
 	if r.cur.Version != expectedVersion {
 		return nil, domain.CampaignLockToken{}, domain.ErrPreconditionFailed
 	}
@@ -606,10 +613,12 @@ func (r *campaignEditRepo) ReleaseCampaignLockAfterCooldown(domain.CampaignLockT
 }
 
 // UpdateCampaign must validate status BEFORE claiming. The claim takes the campaign's
-// advisory lock on a dedicated pooled connection and blocks every other writer for that
+// advisory lock on a dedicated pooled connection and EXCLUDES every other writer for that
 // campaign until release, so a request that is going to be rejected anyway must never take
-// it. (The claim does not bump the version — only ReplaceCampaign does — so this is about
-// not blocking legitimate writers, not about ETag invalidation.)
+// it. Because the lock is a try, not a wait, taking it needlessly does not merely delay the
+// other writers — it turns their requests into 409s. (The claim does not bump the version —
+// only ReplaceCampaign does — so this is about not rejecting legitimate writers, not about
+// ETag invalidation.)
 func TestBriefService_UpdateCampaign_ValidationBeforeClaim(t *testing.T) {
 	camps := &campaignEditRepo{cur: &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Version: 5,
@@ -2594,6 +2603,79 @@ func TestBriefService_DeleteCampaign_PendingIsActionableConflict(t *testing.T) {
 	if !strings.Contains(conflict.Message, "dispatch") {
 		t.Errorf("message = %q, want it to explain that a dispatch is in flight", conflict.Message)
 	}
+}
+
+// TestBriefService_LostClaimIsARetryable409 pins how a LOST try-lock reaches the client.
+//
+// The claim is a try, not a wait (see domain.ErrCampaignWriteInProgress): a second writer for
+// the same campaign is answered immediately rather than parked, so this sentinel is now on
+// every campaign write path and its mapping is the whole caller-facing contract for it. Two
+// wrong answers are easy to fall into and neither would fail any other test:
+//
+//   - 412. The loser's ETag may be perfectly current — it lost a race, not a version check.
+//     A 412 tells them to refetch and rebuild a request that was already correct, and a
+//     client that automates that never retries the write at all.
+//   - 409 "the resource already exists", which is what mapBriefErr renders for the
+//     neighbouring domain.ErrConflict. Right status, but it describes a uniqueness
+//     violation, so it reads as permanent and gives the caller nothing to act on.
+//
+// Both subtests matter because the two paths map errors differently: DeleteCampaign
+// intercepts domain.ErrConflict itself before delegating, so it is the path where a
+// mis-ordered case could swallow this sentinel.
+func TestBriefService_LostClaimIsARetryable409(t *testing.T) {
+	assertRetryable := func(t *testing.T, err error) {
+		t.Helper()
+		var pf *briefs.PreconditionFailedError
+		if errors.As(err, &pf) {
+			t.Fatalf("err = 412 %q; losing the claim says nothing about the caller's ETag, so a "+
+				"refetch-and-rebuild is exactly the wrong advice", pf.Message)
+		}
+		var conflict *briefs.ConflictError
+		if !errors.As(err, &conflict) {
+			t.Fatalf("err = %#v, want ConflictError (409)", err)
+		}
+		if strings.Contains(conflict.Message, "already exists") {
+			t.Errorf("message = %q; that is domain.ErrConflict's uniqueness wording, which reads as "+
+				"permanent — this condition clears on its own", conflict.Message)
+		}
+		if !strings.Contains(conflict.Message, "retry") {
+			t.Errorf("message = %q, want it to tell the caller to retry", conflict.Message)
+		}
+	}
+
+	t.Run("update campaign", func(t *testing.T) {
+		camps := &campaignEditRepo{
+			cur: &model.Campaign{
+				ID: "c1", ProjectID: "cncf", BriefID: "b1", Version: 5,
+				CampaignName: "old", Status: "created",
+			},
+			claimErr: domain.ErrCampaignWriteInProgress,
+		}
+		s := &BriefService{
+			briefs:    &fakeBriefRepo{briefs: map[string]*model.CampaignBrief{}},
+			campaigns: camps,
+			jobs:      newFakeJobRepo(),
+			orch:      NewOrchestrator(camps, newFakeJobRepo(), nil),
+		}
+		v := "5"
+		_, err := s.UpdateCampaign(context.Background(), &briefs.UpdateCampaignPayload{
+			ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &v,
+			// Status is re-sent unchanged: update-campaign rejects a run-status change
+			// outright, and that 400 lands BEFORE the claim, so omitting it would make
+			// this subtest pass without ever reaching the claim at all.
+			Campaign: &briefs.CampaignUpdateInput{CampaignName: "new", Status: "created"},
+		})
+		assertRetryable(t, err)
+	})
+
+	t.Run("delete campaign", func(t *testing.T) {
+		s, _ := newDeleteService(domain.ErrCampaignWriteInProgress)
+		im := "1"
+		err := s.DeleteCampaign(context.Background(), &briefs.DeleteCampaignPayload{
+			ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im,
+		})
+		assertRetryable(t, err)
+	})
 }
 
 // The remaining repo sentinels keep their standard mappings, so a deleted/absent

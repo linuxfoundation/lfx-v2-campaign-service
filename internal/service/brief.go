@@ -1050,6 +1050,11 @@ func mapBriefErr(err error) error {
 		// state conflict, not a uniqueness one — tell the client to refresh and
 		// re-approve, which "already exists" would misdescribe.
 		return &briefs.ConflictError{Code: "409", Message: "brief is no longer approved at the expected version; refresh and re-approve, then retry"}
+	case errors.Is(err, domain.ErrCampaignWriteInProgress):
+		// The claim is a try-lock, not a wait (see domain.ErrCampaignWriteInProgress). The
+		// caller's ETag may be perfectly current, so 412 would send them off to refetch and
+		// rebuild a request that was already correct — the right advice is simply to retry.
+		return &briefs.ConflictError{Code: "409", Message: "another write to this campaign is already in progress; retry shortly"}
 	case errors.Is(err, domain.ErrConflict):
 		return &briefs.ConflictError{Code: "409", Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):

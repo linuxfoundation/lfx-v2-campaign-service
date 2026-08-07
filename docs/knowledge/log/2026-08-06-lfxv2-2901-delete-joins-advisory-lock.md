@@ -9,8 +9,12 @@ ACROSS the platform call, and in the window between `ClaimCampaignVersion` and
 window soft-deletes and bumps `version`, so the toggle's
 `ReplaceCampaign(expectedVersion)` fails AFTER the paid side effect already landed
 upstream — the campaign is changed on the ad platform with no local record of it.
-Taking the advisory lock makes delete wait for the toggle to release, after which
-it observes the bumped version and returns an actionable 412.
+Taking the advisory lock keeps the delete out of that window entirely. It TRIES the
+lock rather than waiting for it: this request has already checked a connection out of
+the pool, so blocking would pin a second pooled connection for the length of the
+winner's platform call. A delete that arrives mid-toggle therefore gets
+`ErrCampaignWriteInProgress` (409, retry shortly) — which is also the truer answer than
+the 412 waiting would have produced, since the delete never held a stale ETag.
 
 **Update** — The delete transaction begins on the connection already holding the
 advisory lock (`conn.Begin`), not on the pool (`r.db.Begin`). Beginning on the
@@ -27,7 +31,3 @@ which asserts on the method body's source. This repo has no DB-backed test
 harness, so racing two real transactions is not available; both properties pinned
 are structural. Verified binding by reverting `conn.Begin` to `r.db.Begin` and
 confirming the failure.
-
-**Update** — Replaced a `switch { case err == nil: ... }` in
-`internal/service/brief_test.go` with a plain `if`/`continue`; CI's staticcheck
-flagged it as QF1002 (could use tagged switch), which failed Build and Test.
