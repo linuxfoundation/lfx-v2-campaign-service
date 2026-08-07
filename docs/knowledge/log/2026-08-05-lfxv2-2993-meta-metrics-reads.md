@@ -7,8 +7,14 @@ campaign id and metrics window (fixed allow-list of supported date_preset values
 `LAST_30_DAYS`) are both validated before string interpolation into the request, since Meta's
 insights endpoint has only fixed preset values. Platform-agnostic domain type `model.CampaignMetrics`
 (Impressions/Clicks/CostMicros/Ctr) is distinct from the platform-level `meta.CampaignMetrics`,
-converted at the dispatcher boundary — mirrors the Google Ads GA-5 pattern exactly. Cost is
-expressed in micros of the ad account's currency (multiplying Meta's spend value by 1,000,000),
-matching Google Ads' unit so a platform-agnostic dispatcher can normalize all platforms to the same
-scale. The existing platform-agnostic `/metrics` endpoint (wired via the orchestrator's optional-capability
-type assertion) now works for Meta campaigns, same as Google Ads (LFXV2-2993).
+converted at the dispatcher boundary. Cost is expressed in micros of the ad account's currency
+(multiplying Meta's spend value by 1,000,000), matching the unit `model.CampaignMetrics.CostMicros`
+declares so the field means the same thing for every platform rather than silently switching scale
+per adapter. The existing platform-agnostic `/metrics` endpoint (wired via the orchestrator's
+optional-capability type assertion) now works for Meta campaigns (LFXV2-2993).
+
+The original wording said this "mirrors the Google Ads GA-5 pattern exactly" and that the endpoint
+now works for Meta "same as Google Ads". Neither was true of the tree: there is no
+`GoogleAdsDispatcher.ReadMetrics` on `main`, and `docs/knowledge/code/internal-platform-googleads.md`
+records Google Ads metrics reads as a later slice. GA-5 exists, but as an unmerged PR — which a
+reader of this fragment has no way to know. Corrected to describe only what is actually here.

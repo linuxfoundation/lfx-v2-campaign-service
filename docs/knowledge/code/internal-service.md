@@ -118,6 +118,26 @@ unreachable there (see `internal/platform/twitter` and `internal/dispatch/twitte
 below). A single global default would make every omitted-window request against an X
 campaign fail with a guaranteed 400.
 
+**Platform error text never reaches a log verbatim.** Both failure branches of
+`GetCampaignMetrics` render the dispatcher's error through `safeErrSummary`
+(`internal/service/brief.go`) rather than passing it to `slog` directly. This path is
+platform-agnostic — every `ReadMetrics` implementation funnels through it — so it cannot
+assume the platform client already scrubbed its response text, and at least one does not:
+`*meta.APIError.Error()` renders the Graph API's `Message` field verbatim, and the
+non-Graph fallback populates that field from the RAW response body. `safeErrSummary`
+replaces every non-graphic rune with U+FFFD (so newlines cannot forge extra records in a
+line-oriented sink, and the substitution stays visible instead of silently altering the
+text) and caps the result at `errSummaryMaxRunes` (200) with a trailing ellipsis, counting
+RUNES so a multi-byte body truncates on a boundary. The scrub is scoped to the log call,
+not to Meta's `Error()` itself, whose raw-body behavior is pre-existing and relied on for
+campaign-creation diagnostics.
+
+The window-unsupported branch scrubs for the same reason as the generic-failure branch,
+not a weaker one: an adapter may wrap `ErrMetricsWindowUnsupported` around upstream text
+(some platforms echo the offending request value into their own "unsupported date range"
+message), so it can carry raw response bytes just as the default branch can. Scrubbing one
+and not the other would leave the path open.
+
 ## Campaign delete
 
 `BriefService.DeleteCampaign` (backing `DELETE .../campaigns/{id}`, `If-Match` required)

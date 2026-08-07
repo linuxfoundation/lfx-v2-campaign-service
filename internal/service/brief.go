@@ -519,9 +519,16 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			// into the client-facing message: an adapter error can carry internal detail (a
 			// platform API's own error text, an allow-list of internal literals) that isn't
 			// meant for an API client.
+			//
+			// safeErrSummary here for the same reason as the default branch below, and not
+			// because this branch is less exposed: an adapter is free to wrap
+			// ErrMetricsWindowUnsupported around upstream text (a platform's own
+			// "unsupported date_preset" message, which some APIs echo the request value
+			// into), so this error can carry raw response bytes exactly as the default
+			// branch's can. Scrubbing one and not the other leaves the path open.
 			slog.WarnContext(ctx, "campaign metrics window unsupported by platform",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
-				"platform", existing.Platform, "window", window, "error", merr)
+				"platform", existing.Platform, "window", window, "error", safeErrSummary(merr))
 			// Provide platform-specific guidance on window support (e.g., X Ads' 7-day limit)
 			msg := "this window is not supported for the campaign's platform"
 			if existing.Platform == model.ProviderTwitterAds {

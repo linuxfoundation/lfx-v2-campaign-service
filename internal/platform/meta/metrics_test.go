@@ -149,6 +149,27 @@ func TestGetCampaignMetrics_RejectsNonNumericCampaignID(t *testing.T) {
 	}
 }
 
+// TestDatePresetFor_CoversEveryWindow is the size half of the window-translation coverage
+// (the value half — which model window produces which upstream date_preset — is
+// TestMeta_ReadMetrics_EveryWindowReachesTheRightDatePreset in internal/dispatch). It fails
+// when a MetricsWindow constant is declared without a datePresetFor entry, which would
+// otherwise surface only as a runtime "unsupported window" for a window the package
+// advertises as supported.
+func TestDatePresetFor_CoversEveryWindow(t *testing.T) {
+	declared := []MetricsWindow{
+		WindowToday, WindowYesterday, WindowLast7Days, WindowLast14Days,
+		WindowLast30Days, WindowThisMonth, WindowLastMonth,
+	}
+	for _, w := range declared {
+		if _, ok := datePresetFor[w]; !ok {
+			t.Errorf("MetricsWindow %q has no datePresetFor entry — GetCampaignMetrics would reject it as unsupported", w)
+		}
+	}
+	if len(declared) != len(datePresetFor) {
+		t.Errorf("datePresetFor has %d entries but %d windows are declared — one of the two lists is stale", len(datePresetFor), len(declared))
+	}
+}
+
 func TestGetCampaignMetrics_RejectsUnsupportedWindow(t *testing.T) {
 	c := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("upstream should not be called for an unsupported window")

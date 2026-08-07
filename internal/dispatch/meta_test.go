@@ -629,6 +629,68 @@ func TestMeta_ReadMetrics_HappyPath(t *testing.T) {
 	}
 }
 
+// TestMeta_ReadMetrics_EveryWindowReachesTheRightDatePreset pins the FULL window
+// translation — model.MetricsWindow → meta.MetricsWindow (metaMetricsWindow) →
+// Meta's date_preset (datePresetFor) — one row per supported window, with the upstream
+// literal spelled out.
+//
+// A table-driven test is worth writing for a chain of one-liners because a wrong entry is
+// invisible everywhere else: swapping "last_7d" for "last_14d" compiles, passes the
+// unsupported-window guard (it IS a valid preset, just the wrong one), and silently reports
+// a different reporting period than the caller asked for. Only comparing against a spelled-out
+// literal catches it — asserting datePresetFor[w] == datePresetFor[w] would prove nothing.
+//
+// Driven through the dispatcher rather than the client so both hops are covered at once: a
+// client-level test would still pass if metaMetricsWindow mapped last_7_days to the wrong
+// meta.Window. The companion size check — that no window can be added to datePresetFor
+// without a row here — lives in TestDatePresetFor_CoversEveryWindow, which is in package
+// meta where the unexported map is reachable.
+func TestMeta_ReadMetrics_EveryWindowReachesTheRightDatePreset(t *testing.T) {
+	cases := []struct {
+		window     model.MetricsWindow
+		wantPreset string
+	}{
+		{model.MetricsWindowToday, "today"},
+		{model.MetricsWindowYesterday, "yesterday"},
+		{model.MetricsWindowLast7Days, "last_7d"},
+		{model.MetricsWindowLast14Days, "last_14d"},
+		{model.MetricsWindowLast30Days, "last_30d"},
+		{model.MetricsWindowThisMonth, "this_month"},
+		{model.MetricsWindowLastMonth, "last_month"},
+	}
+
+	for _, tc := range cases {
+		t.Run(string(tc.window), func(t *testing.T) {
+			var mu sync.Mutex
+			var gotQuery string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				gotQuery = r.URL.RawQuery
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"data":[{"impressions":"1","clicks":"1","spend":"1.00"}]}`)
+			}))
+			defer srv.Close()
+
+			d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{}, meta.WithBaseURL(srv.URL))
+			camp := &model.Campaign{Platform: model.ProviderMetaAds, PlatformCampaignID: "777"}
+			m, err := d.ReadMetrics(context.Background(), "proj", model.ProviderMetaAds, camp, tc.window)
+			if err != nil {
+				t.Fatalf("ReadMetrics(%s): %v", tc.window, err)
+			}
+			if m.Window != tc.window {
+				t.Errorf("returned Window = %q, want %q — the snapshot must report the window the caller asked for", m.Window, tc.window)
+			}
+			mu.Lock()
+			q := gotQuery
+			mu.Unlock()
+			if want := "date_preset=" + tc.wantPreset; !strings.Contains(q, want) {
+				t.Errorf("window %q sent %q, want %q — a wrong preset silently reports a different reporting period", tc.window, q, want)
+			}
+		})
+	}
+}
+
 // TestMeta_ReadMetrics_ConnectionUnresolvedPropagates pins that a broken/inactive
 // connection surfaces as a plain error (NOT wrapped with notCreated, unlike Dispatch) — a
 // metrics read has no create-claim semantics to protect. Mirrors the Google Ads dispatcher.
