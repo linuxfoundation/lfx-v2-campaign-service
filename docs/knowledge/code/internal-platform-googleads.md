@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/googleads"
-description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer, GAQL search (GA-1), PAUSED campaign creation (GA-2), ad group + responsive search ad creation (GA-3), keyword/audience-segment targeting on that ad group (GA-4), and live campaign metrics reads (GA-5)."
+description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer, GAQL search (GA-1), PAUSED campaign creation (GA-2), ad group + responsive search ad creation (GA-3), keyword/audience-segment targeting on that ad group (GA-4), live campaign metrics reads (GA-5), and ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on the account-agnostic request path that validates only the manager id."
 resource: "internal/platform/googleads"
 tags:
   - platform-client
@@ -518,3 +518,64 @@ cascade order and the ACTIVATE provisioning gate. Note the vocabulary: Google sp
 serving state **ENABLED**, not ACTIVE.
 
 Microsoft Ads has a creation dispatcher; its status-TOGGLE capability lands separately.
+
+## Account discovery
+
+`Client.ListAccessibleCustomers` enumerates the ad accounts reachable with the credential,
+returning `AccessibleCustomer{ResourceName, DescriptiveName}`. Two things make it unlike every
+other call in this package.
+
+**It runs with no `CustomerID`.** `doRequest` validates `c.account.CustomerID` as digits-only
+before building any request, but this call is how a caller LEARNS a customer id — a connection
+is authorized first and an account chosen afterwards, from this very list. So the
+account-agnostic paths call `doRequestValidated`, which is `doRequest` with the id precondition
+discharged by the caller. It exists only so those paths still share one copy of the URL
+construction, header set, body bounding, retry gating, and `apiError`/`transportError`
+classification; `validateLoginCustomerID` still runs, because the `login-customer-id` header is
+still attached and still has to be well-formed. `gaqlSearchForCustomer` is the same idea for
+searches: it takes an EXPLICIT customer id (validated there, since it is interpolated into the
+resource path) rather than the client's configured one, and `gaqlSearch` is now a thin
+delegation to it.
+
+**A manager credential needs the hierarchy walked — and the flat list discarded.**
+`customers:listAccessibleCustomers` returns the accounts the authenticated user can act on
+DIRECTLY; a `login-customer-id` header does not make it enumerate that manager's children —
+that is a property of the endpoint, not of the header. On an MCC connection the flat list is
+therefore often just the manager itself, with every child ad account missing.
+
+So `ListAccessibleCustomers` has two modes, and they do not merge:
+
+- **No `login_customer_id`.** The direct list IS the answer. Every account in it is one the
+  credential addresses on its own behalf. A manager account can still be in there and cannot
+  hold campaigns, but the response carries no `manager` flag, so there is nothing to recognise
+  it by; a round-trip per row to find out would cost more than it saves on a list this short.
+- **`login_customer_id` set.** The selectable set is exactly `listManagerClients`' output: a
+  `customer_client` GAQL query scoped to the manager, requesting only `status = 'ENABLED'`
+  clients and dropping rows where `customer_client.manager` is true. The flat list is validated
+  and then **not used as a source of selectable accounts.**
+
+Discarding it is the point, not an oversight. `listAccessibleCustomers` is UNSCOPED — the
+header does not filter it — while every OTHER request this client makes carries that header, so
+an account is addressable through this client only if it sits under the configured manager. An
+account the user reaches directly but which belongs to a different hierarchy comes back in the
+flat list and then fails `PERMISSION_DENIED` the moment anything is done with it. Merging it in
+offers the caller a choice that cannot work, and the failure lands at first dispatch — long
+after the connection was saved — where it reads as a credential problem rather than a
+wrong-account one. Nothing addressable is lost by dropping it: an account under the manager is
+in the expansion too.
+
+The expansion is also the only source of `descriptive_name` — the flat endpoint returns resource
+names alone — so accounts come back labelled in manager mode and unlabelled without one.
+Expansion rows are deduplicated by resource name, since `customer_client` reports a client once
+per path through the hierarchy and a client of a sub-manager that is itself a client of the root
+appears twice. A row with no id is a hard error rather than a silent drop, since dropping it
+would understate the list the operator chooses from.
+
+Validation of the flat list still runs in BOTH modes even though manager mode discards its
+contents: a resource name that is not `customers/{digits}` means the 2xx did not match the
+documented contract, and that is worth failing on wherever it is noticed.
+
+The REST binding is GET (not the POST used by `:search` and `:mutate`), it takes no request
+body at all, and it is sent with `idempotent=true` — a pure read, so retrying a 429 cannot
+double-apply anything.
+
