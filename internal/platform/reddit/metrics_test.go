@@ -89,6 +89,32 @@ func TestGetCampaignMetrics_HappyPath(t *testing.T) {
 	if len(ids) != 1 || ids[0] != "camp_123" {
 		t.Errorf("expected campaign_ids [camp_123], got %v", data["campaign_ids"])
 	}
+	// The whole request body is asserted, not just campaign_ids. The window translation
+	// (dateRangeForWindow) and the breakdown/field selection decide WHICH numbers come
+	// back, so a wrong date range or a dropped field yields a well-formed response for
+	// the wrong period or with a missing metric — nothing downstream can detect that.
+	// The client's clock is pinned at 2026-07-01 (fixedRedditClock), so last_7_days is
+	// the inclusive 7-day span ending today.
+	if got := data["starts_at"]; got != "2026-06-25" {
+		t.Errorf("expected starts_at 2026-06-25, got %v", got)
+	}
+	if got := data["ends_at"]; got != "2026-07-01" {
+		t.Errorf("expected ends_at 2026-07-01, got %v", got)
+	}
+	breakdowns, _ := data["breakdowns"].([]any)
+	if len(breakdowns) != 1 || breakdowns[0] != "campaign_id" {
+		t.Errorf("expected breakdowns [campaign_id], got %v", data["breakdowns"])
+	}
+	fields, _ := data["fields"].([]any)
+	wantFields := []string{"impressions", "clicks", "spend"}
+	if len(fields) != len(wantFields) {
+		t.Fatalf("expected fields %v, got %v", wantFields, data["fields"])
+	}
+	for i, want := range wantFields {
+		if fields[i] != want {
+			t.Errorf("fields[%d]: expected %q, got %v", i, want, fields[i])
+		}
+	}
 }
 
 func TestGetCampaignMetrics_NoActivity(t *testing.T) {
