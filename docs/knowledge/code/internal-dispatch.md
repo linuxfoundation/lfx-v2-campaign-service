@@ -271,7 +271,8 @@ those, leaving the HTTP status mapping to the service layer.
 **Errors that arise BEFORE any request are classified here, and must be.** The service layer has
 exactly one default arm for an unrecognized error, and it answers 503 — "the provider call failed,
 retry later". Three conditions would land there wrongly: an inactive connection, a credential blob
-that is incomplete or undecodable, and a `login_customer_id` stored with dashes. None of them
+that is incomplete or structurally malformed, and a `login_customer_id` stored with dashes. (A blob
+that fails AUTHENTICATION is not one of them — see the decrypt split below.) None of them
 improve with time; all of them need a human to edit the connection. So
 `resolveGoogleAdsDiscoveryClient` wraps each with `domain.ErrConnectionNotUsable`. The 400 mapping
 for that sentinel lands with the endpoint in the follow-up PR; the wrap has to exist here, in the
@@ -284,14 +285,31 @@ failure. `storedCustomerIDRE` in `internal/dispatch/googleads.go` therefore chec
 where it is read — the check has to happen where the answer is still classifiable. The two regexps
 must stay in step.
 
-`creds.resolve` tags two of its own four failure branches, and the split is deliberate. A connection
-row with an EMPTY credential blob, and one whose blob will not DECRYPT, are permanently unusable as
-they stand — they carry `domain.ErrConnectionNotUsable` so a read-only caller answers 400. The other
-two do not: `domain.ErrNotFound` means there is no connection at all (→ 404, and the caller should
-create one, not edit one), and a repository failure is a genuine "try again later" (→ 503).
-Flattening either into "not usable" would lose a distinction the service layer depends on. Note the
-decrypt branch wraps BOTH the sentinel and the decrypt error (`%w: %w`); the service layer logs that
-cause rather than returning it, since a decrypt failure can carry ciphertext detail.
+`creds.resolve` classifies each of its failure branches, and the splits are deliberate. A connection
+row with an EMPTY credential blob is permanently unusable as it stands, so it carries
+`domain.ErrConnectionNotUsable` and a read-only caller answers 400. Two branches do not:
+`domain.ErrNotFound` means there is no connection at all (→ 404, and the caller should create one,
+not edit one), and a repository failure is a genuine "try again later" (→ 503). Flattening either
+into "not usable" would lose a distinction the service layer depends on.
+
+**A decrypt failure is not one condition, and it splits again.** Only a blob the encryptor could not
+even ATTEMPT to authenticate — `domain.ErrCredentialsMalformed`, for AES-GCM a ciphertext shorter
+than a nonce — is proven bad ROW data, and only that branch earns `ErrConnectionNotUsable` → 400. A
+GCM AUTHENTICATION failure carries `domain.ErrCredentialDecryptionFailed` instead: it means a wrong
+or rotated APPLICATION key, or tampering (`internal/infrastructure/crypto/aesgcm.go` states both),
+and that key is deployment-wide, so the same failure hits every project's connection at once.
+Reported as "not usable as configured" it would answer 400 to all of them — every operator told to
+go fix a connection that is fine — and would erase the 500 that says the deployment is broken. An
+unrecognized decrypt error takes the authentication path on purpose: an `Encryptor` that proves
+nothing about the row must not be read as accusing it.
+
+The two sentinels are declared in `internal/domain` rather than in `crypto` because callers depend
+on the `domain.Encryptor` PORT and never import the implementation; the port's doc states the
+wrapping obligation, and `crypto`'s `ErrCiphertextTooShort` / `ErrDecryptionFailed` each wrap their
+domain sentinel so `errors.Is` carries the classification across the layer without inverting the
+dependency. Note the decrypt branches wrap BOTH a sentinel and the decrypt error (`%w: %w`); the
+service layer logs that cause rather than returning it, since a decrypt failure can carry ciphertext
+detail.
 
 Google Ads is the only implementation today, via
 `Client.ListAccessibleCustomers` → `customers:listAccessibleCustomers`. That endpoint is

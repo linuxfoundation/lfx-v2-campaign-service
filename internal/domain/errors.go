@@ -94,4 +94,26 @@ var (
 	// ErrMetricsWindowUnsupported, so the service layer classifies without importing every
 	// platform package.
 	ErrConnectionNotUsable = errors.New("the stored connection is not usable as configured")
+
+	// ErrCredentialsMalformed indicates the stored credential blob is structurally
+	// invalid — the Encryptor could not even ATTEMPT to authenticate it (for the
+	// AES-GCM implementation: shorter than a nonce). That is proven bad ROW data: the
+	// row must be re-saved before this connection can work again, and nothing about
+	// the deployment is wrong. The credential-resolution path wraps it with
+	// ErrConnectionNotUsable, so it reaches the caller as a 400.
+	ErrCredentialsMalformed = errors.New("the stored credential blob is malformed")
+
+	// ErrCredentialDecryptionFailed indicates a well-formed blob that failed
+	// authenticated decryption. It is deliberately NOT ErrConnectionNotUsable: a GCM
+	// authentication failure means a wrong or ROTATED APPLICATION KEY, or tampered
+	// data (internal/infrastructure/crypto/aesgcm.go states both), and the application
+	// key is deployment-wide — one wrong key fails every project's connection at once.
+	// Classifying that as "not usable as configured" would answer 400 and tell every
+	// project to go fix a connection that is fine, while suppressing the only signal
+	// that says the DEPLOYMENT is broken. It maps to 500 and should page ops.
+	//
+	// It is also the DEFAULT for an unrecognised decrypt failure. An Encryptor that
+	// proves nothing about the row must not be read as proving the row is at fault:
+	// mistaking an outage for user error is the expensive direction of this call.
+	ErrCredentialDecryptionFailed = errors.New("stored credentials could not be decrypted")
 )

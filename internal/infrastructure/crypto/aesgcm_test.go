@@ -9,6 +9,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"testing"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 func newTestKey(t *testing.T) []byte {
@@ -97,5 +99,36 @@ func TestAESGCM_DecryptWrongKeyIsAuthFailure(t *testing.T) {
 	ct, _ := enc1.Encrypt([]byte("secret"))
 	if _, err := enc2.Decrypt(ct); !errors.Is(err, ErrDecryptionFailed) {
 		t.Fatalf("expected ErrDecryptionFailed for wrong key, got %v", err)
+	}
+}
+
+// TestAESGCM_DecryptErrorsCarryDomainClassification pins the half of the contract that
+// leaves this package. Nothing above internal/infrastructure imports crypto — the dispatch
+// and service layers depend on domain.Encryptor — so the sentinels above are invisible to
+// every caller that has to decide between "this connection row is bad" (400) and "the
+// deployment's key is wrong" (500 + page ops). The wrapped domain sentinel is the ONLY
+// thing that crosses, and dropping the wrap would leave every test above green while the
+// dispatch layer silently fell into its unclassified default.
+func TestAESGCM_DecryptErrorsCarryDomainClassification(t *testing.T) {
+	enc, _ := NewAESGCM(newTestKey(t))
+
+	_, short := enc.Decrypt([]byte("short"))
+	if !errors.Is(short, domain.ErrCredentialsMalformed) {
+		t.Errorf("short ciphertext: err = %v, want errors.Is(err, domain.ErrCredentialsMalformed)", short)
+	}
+	if errors.Is(short, domain.ErrCredentialDecryptionFailed) {
+		t.Errorf("short ciphertext: err = %v, must not read as an authentication failure — "+
+			"nothing was ever authenticated, and this must not page ops", short)
+	}
+
+	other, _ := NewAESGCM(newTestKey(t))
+	ct, _ := enc.Encrypt([]byte("secret"))
+	_, wrongKey := other.Decrypt(ct)
+	if !errors.Is(wrongKey, domain.ErrCredentialDecryptionFailed) {
+		t.Errorf("wrong key: err = %v, want errors.Is(err, domain.ErrCredentialDecryptionFailed)", wrongKey)
+	}
+	if errors.Is(wrongKey, domain.ErrCredentialsMalformed) {
+		t.Errorf("wrong key: err = %v, must not read as bad row data — the blob is well formed "+
+			"and it is the application key that is wrong", wrongKey)
 	}
 }

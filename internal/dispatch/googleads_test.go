@@ -4,6 +4,7 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/crypto"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
 )
 
@@ -1347,10 +1349,13 @@ func TestGoogleAds_ListAccounts_StillRejectsUnusableConnections(t *testing.T) {
 			wantSub: "no stored credentials",
 		},
 		{
-			// Also inside creds.resolve. A blob that will not decrypt cannot start
-			// decrypting later — key rotation or corruption, both of which need a human.
-			name:    "credential blob that will not decrypt",
-			enc:     errEncryptor{},
+			// Also inside creds.resolve, and note how narrow it is: a blob the encryptor
+			// could not even ATTEMPT to authenticate. That proves the row is bad and
+			// implicates nothing else, so it belongs in this table. A blob that failed
+			// AUTHENTICATION does not belong here at all — see
+			// TestGoogleAds_ListAccounts_DecryptFailureIsNotAConnectionProblem.
+			name:    "structurally malformed credential blob",
+			enc:     malformedEncryptor{},
 			wantSub: "decrypt",
 		},
 		{
@@ -1399,6 +1404,84 @@ func TestGoogleAds_ListAccounts_StillRejectsUnusableConnections(t *testing.T) {
 			if errors.Is(err, domain.ErrNotFound) {
 				t.Errorf("error = %v, must NOT satisfy ErrNotFound: the connection exists, it is "+
 					"just unusable — a 404 would tell the caller to create a second one", err)
+			}
+		})
+	}
+}
+
+// TestGoogleAds_ListAccounts_DecryptFailureIsNotAConnectionProblem pins the other side of
+// the table above: a decrypt failure is not one condition, and the two halves ask different
+// people to act.
+//
+// A blob too short to hold a nonce was never authenticated, so it proves the stored ROW is
+// bad — that half stays in the table above and answers 400. A GCM AUTHENTICATION failure
+// proves something else entirely: the ciphertext is well formed and the key did not open it,
+// which means a wrong or rotated APPLICATION key, or tampering
+// (internal/infrastructure/crypto/aesgcm.go). The application key is deployment-wide, so
+// that failure hits EVERY project's connection in the same instant. Wrapped as
+// ErrConnectionNotUsable it would answer 400 to all of them — every operator told to go fix
+// a connection that is fine, and the one signal that says the deployment is broken erased.
+//
+// The first case runs the REAL AESGCM rather than a fake, because the classification is a
+// two-package contract: crypto must wrap the domain sentinel and creds.resolve must read it.
+// A fake asserting its own error back would prove neither half. The second case is an
+// encryptor whose error carries no classification at all; it must take the same path, since
+// an implementation that proves nothing about the row cannot be read as accusing it.
+func TestGoogleAds_ListAccounts_DecryptFailureIsNotAConnectionProblem(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("reached Google Ads with credentials that never decrypted")
+	}))
+	defer apiSrv.Close()
+
+	sealingKey := bytes.Repeat([]byte{0xA5}, crypto.KeySize)
+	sealer, err := crypto.NewAESGCM(sealingKey)
+	if err != nil {
+		t.Fatalf("build sealing encryptor: %v", err)
+	}
+	sealed, err := sealer.Encrypt([]byte(goodGoogleAdsCreds))
+	if err != nil {
+		t.Fatalf("seal credentials: %v", err)
+	}
+	// A DIFFERENT 32-byte key — the rotated-deployment-key scenario, exactly.
+	rotated, err := crypto.NewAESGCM(bytes.Repeat([]byte{0x5A}, crypto.KeySize))
+	if err != nil {
+		t.Fatalf("build rotated encryptor: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		enc  domain.Encryptor
+		blob []byte
+	}{
+		{name: "GCM authentication failure under a rotated key", enc: rotated, blob: sealed},
+		{name: "decrypt error with no classification", enc: errEncryptor{}, blob: []byte("anything")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := activeGoogleAdsConn(goodGoogleAdsCreds)
+			conn.AccountID = ""
+			conn.EncryptedCredentials = tc.blob
+			d := NewGoogleAdsDispatcher(
+				fakeConnReader{conn: conn}, tc.enc,
+				googleads.WithBaseURL(apiSrv.URL),
+			)
+			_, err := d.ListAccounts(context.Background(), "proj", model.ProviderGoogleAds)
+			if err == nil {
+				t.Fatal("expected a decrypt error, got nil")
+			}
+			if !errors.Is(err, domain.ErrCredentialDecryptionFailed) {
+				t.Errorf("error = %v, want errors.Is(err, domain.ErrCredentialDecryptionFailed): "+
+					"this is the only marker that carries the infrastructure/security "+
+					"classification to the service layer", err)
+			}
+			if errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Errorf("error = %v, must NOT satisfy ErrConnectionNotUsable: that maps to 400 "+
+					"and blames the project's connection row, but a wrong application key fails "+
+					"every project at once and needs ops, not the operator", err)
+			}
+			if errors.Is(err, domain.ErrCredentialsMalformed) {
+				t.Errorf("error = %v, must NOT satisfy ErrCredentialsMalformed: nothing here "+
+					"showed the stored blob to be structurally bad", err)
 			}
 		})
 	}
