@@ -475,6 +475,26 @@ type campaignLock struct {
 // This keeps the version increment inside the outbox transaction, preserving the
 // invariant that EVERY campaign write co-commits its index event (see
 // campaign_repo.go:273-278).
+//
+// DURABILITY BOUNDARY — read this before treating the lock as ownership. A session
+// advisory lock lives only as long as its connection: a failover, a pool eviction, or a
+// severed TCP connection releases it server-side while the holder is still inside its
+// external platform call. A successor can then claim the SAME version and issue a second
+// platform call. The lock is therefore a CONTENTION guard (it makes the common case one
+// writer at a time), not durable ownership.
+//
+// What is durable is the compare-and-swap in replaceCampaignQuery: `WHERE ... version=$12`
+// with `version=version+1`. Whichever writer commits first bumps the version; the other's
+// ReplaceCampaign matches zero rows and surfaces ErrPreconditionFailed, so a lost lock can
+// never produce two persisted writes at the same version, two outbox rows, or a stale
+// overwrite. TestClaimVersionIsBackedByACompareAndSwap pins that predicate.
+//
+// The residual exposure is exactly one duplicated platform call, and every guarded
+// mutation today is DECLARATIVE (set status to active/paused) rather than incremental, so
+// a repeat converges on the same upstream state instead of compounding. That is a
+// deliberate trade, not an oversight: making ownership itself durable needs a lease row
+// with expiry and reconciliation semantics — a design change, tracked separately, not
+// something to graft onto this claim.
 func (r *CampaignRepo) ClaimCampaignVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64) (*model.Campaign, domain.CampaignLockToken, error) {
 	// Acquire a dedicated connection from the pool. This connection is held for the
 	// duration of the claim and must be released by ReleaseCampaignLock on the same

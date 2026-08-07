@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/migrations"
@@ -56,6 +57,33 @@ func TestCampaignRepo_OnConflictCarriesLivePredicate(t *testing.T) {
 					"ON CONFLICT specification\".", livePredicate)
 		})
 	}
+}
+
+// TestClaimVersionIsBackedByACompareAndSwap pins the durable half of the serialization
+// protocol. ClaimCampaignVersion's advisory lock is SESSION-scoped: a failover, a pool
+// eviction, or a dropped TCP connection releases it server-side while the holder is still
+// inside its external platform call, and a successor can then claim the same version. The
+// lock is a contention guard, not durable ownership.
+//
+// What makes a lost lock survivable is this compare-and-swap: ReplaceCampaign must both
+// PREDICATE on the claimed version and BUMP it in the same statement. Whichever writer
+// commits first wins; the other matches zero rows and gets ErrPreconditionFailed. Drop
+// either half and two writers that both held the "same" claim can both persist — two
+// campaign writes at one version, two outbox rows, and the later one silently overwriting
+// the earlier. Asserted against the SQL text because this package has no live-database
+// harness in CI.
+func TestClaimVersionIsBackedByACompareAndSwap(t *testing.T) {
+	q := replaceCampaignQuery
+
+	assert.Contains(t, q, "version=version+1",
+		"without the bump, a second claimant at the same version also passes the version predicate "+
+			"and both writers persist — the advisory lock cannot prevent this, it is only session-scoped")
+	assert.Contains(t, q, "AND version=$12",
+		"without the version predicate, a writer whose lock was lost mid-call overwrites a newer "+
+			"state rather than failing with ErrPreconditionFailed")
+	assert.Contains(t, claimCampaignVersionQuery, "version=$4",
+		"the claim must read AT the caller's expected version; reading the current version instead "+
+			"would hand every racing writer a claim that then passes the swap")
 }
 
 // TestCampaignRepo_ReadsExcludeSoftDeleted pins that every campaigns read filters out
