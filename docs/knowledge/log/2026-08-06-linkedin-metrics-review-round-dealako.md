@@ -29,3 +29,24 @@ carrying ratio syntax would parse to 0.5 rather than erroring. The same test pin
 
 Both verified binding: neutering `decimalCostPattern.MatchString` and `Sign() < 0` fails each test
 with `expected an error for ...` on every case.
+
+**Update** — Swept Copilot's suppressed review-body findings, since an unresolved-thread count of
+zero does not mean there is no open feedback. Most were already addressed by earlier rounds on this
+branch: the campaign URN IS rebuilt from the bare persisted id (in the client, not the dispatcher),
+the Ad Analytics GET DOES reuse the 429 retry policy and returns a terminal error rather than
+`(nil, nil)` when the budget is exhausted, `last_month` no longer uses `AddDate(0, -1, 0)` (it
+derives both boundaries from the first of this month, so March 31 cannot roll back into March), and
+the concept files describe the real package boundary.
+
+One was still live: nothing exercised `LinkedInDispatcher.ReadMetrics` beyond the unsupported-window
+case, leaving the adapter boundary unpinned.
+`TestLinkedIn_ReadMetrics_HappyPathBuildsURNsAndForwardsID` closes it — it asserts the BARE persisted
+`PlatformCampaignID` reaches the client and gets wrapped into a `sponsoredCampaign` URN exactly once
+(a double-wrap assertion guards the other direction), that the account URN comes from the resolved
+connection rather than the campaign row, and that the decoded metrics survive the adapter intact.
+`TestLinkedIn_ReadMetrics_PreflightErrorsNeverContactPlatform` covers the three guard branches with
+a handler that fails the test if it is ever reached.
+
+Both verified binding: replacing the URN build with a pass-through fails the first with
+`campaigns=List(555)`, and neutering the account-id guard fails the third case with the client's
+opaque `account ID is required` instead of the adapter's own diagnostic.

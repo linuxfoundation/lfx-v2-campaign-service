@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -657,5 +658,103 @@ func TestLinkedIn_ReadMetrics_UnsupportedWindowIs400(t *testing.T) {
 	}
 	if !errors.Is(err, linkedin.ErrUnsupportedWindow) {
 		t.Errorf("expected err to still wrap linkedin.ErrUnsupportedWindow, got: %v", err)
+	}
+}
+
+// TestLinkedIn_ReadMetrics_HappyPathBuildsURNsAndForwardsID pins the adapter boundary
+// Copilot flagged as untested: PlatformCampaignID is persisted BARE (campaignFromLinkedIn
+// stores trailingID of the create response's URN), while the Ad Analytics finder requires
+// full sponsoredCampaign/sponsoredAccount URNs. Nothing previously asserted that the bare
+// id reaches the client and that the client — not the dispatcher — rebuilds the URNs, so a
+// regression that sent "555" straight through as the campaign filter, or that double-wrapped
+// an already-URN value, would have gone unnoticed. It also covers the connection's account
+// id flowing into the account URN and the decoded metrics coming back intact.
+func TestLinkedIn_ReadMetrics_HappyPathBuildsURNsAndForwardsID(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"elements":[{"impressions":1000,"clicks":40,"costInUsd":"25.50"}]}`)
+	}))
+	defer srv.Close()
+
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 15, 0, 0, 0, 0, time.UTC) }),
+	)
+	metrics, err := d.ReadMetrics(
+		context.Background(), "proj", model.ProviderLinkedInAds,
+		&model.Campaign{PlatformCampaignID: "555"},
+		model.MetricsWindowLast7Days,
+	)
+	if err != nil {
+		t.Fatalf("ReadMetrics: %v", err)
+	}
+
+	// The campaign URN must be built from the BARE persisted id, exactly once.
+	if !strings.Contains(gotQuery, url.QueryEscape("urn:li:sponsoredCampaign:555")) {
+		t.Errorf("expected the bare id 555 to be wrapped into a sponsoredCampaign URN, query was: %s", gotQuery)
+	}
+	if strings.Contains(gotQuery, url.QueryEscape("urn:li:sponsoredCampaign:urn:li:")) {
+		t.Errorf("campaign URN was double-wrapped, query was: %s", gotQuery)
+	}
+	// The account URN comes from the resolved connection, not from the campaign row.
+	if !strings.Contains(gotQuery, url.QueryEscape("urn:li:sponsoredAccount:123456789")) {
+		t.Errorf("expected the connection's account id in a sponsoredAccount URN, query was: %s", gotQuery)
+	}
+
+	if metrics.Impressions != 1000 || metrics.Clicks != 40 || metrics.CostMicros != 25_500_000 {
+		t.Errorf("decoded metrics did not survive the adapter: got %+v", metrics)
+	}
+	if metrics.Window != model.MetricsWindowLast7Days {
+		t.Errorf("expected the requested window echoed back, got %q", metrics.Window)
+	}
+	if metrics.CampaignID != "555" {
+		t.Errorf("expected CampaignID to stay the bare persisted id, got %q", metrics.CampaignID)
+	}
+}
+
+// TestLinkedIn_ReadMetrics_PreflightErrorsNeverContactPlatform covers the adapter's guard
+// branches. Each must fail before any HTTP call: an unprovisioned campaign, a connection
+// that is not active, and a connection with no account id would otherwise produce an
+// Ad Analytics request with a malformed URN and get an opaque upstream error back.
+func TestLinkedIn_ReadMetrics_PreflightErrorsNeverContactPlatform(t *testing.T) {
+	inactive := activeLinkedInConn(goodLinkedInCreds)
+	inactive.Status = model.StatusInactive
+	noAccount := activeLinkedInConn(goodLinkedInCreds)
+	noAccount.AccountID = "   "
+
+	cases := []struct {
+		name     string
+		conn     *model.Connection
+		campaign *model.Campaign
+		wantSub  string
+	}{
+		{"unprovisioned campaign", activeLinkedInConn(goodLinkedInCreds), &model.Campaign{PlatformCampaignID: ""}, "no platform campaign ID"},
+		{"inactive connection", inactive, &model.Campaign{PlatformCampaignID: "555"}, "not active"},
+		{"connection without account id", noAccount, &model.Campaign{PlatformCampaignID: "555"}, "no account id"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				t.Error("the platform must not be contacted when preflight fails")
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer srv.Close()
+
+			d := NewLinkedInDispatcher(
+				fakeConnReader{conn: tc.conn}, identityEncryptor{},
+				linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 15, 0, 0, 0, 0, time.UTC) }),
+			)
+			_, err := d.ReadMetrics(
+				context.Background(), "proj", model.ProviderLinkedInAds, tc.campaign, model.MetricsWindowLast7Days,
+			)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("expected error containing %q, got: %v", tc.wantSub, err)
+			}
+		})
 	}
 }
