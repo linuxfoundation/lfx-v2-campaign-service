@@ -13,6 +13,8 @@ package service
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -110,6 +112,34 @@ func (s *ConnectionService) TestGoogleAds(ctx context.Context, p *conn.TestGoogl
 
 func (s *ConnectionService) SetCredentialGoogleAds(ctx context.Context, p *conn.SetCredentialGoogleAdsPayload) error {
 	return s.setCredential(ctx, p.ProjectID, model.ProviderGoogleAds, p.Credentials, actorFromCtx(ctx))
+}
+
+func (s *ConnectionService) ListGoogleAdsAccounts(ctx context.Context, p *conn.ListGoogleAdsAccountsPayload) (*conn.ListGoogleAdsAccountsResult, error) {
+	_, _, orch, err := s.resolveBackendWithOrch()
+	if err != nil {
+		return nil, err
+	}
+	accounts, aerr := orch.ReadAccounts(ctx, p.ProjectID, model.ProviderGoogleAds)
+	if aerr != nil {
+		switch {
+		case errors.Is(aerr, ErrAccountsUnsupported):
+			return nil, &conn.BadRequestError{Code: "400", Message: "account discovery is not supported for this platform"}
+		default:
+			slog.WarnContext(ctx, "account discovery failed on google ads",
+				"project_id", p.ProjectID, "error", aerr)
+			return nil, &conn.ConnServiceUnavailableError{Code: "503", Message: "account discovery could not be completed"}
+		}
+	}
+	// Convert model.AccessibleAccount to generated conn type
+	var connAccounts []*conn.AccessibleAccount
+	for _, acct := range accounts {
+		label := acct.Label // Convert to pointer
+		connAccounts = append(connAccounts, &conn.AccessibleAccount{
+			ID:    acct.ID,
+			Label: &label,
+		})
+	}
+	return &conn.ListGoogleAdsAccountsResult{Accounts: connAccounts}, nil
 }
 
 // ─── LinkedinAds ───

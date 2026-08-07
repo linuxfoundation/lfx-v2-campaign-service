@@ -817,3 +817,118 @@ func (c *Client) gaqlSearch(ctx context.Context, query string) ([]json.RawMessag
 	}
 	return nil, fmt.Errorf("gaql search %q: exceeded %d pages with a page token still present", path, maxSearchPages)
 }
+
+// AccessibleCustomer represents a Google Ads customer (account) accessible via
+// the authenticated developer token and login-customer-id (if set). Extracted
+// from the ListAccessibleCustomers response.
+type AccessibleCustomer struct {
+	ResourceName    string
+	DescriptiveName string
+}
+
+// listAccessibleCustomersResponse is the response from the Google Ads
+// customers.listAccessibleCustomers API. The API returns a flat list of all
+// accessible accounts under the authenticated credential + login-customer-id.
+type listAccessibleCustomersResponse struct {
+	// ResourceNames is the list of customer resources reachable via the credential.
+	// Each is formatted as "customers/{customer_id}". This API endpoint — unlike most
+	// Google Ads read operations — does NOT require a customer_id path segment;
+	// it is accessed at /v{api_version}/customers:listAccessibleCustomers.
+	ResourceNames []string `json:"resourceNames"`
+}
+
+// ListAccessibleCustomers discovers the ad accounts accessible via this client's
+// credential and login-customer-id (if set), returning minimal identifying info
+// (resource name and descriptive name). The resource name is formatted as
+// "customers/{customer_id}" (digits only, no dashes).
+//
+// This API endpoint does NOT require a specific customer ID in the path
+// (it is account-agnostic), so it differs from the typical customers/{id}/...
+// pattern used by other client methods.
+func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCustomer, error) {
+	if err := c.validateAccountIDs(); err != nil {
+		return nil, err
+	}
+
+	// The ListAccessibleCustomers endpoint is account-agnostic; it does NOT have
+	// a customer_id path segment. The path is just customers:listAccessibleCustomers.
+	path := "customers:listAccessibleCustomers"
+	u := c.baseURL + "/" + c.apiVersion + "/" + path
+
+	token, err := c.accessTokenValue(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	callCtx, cancel := context.WithTimeout(ctx, googleAdsRequestTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(callCtx, http.MethodPost, u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("developer-token", c.creds.DeveloperToken)
+	if c.account.LoginCustomerID != "" {
+		req.Header.Set("login-customer-id", c.account.LoginCustomerID)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		if isPreSendDialError(err) {
+			return nil, fmt.Errorf("google-ads POST %s: %w", path, err)
+		}
+		return nil, &transportError{Method: http.MethodPost, Path: path, Err: err}
+	}
+
+	buf := new(bytes.Buffer)
+	if _, err := buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBytes+1)); err != nil {
+		_ = resp.Body.Close()
+		cancel()
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return nil, &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("read response body: %w", err)}
+		}
+		return nil, &apiError{StatusCode: resp.StatusCode, Method: http.MethodPost, Path: path, Body: fmt.Sprintf("read response body: %v", err)}
+	}
+	_ = resp.Body.Close()
+	cancel()
+
+	if int64(buf.Len()) > maxResponseBytes {
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return nil, &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBytes)}
+		}
+		return nil, &apiError{StatusCode: resp.StatusCode, Method: http.MethodPost, Path: path, Body: fmt.Sprintf("response exceeds %d bytes", maxResponseBytes)}
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		raw := buf.Bytes()
+		codes := parseErrorCodes(raw)
+		snap := raw
+		if len(snap) > maxErrorBodyChars {
+			snap = snap[:maxErrorBodyChars]
+		}
+		text := string(snap)
+		return nil, &apiError{StatusCode: resp.StatusCode, Method: http.MethodPost, Path: path, Body: text, ErrorCodes: codes}
+	}
+
+	var resp2xx listAccessibleCustomersResponse
+	if err := json.Unmarshal(buf.Bytes(), &resp2xx); err != nil {
+		return nil, &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("decode response: %w", err)}
+	}
+
+	// Convert resource names to AccessibleCustomer structs. The API only returns
+	// resource_names (no descriptive_name at this endpoint); we populate descriptive_name
+	// by parsing the resource_name. A follow-up could fetch account details if needed.
+	// For now, we return the resource_name as-is and leave descriptive_name empty for
+	// subsequent display logic to handle.
+	accounts := make([]AccessibleCustomer, 0, len(resp2xx.ResourceNames))
+	for _, resName := range resp2xx.ResourceNames {
+		accounts = append(accounts, AccessibleCustomer{
+			ResourceName:    resName,
+			DescriptiveName: "", // TODO: fetch from account details if labels are needed
+		})
+	}
+
+	return accounts, nil
+}

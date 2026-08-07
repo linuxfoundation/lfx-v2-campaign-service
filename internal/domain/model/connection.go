@@ -179,3 +179,14 @@ type Connection struct {
 // HasCredentials reports whether an encrypted credential is stored, without
 // exposing the credential itself.
 func (c *Connection) HasCredentials() bool { return len(c.EncryptedCredentials) > 0 }
+
+// AccessibleAccount represents a minimal view of an accessible ad account
+// returned by an account-discovery query. It contains only the identifying
+// information needed by the UI to present account options to the user.
+type AccessibleAccount struct {
+	// ID is the account identifier in the ad platform's namespace (e.g. Google Ads
+	// customer ID, LinkedIn member ID). Platform-specific format and semantics.
+	ID string
+	// Label is a human-readable name or display label for the account.
+	Label string
+}

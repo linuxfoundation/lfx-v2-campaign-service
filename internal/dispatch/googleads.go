@@ -237,6 +237,34 @@ func googleAdsRunStatus(status string) (string, error) {
 	}
 }
 
+// ListAccounts implements service.AccountLister for Google Ads.
+// It discovers accessible ad accounts reachable via the project's stored,
+// encrypted Google Ads connection credential, returning minimal identifying
+// information (customer ID and optionally a display label).
+func (d *GoogleAdsDispatcher) ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error) {
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	customers, lerr := client.ListAccessibleCustomers(ctx)
+	if lerr != nil {
+		return nil, lerr
+	}
+	// Convert Google Ads customers to the common AccessibleAccount shape.
+	// Each customer's descriptive_name is used as the label; the resource_name
+	// (customers/DIGITS) is parsed to extract the numeric customer_id.
+	var accounts []model.AccessibleAccount
+	for _, cust := range customers {
+		// Parse "customers/1234567890" → "1234567890"
+		id := strings.TrimPrefix(cust.ResourceName, "customers/")
+		accounts = append(accounts, model.AccessibleAccount{
+			ID:    id,
+			Label: cust.DescriptiveName,
+		})
+	}
+	return accounts, nil
+}
+
 // ToggleStatus implements service.StatusToggler for Google Ads.
 //
 // PAUSE works today; ACTIVATE is REFUSED. The create path provisions only a PAUSED search
