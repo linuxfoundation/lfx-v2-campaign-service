@@ -643,3 +643,107 @@ func TestListAccessibleCustomers_NoManagerSkipsExpansion(t *testing.T) {
 		t.Error("customer_client expansion ran with no login-customer-id configured")
 	}
 }
+
+// TestListAccessibleCustomers_CustomerClientRowWithoutIDIsAnError pins the stated
+// invariant that a row with no id fails the whole call. Silently dropping it would be
+// the tempting alternative and is the wrong one: the operator would be shown a SHORT
+// list with no indication that it is short, and would then conclude the missing account
+// is not reachable by this credential — a false negative that looks authoritative.
+func TestListAccessibleCustomers_CustomerClientRowWithoutIDIsAnError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeAccountsToken(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			// A well-formed row followed by one with no id: the good row ahead of it is
+			// what makes a silent drop plausible — the call would still "succeed".
+			_, _ = io.WriteString(w, `{"results":[
+				{"customerClient":{"id":"2222222222","descriptiveName":"Child","manager":false,"status":"ENABLED"}},
+				{"customerClient":{"descriptiveName":"Nameless","manager":false,"status":"ENABLED"}}
+			]}`)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
+			ResourceNames: []string{"customers/9999999999"},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
+		AccountConfig{LoginCustomerID: "9999999999"},
+		WithBaseURL(server.URL),
+		WithTokenURL(server.URL+"/token"),
+		WithAPIVersion("v23"),
+		WithClock(func() time.Time { return time.Unix(0, 0) }),
+	)
+
+	accounts, err := client.ListAccessibleCustomers(context.Background())
+	if err == nil {
+		t.Fatalf("a customer_client row with no id must fail the call, got accounts %+v", accounts)
+	}
+	if accounts != nil {
+		t.Errorf("accounts must be nil on error, got %+v", accounts)
+	}
+	// It is a malformed RESPONSE, not a rejected request — the distinction is what the
+	// dispatcher maps to a 503-with-retry rather than a client error.
+	var te *transportError
+	if !errors.As(err, &te) {
+		t.Fatalf("error must unwrap to *transportError, got %T: %v", err, err)
+	}
+	if !strings.Contains(te.Err.Error(), "no id") {
+		t.Errorf("diagnostic must name the defect, got %q", te.Err.Error())
+	}
+}
+
+// TestListAccessibleCustomers_DedupPrefersLabelledCopy exercises the branch where the
+// SAME account arrives twice: unlabelled from the flat list, labelled from the manager
+// expansion. Every other test returns the child only from the expansion, so appending
+// both copies — or keeping the unlabelled one — would pass them all.
+func TestListAccessibleCustomers_DedupPrefersLabelledCopy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeAccountsToken(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			_, _ = io.WriteString(w, `{"results":[
+				{"customerClient":{"id":"2222222222","descriptiveName":"Child Ad Account","manager":false,"status":"ENABLED"}}
+			]}`)
+			return
+		}
+		// The credential can act on the child DIRECTLY as well as through the manager,
+		// so it appears in both — but the flat list has no descriptive_name to give.
+		_ = json.NewEncoder(w).Encode(listAccessibleCustomersResponse{
+			ResourceNames: []string{"customers/9999999999", "customers/2222222222"},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
+		AccountConfig{LoginCustomerID: "9999999999"},
+		WithBaseURL(server.URL),
+		WithTokenURL(server.URL+"/token"),
+		WithAPIVersion("v23"),
+		WithClock(func() time.Time { return time.Unix(0, 0) }),
+	)
+
+	accounts, err := client.ListAccessibleCustomers(context.Background())
+	if err != nil {
+		t.Fatalf("ListAccessibleCustomers failed: %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("accounts = %+v, want exactly one entry — the duplicate must be merged, not appended", accounts)
+	}
+	if accounts[0].ResourceName != "customers/2222222222" {
+		t.Fatalf("got %+v, want the child ad account", accounts[0])
+	}
+	// The expansion is the ONLY source of descriptive_name, so a dedup that keeps the
+	// first-seen (flat, unlabelled) copy silently costs the operator every label.
+	if accounts[0].DescriptiveName != "Child Ad Account" {
+		t.Errorf("DescriptiveName = %q, want the expansion's label to win over the unlabelled flat copy",
+			accounts[0].DescriptiveName)
+	}
+}

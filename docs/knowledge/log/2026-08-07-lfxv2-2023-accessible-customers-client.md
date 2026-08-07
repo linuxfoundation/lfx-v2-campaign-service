@@ -1,5 +1,8 @@
 # 2026-08-07 — Reading the account list a credential can actually reach
 
+**Update** — New capability on PR #83 (`internal/platform/googleads/client.go`,
+`accounts_test.go`, and `docs/knowledge/code/internal-platform-googleads.md`).
+
 `Client.ListAccessibleCustomers` is the Google Ads client's first call that runs **without a
 configured customer id**, because it is how a caller LEARNS one. `doRequest` validates
 `c.account.CustomerID` as digits-only before it builds anything, which is right for every other
