@@ -526,7 +526,8 @@ func TestListAccessibleCustomers_ManagerModeNeverCallsTheFlatList(t *testing.T) 
 
 	if hits != 0 {
 		t.Errorf("manager mode issued %d request(s) to customers:listAccessibleCustomers, want 0 — "+
-			"its result is discarded, so the call can only cost quota and budget and add a failure mode", hits)
+			"nothing in manager mode reads that response, so the call can only cost quota and the "+
+			"caller's deadline and add a failure mode", hits)
 	}
 	if err != nil {
 		t.Fatalf("manager-mode discovery must succeed from the hierarchy query alone even when the "+

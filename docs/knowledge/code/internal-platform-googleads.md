@@ -551,7 +551,7 @@ the wire:
   credential addresses on its own behalf. A manager account can still be in there and cannot
   hold campaigns, but the response carries no `manager` flag, so there is nothing to recognise
   it by; a round-trip per row to find out would cost more than it saves on a list this short.
-- **`login_customer_id` set.** `listManagerChildren` returns immediately, and the flat endpoint
+- **`login_customer_id` set.** `expandManagerHierarchy` returns immediately, and the flat endpoint
   is **never called**. The selectable set is exactly `listManagerClients`' output: a
   `customer_client` GAQL query scoped to the manager, requesting only `status = 'ENABLED'`
   clients and dropping rows where `customer_client.manager` is true.

@@ -5,11 +5,11 @@ call, then, when a `login_customer_id` was configured, discarded the result enti
 answered from `listManagerClients`. Two Google Ads round-trips where one was needed.
 
 **Fix** — The mode branch moved ABOVE the flat request: with a manager configured, a new
-`listManagerChildren` returns straight from the hierarchy query and the flat endpoint is never
+`expandManagerHierarchy` returns straight from the hierarchy query and the flat endpoint is never
 called. The ordering is the whole fix.
 
 **Why it was not merely wasteful** — The discarded call still spent request quota and the
-caller's shared 20-second discovery budget, and its own timeout, 429, or 5xx propagated out of
+whatever deadline the caller passed down, and its own timeout, 429, or 5xx propagated out of
 `ListAccessibleCustomers` and failed discovery outright. A call whose success is not needed
 was able to cause a failure. On an agency-managed connection — the case the expansion exists
 for — that is the common path, not an edge one.

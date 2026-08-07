@@ -929,11 +929,11 @@ func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCusto
 	//
 	// The flat list contributes NOTHING to the manager-mode answer (see the reasoning
 	// below), so issuing it would be a second Google Ads round-trip whose result is
-	// thrown away. That is not merely wasteful: it spends request quota, it spends the
-	// caller's shared 20s discovery budget, and — the part that actually breaks
-	// behaviour — its own timeout, 429, or 5xx propagates and fails the whole discovery
-	// even when the hierarchy query alone would have answered correctly. A call whose
-	// success is not needed must not be able to cause a failure.
+	// thrown away. That is not merely wasteful: it spends request quota and whatever
+	// deadline the caller passed down, and — the part that actually breaks behaviour —
+	// its own timeout, 429, or 5xx propagates and fails the whole discovery even when
+	// the hierarchy query alone would have answered correctly. A call whose success is
+	// not needed must not be able to cause a failure.
 	//
 	// This is why the mode branch sits here rather than after the flat read: the
 	// ordering IS the fix. An earlier revision validated flat-list resource names in
@@ -941,7 +941,7 @@ func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCusto
 	// are never consumed, so that validation only supplied one more way to fail. The
 	// manager-mode rows get their own id validation inside listManagerClients.
 	if c.account.LoginCustomerID != "" {
-		return c.listManagerChildren(ctx)
+		return c.expandManagerHierarchy(ctx)
 	}
 
 	// DIRECT MODE. The flat list is the answer.
@@ -1011,7 +1011,7 @@ func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCusto
 	return direct, nil
 }
 
-// listManagerChildren answers account discovery for a client configured with a manager
+// expandManagerHierarchy answers account discovery for a client configured with a manager
 // (MCC) login-customer-id. It is the whole of manager mode: the flat
 // customers:listAccessibleCustomers response is never fetched, because it is not a merge
 // and that is the whole point.
@@ -1032,7 +1032,7 @@ func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCusto
 // already dropped the managers the flat list cannot identify. Any account present in both
 // lists is in the expansion too, so nothing addressable is lost — which is precisely why
 // fetching the flat list first would have been pure cost.
-func (c *Client) listManagerChildren(ctx context.Context) ([]AccessibleCustomer, error) {
+func (c *Client) expandManagerHierarchy(ctx context.Context) ([]AccessibleCustomer, error) {
 	children, cerr := c.listManagerClients(ctx, c.account.LoginCustomerID)
 	if cerr != nil {
 		return nil, cerr
