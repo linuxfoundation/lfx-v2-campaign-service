@@ -1,5 +1,8 @@
 # 2026-08-07 — The account-discovery endpoint, and why its "no connection" case is a 404
 
+**Update** — New endpoint on PR #85 (`design/connection.go`, `internal/service/`,
+`internal/container/container.go`, and the chart route/ruleset templates).
+
 `GET /projects/{projectId}/connection-google-ads/accounts` is a **live, credential-scoped read
 of what exists upstream**, not a listing of anything this service stores. That distinction is
 the whole reason it can coexist with the catalog's standing rule that there are no
