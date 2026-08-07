@@ -380,7 +380,11 @@ func (c *Client) doAdAnalyticsAttempt(ctx context.Context, rawURL string) (*AdAn
 
 	var analytics AdAnalyticsResponse
 	if err := json.Unmarshal(buf.Bytes(), &analytics); err != nil {
-		return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("decode response: %w", err)}
+		// json.UnmarshalTypeError.Value and json.SyntaxError can contain fragments of the
+		// response body, which reaches the server log through BriefService.GetCampaignMetrics's
+		// default error branch. The buffer is up to 10 MiB of unvalidated upstream content.
+		// Return a safe message with byte length, not the cause, matching costInUsdToMicros.
+		return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("decode response: malformed JSON (%d bytes)", len(buf.Bytes()))}
 	}
 	if analytics.Elements == nil {
 		return nil, false, 0, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("decode response: missing or null \"elements\" field")}

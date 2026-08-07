@@ -14,5 +14,20 @@ Added `TestGetCampaignMetrics_TransportErrorRedaction` with subtests:
 - `RoundTripper_credential_redaction`: Verifies mid-flight/RoundTripper credential markers are redacted
 - `DialError_URL_redaction_preserves_classification`: Uses a fake `RoundTripper` returning `*url.Error` wrapping `*net.DNSError`, verifies URL is absent but classification is preserved
 - `BodyReadError_redacted_in_5xx_path`: Verifies that `apiError.Body` contains the redacted message (extracted via `errors.As`) and not raw I/O error details
+- `BodyReadError_redacted_in_2xx_path` (NEW): Verifies that transportError.Err (2xx body-read error path) contains the redacted message, not raw I/O error details
 
 All binding verified: reverting each redaction branch causes its test to fail with the expected leak (full URL, lost classification, or raw I/O error in Body).
+
+## json.Unmarshal redaction
+
+**Issue**: `json.Unmarshal` errors can leak response body fragments via `json.UnmarshalTypeError.Value`, which may contain up to 10 MiB of malformed JSON from the response body. This reaches server logs in diagnostics and can expose untrusted content.
+
+**Fix** (metrics.go:383): Changed from `fmt.Errorf("decode response: %w", err)` to `fmt.Errorf("decode response: malformed JSON (%d bytes)", len(buf.Bytes()))`. This preserves diagnostic utility (number of bytes received) while eliminating the error object that wraps the JSON fragment. Matches the pattern already used by `costInUsdToMicros` in this PR.
+
+**Test**: Added `TestGetCampaignMetrics_MalformedJSONRedaction` which feeds a malformed JSON response with a credential marker embedded, then verifies (1) the marker is absent from the error message and (2) the safe message "malformed JSON" is present. Binding verified: reverting the fix causes the test to fail, leaking the marker in the raw error output.
+
+## Retry test optimizations
+
+**Issue**: `TestGetCampaignMetrics_RetriesOn429` and `TestGetCampaignMetrics_RetriesExhaustedReturnsError` consumed 1 second and 7 seconds of real wall-clock backoff time respectively, slowing test runs.
+
+**Fix** (metrics_test.go:367, 408): Added `withRetryBaseDelay(time.Millisecond)` to both retry tests to use 1 millisecond backoff instead of the production 1-second default. This reduces combined test sleep from 8 seconds to 8 milliseconds without changing retry logic or reducing iteration count. Retry backoff is parameterized via the test harness and this confirms the backoff path is exercised without production-scale delays.

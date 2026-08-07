@@ -387,6 +387,7 @@ func TestGetCampaignMetrics_RetriesOn429(t *testing.T) {
 		Credentials{AccessToken: "test-token"},
 		RuntimeConfig{DefaultAccountID: "account123"},
 		WithBaseURL(server.URL),
+		withRetryBaseDelay(time.Millisecond),
 	)
 
 	ctx := context.Background()
@@ -416,6 +417,7 @@ func TestGetCampaignMetrics_RetriesExhaustedReturnsError(t *testing.T) {
 		Credentials{AccessToken: "test-token"},
 		RuntimeConfig{DefaultAccountID: "account123"},
 		WithBaseURL(server.URL),
+		withRetryBaseDelay(time.Millisecond),
 	)
 
 	// A permanently-429ing server must surface a terminal error once retryMax is
@@ -919,6 +921,45 @@ func TestGetCampaignMetrics_TransportErrorRedaction(t *testing.T) {
 			t.Errorf("apiError.Body leaked raw I/O error (EOF): %s", apiErr.Body)
 		}
 	})
+
+	t.Run("BodyReadError_redacted_in_2xx_path", func(t *testing.T) {
+		// Create a server that returns 200 with a header that causes read to fail.
+		// The 2xx path returns a transportError with redactBodyReadError applied.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Length", "10000000") // Lie about size
+			// Status 200 signals success, but don't write the promised body
+		}))
+		defer server.Close()
+
+		client := NewClient(
+			Credentials{AccessToken: "test-token"},
+			RuntimeConfig{DefaultAccountID: "account123"},
+			WithBaseURL(server.URL),
+		)
+
+		ctx := context.Background()
+		_, err := client.GetCampaignMetrics(ctx, "account123", "123456", model.MetricsWindowToday)
+		if err == nil {
+			t.Fatalf("expected an error from body-read failure with 200")
+		}
+
+		// Extract the transportError from the chain and verify its Err field is redacted.
+		var transErr *transportError
+		if !errors.As(err, &transErr) {
+			t.Fatalf("expected a transportError in the chain, got: %T", err)
+		}
+
+		// The transportError.Err should contain the redacted message, not raw I/O error.
+		errMsg := transErr.Err.Error()
+		if !strings.Contains(errMsg, "read response body failed") {
+			t.Errorf("transportError.Err missing redacted message: %s", errMsg)
+		}
+
+		// Verify it does NOT contain raw I/O error details
+		if strings.Contains(errMsg, "EOF") && !strings.Contains(errMsg, "read response body") {
+			t.Errorf("transportError.Err leaked raw I/O error (EOF): %s", errMsg)
+		}
+	})
 }
 
 // TestRedactHTTPDoError verifies the redaction helper works correctly.
@@ -949,4 +990,47 @@ func TestRedactHTTPDoError(t *testing.T) {
 			t.Errorf("redacted error lost DNSError classification: %v", redacted)
 		}
 	})
+}
+
+// TestGetCampaignMetrics_MalformedJSONRedaction verifies that json.Unmarshal errors
+// are redacted and do not leak response body fragments. json.UnmarshalTypeError.Value
+// and json.SyntaxError can contain malformed JSON from the response body, which reaches
+// the server log via BriefService.GetCampaignMetrics's default error branch. The response
+// can be up to 10 MiB of unvalidated upstream content.
+func TestGetCampaignMetrics_MalformedJSONRedaction(t *testing.T) {
+	const maliciousJSONMarker = "MALICIOUS_JSON_VALUE_MARKER"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Return JSON with the marker embedded in a malformed value that json.Unmarshal
+		// will include in UnmarshalTypeError.Value
+		fmt.Fprint(w, fmt.Sprintf(`{"elements": [{"impressions": "%s", "clicks": 0, "costInUsd": "0"}]}`, maliciousJSONMarker))
+	}))
+	defer server.Close()
+
+	client := NewClient(
+		Credentials{AccessToken: "test-token"},
+		RuntimeConfig{DefaultAccountID: "account123"},
+		WithBaseURL(server.URL),
+	)
+
+	ctx := context.Background()
+	_, err := client.GetCampaignMetrics(ctx, "account123", "123456", model.MetricsWindowToday)
+	if err == nil {
+		t.Fatalf("expected an error from malformed JSON")
+	}
+
+	// The malicious marker must NOT appear in the error string that would be logged.
+	errStr := err.Error()
+	if strings.Contains(errStr, maliciousJSONMarker) {
+		t.Errorf("error string leaked malformed JSON value: %v", errStr)
+	}
+
+	// The error should contain "decode response" but not the raw JSON value
+	if !strings.Contains(errStr, "decode response") {
+		t.Errorf("error missing 'decode response' diagnostic: %v", errStr)
+	}
+	if !strings.Contains(errStr, "malformed JSON") {
+		t.Errorf("error missing 'malformed JSON' safe message: %v", errStr)
+	}
 }
