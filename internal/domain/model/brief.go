@@ -58,8 +58,18 @@ type CampaignBrief struct {
 	ApprovedBy   *Actor
 	ApprovedAt   *time.Time
 	// CreatedBy / UpdatedBy name the human behind the write. Nil means "not
-	// recorded" — either the row predates actor attribution, or the write was
-	// system-initiated with no person behind it. It never means "nobody".
+	// recorded", which has THREE causes, and they are not equally benign:
+	//
+	//   1. the row predates actor attribution (historical, expected);
+	//   2. the write was system-initiated with no person behind it (expected);
+	//   3. a request principal WAS present but could not be decoded, so
+	//      attributedActor returned nil after logging a warning.
+	//
+	// Case 3 is a regression signal, not a normal absence — it means a real user
+	// made this write and the audit trail lost them. Anyone diagnosing missing
+	// attribution must not read a nil as proof of case 1 or 2; correlate with the
+	// "could not decode request principal" warning before concluding the row is
+	// simply old or system-written. Nil never means "nobody".
 	//
 	// These claims are decoded from the bearer token WITHOUT verifying its
 	// signature; Heimdall validates the token at the gateway before the request
