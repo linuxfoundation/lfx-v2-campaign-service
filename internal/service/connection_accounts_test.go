@@ -238,7 +238,12 @@ func TestListGoogleAdsAccounts_UnusableConnectionIs400(t *testing.T) {
 	}{
 		{"inactive connection", "google ads connection for project p is inactive, not active"},
 		{"incomplete credentials", "google ads credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)"},
-		{"malformed manager id", `stored login_customer_id "999-999-9999" must be digits only (no dashes or spaces)`},
+		// Verbatim from googleads.go: the value is NOT in the message. Copying the real text
+		// is the point of these fixtures — the echo check below is only as strong as the
+		// string it looks for, so a fixture that drifts from production silently tests
+		// nothing. If this ever reverts to embedding the stored value, copy that shape back
+		// here so the check has something real to catch.
+		{"malformed manager id", "stored login_customer_id is invalid (must be digits only, no dashes or spaces)"},
 		// This one comes from a different layer — credsSource.resolve, below the discovery
 		// resolver — and reaches here unchanged. It is listed because the arm must key on
 		// the sentinel alone, not on which function produced it.
