@@ -195,11 +195,19 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   a log line wants anyway: greppable, alertable, and with no payload to carry a secret in.
 - Anything else → **503** — the platform was reached and did not answer.
 
-`ReadAccounts` treats a nil result from a lister as a contract violation and maps it to 503, so
-every layer must build its slice with `make(..., 0, n)`: a credential that legitimately reaches
-zero accounts is an EMPTY list, and a nil anywhere on the path — including the service layer's
-conversion loop — reports the platform as down for a correct, ordinary answer, and hands clients
-a `null` they were promised they would never see.
+Two DIFFERENT guards protect the empty-vs-nil distinction, and they fail in opposite directions —
+document them separately so a future change preserves each for its own reason:
+
+1. **A nil from an `AccountLister`** is a contract violation, and `ReadAccounts` maps it to 503.
+   A credential that legitimately reaches zero accounts must return an EMPTY list, so a nil from
+   a dispatcher means the dispatcher did not answer, not that the answer was "none".
+2. **A nil introduced LATER, by the service layer's own conversion loop**, never reaches that
+   guard — it is created after it. Nothing rejects it, so it serializes as a successful `null`
+   response body: clients were promised a list and get a null instead.
+
+Hence the rule that covers both: every layer builds its slice with `make(..., 0, n)`. Guard 1
+turns a missing answer into 503; guard 2 does not exist, which is exactly why the construction
+convention has to hold on the service side rather than being checked there.
 
 Both cold-start guards on this handler return 503 but mean different things:
 `resolveBackendWithOrch` checks the repo first ("connection storage is unavailable") and the

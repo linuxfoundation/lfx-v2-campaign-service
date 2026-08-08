@@ -340,9 +340,13 @@ The two decrypt sentinels are declared in `internal/domain` rather than in `cryp
 on the `domain.Encryptor` PORT and never import the implementation; the port's doc states the
 wrapping obligation, and `crypto`'s `ErrCiphertextTooShort` / `ErrDecryptionFailed` each wrap their
 domain sentinel so `errors.Is` carries the classification across the layer without inverting the
-dependency. Note the decrypt branches wrap BOTH a sentinel and the decrypt error (`%w: %w`); the
-service layer logs that cause rather than returning it, since a decrypt failure can carry ciphertext
-detail.
+dependency. Note the decrypt branches wrap BOTH a sentinel and the decrypt error (`%w: %w`), and
+the service layer never returns that cause to a caller — but whether it LOGS it depends on which
+sentinel the branch carried. Authenticated-decryption failure (`ErrCredentialDecryptionFailed` →
+500) logs the cause: that error is constructed by the encryptor from ciphertext and key material
+only. Malformed ciphertext reaches `ErrConnectionNotUsable` → 400, whose handler deliberately
+suppresses the cause and logs `reason=credential_blob_malformed` alone, because the conditions on
+that arm include one detected by decoding the DECRYPTED blob.
 
 Google Ads is the only implementation today, via
 `Client.ListAccessibleCustomers` → `customers:listAccessibleCustomers`. That endpoint is
@@ -350,11 +354,18 @@ Google Ads is the only implementation today, via
 — and it is sent with a nil body (so no `Content-Type`) and `idempotent=true` (a pure read, so
 retrying a 429 cannot double-apply anything).
 
-**Discovery runs without an account id, deliberately, at both layers.** A connection is created
-with credentials first and an account chosen afterwards — from the list this call produces — so
-requiring a customer id before discovery means the caller must already know the answer to the
-question they are asking. Two preconditions used to enforce exactly that, and both were relaxed
-in a targeted way rather than removed:
+**Discovery runs without an account id, deliberately, at both layers.** The call is
+account-agnostic: it asks which customer ids the CREDENTIAL reaches, so an account id is not
+a narrower version of the question, it is a different one.
+
+Be precise about the lifecycle this serves TODAY. `design/connection.go:333` still declares
+`Required("account_id")` on `GoogleAdsConnectionConfig`, so a connection cannot currently be
+created without one and the credentials-first, account-chosen-afterwards bootstrap is NOT yet
+reachable — this endpoint currently supports RE-POINTING an existing connection ("which other
+customer ids does this credential reach?" before switching `account_id`). The relaxations below
+are written for the endpoint's own semantics rather than for the stored value, so only the design
+changes when bootstrap lands. Two preconditions used to demand an id, and both were relaxed in a
+targeted way rather than removed:
 
 - The dispatcher's `validateGoogleAdsConnection` demands a non-empty `accountID`. Discovery now
   routes through `validateGoogleAdsCredentials` (via `resolveGoogleAdsDiscoveryClient`) instead,

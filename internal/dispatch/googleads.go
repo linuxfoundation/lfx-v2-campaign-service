@@ -329,11 +329,16 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsClient(ctx context.Context, projec
 }
 
 // resolveGoogleAdsDiscoveryClient builds a client for the ACCOUNT-DISCOVERY path: same
-// credential resolution and the same connection checks as resolveGoogleAdsClient, minus
-// the account id, which by definition does not exist yet (see
-// validateGoogleAdsCredentials). CustomerID is left empty and the client's account-agnostic
-// path tolerates that; the manager id, when present, is what lets discovery expand an MCC
-// hierarchy rather than returning only the manager itself.
+// credential resolution and the same connection checks as resolveGoogleAdsClient, minus the
+// account-id requirement (see validateGoogleAdsCredentials for which lifecycle that serves
+// today — re-pointing, not first-time bootstrap, since GoogleAdsConnectionConfig still
+// declares Required("account_id")).
+//
+// CustomerID is left empty regardless of whether the connection stores one, because the
+// upstream operation is account-AGNOSTIC: it asks which customer ids the credential itself
+// reaches, so scoping it to one of them would narrow the answer to a subset of the question.
+// The manager id, when present, is what lets discovery expand an MCC hierarchy rather than
+// returning only the manager itself.
 func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, error) {
 	res, err := d.creds.resolve(ctx, projectID, platform)
 	if err != nil {

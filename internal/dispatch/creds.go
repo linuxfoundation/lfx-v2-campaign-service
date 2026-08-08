@@ -187,7 +187,13 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 	plaintext, derr := s.enc.Decrypt(conn.EncryptedCredentials)
 	if derr != nil {
 		// derr is NOT echoed to callers by the service layer — a decrypt failure can
-		// carry ciphertext detail. It is logged there and a fixed message returned.
+		// carry ciphertext detail — and whether it is even LOGGED depends on which of
+		// the two classifications below it lands in. The 500 arm (authenticated-decryption
+		// failure) logs the cause, because that error is built by the encryptor from
+		// ciphertext and key material only. The 400 arm (ErrConnectionNotUsable) does not:
+		// it logs a fixed reason token and nothing else, since the conditions reaching it
+		// include one detected by decoding the DECRYPTED blob. Both arms return a fixed
+		// message. Do not "restore" logging of the cause on the 400 path.
 		//
 		// A decrypt failure is NOT one condition, and which sentinel it carries decides
 		// whether a human edits a connection or ops gets paged. Only a blob the encryptor

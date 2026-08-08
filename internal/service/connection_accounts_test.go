@@ -268,8 +268,9 @@ func TestListGoogleAdsAccounts_UnusableConnectionIs400(t *testing.T) {
 				t.Errorf("expected code 400, got %q", badRequest.Code)
 			}
 			if strings.Contains(badRequest.Message, tc.cause) {
-				t.Errorf("message echoes the wrapped cause %q; the cause is logged, not returned, "+
-					"because the decode case can quote decrypted credential bytes", tc.cause)
+				t.Errorf("message echoes the wrapped cause %q; on this arm the cause is neither "+
+					"returned nor logged — only a fixed reason token from unusableConnectionReason "+
+					"is — because the decode case can quote decrypted credential bytes", tc.cause)
 			}
 		})
 	}

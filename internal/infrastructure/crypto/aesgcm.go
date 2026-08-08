@@ -98,10 +98,16 @@ func (a *AESGCM) Decrypt(sealed []byte) ([]byte, error) {
 	//
 	// Checking only `< ns` would let that range fall through to Open, which fails
 	// authentication and is therefore classified as ErrDecryptionFailed — the
-	// "wrong or rotated deployment key" condition that maps to 500 and pages ops
-	// because it implies EVERY connection is broken. A single truncated row would
-	// send someone to look at the key. Rejecting the full minimum here keeps the
-	// blast radius honest: one bad row, reported as one bad row.
+	// condition that maps to 500 and pages ops. That classification is deliberately
+	// conservative rather than a diagnosis: an authentication failure is equally
+	// consistent with a wrong or rotated deployment key (every connection broken)
+	// and with corruption of this ONE full-length row (every other connection
+	// fine), and GCM cannot tell them apart, so neither this package nor the
+	// handler claims to. A provably truncated blob is different in kind — it is
+	// decidable here, and it is always about one row — so letting it reach Open
+	// would convert a certainty into that ambiguity and put a single bad row into
+	// the arm that pages someone. Rejecting the full minimum keeps the blast radius
+	// honest: what is knowably one bad row is reported as one bad row.
 	ns, overhead := a.aead.NonceSize(), a.aead.Overhead()
 	if len(sealed) < ns+overhead {
 		return nil, ErrCiphertextTooShort

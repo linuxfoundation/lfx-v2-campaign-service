@@ -164,7 +164,7 @@ var (
 	//
 	// They exist for the log line, and the log line is the reason they must be sentinels
 	// rather than message text. An operator debugging a 400 needs to know which of these
-	// four it was, but the errors themselves cannot be logged: one of them is produced by
+	// five it was, but the errors themselves cannot be logged: one of them is produced by
 	// decoding the DECRYPTED credential blob, and an error derived from plaintext must
 	// never reach centralized logs. `errors.Is` over a fixed vocabulary carries the
 	// diagnosis with no payload attached to carry secrets in.
