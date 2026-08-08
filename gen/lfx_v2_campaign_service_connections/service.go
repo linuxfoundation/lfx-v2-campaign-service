@@ -402,8 +402,10 @@ type GoogleAdsConnection struct {
 type GoogleAdsConnectionConfig struct {
 	// Optional friendly name
 	Label *string
-	// Google Ads customer ID
-	AccountID string
+	// Google Ads customer ID. Optional: omit it to create the connection with
+	// credentials only, then choose one from GET
+	// .../connection-google-ads/accounts and set it with PUT.
+	AccountID *string
 	// Manager account used for API access
 	LoginCustomerID *string
 }

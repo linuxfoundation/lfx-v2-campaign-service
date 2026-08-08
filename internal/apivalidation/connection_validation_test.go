@@ -141,3 +141,57 @@ func TestValidateTwitterAdsConnectionConfig_PatternsAndRequired(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateCreateGoogleAds_AccountIDIsOptionalAtTheTransport pins the contract change
+// this PR makes, at the layer that actually enforces it.
+//
+// Removing Required("account_id") removed a presence check on the JSON KEY — the generated
+// code was `if body.AccountID == nil`, so it rejected only OMISSION and an explicit
+// `"account_id": ""` always got through. Omission is the shape the credentials-first
+// bootstrap flow sends, so omission is what has to be proven acceptable.
+//
+// A service-level test cannot prove it: the handler is reached only AFTER the generated
+// validator runs, so a validator that still rejected the omitted key would fail the request
+// while every service test stayed green. Re-adding Required("account_id") to the design makes
+// Goa emit ValidateGoogleAdsConnectionConfigRequestBody and call it from the create validator,
+// and this test is what fails.
+func TestValidateCreateGoogleAds_AccountIDIsOptionalAtTheTransport(t *testing.T) {
+	creds := &connsrv.GoogleAdsCredentialsRequestBody{
+		ClientID:       strp("client-id"),
+		ClientSecret:   strp("client-secret"),
+		RefreshToken:   strp("refresh-token"),
+		DeveloperToken: strp("developer-token"),
+	}
+
+	t.Run("account_id omitted is accepted", func(t *testing.T) {
+		body := &connsrv.CreateGoogleAdsRequestBody{
+			// AccountID deliberately left nil: the key is ABSENT, not empty.
+			Config:      &connsrv.GoogleAdsConnectionConfigRequestBody{Label: strp("LF Google Ads")},
+			Credentials: creds,
+		}
+		if body.Config.AccountID != nil {
+			t.Fatal("the test case is wrong: account_id must be absent, not empty")
+		}
+		assertValidation(t, connsrv.ValidateCreateGoogleAdsRequestBody(body), false, "")
+	})
+
+	// The rest of the create contract must NOT have relaxed along with it. Without these,
+	// a regeneration that dropped every validation on this body would still pass above.
+	t.Run("config is still required", func(t *testing.T) {
+		body := &connsrv.CreateGoogleAdsRequestBody{Credentials: creds}
+		assertValidation(t, connsrv.ValidateCreateGoogleAdsRequestBody(body), true, "config")
+	})
+	t.Run("credentials are still required", func(t *testing.T) {
+		body := &connsrv.CreateGoogleAdsRequestBody{Config: &connsrv.GoogleAdsConnectionConfigRequestBody{}}
+		assertValidation(t, connsrv.ValidateCreateGoogleAdsRequestBody(body), true, "credentials")
+	})
+	t.Run("credential validation is still wrapped", func(t *testing.T) {
+		body := &connsrv.CreateGoogleAdsRequestBody{
+			Config: &connsrv.GoogleAdsConnectionConfigRequestBody{},
+			Credentials: &connsrv.GoogleAdsCredentialsRequestBody{
+				ClientID: strp("client-id"), ClientSecret: strp("client-secret"), RefreshToken: strp("refresh-token"),
+			},
+		}
+		assertValidation(t, connsrv.ValidateCreateGoogleAdsRequestBody(body), true, "developer_token")
+	})
+}
