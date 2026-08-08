@@ -122,6 +122,11 @@ documented one (`customers/{this account}/campaigns/{digits}`), **not** `resourc
 returns the trailing segment: right for a mutate response we issued, wrong here, where it reads
 `garbage/4242` as `4242`.
 
+Presence is tested on the **raw** field. Trimming it first would fold a whitespace-only
+resource name into "field absent" and let the row be adopted on its id alone — a row whose two
+selected identity fields do not agree, accepted as though only one had been asked for. Absent
+and present-but-garbage are the distinction the guard exists to draw.
+
 **Digits-only is not the id test.** Both ids go through `canonicalCampaignID`, which requires
 the canonical base-10 spelling of a **positive int64** — the type Google exposes campaign ids
 as. `customerIDRE` (`^[0-9]+$`) is the package's *interpolation-safety* matcher and passes

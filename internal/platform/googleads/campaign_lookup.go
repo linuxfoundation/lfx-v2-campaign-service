@@ -224,8 +224,14 @@ func (c *Client) FindCampaignByName(ctx context.Context, name string) (string, e
 		// padded value is a malformed row, not a value to normalise into a match.
 		id := row.Campaign.ID
 		fromName := c.campaignIDFromResourceName(row.Campaign.ResourceName)
-		if rn := strings.TrimSpace(row.Campaign.ResourceName); rn != "" && fromName == "" {
-			return "", fmt.Errorf("google-ads campaign lookup: campaign named %q has resource name %q, which is malformed or scoped to another customer; refusing to adopt it", lookup, rn)
+		//
+		// Tested RAW, not trimmed. TrimSpace here would fold a whitespace-only resource
+		// name into "field absent" and let the row fall through to the id alone — so a
+		// row carrying id "4242" beside resourceName "   " would be adopted as campaign
+		// 4242 despite one of its two selected identity fields being malformed. Absent
+		// and present-but-garbage are exactly the distinction this guard exists to make.
+		if row.Campaign.ResourceName != "" && fromName == "" {
+			return "", fmt.Errorf("google-ads campaign lookup: campaign named %q has resource name %q, which is malformed or scoped to another customer; refusing to adopt it", lookup, row.Campaign.ResourceName)
 		}
 		switch {
 		case id == "":

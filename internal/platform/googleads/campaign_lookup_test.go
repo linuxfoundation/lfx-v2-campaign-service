@@ -461,6 +461,35 @@ func TestFindCampaignByName_NonCanonicalIDIsRejected(t *testing.T) {
 	}
 }
 
+// TestFindCampaignByName_PresentButUnusableResourceNameIsRejected separates "the field is
+// absent" from "the field is present and garbage". Only the first may fall back to the id.
+//
+// The whitespace-only case is the one that matters: an earlier revision tested the TRIMMED
+// resource name for emptiness, which folded "   " into "absent" and adopted the row on its id
+// alone — a row whose two identity fields do not agree, accepted as though only one had been
+// selected.
+func TestFindCampaignByName_PresentButUnusableResourceNameIsRejected(t *testing.T) {
+	for _, rn := range []string{
+		"   ",                             // whitespace-only: present, and not a resource name
+		"garbage/4242",                    // the shape a lenient trailing-segment parser accepts
+		"customers/999/campaigns/42",      // another customer's campaign
+		"customers/8666746580/campaigns/", // right customer, no campaign segment
+	} {
+		srv, _ := newLookupServer(t, []json.RawMessage{
+			json.RawMessage(`{"campaign":{"id":"4242","name":"bad rn","status":"ENABLED","resourceName":` + jsonQuote(rn) + `}}`),
+		})
+		client := newAccountsTestClient(t, srv)
+
+		got, err := client.FindCampaignByName(context.Background(), "bad rn")
+		if err == nil {
+			t.Fatalf("resource name %q must be rejected, got %q", rn, got)
+		}
+		if !strings.Contains(err.Error(), "resource name") {
+			t.Errorf("resource name %q: error does not say why it was refused: %v", rn, err)
+		}
+	}
+}
+
 // TestFindCampaignByName_RejectsInvalidAccount pins the CONTRACT, not one line: a client
 // whose customer id is malformed cannot address the account the answer would be about, so
 // the lookup must error rather than report the clean absence that licenses a create.
