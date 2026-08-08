@@ -115,8 +115,9 @@ divergence reconcile signal.
 **Actor attribution:** The toggle records WHO performed it (the person who paused/resumed the campaign)
 in the `updated_by` column of the row, capturing the actor from the request context BEFORE the
 detached context persists the row. A system-initiated toggle (e.g., a scheduled remediation, no authenticated
-principal) records NULL, not an inverted actor — NULL means "not recorded", a distinct state from
-"somebody did this". The `created_by` column (the person who authorized the spend) is never touched
+principal) records NULL rather than substituting a stand-in — the campaign's creator, a literal
+"system" — because NULL means "not recorded", a distinct state from naming a principal that never
+acted. The `created_by` column (the person who authorized the spend) is never touched
 by a toggle. See `campaign_actor_test.go` and the `000016` migration (campaigns' actor columns).
 
 ## Campaign metrics read

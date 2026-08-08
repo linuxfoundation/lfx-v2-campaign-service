@@ -146,12 +146,18 @@ func TestCampaignActor_UpdateStampsUpdatedByOnly(t *testing.T) {
 // actor attribution specifically.
 func TestCampaignActor_ToggleStampsUpdatedByOnly(t *testing.T) {
 	author := &model.Actor{Name: "Ada Lovelace", Email: "ada@lf.dev", Username: "ada"}
+	editor := &model.Actor{Name: "Katherine Johnson", Email: "katherine@lf.dev", Username: "katherine"}
 	toggler := &model.Actor{Name: "Grace Hopper", Email: "grace@lf.dev", Username: "grace"}
 
+	// UpdatedBy starts at a DIFFERENT actor than either the author or the toggler. Starting
+	// it at nil would leave two implementations indistinguishable — one that stamps the
+	// toggler, and one that merely carries the previous mover forward — because with no
+	// previous mover both produce the same row. Seeding one separates them: only a toggle
+	// that actually reads the request actor can end up naming Grace here.
 	camp := &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
 		PlatformCampaignID: "t3_c", Status: model.CampaignStatusCreated, Version: 2,
-		CreatedBy: author,
+		CreatedBy: author, UpdatedBy: editor,
 	}
 	// Use an okDispatcher that supports StatusToggler (stubToggler does).
 	tog := &stubToggler{}
@@ -176,8 +182,9 @@ func TestCampaignActor_ToggleStampsUpdatedByOnly(t *testing.T) {
 		t.Fatal("ReplaceCampaign was never called")
 	}
 	if repo.replaced.UpdatedBy == nil || repo.replaced.UpdatedBy.Email != toggler.Email {
-		t.Errorf("UpdatedBy = %+v, want %+v — the toggle must record who paused/resumed the campaign",
-			repo.replaced.UpdatedBy, toggler)
+		t.Errorf("UpdatedBy = %+v, want %+v — the toggle must record who paused/resumed the "+
+			"campaign, not carry forward the previous mover (%+v)",
+			repo.replaced.UpdatedBy, toggler, editor)
 	}
 	if repo.replaced.CreatedBy == nil || repo.replaced.CreatedBy.Email != author.Email {
 		t.Errorf("CreatedBy = %+v, want the original author %+v — a toggle must not rewrite "+

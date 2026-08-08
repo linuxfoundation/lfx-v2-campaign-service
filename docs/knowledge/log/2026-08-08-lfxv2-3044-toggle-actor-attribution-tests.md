@@ -1,6 +1,6 @@
 # 2026-08-08 — LFXV2-3044: test coverage for campaign status toggle actor attribution
 
-**Overview** — The base change (LFXV2-3038) already records WHO performed a campaign status toggle
+**Update** — The base change (LFXV2-3038) already records WHO performed a campaign status toggle
 (pause/resume) in the `updated_by` column via `ToggleCampaignStatus`. This change adds comprehensive
 test coverage to pin that behavior and ensure system-initiated toggles (with no authenticated actor)
 correctly record NULL.
