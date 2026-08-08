@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT -->
 
 **Status:** Research complete. Dependencies and phasing are **settled inside this plan** — PR #69
 has merged, so nothing here is blocked, and the PR split below is fixed — see *PR sequence
-(corrected)*, which supersedes the ordering the two `### PR n` sections were originally written
+(corrected)*, which supersedes the ordering the three `### PR n` sections were originally written
 against. Four decisions
 remain genuinely open and are the only things a human still has to answer; they are stated in full
 under *Open Questions for Human Decision*: **1** bid currency and precision (Phase 2 only),
@@ -1747,16 +1747,28 @@ platform client is internal, so it can land ahead of both without publishing any
 
 | PR | Contents | Public surface after merge | Est. |
 |---|---|---|---|
-| **A** | `internal/platform/googleads/keywords.go` + tests. No design, no handler, no dispatcher method. | none — nothing reachable changes | ≈600 (platform client ~300 + tests ~300) |
-| **B** | `design/brief.go`, `model/keyword.go`, `errors.go`, orchestrator, handlers, **and** the `internal/dispatch/googleads.go` `ListKeywords`/`UpdateKeywords` methods + the `KeywordManager` guard assertion. | two endpoints that WORK for Google Ads | ≈650 (service ~450 + dispatcher ~200) |
+| **A** | `internal/platform/googleads/keywords.go` + tests. No design, no handler, no dispatcher method. | none — nothing reachable changes | ≈450 (platform client ~300 + its tests ~150) |
+| **B** | `design/brief.go`, `model/keyword.go`, `errors.go`, orchestrator, handlers, **and** the `internal/dispatch/googleads.go` `ListKeywords`/`UpdateKeywords` methods + the `KeywordManager` guard assertion. | two endpoints that WORK for Google Ads | ≈800 (service ~500 + dispatcher ~200 + dispatcher tests ~100) |
 | **C** | `internal/service/brief_test.go` — the `### PR 3` section below, unchanged. Tests only. | unchanged from B | ≈200 |
 
-The two estimates are the ≈500 and ≈750 in the `### PR n` headings below, re-cut along the new
-boundary rather than re-guessed: PR 2's own breakdown (`~750 = platform client ~300 + dispatcher
-~200 + tests ~250`) splits cleanly, since the platform client and its tests are exactly what
-moves into PR A. PR A takes the ~300 client plus the ~300 of PR 2's tests that cover it; PR B
-keeps ≈450 of PR 1's service layer plus the ~200 dispatcher half PR 2 leaves behind. Nothing is
-added or dropped by the reorder — the same work crosses a different line.
+These are the ≈500 (PR 1) and ≈750 (PR 2) from the `### PR n` headings below, re-cut along the
+new boundary rather than re-guessed. PR 2's own breakdown is `~750 = platform client ~300 +
+dispatcher ~200 + tests ~250`, and the reorder moves the platform client — and only the tests
+that cover it — into PR A. Everything else stays put:
+
+| | source | → A | → B |
+|---|---|---|---|
+| PR 1 service layer | ~500 | — | ~500 |
+| PR 2 platform client | ~300 | ~300 | — |
+| PR 2 dispatcher | ~200 | — | ~200 |
+| PR 2 tests | ~250 | ~150 | ~100 |
+| **total** | **1250** | **≈450** | **≈800** |
+
+The one number not inherited from an existing heading is the 150/100 split of PR 2's ~250 test
+budget. It is an estimate, weighted toward the client because the client is where the request
+shaping, the response parsing and the error classification live, while the dispatcher method is
+mostly resolve-client-then-delegate. Nothing else is added or dropped by the reorder — the totals
+on each side of the table agree because the same work simply crosses a different line.
 
 Both stay under the 1000-line cap, and neither merge leaves `main` advertising a capability that
 returns 400 for every caller. PR A is dead code between the two merges — unreferenced, untested
@@ -1771,7 +1783,7 @@ answered 400 for **every** platform including the one it named.
 **PR C is the `### PR 3` section below, renamed and nothing else.** It was written as a tests-only
 follow-up to "PR 2", and the reorder does not touch it: it exercises the two endpoints end to end,
 so its only real precondition is that both endpoints work, which is true from B onward. It could
-equally be folded into B; it is kept separate because B is already ≈650 and an integration suite is
+equally be folded into B; it is kept separate because B is already ≈800 and an integration suite is
 the one thing that can be added after the fact without ever leaving `main` in a wrong state.
 
 The three sections below are kept for their file lists and test lists, which are unchanged — read
