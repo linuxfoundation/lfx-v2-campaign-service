@@ -44,10 +44,19 @@ makes it able to reach the reserved scope at all — and also what lets it write
 credential fields were checked for PRESENCE rather than decoded as non-empty STRINGS, so
 `"client_id": 123` installed and failed at dispatch; account ids and path-interpolated
 config values were not shape-checked at all, so Meta `account_id: "foo"` or an X id
-containing `/` landed on an ACTIVE row; and the rotation committed the new secret BEFORE
-the account/config update, so a failed second write paired a new credential with an old
-account. The writes cannot be one transaction through this port, so the order now puts the
-benign write first and the secret last, and the command stays idempotent so a re-run
-converges.
+containing `/` landed on an ACTIVE row; and the rotation was TWO writes, so a failed second
+one paired a new credential with an old account. Reordering the two only chose which mixed
+state a failure left behind, so the port grew `UpdateWithCredential` instead: account,
+config and credential go in ONE statement gated on the row's version. A partial write is no
+longer reachable, and a concurrent rotation loses the version check — is told nothing was
+written and to rerun — rather than interleaving with the winner. The command stays
+idempotent, so a re-run converges.
+
+An account-less row is also no longer installable for a provider that cannot finish one.
+Credentials-first is a real state only where the dispatcher can enumerate the accounts a
+credential reaches, which today means Google Ads alone; the LinkedIn, Meta, Reddit, X and
+Microsoft adapters each refuse an empty account id and offer no discovery endpoint, so such
+a row would install, report success and fail every dispatch forever. `requireAccountID`
+gates it, checking the value about to be WRITTEN so a rotation may still omit the flag.
 
 **A tool that bypasses the API inherits every validation the API was doing for it.**

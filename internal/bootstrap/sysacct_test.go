@@ -136,10 +136,11 @@ func TestStoredBlobDecodesIntoTheReader(t *testing.T) {
 }
 
 // TestSecondInstallRotates: a second run must NOT Create (the singleton index would reject it)
-// but rotate through SetCredential. Phase two pins the ORDER of the two writes, which is the
-// only thing standing in for a transaction: the account/config Update commits first, at the
-// row's own version, and the secret last. Reversed, a failed second write commits the NEW
-// secret against the OLD account id.
+// but rotate the existing row. Phase two pins that the rotation is ONE version-gated write.
+// It used to be two — Update then SetCredential — and ordering them only chose which mixed
+// state a failure left behind: new secret against the old account id, or the reverse. So the
+// assertion is not about order but about the ABSENCE of a second write: neither "update" nor
+// "set-credential" may appear, and the combined call is the last thing that happens.
 func TestSecondInstallRotates(t *testing.T) {
 	row := func(accountID string, cfg map[string]string) *stubRepo {
 		return &stubRepo{row: &model.Connection{
@@ -325,7 +326,11 @@ func TestInstallRejectsMisshapenValues(t *testing.T) {
 		"meta page id not numeric":         {model.ProviderMetaAds, "act_1", map[string]string{"page_id": "abc"}, metaCreds, true},
 		"x id carrying a path separator":   {model.ProviderTwitterAds, "8r7gb", map[string]string{"funding_instrument_id": "a/b"}, xCreds, true},
 		"meta values in shape":             {model.ProviderMetaAds, "act_1", map[string]string{"page_id": "1"}, metaCreds, false},
-		"omitted account id is legal":      {model.ProviderMetaAds, "", map[string]string{"page_id": "1"}, metaCreds, false},
+		// Omission is a SHAPE question here, and an omitted id has no shape to fail. Whether
+		// omission is ALLOWED is requireAccountID's question, and for Meta the answer is no —
+		// see TestInstallRequiresAnAccountIDWhereNothingCanSupplyOneLater. Google Ads is used
+		// so this case still tests only what it claims to.
+		"omitted account id is legal": {model.ProviderGoogleAds, "", map[string]string{"login_customer_id": "1"}, gaCreds, false},
 
 		// Runtime-validator providers. Each of these exited 0 before the rule was added.
 		"google ads account id not numeric":       {model.ProviderGoogleAds, "foo", nil, gaCreds, true},
@@ -431,5 +436,48 @@ func TestRotationRefusesWhenTheRowMovedUnderIt(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "nothing was written") || !strings.Contains(err.Error(), "rerun") {
 		t.Fatalf("err = %q, want it to say nothing was written and to rerun", err)
+	}
+}
+
+// TestInstallRequiresAnAccountIDWhereNothingCanSupplyOneLater: credentials-first is a real
+// lifecycle state only where the dispatcher can enumerate the accounts a credential reaches.
+// Google Ads has that endpoint; the rest do not, and each of their adapters refuses an empty
+// account id — so an account-less Meta or LinkedIn system row installs, reports success, and
+// then fails every dispatch with nothing an operator can do to complete it. That is the same
+// installable-and-dead shape requiredConfigKeys already guards, applied to the one column that
+// is not part of ProviderConfig.
+//
+// The third case is the one that makes this a check on the value WRITTEN rather than the flag
+// TYPED: a rotation may omit -account-id, because the row keeps the id it already has.
+func TestInstallRequiresAnAccountIDWhereNothingCanSupplyOneLater(t *testing.T) {
+	metaCreds := []byte(`{"access_token":"tok","app_secret":"sec"}`)
+
+	repo := &stubRepo{}
+	err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderMetaAds, "", map[string]string{"page_id": "1"}, metaCreds)
+	if err == nil || !strings.Contains(err.Error(), "requires -account-id") {
+		t.Fatalf("creating an account-less meta row = %v, want a refusal naming -account-id", err)
+	}
+	if repo.created != nil || repo.updated != nil || repo.setCT != nil {
+		t.Fatalf("refused and wrote anyway; calls = %v", repo.calls)
+	}
+
+	repo = &stubRepo{}
+	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderGoogleAds, "", nil, []byte(goodCreds)); err != nil {
+		t.Fatalf("google ads has account discovery, so credentials-first must still be legal: %v", err)
+	}
+
+	repo = &stubRepo{row: &model.Connection{
+		ProjectID: model.SystemProjectID, Provider: model.ProviderMetaAds,
+		AccountID: "act_1", ProviderConfig: map[string]string{"page_id": "111"},
+		Version: 4, Status: model.StatusActive,
+	}}
+	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderMetaAds, "", nil, metaCreds); err != nil {
+		t.Fatalf("a rotation may omit -account-id when the row already holds one: %v", err)
+	}
+	if repo.updated == nil || repo.updated.AccountID != "act_1" {
+		t.Fatalf("rotation lost the row's account id: %+v", repo.updated)
 	}
 }

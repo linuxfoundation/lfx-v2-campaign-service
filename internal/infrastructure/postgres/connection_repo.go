@@ -165,18 +165,25 @@ func (r *ConnectionRepo) update(ctx context.Context, c *model.Connection, cipher
 	args = append(args, c.ProjectID, expectedVersion)
 	projPos, verPos := len(args)-1, len(args)
 
+	// RETURNING, not a follow-up Get: this is an optimistic-concurrency write, so the row
+	// it hands back is also the ETag the caller publishes. A separate re-read can observe a
+	// LATER writer's row — the version check only proves nobody won the race BEFORE us, not
+	// that nobody wins it after — and the caller would then publish an ETag for a state its
+	// own write did not produce, silently making the next If-Match succeed against a version
+	// it never saw. One statement makes the write and the returned snapshot the same event.
 	//nolint:gosec // table and column names come from a fixed internal allowlist, not user input.
 	q := fmt.Sprintf(
-		"UPDATE %s SET %s WHERE project_id = $%d AND version = $%d AND status <> 'deleted'",
+		"UPDATE %s SET %s WHERE project_id = $%d AND version = $%d AND status <> 'deleted' RETURNING %s",
 		c.Provider.Table(), strings.Join(sets, ", "), projPos, verPos,
+		strings.Join(connectionSelectCols(c.Provider), ", "),
 	)
-	tag, err := r.db.Exec(ctx, q, args...)
+	updated, err := scanConnection(r.db.QueryRow(ctx, q, args...), c.Provider, cfgCols)
 	if err != nil {
-		return nil, fmt.Errorf("update connection: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		// Distinguish missing from stale version. Surface a transient Get error
-		// rather than masking it as a precondition failure (which would make the
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("update connection: %w", err)
+		}
+		// No row matched. Distinguish missing from stale version. Surface a transient Get
+		// error rather than masking it as a precondition failure (which would make the
 		// caller retry with a fresh ETag instead of backing off on a server error).
 		_, gerr := r.Get(ctx, c.ProjectID, c.Provider)
 		switch {
@@ -188,7 +195,7 @@ func (r *ConnectionRepo) update(ctx context.Context, c *model.Connection, cipher
 			return nil, domain.ErrPreconditionFailed
 		}
 	}
-	return r.Get(ctx, c.ProjectID, c.Provider)
+	return updated, nil
 }
 
 // SetCredential replaces only the encrypted credential blob and bumps version,
@@ -201,20 +208,23 @@ func (r *ConnectionRepo) SetCredential(ctx context.Context, projectID string, pr
 	if err != nil {
 		return nil, err
 	}
-	//nolint:gosec // table name comes from a fixed internal allowlist, not user input.
+	// RETURNING for the reason spelled out on update: the returned row becomes the caller's
+	// ETag, and this write is not even version-gated, so a re-read is MORE exposed here — any
+	// concurrent writer at all can land between the two statements.
+	//nolint:gosec // table and column names come from a fixed internal allowlist, not user input.
 	q := fmt.Sprintf(
 		"UPDATE %s SET credentials = $1, updated_by = $2, version = version + 1, updated_at = now() "+
-			"WHERE project_id = $3 AND status <> 'deleted'",
-		provider.Table(),
+			"WHERE project_id = $3 AND status <> 'deleted' RETURNING %s",
+		provider.Table(), strings.Join(connectionSelectCols(provider), ", "),
 	)
-	tag, err := r.db.Exec(ctx, q, ciphertext, updatedBy, projectID)
+	updated, err := scanConnection(r.db.QueryRow(ctx, q, ciphertext, updatedBy, projectID), provider, provider.ConfigKeys())
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
 		return nil, fmt.Errorf("set credential: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return nil, domain.ErrNotFound
-	}
-	return r.Get(ctx, projectID, provider)
+	return updated, nil
 }
 
 // Delete soft-deletes the connection.

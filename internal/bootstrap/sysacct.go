@@ -196,6 +196,31 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 	return nil
 }
 
+// accountDiscoveryProviders are the providers whose dispatcher can enumerate the accounts a
+// credential reaches (domain.AccountLister, wired only for Google Ads today). They are the
+// ONLY ones for which a credentials-first row is a real lifecycle state rather than a dead row.
+//
+// The distinction is not cosmetic. Every other adapter refuses an empty account id outright —
+// internal/dispatch/{linkedin,meta,reddit,twitter,microsoft}.go each guard on it — and none of
+// them offers an endpoint that would tell an operator what to put there, so an account-less
+// LinkedIn or Meta system row is installable, reports success, and then fails every dispatch
+// with no path to completion. That is exactly the failure requiredConfigKeys above exists to
+// prevent, applied to the one column that is not part of ProviderConfig.
+var accountDiscoveryProviders = map[model.Provider]bool{
+	model.ProviderGoogleAds: true,
+}
+
+// requireAccountID checks the value about to be WRITTEN, for the same reason requireConfig
+// does: on a rotation that omits -account-id the row keeps the id it already has, and that
+// satisfies this.
+func requireAccountID(provider model.Provider, effective string) error {
+	if accountDiscoveryProviders[provider] || strings.TrimSpace(effective) != "" {
+		return nil
+	}
+	return fmt.Errorf("bootstrap: %s requires -account-id: its dispatcher refuses a connection without one and "+
+		"there is no account-discovery endpoint for this provider to finish the row later", provider)
+}
+
 // mergeConfig overlays the supplied flags on what the row already holds. Update rewrites EVERY
 // config column, so replacing would NULL siblings a flag did not mention (Meta stores page_id and
 // app_id, HubSpot four). nil means "write no config at all".
@@ -217,7 +242,9 @@ func mergeConfig(existing, supplied map[string]string) map[string]string {
 // provider. It is IDEMPOTENT — a second run rotates onto the existing row rather than failing
 // the singleton constraint — which makes it safe in a deployment job. credsJSON is the plaintext
 // document in the snake_case form set-credential documents; keys are folded before encryption
-// and never logged. An empty accountID is the credentials-first state.
+// and never logged. An empty accountID is the credentials-first state, and it is accepted only
+// for a provider with account discovery (see accountDiscoveryProviders) — for the rest it would
+// install a row every dispatch refuses and nothing can complete.
 func InstallSystemCredentials(
 	ctx context.Context,
 	repo domain.ConnectionRepository,
@@ -274,6 +301,9 @@ func InstallSystemCredentials(
 		if accountID != "" {
 			upd.AccountID = accountID
 		}
+		if aerr := requireAccountID(provider, upd.AccountID); aerr != nil {
+			return aerr
+		}
 		if cfg != nil {
 			upd.ProviderConfig = cfg
 		}
@@ -290,6 +320,9 @@ func InstallSystemCredentials(
 		// unknown, and creating over it overwrites a credential nobody meant to replace.
 		if verr := requireConfig(provider, providerConfig); verr != nil {
 			return verr
+		}
+		if aerr := requireAccountID(provider, accountID); aerr != nil {
+			return aerr
 		}
 		_, cerr := repo.Create(ctx, &model.Connection{
 			ProjectID:            model.SystemProjectID,
