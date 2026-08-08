@@ -1917,27 +1917,31 @@ func TestGoogleAds_Adoption_DoesNotBypassInputValidation(t *testing.T) {
 func TestGoogleAds_ListAccounts_EmptyUpstreamIsEmptySliceNotNil(t *testing.T) {
 	var mu sync.Mutex
 	var gotMethod, gotPath string
+	var sawFlatList bool
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
 	}))
 	defer tokenSrv.Close()
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		// activeGoogleAdsConn carries a login_customer_id, so discovery also expands the
-		// manager hierarchy. That second request is a POST to a customer-scoped search
-		// path; capturing it would clobber the assertion below, which is about the
-		// account-agnostic discovery call specifically.
+		mu.Lock()
+		gotMethod, gotPath = r.Method, r.URL.Path
+		if strings.HasSuffix(r.URL.Path, "/customers:listAccessibleCustomers") {
+			sawFlatList = true
+		}
+		mu.Unlock()
 		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
 			_, _ = io.WriteString(w, `{"results":[]}`)
 			return
 		}
-		mu.Lock()
-		gotMethod, gotPath = r.Method, r.URL.Path
-		mu.Unlock()
 		_, _ = io.WriteString(w, `{"resourceNames":[]}`)
 	}))
 	defer apiSrv.Close()
 
+	// MANAGER MODE. activeGoogleAdsConn carries a login_customer_id, so the answer comes
+	// from expanding the hierarchy and the flat list is never requested — a call whose
+	// success is not needed must not be able to cause a failure. Asserting the flat
+	// request here would pin the opposite of what the client is supposed to do.
 	d := NewGoogleAdsDispatcher(
 		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
 		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
@@ -1952,9 +1956,30 @@ func TestGoogleAds_ListAccounts_EmptyUpstreamIsEmptySliceNotNil(t *testing.T) {
 	if len(accounts) != 0 {
 		t.Fatalf("expected 0 accounts, got %d", len(accounts))
 	}
+	mu.Lock()
+	flat := sawFlatList
+	mu.Unlock()
+	if flat {
+		t.Error("manager mode issued customers:listAccessibleCustomers; its result is discarded, " +
+			"so the only thing that request can contribute is a way for discovery to fail")
+	}
 
-	// The REST binding for ListAccessibleCustomers is GET on an account-agnostic path —
-	// no customers/{id} segment, unlike every other Google Ads call this client makes.
+	// DIRECT MODE. Without a login_customer_id the flat list IS the answer, and its REST
+	// binding is GET on an account-agnostic path — no customers/{id} segment, unlike every
+	// other Google Ads call this client makes.
+	direct := activeGoogleAdsConn(goodGoogleAdsCreds)
+	direct.ProviderConfig = nil
+	dd := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: direct}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	accounts, err = dd.ListAccounts(context.Background(), "proj", model.ProviderGoogleAds)
+	if err != nil {
+		t.Fatalf("ListAccounts (direct mode): %v", err)
+	}
+	if accounts == nil {
+		t.Fatal("ListAccounts returned nil for an empty upstream result; it must return an empty slice")
+	}
 	mu.Lock()
 	method, path := gotMethod, gotPath
 	mu.Unlock()
