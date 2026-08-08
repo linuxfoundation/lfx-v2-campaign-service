@@ -3269,3 +3269,149 @@ func TestGetCampaignMetrics_PlatformErrorIsScrubbedBeforeLogging(t *testing.T) {
 		t.Errorf("the control character was not normalized before logging:\n%s", logged)
 	}
 }
+
+// TestGetCampaignMetrics_UnusableConnectionIs409 and its toggle twin pin the fix for a
+// defect that credentials-first bootstrap made COMMON, not one it created. An account-less
+// row was always storable: Goa's Required("account_id") was a presence check on the JSON
+// KEY — the generated validator was `if body.AccountID == nil` — and the Go field is a plain
+// string, so `"account_id": ""` satisfied it. The state was reachable but unintended, which
+// is why its 503 went unexamined. Now the ordinary first state of a
+// connection — credentials stored, account not yet chosen — reaches these handlers, and a
+// 503 tells the caller "the platform did not respond, try later" about a platform that was
+// never contacted and a condition that changes only when a human edits the connection.
+//
+// Asserting the STATUS, not just that an error occurred: the default arm below also
+// errors, so a test that only checked for non-nil would pass against the bug.
+//
+// One test per handler. The two arms are near-identical prose in two different switches,
+// which is exactly why a single test would leave the other one at 503.
+func TestGetCampaignMetrics_UnusableConnectionIs409(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	disp := &metricsOnlyDispatcher{err: fmt.Errorf("no account id: %w: %w",
+		domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected)}
+	s := newMetricsService(camp, disp)
+	_, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("want a 409 ConflictError, got %T: %v", err, err)
+	}
+	if conflict.Code != "409" {
+		t.Errorf("code = %q, want 409", conflict.Code)
+	}
+	// The MESSAGE has to name the missing account, not just the status. ErrAccountNotSelected
+	// is always wrapped alongside ErrConnectionNotUsable, so a broad match still produces a
+	// 409 — the status alone cannot distinguish the fix from the bug.
+	if !strings.Contains(conflict.Message, "no ad account selected") {
+		t.Errorf("message = %q, want it to name the missing account specifically", conflict.Message)
+	}
+	assertAccountNotSelectedLog(t, buf.String())
+}
+
+// TestGetCampaignMetrics_OtherUnusableCauseKeepsTheGeneralMessage is the contrast that makes
+// the test above binding: an unusable connection for a DIFFERENT reason must still get the
+// general message. Without this, moving the specific message onto the broad arm would pass
+// both tests while telling an operator with rotted credentials to go pick an account.
+func TestGetCampaignMetrics_OtherUnusableCauseKeepsTheGeneralMessage(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	disp := &metricsOnlyDispatcher{err: fmt.Errorf("bad blob: %w: %w",
+		domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)}
+	s := newMetricsService(camp, disp)
+	_, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("want a 409 ConflictError, got %T: %v", err, err)
+	}
+	if strings.Contains(conflict.Message, "no ad account selected") {
+		t.Errorf("message = %q, want the general unusable-connection wording for a credential fault", conflict.Message)
+	}
+}
+
+func TestToggleCampaignStatus_UnusableConnectionIs409(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	tog := &stubToggler{err: fmt.Errorf("no account id: %w: %w",
+		domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected)}
+	s, _ := newToggleService(camp, tog)
+	im := "1"
+	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("want a 409 ConflictError, got %T: %v", err, err)
+	}
+	if conflict.Code != "409" {
+		t.Errorf("code = %q, want 409", conflict.Code)
+	}
+	if !strings.Contains(conflict.Message, "no ad account selected") {
+		t.Errorf("message = %q, want it to name the missing account specifically", conflict.Message)
+	}
+	assertAccountNotSelectedLog(t, buf.String())
+}
+
+// TestToggleCampaignStatus_OtherUnusableCauseKeepsTheGeneralMessage is the toggle's half of
+// the contrast — one per handler, because the two arms are near-identical prose in two
+// different switches and a single test would leave the other one broad.
+func TestToggleCampaignStatus_OtherUnusableCauseKeepsTheGeneralMessage(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	tog := &stubToggler{err: fmt.Errorf("inactive: %w: %w",
+		domain.ErrConnectionNotUsable, domain.ErrConnectionInactive)}
+	s, _ := newToggleService(camp, tog)
+	im := "1"
+	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("want a 409 ConflictError, got %T: %v", err, err)
+	}
+	if strings.Contains(conflict.Message, "no ad account selected") {
+		t.Errorf("message = %q, want the general unusable-connection wording for an inactive connection", conflict.Message)
+	}
+}
+
+// assertAccountNotSelectedLog checks both halves of the logging contract on these arms:
+// the fixed reason token IS present (an operator has to be able to tell "no account
+// chosen" apart from "credentials rotted"), and the wrapped cause is NOT — one of the
+// conditions behind ErrConnectionNotUsable is detected by decoding the DECRYPTED
+// credential blob, so this vocabulary is the only thing these arms may log.
+func assertAccountNotSelectedLog(t *testing.T, logged string) {
+	t.Helper()
+	if !strings.Contains(logged, "account_not_selected") {
+		t.Errorf("log is missing the reason token, so the two unusable-connection causes are\n"+
+			"indistinguishable to an operator:\n%s", logged)
+	}
+	if strings.Contains(logged, "no account id") {
+		t.Errorf("the wrapped cause reached the log; only the fixed reason token may be logged\n"+
+			"on this arm:\n%s", logged)
+	}
+}
