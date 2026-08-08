@@ -299,3 +299,78 @@ func TestJWTAuth_EmptyTokenRejected(t *testing.T) {
 		t.Fatal("expected error for empty token")
 	}
 }
+
+// TestSystemScopeIsUnreachableThroughTheAPI: the reserved scope holds the LF-owned
+// credentials that every project without its own connection dispatches through, so no
+// API caller may read, rewrite, re-credential, test or delete it.
+//
+// The row EXISTS in the repo for each case. A test against an empty store would pass
+// against a service with no guard at all — the repo would answer "not found" and the
+// assertion could not tell the two apart.
+func TestSystemScopeIsUnreachableThroughTheAPI(t *testing.T) {
+	newRepoWithSystemRow := func() *fakeRepo {
+		r := newFakeRepo()
+		r.store[model.SystemProjectID+"|"+string(model.ProviderGoogleAds)] = &model.Connection{
+			ProjectID: model.SystemProjectID, Provider: model.ProviderGoogleAds,
+			AccountID: "8666746580", EncryptedCredentials: []byte("ct"),
+			Status: model.StatusActive, Version: 1,
+		}
+		return r
+	}
+	etag := "1"
+	cases := map[string]func(*ConnectionService) error{
+		"get": func(s *ConnectionService) error {
+			_, err := s.GetGoogleAds(context.Background(), &conn.GetGoogleAdsPayload{ProjectID: model.SystemProjectID})
+			return err
+		},
+		"update": func(s *ConnectionService) error {
+			_, err := s.UpdateGoogleAds(context.Background(), &conn.UpdateGoogleAdsPayload{
+				ProjectID: model.SystemProjectID, IfMatch: &etag,
+				Config: &conn.GoogleAdsConnectionConfig{AccountID: "1"},
+			})
+			return err
+		},
+		"set-credential": func(s *ConnectionService) error {
+			return s.SetCredentialGoogleAds(context.Background(), &conn.SetCredentialGoogleAdsPayload{
+				ProjectID: model.SystemProjectID,
+				Credentials: &conn.GoogleAdsCredentials{
+					RefreshToken: "rt", ClientID: "ci", ClientSecret: "cs", DeveloperToken: "dt",
+				},
+			})
+		},
+		"delete": func(s *ConnectionService) error {
+			return s.DeleteGoogleAds(context.Background(), &conn.DeleteGoogleAdsPayload{ProjectID: model.SystemProjectID})
+		},
+		"test": func(s *ConnectionService) error {
+			_, err := s.TestGoogleAds(context.Background(), &conn.TestGoogleAdsPayload{ProjectID: model.SystemProjectID})
+			return err
+		},
+		"create": func(s *ConnectionService) error {
+			_, err := s.CreateGoogleAds(context.Background(), &conn.CreateGoogleAdsPayload{
+				ProjectID: model.SystemProjectID,
+				Config:    &conn.GoogleAdsConnectionConfig{AccountID: "1"},
+				Credentials: &conn.GoogleAdsCredentials{
+					RefreshToken: "rt", ClientID: "ci", ClientSecret: "cs", DeveloperToken: "dt",
+				},
+			})
+			return err
+		},
+	}
+	for name, call := range cases {
+		t.Run(name, func(t *testing.T) {
+			repo := newRepoWithSystemRow()
+			err := call(newTestService(t, repo))
+			if err == nil {
+				t.Fatalf("%s at the reserved scope succeeded; it must be refused", name)
+			}
+			// Create is refused earlier, by the slug pattern, and answers 400 — the
+			// reserved value is not a slug. The other five answer 404. Either is a
+			// refusal; what must never happen is the request reaching the row.
+			switch e := err.(type) {
+			case *conn.NotFoundError, *conn.BadRequestError:
+			default:
+				t.Fatalf("err = %T (%v), want NotFoundError or BadRequestError", e, err)
+			}
+		})
+	}
+}

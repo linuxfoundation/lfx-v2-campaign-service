@@ -5,8 +5,11 @@ package dispatch
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
@@ -142,4 +145,137 @@ func TestApplyCampaignConfig(t *testing.T) {
 			t.Errorf("a malformed end date must be nil, got %v", c.EndDate)
 		}
 	})
+}
+
+// scopedConnReader answers per PROJECT SCOPE, unlike fakeConnReader which returns the
+// same row for every project. The system-account fallback is entirely about which
+// scope was asked, so a fake that cannot tell them apart would pass against an
+// implementation that never consults the system scope at all.
+type scopedConnReader struct {
+	rows map[string]*model.Connection
+	errs map[string]error
+	gets []string // every project id asked for, in order
+}
+
+func (f *scopedConnReader) Get(_ context.Context, projectID string, _ model.Provider) (*model.Connection, error) {
+	f.gets = append(f.gets, projectID)
+	if err, ok := f.errs[projectID]; ok {
+		return nil, err
+	}
+	if c, ok := f.rows[projectID]; ok {
+		return c, nil
+	}
+	return nil, domain.ErrNotFound
+}
+
+func usableConn(creds, accountID string) *model.Connection {
+	return &model.Connection{
+		Provider:             model.ProviderGoogleAds,
+		AccountID:            accountID,
+		EncryptedCredentials: []byte(creds),
+		Status:               model.StatusActive,
+	}
+}
+
+// TestResolveFallsBackToSystemAccount: a project with no connection of its own runs
+// on the LF-owned system account rather than failing.
+func TestResolveFallsBackToSystemAccount(t *testing.T) {
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		model.SystemProjectID: usableConn(`{"sys":true}`, "sys-account"),
+	}}
+	got, err := newCredsSource(repo, identityEncryptor{}).
+		resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got.accountID != "sys-account" || string(got.plaintext) != `{"sys":true}` {
+		t.Errorf("resolved %q/%q, want the system account's credentials", got.accountID, got.plaintext)
+	}
+	if len(repo.gets) != 2 || repo.gets[0] != "cncf" || repo.gets[1] != model.SystemProjectID {
+		t.Errorf("scopes asked = %v, want the project first then the system scope", repo.gets)
+	}
+}
+
+// TestResolveDoesNotFallBackFromABrokenProjectConnection: the asymmetry that makes the
+// fallback safe. A project that HAS a connection has recorded an intent to bill its own
+// account; running its campaign on the Linux Foundation's account because that row needs
+// attention would spend LF money on a request nobody aimed there.
+func TestResolveDoesNotFallBackFromABrokenProjectConnection(t *testing.T) {
+	cases := map[string]*model.Connection{
+		// Refused by resolve itself, and refused by the adapter after resolve returns
+		// (status is carried out on `resolved`, not enforced here). Both must reach the
+		// project's own row, never the system account's.
+		"no stored credentials": {Provider: model.ProviderGoogleAds, Status: model.StatusActive},
+		"inactive":              {Provider: model.ProviderGoogleAds, AccountID: "1", EncryptedCredentials: []byte(`{}`), Status: model.StatusInactive},
+	}
+	for name, projectConn := range cases {
+		t.Run(name, func(t *testing.T) {
+			repo := &scopedConnReader{rows: map[string]*model.Connection{
+				"cncf":                projectConn,
+				model.SystemProjectID: usableConn(`{"sys":true}`, "sys-account"),
+			}}
+			got, err := newCredsSource(repo, identityEncryptor{}).
+				resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+			if err == nil && string(got.plaintext) == `{"sys":true}` {
+				t.Error("resolved the system account's credentials for a project that has its own connection")
+			}
+			for _, scope := range repo.gets {
+				if scope == model.SystemProjectID {
+					t.Error("the system account was consulted for a project that has its own connection")
+				}
+			}
+		})
+	}
+}
+
+// TestResolveWithNoSystemAccountReportsTheProject: the ordinary deployment, where no
+// system account is configured. Two lookups missed, but the error names the caller's
+// project — there is nothing they can do about an absent system account.
+func TestResolveWithNoSystemAccountReportsTheProject(t *testing.T) {
+	repo := &scopedConnReader{}
+	_, err := newCredsSource(repo, identityEncryptor{}).
+		resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+	if !strings.Contains(err.Error(), "cncf") || strings.Contains(err.Error(), model.SystemProjectID) {
+		t.Errorf("err = %q, want it to name the project and not the reserved scope", err)
+	}
+}
+
+// TestResolveHoldsTheSystemAccountToTheSameStandard: an unusable system row is refused,
+// not trusted because it is ours.
+func TestResolveHoldsTheSystemAccountToTheSameStandard(t *testing.T) {
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		model.SystemProjectID: {Provider: model.ProviderGoogleAds, Status: model.StatusActive},
+	}}
+	_, err := newCredsSource(repo, identityEncryptor{}).
+		resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+	if !errors.Is(err, domain.ErrConnectionNotUsable) {
+		t.Fatalf("err = %v, want ErrConnectionNotUsable for a system row with no credentials", err)
+	}
+}
+
+// TestSystemLookupFailureIsNotAnAbsence: a database error on the fallback lookup must
+// not be reported as "you have no connection" — that answers 404 to what is a 503.
+func TestSystemLookupFailureIsNotAnAbsence(t *testing.T) {
+	repo := &scopedConnReader{errs: map[string]error{model.SystemProjectID: errors.New("connection refused")}}
+	_, err := newCredsSource(repo, identityEncryptor{}).
+		resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+	if err == nil || errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("err = %v, want a non-absence error", err)
+	}
+}
+
+// TestResolveAtTheSystemScopeDoesNotRecurse: dispatching a brief already scoped to the
+// reserved project must not ask for the same row twice.
+func TestResolveAtTheSystemScopeDoesNotRecurse(t *testing.T) {
+	repo := &scopedConnReader{}
+	if _, err := newCredsSource(repo, identityEncryptor{}).
+		resolve(context.Background(), model.SystemProjectID, model.ProviderGoogleAds); err == nil {
+		t.Fatal("want ErrNotFound, got nil")
+	}
+	if len(repo.gets) != 1 {
+		t.Errorf("scopes asked = %v, want exactly one lookup", repo.gets)
+	}
 }

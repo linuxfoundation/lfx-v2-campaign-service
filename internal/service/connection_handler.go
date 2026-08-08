@@ -167,10 +167,34 @@ func (s *ConnectionService) resolveBackendWithOrch() (domain.ConnectionRepositor
 	return repo, enc, orch, nil
 }
 
+// rejectSystemScope refuses a request aimed at model.SystemProjectID, the reserved
+// scope holding the LF-owned fallback credentials.
+//
+// The create endpoints are already closed by validateConnectionProjectSlug — the
+// reserved value cannot match the slug pattern — so this guard exists for the OTHER
+// five, which are deliberately permissive on project_id to keep historical UUID-keyed
+// rows reachable. Without it, a caller who could reach the connections API for any
+// project could update, re-credential or delete the system account that every project
+// without its own connection dispatches through. Every one of the six goes through a
+// helper here, which is why the check lives at this layer and not in each of the
+// forty-odd per-provider adapters.
+//
+// 404, not 403: the reserved scope is not a project this API exposes, and answering
+// "forbidden" would confirm to an unauthorized caller that something is there.
+func rejectSystemScope(projectID string) error {
+	if projectID == model.SystemProjectID {
+		return &conn.NotFoundError{Code: "404", Message: "connection not found"}
+	}
+	return nil
+}
+
 // createConn encrypts credentials, persists a new connection, and returns the
 // generic domain result. Adapters build the *model.Connection (minus
 // credentials) and pass the plaintext credential JSON separately.
 func (s *ConnectionService) createConn(ctx context.Context, c *model.Connection, creds any) (*model.Connection, error) {
+	if err := rejectSystemScope(c.ProjectID); err != nil {
+		return nil, err
+	}
 	repo, enc, err := s.resolveBackend()
 	if err != nil {
 		return nil, err
@@ -190,6 +214,9 @@ func (s *ConnectionService) createConn(ctx context.Context, c *model.Connection,
 
 // getConn fetches the project's connection for a provider.
 func (s *ConnectionService) getConn(ctx context.Context, projectID string, p model.Provider) (*model.Connection, error) {
+	if err := rejectSystemScope(projectID); err != nil {
+		return nil, err
+	}
 	repo, _, err := s.resolveBackend()
 	if err != nil {
 		return nil, err
@@ -200,6 +227,9 @@ func (s *ConnectionService) getConn(ctx context.Context, projectID string, p mod
 
 // updateConn replaces config, gated on the If-Match version.
 func (s *ConnectionService) updateConn(ctx context.Context, c *model.Connection, ifMatch *string) (*model.Connection, error) {
+	if err := rejectSystemScope(c.ProjectID); err != nil {
+		return nil, err
+	}
 	repo, _, err := s.resolveBackend()
 	if err != nil {
 		return nil, err
@@ -214,6 +244,9 @@ func (s *ConnectionService) updateConn(ctx context.Context, c *model.Connection,
 
 // setCredential encrypts and replaces the stored credential.
 func (s *ConnectionService) setCredential(ctx context.Context, projectID string, p model.Provider, creds any, by *model.Actor) error {
+	if err := rejectSystemScope(projectID); err != nil {
+		return err
+	}
 	repo, enc, err := s.resolveBackend()
 	if err != nil {
 		return err
@@ -235,6 +268,9 @@ func (s *ConnectionService) setCredential(ctx context.Context, projectID string,
 
 // deleteConn soft-deletes the connection.
 func (s *ConnectionService) deleteConn(ctx context.Context, projectID string, p model.Provider) error {
+	if err := rejectSystemScope(projectID); err != nil {
+		return err
+	}
 	repo, _, err := s.resolveBackend()
 	if err != nil {
 		return err
@@ -249,6 +285,9 @@ func (s *ConnectionService) deleteConn(ctx context.Context, projectID string, p 
 // verification is not yet implemented; it reports the connection exists and is
 // pending real verification (LFXV2-2556 follow-up / provider adapters).
 func (s *ConnectionService) testConn(ctx context.Context, projectID string, p model.Provider) (*conn.ConnectionTestResult, error) {
+	if err := rejectSystemScope(projectID); err != nil {
+		return nil, err
+	}
 	repo, _, err := s.resolveBackend()
 	if err != nil {
 		return nil, err

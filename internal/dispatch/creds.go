@@ -124,8 +124,9 @@ type connReader interface {
 	Get(ctx context.Context, projectID string, provider model.Provider) (*model.Connection, error)
 }
 
-// credsSource resolves a project's decrypted platform credentials. It is the ONLY
-// shared piece across adapters: the mechanical Get-then-Decrypt. It deliberately does
+// credsSource resolves a project's decrypted platform credentials, from the project's
+// own connection or from the LF-owned system account. It is the ONLY shared piece
+// across adapters: the mechanical Get-then-Decrypt. It deliberately does
 // NOT interpret the plaintext — credential shapes differ per platform (OAuth2 refresh
 // tokens, OAuth1 4-tuples, static bearer tokens), so each adapter unmarshals the blob
 // itself. ProviderConfig (non-secret columns) and AccountID come back untouched too.
@@ -150,17 +151,39 @@ type resolved struct {
 }
 
 // resolve fetches the project's connection for the provider and decrypts its
-// credentials. It returns a NOT-created error (so the orchestrator releases the
-// dispatch claim) when the connection is missing, unconfigured, or undecryptable —
-// none of those could have created an upstream campaign.
+// credentials, falling back to the reserved system scope (model.SystemProjectID) when
+// the project has no connection of its own. It returns a NOT-created error (so the
+// orchestrator releases the dispatch claim) when neither scope yields a usable
+// connection — none of those states could have created an upstream campaign.
 func (s *credsSource) resolve(ctx context.Context, projectID string, provider model.Provider) (*resolved, error) {
 	conn, err := s.repo.Get(ctx, projectID, provider)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
+			// The project has no connection of its own. Fall back to the LF-owned
+			// system account, so a project can run campaigns before it has connected
+			// a platform account (goal: system accounts with per-user attribution).
+			//
+			// ONLY a genuine absence falls back, and that asymmetry is the whole
+			// safety argument. Every other failure above and below — a repo error, an
+			// inactive row, an empty credential blob, a decrypt failure — means the
+			// project HAS a connection that needs attention, and quietly running its
+			// campaign on the Linux Foundation's own ad account instead would spend LF
+			// money on a request the project believed was billed to itself. A missing
+			// row is the one state where no such intent was ever recorded.
+			if sysConn, sysErr := s.systemConn(ctx, projectID, provider); sysErr != nil {
+				return nil, sysErr
+			} else if sysConn != nil {
+				return s.resolveConn(ctx, model.SystemProjectID, sysConn, provider)
+			}
 			// Wrap the sentinel rather than dropping it: read-only callers such as
 			// account discovery need to tell "this project has no connection" (404)
 			// apart from "the platform call failed" (503). The dispatch paths only
 			// consult NoUpstreamCreate, so preserving it changes nothing for them.
+			//
+			// The error names the PROJECT, not the system scope, even though two
+			// lookups missed. The caller asked about their project and there is
+			// nothing for them to do about an absent system account; which of the two
+			// was missing is an operator's question, and systemConn logs it.
 			return nil, notCreated(fmt.Errorf("no %s connection configured for project %s: %w", provider, projectID, domain.ErrNotFound))
 		}
 		// A repo error (DB down) is NOT a pre-create signal we can prove, but no
@@ -168,6 +191,41 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 		// not-created so a transient DB blip doesn't wedge the claim.
 		return nil, notCreated(fmt.Errorf("load %s connection: %w", provider, err))
 	}
+	return s.resolveConn(ctx, projectID, conn, provider)
+}
+
+// systemConn loads the reserved system-scope connection for provider. It returns
+// (nil, nil) when no system account is configured — the ordinary state for a
+// deployment that has not set one up — and an error only when the lookup itself
+// failed. projectID is the scope that missed, for the log line.
+func (s *credsSource) systemConn(ctx context.Context, projectID string, provider model.Provider) (*model.Connection, error) {
+	if projectID == model.SystemProjectID {
+		// Already the system scope: a second identical Get would return the same
+		// miss, and calling the fallback a fallback for itself would be a lie.
+		return nil, nil
+	}
+	conn, err := s.repo.Get(ctx, model.SystemProjectID, provider)
+	if err == nil {
+		slog.InfoContext(ctx, "project has no connection; using the system account",
+			"project_id", projectID, "provider", string(provider))
+		return conn, nil
+	}
+	if errors.Is(err, domain.ErrNotFound) {
+		return nil, nil
+	}
+	// A repo failure on the system lookup is NOT an absence. Reporting it as one
+	// would hand the caller a 404 that says "you have no connection" when the truth
+	// is that the database did not answer.
+	return nil, notCreated(fmt.Errorf("load system %s connection: %w", provider, err))
+}
+
+// resolveConn validates a connection row and decrypts its credentials. It is shared
+// by the project scope and the system-account fallback, so a system row is held to
+// exactly the same standard: an empty credential blob or an undecryptable one is
+// refused there too, rather than being trusted because it is ours. Status travels out
+// on `resolved` and is enforced by each adapter, which likewise cannot tell — and does
+// not need to tell — which scope the row came from.
+func (s *credsSource) resolveConn(ctx context.Context, projectID string, conn *model.Connection, provider model.Provider) (*resolved, error) {
 	// The branches below are tagged with domain.ErrConnectionNotUsable; the two above
 	// deliberately are not. The distinction is whether the connection ROW itself is the
 	// thing that needs editing. A row with no credential blob is permanently unusable as

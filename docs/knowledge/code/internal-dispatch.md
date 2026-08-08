@@ -39,7 +39,8 @@ revoked or deleted.
    non-secret fields (`AccountID`, `ProviderConfig`, `Status`). It does NOT interpret
    the plaintext — credential shapes differ per platform (OAuth2 refresh tokens,
    OAuth1 4-tuples, static bearer tokens), so each adapter unmarshals the blob into
-   its own credential struct.
+   its own credential struct. When the project has NO connection, resolution falls
+   back to the reserved `model.SystemProjectID` scope (see below).
 2. **Map inputs** (per-platform) — the adapter reads the brief's event destination
    from its top-level `URL` field (with a nested `registrationUrl` in the opaque JSON
    only as a fallback) and `eventName` from the opaque JSON blobs, plus the
@@ -415,3 +416,45 @@ Two places this shows up today:
   DESIGN, while an ad platform's toggle may simply not be wired yet.
 
 See [internal/dispatch](../../../internal/dispatch).
+
+## The system account is a connection row, not a second mechanism
+
+A project that has connected no ad account of its own dispatches through the LF-owned
+system account, stored as an ordinary connection row at the reserved project scope
+`model.SystemProjectID` (`system:linuxfoundation`).
+
+A reserved scope rather than a `LFX_SYS_*` environment block, because a system account
+needs precisely what a project account needs: encryption at rest, an account id,
+provider config, a status, a version for `If-Match`, and an `updated_by` audit trail.
+All of that is already on the row — and reusing it means the credentials-first
+bootstrap flow and the account-discovery endpoint operate on the system account with no
+code of their own.
+
+**Only a genuine absence falls back, and that asymmetry is the whole safety argument.**
+A repo error, an empty credential blob, a decrypt failure — each means the project HAS a
+connection that needs attention, and quietly running its campaign on the Linux
+Foundation's own ad account instead would spend LF money on a request the project
+believed was billed to itself. A missing row is the one state where no such intent was
+ever recorded. A failure of the FALLBACK lookup is likewise not an absence: reported as
+one it would answer "you have no connection" when the truth is that the database did not
+answer.
+
+The system row is held to the same standard as any other — `resolveConn` is shared, so
+an empty or undecryptable blob is refused there too rather than trusted because it is
+ours.
+
+The reserved value is unreachable through the API. `projectSlugProblem` enforces
+`^[a-z0-9]+(-[a-z0-9]+)*$`, which the colon cannot satisfy, so no create endpoint can
+plant a row there. That is necessary but not sufficient: get/update/delete/test/
+set-credential are permissive on `project_id` for historical UUID rows, so an existing
+system row would otherwise be rewritable by anyone who could reach the connections API
+for any project at all. `rejectSystemScope` closes those five at the shared helpers in
+`internal/service/connection_handler.go` — one choke point rather than forty-odd
+per-provider adapters — and answers 404 rather than 403, since confirming that something
+is there is itself a disclosure.
+
+Account discovery follows the same fallback, deliberately. It resolves through
+`credsSource.resolve` like every dispatch path, so a project with no connection is shown
+the accounts its campaigns would actually run on. The alternative — discovery reporting
+404 while dispatch quietly succeeds — is the worse inconsistency. Account ids are not
+secrets; the credentials never leave the service either way.
