@@ -838,6 +838,16 @@ func (c *Client) gaqlSearchForCustomer(ctx context.Context, customerID, query st
 		if err != nil {
 			return nil, fmt.Errorf("gaql search: %w", err)
 		}
+		// A top-level JSON `null` unmarshals into searchResponse WITHOUT error and
+		// leaves it zero-valued, so it would return a nil row set and no page token —
+		// indistinguishable from a genuine empty result. For a caller that reads an
+		// empty result as a licence to create, that turns an unverifiable response into
+		// a duplicate paid campaign. Google's real empty page is `{}` or
+		// `{"results":[]}`, both well-formed objects, so rejecting the bare null costs
+		// nothing legitimate.
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return nil, &transportError{Method: http.MethodPost, Path: path, Err: errors.New("search response was a bare JSON null, not a result set")}
+		}
 		var sr searchResponse
 		if err := json.Unmarshal(raw, &sr); err != nil {
 			// A 2xx search response we can't decode is wrapped as transportError for

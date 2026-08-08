@@ -102,10 +102,9 @@ func TestFindCampaignByName_AbsentIsNotAnError(t *testing.T) {
 	}
 }
 
-// TestFindCampaignByName_DuplicateNamesAreAmbiguous covers the case that motivates
-// returning an error instead of the first hit. Google Ads permits duplicate campaign
-// names in one account, so picking arbitrarily would bind a brief to the wrong paid
-// campaign.
+// TestFindCampaignByName_DuplicateNamesAreAmbiguous motivates erroring instead of taking
+// the first hit: Google Ads permits duplicate names in one account, so an arbitrary pick
+// binds a brief to the wrong paid campaign.
 func TestFindCampaignByName_DuplicateNamesAreAmbiguous(t *testing.T) {
 	srv, _ := newLookupServer(t, []json.RawMessage{
 		lookupRow("111", "dupe", StatusEnabled),
@@ -127,9 +126,9 @@ func TestFindCampaignByName_DuplicateNamesAreAmbiguous(t *testing.T) {
 	}
 }
 
-// TestFindCampaignByName_DuplicateRowsForOneCampaignAreNotAmbiguous is the other half
-// of the ambiguity rule: the same campaign returned twice is ONE campaign, and
-// reporting it as ambiguous would block a legitimate adoption.
+// TestFindCampaignByName_DuplicateRowsForOneCampaignAreNotAmbiguous is the other half of
+// the rule: one campaign on two rows is ONE campaign, and calling it ambiguous would
+// block a legitimate adoption.
 func TestFindCampaignByName_DuplicateRowsForOneCampaignAreNotAmbiguous(t *testing.T) {
 	srv, _ := newLookupServer(t, []json.RawMessage{
 		lookupRow("777", "same campaign twice", StatusEnabled),
@@ -146,20 +145,16 @@ func TestFindCampaignByName_DuplicateRowsForOneCampaignAreNotAmbiguous(t *testin
 	}
 }
 
-// TestFindCampaignByName_QuoteInNameCannotInjectQuery is the reason gaqlStringLiteral
-// exists. Without escaping, the quote closes the literal and the rest of the name is
-// parsed as query syntax — turning an exact-match lookup into a match on the whole
-// account, after which the caller binds a brief to an unrelated campaign.
+// TestFindCampaignByName_QuoteInNameCannotInjectQuery is why gaqlStringLiteral exists:
+// unescaped, the quote closes the literal and the rest becomes query syntax, turning an
+// exact-match lookup into a match on the whole account.
 func TestFindCampaignByName_QuoteInNameCannotInjectQuery(t *testing.T) {
 	const evil = `x' OR campaign.id > '0`
 
-	// The server returns a campaign that is NOT named `evil` — exactly what an injected
-	// query would surface. The client-side equality re-check must reject the whole
-	// response as UNVERIFIABLE.
-	//
-	// The assertion is an ERROR, not a zero match. Discarding the row would collapse an
-	// injected query into ("", nil), which is the licence-to-create absence, so a test
-	// that accepted a clean absence here would be asserting the unsafe outcome.
+	// The server returns a campaign NOT named `evil` — what an injected query surfaces.
+	// The assertion is an ERROR, not a zero match: discarding the row would collapse an
+	// injected query into ("", nil), the licence-to-create absence, so a test accepting
+	// a clean absence here would be asserting the unsafe outcome.
 	srv, query := newLookupServer(t, []json.RawMessage{
 		lookupRow("999", "some other campaign", StatusEnabled),
 	})
@@ -188,9 +183,9 @@ func TestFindCampaignByName_QuoteInNameCannotInjectQuery(t *testing.T) {
 	}
 }
 
-// TestGAQLStringLiteral covers the escape set directly, including the ordering trap:
-// backslash must be doubled before quotes are escaped, or the backslash introduced by
-// the quote escape is itself escaped and the quote is released.
+// TestGAQLStringLiteral covers the escape set directly, including the ordering trap: the
+// backslash must be doubled before quotes are escaped, or the backslash the quote escape
+// introduces is itself escaped and the quote is released.
 func TestGAQLStringLiteral(t *testing.T) {
 	for _, tc := range []struct {
 		name, in, want string
@@ -224,19 +219,12 @@ func TestGAQLStringLiteral_RejectsOnlyWhatGoogleForbids(t *testing.T) {
 	}
 }
 
-// TestGAQLStringLiteral_AllowsEverythingGoogleAccepts is the other half of that
-// decision, and the more important half.
-//
-// This lookup serves ADOPTION, whose targets were created outside this service and
-// never passed through sanitizeNamePart. Google accepts every character below inside
-// Campaign.name, so campaigns named this way really can exist — and rejecting such a
-// name answers "no such campaign" about a campaign that is sitting right there, which
-// is the false absence that licenses a duplicate PAID campaign.
-//
-// TAB is the case a blanket unicode.IsControl rule gets wrong (it is category Cc but
-// perfectly legal in a name). U+2028/U+2029 are Zl/Zp, legal, and were wrongly rejected
-// by an explicit check. The zero-width joiner is category Cf and appears in ordinary
-// emoji sequences.
+// TestGAQLStringLiteral_AllowsEverythingGoogleAccepts is the other, more important half:
+// adoption targets never passed through sanitizeNamePart, so campaigns named this way
+// really exist, and refusing one answers "no such campaign" about a campaign sitting
+// right there — the false absence that licenses a duplicate PAID campaign. TAB is what a
+// blanket unicode.IsControl rule gets wrong (Cc, but legal); U+2028/U+2029 are Zl/Zp and
+// legal; the zero-width joiner is Cf and appears in ordinary emoji sequences.
 func TestGAQLStringLiteral_AllowsEverythingGoogleAccepts(t *testing.T) {
 	for _, in := range []string{
 		"a\tb",
@@ -431,7 +419,7 @@ func TestFindCampaignByName_ResourceNameFallbackValidatesShape(t *testing.T) {
 			if err == nil {
 				t.Fatalf("resourceName %q must not yield an id, got %q", tc.resourceName, id)
 			}
-			if !strings.Contains(err.Error(), "rather than report it absent") {
+			if !strings.Contains(err.Error(), "malformed or scoped to another customer") {
 				t.Errorf("error does not explain the fail-closed reason: %v", err)
 			}
 		})
@@ -442,8 +430,11 @@ func TestFindCampaignByName_ResourceNameFallbackValidatesShape(t *testing.T) {
 // (as opposed to the resource-name fallback above). The id is interpolated into resource
 // paths by every later call, so a non-numeric one must never leave this function.
 func TestFindCampaignByName_NonNumericIDIsRejected(t *testing.T) {
+	// The resource name is OMITTED so the row's only identity evidence is the id
+	// field; with one present it would be rejected by the resource-name guard first
+	// and this test would pass without ever reaching the numeric check.
 	srv, _ := newLookupServer(t, []json.RawMessage{
-		json.RawMessage(`{"campaign":{"resourceName":"customers/1234567890/campaigns/x","id":"not-a-number","name":"bad id","status":"ENABLED"}}`),
+		json.RawMessage(`{"campaign":{"id":"not-a-number","name":"bad id","status":"ENABLED"}}`),
 	})
 	client := newAccountsTestClient(t, srv)
 
@@ -507,5 +498,53 @@ func TestFindCampaignByName_SearchFailurePropagates(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "google-ads campaign lookup") {
 		t.Errorf("error is not wrapped with the lookup context: %v", err)
+	}
+}
+
+// TestFindCampaignByName_IdentityFieldsMustAgree covers a row whose two selected identity
+// fields contradict each other. Validating the resource name only as a FALLBACK for a
+// missing id made the check reachable exactly when the row was least suspicious — yet a
+// row carrying both fields is the one adoption acts on.
+func TestFindCampaignByName_IdentityFieldsMustAgree(t *testing.T) {
+	for _, tc := range []struct{ name, resourceName, want string }{
+		{"another customer", "customers/9999999999/campaigns/4242", "malformed or scoped to another customer"},
+		{"malformed", "garbage/4242", "malformed or scoped to another customer"},
+		{"names a different campaign", "customers/1234567890/campaigns/777", "identity fields disagree"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _ := newLookupServer(t, []json.RawMessage{
+				json.RawMessage(`{"campaign":{"resourceName":` + jsonQuote(tc.resourceName) +
+					`,"id":"4242","name":"disagree","status":"ENABLED"}}`),
+			})
+			id, err := newAccountsTestClient(t, srv).FindCampaignByName(context.Background(), "disagree")
+			if err == nil {
+				t.Fatalf("resourceName %q beside id 4242 must not yield an id, got %q", tc.resourceName, id)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestFindCampaignByName_RejectsBareNullResponse pins the null guard in gaqlSearch: a
+// top-level null unmarshals WITHOUT error into a zero-valued response, which before the
+// guard read as the clean ("", nil) absence — licence to create a duplicate paid campaign.
+func TestFindCampaignByName_RejectsBareNullResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "token") {
+			_, _ = w.Write([]byte(`{"access_token":"t","expires_in":3600}`))
+			return
+		}
+		_, _ = w.Write([]byte("null"))
+	}))
+	defer srv.Close()
+
+	id, err := newAccountsTestClient(t, srv).FindCampaignByName(context.Background(), "anything")
+	if err == nil {
+		t.Fatalf("a bare null response must not report a clean absence, got %q", id)
+	}
+	if !strings.Contains(err.Error(), "bare JSON null") {
+		t.Errorf("error = %v, want it to name the bare null response", err)
 	}
 }

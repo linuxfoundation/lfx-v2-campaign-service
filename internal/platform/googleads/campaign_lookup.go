@@ -14,44 +14,31 @@ import (
 // ---------------------------------------------------------------------------
 // Campaign lookup by name: the read half of brief-to-campaign binding.
 //
-// The other clients (linkedin, twitter, microsoft, meta) grew a find-by-name to
-// make CREATE idempotent — don't double-create when a retry lands after the first
-// attempt already committed. This one exists for that too, but the reason it is
-// being added now is ADOPTION: binding a brief to a campaign that already exists
-// on the platform and that this service never created. Those two uses want the
+// The other clients grew a find-by-name to make CREATE idempotent. This one serves
+// that too, but exists now for ADOPTION: binding a brief to a campaign that already
+// exists on the platform and that this service never created. Both uses want the
 // same query and the same fail-closed semantics, so they share one method.
 // ---------------------------------------------------------------------------
 
 // gaqlStringLiteral renders s as a single-quoted GAQL string literal, escaping the
 // two characters that can terminate or extend one.
 //
-// EVERY other GAQL query in this package interpolates either a digits-only id
-// (customerIDRE) or a value from a closed allow-list (validMetricsWindows in
-// metrics.go), so until now nothing here has needed to quote free text. A campaign
-// NAME is the first genuinely caller-controlled string to reach a WHERE clause, and
-// it cannot be allow-listed — an operator may name a campaign anything Google
-// accepts. Without escaping, a name containing a quote closes the literal and the
-// remainder is parsed as query syntax: `x' OR campaign.id > '0` turns an exact-match
-// lookup into a match on everything in the account, and the caller would then bind a
-// brief to whichever unrelated campaign came back first.
+// EVERY other GAQL query here interpolates a digits-only id (customerIDRE) or a value
+// from a closed allow-list (validMetricsWindows), so nothing has needed to quote free
+// text. A campaign NAME is the first genuinely caller-controlled string to reach a
+// WHERE clause and cannot be allow-listed. Unescaped, `x' OR campaign.id > '0` closes
+// the literal and turns an exact-match lookup into a match on the whole account.
 //
-// GAQL follows the usual backslash convention, so the escape set is exactly two
-// characters and ORDER MATTERS: backslash must be doubled FIRST, or the backslash
-// introduced when escaping a quote would itself be escaped a second time and the
-// quote would be released.
+// ORDER MATTERS: backslash must be doubled FIRST, or the backslash introduced when
+// escaping a quote is escaped a second time and the quote is released.
 //
 // The rejected set is EXACTLY the three characters Google Ads prohibits in
-// Campaign.name — NUL, LF and CR — and no more. Rejecting them costs no reachable
-// lookup, because a name containing one cannot be a real campaign name.
-//
-// Rejecting MORE is a bug: this lookup serves adoption, whose targets were created
-// outside this service and never ran through sanitizeNamePart, and Google accepts TAB
-// (and U+2028/U+2029, and zero-width joiners) in a name — so refusing one answers "no
-// such campaign" about a campaign that exists, which is the false absence that licenses
-// the create path to make a duplicate PAID campaign. Everything else is safe to escape
-// and pass through: the query rides in a JSON body, and encoding/json escapes control
-// characters and U+2028/U+2029 on the way out. See the knowledge log for the full
-// reasoning.
+// Campaign.name — NUL, LF and CR. Rejecting them costs no reachable lookup, since such
+// a name cannot be real. Rejecting MORE is a bug: adoption targets never ran through
+// sanitizeNamePart, and Google accepts TAB, U+2028/U+2029 and zero-width joiners, so
+// refusing one answers "no such campaign" about a campaign that exists — the false
+// absence that licenses a duplicate PAID campaign. Passing the rest through is safe:
+// the query rides in a JSON body and encoding/json escapes those runes on the way out.
 func gaqlStringLiteral(s string) (string, error) {
 	for _, r := range s {
 		if r == '\x00' || r == '\n' || r == '\r' {
@@ -82,13 +69,11 @@ type campaignLookupRow struct {
 //
 // It returns "" for anything else, which the caller turns into a fail-closed error.
 //
-// This is deliberately stricter than the package's resourceID helper, which returns
-// the trailing path segment of whatever it is given. resourceID is right for parsing
-// the response to a mutate WE issued — the resource name there is one the server
-// minted for the very entity we just created. Here the resource name is the sole
-// identity evidence for a campaign we are about to bind a brief to, so "the part
-// after the last slash" is not enough: it would accept "garbage/4242", and it would
-// accept a campaign belonging to a different customer.
+// Deliberately stricter than the package's resourceID helper, which returns the
+// trailing path segment. resourceID is right for parsing a mutate response WE issued —
+// the server minted that name for the entity we just created. Here the resource name is
+// identity evidence for a campaign about to have a brief bound to it, so "after the last
+// slash" is not enough: it accepts "garbage/4242" and another customer's campaign.
 func (c *Client) campaignIDFromResourceName(resourceName string) string {
 	parts := strings.Split(resourceName, "/")
 	if len(parts) != 4 || parts[0] != "customers" || parts[2] != "campaigns" {
@@ -111,11 +96,10 @@ func (c *Client) campaignIDFromResourceName(resourceName string) string {
 // account whose name is exactly name.
 //
 // The contract mirrors the fail-closed LOGIC of the other clients' lookups (meta's
-// findCampaignByName, linkedin's findMatch, twitter's and microsoft's
-// findCampaignByName), because the callers make the same decision from the result.
-// It is the first one EXPORTED, though: the others are called only from inside their
-// own client's create path, whereas this one is also called from the dispatch layer
-// for adoption, which lives in a different package.
+// findCampaignByName, linkedin's findMatch, twitter's and microsoft's), because callers
+// make the same decision from the result. It is the first one EXPORTED, though: the
+// others are called only from inside their own create path, this one also from the
+// dispatch layer for adoption.
 //
 // The outcomes:
 //
@@ -124,14 +108,12 @@ func (c *Client) campaignIDFromResourceName(resourceName string) string {
 //   - more than one match     -> ("", error) — AMBIGUOUS, never a silent pick
 //   - anything unverifiable   -> ("", error)
 //
-// The distinction between the second and third cases is the whole point, and it is
-// why this returns an error rather than the first hit. Both callers act
-// destructively on an absence: the create path takes ("", nil) as licence to create
-// a campaign, and the adoption path takes it as licence to report that there is
-// nothing to adopt. Reporting a false absence therefore produces a duplicate paid
-// campaign, and picking arbitrarily among several same-name campaigns binds a brief
-// to the wrong one — with real spend attached either way. So every uncertain
-// outcome fails closed.
+// The distinction between the second and third cases is the whole point, and why this
+// errors rather than taking the first hit. Both callers act destructively on an absence:
+// create takes ("", nil) as licence to create, adoption as licence to report nothing to
+// adopt. A false absence therefore produces a duplicate paid campaign, and an arbitrary
+// pick among same-name campaigns binds a brief to the wrong one — real spend either way.
+// Every uncertain outcome fails closed.
 //
 // Google Ads permits duplicate campaign names within an account (unlike the budget
 // name, which the create path already handles as a duplicate error), so the
@@ -226,15 +208,26 @@ func (c *Client) FindCampaignByName(ctx context.Context, name string) (string, e
 			return "", fmt.Errorf("google-ads campaign lookup: campaign named %q has unrecognised status %q (want %s, %s or %s); refusing to treat it as live", lookup, row.Campaign.Status, StatusEnabled, StatusPaused, StatusRemoved)
 		}
 
+		// The resource name is validated WHENEVER it is present, not only as a fallback
+		// for a missing campaign.id. Both fields were selected, so both are evidence of
+		// what this row IS: a resource name that is malformed, or scoped to a different
+		// customer, sitting beside a plausible-looking id means the row does not identify
+		// a single campaign in THIS account. Preferring the id there would bind a brief
+		// to a campaign whose ownership we just failed to verify. Validating only in the
+		// fallback makes the check reachable exactly when the row is least suspicious.
 		id := strings.TrimSpace(row.Campaign.ID)
-		if id == "" {
-			// Fall back to the resource name; v23 returns campaign.id as a string, but an
-			// int64 field can arrive absent. The fallback validates the FULL shape rather
-			// than taking the trailing segment: bare resourceID would read "garbage/4242"
-			// as campaign 4242, and a resource name scoped to a DIFFERENT customer as a
-			// campaign in this one — either way binding a brief to an id we never verified
-			// belongs to this account.
-			id = c.campaignIDFromResourceName(row.Campaign.ResourceName)
+		fromName := c.campaignIDFromResourceName(row.Campaign.ResourceName)
+		if rn := strings.TrimSpace(row.Campaign.ResourceName); rn != "" && fromName == "" {
+			return "", fmt.Errorf("google-ads campaign lookup: campaign named %q has resource name %q, which is malformed or scoped to another customer; refusing to adopt it", lookup, rn)
+		}
+		switch {
+		case id == "":
+			// v23 returns campaign.id as a string, but an int64 field can arrive absent.
+			// The fallback validated the FULL shape above rather than taking the trailing
+			// segment: bare resourceID would read "garbage/4242" as campaign 4242.
+			id = fromName
+		case fromName != "" && fromName != id:
+			return "", fmt.Errorf("google-ads campaign lookup: campaign named %q reports id %q but resource name %q; its two identity fields disagree, refusing to adopt it", lookup, id, row.Campaign.ResourceName)
 		}
 		// A matched row with no usable id is the fail-closed case linkedin's findMatch
 		// documents: the server says a campaign with this name exists, but we cannot
