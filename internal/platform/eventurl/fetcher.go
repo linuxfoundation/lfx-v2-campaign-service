@@ -1,7 +1,11 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
-// Package eventurl provides event URL fetching and parsing with SSRF protections.
+// Package eventurl fetches event pages under SSRF protections.
+//
+// Fetching only. Extracting event metadata from a fetched body is a separate concern and
+// lands separately; this package's contract is that a body it returns came from an
+// address the service is willing to connect to.
 package eventurl
 
 import (
@@ -358,12 +362,28 @@ func guardDialAddress(nat64 []nat64Prefix) func(string, string, syscall.RawConn)
 		//
 		// Final, because under a declared translator the IPv6 address is not an endpoint at
 		// all: it is an encoding of the IPv4 destination, and that destination's verdict is
-		// the complete answer. First match wins; overlapping prefixes are a misconfiguration
-		// of the same class WithNAT64Prefixes already panics on.
+		// the complete answer.
+		//
+		// EVERY matching prefix is judged, not the first. Prefixes may overlap -- nothing
+		// rejects that, and nothing should, since 64:ff9b::/96 is always present and an
+		// operator's own prefix may legitimately nest inside a block they also declare --
+		// and an address under two of them decodes to two DIFFERENT IPv4 destinations,
+		// because the length alone says where the address sits. Judging only the first
+		// match is a fail-open: with 2a01:4f8::/32 declared ahead of
+		// 2a01:4f8:808:808::/96, the address 2a01:4f8:808:808::a9fe:a9fe reads as public
+		// 8.8.8.8 at /32 and is allowed, while longest-prefix routing hands it to the /96
+		// translator as 169.254.169.254.
+		//
+		// Picking the longest match instead would model the routing table, but it bets the
+		// guard on this service's table agreeing with the translator's. Requiring every
+		// declared decoding to be permitted costs only addresses that are ambiguous by
+		// construction, and refuses without needing to know which translator wins.
+		matched := false
 		for _, p := range nat64 {
 			if !p.net.Contains(ip) {
 				continue
 			}
+			matched = true
 			v4 := embeddedIPv4(ip, p.length)
 			if v4 == nil {
 				// Unreachable while WithNAT64Prefixes validates the length, and still a
@@ -372,8 +392,10 @@ func guardDialAddress(nat64 []nat64Prefix) func(string, string, syscall.RawConn)
 				return fmt.Errorf("%w: %s is not decodable at its configured /%d", ErrEventURLForbidden, ip, p.length)
 			}
 			if isForbiddenIP(v4) {
-				return fmt.Errorf("%w: %s names %s through a nat64 prefix", ErrEventURLForbidden, ip, v4)
+				return fmt.Errorf("%w: %s names %s through a /%d nat64 prefix", ErrEventURLForbidden, ip, v4, p.length)
 			}
+		}
+		if matched {
 			return nil
 		}
 		if isForbiddenIP(ip) {

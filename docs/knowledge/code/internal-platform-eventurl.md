@@ -111,7 +111,16 @@ configured prefixes first, and the wholesale denial is what remains for the unde
 
 A configured prefix's verdict is also **final**: under a declared translator the IPv6 address is
 not an endpoint at all, it is an encoding of the IPv4 destination, and that destination's verdict
-is the complete answer. First match wins.
+is the complete answer.
+
+EVERY matching prefix is judged, not the first. Prefixes may overlap — nothing rejects that,
+and nothing should, since `64:ff9b::/96` is always present and an operator's prefix may nest
+inside a wider block they also declare — and the prefix LENGTH decides where the embedded IPv4
+sits, so one address decodes differently under each. Stopping at the first match was a
+fail-open: with `2a01:4f8::/32` declared ahead of `2a01:4f8:808:808::/96`,
+`2a01:4f8:808:808::a9fe:a9fe` reads as public `8.8.8.8` at /32 and is allowed, while
+longest-prefix routing hands it to the /96 translator as `169.254.169.254`. Requiring every
+declared decoding to be permitted refuses that without needing to know which translator wins.
 
 Both directions are pinned by `TestConfiguredNAT64PrefixOutranksTheLocalUseDenial`. Asserting
 only the rejection would pass against a blanket deny, which is exactly the regression at issue —

@@ -529,3 +529,61 @@ func TestNAT64PrefixesReachTheDialerThroughNewFetcher(t *testing.T) {
 			"configuring a prefix must not drop 64:ff9b::/96", err)
 	}
 }
+
+// TestOverlappingNAT64PrefixesAreAllJudged pins the fix for a fail-open in the dial guard.
+//
+// Prefixes are allowed to overlap. Nothing rejects it — WithNAT64Prefixes validates CIDR
+// form and RFC 6052 length only — and rejecting would be wrong anyway, since every Fetcher
+// carries 64:ff9b::/96 and an operator's prefix may legitimately nest inside a wider block
+// they also declare.
+//
+// Overlap matters because the prefix LENGTH decides where the embedded IPv4 sits, so one
+// address decodes to two different destinations under two prefixes. 2a01:4f8:808:808::a9fe:a9fe
+// is 8.8.8.8 read at /32 (bytes 4-7) and 169.254.169.254 read at /96 (bytes 12-15). A guard
+// that stopped at the first match and saw the /32 first would allow a dial that
+// longest-prefix routing delivers to the link-local metadata address.
+//
+// Both orderings are exercised: with the wide prefix first the old code allowed it, and with
+// the narrow prefix first it refused, so testing one order alone would pass against the bug.
+func TestOverlappingNAT64PrefixesAreAllJudged(t *testing.T) {
+	wide := nat64Prefix{net: mustCIDR(t, "2a01:4f8::/32"), length: 32}
+	narrow := nat64Prefix{net: mustCIDR(t, "2a01:4f8:808:808::/96"), length: 96}
+
+	// Decodes to 8.8.8.8 under wide, 169.254.169.254 under narrow.
+	const addr = "[2a01:4f8:808:808::a9fe:a9fe]:443"
+
+	for _, tc := range []struct {
+		name     string
+		prefixes []nat64Prefix
+	}{
+		{name: "wide first", prefixes: []nat64Prefix{wide, narrow}},
+		{name: "narrow first", prefixes: []nat64Prefix{narrow, wide}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := guardDialAddress(tc.prefixes)("tcp6", addr, nil)
+			if !errors.Is(err, ErrEventURLForbidden) {
+				t.Fatalf("guard = %v, want ErrEventURLForbidden — the address reaches "+
+					"169.254.169.254 through the /96 translator, and a prefix that decodes "+
+					"it as public must not settle the question for the one that does not", err)
+			}
+		})
+	}
+
+	// The converse: an address that is permitted under EVERY matching prefix still passes,
+	// so the fix refuses ambiguity rather than refusing overlap itself.
+	clean := "[2a01:4f8:808:808::808:808]:443" // 8.8.8.8 at /32 and at /96
+	if err := guardDialAddress([]nat64Prefix{wide, narrow})("tcp6", clean, nil); err != nil {
+		t.Errorf("guard on an address public under both prefixes = %v, want nil — "+
+			"overlap alone must not make an address unreachable", err)
+	}
+}
+
+// mustCIDR parses a CIDR that the test author has already vetted.
+func mustCIDR(t *testing.T, cidr string) net.IPNet {
+	t.Helper()
+	_, n, err := net.ParseCIDR(cidr)
+	if err != nil {
+		t.Fatalf("ParseCIDR(%q): %v", cidr, err)
+	}
+	return *n
+}
