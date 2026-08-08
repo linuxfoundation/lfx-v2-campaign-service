@@ -110,8 +110,14 @@ func TestFindCampaignByName_AbsentIsNotAnError(t *testing.T) {
 }
 
 // TestFindCampaignByName_DuplicateNamesAreAmbiguous motivates erroring instead of taking
-// the first hit: Google Ads permits duplicate names in one account, so an arbitrary pick
-// binds a brief to the wrong paid campaign.
+// the first hit. Two live campaigns sharing a name is ANOMALOUS, not routine — v23 rejects a
+// mutate whose name another ENABLED/PAUSED campaign already holds (DUPLICATE_CAMPAIGN_NAME),
+// so this response should not be possible.
+//
+// Which is precisely why the branch matters. A response that contradicts the API's own
+// constraint is a response nothing about is trustworthy, and picking one of its rows would
+// bind a brief to the wrong PAID campaign on no evidence at all. Fail-closing is least costly
+// exactly where guessing is least defensible.
 func TestFindCampaignByName_DuplicateNamesAreAmbiguous(t *testing.T) {
 	srv, _ := newLookupServer(t, []json.RawMessage{
 		lookupRow("111", "dupe", StatusEnabled),
