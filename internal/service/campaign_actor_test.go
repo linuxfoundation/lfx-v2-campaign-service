@@ -196,8 +196,15 @@ func TestCampaignActor_ToggleStampsUpdatedByOnly(t *testing.T) {
 }
 
 // TestCampaignActor_SystemToggleRecordsNoActor pins the legitimate nil: a system-initiated
-// toggle with no authenticated principal must still succeed and must record NULL rather than
-// inventing an actor.
+// toggle with no authenticated principal must still succeed and must carry no actor rather
+// than inventing one.
+//
+// Note what this does NOT say. The nil reaching the repo does not become a NULL column:
+// replaceCampaignQuery writes `updated_by=COALESCE($9, updated_by)`, so the row keeps whoever
+// last moved it. That is the intended reading of nil — "this write records nothing", not
+// "forget what you knew" — and the fixture seeds a prior mover so the distinction is visible
+// here rather than only in the SQL. The assertion is on the service's contract (it hands the
+// repo no actor); the COALESCE is pinned in campaign_repo_test.go.
 //
 // This is a NEGATIVE pin and is deliberately not binding on the attribution code: with that
 // code removed UpdatedBy is nil anyway, so the test still passes. What it guards is the
@@ -205,10 +212,11 @@ func TestCampaignActor_ToggleStampsUpdatedByOnly(t *testing.T) {
 // campaign's creator) onto an unauthenticated toggle, which would make the audit trail claim
 // a principal that never acted. TestCampaignActor_ToggleStampsUpdatedByOnly is the binding half.
 func TestCampaignActor_SystemToggleRecordsNoActor(t *testing.T) {
+	previous := &model.Actor{Name: "Katherine Johnson", Email: "katherine@lf.dev", Username: "katherine"}
 	camp := &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
 		PlatformCampaignID: "t3_c", Status: model.CampaignStatusCreated, Version: 1,
-		CreatedBy: &model.Actor{Email: "creator@lf.dev"},
+		CreatedBy: &model.Actor{Email: "creator@lf.dev"}, UpdatedBy: previous,
 	}
 	tog := &stubToggler{}
 	repo := &toggleCampaignRepo{got: camp}
@@ -233,7 +241,11 @@ func TestCampaignActor_SystemToggleRecordsNoActor(t *testing.T) {
 		t.Fatal("ReplaceCampaign was never called")
 	}
 	if repo.replaced.UpdatedBy != nil {
-		t.Errorf("UpdatedBy = %+v, want nil — a system toggle has no authenticated actor", repo.replaced.UpdatedBy)
+		t.Errorf("UpdatedBy = %+v, want nil — a system toggle has no authenticated actor, and "+
+			"carrying the previous mover (%+v) forward as if they performed this toggle would "+
+			"attribute it to someone who did not. The repo's COALESCE is what preserves the "+
+			"column; the service must not do it by substituting a stand-in here",
+			repo.replaced.UpdatedBy, previous)
 	}
 	// CreatedBy must be preserved unchanged.
 	if repo.replaced.CreatedBy == nil || repo.replaced.CreatedBy.Email != "creator@lf.dev" {
