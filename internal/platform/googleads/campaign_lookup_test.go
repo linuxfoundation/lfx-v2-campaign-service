@@ -570,14 +570,23 @@ func TestFindCampaignByName_IdentityFieldsMustAgree(t *testing.T) {
 	}
 }
 
-// TestFindCampaignByName_NullIsNeverAnAbsence pins the null guard at BOTH levels. A
-// top-level null, and an explicit `"results":null` one level in, each unmarshal WITHOUT
-// error into a zero-valued response — nil rows, no page token, byte for byte what a genuine
-// empty page produces. Before the guards that read as the clean ("", nil) absence: licence to
-// create a duplicate paid campaign. TestFindCampaignByName_AbsentIsNotAnError is the
-// companion — `[]`, the shape Google really sends, must still license a create.
+// TestFindCampaignByName_NullIsNeverAnAbsence pins the null guard at all THREE levels. A
+// top-level null, an explicit `"results":null` one level in, and an explicit
+// `"nextPageToken":null` each unmarshal WITHOUT error into a zero-valued field — byte for
+// byte what a genuine empty page or a genuine final page produces. Before the guards that
+// reads as the clean ("", nil) absence: licence to create a duplicate paid campaign.
+//
+// The third case is the subtle one, and it fails DIFFERENTLY from the first two. `results`
+// is legitimately empty there; it is the CURSOR that is null, and a null cursor decodes to
+// "" — the value this loop reads as "that was the last page". So the response is not read as
+// an empty result set, it is read as a COMPLETE one, and pagination stops at page 1. A
+// campaign sitting on page 2 is then reported absent. Same false absence, reached by
+// truncation rather than by an empty page.
+//
+// TestFindCampaignByName_AbsentIsNotAnError is the companion — `[]`, the shape Google really
+// sends, must still license a create.
 func TestFindCampaignByName_NullIsNeverAnAbsence(t *testing.T) {
-	for _, body := range []string{"null", `{"results":null,"nextPageToken":""}`} {
+	for _, body := range []string{"null", `{"results":null,"nextPageToken":""}`, `{"results":[],"nextPageToken":null}`} {
 		t.Run(body, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if strings.Contains(r.URL.Path, "token") {

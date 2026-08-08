@@ -137,11 +137,21 @@ one of which is real. Canonicalising collapses the spellings, so the comparison 
 campaigns. `campaign.id` is also **not** trimmed: a padded value is a malformed row, and
 `TrimSpace` would answer with campaign `4242` for a response this API does not produce.
 
-A JSON `null` is refused at **both** levels: `gaqlSearch` rejects a top-level `null` body, and
-`results` decodes through `searchRows`, which rejects an explicit `{"results":null}`. Either
-would unmarshal without error into a zero-valued response — indistinguishable from a genuine
-empty page, therefore a licence to create. An **omitted** `results` stays legal: `{}` and
-`{"results":[]}` are Google's own empty page.
+A JSON `null` is refused at **three** levels: `gaqlSearch` rejects a top-level `null` body,
+`results` decodes through `searchRows`, and `nextPageToken` decodes through `pageToken`. Each
+would otherwise unmarshal without error into a zero-valued field, indistinguishable from a
+genuine response, therefore a licence to create. An **omitted** key stays legal at every
+level: `{}` and `{"results":[]}` are Google's own empty page, and a final page omits the
+cursor.
+
+The cursor case fails by a different route and is worth stating separately. `"nextPageToken":
+null` decodes to `""`, which is exactly the value the pagination loop reads as "that was the
+last page". The result set is not empty and is not misread as empty — it is read as
+COMPLETE, and paging stops at page 1. A campaign on page 2 is then reported absent, and
+`FindCampaignByName` treats absence as a licence to create a duplicate PAID campaign. Same
+false absence as the other two, reached by silent truncation rather than by an empty page.
+proto3 JSON emits an unset string as `""` or omits it and never emits `null`, so refusing it
+costs nothing a conformant server would send.
 
 ## Campaign creation (GA-2)
 

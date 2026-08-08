@@ -769,7 +769,7 @@ type searchRequest struct {
 // decode the fields they asked for.
 type searchResponse struct {
 	Results       searchRows `json:"results"`
-	NextPageToken string     `json:"nextPageToken"`
+	NextPageToken pageToken  `json:"nextPageToken"`
 }
 
 // searchRows is the repeated `results` field with one added rule: an EXPLICIT JSON null is
@@ -790,6 +790,32 @@ func (r *searchRows) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*r = rows
+	return nil
+}
+
+// pageToken is `nextPageToken` with the same rule searchRows applies to `results`, for the
+// same reason and at higher stakes. Decoded as a plain string, an EXPLICIT `null` is
+// indistinguishable from an omitted key and from `""` — all three yield "" — and "" is what
+// this loop reads as "that was the last page". So a server that answers `{"results":[...],
+// "nextPageToken":null}` truncates pagination silently.
+//
+// That truncation is a FALSE ABSENCE, which is the expensive direction here: FindCampaignByName
+// treats "no match in any page" as a licence to CREATE, so a match sitting on page 2 becomes a
+// duplicate paid campaign. proto3 JSON omits an unset string field or emits ""; it never emits
+// null, so refusing it costs nothing a conformant server would send. An omitted key is left
+// alone — UnmarshalJSON is not called for it, and `{}` is Google's own final page.
+type pageToken string
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (t *pageToken) UnmarshalJSON(b []byte) error {
+	if bytes.Equal(bytes.TrimSpace(b), []byte("null")) {
+		return errors.New("`nextPageToken` was JSON null, not a cursor")
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	*t = pageToken(s)
 	return nil
 }
 
@@ -844,7 +870,7 @@ func (c *Client) gaqlSearchForCustomer(ctx context.Context, customerID, query st
 	path := "customers/" + customerID + "/googleAds:search"
 	var out []json.RawMessage
 	var totalBytes int
-	pageToken := ""
+	cursor := ""
 	seen := map[string]struct{}{}
 
 	for page := 0; page < maxSearchPages; page++ {
@@ -855,7 +881,7 @@ func (c *Client) gaqlSearchForCustomer(ctx context.Context, customerID, query st
 		// into `path` above, the manager id because it is sent as a header. Re-running
 		// doRequest's check would instead validate c.account.CustomerID, which the
 		// discovery path deliberately leaves empty.
-		raw, err := c.doRequestValidated(ctx, http.MethodPost, path, searchRequest{Query: query, PageToken: pageToken}, true /* idempotent */)
+		raw, err := c.doRequestValidated(ctx, http.MethodPost, path, searchRequest{Query: query, PageToken: cursor}, true /* idempotent */)
 		if err != nil {
 			return nil, fmt.Errorf("gaql search: %w", err)
 		}
@@ -897,11 +923,11 @@ func (c *Client) gaqlSearchForCustomer(ctx context.Context, customerID, query st
 			return out, nil
 		}
 		// Guard against a server that repeats the same non-empty cursor.
-		if _, dup := seen[sr.NextPageToken]; dup {
+		if _, dup := seen[string(sr.NextPageToken)]; dup {
 			return nil, fmt.Errorf("gaql search %q: server repeated page token — aborting", path)
 		}
-		seen[sr.NextPageToken] = struct{}{}
-		pageToken = sr.NextPageToken
+		seen[string(sr.NextPageToken)] = struct{}{}
+		cursor = string(sr.NextPageToken)
 	}
 	return nil, fmt.Errorf("gaql search %q: exceeded %d pages with a page token still present", path, maxSearchPages)
 }
