@@ -2392,7 +2392,9 @@ type AccessibleAccountResponseBody struct {
 type GoogleAdsConnectionConfigRequestBody struct {
 	// Optional friendly name
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
-	// Google Ads customer ID
+	// Google Ads customer ID. Optional: omit it to create the connection with
+	// credentials only, then choose one from GET
+	// .../connection-google-ads/accounts and set it with PUT.
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
 	// Manager account used for API access
 	LoginCustomerID *string `form:"login_customer_id,omitempty" json:"login_customer_id,omitempty" xml:"login_customer_id,omitempty"`
@@ -5299,11 +5301,6 @@ func ValidateCreateGoogleAdsRequestBody(body *CreateGoogleAdsRequestBody) (err e
 	if body.Credentials == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("credentials", "body"))
 	}
-	if body.Config != nil {
-		if err2 := ValidateGoogleAdsConnectionConfigRequestBody(body.Config); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
 	if body.Credentials != nil {
 		if err2 := ValidateGoogleAdsCredentialsRequestBody(body.Credentials); err2 != nil {
 			err = goa.MergeErrors(err, err2)
@@ -5317,11 +5314,6 @@ func ValidateCreateGoogleAdsRequestBody(body *CreateGoogleAdsRequestBody) (err e
 func ValidateUpdateGoogleAdsRequestBody(body *UpdateGoogleAdsRequestBody) (err error) {
 	if body.Config == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
-	}
-	if body.Config != nil {
-		if err2 := ValidateGoogleAdsConnectionConfigRequestBody(body.Config); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
 	}
 	return
 }
@@ -5636,15 +5628,6 @@ func ValidateSetCredentialHubspotRequestBody(body *SetCredentialHubspotRequestBo
 		if err2 := ValidateHubspotCredentialsRequestBody(body.Credentials); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
-	}
-	return
-}
-
-// ValidateGoogleAdsConnectionConfigRequestBody runs the validations defined on
-// google-ads-connection-configRequestBody
-func ValidateGoogleAdsConnectionConfigRequestBody(body *GoogleAdsConnectionConfigRequestBody) (err error) {
-	if body.AccountID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
 	}
 	return
 }
