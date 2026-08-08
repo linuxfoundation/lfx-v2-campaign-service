@@ -112,6 +112,13 @@ so the row can't diverge from the platform if the request is cancelled after the
 and a stuck DB can't hang shutdown; a persist failure after the platform changed is logged as a
 divergence reconcile signal.
 
+**Actor attribution:** The toggle records WHO performed it (the person who paused/resumed the campaign)
+in the `updated_by` column of the row, capturing the actor from the request context BEFORE the
+detached context persists the row. A system-initiated toggle (e.g., a scheduled remediation, no authenticated
+principal) records NULL, not an inverted actor — NULL means "not recorded", a distinct state from
+"somebody did this". The `created_by` column (the person who authorized the spend) is never touched
+by a toggle. See `campaign_actor_test.go` and the `000016` migration (campaigns' actor columns).
+
 ## Campaign metrics read
 
 `BriefService.GetCampaignMetrics` (backing `GET .../campaigns/{id}/metrics`) reads live

@@ -135,3 +135,96 @@ func TestCampaignActor_UpdateStampsUpdatedByOnly(t *testing.T) {
 			"who launched the campaign", camps.got.CreatedBy, author)
 	}
 }
+
+// TestCampaignActor_ToggleStampsUpdatedByOnly asserts a status toggle records the toggler and
+// does not touch created_by. A toggle is a mutation but it records a different actor than the
+// creator — the person who paused/resumed the campaign, not the person who authorized the spend.
+// The two must be kept separate to properly attribute who did what.
+//
+// Uses the same fake infrastructure as the toggle tests in brief_test.go, but asserts the
+// actor attribution specifically.
+func TestCampaignActor_ToggleStampsUpdatedByOnly(t *testing.T) {
+	author := &model.Actor{Name: "Ada Lovelace", Email: "ada@lf.dev", Username: "ada"}
+	toggler := &model.Actor{Name: "Grace Hopper", Email: "grace@lf.dev", Username: "grace"}
+
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", Status: model.CampaignStatusCreated, Version: 2,
+		CreatedBy: author,
+	}
+	// Use an okDispatcher that supports StatusToggler (stubToggler does).
+	tog := &stubToggler{}
+	repo := &toggleCampaignRepo{got: camp}
+	s := &BriefService{
+		briefs:    &fakeBriefRepo{briefs: map[string]*model.CampaignBrief{}},
+		campaigns: repo,
+		jobs:      newFakeJobRepo(),
+		orch:      NewOrchestrator(repo, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderRedditAds: tog}),
+	}
+	v := "2"
+
+	res, err := s.ToggleCampaignStatus(ctxWithActor(toggler), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &v,
+		Status: model.CampaignRunPaused,
+	})
+	if err != nil {
+		t.Fatalf("ToggleCampaignStatus: %v", err)
+	}
+
+	if repo.replaced == nil {
+		t.Fatal("ReplaceCampaign was never called")
+	}
+	if repo.replaced.UpdatedBy == nil || repo.replaced.UpdatedBy.Email != toggler.Email {
+		t.Errorf("UpdatedBy = %+v, want %+v — the toggle must record who paused/resumed the campaign",
+			repo.replaced.UpdatedBy, toggler)
+	}
+	if repo.replaced.CreatedBy == nil || repo.replaced.CreatedBy.Email != author.Email {
+		t.Errorf("CreatedBy = %+v, want the original author %+v — a toggle must not rewrite "+
+			"who authorized the spend", repo.replaced.CreatedBy, author)
+	}
+	if res.Status != model.CampaignRunPaused {
+		t.Errorf("result status = %q, want paused", res.Status)
+	}
+}
+
+// TestCampaignActor_SystemToggleRecordsNoActor pins the legitimate nil: a system-initiated
+// toggle with no authenticated principal must still succeed and must record NULL rather than
+// inventing an actor. This case is less common than system-initiated dispatch (which is the
+// recovery sweeper), but a scheduled toggle or an automated remediation might do this in future.
+func TestCampaignActor_SystemToggleRecordsNoActor(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", Status: model.CampaignStatusCreated, Version: 1,
+		CreatedBy: &model.Actor{Email: "creator@lf.dev"},
+	}
+	tog := &stubToggler{}
+	repo := &toggleCampaignRepo{got: camp}
+	s := &BriefService{
+		briefs:    &fakeBriefRepo{briefs: map[string]*model.CampaignBrief{}},
+		campaigns: repo,
+		jobs:      newFakeJobRepo(),
+		orch:      NewOrchestrator(repo, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderRedditAds: tog}),
+	}
+	v := "1"
+
+	// System-initiated toggle: no actor in context (like a scheduled task or recovery action).
+	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &v,
+		Status: model.CampaignRunActive,
+	})
+	if err != nil {
+		t.Fatalf("ToggleCampaignStatus: %v", err)
+	}
+
+	if repo.replaced == nil {
+		t.Fatal("ReplaceCampaign was never called")
+	}
+	if repo.replaced.UpdatedBy != nil {
+		t.Errorf("UpdatedBy = %+v, want nil — a system toggle has no authenticated actor", repo.replaced.UpdatedBy)
+	}
+	// CreatedBy must be preserved unchanged.
+	if repo.replaced.CreatedBy == nil || repo.replaced.CreatedBy.Email != "creator@lf.dev" {
+		t.Errorf("CreatedBy = %+v, want the original creator — a toggle must not touch it",
+			repo.replaced.CreatedBy)
+	}
+}
