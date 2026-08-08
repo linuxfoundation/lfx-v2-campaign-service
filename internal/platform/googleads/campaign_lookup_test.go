@@ -473,7 +473,7 @@ func TestFindCampaignByName_PresentButUnusableResourceNameIsRejected(t *testing.
 		"   ",                             // whitespace-only: present, and not a resource name
 		"garbage/4242",                    // the shape a lenient trailing-segment parser accepts
 		"customers/999/campaigns/42",      // another customer's campaign
-		"customers/8666746580/campaigns/", // right customer, no campaign segment
+		"customers/1234567890/campaigns/", // this client's customer, no campaign segment
 	} {
 		srv, _ := newLookupServer(t, []json.RawMessage{
 			json.RawMessage(`{"campaign":{"id":"4242","name":"bad rn","status":"ENABLED","resourceName":` + jsonQuote(rn) + `}}`),
