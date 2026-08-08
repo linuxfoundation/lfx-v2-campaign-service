@@ -156,15 +156,27 @@ Three strategies in strict precedence — JSON-LD `schema.org/Event`, then OpenG
 `<title>` plus `meta[name=description]` — over **one** parse of the tree. Parsing per strategy
 paid `html.Parse`, the most expensive step, three times on a body that may be 10 MiB.
 
-`setIfEmpty` gives the field to the FIRST node that supplies it, so a page's `Organization`
-block cannot overwrite the `Event`'s own name. That rule is only meaningful if traversal order
-is document order, which is why `jsonLDNodes` pushes array elements onto its stack in reverse.
+`setIfEmpty` gives the field to the FIRST *strategy* that supplies it, so OpenGraph cannot
+overwrite a name JSON-LD already found. Within JSON-LD it arbitrates nothing, because **one
+node supplies every field**: `parseJSONLD` commits to the first *named* `Event` in document
+order and writes that node's candidate wholesale. That rule is only meaningful if traversal
+order is document order, which is why `jsonLDNodes` pushes array elements onto its stack in
+reverse.
+
+Letting each node fill whatever the previous ones left empty is the intuitive alternative and
+composes an event that exists on no part of the page: a `@graph` listing Event A with only a
+name and Event B with only a description yields A's name beside B's dates, with nothing
+downstream able to tell the halves apart. A *nameless* Event node leaks its fields into the
+next named one the same way, which is why it is skipped rather than merged. This is the same
+all-or-nothing rule applied between strategies (below) — applying it there but not between
+nodes would leave the larger hazard open, since one `@graph` routinely carries several events
+while a page rarely carries competing metadata blocks.
 
 **Each strategy fills its own candidate; a losing strategy contributes nothing.** Threading one
 `EventDetails` through all three looks like harmless reuse and is not: JSON-LD that yields a
 description but no name loses, OpenGraph then supplies the name, and the record goes out stamped
-`extracted_from="opengraph"` carrying a description no OpenGraph tag on the page contained. That
-is two sources merged under one provenance label — and `extracted_from` exists precisely so a
+`extractedFrom="opengraph"` carrying a description no OpenGraph tag on the page contained. That
+is two sources merged under one provenance label — and `extractedFrom` exists precisely so a
 human can judge how far to trust the rest of the record, so a label true of only some fields is
 worse than no label at all. Provenance is all-or-nothing to mean anything.
 
@@ -180,19 +192,54 @@ JSON-LD's shapes are the part that silently loses data if taken literally:
 
 - The root is commonly an **array** (a page emits Organization, BreadcrumbList and Event as one
   list) or an `@graph` wrapper. Unmarshalling into a map drops the whole block.
-- `@type` may be a string or an array of them, and matching on `event` as a substring catches
-  the subtypes (`BusinessEvent`, `EducationEvent`) most conference pages actually emit.
+- `@type` may be a string or an array of them, and is matched against an **allow-list**
+  (`eventTypes`) of `Event` plus its subtypes. Matching `event` as a substring was the obvious
+  shortcut and claimed types that are not events and never were: `EventVenue` is a `Place`,
+  `EventReservation` a `Reservation`, `EventStatusType` and `EventAttendanceModeEnumeration`
+  enumerations. Not theoretical — an `@graph` conventionally lists the venue *before* the event
+  it hosts, so `EventVenue` was routinely the first match and the old per-field merge then
+  locked the name to the venue's. Omitting a real subtype costs a page that degrades to
+  OpenGraph; admitting a non-event costs a brief built from the wrong node. `isEventType`
+  normalises the bare name, the full IRI (`https://schema.org/Event`) and the CURIE
+  (`schema:Event`) first, since all three are valid spellings of one type.
 - The same property may be a bare string, a node object, or an array of either — `location` is
   normally a `Place`, `image` an `ImageObject`. A plain assertion to `string` drops the majority
-  shape and the field just comes back empty with nothing saying why.
+  shape and the field just comes back empty with nothing saying why. That freedom applies at
+  *every* level, not just the top, so `jsonLDText` resolves a node's sub-property recursively
+  rather than asserting it to string.
+- `location` gets its own resolver because it is the one property whose fallback is not another
+  string. A `Place` carries the venue in `name`; when `name` is absent the documented fallback
+  is `address`, which schema.org emits as a `PostalAddress` **node**. Passing `"address"` in
+  `jsonLDText`'s generic key list therefore resolved nothing for the exact shape the fallback
+  exists to serve. `jsonLDAddressAt` **joins** the address components (narrowest to widest)
+  rather than taking the first: unlike a name, no single component stands for the whole, and
+  `San Francisco` alone is a materially worse venue line than `San Francisco, CA, US`.
 
-Traversal is **iterative and explicitly bounded** (`maxJSONLDNodes`, `maxJSONLDDepth`).
-`encoding/json`'s 10000-level nesting limit is not a usable bound: it caps what *decodes*, and a
-document that decodes fine can describe far more graph nodes than any real page. The recursive
-form also appended each child slice into its parent, so a nested `@graph` chain copied the
-accumulated result once per level — quadratic allocation driven by attacker-controlled nesting.
+Traversal is **iterative and explicitly bounded** (`maxJSONLDNodes`, `maxJSONLDDepth`,
+`maxJSONLDScheduled`). `encoding/json`'s 10000-level nesting limit is not a usable bound: it caps
+what *decodes*, and a document that decodes fine can describe far more graph nodes than any real
+page. The recursive form also appended each child slice into its parent, so a nested `@graph`
+chain copied the accumulated result once per level — quadratic allocation driven by
+attacker-controlled nesting.
 
-## Every extracted field is clamped
+**`maxJSONLDScheduled` is what makes the other two hold.** `maxJSONLDNodes` counts what lands in
+`out`, and only maps land there — so a document made mostly of *non*-maps never trips it. A
+top-level array had every element pushed onto the stack in one shot, before the loop could
+re-check the node cap even once; `[1,1,1,…]` filling the fetcher's 10 MiB body is roughly five
+million frames queued while `out` stays empty. Bounding **scheduled values** bounds the walk
+whatever the document is made of. An oversized array is truncated from the **tail**, not refused
+mid-loop: elements are pushed in reverse so the stack pops them in document order, and refusing
+partway through would drop the *head* — precisely what `parseJSONLD`'s "first named Event in
+document order wins" rule depends on.
+
+Neither cap bounds **peak memory**, and reading them that way is a mistake worth naming:
+`json.Unmarshal` materializes the entire value before `jsonLDNodes` is handed anything, so by
+the time the node cap can apply, the allocation it might have prevented has already happened.
+What bounds that is upstream — the fetcher caps a response at `maxResponseBytes` (10 MiB) and
+*refuses* anything larger rather than parsing a truncated prefix. These caps bound the
+traversal that follows, which is a different cost.
+
+## Every extracted field is clamped and sanitized
 
 Every field comes from attacker-controlled markup under a 10 MiB body limit, so without
 clamping one `<title>` puts megabytes into a Postgres column and into every brief built from
@@ -200,6 +247,24 @@ it. `clamp` cuts on a **rune** boundary — a byte slice of UTF-8 can end mid-se
 Postgres rejects the invalid string, turning an oversized field into a failed request rather
 than a short one. `clampFields` bounds every field in one place, so a new strategy cannot
 introduce an unbounded one by forgetting.
+
+Cutting cleanly only avoids *creating* invalid UTF-8; it cannot notice what arrived that way.
+`html.Parse` does not validate encoding, so a page declaring UTF-8 while emitting Latin-1 hands
+us a Go string that is already invalid, and Postgres refuses it either way. `sanitize` runs
+`strings.ToValidUTF8` first, then strips NUL separately — a NUL *is* valid UTF-8, so
+`ToValidUTF8` leaves it and a Postgres text value still refuses it. Both passes run **before**
+truncation, since either can change the byte length. The markup path never reaches the NUL pass
+(`html.Parse` already replaces a raw NUL with U+FFFD per the HTML spec); JSON-LD does, because
+`encoding/json` decodes a JSON `\u0000` escape into a real one.
+
+**Sanitizing runs before a field is judged usable, not after.** `Parse` clamps each strategy's
+candidate — and `parseJSONLD` clamps each node's — *before* testing `Name != ""`. The ordering is
+not cosmetic: a name of nothing but NUL bytes is non-empty when the node is chosen and empty by
+the time the record is returned, so judging first let such a node win its strategy outright. The
+caller then received an empty record stamped `extractedFrom="jsonld"` while the page's second,
+valid `Event` node and its OpenGraph title both went unread — a page-controlled way to make this
+service report "no event details here" about a page that plainly has them. A field that cannot
+survive storage is not a field the page supplied.
 
 ## The JSON keys belong to the brief blob, not to this struct
 

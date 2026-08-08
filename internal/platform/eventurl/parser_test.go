@@ -190,6 +190,29 @@ func TestJSONLDNodesIsBounded(t *testing.T) {
 	}
 }
 
+// TestJSONLDTextIsDepthBounded pins the array recursion's cap.
+//
+// The assertion is on the RESULT, not on any observable of the walk, because the cap has
+// no other effect: a value nested past it is reported absent, exactly like a property the
+// parser could not resolve for any other reason. The shallow case is in the same test on
+// purpose — a cap that also swallowed ordinary one-level arrays would satisfy the deep
+// assertion perfectly, and `location` arriving as a single-element array is the common
+// real-world shape, not an edge case.
+func TestJSONLDTextIsDepthBounded(t *testing.T) {
+	deep := interface{}("Moscone Center")
+	for range maxJSONLDDepth + 2 {
+		deep = []interface{}{deep}
+	}
+	if got := jsonLDText(deep, "name"); got != "" {
+		t.Errorf("value nested past the cap resolved to %q, want %q", got, "")
+	}
+
+	shallow := interface{}([]interface{}{map[string]interface{}{"name": "Moscone Center"}})
+	if got := jsonLDText(shallow, "name"); got != "Moscone Center" {
+		t.Errorf("ordinary single-element array resolved to %q, want %q", got, "Moscone Center")
+	}
+}
+
 // TestParseJSONLDGraphOrderIsDocumentOrder pins the iterative traversal's ordering. The
 // stack pushes array elements in reverse precisely so they pop in document order; get
 // that backwards and setIfEmpty's "first node wins" rule silently selects the LAST
@@ -221,5 +244,176 @@ func TestEventDetailsUsesStoredBlobKeys(t *testing.T) {
 		if got[k] != want {
 			t.Errorf("key %q = %q, want %q (serialized as %s)", k, got[k], want, b)
 		}
+	}
+}
+
+// TestJSONLDTypeIsAllowListed pins that @type is matched against schema.org's Event
+// hierarchy and not by substring. A substring test for "event" claims EventVenue (a
+// Place), EventReservation (a Reservation) and the Event*Type enumerations, and an
+// `@graph` conventionally lists the venue BEFORE the event it hosts — so the wrong node
+// was routinely the first one matched.
+func TestJSONLDTypeIsAllowListed(t *testing.T) {
+	notEvents := []string{"EventVenue", "EventReservation", "EventStatusType", "EventAttendanceModeEnumeration"}
+	for _, typ := range notEvents {
+		t.Run(typ, func(t *testing.T) {
+			page := `<html><head><title>Real Title</title><script type="application/ld+json">` +
+				`{"@type":"` + typ + `","name":"Moscone Center"}` +
+				`</script></head><body></body></html>`
+			got := NewParser().Parse([]byte(page))
+			if got.Name == "Moscone Center" {
+				t.Errorf("@type %q was treated as an Event; name came from the venue node", typ)
+			}
+			if got.ExtractedFrom != "fallback" {
+				t.Errorf("ExtractedFrom = %q, want fallback (no Event node on the page)", got.ExtractedFrom)
+			}
+		})
+	}
+
+	// The subtypes and the IRI/CURIE spellings must still be admitted — over-rejecting
+	// is a silent quality regression in the other direction.
+	events := []string{"Event", "BusinessEvent", "EducationEvent", "Hackathon",
+		"https://schema.org/Event", "schema:MusicEvent"}
+	for _, typ := range events {
+		t.Run(typ, func(t *testing.T) {
+			page := `<html><head><script type="application/ld+json">` +
+				`{"@type":"` + typ + `","name":"KubeCon"}` +
+				`</script></head><body></body></html>`
+			if got := NewParser().Parse([]byte(page)); got.Name != "KubeCon" {
+				t.Errorf("@type %q was rejected: Name = %q, want KubeCon", typ, got.Name)
+			}
+		})
+	}
+}
+
+// TestJSONLDLocationResolvesPostalAddress pins the documented fallback. `location` is a
+// Place whose venue is in `name`, and when `name` is absent the fallback is `address` —
+// which schema.org emits as a PostalAddress NODE, not a string. Reading only string
+// sub-keys made that fallback resolve to empty for the exact shape it exists to serve.
+func TestJSONLDLocationResolvesPostalAddress(t *testing.T) {
+	page := `<html><head><script type="application/ld+json">{"@type":"Event","name":"KubeCon",
+		"location":{"@type":"Place","address":{"@type":"PostalAddress",
+		"streetAddress":"747 Howard St","addressLocality":"San Francisco",
+		"addressRegion":"CA","addressCountry":{"@type":"Country","name":"US"}}}}
+		</script></head><body></body></html>`
+	got := NewParser().Parse([]byte(page))
+	want := "747 Howard St, San Francisco, CA, US"
+	if got.Location != want {
+		t.Errorf("Location = %q, want %q", got.Location, want)
+	}
+}
+
+// TestJSONLDDoesNotMergeDistinctEvents pins that ONE node supplies every field. Merging
+// per-field across nodes composes an event that exists on no part of the page: the name
+// of one event beside the dates of another, with nothing downstream able to tell.
+func TestJSONLDDoesNotMergeDistinctEvents(t *testing.T) {
+	page := `<html><head><script type="application/ld+json">[
+		{"@type":"Event","name":"KubeCon EU","startDate":"2026-03-01"},
+		{"@type":"Event","description":"A different conference","endDate":"2026-09-30"}
+	]</script></head><body></body></html>`
+	got := NewParser().Parse([]byte(page))
+
+	if got.Name != "KubeCon EU" || got.StartDate != "2026-03-01" {
+		t.Fatalf("first Event not selected: Name=%q StartDate=%q", got.Name, got.StartDate)
+	}
+	if got.Description != "" {
+		t.Errorf("Description = %q, want empty: it belongs to the SECOND Event node", got.Description)
+	}
+	if got.EndDate != "" {
+		t.Errorf("EndDate = %q, want empty: it belongs to the SECOND Event node", got.EndDate)
+	}
+}
+
+// TestClampSanitizesInvalidUTF8 pins that invalid UTF-8 arriving IN the fetched bytes is
+// replaced, not merely left alone by a truncation that happens to cut cleanly. html.Parse
+// does not validate encoding, so a page declaring UTF-8 while emitting Latin-1 hands us a
+// string Postgres will refuse. A NUL is valid UTF-8 and refused too, so it is stripped.
+func TestClampSanitizesInvalidUTF8(t *testing.T) {
+	page := append([]byte("<html><head><title>Caf"), 0xE9) // lone Latin-1 é
+	page = append(page, []byte(" Event</title></head></html>")...)
+
+	got := NewParser().Parse(page)
+	if !utf8.ValidString(got.Name) {
+		t.Errorf("Name = %q is not valid UTF-8", got.Name)
+	}
+	if !strings.Contains(got.Name, "Caf") || !strings.Contains(got.Name, " Event") {
+		t.Errorf("Name = %q lost the surrounding valid text", got.Name)
+	}
+
+	// The NUL pass needs its own input. html.Parse already replaces a raw NUL with U+FFFD
+	// per the HTML spec, so the markup path never reaches it. JSON-LD does: encoding/json
+	// decodes the six-character escape below into a real NUL, which Postgres then refuses.
+	jsonLD := `<html><head><script type="application/ld+json">` +
+		`{"@type":"Event","name":"Kube\u0000Con"}</script></head><body></body></html>`
+	if n := NewParser().Parse([]byte(jsonLD)).Name; strings.ContainsRune(n, 0) {
+		t.Errorf("Name = %q still carries a NUL byte", n)
+	} else if n != "KubeCon" {
+		t.Errorf("Name = %q, want KubeCon", n)
+	}
+}
+
+// TestJSONLDNodesBoundsScheduledValuesNotJustNodes pins the bound that maxJSONLDNodes cannot
+// provide on its own.
+//
+// maxJSONLDNodes counts what lands in `out`, and only maps land there. A document made mostly
+// of non-maps therefore never trips it: the walk below queues every element of a top-level
+// array before the loop can re-check the node cap even once, so `out` stays empty while the
+// stack grows with the array. 10 MiB of `[1,1,1,...]` -- comfortably inside the fetcher's body
+// cap -- is millions of frames, and the comment on jsonLDNodes claims a bound that would not
+// hold. maxJSONLDScheduled bounds the traversal by what it SCHEDULES, which is a property of
+// the walk rather than of the document's shape.
+//
+// The trailing Event is the assertion's whole point: it sits past the budget, so it must NOT
+// be reached. Losing the tail of an oversized array is the deliberate trade -- see the
+// truncation comment in jsonLDNodes for why the tail and not the head.
+func TestJSONLDNodesBoundsScheduledValuesNotJustNodes(t *testing.T) {
+	root := make([]interface{}, 0, maxJSONLDScheduled+1)
+	for i := 0; i < maxJSONLDScheduled; i++ {
+		root = append(root, float64(i))
+	}
+	root = append(root, map[string]interface{}{"@type": "Event", "name": "Past the budget"})
+
+	if got := jsonLDNodes(root); len(got) != 0 {
+		t.Errorf("jsonLDNodes returned %d nodes, want 0: every scalar ahead of the trailing "+
+			"Event was scheduled, which means the traversal walked the whole array and "+
+			"maxJSONLDNodes never bounded it", len(got))
+	}
+
+	// The retained prefix keeps document order, which is what parseJSONLD's "first named
+	// Event wins" rule rests on. A budget that dropped from the head would silently change
+	// which event a large page resolves to.
+	head := []interface{}{
+		map[string]interface{}{"@type": "Event", "name": "First"},
+		map[string]interface{}{"@type": "Event", "name": "Second"},
+	}
+	nodes := jsonLDNodes(head)
+	if len(nodes) != 2 || nodes[0]["name"] != "First" {
+		t.Errorf("nodes = %v, want First then Second in document order", nodes)
+	}
+}
+
+// TestParseJSONLDNameIsJudgedAfterSanitizing pins that a name which cannot survive storage is
+// not treated as a name.
+//
+// sanitize strips NUL bytes, so a name of nothing but NULs is non-empty when the node is
+// selected and empty by the time the record is returned. Judging usability before that ran let
+// the poisoned node win its strategy outright: parseJSONLD committed to it, Parse stamped
+// ExtractedFrom="jsonld", and the caller got an empty record -- with the page's second, valid
+// Event node and its OpenGraph title both sitting unread. An attacker-controlled page could
+// therefore make this service report "no event details here" about a page that plainly has
+// them, which is the fail-closed shape that matters: the caller acts on the absence.
+func TestParseJSONLDNameIsJudgedAfterSanitizing(t *testing.T) {
+	page := `<html><head>` +
+		`<script type="application/ld+json">{"@type":"Event","name":"\u0000\u0000"}</script>` +
+		`<script type="application/ld+json">{"@type":"Event","name":"KubeCon EU"}</script>` +
+		`<meta property="og:title" content="OpenGraph fallback">` +
+		`</head><body></body></html>`
+
+	got := NewParser().Parse([]byte(page))
+	if got.Name != "KubeCon EU" {
+		t.Errorf("Name = %q, want %q -- a name of NUL bytes alone is empty once stored, so it "+
+			"cannot be what makes a node the event this page is about", got.Name, "KubeCon EU")
+	}
+	if got.ExtractedFrom != "jsonld" {
+		t.Errorf("ExtractedFrom = %q, want jsonld", got.ExtractedFrom)
 	}
 }

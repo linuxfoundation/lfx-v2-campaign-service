@@ -588,6 +588,18 @@ func TestEventFamily(t *testing.T) {
 		{"Open Summit", "2027", "Open Summit", "2027"},          // year not in the name
 		{"Open Summit", "", "Open Summit", ""},                  // no year anywhere: degrade
 		{"2026", "2026", "2026", "2026"},                        // stripping would empty it
+
+		// A details year that is four digits but outside the range yearInName can extract.
+		// The details field is hand-edited, so this is reachable; a first-digit-only check
+		// would let "1000"/"2999" through here while the warehouse client rejected them,
+		// which is the same predicate drift in the other direction. This is a separate copy
+		// of isSupportedYear from the warehouse client's, so its own test has to reach it.
+		{"Open Summit", "9999", "Open Summit", ""}, // above the range
+		{"Open Summit", "0202", "Open Summit", ""}, // below the range
+		{"Open Summit", "1899", "Open Summit", ""}, // just under 19xx
+		{"Open Summit", "2100", "Open Summit", ""}, // just over 20xx
+		{"Open Summit", "1900", "Open Summit", "1900"},
+		{"Open Summit", "2099", "Open Summit", "2099"},
 	}
 	for _, c := range cases {
 		f, y := eventFamily(c.name, c.detailYear)

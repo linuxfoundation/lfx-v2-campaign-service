@@ -1194,6 +1194,58 @@ func TestGoogleAds_ReadMetrics_ConnectionUnresolvedPropagates(t *testing.T) {
 	}
 }
 
+// TestGoogleAds_ReadMetrics_UnusableConnectionIsClassifiedNotRetryable pins the READ path's
+// half of the classification the ListAccounts table pins for discovery. The two reach the
+// validator through different resolvers, and only the discovery one used to tag the result:
+// an inactive or incomplete connection came back off resolveGoogleAdsClient bare, missed
+// the handler's ErrConnectionNotUsable arm (internal/service/brief.go), and answered 503 —
+// "the platform did not respond" about a platform never contacted, telling the caller to
+// retry a request no amount of waiting can satisfy. The status toggle resolves through the
+// same function and inherits the same guarantee.
+func TestGoogleAds_ReadMetrics_UnusableConnectionIsClassifiedNotRetryable(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("reached Google Ads with an unusable connection")
+	}))
+	defer apiSrv.Close()
+
+	cases := []struct {
+		name   string
+		mutate func(*model.Connection)
+		want   error
+	}{
+		{"inactive", func(c *model.Connection) { c.Status = model.StatusInactive }, domain.ErrConnectionInactive},
+		{"undecodable blob", func(c *model.Connection) { c.EncryptedCredentials = []byte(`{`) }, domain.ErrCredentialsUndecodable},
+		{"incomplete credentials", func(c *model.Connection) {
+			c.EncryptedCredentials = []byte(`{"ClientID":"a","ClientSecret":"b","DeveloperToken":"c"}`)
+		}, domain.ErrCredentialsIncomplete},
+		{"no account selected", func(c *model.Connection) { c.AccountID = "" }, domain.ErrAccountNotSelected},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := activeGoogleAdsConn(goodGoogleAdsCreds)
+			tc.mutate(conn)
+			d := NewGoogleAdsDispatcher(
+				fakeConnReader{conn: conn}, identityEncryptor{},
+				googleads.WithBaseURL(apiSrv.URL),
+			)
+			camp := &model.Campaign{Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+			_, err := d.ReadMetrics(context.Background(), "proj", model.ProviderGoogleAds, camp, model.MetricsWindowLast30Days)
+			if err == nil {
+				t.Fatal("expected a connection error, got nil")
+			}
+			if !errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Errorf("error = %v, want errors.Is(err, domain.ErrConnectionNotUsable): without it "+
+					"the handler falls to its default arm and answers 503 for a condition only an "+
+					"edit to the connection can clear", err)
+			}
+			if !errors.Is(err, tc.want) {
+				t.Errorf("error = %v, want errors.Is(err, %v): the reason sentinel is what the "+
+					"handler logs, and it must survive alongside the status marker", err, tc.want)
+			}
+		})
+	}
+}
+
 // TestGoogleAds_ReadMetrics_UnmappableWindowIs400AndNeverContactsPlatform pins the
 // translation boundary: a window outside the closed model vocabulary is caller input, so it
 // must surface as domain.ErrMetricsWindowUnsupported (400) and the platform must never be
@@ -1526,27 +1578,31 @@ func TestGoogleAds_ToggleStatus_ActivateSucceedsChildrenFirst(t *testing.T) {
 func TestGoogleAds_ListAccounts_EmptyUpstreamIsEmptySliceNotNil(t *testing.T) {
 	var mu sync.Mutex
 	var gotMethod, gotPath string
+	var sawFlatList bool
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
 	}))
 	defer tokenSrv.Close()
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		// activeGoogleAdsConn carries a login_customer_id, so discovery also expands the
-		// manager hierarchy. That second request is a POST to a customer-scoped search
-		// path; capturing it would clobber the assertion below, which is about the
-		// account-agnostic discovery call specifically.
+		mu.Lock()
+		gotMethod, gotPath = r.Method, r.URL.Path
+		if strings.HasSuffix(r.URL.Path, "/customers:listAccessibleCustomers") {
+			sawFlatList = true
+		}
+		mu.Unlock()
 		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
 			_, _ = io.WriteString(w, `{"results":[]}`)
 			return
 		}
-		mu.Lock()
-		gotMethod, gotPath = r.Method, r.URL.Path
-		mu.Unlock()
 		_, _ = io.WriteString(w, `{"resourceNames":[]}`)
 	}))
 	defer apiSrv.Close()
 
+	// MANAGER MODE. activeGoogleAdsConn carries a login_customer_id, so the answer comes
+	// from expanding the hierarchy and the flat list is never requested — a call whose
+	// success is not needed must not be able to cause a failure. Asserting the flat
+	// request here would pin the opposite of what the client is supposed to do.
 	d := NewGoogleAdsDispatcher(
 		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
 		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
@@ -1561,9 +1617,30 @@ func TestGoogleAds_ListAccounts_EmptyUpstreamIsEmptySliceNotNil(t *testing.T) {
 	if len(accounts) != 0 {
 		t.Fatalf("expected 0 accounts, got %d", len(accounts))
 	}
+	mu.Lock()
+	flat := sawFlatList
+	mu.Unlock()
+	if flat {
+		t.Error("manager mode issued customers:listAccessibleCustomers; its result is discarded, " +
+			"so the only thing that request can contribute is a way for discovery to fail")
+	}
 
-	// The REST binding for ListAccessibleCustomers is GET on an account-agnostic path —
-	// no customers/{id} segment, unlike every other Google Ads call this client makes.
+	// DIRECT MODE. Without a login_customer_id the flat list IS the answer, and its REST
+	// binding is GET on an account-agnostic path — no customers/{id} segment, unlike every
+	// other Google Ads call this client makes.
+	direct := activeGoogleAdsConn(goodGoogleAdsCreds)
+	direct.ProviderConfig = nil
+	dd := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: direct}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	accounts, err = dd.ListAccounts(context.Background(), "proj", model.ProviderGoogleAds)
+	if err != nil {
+		t.Fatalf("ListAccounts (direct mode): %v", err)
+	}
+	if accounts == nil {
+		t.Fatal("ListAccounts returned nil for an empty upstream result; it must return an empty slice")
+	}
 	mu.Lock()
 	method, path := gotMethod, gotPath
 	mu.Unlock()
@@ -2042,4 +2119,40 @@ func TestValidateGoogleAdsCredentials_WhitespaceOnlyIsIncomplete(t *testing.T) {
 			t.Errorf("creds = %+v, want %+v (the trimmed values must be what reaches NewClient)", got, want)
 		}
 	})
+}
+
+// TestValidateGoogleAdsConnection_NoAccountSelected pins the sentinel pair on the empty
+// account-id guard. Until credentials-first bootstrap existed, an account-less connection
+// was an unintended state rather than an impossible one — Required("account_id") checked
+// only that the JSON key was present, so `"account_id": ""` was accepted and stored — and
+// the guard returned a bare error carrying no sentinel at all.
+//
+// That is now the ordinary state of a freshly created connection, and a bare error would
+// fall to each handler's default arm and answer 503 "the platform did not respond" for a
+// project that has simply not finished setting up. Both sentinels are load-bearing and
+// serve different consumers: ErrConnectionNotUsable is what every handler switches on to
+// pick a non-retryable status, and ErrAccountNotSelected is what unusableConnectionReason
+// turns into the log's fixed reason token. Asserting only one would let the other be
+// dropped silently.
+func TestValidateGoogleAdsConnection_NoAccountSelected(t *testing.T) {
+	raw := []byte(goodGoogleAdsCreds)
+	// Whitespace, not "", so this also pins that the check runs on the TRIMMED value —
+	// a connection holding " " has no more selected an account than one holding "".
+	for _, accountID := range []string{"", "   "} {
+		_, gotID, err := validateGoogleAdsConnection("proj", &resolved{
+			plaintext: raw, status: model.StatusActive, accountID: accountID,
+		})
+		if err == nil {
+			t.Fatalf("accountID %q: want an error, got nil", accountID)
+		}
+		if !errors.Is(err, domain.ErrConnectionNotUsable) {
+			t.Errorf("accountID %q: want ErrConnectionNotUsable in the chain, got %v", accountID, err)
+		}
+		if !errors.Is(err, domain.ErrAccountNotSelected) {
+			t.Errorf("accountID %q: want ErrAccountNotSelected in the chain, got %v", accountID, err)
+		}
+		if gotID != "" {
+			t.Errorf("accountID %q: returned id = %q, want empty on the error path", accountID, gotID)
+		}
+	}
 }

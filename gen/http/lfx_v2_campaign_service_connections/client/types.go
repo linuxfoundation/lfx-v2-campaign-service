@@ -2383,8 +2383,10 @@ type ListGoogleAdsAccountsNotFoundResponseBody struct {
 type GoogleAdsConnectionConfigRequestBody struct {
 	// Optional friendly name
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
-	// Google Ads customer ID
-	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Google Ads customer ID. Optional: omit it to create the connection with
+	// credentials only, then choose one from GET
+	// .../connection-google-ads/accounts and set it with PUT.
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
 	// Manager account used for API access
 	LoginCustomerID *string `form:"login_customer_id,omitempty" json:"login_customer_id,omitempty" xml:"login_customer_id,omitempty"`
 }
