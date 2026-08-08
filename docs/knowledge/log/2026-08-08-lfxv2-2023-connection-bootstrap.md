@@ -37,13 +37,19 @@ to each handler's `default:` arm, which answers **503 "the platform did not resp
 platform that was never contacted, with a remedy (wait) that can never work, for a project that
 has simply not finished setting up.
 
-The fix is `domain.ErrAccountNotSelected`, wrapped alongside `ErrConnectionNotUsable`: the first
-sentinel picks the status, the second names the log's fixed reason token
-(`unusableConnectionReason` → `account_not_selected`). Three handlers had to learn it — discovery
-answers 400 (the connection is the resource), the status toggle and metrics read answer 409 (the
+The fix is `domain.ErrAccountNotSelected`, wrapped alongside `ErrConnectionNotUsable`. The roles
+are split: `ErrConnectionNotUsable` picks the status, `ErrAccountNotSelected` supplies the reason
+token (`unusableConnectionReason` → `account_not_selected`) and the specific message. Because it
+is always wrapped alongside the other, each handler must match it FIRST — a broad match swallows
+the distinction and tells an operator to repair credentials that are fine.
+
+Two handlers had to learn it, not three. The status toggle and the metrics read answer 409 (the
 campaign is the resource; an unfinished connection is a precondition conflict, matching how they
-already classify `ErrCampaignNotProvisioned`). All three are non-retryable, which is the property
-a client acts on and the one 503 got wrong.
+already classify `ErrCampaignNotProvisioned`), and both are non-retryable, which is the property
+a client acts on and the one 503 got wrong. **Account discovery deliberately does not map it**:
+it calls `validateGoogleAdsCredentials` rather than `validateGoogleAdsConnection`, so the
+account-id guard never runs there — accepting an account-less connection is what makes the
+bootstrap possible, since discovery is how the operator finds the account to select.
 
 **The general lesson: an unreachable guard is untested error-classification, and relaxing a
 constraint is what makes it reachable.** Before dropping a `Required`, grep for the guard that the

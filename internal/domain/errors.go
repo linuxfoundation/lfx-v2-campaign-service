@@ -216,12 +216,19 @@ var (
 	// condition fell to the default arm and reported 503, telling an operator to wait for a
 	// state that changes only when a human picks an account.
 	//
-	// Note the deliberate status asymmetry across handlers, which is not an inconsistency:
-	// account discovery answers 400 (the connection IS the resource being acted on, and the
-	// request is asking about a connection that is not usable as configured), while the
-	// campaign toggle and metrics reads answer 409 (the campaign is the resource; an
+	// It is wrapped ALONGSIDE ErrConnectionNotUsable, and the two have distinct jobs:
+	// ErrConnectionNotUsable selects the HTTP status, this one supplies the reason token
+	// (unusableConnectionReason -> "account_not_selected") and the specific message.
+	//
+	// It reaches exactly two handlers, the campaign status toggle and the per-campaign
+	// metrics read, both of which answer 409: the campaign is the resource there, and an
 	// unfinished connection is a precondition conflict, matching how those handlers already
-	// classify ErrCampaignNotProvisioned). All three are non-retryable, which is the
-	// property that actually matters and the one 503 got wrong.
+	// classify ErrCampaignNotProvisioned. Non-retryable is the property that actually
+	// matters and the one 503 got wrong.
+	//
+	// Account discovery does NOT map this sentinel. It calls validateGoogleAdsCredentials,
+	// which deliberately omits the account-id check — accepting an account-less connection
+	// is precisely what makes the bootstrap possible, since discovery is how the operator
+	// finds the account to select. Discovery's own 400 covers its other unusable states.
 	ErrAccountNotSelected = errors.New("no ad account has been selected for the stored connection")
 )

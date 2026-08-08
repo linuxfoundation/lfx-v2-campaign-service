@@ -210,16 +210,28 @@ connections that need it, and the bootstrap would dead-end at step two. Readines
 derived fact — `account_id` being non-empty — and the operations that need it report its absence
 with this reason rather than inventing a second status to carry the same bit.
 
-**The status differs by handler on purpose, and the three agree on the property that matters.**
-Account discovery answers **400**: the connection IS the resource being acted on, and the request
-asks about a connection that is not usable as configured. The campaign status toggle and the
-per-campaign metrics read answer **409**: there the CAMPAIGN is the resource, and an unfinished
-connection is a precondition conflict — the same classification those handlers already give
-`ErrCampaignNotProvisioned`. All three are non-retryable, which is the property a client acts on,
-and it is the property the original code got wrong: before this sentinel existed the empty-id
-guard returned a bare error, which fell through to each handler's `default:` arm and answered
+**Only the two campaign handlers see this sentinel, and both answer 409.** The campaign status
+toggle and the per-campaign metrics read each match `ErrAccountNotSelected` *before* the general
+`ErrConnectionNotUsable` arm — it is always wrapped alongside that sentinel, so a broad match
+would swallow it and return the ambiguous "no account selected, or the credentials need
+attention" message for a connection whose credentials are fine. The CAMPAIGN is the resource
+there, and an unfinished connection is a precondition conflict — the same classification those
+handlers already give `ErrCampaignNotProvisioned`. Non-retryable is the property a client acts
+on, and the one the original code got wrong: before this sentinel existed the empty-id guard
+returned a bare error, which fell through to each handler's `default:` arm and answered
 **503 "the platform did not respond"** — for a platform never contacted, with a remedy (wait)
 that can never work, since only a human choosing an account changes the state.
+
+**Account discovery does not map it at all.** Discovery calls `validateGoogleAdsCredentials`,
+not `validateGoogleAdsConnection`, so the account-id check never runs: accepting an account-less
+connection is exactly what makes the bootstrap work, since discovery is how the operator finds
+the account to select. Discovery's 400 is reserved for its *other* unusable states (inactive,
+credential blob absent/incomplete/malformed, provider config invalid).
+
+The distinction is carried in the response **message**, not a field. `ConflictError` is a shared
+Goa type with exactly `code` and `message`, so exposing a machine-readable `reason` would mean
+changing a type every 409 in this service returns; the reason token reaches operators through
+the log instead.
 
 Two DIFFERENT guards protect the empty-vs-nil distinction, and they fail in opposite directions —
 document them separately so a future change preserves each for its own reason:
