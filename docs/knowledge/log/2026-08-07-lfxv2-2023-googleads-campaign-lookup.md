@@ -1,8 +1,13 @@
 # 2026-08-07 — Google Ads campaign lookup, and the first free text to reach a GAQL WHERE clause
 
-**Update** — `Client.FindCampaignByName` closes the last platform gap in campaign
-lookup: linkedin, twitter, microsoft and meta all had one; googleads and reddit had
-none, and googleads is the lead platform for LFXV2-2023.
+**Update** — `Client.FindCampaignByName` closes the Google Ads half of the remaining
+campaign-lookup gap. linkedin (`findMatch`), twitter, microsoft and meta all grew a
+find-by-name; googleads and reddit had none. **Reddit is still open** — googleads goes
+first because it is the lead platform for LFXV2-2023.
+
+It is also the first lookup that is **exported**. The others are called only from
+inside their own client's create path; this one is called from the dispatch layer for
+adoption too, which lives in a different package.
 
 ## Why now, and why the contract is shaped the way it is
 
@@ -60,14 +65,45 @@ the need for one — and the first value that cannot be allow-listed is where th
 escaper becomes a vulnerability.** Grep for how a query's other operands are constrained
 before assuming a package's query builder is safe by construction.
 
-## The client-side re-check is deliberate duplication
+## The client-side re-check is deliberate duplication — and a skip would have undone it
 
 The name filter and the `REMOVED` exclusion are both in the `WHERE` clause and both
 re-checked over the returned rows. That is not belt-and-braces. If the escaping ever
 regressed, the injected query still returns **2xx with rows** — for other campaigns — and
-a server-side-only filter would hand one back as an exact match. The client-side equality
-check converts that from a silent wrong binding into a visible zero-match or ambiguity
-error, which is the failure mode that can be noticed.
+a server-side-only filter would hand one back as an exact match.
+
+The first cut of the re-check *skipped* a non-matching row, and that was wrong in a way
+worth recording, because the mechanism looked like defence-in-depth while the disposition
+quietly defeated it. **A skip that reduces an unverifiable response to a clean absence is
+a false-absence bug.** Dropping every injected row leaves zero matches, which is `("", nil)`
+— the licence-to-create value. The escaping regression would have been detected and then
+converted into exactly the outcome it was detected to prevent. The original injection test
+asserted that clean absence, so it was pinning the unsafe behaviour.
+
+So a name mismatch is now an **error**: the server was asked for an exact match, and a row
+that is not one means the filter did not take effect, which invalidates the whole response
+rather than that one row.
+
+Status is the opposite case, and the asymmetry is the point. `REMOVED` **is** a per-row
+skip, because a tombstone is unadoptable no matter why it arrived — dropping it can only
+ever be correct. Every *other* status errors: Google can answer `UNSPECIFIED` or `UNKNOWN`,
+an omitted field decodes to `""`, and treating an unrecognised status as live returns the
+id of a campaign whose serving state was never established.
+
+The id fallback got the same treatment. When `campaign.id` is absent, the campaign id is
+recovered from the resource name — but by validating the full documented shape
+(`customers/{this account}/campaigns/{digits}`), not by the package's `resourceID` helper.
+`resourceID` returns the trailing path segment, which is right for parsing a mutate
+response (an entity we just created) and wrong here: it reads `garbage/4242` as campaign
+`4242` and accepts a resource name scoped to a **different customer**. This resource name
+is the sole identity evidence for a campaign about to have a brief bound to it.
+
+**Second general lesson: `unicode.IsControl` covers category Cc only.** U+2028 LINE
+SEPARATOR and U+2029 PARAGRAPH SEPARATOR are Zl/Zp — `IsControl` returns false for both,
+yet they terminate a line to many parsers. They are rejected explicitly. Category Cf
+(zero-width joiner, variation selectors) is deliberately *allowed*: it appears in ordinary
+emoji sequences and terminates nothing in GAQL, so rejecting it would fail a lookup for a
+campaign that genuinely exists — a false absence again.
 
 Rows are deduplicated by id before the count, so the same campaign arriving on several
 rows is not misreported as ambiguous and does not block a legitimate adoption.

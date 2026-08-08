@@ -73,20 +73,32 @@ order re-escapes the backslash the quote escape introduced and releases the quot
 Control characters are **rejected**, not escaped: GAQL has no portable escape for them
 and Google Ads forbids them in a name, so such a name cannot match a real campaign.
 
+`unicode.IsControl` is not sufficient on its own — it covers category **Cc only**, so
+U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR (Zl/Zp) return false from it despite
+being line terminators; both are rejected explicitly. Category **Cf** (zero-width joiner,
+variation selectors) is deliberately **allowed**: it occurs in ordinary emoji sequences and
+terminates nothing in GAQL, so rejecting it would fail a lookup for a campaign that really
+exists — a false absence.
+
 Anything new that interpolates free text into GAQL must go through that helper.
 
 ## Campaign lookup by name
 
-`FindCampaignByName` returns the id of the single non-`REMOVED` campaign with exactly
-that name. The contract matches the meta and linkedin lookups because callers make the
-same decision from it:
+`FindCampaignByName` returns the id of the single live campaign with exactly that name.
+The fail-closed logic mirrors the other clients' lookups (meta's `findCampaignByName`,
+linkedin's `findMatch`, twitter's and microsoft's `findCampaignByName`) because callers
+make the same decision from the result. It is the first one that is **exported**, though:
+the others are called only from inside their own client's create path, whereas this one is
+also called from the dispatch layer for adoption, in a different package.
 
 | outcome | result |
 |---|---|
-| exactly one live match | `(id, nil)` |
-| no live match | `("", nil)` — a clean, trustworthy absence |
+| exactly one live (`ENABLED`/`PAUSED`) match | `(id, nil)` |
+| no live match — only `REMOVED` rows, or none at all | `("", nil)` — a clean, trustworthy absence |
 | more than one match | `("", error)` — ambiguous, never a silent pick |
-| unverifiable (undecodable row, matched row with no id, non-numeric id) | `("", error)` |
+| a returned row whose name is **not** the queried name | `("", error)` — the filter was not honoured |
+| unrecognised status (`UNSPECIFIED`, `UNKNOWN`, empty) | `("", error)` |
+| unverifiable (undecodable row, matched row with no usable id, non-numeric id, malformed or cross-customer resource name) | `("", error)` |
 
 **Why absence and ambiguity must be different values.** Both callers act destructively
 on an absence: the create path takes `("", nil)` as licence to create a campaign, and
@@ -100,8 +112,26 @@ The name filter and the `REMOVED` exclusion are applied **server-side** (a miss 
 page instead of a walk of the account, and a tombstone tail cannot page the query out)
 and then **re-checked client-side**. The re-check is not redundant: if the escaping ever
 regressed, an injected query would still return 2xx rows for OTHER campaigns, and a
-server-side-only filter would hand one back as an exact match. The client-side equality
-check turns a silent wrong binding into a visible zero-match or ambiguity error.
+server-side-only filter would hand one back as an exact match.
+
+**The disposition of the re-check matters as much as the check.** A name mismatch is an
+**error**, never a skip: skipping every injected row leaves zero matches, i.e. `("", nil)`
+— so the regression would be detected and then converted into precisely the false absence
+it was detected to prevent. A wrong name means the `WHERE` clause was not honoured, which
+invalidates the whole response, not one row. Generally: *a skip that reduces an
+unverifiable response to a clean absence is a false-absence bug.*
+
+Status is the deliberate asymmetry. `REMOVED` **is** a per-row skip — a tombstone is
+unadoptable regardless of why it arrived, so dropping it can only ever be correct. Every
+other unrecognised status errors.
+
+The id fallback is likewise strict. When `campaign.id` is absent, the id is recovered from
+the resource name by validating the full documented shape
+(`customers/{this account}/campaigns/{digits}`) — **not** by the package's `resourceID`
+helper. `resourceID` returns the trailing path segment, which is right for parsing the
+response to a mutate we issued but wrong here: it would read `garbage/4242` as campaign
+`4242` and accept a resource name scoped to a different customer. Here the resource name is
+the only identity evidence for a campaign about to have a brief bound to it.
 
 Rows are deduplicated by id before counting, so one campaign returned on several rows is
 not misreported as ambiguous.

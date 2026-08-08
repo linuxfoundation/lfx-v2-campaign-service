@@ -46,9 +46,20 @@ import (
 // strips them on the create path for the same reason), and a name containing one
 // therefore cannot match a real campaign — so rejecting loses no reachable lookup
 // while keeping a NUL or newline from ever reaching the query builder.
+//
+// unicode.IsControl covers category Cc ONLY. U+2028 LINE SEPARATOR and U+2029
+// PARAGRAPH SEPARATOR are Zl/Zp, so IsControl returns FALSE for both, yet they are
+// line terminators to many parsers and belong in the same bucket as a newline. They
+// are rejected explicitly rather than left to IsControl.
+//
+// Category Cf (zero-width joiner, variation selectors) is deliberately NOT rejected:
+// those appear inside legitimate emoji sequences, an operator may well use one in a
+// campaign name, and none of them terminates a GAQL literal. Rejecting them would
+// fail a lookup for a campaign that really exists — the false-absence outcome this
+// whole file is built to avoid.
 func gaqlStringLiteral(s string) (string, error) {
 	for _, r := range s {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
 			return "", fmt.Errorf("google-ads: campaign name contains a control character (%U) and cannot appear in a query", r)
 		}
 	}
@@ -69,16 +80,49 @@ type campaignLookupRow struct {
 	} `json:"campaign"`
 }
 
-// StatusRemoved is Google's tombstone state. A removed campaign still matches a
-// name query and can never serve or be re-enabled, so it must not be adopted or
-// treated as an idempotent create hit.
-const StatusRemoved = "REMOVED"
-
-// FindCampaignByName returns the numeric id of the single non-removed campaign in
-// this account whose name is exactly name.
+// campaignIDFromResourceName extracts a campaign id from a resource name, accepting
+// ONLY the exact shape Google documents and only for THIS client's account:
 //
-// The contract mirrors the meta and linkedin lookups, because the callers make the
-// same decision from the result:
+//	customers/{this account's customer id}/campaigns/{digits}
+//
+// It returns "" for anything else, which the caller turns into a fail-closed error.
+//
+// This is deliberately stricter than the package's resourceID helper, which returns
+// the trailing path segment of whatever it is given. resourceID is right for parsing
+// the response to a mutate WE issued — the resource name there is one the server
+// minted for the very entity we just created. Here the resource name is the sole
+// identity evidence for a campaign we are about to bind a brief to, so "the part
+// after the last slash" is not enough: it would accept "garbage/4242", and it would
+// accept a campaign belonging to a different customer.
+func (c *Client) campaignIDFromResourceName(resourceName string) string {
+	parts := strings.Split(resourceName, "/")
+	if len(parts) != 4 || parts[0] != "customers" || parts[2] != "campaigns" {
+		return ""
+	}
+	// The account segment must be THIS account. A cross-customer resource name is not
+	// a campaign this client may adopt.
+	if parts[1] != c.account.CustomerID {
+		return ""
+	}
+	// customerIDRE is the package's digits-only matcher; campaign ids are int64s in
+	// the same textual form, and the caller re-checks the result against it too.
+	if !customerIDRE.MatchString(parts[3]) {
+		return ""
+	}
+	return parts[3]
+}
+
+// FindCampaignByName returns the numeric id of the single live campaign in this
+// account whose name is exactly name.
+//
+// The contract mirrors the fail-closed LOGIC of the other clients' lookups (meta's
+// findCampaignByName, linkedin's findMatch, twitter's and microsoft's
+// findCampaignByName), because the callers make the same decision from the result.
+// It is the first one EXPORTED, though: the others are called only from inside their
+// own client's create path, whereas this one is also called from the dispatch layer
+// for adoption, which lives in a different package.
+//
+// The outcomes:
 //
 //   - exactly one live match  -> (id, nil)
 //   - no live match           -> ("", nil)   — a clean, trustworthy absence
@@ -153,21 +197,48 @@ func (c *Client) FindCampaignByName(ctx context.Context, name string) (string, e
 		// carries them. This is not belt-and-braces: it is what makes an escaping
 		// regression LOUD. If gaqlStringLiteral ever stopped neutralising a quote, the
 		// injected query would still return 2xx with rows for OTHER campaigns, and a
-		// server-side-only filter would hand one of them back as an exact match. The
-		// client-side equality check turns that from a silent wrong binding into a
-		// visible zero-match or ambiguity error.
+		// server-side-only filter would hand one of them back as an exact match.
+		//
+		// A name mismatch is an ERROR, not a skip. Skipping would reduce an injected or
+		// otherwise unhonoured query to "no rows matched", i.e. ("", nil) — precisely the
+		// false absence this method exists to prevent, and the caller would then create a
+		// duplicate paid campaign. The server was asked for an exact match; a row that is
+		// not one means the filter did not take effect, which invalidates the WHOLE
+		// response, not just this row. So fail closed on the response as a whole.
+		//
+		// The comparison is byte-exact, matching how composeName builds the stored name.
+		// If Google ever answered case-insensitively or with different Unicode
+		// normalisation, this would fail closed with the error below rather than silently
+		// binding — visible and safe, which is the point.
 		if row.Campaign.Name != lookup {
-			continue
+			return "", fmt.Errorf("google-ads campaign lookup: exact-match query for %q returned a campaign named %q; the name filter was not honoured, refusing to trust this response", lookup, row.Campaign.Name)
 		}
-		if row.Campaign.Status == StatusRemoved {
+
+		// Status, by contrast, IS a per-row skip when it is REMOVED — and only then. A
+		// tombstone is unambiguously not adoptable no matter why it arrived, so dropping
+		// it can only ever be correct, whereas a wrong NAME means the query itself failed.
+		//
+		// Every other status fails closed. Google can return UNSPECIFIED or UNKNOWN (and
+		// an omitted field decodes to ""), and treating an unrecognised status as live
+		// would return the id of a campaign whose serving state we could not establish.
+		switch row.Campaign.Status {
+		case StatusRemoved:
 			continue
+		case StatusEnabled, StatusPaused:
+			// Live: the only two states a real, adoptable campaign can be in.
+		default:
+			return "", fmt.Errorf("google-ads campaign lookup: campaign named %q has unrecognised status %q (want %s, %s or %s); refusing to treat it as live", lookup, row.Campaign.Status, StatusEnabled, StatusPaused, StatusRemoved)
 		}
 
 		id := strings.TrimSpace(row.Campaign.ID)
 		if id == "" {
-			// Fall back to the resource name, which is "customers/{cid}/campaigns/{id}";
-			// v23 returns campaign.id as a string but an int64 field can arrive absent.
-			id = resourceID(row.Campaign.ResourceName)
+			// Fall back to the resource name; v23 returns campaign.id as a string, but an
+			// int64 field can arrive absent. The fallback validates the FULL shape rather
+			// than taking the trailing segment: bare resourceID would read "garbage/4242"
+			// as campaign 4242, and a resource name scoped to a DIFFERENT customer as a
+			// campaign in this one — either way binding a brief to an id we never verified
+			// belongs to this account.
+			id = c.campaignIDFromResourceName(row.Campaign.ResourceName)
 		}
 		// A matched row with no usable id is the fail-closed case linkedin's findMatch
 		// documents: the server says a campaign with this name exists, but we cannot

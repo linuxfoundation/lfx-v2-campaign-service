@@ -154,18 +154,26 @@ func TestFindCampaignByName_QuoteInNameCannotInjectQuery(t *testing.T) {
 	const evil = `x' OR campaign.id > '0`
 
 	// The server returns a campaign that is NOT named `evil` — exactly what an injected
-	// query would surface. The client-side equality re-check must discard it.
+	// query would surface. The client-side equality re-check must reject the whole
+	// response as UNVERIFIABLE.
+	//
+	// The assertion is an ERROR, not a zero match. Discarding the row would collapse an
+	// injected query into ("", nil), which is the licence-to-create absence, so a test
+	// that accepted a clean absence here would be asserting the unsafe outcome.
 	srv, query := newLookupServer(t, []json.RawMessage{
 		lookupRow("999", "some other campaign", StatusEnabled),
 	})
 	client := newAccountsTestClient(t, srv)
 
 	id, err := client.FindCampaignByName(context.Background(), evil)
-	if err != nil {
-		t.Fatalf("FindCampaignByName: %v", err)
+	if err == nil {
+		t.Fatalf("a row that does not match the exact-match query must fail closed, got id %q", id)
 	}
 	if id != "" {
-		t.Fatalf("a non-matching row must not be returned as a match, got %q", id)
+		t.Errorf("a non-matching row must not be returned as a match, got %q", id)
+	}
+	if !strings.Contains(err.Error(), "name filter was not honoured") {
+		t.Errorf("error does not explain the unhonoured filter: %v", err)
 	}
 
 	q := query()
@@ -208,11 +216,29 @@ func TestGAQLStringLiteral(t *testing.T) {
 // TestGAQLStringLiteral_RejectsControlChars pins the decision to reject rather than
 // escape: GAQL has no portable escape for these, and Google Ads forbids them in a
 // campaign name, so such a name cannot match anything real.
+// The last two cases are the ones unicode.IsControl does NOT catch: U+2028 and U+2029
+// are categories Zl/Zp, so IsControl returns false for both even though they are line
+// terminators. Deleting the explicit checks for them makes exactly these two fail.
 func TestGAQLStringLiteral_RejectsControlChars(t *testing.T) {
-	for _, in := range []string{"a\x00b", "a\nb", "a\tb"} {
+	for _, in := range []string{"a\x00b", "a\nb", "a\tb", "a\u2028b", "a\u2029b"} {
 		if _, err := gaqlStringLiteral(in); err == nil {
 			t.Errorf("gaqlStringLiteral(%q) must reject a control character", in)
 		}
+	}
+}
+
+// TestGAQLStringLiteral_AllowsFormatCharacters is the other side of that decision.
+// Category Cf (zero-width joiner, variation selector) appears inside ordinary emoji
+// sequences and terminates nothing in GAQL, so rejecting it would fail a lookup for a
+// campaign that genuinely exists — a false absence, which licenses a duplicate create.
+func TestGAQLStringLiteral_AllowsFormatCharacters(t *testing.T) {
+	const withZWJ = "team \u200d rocket"
+	got, err := gaqlStringLiteral(withZWJ)
+	if err != nil {
+		t.Fatalf("a zero-width joiner must not be rejected: %v", err)
+	}
+	if got != "'"+withZWJ+"'" {
+		t.Fatalf("gaqlStringLiteral(%q) = %s, want it quoted unchanged", withZWJ, got)
 	}
 }
 
@@ -317,5 +343,135 @@ func TestFindCampaignByName_TrimsToMatchTheCreatePath(t *testing.T) {
 	}
 	if !strings.Contains(query(), "campaign.name = 'trimmed'") {
 		t.Errorf("name was not trimmed before querying: %s", query())
+	}
+}
+
+// TestFindCampaignByName_UnrecognisedStatusFailsClosed: REMOVED is the only status that
+// may be silently skipped. Google can answer UNSPECIFIED or UNKNOWN, and an omitted
+// field decodes to "" — accepting any of those as live would return the id of a
+// campaign whose serving state was never established.
+func TestFindCampaignByName_UnrecognisedStatusFailsClosed(t *testing.T) {
+	for _, status := range []string{"UNSPECIFIED", "UNKNOWN", ""} {
+		t.Run("status "+status, func(t *testing.T) {
+			srv, _ := newLookupServer(t, []json.RawMessage{lookupRow("42", "odd status", status)})
+			client := newAccountsTestClient(t, srv)
+
+			id, err := client.FindCampaignByName(context.Background(), "odd status")
+			if err == nil {
+				t.Fatalf("status %q must fail closed, got id %q", status, id)
+			}
+			if !strings.Contains(err.Error(), "unrecognised status") {
+				t.Errorf("error does not name the unrecognised status: %v", err)
+			}
+		})
+	}
+}
+
+// TestFindCampaignByName_ResourceNameFallbackValidatesShape covers the identity guard on
+// the id fallback. Taking the trailing path segment (what the package's resourceID does)
+// would read "garbage/4242" as campaign 4242, and would accept a campaign belonging to a
+// DIFFERENT customer — binding a brief to an id never verified as ours.
+//
+// Every case here has an absent id field, so the fallback is the only source of identity;
+// deleting the shape check makes each of them return an id instead of failing.
+func TestFindCampaignByName_ResourceNameFallbackValidatesShape(t *testing.T) {
+	for _, tc := range []struct{ name, resourceName string }{
+		{"not a resource path", "garbage/4242"},
+		{"wrong collection", "customers/1234567890/adGroups/4242"},
+		{"another customer's campaign", "customers/9999999999/campaigns/4242"},
+		{"non-numeric id segment", "customers/1234567890/campaigns/not-a-number"},
+		// The extra segment is DIGITS on purpose: with the shape check reverted to a
+		// trailing-segment read, "extra" would be caught by the numeric guard downstream
+		// and the case would pass vacuously. "1" gets through it, so this case binds the
+		// segment-count check specifically.
+		{"trailing segments", "customers/1234567890/campaigns/4242/1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _ := newLookupServer(t, []json.RawMessage{
+				json.RawMessage(`{"campaign":{"resourceName":` + jsonQuote(tc.resourceName) +
+					`,"name":"shape test","status":"ENABLED"}}`),
+			})
+			client := newAccountsTestClient(t, srv)
+
+			id, err := client.FindCampaignByName(context.Background(), "shape test")
+			if err == nil {
+				t.Fatalf("resourceName %q must not yield an id, got %q", tc.resourceName, id)
+			}
+			if !strings.Contains(err.Error(), "rather than report it absent") {
+				t.Errorf("error does not explain the fail-closed reason: %v", err)
+			}
+		})
+	}
+}
+
+// TestFindCampaignByName_NonNumericIDIsRejected drives the guard on the id field itself
+// (as opposed to the resource-name fallback above). The id is interpolated into resource
+// paths by every later call, so a non-numeric one must never leave this function.
+func TestFindCampaignByName_NonNumericIDIsRejected(t *testing.T) {
+	srv, _ := newLookupServer(t, []json.RawMessage{
+		json.RawMessage(`{"campaign":{"resourceName":"customers/1234567890/campaigns/x","id":"not-a-number","name":"bad id","status":"ENABLED"}}`),
+	})
+	client := newAccountsTestClient(t, srv)
+
+	id, err := client.FindCampaignByName(context.Background(), "bad id")
+	if err == nil {
+		t.Fatalf("a non-numeric id must be rejected, got %q", id)
+	}
+	if !strings.Contains(err.Error(), "non-numeric id") {
+		t.Errorf("error does not name the non-numeric id: %v", err)
+	}
+}
+
+// TestFindCampaignByName_RejectsInvalidAccount pins the CONTRACT, not one line: a client
+// whose customer id is malformed cannot address the account the answer would be about, so
+// the lookup must error rather than report the clean absence that licenses a create.
+//
+// Two guards enforce it — the explicit validateAccountIDs call at the top of the lookup
+// (matching every other exported method here) and the same call inside doRequest. Deleting
+// either alone leaves the other covering the outcome, so this test does not bind a single
+// statement; deleting BOTH fails it. The explicit one is kept for the convention and to
+// fail before a query is built, which is what the second assertion below records.
+func TestFindCampaignByName_RejectsInvalidAccount(t *testing.T) {
+	srv, query := newLookupServer(t, []json.RawMessage{lookupRow("1", "anything", StatusEnabled)})
+	client := NewClient(
+		Credentials{ClientID: "id", ClientSecret: "secret", DeveloperToken: "token", RefreshToken: "refresh"},
+		AccountConfig{CustomerID: "123-456-7890"}, // dashes: not digits-only
+		WithBaseURL(srv.URL),
+		WithTokenURL(srv.URL+"/token"),
+		WithAPIVersion("v23"),
+	)
+
+	if id, err := client.FindCampaignByName(context.Background(), "anything"); err == nil {
+		t.Fatalf("an invalid customer id must fail the lookup, got %q", id)
+	}
+	// And it must fail BEFORE the network call, so a malformed account cannot spend a
+	// request or surface a row.
+	if q := query(); q != "" {
+		t.Errorf("lookup queried the API despite an invalid customer id: %s", q)
+	}
+}
+
+// TestFindCampaignByName_SearchFailurePropagates: a transport or API failure is not an
+// absence. It must reach the caller wrapped, so nothing reads it as licence to create.
+func TestFindCampaignByName_SearchFailurePropagates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeAccountsToken(w, r) {
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"message":"backend error"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	client := newAccountsTestClient(t, srv)
+
+	id, err := client.FindCampaignByName(context.Background(), "anything")
+	if err == nil {
+		t.Fatalf("a failing search must not report an absence, got id %q and nil error", id)
+	}
+	if id != "" {
+		t.Errorf("a failed lookup must not return an id, got %q", id)
+	}
+	if !strings.Contains(err.Error(), "google-ads campaign lookup") {
+		t.Errorf("error is not wrapped with the lookup context: %v", err)
 	}
 }
