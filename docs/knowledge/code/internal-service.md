@@ -23,22 +23,29 @@ gated on `If-Match` (same strong-validator parsing as briefs); the ETag mirrors 
 row version. Like the other services it late-binds via `SetBackend` after a
 cold-start DB retry and returns a typed `503` (routes mounted) when no repo is wired.
 
-## Event-to-brief mapping
+## Event URL metadata (LFXV2-3043)
 
-`BriefFromEventDetails` maps parsed event metadata into a persisted `CampaignBrief`, completing
-the "event URL → campaign brief" pipeline (LFXV2-3043). It bridges `internal/platform/eventurl`'s
-parser and the brief repository:
-- Requires `EventDetails.Name` (extracted from the page by the parser). A missing name is a
-  client error — no usable title was found; it is returned as an error rather than a brief
-  that will fail dispatch later.
-- Stores the complete `EventDetails` as the brief's opaque JSON blob, which later consumers
-  (e.g., `internal/dispatch/reddit.go`'s `decodeBriefFields`) read back from it.
-- Deliberately leaves empty fields that require human judgment: Copy (ad copy), Keywords,
-  Targeting (targeting recommendations), and Platforms (binding selection) — only the creator
-  of the campaign knows what audiences and objectives apply. The brief starts draft, ready
-  for a human to author these before approval and dispatch.
-- Reuses the existing `BriefService.CreateBrief` persistence path, so indexing, outbox
-  enqueuing, and versioning are identical to UI-driven creation.
+`FetchEventURL` (`event_url.go`) fetches an event page and returns the metadata extracted
+from it, for pre-filling a brief form. It bridges `internal/platform/eventurl`'s fetcher and
+parser to the API surface.
+
+**It creates and persists NOTHING.** The caller reviews what was extracted and submits it
+through the ordinary `create-brief`. There is no `EventDetails` → `CampaignBrief` mapper in
+this service, and the absence is deliberate: a page's metadata is a *suggestion* to a human
+authoring a brief, not a brief. Writing the mapper before a caller existed produced code that
+compiled, passed and linted while being reachable from nothing, so it was removed rather than
+shipped. Add it with the caller that needs it, not before.
+
+- The collaborators are injected by `SetEventURL`, separately from `NewBriefService`, for the
+  same reason as `SetIndexer` — the ~40 existing constructor call sites keep compiling, and a
+  `BriefService` without them still serves every other method.
+- Because it consults no repository, it stays available during the cold-start window before
+  the database binds. Its `503` covers only the case where the fetcher itself was never wired.
+- An absent field is a nil pointer, never a pointer to `""`: "the page did not say" and "the
+  page said nothing" are different answers to a UI deciding whether to leave a field free.
+- `mapEventURLErr` maps the `eventurl` sentinels onto the advertised errors. A forbidden
+  address is `400`, not `403` — nothing about the caller's permissions is at issue; the URL
+  they supplied names an address this service will not connect to.
 
 `BriefService` implements brief CRUD and campaign endpoints. `FindBrief` looks a brief up by
 `(project_id, event_slug)` rather than by id — the key a caller holds when re-visiting an event
