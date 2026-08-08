@@ -1028,18 +1028,16 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// contacted for the last group.
 	//
 	// The classification of that last group is NO LONGER uniform across dispatchers, and this
-	// comment used to say it was. Google Ads tags the preflight failures REACHABLE HERE with
+	// comment used to say it was. Google Ads tags every one of its preflight failures with
 	// domain.ErrConnectionNotUsable (internal/dispatch/googleads.go): the three in
-	// validateGoogleAdsCredentials and the missing-account guard in
-	// validateGoogleAdsConnection, both of which resolveGoogleAdsClient runs. The caller maps
-	// them to 409 — correct, because none of them improves with time.
+	// validateGoogleAdsCredentials, the missing-account guard in validateGoogleAdsConnection,
+	// and the stored-login_customer_id check in validatedLoginCustomerID. All four run on this
+	// path. The caller maps them to 409 — correct, because none of them improves with time.
 	//
-	// The stored-login_customer_id check is NOT among them, though it is tagged: it lives in
-	// resolveGoogleAdsDiscoveryClient, which only the discovery endpoint calls. A malformed
-	// manager id therefore reaches this path unclassified, fails inside the client at
-	// validateLoginCustomerID, and falls through to 503 — retryable, for a stored value that
-	// no amount of retrying will fix. Hoisting the check into the shared validation is the
-	// fix; it is a behaviour change with its own test and lands separately.
+	// The manager-id check is the newest of the four and was for a while NOT reachable here:
+	// it sat inline in the discovery resolver, so a malformed stored value reached this path
+	// unclassified and fell through to 503. LFXV2-3052 hoisted it into a helper both resolvers
+	// call, which is why the list above is once again the whole list rather than a subset.
 	//
 	// Reddit, Meta, LinkedIn, X AND Microsoft still return bare
 	// errors that fall through to the caller's default 503 arm; Microsoft is wired for

@@ -291,19 +291,30 @@ downstream can recover the distinction.
 
 Ownership of that wrap is SPLIT, and the split follows which function is in a position to know.
 `validateGoogleAdsCredentials` tags the three CREDENTIAL-STATE failures — a non-`active` status,
-a blob that is not valid JSON, a blob missing a required field — and it is used by every Google
-Ads path, so campaign dispatch and the metrics read get the classification too, not just
-discovery. `resolveGoogleAdsDiscoveryClient` tags the one that is not about the credential at
-all: a `login_customer_id` stored with dashes. Reading either as "the resolver wraps every
-pre-send failure" would suggest the campaign paths are unclassified, which is the opposite of
-what happens.
+a blob that is not valid JSON, a blob missing a required field. `validatedLoginCustomerID` tags
+the one that is not about the credential at all: a `login_customer_id` stored with dashes.
+
+**Both are called by BOTH resolvers, and that is the whole point of the second one being a
+function.** The manager-id check used to sit INLINE in `resolveGoogleAdsDiscoveryClient`, which
+meant only the discovery endpoint got it. The toggle path read the same stored column, handed it
+to the same client, and classified the same defect differently: the value reached the client
+uninspected, failed there at `validateLoginCustomerID`, and arrived at the orchestrator
+indistinguishable from an upstream failure — same call, same error type. The default arm answered
+`503`, promising a retry would help, for a stored value only a human can repair. LFXV2-3052
+hoisted it into a helper both resolvers call. A check that lives on one of two paths through the
+same column is not a check; it is a coin flip on which endpoint the caller happened to use.
+
+An empty `login_customer_id` is legal and means "no manager", so only a non-empty malformed value
+fails. The error names the field and the rule but never echoes the VALUE: a manager id is
+account-identifying configuration, this error reaches a log, and the rest of this path keeps
+error text to a fixed sentinel vocabulary with no payload attached.
 
 The manager-id check is duplicated on purpose. `Client.validateLoginCustomerID` still validates it
 (the backstop for every other caller), but it does so inside the same call that talks to Google, so
 by the time it fires the error is indistinguishable at this boundary from a genuine upstream
 failure. `storedCustomerIDRE` in `internal/dispatch/googleads.go` therefore checks the STORED value
-where it is read — the check has to happen where the answer is still classifiable. The two regexps
-must stay in step.
+where it is READ, not where it is used — the check has to happen while the answer is still
+classifiable. The two regexps must stay in step.
 
 `creds.resolve` classifies each of its failure branches, and the splits are deliberate. A connection
 row with an EMPTY credential blob is permanently unusable as it stands, so it carries
