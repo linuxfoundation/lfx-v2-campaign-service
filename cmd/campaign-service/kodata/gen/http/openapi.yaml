@@ -5031,7 +5031,7 @@ definitions:
                 example: Nobis est fugit ratione consectetur exercitationem.
             url:
                 type: string
-                description: The page that was fetched
+                description: 'The event''s own landing page, as the page declares it (JSON-LD url / og:url), falling back to the URL that was fetched when it declares none. NOT necessarily the fetched URL: a caller commonly pastes a link carrying tracking parameters, and the page''s declared canonical is the better destination for an ad'
                 example: Excepturi fugit.
         example:
             description: Quia voluptates voluptates nisi nihil aut molestias.

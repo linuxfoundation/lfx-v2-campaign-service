@@ -222,10 +222,12 @@ var CampaignMetrics = Type("campaign-metrics", func() {
 // ordinary omission into a server-side validation failure on a response, which is the
 // worst possible place to discover it.
 //
-// url is the page that was FETCHED, and is not called registration_url on purpose: the
-// dispatchers treat that as the link an ad sends a human to, and an event's landing
-// page is frequently not its registration form. A caller that wants them to be the same
-// says so when it creates the brief.
+// url is the page's own DECLARED landing page (JSON-LD `url` / `og:url`), falling back to
+// the URL that was fetched only when the page declares none — see the attribute's own
+// description. It is not called registration_url on purpose: the dispatchers treat that as
+// the link an ad sends a human to, and an event's landing page is frequently not its
+// registration form. A caller that wants them to be the same says so when it creates the
+// brief.
 var EventDetailsResult = Type("event-details", func() {
 	Attribute("event_name", String, "Event name", func() { Example("KubeCon + CloudNativeCon Europe 2026") })
 	Attribute("description", String, "Event description")

@@ -275,7 +275,11 @@ type EventDetails struct {
 	EndDate *string
 	// Event image URL
 	Image *string
-	// The page that was fetched
+	// The event's own landing page, as the page declares it (JSON-LD url /
+	// og:url), falling back to the URL that was fetched when it declares none. NOT
+	// necessarily the fetched URL: a caller commonly pastes a link carrying
+	// tracking parameters, and the page's declared canonical is the better
+	// destination for an ad
 	URL *string
 	// Which strategy produced this record — the whole record came from exactly one
 	// of them

@@ -291,11 +291,12 @@ func redactNATSURL(u string) string {
 
 // splitCSV parses a comma-separated env var into its non-empty, space-trimmed entries.
 //
-// nil for an empty or all-blank value, so a caller can distinguish "not configured" from
-// "configured with nothing" without inspecting element contents. Blank entries are dropped
-// rather than passed through: a trailing comma or a "a, ,b" typo would otherwise become an
-// empty string that every consumer has to re-check, and the one consumer here PANICS on a
-// value it cannot parse.
+// Returns nil for an empty value AND for an all-blank one — the two are deliberately NOT
+// distinguished. There is no configuration a caller could express with `","` that it cannot
+// express by leaving the variable unset, so treating them alike removes a state rather than
+// hiding one. Blank entries are dropped rather than passed through: a trailing comma or an
+// "a, ,b" typo would otherwise become an empty string that every consumer has to re-check,
+// and the one consumer here PANICS on a value it cannot parse.
 func splitCSV(v string) []string {
 	var out []string
 	for _, part := range strings.Split(v, ",") {

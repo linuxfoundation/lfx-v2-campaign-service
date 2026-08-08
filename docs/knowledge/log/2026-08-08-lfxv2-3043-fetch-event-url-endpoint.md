@@ -1,6 +1,6 @@
 # 2026-08-08 — The event-URL endpoint, and what it deliberately does not do
 
-**New** — `POST /projects/{projectId}/fetch-event-url` (LFXV2-3043), the third and last
+**Update** — `POST /projects/{projectId}/fetch-event-url` (LFXV2-3043), the third and last
 piece of the event-URL chain: `internal/platform/eventurl`'s SSRF-guarded fetch, its
 three-strategy parse, and now a route that exposes both. The endpoint fetches an event
 page and returns what was extracted from it. It creates and persists **nothing**.
