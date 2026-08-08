@@ -587,7 +587,7 @@ func (r *campaignEditRepo) GetCampaign(context.Context, string, string, string) 
 func (r *campaignEditRepo) GetCampaignByPlatform(context.Context, string, string, model.Provider) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
-func (r *campaignEditRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string) (bool, *model.Campaign, error) {
+func (r *campaignEditRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string, *model.Actor) (bool, *model.Campaign, error) {
 	return true, nil, nil
 }
 func (r *campaignEditRepo) DeleteDispatchClaim(context.Context, string, model.Provider) error {

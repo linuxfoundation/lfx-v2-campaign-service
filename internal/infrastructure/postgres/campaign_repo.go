@@ -72,8 +72,8 @@ var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 // reusable: a deleted row sits outside the index, so it does not conflict and this
 // INSERT wins the claim cleanly. Pinned by
 // TestCampaignRepo_OnConflictCarriesLivePredicate.
-const claimCampaignDispatchQuery = `INSERT INTO campaigns (project_id, brief_id, job_id, platform, campaign_name, status)
-	VALUES ($1, $2, $3, $4, '', 'pending')
+const claimCampaignDispatchQuery = `INSERT INTO campaigns (project_id, brief_id, job_id, platform, campaign_name, status, created_by)
+	VALUES ($1, $2, $3, $4, '', 'pending', $5)
 	ON CONFLICT (brief_id, platform) WHERE status <> 'deleted' DO NOTHING`
 
 // ClaimCampaignDispatch atomically claims the right to dispatch (brief, platform)
@@ -89,8 +89,16 @@ const claimCampaignDispatchQuery = `INSERT INTO campaigns (project_id, brief_id,
 // RowsAffected()==1 means this caller won the claim; 0 means the pair is already claimed or
 // already has a campaign. No RETURNING is used because ON CONFLICT DO NOTHING returns no row
 // on conflict, so we detect the winner via RowsAffected and then read the current row.
-func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string) (bool, *model.Campaign, error) {
-	tag, err := r.db.Exec(ctx, claimCampaignDispatchQuery, projectID, briefID, jobID, string(platform))
+// The actor is stamped HERE, on the claim, and not on the later upsert, because this INSERT
+// is the row's only INSERT — every subsequent write for this (brief, platform) takes the
+// upsert's conflict arm, which deliberately leaves created_by alone. `by` may be nil: the
+// recovery sweeper re-dispatches with no originating request, and NULL there is correct.
+func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
+	createdBy, err := marshalActor(by)
+	if err != nil {
+		return false, nil, fmt.Errorf("claim campaign dispatch: %w", err)
+	}
+	tag, err := r.db.Exec(ctx, claimCampaignDispatchQuery, projectID, briefID, jobID, string(platform), createdBy)
 	if err != nil {
 		return false, nil, fmt.Errorf("claim campaign dispatch: %w", err)
 	}
@@ -209,7 +217,7 @@ func (r *CampaignRepo) DeleteDispatchClaim(ctx context.Context, briefID string, 
 
 const campaignCols = `id::text, project_id::text, brief_id::text, job_id::text, platform, platform_campaign_id, campaign_name,
 	status, budget_amount, budget_type, start_date, end_date, config_snapshot, result, version,
-	created_at, updated_at`
+	created_by, updated_by, created_at, updated_at`
 
 // getCampaignQuery and getCampaignByPlatformQuery both exclude soft-deleted rows;
 // pinned by TestCampaignRepo_ReadsExcludeSoftDeleted.
@@ -266,14 +274,28 @@ func (r *CampaignRepo) GetCampaignByPlatform(ctx context.Context, projectID, bri
 // whatever may still exist upstream.
 const upsertCampaignQuery = `INSERT INTO campaigns
 	(project_id, brief_id, job_id, platform, platform_campaign_id, campaign_name, status,
-	 budget_amount, budget_type, start_date, end_date, config_snapshot, result)
-	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+	 budget_amount, budget_type, start_date, end_date, config_snapshot, result, created_by, updated_by)
+	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 	ON CONFLICT (brief_id, platform) WHERE status <> 'deleted' DO UPDATE SET
 		job_id=EXCLUDED.job_id, platform_campaign_id=EXCLUDED.platform_campaign_id,
 		campaign_name=EXCLUDED.campaign_name, status=EXCLUDED.status,
 		budget_amount=EXCLUDED.budget_amount, budget_type=EXCLUDED.budget_type,
 		start_date=EXCLUDED.start_date, end_date=EXCLUDED.end_date,
 		config_snapshot=EXCLUDED.config_snapshot, result=EXCLUDED.result,
+		-- created_by is NOT in the update list. The INSERT arm stamps it once, at claim
+		-- time, and the conflict arm must leave it alone: every later dispatch of the
+		-- same (brief, platform) — a retry, a re-dispatch after a brief edit — takes
+		-- this arm, and copying EXCLUDED.created_by here would rewrite the original
+		-- author with whoever triggered the most recent run. That is exactly the
+		-- information updated_by exists to carry, and it is the one field created_by
+		-- exists NOT to carry.
+		--
+		-- COALESCE, not a bare assignment, for the same reason from the other side: an
+		-- upsert whose INSERT arm loses the race still has to record a mover, and a
+		-- system-initiated re-persist (the recovery sweeper, EXCLUDED.updated_by NULL)
+		-- must not erase the last known human. NULL means "not recorded", so writing
+		-- one over a real actor would turn "we know who" into "we do not".
+		updated_by=COALESCE(EXCLUDED.updated_by, campaigns.updated_by),
 		version=campaigns.version+1, updated_at=now()
 	RETURNING ` + campaignCols
 
@@ -306,8 +328,12 @@ const claimCampaignExistsQuery = `SELECT EXISTS (
 
 const replaceCampaignQuery = `UPDATE campaigns SET
 	campaign_name=$1, status=$2, budget_amount=$3, budget_type=$4, start_date=$5, end_date=$6,
-	config_snapshot=$7, result=$8, version=version+1, updated_at=now()
-	WHERE id=$9 AND brief_id=$10 AND project_id=$11 AND version=$12
+	config_snapshot=$7, result=$8,
+	-- Same COALESCE reasoning as the upsert's conflict arm: an update with no actor is
+	-- an ordinary system write, not an instruction to forget the last human one.
+	updated_by=COALESCE($9, updated_by),
+	version=version+1, updated_at=now()
+	WHERE id=$10 AND brief_id=$11 AND project_id=$12 AND version=$13
 	  AND status <> 'deleted'`
 
 // UpsertCampaign inserts or updates the (brief, platform) campaign row. On
@@ -319,10 +345,20 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	createdBy, err := marshalActor(c.CreatedBy)
+	if err != nil {
+		return nil, fmt.Errorf("upsert campaign: %w", err)
+	}
+	updatedBy, err := marshalActor(c.UpdatedBy)
+	if err != nil {
+		return nil, fmt.Errorf("upsert campaign: %w", err)
+	}
+
 	row := tx.QueryRow(ctx, upsertCampaignQuery,
 		c.ProjectID, c.BriefID, c.JobID, string(c.Platform), nullStr(c.PlatformCampaignID),
 		c.CampaignName, c.Status, c.BudgetAmount, budgetTypeArg(c.BudgetType),
 		c.StartDate, c.EndDate, nullJSON(c.ConfigSnapshot), nullJSON(c.Result),
+		createdBy, updatedBy,
 	)
 	upserted, err := scanCampaign(row)
 	if err != nil {
@@ -409,9 +445,13 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	updatedBy, err := marshalActor(c.UpdatedBy)
+	if err != nil {
+		return nil, fmt.Errorf("replace campaign: %w", err)
+	}
 	updated, err := scanCampaign(tx.QueryRow(ctx, q,
 		c.CampaignName, c.Status, c.BudgetAmount, budgetTypeArg(c.BudgetType), c.StartDate, c.EndDate,
-		nullJSON(c.ConfigSnapshot), nullJSON(c.Result), c.ID, c.BriefID, c.ProjectID, expectedVersion,
+		nullJSON(c.ConfigSnapshot), nullJSON(c.Result), updatedBy, c.ID, c.BriefID, c.ProjectID, expectedVersion,
 	))
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("replace campaign: %w", err)
@@ -1113,13 +1153,22 @@ func scanCampaign(row pgx.Row) (*model.Campaign, error) {
 		platform   string
 		pcID       *string
 		budgetType *string
+		createdBy  []byte
+		updatedBy  []byte
 	)
-	if err := row.Scan(
+	err := row.Scan(
 		&c.ID, &c.ProjectID, &c.BriefID, &c.JobID, &platform, &pcID, &c.CampaignName,
 		&c.Status, &c.BudgetAmount, &budgetType, &c.StartDate, &c.EndDate,
-		&c.ConfigSnapshot, &c.Result, &c.Version, &c.CreatedAt, &c.UpdatedAt,
-	); err != nil {
+		&c.ConfigSnapshot, &c.Result, &c.Version, &createdBy, &updatedBy, &c.CreatedAt, &c.UpdatedAt,
+	)
+	if err != nil {
 		return nil, err
+	}
+	if c.CreatedBy, err = unmarshalActor(createdBy); err != nil {
+		return nil, fmt.Errorf("decode campaign created_by: %w", err)
+	}
+	if c.UpdatedBy, err = unmarshalActor(updatedBy); err != nil {
+		return nil, fmt.Errorf("decode campaign updated_by: %w", err)
 	}
 	c.Platform = model.Provider(platform)
 	if pcID != nil {

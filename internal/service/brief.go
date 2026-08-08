@@ -670,6 +670,7 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 	if p.Campaign.Config != nil {
 		existing.ConfigSnapshot = marshalAny(p.Campaign.Config)
 	}
+	existing.UpdatedBy = attributedActor(ctx, "update campaign")
 	// Gate the final write on the original claimed version. The claim acquired
 	// the lock but did NOT bump the version; ReplaceCampaign will bump it
 	// (from version to version+1) inside the outbox transaction, preserving the
@@ -869,6 +870,11 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	// detached write is BOUNDED by persistResultTimeout (mirrors the orchestrator's
 	// post-provider persists) so a stuck DB can't hang shutdown grace indefinitely.
 	existing.Status = p.Status
+	// Resolve the actor from the LIVE ctx, before persistCtx replaces it below. A
+	// context.WithoutCancel derivative keeps the values, so this would work either way —
+	// it is done here so the ordering does not become load-bearing if the detached
+	// context is ever built some other way.
+	existing.UpdatedBy = attributedActor(ctx, "toggle campaign status")
 	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 	defer cancel()
 	// Gate the final write on the original claimed version. The claim acquired the lock but

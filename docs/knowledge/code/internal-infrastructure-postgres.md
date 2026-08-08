@@ -161,9 +161,14 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   decide whether a pair was already dispatched.
 
 - `000015` — `created_by` / `updated_by` JSONB on `campaign_briefs` (see *Actor
-  attribution* below). `campaigns` gets the same treatment in a separate version: its
-  write paths (dispatch claim, upsert, status toggle) are a distinct change with
-  distinct failure modes.
+  attribution* below).
+
+- `000016` — the same two columns on `campaigns`. Deliberately a separate version, not
+  a second `ALTER` inside `000015`: the write paths differ in KIND, not just in table
+  (see *Async attribution on campaigns* below), and that difference is a signature change
+  across the dispatch path. Ordering matters — `000016` must reach `main` AFTER `000015`,
+  because golang-migrate tracks a single version integer and would step straight past a
+  lower version that appeared later.
 
 ## Actor attribution
 
@@ -207,6 +212,41 @@ Three properties are load-bearing, and each is pinned by a test in `brief_repo_t
 - **Insert stamps BOTH** (`VALUES … ,$11,$11`). Leaving `updated_by` NULL until the
   first edit makes "who touched this last" unanswerable without also consulting
   `created_by`; the two diverge from the first update onwards, which is when it matters.
+
+### Async attribution on campaigns
+
+Everything above describes a write on the REQUEST goroutine, where reading the actor at the
+point of the write is enough. Campaign creation is not one. `Orchestrator.Start` returns as
+soon as the job row exists; the dispatch runs on `o.rootCtx` in a goroutine that outlives the
+request. No context reachable from inside `dispatchPlatform` carries an actor, so an
+`actorFromCtx` at the INSERT would return nil for every campaign ever created — silently, with
+no error and no log line.
+
+So `Start` captures it while the request context is still in hand and threads it down through
+`run` → `dispatchPlatform` → `ClaimCampaignDispatch`. `by` is therefore a PARAMETER on that
+repository method rather than something the repo reads from its ctx. What is captured is the
+DECODED actor value, never the bearer token: a token captured for asynchronous use may be
+expired by the time the work runs and there is no retry, while a decoded value has no expiry
+and is the exact thing being recorded.
+
+Three consequences follow, and they are what the SQL encodes:
+
+- **The claim INSERT is the row's only INSERT.** `claimCampaignDispatchQuery` is where
+  `created_by` is stamped. Every later write for that (brief, platform) pair — a retry, a
+  re-dispatch after a brief edit, a reconcile — takes `upsertCampaignQuery`'s conflict arm.
+- **`created_by` is absent from that conflict arm's SET list**, so a re-dispatch cannot
+  rewrite the original author with whoever triggered the latest run. That is the one fact
+  no service-layer test can reach, so it is asserted against the SQL text
+  (`TestUpsertCampaignDoesNotRewriteCreatedBy`).
+- **`updated_by` moves via `COALESCE(EXCLUDED.updated_by, campaigns.updated_by)`**, not a
+  bare assignment. A system-initiated re-persist — the recovery sweeper, which has no
+  originating request — passes NULL, and writing that over a real actor would turn "we know
+  who" into "we do not". `replaceCampaignQuery` does the same for the update path.
+
+A campaign row therefore attributes to whoever asked for the DISPATCH: the person who
+authorized the spend, which is the question `created_by` exists to answer, and not the same
+question as "who was authenticated when some later goroutine got around to writing the row".
+A NULL on a swept row is correct, not a lost attribution.
 
 `Approve` moves `updated_by` alongside `approved_by`, and the two then diverge:
 `ReplaceBrief` CLEARS `approved_by` (a modified brief must not stay approved) while

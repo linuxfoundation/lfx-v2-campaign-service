@@ -37,8 +37,26 @@ type Campaign struct {
 	ConfigSnapshot     json.RawMessage
 	Result             json.RawMessage
 	Version            int64
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	// CreatedBy / UpdatedBy name the human behind the write, with the same three
+	// causes for nil as CampaignBrief.CreatedBy — read that doc first, it is the
+	// canonical statement and is not repeated here.
+	//
+	// What is DIFFERENT for campaigns, and is the whole reason this took its own
+	// change: the write does not happen on the request goroutine. Dispatch runs on
+	// the orchestrator's root context after the request has returned, so reading the
+	// actor at the point of the INSERT would yield nil for every campaign ever
+	// created. Orchestrator.Start captures it from the request context and threads it
+	// down. A campaign row therefore attributes to whoever asked for the DISPATCH,
+	// which is the person who authorized the spend — not to whoever happened to be
+	// authenticated when some later goroutine got around to writing the row.
+	//
+	// One nil cause is specific to this table and is entirely ordinary: the recovery
+	// sweeper re-persists campaigns with no originating request at all. A NULL
+	// created_by on a swept row is correct, not a lost attribution.
+	CreatedBy *Actor
+	UpdatedBy *Actor
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Campaign.Status is a plain string that carries TWO kinds of value: a provisioning state
