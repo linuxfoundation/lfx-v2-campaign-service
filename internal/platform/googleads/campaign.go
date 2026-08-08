@@ -441,7 +441,41 @@ func resourceID(resourceName string) string {
 // with a stable NameSuffix is surfaced as UNCONFIRMED-already-exists (the resource
 // likely exists from a prior attempt; reconcile by name rather than treating it as
 // created here).
-func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
+// campaignPreflight is everything CreateCampaign validates and computes BEFORE its first
+// mutate. It exists as a type so the checks can have a second caller without being written
+// twice — see ValidateCampaignInput.
+type campaignPreflight struct {
+	amountMicros     int64
+	budgetName       string
+	campaignName     string
+	finalURL         string
+	adGroupName      string
+	headlines        []string
+	descriptions     []string
+	keywords         []Keyword
+	audienceSegments []string
+}
+
+// ValidateCampaignInput runs exactly the input validation CreateCampaign runs before it
+// touches Google, and reports the first failure. It mutates nothing and sends nothing.
+//
+// It exists for the ADOPTION path. A dispatch that finds an existing campaign by name
+// returns before CreateCampaign is ever called, so without this the same input would be
+// accepted or rejected depending on whether a same-name campaign happened to exist — a
+// bad budget or an invalid registration URL would fail cleanly on a first dispatch and
+// silently succeed on a retry. Validity is a property of the request; it cannot depend on
+// hidden state at the far end.
+//
+// It delegates to the SAME helper CreateCampaign uses rather than repeating the checks,
+// because a second copy would pass review once and drift on the next change to either.
+func (c *Client) ValidateCampaignInput(in CampaignInput) error {
+	_, err := c.preflightCampaign(in)
+	return err
+}
+
+// preflightCampaign validates the input and computes the derived values. Non-mutating: it
+// performs no I/O, so a caller may run it to decide whether a request is well-formed.
+func (c *Client) preflightCampaign(in CampaignInput) (*campaignPreflight, error) {
 	if err := c.validateAccountIDs(); err != nil {
 		return nil, err
 	}
@@ -498,6 +532,29 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, err
 	}
+
+	return &campaignPreflight{
+		amountMicros:     amountMicros,
+		budgetName:       budgetName,
+		campaignName:     campaignName,
+		finalURL:         finalURL,
+		adGroupName:      adGroupName,
+		headlines:        headlines,
+		descriptions:     descriptions,
+		keywords:         keywords,
+		audienceSegments: audienceSegments,
+	}, nil
+}
+
+func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
+	pf, err := c.preflightCampaign(in)
+	if err != nil {
+		return nil, err
+	}
+	amountMicros, budgetName, campaignName := pf.amountMicros, pf.budgetName, pf.campaignName
+	finalURL, adGroupName := pf.finalURL, pf.adGroupName
+	headlines, descriptions := pf.headlines, pf.descriptions
+	keywords, audienceSegments := pf.keywords, pf.audienceSegments
 
 	var steps []string
 	googleAdsURL := "https://ads.google.com/aw/campaigns?ocid=" + c.account.CustomerID

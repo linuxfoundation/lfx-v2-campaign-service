@@ -147,6 +147,16 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// FindCampaignByName errors on anything it cannot verify (transport failure, a name
 	// that does not match the WHERE clause, a campaign in another customer), so the
 	// lookup never reduces an unverifiable response to a clean "not found".
+	//
+	// Validate the input FIRST, and note this is not merely tidy ordering. Adoption
+	// returns before CreateCampaign runs its preflight, so without this call the same
+	// request would be rejected when no campaign exists and accepted when one does — a
+	// NaN budget or a malformed registration URL would fail on the first dispatch and
+	// silently succeed on the retry. Whether a request is well-formed cannot depend on
+	// what happens to be sitting in the ad account.
+	if err := client.ValidateCampaignInput(in); err != nil {
+		return nil, notCreated(err)
+	}
 	campaignName := googleads.ComposeName("Search Campaign", in)
 	adoptID, adoptErr := client.FindCampaignByName(ctx, campaignName)
 	if adoptErr != nil {
@@ -155,7 +165,7 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		return nil, notCreated(adoptErr)
 	}
 	if adoptID != "" {
-		return campaignFromGoogleAdsAdoption(ctx, adoptID, campaignName, accountID, res.label), nil
+		return campaignFromGoogleAdsAdoption(ctx, adoptID, campaignName, accountID, res.label, cfg), nil
 	}
 	// The GA client's contract (mirrors reddit/meta/twitter): (nil, err) ONLY when
 	// NOTHING was (or may have been) created — a validation/pre-send/definite failure.
@@ -241,12 +251,30 @@ func campaignFromGoogleAds(ctx context.Context, r *googleads.CampaignResult, cfg
 // outcome: the alternative is a duplicate paid campaign, and the shell is now recorded and
 // visible for reconciliation rather than orphaned. Completing a partial adoption is
 // LFXV2-3042's follow-up, and needs an ad-group lookup this client does not yet have.
-func campaignFromGoogleAdsAdoption(ctx context.Context, campaignID, campaignName, accountID, accountLabel string) *model.Campaign {
+func campaignFromGoogleAdsAdoption(ctx context.Context, campaignID, campaignName, accountID, accountLabel string, cfg googleAdsConfig) *model.Campaign {
 	c := &model.Campaign{
 		PlatformCampaignID: campaignID,
 		CampaignName:       campaignName,
 		Status:             campaignStatusCreated,
 	}
+	// The config is applied for the same reason as on the create path, and it is worth
+	// being precise about what these columns mean, because "adopted" invites the reading
+	// that they should be left NULL as unknown.
+	//
+	// budget_amount/budget_type/config_snapshot record the CALLER-SUPPLIED config for this
+	// dispatch — what was asked for — not a readback of platform state; the create path
+	// stamps them from the same cfg before anything is read back. Leaving them NULL here
+	// would not express "unknown", it would lose the request: the row would be the only
+	// record that this dispatch happened and would say nothing about what it asked for,
+	// and every sibling adapter's rows would disagree with it in shape for no reason a
+	// reader could recover.
+	//
+	// What adoption does NOT do is push this config upstream. The campaign already exists
+	// with whatever budget and settings it was created with, and this path deliberately
+	// creates no budget and no ad group (see the Steps below). So the row records the
+	// request while the platform keeps its own state — reconciling the two is the job of
+	// a metrics read, not of this mapper.
+	applyCampaignConfig(ctx, c, cfg.Budget, false, "", "", cfg)
 	// The blob must carry CustomerID: googleAdsCreationCustomerID reads it to detect a
 	// later read/toggle against a DIFFERENT customer, and treats an absent one as
 	// "unknown, proceed" — so omitting it would silently disable that check.

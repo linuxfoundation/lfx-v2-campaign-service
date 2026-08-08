@@ -99,8 +99,9 @@ interpolating free text into GAQL must go through the helper.
 fail-closed logic mirrors the other clients' lookups (meta's `findCampaignByName`, linkedin's
 `findMatch`, twitter's and microsoft's) because callers make the same decision from the
 result. It is the first one **exported** — the others are called only from inside their own
-create path; this one is exported because dispatch's adoption path is intended to call it.
-That wiring is a follow-up — nothing in production calls it yet.
+create path; this one is exported because `GoogleAdsDispatcher.Dispatch` calls it before
+creating, to adopt a campaign a previous attempt already made rather than create a second
+paid one (LFXV2-3042).
 
 | outcome | result |
 |---|---|

@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -1528,7 +1529,11 @@ func TestGoogleAds_ToggleStatus_ActivateSucceedsChildrenFirst(t *testing.T) {
 // adopt-on-create: a retried dispatch finds an existing campaign with the same name
 // and returns it as an adopted campaign without creating a new one or spending budget.
 func TestGoogleAds_Adoption_FindsAndAdoptsExistingCampaign(t *testing.T) {
-	var searchCalled, createCalled bool
+	// atomic.Bool, not plain bools: these are written on the httptest handler's goroutine
+	// and read on the test's. The completed HTTP response does establish a happens-before
+	// here, so `-race` is clean either way — but that argument has to be reconstructed by
+	// every future reader, and the next test that copies this shape may not preserve it.
+	var searchCalled, createCalled atomic.Bool
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
 	}))
@@ -1538,12 +1543,12 @@ func TestGoogleAds_Adoption_FindsAndAdoptsExistingCampaign(t *testing.T) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
 			// The lookup response: one existing campaign with the adoption target id.
-			searchCalled = true
+			searchCalled.Store(true)
 			_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"999","name":"LFX | Search Campaign | cncf | KubeCon NA 2026 | brief-1","status":"ENABLED","resourceName":"customers/1234567890/campaigns/999"}}]}`)
 		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"),
 			strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
 			// Should never reach here on adoption.
-			createCalled = true
+			createCalled.Store(true)
 			http.Error(w, "should not create on adoption", http.StatusBadRequest)
 		default:
 			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
@@ -1570,10 +1575,23 @@ func TestGoogleAds_Adoption_FindsAndAdoptsExistingCampaign(t *testing.T) {
 	if camp.Status != campaignStatusCreated {
 		t.Errorf("adoption status = %q, want %q", camp.Status, campaignStatusCreated)
 	}
-	if !searchCalled {
+	// The adopted row must still record what the dispatch ASKED for. These columns hold
+	// the caller-supplied config, not a readback of platform state, so leaving them NULL
+	// on adoption would not say "unknown" — it would lose the request, and nothing else
+	// in the row records it. Nothing here fails a build or a lint if it regresses.
+	if camp.BudgetAmount == nil || *camp.BudgetAmount != 50 {
+		t.Errorf("adopted campaign BudgetAmount = %v, want 50 — the caller's config must persist", camp.BudgetAmount)
+	}
+	if camp.BudgetType == nil || *camp.BudgetType != model.BudgetDaily {
+		t.Errorf("adopted campaign BudgetType = %v, want %q", camp.BudgetType, model.BudgetDaily)
+	}
+	if len(camp.ConfigSnapshot) == 0 {
+		t.Error("adopted campaign ConfigSnapshot is empty; the validated config must be persisted")
+	}
+	if !searchCalled.Load() {
 		t.Error("adoption must call googleAds:search")
 	}
-	if createCalled {
+	if createCalled.Load() {
 		t.Error("adoption must not call create/mutate endpoints")
 	}
 }
@@ -1791,5 +1809,47 @@ func TestGoogleAds_Adoption_SkipsRemovedCampaign(t *testing.T) {
 	// A REMOVED row was skipped, so we proceeded to create (campaign id 222).
 	if camp.PlatformCampaignID != "222" {
 		t.Errorf("created campaign id = %q, want 222 (not 999 from the removed row)", camp.PlatformCampaignID)
+	}
+}
+
+// TestGoogleAds_Adoption_DoesNotBypassInputValidation pins that validity is a property of
+// the request, not of what happens to exist on the ad account.
+//
+// The bug this guards is subtle because both halves look correct in isolation: adoption
+// returns before CreateCampaign, and CreateCampaign is where input is validated. The result
+// was that an invalid budget failed cleanly on a first dispatch and silently succeeded on the
+// retry that found a campaign to adopt — the same input, two outcomes, decided by remote
+// state the caller cannot see.
+//
+// The search handler t.Errorf's if it is reached at all: the point is not merely that the
+// dispatch fails, but that it fails BEFORE the lookup. A validation that ran after the lookup
+// would still reject this input while leaving the ordering defect in place.
+func TestGoogleAds_Adoption_DoesNotBypassInputValidation(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("invalid input must be rejected before any call to Google, got %s", r.URL.Path)
+		http.Error(w, "unexpected", http.StatusInternalServerError)
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)},
+		identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL),
+		googleads.WithBaseURL(apiSrv.URL),
+	)
+	// A zero budget is rejected by the preflight (it rounds to 0 micros). Any input the
+	// preflight rejects would do; this one needs no long strings to express.
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":0}}`)
+
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+	if err == nil {
+		t.Fatalf("invalid budget must fail regardless of what exists upstream, got campaign %+v", camp)
+	}
+	if camp != nil {
+		t.Errorf("a pre-send validation failure created nothing, so the result must be nil to release the claim; got %+v", camp)
 	}
 }
