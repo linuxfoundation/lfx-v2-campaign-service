@@ -41,27 +41,17 @@ import (
 // quote would be released.
 //
 // The rejected set is EXACTLY the three characters Google Ads prohibits in
-// Campaign.name — NUL, LF and CR — and no more. That boundary is deliberate, and
-// drawing it wider was a bug worth recording here.
+// Campaign.name — NUL, LF and CR — and no more. Rejecting them costs no reachable
+// lookup, because a name containing one cannot be a real campaign name.
 //
-// The tempting rule is "reject every control character": unicode.IsControl, plus
-// explicit checks for U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR, which
-// IsControl misses because they are categories Zl/Zp rather than Cc. But this lookup
-// serves ADOPTION, and adoption targets campaigns this service never created and never
-// ran through sanitizeNamePart. Google accepts a TAB inside Campaign.name — and a
-// U+2028, and a zero-width joiner — so campaigns named that way really can exist.
-// Rejecting one of those names answers "no such campaign" about a campaign that is
-// sitting right there, and an absence from this method is exactly what licenses the
-// create path to create a duplicate PAID campaign.
-//
-// NUL, LF and CR are safe to reject for the opposite reason: Google forbids them, so a
-// name containing one cannot BE a real campaign name and rejecting costs no reachable
-// lookup. They are also the only three that could terminate a line. Everything else
-// travels safely regardless — the query is carried in a JSON body, and encoding/json
-// escapes control characters and U+2028/U+2029 on the way out.
-//
-// The rule, then: reject only what the upstream field itself cannot hold. Escape
-// everything else and let the exact-match comparison do its job.
+// Rejecting MORE is a bug: this lookup serves adoption, whose targets were created
+// outside this service and never ran through sanitizeNamePart, and Google accepts TAB
+// (and U+2028/U+2029, and zero-width joiners) in a name — so refusing one answers "no
+// such campaign" about a campaign that exists, which is the false absence that licenses
+// the create path to make a duplicate PAID campaign. Everything else is safe to escape
+// and pass through: the query rides in a JSON body, and encoding/json escapes control
+// characters and U+2028/U+2029 on the way out. See the knowledge log for the full
+// reasoning.
 func gaqlStringLiteral(s string) (string, error) {
 	for _, r := range s {
 		if r == '\x00' || r == '\n' || r == '\r' {
@@ -151,18 +141,10 @@ func (c *Client) FindCampaignByName(ctx context.Context, name string) (string, e
 		return "", err
 	}
 
-	// The name is used VERBATIM. An earlier cut trimmed it first, reasoning that
-	// composeName runs its parts through sanitizeNamePart (which trims and collapses
-	// whitespace) so a stored name never carries surrounding space — but that makes
-	// trimming a no-op for the create path, which is the only caller that passes a
-	// composed name. It changes behaviour only for ADOPTION, where the caller supplies
-	// the name of a campaign this service did not create, and there it quietly breaks
-	// the contract: a request to adopt "  foo  " would return the campaign named "foo",
-	// and if both names existed it would hide the ambiguity instead of reporting it.
-	// A method that promises an exact-name match has to query the name it was given.
-	//
-	// Whitespace-only input is still rejected — TrimSpace is used to DETECT it, not to
-	// rewrite the query — because such a name identifies nothing.
+	// The name is used VERBATIM — no TrimSpace. Trimming is a no-op for the create path
+	// (composeName's output is already trimmed) and a silent contract change for adoption,
+	// where a request for "  foo  " would return the campaign named "foo" and hide the
+	// ambiguity if both existed. TrimSpace below only DETECTS whitespace-only input.
 	if strings.TrimSpace(name) == "" {
 		return "", fmt.Errorf("google-ads: cannot look up a campaign by an empty name")
 	}

@@ -100,27 +100,24 @@ is the sole identity evidence for a campaign about to have a brief bound to it.
 
 **Second general lesson, and it cuts the other way: an over-broad rejection is a false
 absence too.** The first cut rejected every `unicode.IsControl` rune plus U+2028/U+2029
-(categories Zl/Zp, which `IsControl` misses — worth knowing on its own). That looked
-conservative and was not. Google Ads prohibits only **NUL, LF and CR** in `Campaign.name`;
-TAB, the line separators and zero-width joiners are all legal. Adoption targets campaigns
-this service never created and never sanitised, so a campaign really can be named with a
-TAB in it — and refusing to look it up answers "no such campaign" about a campaign sitting
-right there, licensing the duplicate create all over again.
-
-The rule that survives: **reject only what the upstream field itself cannot hold.** Then
-rejection costs no reachable lookup, because such a name could never have been stored.
-Nothing is at risk by allowing the rest — the query rides in a JSON body and
-`encoding/json` escapes control characters and U+2028/U+2029 on the way out.
+(categories Zl/Zp, which `IsControl` misses — worth knowing on its own). Google Ads
+prohibits only **NUL, LF and CR** in `Campaign.name`; TAB, the line separators and
+zero-width joiners are all legal, and adoption targets campaigns this service never
+created and never sanitised. Refusing to look one up answers "no such campaign" about a
+campaign sitting right there, licensing the duplicate create all over again. The rule
+that survives: **reject only what the upstream field itself cannot hold** — then
+rejection costs no reachable lookup, and nothing is at risk by allowing the rest, since
+the query rides in a JSON body and `encoding/json` escapes the dangerous runes anyway.
 
 ## Trimming quietly redefined the contract
 
-The lookup originally ran `strings.TrimSpace(name)` before querying, justified by the
-create path: `composeName` already trims, so the stored name never carries surrounding
-space. But that is precisely why the trim was pointless there — and it was not pointless
-for **adoption**, the caller that supplies a name this service did not compose. A request
-to adopt `"  foo  "` would return the campaign named `"foo"`: a different campaign than
-the one asked for, from a method whose contract is an exact-name match, with the ambiguity
-hidden rather than reported if both names existed.
+The lookup originally ran `strings.TrimSpace(name)`, justified by the create path:
+`composeName` already trims, so a stored name never carries surrounding space. That is
+exactly why the trim was pointless there — and not pointless for **adoption**, the caller
+that supplies a name this service did not compose. A request to adopt `"  foo  "` would
+return the campaign named `"foo"`: a different campaign than the one asked for, from a
+method whose contract is an exact-name match, with the ambiguity hidden rather than
+reported if both names existed.
 
 The name is now used verbatim; `TrimSpace` only *detects* whitespace-only input so it can
 be rejected. **General form: a normalisation applied for caller A's convenience becomes a

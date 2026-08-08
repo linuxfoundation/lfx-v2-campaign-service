@@ -74,15 +74,13 @@ Only **NUL, LF and CR** are rejected — exactly what Google Ads prohibits in
 `Campaign.name`, and no more. A blanket "reject every control character" rule is wrong
 here and was corrected in review: this lookup serves **adoption**, whose targets were
 created outside this service and never passed through `sanitizeNamePart`, and Google
-accepts TAB (and U+2028/U+2029, and zero-width joiners) inside a campaign name. Rejecting
-one of those answers "no such campaign" about a campaign that exists — the false absence
-that licenses a duplicate paid campaign. NUL/LF/CR are safe to reject precisely because
-Google forbids them, so such a name cannot be real.
-
-Note the trap in the tempting version: `unicode.IsControl` covers category **Cc only**,
-so U+2028/U+2029 (Zl/Zp) slip past it and invite an explicit check — which is then
-over-rejection twice over. Everything travels safely regardless: the query rides in a
-JSON body and `encoding/json` escapes control characters and U+2028/U+2029 on the way out.
+accepts TAB (and U+2028/U+2029, and zero-width joiners) inside a campaign name.
+Rejecting one of those answers "no such campaign" about a campaign that exists — the
+false absence that licenses a duplicate paid campaign. Note the trap in the tempting
+version: `unicode.IsControl` covers category **Cc only**, so U+2028/U+2029 (Zl/Zp) slip
+past it and invite an explicit check, which is then over-rejection twice over. Nothing
+is at risk by allowing them: the query rides in a JSON body and `encoding/json` escapes
+control characters and U+2028/U+2029 on the way out.
 
 The name is also queried **verbatim** — no `TrimSpace`. Trimming is a no-op for the
 create path (`composeName`'s output is already trimmed and whitespace-collapsed), so it
