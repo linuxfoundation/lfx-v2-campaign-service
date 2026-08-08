@@ -1,7 +1,11 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
-// Package eventurl provides event URL fetching and parsing with SSRF protections.
+// Package eventurl fetches event pages under SSRF protections.
+//
+// Fetching only. Extracting event metadata from a fetched body is a separate concern and
+// lands separately; this package's contract is that a body it returns came from an
+// address the service is willing to connect to.
 package eventurl
 
 import (
@@ -177,8 +181,13 @@ func isForbiddenIP(ip net.IP) bool {
 	return false
 }
 
-// fetchError renders a URL-FREE message while keeping its cause reachable, so a caller
-// can still ask errors.Is(err, context.Canceled) after the text has been stripped.
+// fetchError renders a URL-FREE message while keeping the transport's IDENTITY answerable,
+// so a caller can still ask errors.Is(err, context.Canceled) after the text is stripped.
+//
+// The identity, and not the cause: the cause itself is discarded, and what the chain carries
+// is a canonical sentinel this package selected in its place (see safeIdentity). The
+// distinction is the security invariant below, not a detail — a chain that really did carry
+// the cause would hand back the *url.Error this type exists to withhold.
 //
 // Unwrap returns both the sentinel and the identity (Go 1.20 multi-unwrap), which is what
 // lets one value answer to ErrEventURLFetchFailed and to context.Canceled at once.
@@ -320,7 +329,11 @@ func WithNAT64Prefixes(cidrs ...string) Option {
 	}
 }
 
-// guardDialAddress is the net.Dialer.Control hook that refuses a non-public address.
+// guardDialAddress is the net.Dialer.Control hook that refuses a DENIED address.
+//
+// Denied, not "non-public": isForbiddenIP enumerates what it rejects and returns false for
+// everything else, so this hook is a denylist and calling it anything stronger would let a
+// caller read the residual gap as closed.
 //
 // The check lives HERE, and not next to a prior LookupIPAddr, because Control runs after
 // resolution and immediately before connect, on the very address the kernel is about to
@@ -339,20 +352,58 @@ func guardDialAddress(nat64 []nat64Prefix) func(string, string, syscall.RawConn)
 		if ip == nil {
 			return fmt.Errorf("%w: unparsable dial address %q", ErrEventURLForbidden, address)
 		}
-		if isForbiddenIP(ip) {
-			return fmt.Errorf("%w: %s", ErrEventURLForbidden, ip)
-		}
-		// Configured translation prefixes are judged by the IPv4 they name, exactly as the
-		// well-known one is inside isForbiddenIP. Kept out of that function because the set
-		// is per-Fetcher: it is deployment configuration, not a property of the IANA registry.
+		// Configured translation prefixes are judged FIRST, and their verdict is FINAL.
+		//
+		// The order is the whole point. RFC 8215 sets aside 64:ff9b:1::/48 for local-use
+		// NAT64 prefixes — it is the block an operator PICKS THEIR PREFIX FROM — and
+		// forbiddenNets denies that /48 wholesale, because an address under an unknown
+		// prefix cannot be decoded and refusing is the fail-closed answer. Run that denial
+		// first and it also swallows every CONFIGURED prefix inside the block: the one
+		// case WithNAT64Prefixes exists to serve would be refused before its embedded IPv4
+		// was ever looked at, so even 64:ff9b:1:1::808:808 — public 8.8.8.8 — could not be
+		// reached. The blanket denial is the FALLBACK for prefixes nobody declared, not a
+		// veto over the ones an operator did.
+		//
+		// Final, because under a declared translator the IPv6 address is not an endpoint at
+		// all: it is an encoding of the IPv4 destination, and that destination's verdict is
+		// the complete answer.
+		//
+		// EVERY matching prefix is judged, not the first. Prefixes may overlap -- nothing
+		// rejects that, and nothing should, since 64:ff9b::/96 is always present and an
+		// operator's own prefix may legitimately nest inside a block they also declare --
+		// and an address under two of them decodes to two DIFFERENT IPv4 destinations,
+		// because the length alone says where the address sits. Judging only the first
+		// match is a fail-open: with 2a01:4f8::/32 declared ahead of
+		// 2a01:4f8:808:808::/96, the address 2a01:4f8:808:808::a9fe:a9fe reads as public
+		// 8.8.8.8 at /32 and is allowed, while longest-prefix routing hands it to the /96
+		// translator as 169.254.169.254.
+		//
+		// Picking the longest match instead would model the routing table, but it bets the
+		// guard on this service's table agreeing with the translator's. Requiring every
+		// declared decoding to be permitted costs only addresses that are ambiguous by
+		// construction, and refuses without needing to know which translator wins.
+		matched := false
 		for _, p := range nat64 {
 			if !p.net.Contains(ip) {
 				continue
 			}
+			matched = true
 			v4 := embeddedIPv4(ip, p.length)
-			if v4 != nil && isForbiddenIP(v4) {
-				return fmt.Errorf("%w: %s names %s through a nat64 prefix", ErrEventURLForbidden, ip, v4)
+			if v4 == nil {
+				// Unreachable while WithNAT64Prefixes validates the length, and still a
+				// refusal rather than a fallthrough: "cannot decode" must never become
+				// "nothing forbidden found", which is what reaching the return below means.
+				return fmt.Errorf("%w: %s is not decodable at its configured /%d", ErrEventURLForbidden, ip, p.length)
 			}
+			if isForbiddenIP(v4) {
+				return fmt.Errorf("%w: %s names %s through a /%d nat64 prefix", ErrEventURLForbidden, ip, v4, p.length)
+			}
+		}
+		if matched {
+			return nil
+		}
+		if isForbiddenIP(ip) {
+			return fmt.Errorf("%w: %s", ErrEventURLForbidden, ip)
 		}
 		return nil
 	}
@@ -396,7 +447,12 @@ func NewFetcher(opts ...Option) *Fetcher {
 
 // Fetch retrieves the body of eventURL with SSRF protections. It rejects:
 //   - non-http/https schemes
-//   - any URL whose connection would land on a non-public address (see isForbiddenIP)
+//   - any URL whose connection would land on an address isForbiddenIP DENIES — an
+//     enumeration (loopback, private, link-local, multicast, and the reserved and
+//     documentation ranges in forbiddenNets), not a test for "non-public". Anything the
+//     enumeration does not name is allowed, which is the honest description: see the
+//     package doc for the residual case, an operator's network-specific NAT64 prefix
+//     that the service was never told about and so cannot decode.
 //   - redirects, and any non-2xx response
 //   - bodies exceeding maxResponseBytes
 //
