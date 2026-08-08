@@ -210,7 +210,7 @@ func (c *Client) Close() error {
 // The query is fully parameterized (no term is interpolated into SQL); each term is
 // wrapped as a `%term%` ILIKE pattern with its metacharacters escaped (see
 // likeContains) so a literal `%` or `_` in a term matches literally instead of acting
-// as a wildcard. currentYear (a 4-digit year, e.g. "2026") is REQUIRED and excludes
+// as a wildcard. currentYear (a 4-digit 19xx/20xx year, e.g. "2026") is REQUIRED and excludes
 // that edition — it is the guarantee that only PAST editions are returned, so a blank
 // or malformed value is rejected rather than silently dropping the exclusion. A blank
 // eventTerm is likewise rejected (it would match everything).
@@ -222,10 +222,11 @@ func (c *Client) ResolvePastEventNames(ctx context.Context, eventTerm, locationT
 	// currentYear gates the "past editions only" contract. If it were optional, a
 	// blank/malformed value would silently drop the NOT-ILIKE exclusion and let the
 	// CURRENT edition through — the opposite of the method's guarantee. Require a
-	// 4-digit year.
+	// 4-digit 19xx/20xx year: the range is what keeps this comparable to the years
+	// yearInName can extract (see isSupportedYear).
 	currentYear = strings.TrimSpace(currentYear)
-	if !isFourDigitYear(currentYear) {
-		return nil, fmt.Errorf("snowflake: ResolvePastEventNames requires currentYear as a 4-digit year (got %q)", currentYear)
+	if !isSupportedYear(currentYear) {
+		return nil, fmt.Errorf("snowflake: ResolvePastEventNames requires currentYear as a 4-digit 19xx/20xx year (got %q)", currentYear)
 	}
 
 	db, err := c.pool()
@@ -264,7 +265,9 @@ WHERE EVENT_NAME ILIKE ? %s`, ident(defaultDatabase), ident(defaultSchema), iden
 	}
 	defer func() { _ = rows.Close() }()
 
-	// Parse currentYear once for filtering below. We already validated it's a 4-digit year.
+	// Parse currentYear once for filtering below. We already validated it's a 4-digit
+	// 19xx/20xx year, which is the same range yearInName can extract — so the comparison
+	// below is between two values drawn from one range.
 	currentYearInt, _ := parseYear(currentYear)
 
 	const rawLimit = (maxEventRows + 1) * 2
@@ -349,17 +352,24 @@ func parsePrivateKey(pemStr string) (*rsa.PrivateKey, error) {
 	return rsaKey, nil
 }
 
-// isFourDigitYear reports whether s is exactly four ASCII digits (e.g. "2026").
-func isFourDigitYear(s string) bool {
+// isSupportedYear reports whether s is a 4-digit year in the 19xx/20xx range.
+//
+// The range is not decoration, and it is deliberately the FULL two-byte prefix rather than a
+// first-digit check (which would accept 1000-2999). yearInName can only ever EXTRACT a 19xx/20xx
+// year from an event name, so a year outside that range is not comparable with the years it
+// is compared AGAINST. Above the range a currentYear of "9999" leaves every real edition
+// strictly below it and the exclusion never fires — "past editions only" quietly starts
+// returning future ones; below it ("0202") every edition is excluded and the resolve returns
+// nothing. The two predicates must be one, which is why the range lives here rather than at
+// each comparison.
+func isSupportedYear(s string) bool {
 	if len(s) != 4 {
 		return false
 	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
+	if s[0:2] != "19" && s[0:2] != "20" {
+		return false
 	}
-	return true
+	return s[2] >= '0' && s[2] <= '9' && s[3] >= '0' && s[3] <= '9'
 }
 
 // likeContains builds a `%term%` ILIKE pattern that matches term as a LITERAL
@@ -395,7 +405,7 @@ func ident(s string) string {
 func yearInName(s string) string {
 	for i := 0; i+4 <= len(s); i++ {
 		c := s[i : i+4]
-		if !isFourDigitYear(c) || (c[0] != '1' && c[0] != '2') {
+		if !isSupportedYear(c) {
 			continue
 		}
 		// Reject a longer digit run (e.g. an id) that merely contains four digits.
@@ -407,7 +417,7 @@ func yearInName(s string) string {
 }
 
 // parseYear converts a 4-digit year string to an integer. Returns 0 if parsing fails.
-// The caller should validate with isFourDigitYear first.
+// The caller should validate with isSupportedYear first.
 func parseYear(s string) (int, error) {
 	var y int
 	_, err := fmt.Sscanf(s, "%d", &y)
