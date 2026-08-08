@@ -177,7 +177,7 @@ func (stubCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, _ d
 func (stubCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64, domain.CampaignLockToken, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
-func (stubCampaignRepo) DeleteCampaign(context.Context, string, string, string, int64, domain.CampaignIndexPayloadFunc) error {
+func (stubCampaignRepo) DeleteCampaign(context.Context, string, string, string, int64, *model.Actor, domain.CampaignIndexPayloadFunc) error {
 	return nil
 }
 func (stubCampaignRepo) ClaimCampaignVersion(context.Context, string, string, string, int64) (*model.Campaign, domain.CampaignLockToken, error) {

@@ -72,8 +72,9 @@ var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 // reusable: a deleted row sits outside the index, so it does not conflict and this
 // INSERT wins the claim cleanly. Pinned by
 // TestCampaignRepo_OnConflictCarriesLivePredicate.
-const claimCampaignDispatchQuery = `INSERT INTO campaigns (project_id, brief_id, job_id, platform, campaign_name, status, created_by)
-	VALUES ($1, $2, $3, $4, '', 'pending', $5)
+const claimCampaignDispatchQuery = `INSERT INTO campaigns
+	(project_id, brief_id, job_id, platform, campaign_name, status, created_by, updated_by)
+	VALUES ($1, $2, $3, $4, '', 'pending', $5, $5)
 	ON CONFLICT (brief_id, platform) WHERE status <> 'deleted' DO NOTHING`
 
 // ClaimCampaignDispatch atomically claims the right to dispatch (brief, platform)
@@ -89,10 +90,21 @@ const claimCampaignDispatchQuery = `INSERT INTO campaigns (project_id, brief_id,
 // RowsAffected()==1 means this caller won the claim; 0 means the pair is already claimed or
 // already has a campaign. No RETURNING is used because ON CONFLICT DO NOTHING returns no row
 // on conflict, so we detect the winner via RowsAffected and then read the current row.
-// The actor is stamped HERE, on the claim, and not on the later upsert, because this INSERT
-// is the row's only INSERT — every subsequent write for this (brief, platform) takes the
-// upsert's conflict arm, which deliberately leaves created_by alone. `by` may be nil: the
-// recovery sweeper re-dispatches with no originating request, and NULL there is correct.
+// The actor is stamped HERE, on the claim, because this is the row's FIRST insert — the
+// upsert that follows normally takes the conflict arm, which deliberately leaves created_by
+// alone. (The upsert's INSERT arm stamps it too, for the retry whose claim row was already
+// released; see orchestrator.dispatchPlatform. Both arms setting it is what keeps the column
+// populated on every path that can create the row.)
+//
+// Both actor columns are set from the same value, matching createBriefQuery: at creation the
+// author IS the last mover, and leaving updated_by NULL on a freshly claimed row would make
+// "nobody has touched this since it was made" indistinguishable from "we never recorded who".
+//
+// `by` may be nil, and that is an ordinary outcome rather than a defect. It comes from
+// attributedActor(ctx, "dispatch campaign brief") in Orchestrator.Start, which returns nil —
+// after logging a warning — when the request carries no authenticated principal. NULL then
+// means "not recorded", which is the honest value; inventing a placeholder actor would make
+// the audit trail claim a principal that never acted.
 func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
 	createdBy, err := marshalActor(by)
 	if err != nil {
@@ -290,11 +302,13 @@ const upsertCampaignQuery = `INSERT INTO campaigns
 		-- information updated_by exists to carry, and it is the one field created_by
 		-- exists NOT to carry.
 		--
-		-- COALESCE, not a bare assignment, for the same reason from the other side: an
-		-- upsert whose INSERT arm loses the race still has to record a mover, and a
-		-- system-initiated re-persist (the recovery sweeper, EXCLUDED.updated_by NULL)
-		-- must not erase the last known human. NULL means "not recorded", so writing
-		-- one over a real actor would turn "we know who" into "we do not".
+		-- COALESCE, not a bare assignment, for the same reason from the other side. This
+		-- arm runs for every re-dispatch, and the actor threaded into it is whatever
+		-- attributedActor produced back in Orchestrator.Start — nil whenever that request
+		-- carried no authenticated principal. An unattributed re-dispatch is an ordinary
+		-- event, and it must not erase the actor recorded by the attributed dispatch
+		-- before it: NULL means "not recorded", so writing one over a real actor would
+		-- turn "we know who" into "we do not".
 		updated_by=COALESCE(EXCLUDED.updated_by, campaigns.updated_by),
 		version=campaigns.version+1, updated_at=now()
 	RETURNING ` + campaignCols
@@ -329,8 +343,9 @@ const claimCampaignExistsQuery = `SELECT EXISTS (
 const replaceCampaignQuery = `UPDATE campaigns SET
 	campaign_name=$1, status=$2, budget_amount=$3, budget_type=$4, start_date=$5, end_date=$6,
 	config_snapshot=$7, result=$8,
-	-- Same COALESCE reasoning as the upsert's conflict arm: an update with no actor is
-	-- an ordinary system write, not an instruction to forget the last human one.
+	-- Same COALESCE reasoning as the upsert's conflict arm: an update whose caller had no
+	-- authenticated principal (attributedActor returned nil, having logged it) is an
+	-- ordinary unattributed write, not an instruction to forget the last actor we know.
 	updated_by=COALESCE($9, updated_by),
 	version=version+1, updated_at=now()
 	WHERE id=$10 AND brief_id=$11 AND project_id=$12 AND version=$13
@@ -984,7 +999,18 @@ const deleteCampaignLockQuery = `SELECT status, version FROM campaigns
 // the row holds platform_campaign_id, the only local pointer to a campaign that may
 // still exist and still be spending upstream. Pinned by
 // TestDeleteCampaign_IsSoftDelete.
-const deleteCampaignQuery = `UPDATE campaigns SET status='deleted', version=version+1, updated_at=now()
+//
+// updated_by is stamped here for the same reason the row is kept at all. A soft delete
+// is the most consequential thing anyone does to a campaign — it retires the local
+// record of something that may still be spending — and it is the one mutation where
+// "who did this" is asked after the fact. Leaving the column alone would leave it
+// naming whoever last EDITED the campaign, so the audit trail would attribute the
+// deletion to someone who did not perform it: worse than NULL, because it reads as
+// knowledge. COALESCE for the usual reason (see the upsert's conflict arm): a delete
+// with no authenticated principal records nothing rather than erasing the last actor
+// we do know about.
+const deleteCampaignQuery = `UPDATE campaigns SET status='deleted',
+	updated_by=COALESCE($2, updated_by), version=version+1, updated_at=now()
 	WHERE id=$1`
 
 // DeleteCampaign soft-deletes a campaign (status = 'deleted'), gating on
@@ -1023,7 +1049,7 @@ const deleteCampaignQuery = `UPDATE campaigns SET status='deleted', version=vers
 // mid-dispatch 'pending' claim, or a 'group_created'/'unconfirmed' partial orphan —
 // see model.CampaignStatusNeedsReconciliation), and domain.ErrPreconditionFailed on a
 // version mismatch.
-func (r *CampaignRepo) DeleteCampaign(ctx context.Context, projectID, briefID, id string, expectedVersion int64, indexPayload domain.CampaignIndexPayloadFunc) error {
+func (r *CampaignRepo) DeleteCampaign(ctx context.Context, projectID, briefID, id string, expectedVersion int64, by *model.Actor, indexPayload domain.CampaignIndexPayloadFunc) error {
 	// Participate in the SAME advisory-lock protocol as ClaimCampaignVersion before
 	// taking the row lock. FOR UPDATE alone serializes this against the dispatch path
 	// (which UPDATEs the row) but NOT against an in-flight run-state toggle: a toggle
@@ -1123,7 +1149,11 @@ func (r *CampaignRepo) DeleteCampaign(ctx context.Context, projectID, briefID, i
 		return domain.ErrPreconditionFailed
 	}
 
-	if _, uerr := tx.Exec(ctx, deleteCampaignQuery, id); uerr != nil {
+	deletedBy, merr := marshalActor(by)
+	if merr != nil {
+		return fmt.Errorf("delete campaign: %w", merr)
+	}
+	if _, uerr := tx.Exec(ctx, deleteCampaignQuery, id, deletedBy); uerr != nil {
 		return fmt.Errorf("delete campaign: soft delete: %w", uerr)
 	}
 	// Enqueue the deletion to the index, just as every other write does. A nil

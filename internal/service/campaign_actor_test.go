@@ -71,10 +71,11 @@ func TestCampaignActor_DispatchAttributesToTheRequestingActor(t *testing.T) {
 	}
 }
 
-// TestCampaignActor_SystemDispatchRecordsNoActor pins the legitimate nil: a dispatch with no
-// authenticated principal (the recovery sweeper re-dispatching with no originating request)
-// must still succeed and must record NULL rather than inventing an actor. NULL means "not
-// recorded", never "nobody" — the distinction matters when reading an audit trail.
+// TestCampaignActor_SystemDispatchRecordsNoActor pins the legitimate nil. attributedActor
+// returns nil — after logging a warning — whenever the request context carries no
+// authenticated principal, and that nil is threaded all the way to the claim INSERT. Such a
+// dispatch must still succeed and must record NULL rather than inventing an actor: NULL means
+// "not recorded", never "nobody", and the distinction matters when reading an audit trail.
 func TestCampaignActor_SystemDispatchRecordsNoActor(t *testing.T) {
 	jobs := newFakeJobRepo()
 	camps := &fakeCampaignRepo{}
@@ -231,5 +232,55 @@ func TestCampaignActor_SystemToggleRecordsNoActor(t *testing.T) {
 	if repo.replaced.CreatedBy == nil || repo.replaced.CreatedBy.Email != "creator@lf.dev" {
 		t.Errorf("CreatedBy = %+v, want the original creator — a toggle must not touch it",
 			repo.replaced.CreatedBy)
+	}
+}
+
+// TestCampaignActor_DeleteStampsTheDeletingActor pins the attribution on the one mutation
+// where "who did this" is asked after the fact.
+//
+// A soft delete keeps the row precisely because it may still point at a campaign spending
+// real money upstream, and the question then asked of that row is who retired it. Without
+// this wiring updated_by is left naming whoever last EDITED the campaign, which is worse
+// than NULL: it reads as knowledge and it is wrong.
+func TestCampaignActor_DeleteStampsTheDeletingActor(t *testing.T) {
+	deleter := &model.Actor{Name: "Grace Hopper", Email: "grace@lf.dev", Username: "grace"}
+	s, camps := newDeleteService(nil)
+	im := "3"
+
+	if err := s.DeleteCampaign(ctxWithActor(deleter), &briefs.DeleteCampaignPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im,
+	}); err != nil {
+		t.Fatalf("DeleteCampaign: %v", err)
+	}
+	if !camps.called {
+		t.Fatal("repo DeleteCampaign was not called")
+	}
+	if camps.gotActor == nil {
+		t.Fatal("DeleteCampaign received a nil actor: the deletion would commit with updated_by " +
+			"still naming the last editor, attributing the delete to someone who did not perform it")
+	}
+	if camps.gotActor.Email != deleter.Email || camps.gotActor.Username != deleter.Username {
+		t.Errorf("delete actor = %+v, want %+v", camps.gotActor, deleter)
+	}
+}
+
+// TestCampaignActor_SystemDeleteRecordsNoActor is the negative half. It is deliberately NOT
+// binding on the attribution code — with the wiring removed the actor is nil here anyway —
+// and guards the opposite regression: a future change that substitutes a placeholder actor
+// (the campaign's creator, a literal "system") onto an unauthenticated delete, which would
+// make the audit trail name a principal that never acted. The repo's COALESCE is what turns
+// this nil into "leave the previous value alone" rather than "clear it".
+func TestCampaignActor_SystemDeleteRecordsNoActor(t *testing.T) {
+	s, camps := newDeleteService(nil)
+	im := "3"
+
+	if err := s.DeleteCampaign(context.Background(), &briefs.DeleteCampaignPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im,
+	}); err != nil {
+		t.Fatalf("DeleteCampaign: %v", err)
+	}
+	if camps.gotActor != nil {
+		t.Errorf("delete actor = %+v, want nil — an unauthenticated delete records nothing "+
+			"rather than inventing a principal", camps.gotActor)
 	}
 }

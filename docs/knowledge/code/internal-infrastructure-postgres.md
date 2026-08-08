@@ -231,22 +231,46 @@ and is the exact thing being recorded.
 
 Three consequences follow, and they are what the SQL encodes:
 
-- **The claim INSERT is the row's only INSERT.** `claimCampaignDispatchQuery` is where
+- **The claim INSERT is the row's first INSERT.** `claimCampaignDispatchQuery` is where
   `created_by` is stamped. Every later write for that (brief, platform) pair — a retry, a
-  re-dispatch after a brief edit, a reconcile — takes `upsertCampaignQuery`'s conflict arm.
+  re-dispatch after a brief edit, a reconcile — normally takes `upsertCampaignQuery`'s
+  conflict arm. (The upsert's INSERT arm stamps `created_by` too, for the retry whose claim
+  row was already released; both arms setting it is what keeps the column populated on every
+  path that can create the row.)
+- **The claim stamps BOTH actor columns from one placeholder** (`$5, $5`), matching
+  `createBriefQuery`. At creation the author IS the last mover, and leaving `updated_by` NULL
+  would make "untouched since it was made" indistinguishable from "we never recorded who" —
+  which the conflict arm cannot repair later, since it only moves `updated_by` when it has a
+  non-NULL actor to move. Pinned by `TestClaimCampaignDispatchStampsBothActorColumns`.
 - **`created_by` is absent from that conflict arm's SET list**, so a re-dispatch cannot
   rewrite the original author with whoever triggered the latest run. That is the one fact
   no service-layer test can reach, so it is asserted against the SQL text
   (`TestUpsertCampaignDoesNotRewriteCreatedBy`).
 - **`updated_by` moves via `COALESCE(EXCLUDED.updated_by, campaigns.updated_by)`**, not a
-  bare assignment. A system-initiated re-persist — the recovery sweeper, which has no
-  originating request — passes NULL, and writing that over a real actor would turn "we know
-  who" into "we do not". `replaceCampaignQuery` does the same for the update path.
+  bare assignment. The actor threaded into a re-dispatch is whatever `attributedActor`
+  produced back in `Orchestrator.Start` — nil whenever that request carried no authenticated
+  principal — and letting that NULL land would turn "we know who" into "we do not".
+  `replaceCampaignQuery` and `deleteCampaignQuery` do the same for the update and delete paths.
+- **The soft delete stamps `updated_by`** (`TestDeleteCampaignStampsTheDeletingActor`). The
+  row is kept precisely because it may still point at a campaign spending upstream, so "who
+  retired this" is a question actually asked of it later; leaving the column alone would
+  answer with whoever last EDITED the campaign — worse than NULL, because it reads as
+  knowledge and names the wrong person.
 
 A campaign row therefore attributes to whoever asked for the DISPATCH: the person who
 authorized the spend, which is the question `created_by` exists to answer, and not the same
 question as "who was authenticated when some later goroutine got around to writing the row".
-A NULL on a swept row is correct, not a lost attribution.
+A NULL is correct on an unattributed write, not a lost attribution.
+
+`scanCampaign` is covered directly (`TestScanCampaign_MapsEachColumnToItsField`,
+`TestCampaignCols_MatchesTheDeclaredOrder`) rather than only through the queries that call it.
+Both actor columns are JSONB and both timestamps are `time.Time`, so a swap in its destination
+list cannot fail at the type level: `created_by` and `updated_by` would simply trade places and
+every other test would stay green while the audit trail named the wrong person on every row.
+Distinct per-column values are what make the swap visible. A NULL actor decodes to nil
+(ordinary — every row predating `000016` has both NULL); actor JSON of the wrong SHAPE fails
+the scan with the column named, since a silently-nil actor is indistinguishable from "not
+recorded", which is the confusion the NULL semantics exist to avoid.
 
 `Approve` moves `updated_by` alongside `approved_by`, and the two then diverge:
 `ReplaceBrief` CLEARS `approved_by` (a modified brief must not stay approved) while
