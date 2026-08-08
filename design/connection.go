@@ -348,10 +348,11 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // for another provider, only together with that provider's discovery endpoint.
 //
 // A connection in this state stays status=active, and account_id comes back as "". See
-// docs/knowledge/code/internal-service.md — "active" describes the CREDENTIALS (which are
-// live, and which discovery needs, since it refuses a non-active connection), not
-// readiness to run a campaign. Readiness is account_id being non-empty, and the operations
-// that need it say so with reason=account_not_selected rather than a 503.
+// docs/knowledge/code/internal-service.md — "active" says the connection is ENABLED for
+// credential-based operations such as discovery (which refuses a non-active connection),
+// NOT that the credentials were verified: nothing verifies them, so an active row can hold
+// material the platform will reject. Readiness to run a campaign is account_id being
+// non-empty, and the operations that need it say so with reason=account_not_selected.
 var GoogleAdsConnectionConfig = Type("google-ads-connection-config", func() {
 	Attribute("label", String, "Optional friendly name", func() { Example("TLF Main") })
 	Attribute("account_id", String, "Google Ads customer ID. Optional: omit it to create the connection with credentials only, then choose one from GET .../connection-google-ads/accounts and set it with PUT.", func() { Example("8666746580") })

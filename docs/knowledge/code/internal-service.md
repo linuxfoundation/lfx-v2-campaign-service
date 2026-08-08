@@ -205,10 +205,13 @@ credentials-first bootstrap (`design/connection.go`): a connection can now be cr
 credentials alone, discovery run against it, and the chosen account PUT back afterwards.
 
 Note that `status=active` on such a connection is deliberate, not a gap in the lifecycle.
-**"Active" describes the CREDENTIALS — they are live and usable — not readiness to run a
-campaign.** It has to: `validateGoogleAdsCredentials` refuses a non-active connection, so a
-distinct "pending" status would make the discovery endpoint unreachable for exactly the
-connections that need it, and the bootstrap would dead-end at step two. Readiness is a separate,
+**`active` says the connection is ENABLED for credential-based operations — it does not say the
+credentials were verified.** Nothing verifies them: `createConn` serializes, encrypts and
+persists exactly what was supplied, and `testConn` says so itself (upstream verification is not
+implemented), so an active row can hold OAuth material the platform will reject. What `active`
+buys is reachability — `validateGoogleAdsCredentials` refuses a non-active connection, so a
+distinct "pending" status would make discovery unreachable for exactly the connections that need
+it, and the bootstrap would dead-end at step two. Readiness to run a campaign is a separate,
 derived fact — `account_id` being non-empty — and the operations that need it report its absence
 with this reason rather than inventing a second status to carry the same bit.
 

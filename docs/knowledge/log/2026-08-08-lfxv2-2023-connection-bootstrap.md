@@ -69,9 +69,12 @@ Both were live risks worth ruling out before committing to the approach, and bot
 
 It has to be: `validateGoogleAdsCredentials` refuses a non-active connection, so a distinct
 "pending" status would make discovery unreachable for exactly the connections that need it, and
-the bootstrap would dead-end at step two. "Active" describes the CREDENTIALS, not readiness to run
-a campaign. Readiness is a derived fact — `account_id` non-empty — and is reported through the
-reason vocabulary rather than a second status carrying the same bit.
+the bootstrap would dead-end at step two. `active` says the connection is ENABLED for
+credential-based operations; it does NOT say the credentials were verified, because nothing
+verifies them — `createConn` persists exactly what was supplied and `testConn` says upstream
+verification is not implemented. Readiness to run a campaign is a separate derived fact —
+`account_id` non-empty — reported through the reason vocabulary rather than a second status
+carrying the same bit.
 
 One consequence to keep in mind: `PUT` is a full replace, so omitting `account_id` on update
 CLEARS a previously chosen one. That is the same semantics `label` and `login_customer_id` have

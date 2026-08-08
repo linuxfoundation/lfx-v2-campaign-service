@@ -373,8 +373,10 @@ PUT    /projects/{id}/connection-google-ads          (set the chosen account_id)
 A connection in the intermediate state stays `status=active` and stores `account_id` as `""`.
 That is not a loose end: `validateGoogleAdsCredentials` REFUSES a non-active connection, so any
 "pending"-style status would make step two unreachable and dead-end the bootstrap it exists to
-serve. "Active" describes the credentials, not readiness to run a campaign; readiness is
-`account_id` being non-empty, and the paths that need it say so with `ErrAccountNotSelected`.
+serve. `active` says the connection is ENABLED for credential-based operations, NOT that the
+credentials were verified — nothing verifies them, so an active row can hold material the
+platform will reject. Readiness to run a campaign is `account_id` being non-empty, and the paths
+that need it say so with `ErrAccountNotSelected`.
 
 The two preconditions below were relaxed for the endpoint's own semantics rather than for the
 stored value, which is why the design change above was all that bootstrap additionally needed:
