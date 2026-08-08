@@ -424,76 +424,64 @@ system account, stored as an ordinary connection row at the reserved project sco
 `model.SystemProjectID` (`system:linuxfoundation`).
 
 A reserved scope rather than a `LFX_SYS_*` environment block, because a system account
-needs precisely what a project account needs: encryption at rest, an account id,
-provider config, a status, a version for `If-Match`, and an `updated_by` audit trail.
-All of that is already on the row — and reusing it means the credentials-first
-bootstrap flow and the account-discovery endpoint operate on the system account with no
-code of their own.
+needs precisely what a project account needs — encryption at rest, an account id, provider
+config, a status, an `If-Match` version, an `updated_by` trail — all already on the row, so
+bootstrap and discovery work on it with no code of their own.
 
-**Only a genuine absence falls back, and that asymmetry is the whole safety argument.**
-A repo error, an empty credential blob, a decrypt failure — each means the project HAS a
-connection that needs attention, and quietly running its campaign on the Linux
-Foundation's own ad account instead would spend LF money on a request the project
-believed was billed to itself. A missing row is the one state where no such intent was
-ever recorded. A failure of the FALLBACK lookup is likewise not an absence: reported as
-one it would answer "you have no connection" when the truth is that the database did not
-answer.
+**Only a genuine absence falls back, and that asymmetry is the whole safety argument.** A
+repo error, an empty blob, a decrypt failure each mean the project HAS a connection that
+needs attention; running its campaign on the LF account instead spends LF money on a request
+the project believed was billed to itself. A missing row is the one state where no such
+intent was recorded, and a failure of the FALLBACK lookup is likewise not an absence —
+`resolveConn` is shared, so the system row is held to the same standard as any other.
 
-The system row is held to the same standard as any other — `resolveConn` is shared, so
-an empty or undecryptable blob is refused there too rather than trusted because it is
-ours.
-
-The reserved value is unreachable through the API. `projectSlugProblem` enforces
-`^[a-z0-9]+(-[a-z0-9]+)*$`, which the colon cannot satisfy, so no create endpoint can
-plant a row there. That is necessary but not sufficient: get/update/delete/test/
-set-credential are permissive on `project_id` for historical UUID rows, so an existing
-system row would otherwise be rewritable by anyone who could reach the connections API
-for any project at all. `rejectSystemScope` closes those five at the shared helpers in
-`internal/service/connection_handler.go` — one choke point rather than forty-odd
-per-provider adapters — and answers 404 rather than 403, since confirming that something
-is there is itself a disclosure.
+The reserved value is unreachable through the API: `projectSlugProblem` enforces
+`^[a-z0-9]+(-[a-z0-9]+)*$`, which the colon cannot satisfy. Necessary and not sufficient —
+get/update/delete/test/set-credential stay permissive on `project_id` for historical UUID
+rows, so an existing system row was rewritable by anyone reaching the connections API for
+any project. `rejectSystemScope` closes those five at the shared helpers in
+`connection_handler.go`, answering 404 rather than 403 since confirming something is there
+is itself a disclosure.
 
 **A choke point only covers what actually passes through it.** Account discovery is a
-seventh endpoint taking a caller-supplied `project_id`, and the one that does NOT reach
+SEVENTH endpoint taking a caller-supplied `project_id` and the one that does not reach
 storage through those helpers — it calls `orch.ReadAccounts` itself — so it carries the
-guard inline and was the one initially missed. Left open, a `GET` on the reserved scope
-decrypts the LF credential and enumerates the Linux Foundation's own accounts. The test
-that pins this enumerates all seven and gives the discovery case a working orchestrator on
-purpose: without one the call 503s before the guard is reached, and the case would pass
-against an unguarded implementation for the wrong reason.
-
-Account discovery still follows the same *fallback*, deliberately — a different thing from
-addressing the reserved scope. Called with a project's own id it resolves through
-`credsSource.resolve` like every dispatch path, so a project with no connection is shown
-the accounts its campaigns would actually run on; discovery reporting 404 while dispatch
-quietly succeeds is the worse inconsistency. Account ids are not secrets, and the
-credentials never leave the service either way.
+guard inline, and it was the one initially missed. Left open, a `GET` on the reserved scope
+decrypts the LF credential and enumerates the Linux Foundation's own accounts. Its test
+needs a working orchestrator to mean anything: without one the call 503s before the guard
+is reached and passes against an unguarded implementation. Discovery still follows the same
+*fallback*, deliberately — a different thing from addressing the reserved scope: called
+with a project's own id it resolves through `credsSource.resolve` like every dispatch path,
+so a project with no connection sees the accounts its campaigns would actually run on.
 
 ## Installing the system account
 
 Nothing can address the reserved scope over HTTP, so nothing can install it over HTTP
-either. An installer is therefore a REQUIRED part of the feature, not a deployment detail:
-without one the fallback can never fire and the change ships turned off.
-
+either — which makes an installer a REQUIRED part of the feature, not a deployment detail:
+without one the fallback never fires and the change ships turned off.
 `internal/bootstrap`'s `InstallSystemCredentials`, driven by the `sysacct-bootstrap`
-binary, speaks to the same two ports the HTTP layer uses — the repository and the
-encryptor — so its row is indistinguishable from an API-written one: same encryption, same
-version counter, same audit fields. It attributes the write to the installer rather than a
-person, because there is no bearer token behind the reserved scope.
+binary, writes through the same repository and encryptor ports the HTTP layer uses, so its
+row is indistinguishable from an API-written one, attributed to the installer because no
+bearer token stands behind the reserved scope. Four properties are load-bearing:
 
-Three properties are load-bearing:
-
-- **Idempotent.** A second run rotates through `SetCredential` rather than `Create`, which
-  the partial unique index would reject. Rotation touches only the credential unless
-  `-account-id` was given, so it cannot silently clear an account someone already
-  selected — and when it is given, the `Update` is gated on the version `SetCredential`
-  just left behind, not the one read before it, or the rotation lands half-applied.
+- **Idempotent.** A second run rotates through `SetCredential`, not `Create` (the partial
+  unique index would reject that), and touches only the credential unless `-account-id`
+  was given, so it cannot clear an already-selected account. When it is given, the
+  `Update` is gated on the version `SetCredential` just left behind, or the rotation
+  lands half-applied.
 - **Fail-closed on an unreadable row.** Only `ErrNotFound` may create; on any other read
-  error the row's state is unknown, and creating over an existing-but-unreadable row
-  overwrites a credential nobody meant to replace. Same asymmetry as the fallback itself.
-- **The credential comes from stdin, never a flag** — a flag lands in shell history and in
-  every `ps` listing, which for a long-lived refresh token is an indefinite exposure.
+  error the row's state is unknown and creating over it overwrites a credential nobody
+  meant to replace. Same asymmetry as the fallback itself.
+- **The credential comes from stdin, never a flag** — a flag lands in shell history and
+  every `ps` listing, indefinite exposure for a long-lived refresh token.
+- **Credential keys are folded before storage.** Valid JSON is not the bar — what the
+  READER matches is. Stored blobs and dispatch structs are both untagged, so
+  `encoding/json` falls back to a case-insensitive match that cannot bridge the underscore
+  in the snake_case wire form the API documents; a working set-credential body encrypted
+  cleanly, decoded to an all-zero struct and failed at dispatch as `credentials_incomplete`,
+  installer exit 0. `credentialKey` folds separators away, and a document missing a
+  required key is refused up front.
 
-`-account-id` is optional: a system account without one is the credentials-first state, and
-account discovery is what turns it into an account id. Requiring it up front would mean
-knowing the customer id before holding the credential that could tell you what it is.
+`-account-id` is optional: without one the account is in the credentials-first state and
+discovery turns it into an account id. Requiring it would mean knowing the customer id
+before holding the credential that could tell you what it is.

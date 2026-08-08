@@ -351,13 +351,9 @@ func TestSystemScopeIsUnreachableThroughTheAPI(t *testing.T) {
 			_, err := s.TestGoogleAds(context.Background(), &conn.TestGoogleAdsPayload{ProjectID: model.SystemProjectID})
 			return err
 		},
-		// Account discovery is the SEVENTH endpoint taking a caller-supplied
-		// project_id and the only one that does not reach the repo through a helper
-		// in connection_handler.go, which is why it was the one initially missed.
-		// The service is given a WORKING orchestrator here on purpose: without one
-		// the call would 503 before the guard mattered, and the case would pass
-		// against an unguarded implementation for the wrong reason. With one, the
-		// unguarded implementation returns 200 and the LF account list.
+		// The SEVENTH endpoint. Given a WORKING orchestrator on purpose: without one
+		// the call 503s before the guard matters, and this would pass against an
+		// unguarded implementation. With one, unguarded returns 200 and the LF accounts.
 		"list-accounts": func(s *ConnectionService) error {
 			s.SetOrchestrator(&Orchestrator{
 				dispatchers: map[model.Provider]PlatformDispatcher{

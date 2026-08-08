@@ -170,14 +170,13 @@ func (s *ConnectionService) resolveBackendWithOrch() (domain.ConnectionRepositor
 // rejectSystemScope refuses a request aimed at model.SystemProjectID, the reserved
 // scope holding the LF-owned fallback credentials.
 //
-// The create endpoints are already closed by validateConnectionProjectSlug — the
-// reserved value cannot match the slug pattern — so this guard exists for the OTHER
-// five, which are deliberately permissive on project_id to keep historical UUID-keyed
-// rows reachable. Without it, a caller who could reach the connections API for any
-// project could update, re-credential or delete the system account that every project
-// without its own connection dispatches through. Every one of the six goes through a
-// helper here, which is why the check lives at this layer and not in each of the
-// forty-odd per-provider adapters.
+// The create endpoints are already closed by validateConnectionProjectSlug — the reserved
+// value cannot match the slug pattern — so this guard exists for the OTHER five, which are
+// deliberately permissive on project_id to keep historical UUID-keyed rows reachable.
+// Without it, a caller reaching the connections API for any project could update,
+// re-credential or delete the system account every project without its own connection
+// dispatches through. Those five funnel through the helpers here; account discovery does
+// not, and calls this directly (see connection.go).
 //
 // 404, not 403: the reserved scope is not a project this API exposes, and answering
 // "forbidden" would confirm to an unauthorized caller that something is there.

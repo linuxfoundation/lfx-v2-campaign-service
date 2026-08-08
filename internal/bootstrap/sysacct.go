@@ -1,18 +1,15 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
-// Package bootstrap installs the LF-owned system ad-account credentials that
-// projects without a connection of their own fall back to.
+// Package bootstrap installs the LF-owned system ad-account credentials that projects
+// without a connection of their own fall back to.
 //
-// It exists because model.SystemProjectID is deliberately unreachable over HTTP
-// (see rejectSystemScope in internal/service): every connection endpoint answers
-// 404 there, so no request can install the row. That is the correct posture, and it
-// is exactly why an out-of-band installer is REQUIRED rather than optional —
-// without one the fallback can never fire and the feature ships turned off.
-//
-// The installer speaks to the repository and the encryptor directly, the same two
-// ports the HTTP layer uses, so a row it writes is indistinguishable from one the
-// API wrote: same encryption, same version counter, same audit fields.
+// model.SystemProjectID is deliberately unreachable over HTTP (rejectSystemScope), so no
+// request can install the row — which is exactly why an out-of-band installer is REQUIRED
+// rather than optional: without one the fallback never fires and the feature ships turned
+// off. It writes through the repository and encryptor directly, the same two ports the
+// HTTP layer uses, so its row is indistinguishable from an API-written one.
+// See docs/knowledge/code/internal-dispatch.md.
 package bootstrap
 
 import (
@@ -20,30 +17,82 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// systemActor is stamped as created_by/updated_by on the system row. The reserved
-// scope has no human owner and no bearer token behind it, so attributing the write
-// to a person would be a lie; naming the installer is the honest answer and it is
-// what an auditor reading updated_by needs in order to know which path wrote the row.
+// systemActor is stamped as created_by/updated_by. The reserved scope has no bearer token
+// behind it, so attributing the write to a person would be a lie; naming the installer is
+// what an auditor reading updated_by actually needs.
 var systemActor = &model.Actor{Name: "system account bootstrap", Username: "sysacct-bootstrap"}
 
-// InstallSystemCredentials installs or rotates the system account's credentials for
-// one provider. It is IDEMPOTENT: run it twice with the same input and the second
-// run rotates the credential onto the existing row rather than failing the singleton
-// constraint, which is what makes it safe to wire into a deployment job.
+// requiredCredentialKeys mirrors the Required() lists in design/connection.go, in the
+// snake_case wire form: the installer's contract is the documented REQUEST body an
+// operator already has, not an internal struct.
+var requiredCredentialKeys = map[model.Provider][]string{
+	model.ProviderGoogleAds:    {"refresh_token", "client_id", "client_secret", "developer_token"},
+	model.ProviderLinkedInAds:  {"access_token"},
+	model.ProviderMetaAds:      {"access_token", "app_secret"},
+	model.ProviderRedditAds:    {"client_id", "client_secret", "refresh_token"},
+	model.ProviderTwitterAds:   {"consumer_key", "consumer_secret", "access_token", "access_token_secret"},
+	model.ProviderMicrosoftAds: {"client_id", "client_secret", "refresh_token", "developer_token"},
+	model.ProviderHubSpot:      {"private_app_token"},
+}
+
+// credentialKey folds a field name to the form the READERS match on. Stored blobs and
+// dispatch structs are both untagged, so encoding/json falls back to a case-insensitive
+// match: `clientId` works, `client_id` cannot — nothing bridges an underscore. snake_case
+// is what the API documents, so a working set-credential body encrypted cleanly, decoded
+// to an all-zero struct, and failed at dispatch, installer exit 0.
+func credentialKey(k string) string {
+	return strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(k))
+}
+
+// canonicalCredentials validates the document and folds its keys. It refuses anything that
+// is not a non-empty JSON OBJECT (`null`, `[]` and `"x"` all parse, none is a credential)
+// and anything missing a required field — an incomplete document would otherwise fail at
+// dispatch, where nothing points back here.
+func canonicalCredentials(provider model.Provider, credsJSON []byte) ([]byte, error) {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(credsJSON, &doc); err != nil {
+		return nil, fmt.Errorf("bootstrap: credentials must be a json object: %w", err)
+	}
+	if len(doc) == 0 {
+		return nil, errors.New("bootstrap: credentials json object is empty")
+	}
+	folded := make(map[string]json.RawMessage, len(doc))
+	for k, v := range doc {
+		// Two spellings of one field may differ; keeping whichever ranged last is a coin flip.
+		if _, dup := folded[credentialKey(k)]; dup {
+			return nil, fmt.Errorf("bootstrap: credentials contain two spellings of %q", credentialKey(k))
+		}
+		folded[credentialKey(k)] = v
+	}
+	var missing []string
+	for _, want := range requiredCredentialKeys[provider] {
+		if raw, ok := folded[credentialKey(want)]; !ok || len(raw) == 0 || string(raw) == `""` || string(raw) == "null" {
+			missing = append(missing, want)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return nil, fmt.Errorf("bootstrap: %s credentials are missing %s", provider, strings.Join(missing, ", "))
+	}
+	return json.Marshal(folded)
+}
+
+// InstallSystemCredentials installs or rotates the system account's credentials for one
+// provider. It is IDEMPOTENT — a second run rotates onto the existing row rather than
+// failing the singleton constraint — which is what makes it safe in a deployment job.
+// credsJSON is the plaintext document in the snake_case form set-credential documents; its
+// keys are folded (see credentialKey) before encryption and never logged.
 //
-// credsJSON is the plaintext credential document for the provider, exactly as the
-// set-credential endpoint would receive it. It is encrypted here and the plaintext
-// is never persisted or logged.
-//
-// accountID may be empty: that is the credentials-first bootstrap state, and the
-// account-discovery endpoint exists to turn it into an account id. Requiring one
-// here would mean knowing the customer id before holding the credential that could
-// tell you what it is.
+// accountID may be empty: that is the credentials-first state, and account discovery turns
+// it into an account id. Requiring one would mean knowing the customer id before holding
+// the credential that could tell you what it is.
 func InstallSystemCredentials(
 	ctx context.Context,
 	repo domain.ConnectionRepository,
@@ -58,20 +107,12 @@ func InstallSystemCredentials(
 	if !provider.Valid() {
 		return fmt.Errorf("bootstrap: %q is not a supported provider", provider)
 	}
-	// A credential document is validated as a non-empty JSON OBJECT, not merely as
-	// valid JSON: `null`, `[]` and `"x"` all parse, and each would store a blob that
-	// decrypts cleanly and then fails at dispatch time with nothing pointing back
-	// here. The per-field requirements stay with the provider that knows them —
-	// this only refuses what could never be right for any provider.
-	var probe map[string]json.RawMessage
-	if err := json.Unmarshal(credsJSON, &probe); err != nil {
-		return fmt.Errorf("bootstrap: credentials must be a json object: %w", err)
-	}
-	if len(probe) == 0 {
-		return errors.New("bootstrap: credentials json object is empty")
+	canonical, err := canonicalCredentials(provider, credsJSON)
+	if err != nil {
+		return err
 	}
 
-	ct, err := enc.Encrypt(credsJSON)
+	ct, err := enc.Encrypt(canonical)
 	if err != nil {
 		return fmt.Errorf("bootstrap: encrypt credentials: %w", err)
 	}
@@ -79,9 +120,8 @@ func InstallSystemCredentials(
 	existing, gerr := repo.Get(ctx, model.SystemProjectID, provider)
 	switch {
 	case gerr == nil:
-		// Rotation. Only SetCredential is used, deliberately: Update would also
-		// rewrite the account id, so a rotation run that omitted -account-id would
-		// silently CLEAR an account someone had already selected.
+		// Only SetCredential, deliberately: Update would also rewrite the account
+		// id, so a rotation omitting -account-id would CLEAR a selected account.
 		if _, serr := repo.SetCredential(ctx, model.SystemProjectID, provider, ct, systemActor); serr != nil {
 			return fmt.Errorf("bootstrap: rotate system %s credentials: %w", provider, serr)
 		}
@@ -89,19 +129,17 @@ func InstallSystemCredentials(
 			upd := *existing
 			upd.AccountID = accountID
 			upd.UpdatedBy = systemActor
-			// SetCredential above bumped the version, so the row's version is now
-			// existing.Version+1. Passing the stale one would fail the optimistic
-			// check and leave the credential rotated but the account id not.
+			// SetCredential bumped the version. Passing the stale one fails the
+			// optimistic check, leaving the credential rotated and the id not.
 			if _, uerr := repo.Update(ctx, &upd, existing.Version+1); uerr != nil {
 				return fmt.Errorf("bootstrap: set system %s account id: %w", provider, uerr)
 			}
 		}
 		return nil
 	case errors.Is(gerr, domain.ErrNotFound):
-		// First install. Not-found is the ONLY error that may create: any other
-		// error means the row's state is unknown, and creating on top of an
-		// existing-but-unreadable row is how you end up with two system accounts
-		// or an overwritten credential nobody meant to replace.
+		// Not-found is the ONLY error that may create: on any other, the row's
+		// state is unknown and creating over it overwrites a credential nobody
+		// meant to replace.
 		_, cerr := repo.Create(ctx, &model.Connection{
 			ProjectID:            model.SystemProjectID,
 			Provider:             provider,

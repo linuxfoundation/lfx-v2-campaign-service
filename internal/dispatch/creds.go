@@ -164,12 +164,9 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 			// a platform account (goal: system accounts with per-user attribution).
 			//
 			// ONLY a genuine absence falls back, and that asymmetry is the whole
-			// safety argument. Every other failure above and below — a repo error, an
-			// inactive row, an empty credential blob, a decrypt failure — means the
-			// project HAS a connection that needs attention, and quietly running its
-			// campaign on the Linux Foundation's own ad account instead would spend LF
-			// money on a request the project believed was billed to itself. A missing
-			// row is the one state where no such intent was ever recorded.
+			// safety argument: every other failure here means the project HAS a
+			// connection needing attention, and running its campaign on the LF
+			// account would spend LF money on a request it believed was its own.
 			if sysConn, sysErr := s.systemConn(ctx, projectID, provider); sysErr != nil {
 				return nil, sysErr
 			} else if sysConn != nil {
@@ -194,10 +191,9 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 	return s.resolveConn(ctx, projectID, conn, provider)
 }
 
-// systemConn loads the reserved system-scope connection for provider. It returns
-// (nil, nil) when no system account is configured — the ordinary state for a
-// deployment that has not set one up — and an error only when the lookup itself
-// failed. projectID is the scope that missed, for the log line.
+// systemConn loads the reserved system-scope connection. It returns (nil, nil) when no
+// system account is configured — the ordinary state — and an error only when the lookup
+// itself failed. projectID is the scope that missed, for the log line.
 func (s *credsSource) systemConn(ctx context.Context, projectID string, provider model.Provider) (*model.Connection, error) {
 	if projectID == model.SystemProjectID {
 		// Already the system scope: a second identical Get would return the same
@@ -219,12 +215,10 @@ func (s *credsSource) systemConn(ctx context.Context, projectID string, provider
 	return nil, notCreated(fmt.Errorf("load system %s connection: %w", provider, err))
 }
 
-// resolveConn validates a connection row and decrypts its credentials. It is shared
-// by the project scope and the system-account fallback, so a system row is held to
-// exactly the same standard: an empty credential blob or an undecryptable one is
-// refused there too, rather than being trusted because it is ours. Status travels out
-// on `resolved` and is enforced by each adapter, which likewise cannot tell — and does
-// not need to tell — which scope the row came from.
+// resolveConn validates a connection row and decrypts its credentials. Shared by the
+// project scope and the system-account fallback, so a system row is held to exactly the
+// same standard rather than trusted because it is ours. Status travels out on `resolved`
+// and is enforced by each adapter, which cannot tell which scope the row came from.
 func (s *credsSource) resolveConn(ctx context.Context, projectID string, conn *model.Connection, provider model.Provider) (*resolved, error) {
 	// The branches below are tagged with domain.ErrConnectionNotUsable; the two above
 	// deliberately are not. The distinction is whether the connection ROW itself is the

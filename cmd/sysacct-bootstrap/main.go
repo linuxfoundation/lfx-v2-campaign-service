@@ -9,13 +9,11 @@
 //	DATABASE_URL=... CREDENTIAL_ENCRYPTION_KEY=... \
 //	  sysacct-bootstrap -provider google-ads [-account-id 8666746580] < creds.json
 //
-// The credential document is read from STDIN and never from a flag: a flag value
-// lands in shell history and in every `ps` listing on the host for the lifetime of
-// the process, which for a long-lived refresh token is an indefinite exposure.
-//
-// This is a separate binary rather than a subcommand of campaign-service so the
-// serving path grows no flags, and so the job that runs it can be given database
-// and key access without also being able to serve traffic.
+// The credential document is read from STDIN, never a flag: a flag lands in shell history
+// and every `ps` listing, indefinite exposure for a long-lived refresh token. Keys use the
+// snake_case form the set-credential endpoint documents. Separate binary rather than a
+// campaign-service subcommand, so the serving path grows no flags and the job running it
+// needs no ability to serve traffic.
 package main
 
 import (
@@ -34,8 +32,8 @@ import (
 )
 
 const (
-	// maxCredentialBytes bounds the stdin read. A credential document is a handful of
-	// tokens; anything larger is a misdirected pipe, and io.ReadAll on one is unbounded.
+	// maxCredentialBytes bounds the stdin read: a credential is a handful of tokens, so
+	// anything larger is a misdirected pipe and io.ReadAll on one is unbounded.
 	maxCredentialBytes = 64 << 10
 	bootstrapTimeout   = 30 * time.Second
 )
@@ -60,10 +58,8 @@ func run() error {
 		return fmt.Errorf("%s is not set", constants.EnvDatabaseURL)
 	}
 
-	// Read the credential BEFORE opening the database: a malformed or absent
-	// document is the likeliest failure and there is no reason to hold a pool
-	// open across it. One byte past the limit so an oversized document is
-	// detected rather than silently truncated into a half-credential.
+	// Read the credential BEFORE opening the database: a malformed document is the likeliest
+	// failure. One byte past the limit so an oversize is detected, not cut.
 	credsJSON, err := io.ReadAll(io.LimitReader(os.Stdin, maxCredentialBytes+1))
 	if err != nil {
 		return fmt.Errorf("read credentials from stdin: %w", err)
@@ -94,8 +90,8 @@ func run() error {
 	); err != nil {
 		return err
 	}
-	// The credential itself is never echoed; what an operator needs confirmed is
-	// which provider now has a system account, not what was installed.
+	// Never echo the credential: what needs confirming is which provider now has a
+	// system account, not what was installed.
 	fmt.Printf("system account credentials installed for %s\n", *provider)
 	return nil
 }
