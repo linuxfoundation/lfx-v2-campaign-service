@@ -376,12 +376,21 @@ func TestSystemScopeIsUnreachableThroughTheAPI(t *testing.T) {
 			if err == nil {
 				t.Fatalf("%s at the reserved scope succeeded; it must be refused", name)
 			}
-			// Create is refused earlier by the slug pattern (400); the rest answer 404.
-			// Either is a refusal; what must never happen is reaching the row.
-			switch e := err.(type) {
-			case *conn.NotFoundError, *conn.BadRequestError:
-			default:
-				t.Fatalf("err = %T (%v), want NotFoundError or BadRequestError", e, err)
+			// Asserted PER ROUTE rather than as "either refusal", because which refusal
+			// is the contract here. Create is rejected by the slug pattern before any
+			// lookup, and a pattern violation is a 400. Every other route reaches its own
+			// guard and must answer 404 specifically: 403 — or a 400 that says the id is
+			// malformed — tells an unauthorized caller that something is at this scope,
+			// which is the disclosure the guard exists to prevent. Accepting either status
+			// would let a guard drift onto the wrong one and still pass.
+			if name == "create" {
+				if _, ok := err.(*conn.BadRequestError); !ok {
+					t.Fatalf("create err = %T (%v), want BadRequestError", err, err)
+				}
+				return
+			}
+			if _, ok := err.(*conn.NotFoundError); !ok {
+				t.Fatalf("%s err = %T (%v), want NotFoundError", name, err, err)
 			}
 		})
 	}

@@ -348,3 +348,40 @@ func TestCredentialValuesMustBeNonEmptyStrings(t *testing.T) {
 		})
 	}
 }
+
+// TestInstallRejectsConfigKeysTheProviderDoesNotStore: a -config key outside the provider's
+// column set has nowhere to be written, so before this guard the command dropped it and exited
+// 0 — telling the operator a routing setting was installed that nothing held. The keys below
+// are all REAL keys on some other provider, which is what makes the mistake plausible and what
+// a union-of-all-providers allow-list would have missed.
+func TestInstallRejectsConfigKeysTheProviderDoesNotStore(t *testing.T) {
+	gaCreds := []byte(`{"refresh_token":"rt","client_id":"ci","client_secret":"cs","developer_token":"dt"}`)
+	liCreds := []byte(`{"access_token":"tok"}`)
+	rdCreds := []byte(`{"client_id":"ci","client_secret":"cs","refresh_token":"rt"}`)
+	cases := map[string]struct {
+		provider model.Provider
+		cfg      map[string]string
+		creds    []byte
+		wantErr  bool
+	}{
+		"linkedin key on google ads":      {model.ProviderGoogleAds, map[string]string{"org_id": "123"}, gaCreds, true},
+		"google ads key on linkedin":      {model.ProviderLinkedInAds, map[string]string{"org_id": "1", "login_customer_id": "9746983954"}, liCreds, true},
+		"typo in an otherwise real key":   {model.ProviderGoogleAds, map[string]string{"login_customerid": "9746983954"}, gaCreds, true},
+		"any key on a provider with none": {model.ProviderRedditAds, map[string]string{"org_id": "123"}, rdCreds, true},
+		"the provider's own key":          {model.ProviderGoogleAds, map[string]string{"login_customer_id": "9746983954"}, gaCreds, false},
+		"no config at all":                {model.ProviderGoogleAds, nil, gaCreds, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			repo := &stubRepo{getErr: domain.ErrNotFound}
+			err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+				tc.provider, "", tc.cfg, tc.creds)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr = %v", err, tc.wantErr)
+			}
+			if tc.wantErr && repo.created != nil {
+				t.Fatalf("wrote a row carrying a key it cannot store: %+v", repo.created)
+			}
+		})
+	}
+}

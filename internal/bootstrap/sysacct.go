@@ -143,6 +143,40 @@ func requireShapes(provider model.Provider, accountID string, cfg map[string]str
 	return nil
 }
 
+// requireKnownConfigKeys refuses a -config key the SELECTED provider does not persist.
+//
+// Storage has one column per key (model.Provider.ConfigKeys), so an unknown key is not stored
+// somewhere unhelpful — it is DROPPED, and the command still exits 0. The operator is then told
+// the setting is installed when nothing holds it, which is the whole failure mode: `-provider
+// google-ads -config org_id=123` is LinkedIn's key, valid-looking and silently discarded.
+//
+// A per-provider check rather than a global key set, because most of these keys are real
+// somewhere: the mistake this catches is using the right key on the wrong provider, which a
+// union of every provider's keys would wave through.
+func requireKnownConfigKeys(provider model.Provider, cfg map[string]string) error {
+	known := make(map[string]bool, 4)
+	for _, k := range provider.ConfigKeys() {
+		known[k] = true
+	}
+	unknown := make([]string, 0, len(cfg))
+	for k := range cfg {
+		if !known[k] {
+			unknown = append(unknown, k)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	allowed := provider.ConfigKeys()
+	if len(allowed) == 0 {
+		return fmt.Errorf("bootstrap: %s stores no -config keys, but %s was supplied",
+			provider, strings.Join(unknown, ", "))
+	}
+	return fmt.Errorf("bootstrap: %s does not store -config %s; it stores %s",
+		provider, strings.Join(unknown, ", "), strings.Join(allowed, ", "))
+}
+
 // requiredConfigKeys are the non-secret ProviderConfig columns a dispatch adapter REFUSES to
 // create a campaign without — the row is otherwise installable and dead. Others are optional.
 var requiredConfigKeys = map[model.Provider][]string{
@@ -198,6 +232,9 @@ func InstallSystemCredentials(
 	}
 	if !provider.Valid() {
 		return fmt.Errorf("bootstrap: %q is not a supported provider", provider)
+	}
+	if err := requireKnownConfigKeys(provider, providerConfig); err != nil {
+		return err
 	}
 	if err := requireShapes(provider, accountID, providerConfig); err != nil {
 		return err

@@ -441,8 +441,14 @@ Nothing can install that scope over HTTP, so the installer is a REQUIRED part of
 `bootstrap-system-account` subcommand (`cmd/campaign-service/sysacct.go` → `internal/bootstrap`),
 not a second binary, since ko publishes only `cmd/campaign-service`, resolving its DSN through
 `config.ResolveDatabaseURL` because the chart injects `PG*` and leaves `DATABASE_URL` unset. It
-reads the credential from stdin (a flag lands in shell history and every `ps`), rotates through
-`SetCredential` gated on the version that call left behind, and only `ErrNotFound` may create.
+reads the credential from stdin (a flag lands in shell history and every `ps`), and only
+`ErrNotFound` may create. A rotation is TWO writes in this order: the version-gated `Update`
+that rewrites the account id and config columns FIRST, then the ungated `SetCredential`. The
+order matters to an operator reading a partial failure, because it decides which mixed state
+survives — a crash between the two leaves the NEW account id carrying the OLD credential, so the
+row keeps dispatching on the account whose credential is known to work rather than stranding a
+new account with none. The reverse order would produce the opposite residue. The window closes
+on a rerun; the command is idempotent.
 Keys are folded because stored blobs and dispatch structs are both untagged, so `encoding/json`
 falls back to a case-insensitive match that cannot bridge the underscore in the documented
 snake_case wire form. The config an adapter refuses to create without (LinkedIn `org_id`, Meta
