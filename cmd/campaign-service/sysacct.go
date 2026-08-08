@@ -14,6 +14,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/bootstrap"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/crypto"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
@@ -70,9 +71,13 @@ func runSysacctBootstrap(args []string) error {
 	if err != nil {
 		return err
 	}
-	dsn := os.Getenv(constants.EnvDatabaseURL)
+	// The SERVER's resolver, not os.Getenv: in-cluster DATABASE_URL is unset.
+	dsn, err := config.ResolveDatabaseURL()
+	if err != nil {
+		return fmt.Errorf("resolve database settings: %w", err)
+	}
 	if dsn == "" {
-		return fmt.Errorf("%s is not set", constants.EnvDatabaseURL)
+		return fmt.Errorf("no database configured; set PGHOST/PGUSER/PGPASSWORD/PGDATABASE or %s", constants.EnvDatabaseURL)
 	}
 
 	// Read the credential BEFORE opening the database: a malformed document is the likeliest

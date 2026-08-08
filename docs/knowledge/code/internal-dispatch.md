@@ -430,24 +430,21 @@ error, an empty blob, a decrypt failure each mean the project HAS a connection n
 and running its campaign on the LF account spends LF money on a request the project believed was
 billed to itself. `resolveConn` is shared, so a failed FALLBACK lookup is not an absence either.
 
-The reserved value cannot satisfy `projectSlugProblem`, so no create endpoint can plant a row
-there — necessary, not sufficient, since get/update/delete/test/set-credential stay permissive on
-`project_id` for historical UUID rows. `rejectSystemScope` closes those five at the shared helpers
-in `connection_handler.go`, answering 404 not 403 (confirming something is there is itself a
-disclosure). **A choke point only covers what passes through it**: account discovery is a SEVENTH
-endpoint taking a caller-supplied `project_id` and carries the guard inline — left open, a `GET`
-there decrypts the LF credential and enumerates the LF's own accounts.
+No create endpoint can plant a row at the reserved scope (`projectSlugProblem` rejects it), and
+`rejectSystemScope` closes get/update/delete/test/set-credential — which stay permissive on
+`project_id` for historical UUID rows — at the shared helpers in `connection_handler.go`,
+answering 404 not 403. **A choke point only covers what passes through it**: account discovery is
+a SEVENTH endpoint taking a caller-supplied `project_id` and carries the guard inline; left open,
+a `GET` there enumerates the LF's own accounts.
 
-Nothing can install that scope over HTTP either, which makes an installer a REQUIRED part of the
-feature — the `bootstrap-system-account` subcommand (`cmd/campaign-service/sysacct.go` →
-`internal/bootstrap`), not a second binary, since ko publishes only `cmd/campaign-service`. It
+Nothing can install that scope over HTTP, so the installer is a REQUIRED part of the feature: the
+`bootstrap-system-account` subcommand (`cmd/campaign-service/sysacct.go` → `internal/bootstrap`),
+not a second binary, since ko publishes only `cmd/campaign-service`, resolving its DSN through
+`config.ResolveDatabaseURL` because the chart injects `PG*` and leaves `DATABASE_URL` unset. It
 reads the credential from stdin (a flag lands in shell history and every `ps`), rotates through
 `SetCredential` gated on the version that call left behind, and only `ErrNotFound` may create.
-Its validations exist because **valid JSON is not the bar — what the READER matches is**: stored
-blobs and dispatch structs are both untagged, so `encoding/json` falls back to a case-insensitive
-match that cannot bridge the underscore in the documented snake_case wire form, and such a body
-encrypted cleanly, decoded to an all-zero struct and failed at dispatch with the installer
-exiting 0. Keys are therefore folded, and the config an adapter refuses to create without
-(LinkedIn `org_id`, Meta `page_id`, X `funding_instrument_id`) is required of the map about to be
-WRITTEN — on rotation the existing columns MERGED with the flags, since `Update` rewrites every
-config column and Meta stores `page_id` alongside `app_id`.
+Keys are folded because stored blobs and dispatch structs are both untagged, so `encoding/json`
+falls back to a case-insensitive match that cannot bridge the underscore in the documented
+snake_case wire form. The config an adapter refuses to create without (LinkedIn `org_id`, Meta
+`page_id`, X `funding_instrument_id`) is required of the map about to be WRITTEN — on rotation the
+existing columns MERGED with the flags, since `Update` rewrites every config column.

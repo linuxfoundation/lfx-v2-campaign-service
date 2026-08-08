@@ -224,38 +224,37 @@ func TestResolveDoesNotFallBackFromABrokenProjectConnection(t *testing.T) {
 	}
 }
 
-// TestResolveWithNoSystemAccountReportsTheProject: two misses, but the error names the caller's.
-func TestResolveWithNoSystemAccountReportsTheProject(t *testing.T) {
-	repo := &scopedConnReader{}
-	_, err := newCredsSource(repo, identityEncryptor{}).
-		resolve(context.Background(), "cncf", model.ProviderGoogleAds)
-	if !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("err = %v, want ErrNotFound", err)
-	}
-	if !strings.Contains(err.Error(), "cncf") || strings.Contains(err.Error(), model.SystemProjectID) {
-		t.Errorf("err = %q, want it to name the project and not the reserved scope", err)
-	}
-}
-
-// TestResolveHoldsTheSystemAccountToTheSameStandard: refused, not trusted because it is ours.
-func TestResolveHoldsTheSystemAccountToTheSameStandard(t *testing.T) {
-	repo := &scopedConnReader{rows: map[string]*model.Connection{
-		model.SystemProjectID: {Provider: model.ProviderGoogleAds, Status: model.StatusActive},
-	}}
-	_, err := newCredsSource(repo, identityEncryptor{}).
-		resolve(context.Background(), "cncf", model.ProviderGoogleAds)
-	if !errors.Is(err, domain.ErrConnectionNotUsable) {
-		t.Fatalf("err = %v, want ErrConnectionNotUsable for a system row with no credentials", err)
-	}
-}
-
-// TestSystemLookupFailureIsNotAnAbsence: a DB error on the fallback is a 503, not a 404.
-func TestSystemLookupFailureIsNotAnAbsence(t *testing.T) {
-	repo := &scopedConnReader{errs: map[string]error{model.SystemProjectID: errors.New("connection refused")}}
-	_, err := newCredsSource(repo, identityEncryptor{}).
-		resolve(context.Background(), "cncf", model.ProviderGoogleAds)
-	if err == nil || errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("err = %v, want a non-absence error", err)
+// TestFallbackOutcomes covers what the system-scope lookup may yield beyond a usable row: an
+// absence (the error must name the CALLER's project, not the reserved scope), an unusable system
+// row (refused, not trusted because it is ours), and a lookup FAILURE (a 503, never a 404).
+func TestFallbackOutcomes(t *testing.T) {
+	usable := &model.Connection{Provider: model.ProviderGoogleAds, Status: model.StatusActive}
+	for name, tc := range map[string]struct {
+		repo *scopedConnReader
+		want error
+	}{
+		"no system account": {&scopedConnReader{}, domain.ErrNotFound},
+		"unusable system row": {&scopedConnReader{rows: map[string]*model.Connection{
+			model.SystemProjectID: usable,
+		}}, domain.ErrConnectionNotUsable},
+		"system lookup fails": {&scopedConnReader{errs: map[string]error{
+			model.SystemProjectID: errors.New("connection refused"),
+		}}, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := newCredsSource(tc.repo, identityEncryptor{}).
+				resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+			switch {
+			case tc.want == nil && (err == nil || errors.Is(err, domain.ErrNotFound)):
+				t.Fatalf("err = %v, want a non-absence error", err)
+			case tc.want != nil && !errors.Is(err, tc.want):
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+			if tc.want == domain.ErrNotFound && (!strings.Contains(err.Error(), "cncf") ||
+				strings.Contains(err.Error(), model.SystemProjectID)) {
+				t.Errorf("err = %q, want it to name the project and not the reserved scope", err)
+			}
+		})
 	}
 }
 

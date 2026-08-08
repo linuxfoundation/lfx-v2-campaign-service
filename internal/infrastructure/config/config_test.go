@@ -329,3 +329,15 @@ func TestRedactNATSURL_Shapes(t *testing.T) {
 		assert.Equal(t, want, redactNATSURL(in), "input %q", in)
 	}
 }
+
+// TestResolveDatabaseURL: the subcommand path must compose the same DSN the server does from the
+// PG* the chart injects, not read DATABASE_URL alone — which is unset in-cluster.
+func TestResolveDatabaseURL(t *testing.T) {
+	t.Setenv("PGHOST", "db.internal")
+	t.Setenv("PGUSER", "svc")
+	t.Setenv("PGPASSWORD", "p@ss word")
+	t.Setenv("PGDATABASE", "campaigns")
+	dsn, err := ResolveDatabaseURL()
+	assert.NoError(t, err)
+	assert.Equal(t, "postgres://svc:p%40ss%20word@db.internal:5432/campaigns", dsn)
+}

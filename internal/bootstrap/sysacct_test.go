@@ -81,7 +81,8 @@ const goodCreds = `{"refresh_token":"rt","client_id":"ci","client_secret":"cs","
 
 // TestStoredBlobDecodesIntoTheReader would have caught the original defect: encrypting the
 // document verbatim was not wrong about JSON, it was wrong about WHO READS IT — so it asserts on
-// the DECODE, into a struct shaped like dispatch's googleAdsCreds.
+// the DECODE, into a struct shaped like dispatch's googleAdsCreds. It also pins where the row
+// lands and that the blob is CIPHERTEXT, both of which hold for every spelling.
 func TestStoredBlobDecodesIntoTheReader(t *testing.T) {
 	for name, in := range map[string]string{
 		"wire snake_case": goodCreds,
@@ -91,10 +92,22 @@ func TestStoredBlobDecodesIntoTheReader(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			repo := &stubRepo{}
 			if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-				model.ProviderGoogleAds, "", nil, []byte(in)); err != nil {
+				model.ProviderGoogleAds, "8666746580", nil, []byte(in)); err != nil {
 				t.Fatalf("install: %v", err)
 			}
-			var got struct{ ClientID, ClientSecret, DeveloperToken, RefreshToken string }
+			if repo.created == nil {
+				t.Fatalf("no row created; calls = %v", repo.calls)
+			}
+			if got := string(repo.created.EncryptedCredentials); !strings.HasPrefix(got, "enc:") ||
+				repo.created.ProjectID != model.SystemProjectID {
+				t.Fatalf("row at %q with credentials %q; want the reserved scope, encrypted",
+					repo.created.ProjectID, got)
+			}
+			if repo.created.Status != model.StatusActive || repo.created.UpdatedBy == nil {
+				t.Fatalf("row not active/attributed: %+v", repo.created)
+			}
+			type creds struct{ ClientID, ClientSecret, DeveloperToken, RefreshToken string }
+			var got creds
 			plain, err := fakeEnc{}.Decrypt(repo.created.EncryptedCredentials)
 			if err != nil {
 				t.Fatalf("decrypt: %v", err)
@@ -102,35 +115,10 @@ func TestStoredBlobDecodesIntoTheReader(t *testing.T) {
 			if err := json.Unmarshal(plain, &got); err != nil {
 				t.Fatalf("stored blob does not decode: %v", err)
 			}
-			want := struct{ ClientID, ClientSecret, DeveloperToken, RefreshToken string }{"ci", "cs", "dt", "rt"}
-			if got != want {
+			if want := (creds{"ci", "cs", "dt", "rt"}); got != want {
 				t.Fatalf("reader saw %+v, want %+v — the stored keys do not reach the dispatch struct", got, want)
 			}
 		})
-	}
-}
-
-// TestInstallCreatesAtTheReservedScope: the row lands at model.SystemProjectID, encrypted.
-func TestInstallCreatesAtTheReservedScope(t *testing.T) {
-	repo := &stubRepo{}
-	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderGoogleAds, "8666746580", nil, []byte(goodCreds)); err != nil {
-		t.Fatalf("install: %v", err)
-	}
-	if repo.created == nil {
-		t.Fatalf("no row created; calls = %v", repo.calls)
-	}
-	if repo.created.ProjectID != model.SystemProjectID {
-		t.Fatalf("project_id = %q, want %q", repo.created.ProjectID, model.SystemProjectID)
-	}
-	if got := string(repo.created.EncryptedCredentials); !strings.HasPrefix(got, "enc:") {
-		t.Fatalf("credentials stored as %q; they must pass through the encryptor", got)
-	}
-	if repo.created.Status != model.StatusActive {
-		t.Fatalf("status = %q, want active", repo.created.Status)
-	}
-	if repo.created.CreatedBy == nil || repo.created.UpdatedBy == nil {
-		t.Fatal("system row has no actor attribution")
 	}
 }
 
@@ -150,15 +138,9 @@ func TestSecondInstallRotates(t *testing.T) {
 		model.ProviderGoogleAds, "8666746580", nil, []byte(goodCreds)); err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
-	if repo.created != nil {
-		t.Fatalf("rotation called Create; calls = %v", repo.calls)
-	}
-	if repo.setCT == nil {
-		t.Fatalf("rotation did not set a credential; calls = %v", repo.calls)
-	}
 	// Nothing changed, so nothing may Update — an omitted flag must not blank a set column.
-	if repo.updated != nil {
-		t.Fatalf("rotation updated the row with nothing to change: %+v", repo.updated)
+	if repo.created != nil || repo.setCT == nil || repo.updated != nil {
+		t.Fatalf("rotation must SetCredential only; calls = %v, updated = %+v", repo.calls, repo.updated)
 	}
 
 	repo = row("old", nil)
@@ -166,14 +148,9 @@ func TestSecondInstallRotates(t *testing.T) {
 		model.ProviderGoogleAds, "new", nil, []byte(goodCreds)); err != nil {
 		t.Fatalf("rotate with a new account id: %v", err)
 	}
-	if repo.updated == nil {
-		t.Fatalf("account id change did not Update; calls = %v", repo.calls)
-	}
-	if repo.updVer != 5 {
-		t.Fatalf("Update gated on version %d, want 5 (the version SetCredential left behind)", repo.updVer)
-	}
-	if repo.updated.AccountID != "new" {
-		t.Fatalf("account id = %q, want new", repo.updated.AccountID)
+	// Version 5 is what SetCredential left behind; the pre-rotation 4 would fail the check.
+	if repo.updated == nil || repo.updVer != 5 || repo.updated.AccountID != "new" {
+		t.Fatalf("account id change: updated = %+v at version %d, want new at 5", repo.updated, repo.updVer)
 	}
 }
 
