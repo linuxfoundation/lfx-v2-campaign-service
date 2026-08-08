@@ -23,6 +23,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/crypto"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/snowflake"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
@@ -990,10 +991,31 @@ func (c *Container) Close(ctx context.Context) error {
 func (c *Container) newBriefService(briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator) *service.BriefService {
 	s := service.NewBriefService(briefs, campaigns, jobs, orch)
 	s.SetIndexer(c.indexPublisher)
+	s.SetEventURL(c.eventFetcher(), eventurl.NewParser())
 	if c.indexingDisabled() {
 		s.DisableIndexing()
 	}
 	return s
+}
+
+// eventFetcher constructs the SSRF-guarded event-page fetcher for this deployment.
+//
+// The NAT64 prefixes are the whole reason this is a method and not a bare NewFetcher()
+// call. eventurl decodes the well-known 64:ff9b::/96 unconditionally, but RFC 6052 §2.2
+// network-specific prefixes are the operator's own global unicast space — undiscoverable
+// in-process and indistinguishable from any other public prefix. On a cluster that uses
+// one, an unlisted prefix is a live SSRF hole: the TRANSLATOR makes the IPv4 connection,
+// so an encoded 169.254.169.254 satisfies every check inside this process. Config is the
+// only place that fact can come from.
+//
+// WithNAT64Prefixes panics on a malformed or non-RFC-6052 length, and that is the wanted
+// behaviour HERE specifically: this runs at composition, so a prefix typed wrong stops
+// the pod from starting instead of silently decoding at the wrong offset for its lifetime.
+func (c *Container) eventFetcher() *eventurl.Fetcher {
+	if c.Config == nil || len(c.Config.EventURLNAT64Prefixes) == 0 {
+		return eventurl.NewFetcher()
+	}
+	return eventurl.NewFetcher(eventurl.WithNAT64Prefixes(c.Config.EventURLNAT64Prefixes...))
 }
 
 // indexingDisabled reports whether indexing is DELIBERATELY off, from CONFIG alone.

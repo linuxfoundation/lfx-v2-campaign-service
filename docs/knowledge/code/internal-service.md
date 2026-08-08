@@ -262,4 +262,28 @@ statement (and the claim INSERTs rather than updates, so there is no row conflic
 serialize on) — deleting under an in-flight dispatch could let a concurrent claim
 double-create upstream.
 
+## FetchEventURL does not consult the repositories
+
+`event_url.go` holds the one brief-service handler that does not call `ready()`. It needs
+a fetcher and a parser, not a database, so it stays available through the cold-start
+window when the backend has not yet bound — and its own 503 therefore means only "the
+fetcher was never wired", which is a configuration fact rather than a transient one.
+
+The collaborators arrive through `SetEventURL` for the same reason `SetIndexer` exists:
+the ~40 `NewBriefService` call sites (nearly all tests) must keep compiling. The
+difference from the indexer is that there is no Noop stand-in — a fetcher that silently
+did nothing would report "no event details" for a page that is perfectly fine — so the
+handler checks for nil and reports unavailable instead.
+
+`EventFetcher` is narrow on purpose. `eventurl.NewFetcher` is the only constructor in
+non-test code, so nothing can reach this seam with an unguarded HTTP client; the interface
+exists so tests need no listening socket, not so the SSRF guard becomes swappable.
+
+`mapEventURLErr` matches with `errors.Is`, because `eventurl` returns a multi-unwrap error
+carrying both a sentinel and a redacted cause — a type switch sees only the wrapper. Its
+default branch returns a FIXED message rather than formatting the cause: `eventurl` builds
+URL-free messages because they are rendered to callers and to logs, and an unrecognized
+error is exactly the one whose text nothing vouched for. Forbidden maps to 400 and not
+403: nothing about the caller is at issue, so 403 would send an operator to look at tokens.
+
 See [internal/service](../../../internal/service).
