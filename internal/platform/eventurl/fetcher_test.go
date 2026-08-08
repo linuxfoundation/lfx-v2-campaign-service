@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -278,5 +279,179 @@ func TestSafeCauseNeverEchoesUnknownText(t *testing.T) {
 	got := safeCause(&net.DNSError{Err: "no such host", Name: "secret-preview.example.com", IsNotFound: true})
 	if got != "host not found" {
 		t.Errorf("safeCause(DNSError) = %q, want %q", got, "host not found")
+	}
+}
+
+// TestFetchErrorsDoNotExposeTheTransportErrorThroughUnwrap is the other half of the
+// redaction, and the half a message-only assertion cannot reach. fetchError publishes an
+// Unwrap, so every value in its chain is recoverable by anything doing errors.As — logging
+// middleware, telemetry, a generic error renderer. A *url.Error recovered that way hands
+// over its EXPORTED URL field: the caller's userinfo and query, i.e. exactly the secret the
+// message strips. Restoring `cause: err` at either construction site makes this fail.
+func TestFetchErrorsDoNotExposeTheTransportErrorThroughUnwrap(t *testing.T) {
+	const secret = "s3cr3t"
+	target := "http://" + secret + ":" + secret + "@127.0.0.1:9/e?token=" + secret
+
+	_, err := newUnguardedFetcher().Fetch(context.Background(), target)
+	if err == nil {
+		t.Fatal("Fetch(unreachable) error = nil, want an error")
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		t.Fatalf("the *url.Error is reachable through the chain, carrying URL %q", urlErr.URL)
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		t.Fatalf("the transport error is reachable through the chain: %v", opErr)
+	}
+	if !errors.Is(err, ErrEventURLFetchFailed) {
+		t.Errorf("err = %v, want it to stay errors.Is-able as ErrEventURLFetchFailed", err)
+	}
+}
+
+// leakyBody fails its Read with a secret-bearing *url.Error. http2 stream errors really do
+// quote the request, so this is the shape the body-read branch has to survive — not a
+// hypothetical.
+type leakyBody struct{ readErr error }
+
+func (b leakyBody) Read([]byte) (int, error) { return 0, b.readErr }
+func (b leakyBody) Close() error             { return nil }
+
+// leakyTransport answers 200 with a body that fails on read, so the failure lands PAST the
+// client.Do branch the other redaction test covers.
+type leakyTransport struct{ err error }
+
+func (t leakyTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Body: leakyBody{readErr: t.err}, Header: http.Header{}}, nil
+}
+
+// TestBodyReadErrorsAreRedactedToo covers the SECOND construction site. The Do-path test
+// would stay green if only this branch regressed to carrying the raw error, so redaction
+// tested at one site proves nothing about the other — the leak is per-branch, and so is the
+// test. Both assertions matter: the message must not quote the URL, and errors.As must not
+// be able to walk back to the *url.Error the message was derived from.
+func TestBodyReadErrorsAreRedactedToo(t *testing.T) {
+	const secret = "s3cr3t"
+	leak := &url.Error{Op: "Get", URL: "http://u:" + secret + "@example.test/e?token=" + secret, Err: errors.New("stream error")}
+	f := &Fetcher{client: &http.Client{Transport: leakyTransport{err: leak}}}
+
+	_, err := f.Fetch(context.Background(), "http://example.test/e")
+	if err == nil {
+		t.Fatal("Fetch with a failing body read returned no error")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Errorf("the rendered error quotes the secret: %v", err)
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		t.Fatalf("the *url.Error is reachable through the chain, carrying URL %q", urlErr.URL)
+	}
+	if !errors.Is(err, ErrEventURLFetchFailed) {
+		t.Errorf("err = %v, want it to stay errors.Is-able as ErrEventURLFetchFailed", err)
+	}
+}
+
+// TestSafeIdentityKeepsOnlyCanonicalSentinels: the identity exists so a caller can tell "we
+// gave up" from "the page did not answer", which needs exactly the context sentinels — and
+// the value satisfying errors.Is must be the canonical singleton, not the wrapper that
+// happened to contain it. Anything unrecognized contributes nothing, the same default-deny
+// safeCause applies to the message.
+func TestSafeIdentityKeepsOnlyCanonicalSentinels(t *testing.T) {
+	wrapped := &url.Error{Op: "Get", URL: "http://u:p@host/?token=s3cr3t", Err: context.DeadlineExceeded}
+	got := safeIdentity(wrapped)
+	if got != context.DeadlineExceeded {
+		t.Fatalf("safeIdentity(wrapped deadline) = %#v, want the canonical context.DeadlineExceeded", got)
+	}
+	if safeIdentity(&url.Error{Op: "Get", URL: "http://u:p@host/", Err: errors.New("boom")}) != nil {
+		t.Error("safeIdentity kept an unrecognized cause; it must contribute nothing to the chain")
+	}
+	if safeIdentity(context.Canceled) != context.Canceled {
+		t.Error("safeIdentity dropped context.Canceled")
+	}
+}
+
+// TestEmbeddedIPv4DecodesEveryRFC6052Layout: the IPv4 destination is at a DIFFERENT offset for
+// every prefix length, and only /96 puts it in the low 32 bits. A decoder that assumed the /96
+// layout would read four unrelated bytes for the other five and answer "not forbidden" about an
+// address naming 169.254.169.254 — the exact failure this exists to prevent. Each case below
+// encodes 169.254.169.254 (a9 fe a9 fe) at its length's layout.
+func TestEmbeddedIPv4DecodesEveryRFC6052Layout(t *testing.T) {
+	want := net.IPv4(169, 254, 169, 254)
+	cases := map[int]string{
+		32: "2001:db8:a9fe:a9fe::",
+		40: "2001:db8:aa9:fea9:00fe::",
+		48: "2001:db8:0:a9fe:a9:fe00::",
+		56: "2001:db8:0:a9:fe:a9fe::",
+		64: "2001:db8:a9fe:a9fe:00a9:fea9:fe00::",
+		96: "2001:db8::a9fe:a9fe",
+	}
+	for length, s := range cases {
+		ip := net.ParseIP(s)
+		if ip == nil {
+			t.Fatalf("/%d: fixture %q does not parse", length, s)
+		}
+		got := embeddedIPv4(ip, length)
+		if !got.Equal(want) {
+			t.Errorf("embeddedIPv4(%s, /%d) = %v, want %v", s, length, got, want)
+		}
+	}
+
+	// A nonzero reserved octet must STILL decode. RFC 6052 requires bits 64-71 to be zero,
+	// but refusing to decode when they are not would fail OPEN: nil means "no embedded
+	// address", which means the dial proceeds. An attacker reaching for 169.254.169.254
+	// through a translated prefix would just set this octet. The length is known from the
+	// matched prefix, so the octet identifies nothing and buys nothing.
+	if got := embeddedIPv4(net.ParseIP("2001:db8:a9fe:a9fe:01a9:fea9:fe00::"), 64); !got.Equal(want) {
+		t.Errorf("embeddedIPv4 with a nonzero reserved octet = %v, want %v — a MUST-violating address must not fail open", got, want)
+	}
+	// A length RFC 6052 does not define must never be guessed at.
+	if got := embeddedIPv4(net.ParseIP("2001:db8::a9fe:a9fe"), 80); got != nil {
+		t.Errorf("embeddedIPv4 decoded at an undefined prefix length: %v", got)
+	}
+}
+
+// TestConfiguredNAT64PrefixIsGuarded: on a cluster with a network-specific translation prefix,
+// the TRANSLATOR makes the IPv4 connection, so an encoded 169.254.169.254 reaches the metadata
+// service while every check in isForbiddenIP sees an ordinary global IPv6 address. The prefix
+// cannot be discovered in-process — it is the operator's own global unicast space — so it is
+// configured, and the guard has to decode it.
+//
+// The third assertion is the half that makes this a fix rather than a blanket deny: an address
+// in the SAME configured prefix naming a public IPv4 must still be allowed through the guard.
+func TestConfiguredNAT64PrefixIsGuarded(t *testing.T) {
+	// A globally routable prefix, not 2001:db8::/32: the documentation range is already in
+	// forbiddenNets, so using it would let this test pass on the wrong rejection.
+	guard := guardDialAddress([]nat64Prefix{{
+		net:    net.IPNet{IP: net.ParseIP("2a01:4f8:1::"), Mask: net.CIDRMask(48, 128)},
+		length: 48,
+	}})
+
+	// 2a01:4f8:1:: + a9fe/a9fe at the /48 layout (bytes 6-7, reserved octet, bytes 9-10).
+	if err := guard("tcp6", "[2a01:4f8:1:a9fe:a9:fe00::]:443", nil); err == nil {
+		t.Error("a configured nat64 prefix naming 169.254.169.254 was allowed")
+	} else if !errors.Is(err, ErrEventURLForbidden) {
+		t.Errorf("err = %v, want ErrEventURLForbidden", err)
+	}
+
+	// Unconfigured, the same address is invisible: this is what makes the option load-bearing
+	// rather than decorative, and what the knowledge doc records as the residual risk.
+	if err := guardDialAddress(nil)("tcp6", "[2a01:4f8:1:a9fe:a9:fe00::]:443", nil); err == nil {
+		t.Log("unconfigured: the encoded address is not detectable in-process, as documented")
+	}
+
+	// 8.8.8.8 (08 08 08 08) at the same layout: public, and must stay reachable.
+	if err := guard("tcp6", "[2a01:4f8:1:808:8:800::]:443", nil); err != nil {
+		t.Errorf("a configured prefix naming a public IPv4 was refused: %v", err)
+	}
+
+	// The same metadata address with the RESERVED octet set to 01 instead of 00. RFC 6052
+	// says that octet MUST be zero, and the temptation is to treat a violation as "not an
+	// embedding" — but this guard only ever decides between "refuse" and "dial", so a
+	// refusal to decode IS a dial. That makes the reserved octet a one-byte bypass of the
+	// entire NAT64 check, reachable by anyone who can name a host.
+	if err := guard("tcp6", "[2a01:4f8:1:a9fe:1a9:fe00::]:443", nil); err == nil {
+		t.Error("a nonzero reserved octet bypassed the nat64 guard — the check fails open")
+	} else if !errors.Is(err, ErrEventURLForbidden) {
+		t.Errorf("err = %v, want ErrEventURLForbidden", err)
 	}
 }
