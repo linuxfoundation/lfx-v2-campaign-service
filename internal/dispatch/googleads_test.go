@@ -2097,9 +2097,10 @@ func TestValidateGoogleAdsCredentials_WhitespaceOnlyIsIncomplete(t *testing.T) {
 }
 
 // TestValidateGoogleAdsConnection_NoAccountSelected pins the sentinel pair on the empty
-// account-id guard. Until credentials-first bootstrap existed, this guard was UNREACHABLE
-// — the design required account_id, so no connection could be stored without one — and
-// being unreachable it returned a bare error carrying no sentinel at all.
+// account-id guard. Until credentials-first bootstrap existed, an account-less connection
+// was an unintended state rather than an impossible one — Required("account_id") checked
+// only that the JSON key was present, so `"account_id": ""` was accepted and stored — and
+// the guard returned a bare error carrying no sentinel at all.
 //
 // That is now the ordinary state of a freshly created connection, and a bare error would
 // fall to each handler's default arm and answer 503 "the platform did not respond" for a

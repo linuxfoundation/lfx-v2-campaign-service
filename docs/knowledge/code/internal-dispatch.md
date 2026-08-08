@@ -366,7 +366,7 @@ retrying a 429 cannot double-apply anything).
 account-agnostic: it asks which customer ids the CREDENTIAL reaches, so an account id is not
 a narrower version of the question, it is a different one.
 
-Both lifecycles are now reachable. `GoogleAdsConnectionConfig` no longer declares
+Both lifecycles are now SUPPORTED. `GoogleAdsConnectionConfig` no longer declares
 `Required("account_id")` (Google Ads alone — it is the only provider with a discovery endpoint,
 so the only one where a caller can create a connection and then find out what to put in it), so
 this endpoint serves BOTH re-pointing an existing connection ("which other customer ids does this

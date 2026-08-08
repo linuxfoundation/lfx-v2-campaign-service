@@ -247,12 +247,17 @@ func validateGoogleAdsConnection(projectID string, res *resolved) (googleAdsCred
 		// ErrConnectionNotUsable decides the HTTP status, ErrAccountNotSelected names the
 		// reason for the log line's fixed vocabulary (unusableConnectionReason).
 		//
-		// This guard used to return a bare error, which was harmless only because it was
-		// unreachable — GoogleAdsConnectionConfig required account_id, so no connection
-		// could exist without one. Credentials-first bootstrap makes it the NORMAL state of
-		// a freshly created connection, and a bare error here falls to each handler's
-		// default arm and answers 503: "the platform did not respond", for a project that
-		// simply has not finished setting up, with a remedy (wait) that can never work.
+		// This guard used to return a bare error. That was NOT harmless, and calling it
+		// unreachable would be wrong: Goa's Required("account_id") was a presence check on
+		// the JSON KEY — the generated validator was `if body.AccountID == nil` — and the
+		// Go field is a plain string, so `"account_id": ""` (or whitespace) satisfied it and
+		// was stored. An account-less row was reachable all along; it was just an unintended,
+		// undocumented state nobody had reasoned about. What changed is that credentials-first
+		// bootstrap makes it a SUPPORTED, omission-based lifecycle state and the NORMAL state
+		// of a freshly created connection — which is what makes the bare error's cost
+		// unavoidable rather than merely latent: it falls to each handler's default arm and
+		// answers 503, "the platform did not respond", for a project that simply has not
+		// finished setting up, with a remedy (wait) that can never work.
 		return creds, "", fmt.Errorf("google ads connection for project %s has no account id (customer id): %w: %w",
 			projectID, domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected)
 	}

@@ -186,8 +186,14 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   and an upstream one arrive as the same type — so `internal/dispatch/googleads.go` wraps the
   pre-send failures with the sentinel and this arm reads it. The wrap has two owners:
   `validateGoogleAdsCredentials` tags the credential-state three (inactive, undecodable,
-  incomplete), which is why they are also 409 on the campaign dispatch and metrics paths rather
-  than discovery alone, and `resolveGoogleAdsDiscoveryClient` tags the dashed `login_customer_id`. Neither the cause NOR its text leaves this function — not in the response and not in
+  incomplete), which is why they reach callers beyond discovery — but the SHAPE they reach them in
+  depends on whether the caller is synchronous. The **status toggle** and the **metrics read**
+  (`internal/service/brief.go`) are synchronous, so they answer a **409** off this same sentinel.
+  **Campaign create is not**: it answers `202` and the identical failure surfaces later in the
+  polled job result, never as a 409 — see `docs/api-catalog.md`. Do not describe "campaign
+  dispatch" as receiving a 409; the dispatch layer produces the error, and only the two
+  synchronous readers turn it into a status code.
+  `resolveGoogleAdsDiscoveryClient` tags the dashed `login_customer_id`. Neither the cause NOR its text leaves this function — not in the response and not in
   the log line. One of the wrapped errors is computed over the decrypted credential blob, and
   `encoding/json` quotes its input, so logging the cause would put credential-derived bytes into
   centralized logs for exactly the connection whose credentials are malformed. What the log line
@@ -202,9 +208,17 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
 **`account_not_selected` is the one reason in that vocabulary that is not a fault.** Every other
 token describes something WRONG with stored state; this one describes state that is merely
 UNFINISHED, and it is the only one a caller reaches by doing exactly what the API told them to
-do. It exists because `GoogleAdsConnectionConfig` dropped `Required("account_id")` to allow the
+do. It is NAMED because `GoogleAdsConnectionConfig` dropped `Required("account_id")` to allow the
 credentials-first bootstrap (`design/connection.go`): a connection can now be created with
 credentials alone, discovery run against it, and the chosen account PUT back afterwards.
+
+It was not, however, previously impossible — and the distinction matters, because the guard that
+produces this token predates the bootstrap and used to return a bare error. Goa's `Required`
+checks that the JSON KEY is present; the generated validator was `if body.AccountID == nil`, and
+the Go field is a plain string, so `"account_id": ""` (or whitespace) satisfied it and was stored.
+An account-less row was reachable all along as an unintended, undocumented state. What this change
+did was turn it into a supported, omission-based lifecycle state — and, in doing so, make the
+mis-classified 503 the common case rather than a latent one.
 
 Note that `status=active` on such a connection is deliberate, not a gap in the lifecycle.
 **`active` says the connection is ENABLED for credential-based operations — it does not say the

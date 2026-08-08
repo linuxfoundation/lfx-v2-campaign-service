@@ -316,9 +316,11 @@ func TestJWTAuth_EmptyTokenRejected(t *testing.T) {
 //
 // Three assertions, each guarding a different way this could regress:
 //
-//  1. It is accepted at all. Goa enforces Required at the transport layer, so the
-//     Required("account_id") this change removed would have rejected the request before
-//     any of this code ran.
+//  1. It is accepted at all — with the key OMITTED. Goa enforces Required at the transport
+//     layer, and the Required("account_id") this change removed was a presence check on the
+//     JSON key (`if body.AccountID == nil`), so it rejected only OMISSION; an explicit
+//     `"account_id": ""` always got through. Omission is the shape the bootstrap flow
+//     actually sends, which is why this test omits rather than empties the field.
 //  2. status is ACTIVE. This is not cosmetic — validateGoogleAdsCredentials refuses a
 //     non-active connection, so a "pending"-style status here would leave the connection
 //     unable to reach the discovery endpoint that exists to finish it, and the bootstrap

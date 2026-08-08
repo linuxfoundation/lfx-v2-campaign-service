@@ -208,13 +208,17 @@ var (
 	// this one describes state that is merely UNFINISHED, and it is the only one a caller
 	// reaches by doing exactly what the API told them to do.
 	//
-	// It became reachable when GoogleAdsConnectionConfig dropped Required("account_id") to
-	// allow credentials-first bootstrap (design/connection.go). Before that a connection
-	// could not exist without an account id, so the guard that produces this was dead code
-	// — and, being dead, it returned a bare error carrying no sentinel at all. That is
-	// precisely the shape of defect this vocabulary exists to prevent: with no sentinel the
-	// condition fell to the default arm and reported 503, telling an operator to wait for a
-	// state that changes only when a human picks an account.
+	// It became a SUPPORTED state when GoogleAdsConnectionConfig dropped
+	// Required("account_id") to allow credentials-first bootstrap (design/connection.go).
+	// It was not, however, previously impossible: Required checked only that the JSON key
+	// was present (the generated validator was `if body.AccountID == nil`) and the Go field
+	// is a plain string, so `"account_id": ""` was accepted and stored. The guard that
+	// produces this sentinel was therefore reachable before — via an unintended, unnamed
+	// state — and it returned a bare error carrying no sentinel at all. That is precisely
+	// the shape of defect this vocabulary exists to prevent: with no sentinel the condition
+	// fell to the default arm and reported 503, telling an operator to wait for a state that
+	// changes only when a human picks an account. Bootstrap did not create the defect; it
+	// made it the common path and gave the state a name.
 	//
 	// It is wrapped ALONGSIDE ErrConnectionNotUsable, and the two have distinct jobs:
 	// ErrConnectionNotUsable selects the HTTP status, this one supplies the reason token

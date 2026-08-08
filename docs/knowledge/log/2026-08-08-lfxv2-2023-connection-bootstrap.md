@@ -79,3 +79,26 @@ carrying the same bit.
 One consequence to keep in mind: `PUT` is a full replace, so omitting `account_id` on update
 CLEARS a previously chosen one. That is the same semantics `label` and `login_customer_id` have
 always had on that handler, and it is the intended way to un-select an account.
+
+## Correction — "unreachable" was the wrong word, and 409 was the wrong path
+
+Two suppressed Copilot findings on #91, both correct on the merits.
+
+**The empty-account-id guard was never unreachable.** Several comments (and this bundle)
+claimed no account-less connection could exist before this change, because the design declared
+`Required("account_id")`. Goa's `Required` checks that the JSON KEY is present — the generated
+validator removed by this PR was literally `if body.AccountID == nil` — and the Go field is a
+plain string, so `"account_id": ""` or whitespace satisfied it and was persisted. The guard was
+reachable through an unintended, undocumented state; what this change does is convert that into a
+supported, omission-based lifecycle state, and thereby turn a latent mis-classification (bare
+error → default arm → 503) into the common path. Reworded at every site that repeated the claim:
+`internal/dispatch/googleads.go`, `internal/domain/errors.go`, `internal/dispatch/googleads_test.go`,
+`internal/service/connection_test.go`, `docs/knowledge/code/internal-service.md`,
+`docs/knowledge/code/internal-dispatch.md`.
+
+**Campaign dispatch does not answer 409.** `internal-service.md` said the credential-state three
+are "409 on the campaign dispatch and metrics paths". Campaign create is asynchronous: it answers
+`202` and surfaces the failure through the polled job result, exactly as `docs/api-catalog.md`
+already states. The two synchronous readers — the status toggle and the per-campaign metrics read
+(`internal/service/brief.go`) — are the ones that turn the sentinel into a status code. The
+dispatch layer PRODUCES the error; it does not classify it.
