@@ -62,6 +62,58 @@ is four bytes and can no longer match a `/96`. `64:ff9b::a9fe:a9fe` is the cloud
 address; `64:ff9b::5db8:d822` is an ordinary public host and stays allowed. Both sides
 of each rule are pinned by the public-address cases in the same test.
 
+## The error chain carries only values this package minted
+
+`Error()` renders no URL, and that is the easy half. `fetchError` also publishes an `Unwrap`,
+so every value in its chain is recoverable by anything doing `errors.As` — logging middleware,
+telemetry, a generic renderer. Holding the transport error there, even in an unexported field,
+hands it out: `errors.As(err, &urlErr)` recovers the `*url.Error` and reads its **exported**
+`URL` field, userinfo and query included. An unexported field is not a boundary when the type
+publishes an `Unwrap`.
+
+So the chain carries `safeIdentity(err)` instead: the canonical `context.Canceled`,
+`context.DeadlineExceeded`, `io.EOF` and `io.ErrUnexpectedEOF` singletons and nothing else.
+Those are field-less package-level values, so exposing one reveals nothing about the request,
+and they are exactly what a caller distinguishing "we gave up" from "the page did not answer"
+needs. Anything unrecognized contributes NO chain entry at all — the same default-deny
+`safeCause` applies to the message, for the same reason: an unrecognized error is the case
+whose contents are least vouched for. `*net.DNSError` and `*url.Error` would each have to be
+rebuilt to be safe, and no caller branches on them.
+
+## NAT64 has one prefix that can be known and an unbounded set that cannot
+
+`64:ff9b::/96` (RFC 6052 §2.1) is the well-known translation prefix, and it is decoded
+unconditionally. RFC 6052 §2.2 also permits **network-specific** prefixes at `/32`, `/40`,
+`/48`, `/56` and `/64`, and those are the operator's own global unicast space — indistinguishable
+by inspection from any other public prefix. On a cluster that uses one, the TRANSLATOR makes the
+IPv4 connection, so an encoded `169.254.169.254` satisfies every check here.
+
+They are therefore **configured**, via `NewFetcher(WithNAT64Prefixes(...))`, not guessed.
+Speculatively decoding every address at all six layouts would over-reject: roughly one global
+address in 256 has a zero octet at bits 64-71 and bytes that read as `10.0.0.0/8` at the `/64`
+layout, and refusing a legitimate event page is a real cost, not a conservative default.
+
+The decoding is per-length, because only `/96` puts the address in the low 32 bits — the shorter
+layouts split it around the reserved octet at bits 64-71.
+
+**Nothing the RFC merely requires to be zero is checked** — not that reserved octet, not the
+trailing suffix bits. Every such check is a way to fail OPEN. `embeddedIPv4` returning nil means
+"no embedded address here", and the guard's only two outcomes are refuse and dial, so a refusal
+to *decode* is a decision to *connect*. Checking bits 64-71 would therefore hand an attacker a
+one-byte bypass of the whole NAT64 check: set the reserved octet to `01`, and an address naming
+`169.254.169.254` sails through.
+
+The octet is not needed to identify the layout either. `embeddedIPv4` is only ever called after
+an address matched a prefix whose length is KNOWN — from configuration, or from the well-known
+`/96`. The length is given, not inferred, so there is nothing to self-describe. Nor is there
+over-rejection to weigh against it: inside a matched translation prefix, every address is bound
+for a translator by construction. (The over-rejection argument above is about *speculatively*
+decoding arbitrary addresses, which is exactly why this package does not do that.)
+
+**Residual risk, stated plainly:** an unlisted network-specific prefix is a live SSRF hole, and
+this option is the in-process half of the answer, not a substitute for a destination policy at
+an egress boundary. Where the prefix cannot be enumerated, the boundary is the only real control.
+
 ## Parsing degrades, it does not guess
 
 Three strategies in strict precedence — JSON-LD `schema.org/Event`, then OpenGraph, then
