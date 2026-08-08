@@ -147,10 +147,9 @@ func TestApplyCampaignConfig(t *testing.T) {
 	})
 }
 
-// scopedConnReader answers per PROJECT SCOPE, unlike fakeConnReader which returns the
-// same row for every project. The system-account fallback is entirely about which
-// scope was asked, so a fake that cannot tell them apart would pass against an
-// implementation that never consults the system scope at all.
+// scopedConnReader answers per PROJECT SCOPE, unlike fakeConnReader. The fallback is
+// entirely about WHICH scope was asked, so a fake that cannot tell them apart would pass
+// against an implementation that never consults the system scope at all.
 type scopedConnReader struct {
 	rows map[string]*model.Connection
 	errs map[string]error
@@ -197,14 +196,12 @@ func TestResolveFallsBackToSystemAccount(t *testing.T) {
 }
 
 // TestResolveDoesNotFallBackFromABrokenProjectConnection: the asymmetry that makes the
-// fallback safe. A project that HAS a connection has recorded an intent to bill its own
-// account; running its campaign on the Linux Foundation's account because that row needs
-// attention would spend LF money on a request nobody aimed there.
+// fallback safe. A project that HAS a connection recorded an intent to bill its own
+// account; running it on the LF account instead spends LF money nobody aimed there.
 func TestResolveDoesNotFallBackFromABrokenProjectConnection(t *testing.T) {
 	cases := map[string]*model.Connection{
-		// Refused by resolve itself, and refused by the adapter after resolve returns
-		// (status is carried out on `resolved`, not enforced here). Both must reach the
-		// project's own row, never the system account's.
+		// One refused by resolve, one by the adapter after it (status rides out on
+		// `resolved`). Both must stop at the project's row, never the system account's.
 		"no stored credentials": {Provider: model.ProviderGoogleAds, Status: model.StatusActive},
 		"inactive":              {Provider: model.ProviderGoogleAds, AccountID: "1", EncryptedCredentials: []byte(`{}`), Status: model.StatusInactive},
 	}
@@ -228,9 +225,8 @@ func TestResolveDoesNotFallBackFromABrokenProjectConnection(t *testing.T) {
 	}
 }
 
-// TestResolveWithNoSystemAccountReportsTheProject: the ordinary deployment, where no
-// system account is configured. Two lookups missed, but the error names the caller's
-// project — there is nothing they can do about an absent system account.
+// TestResolveWithNoSystemAccountReportsTheProject: two lookups miss, but the error names
+// the CALLER's project — nothing they can do about an absent system account.
 func TestResolveWithNoSystemAccountReportsTheProject(t *testing.T) {
 	repo := &scopedConnReader{}
 	_, err := newCredsSource(repo, identityEncryptor{}).

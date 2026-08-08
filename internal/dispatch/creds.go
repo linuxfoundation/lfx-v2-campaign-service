@@ -159,14 +159,12 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 	conn, err := s.repo.Get(ctx, projectID, provider)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			// The project has no connection of its own. Fall back to the LF-owned
-			// system account, so a project can run campaigns before it has connected
-			// a platform account (goal: system accounts with per-user attribution).
-			//
-			// ONLY a genuine absence falls back, and that asymmetry is the whole
-			// safety argument: every other failure here means the project HAS a
-			// connection needing attention, and running its campaign on the LF
-			// account would spend LF money on a request it believed was its own.
+			// No connection of its own: fall back to the LF-owned system account, so a
+			// project can run campaigns before connecting a platform account. ONLY a
+			// genuine absence falls back, and that asymmetry is the whole safety
+			// argument — every other failure means the project HAS a connection needing
+			// attention, and running its campaign on the LF account would spend LF money
+			// on a request it believed was its own.
 			if sysConn, sysErr := s.systemConn(ctx, projectID, provider); sysErr != nil {
 				return nil, sysErr
 			} else if sysConn != nil {
@@ -176,11 +174,8 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 			// account discovery need to tell "this project has no connection" (404)
 			// apart from "the platform call failed" (503). The dispatch paths only
 			// consult NoUpstreamCreate, so preserving it changes nothing for them.
-			//
-			// The error names the PROJECT, not the system scope, even though two
-			// lookups missed. The caller asked about their project and there is
-			// nothing for them to do about an absent system account; which of the two
-			// was missing is an operator's question, and systemConn logs it.
+			// It names the PROJECT even though two lookups missed: which one was absent
+			// is an operator's question, and systemConn logs it.
 			return nil, notCreated(fmt.Errorf("no %s connection configured for project %s: %w", provider, projectID, domain.ErrNotFound))
 		}
 		// A repo error (DB down) is NOT a pre-create signal we can prove, but no
@@ -191,13 +186,11 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 	return s.resolveConn(ctx, projectID, conn, provider)
 }
 
-// systemConn loads the reserved system-scope connection. It returns (nil, nil) when no
-// system account is configured — the ordinary state — and an error only when the lookup
-// itself failed. projectID is the scope that missed, for the log line.
+// systemConn loads the reserved system-scope connection: (nil, nil) when no system account
+// is configured — the ordinary state — and an error only when the lookup itself failed.
 func (s *credsSource) systemConn(ctx context.Context, projectID string, provider model.Provider) (*model.Connection, error) {
 	if projectID == model.SystemProjectID {
-		// Already the system scope: a second identical Get would return the same
-		// miss, and calling the fallback a fallback for itself would be a lie.
+		// Already the system scope: a second identical Get would return the same miss.
 		return nil, nil
 	}
 	conn, err := s.repo.Get(ctx, model.SystemProjectID, provider)
@@ -209,16 +202,14 @@ func (s *credsSource) systemConn(ctx context.Context, projectID string, provider
 	if errors.Is(err, domain.ErrNotFound) {
 		return nil, nil
 	}
-	// A repo failure on the system lookup is NOT an absence. Reporting it as one
-	// would hand the caller a 404 that says "you have no connection" when the truth
-	// is that the database did not answer.
+	// A repo failure on the system lookup is NOT an absence: reporting it as one hands
+	// the caller a 404 saying "you have no connection" when the database did not answer.
 	return nil, notCreated(fmt.Errorf("load system %s connection: %w", provider, err))
 }
 
 // resolveConn validates a connection row and decrypts its credentials. Shared by the
 // project scope and the system-account fallback, so a system row is held to exactly the
-// same standard rather than trusted because it is ours. Status travels out on `resolved`
-// and is enforced by each adapter, which cannot tell which scope the row came from.
+// same standard rather than trusted because it is ours. Status rides out on `resolved`.
 func (s *credsSource) resolveConn(ctx context.Context, projectID string, conn *model.Connection, provider model.Provider) (*resolved, error) {
 	// The branches below are tagged with domain.ErrConnectionNotUsable; the two above
 	// deliberately are not. The distinction is whether the connection ROW itself is the

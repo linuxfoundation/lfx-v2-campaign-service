@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: MIT
 
 // Package bootstrap installs the LF-owned system ad-account credentials that projects
-// without a connection of their own fall back to.
-//
-// model.SystemProjectID is deliberately unreachable over HTTP (rejectSystemScope), so no
-// request can install the row — which is exactly why an out-of-band installer is REQUIRED
-// rather than optional: without one the fallback never fires and the feature ships turned
-// off. It writes through the repository and encryptor directly, the same two ports the
-// HTTP layer uses, so its row is indistinguishable from an API-written one.
-// See docs/knowledge/code/internal-dispatch.md.
+// without a connection of their own fall back to. model.SystemProjectID is deliberately
+// unreachable over HTTP (rejectSystemScope), so no request can install the row — which is
+// why an out-of-band installer is REQUIRED, not optional: without one the fallback never
+// fires and the feature ships turned off. It writes through the repository and encryptor
+// directly, the same two ports the HTTP layer uses, so its row is indistinguishable from
+// an API-written one. Driven by the bootstrap-system-account subcommand; see
+// docs/knowledge/code/internal-dispatch.md.
 package bootstrap
 
 import (
@@ -24,14 +23,12 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// systemActor is stamped as created_by/updated_by. The reserved scope has no bearer token
-// behind it, so attributing the write to a person would be a lie; naming the installer is
-// what an auditor reading updated_by actually needs.
+// systemActor is stamped as created_by/updated_by: the reserved scope has no bearer token
+// behind it, so attributing the write to a person would be a lie.
 var systemActor = &model.Actor{Name: "system account bootstrap", Username: "sysacct-bootstrap"}
 
 // requiredCredentialKeys mirrors the Required() lists in design/connection.go, in the
-// snake_case wire form: the installer's contract is the documented REQUEST body an
-// operator already has, not an internal struct.
+// snake_case wire form: the contract is the documented REQUEST body, not an internal struct.
 var requiredCredentialKeys = map[model.Provider][]string{
 	model.ProviderGoogleAds:    {"refresh_token", "client_id", "client_secret", "developer_token"},
 	model.ProviderLinkedInAds:  {"access_token"},
@@ -45,16 +42,15 @@ var requiredCredentialKeys = map[model.Provider][]string{
 // credentialKey folds a field name to the form the READERS match on. Stored blobs and
 // dispatch structs are both untagged, so encoding/json falls back to a case-insensitive
 // match: `clientId` works, `client_id` cannot — nothing bridges an underscore. snake_case
-// is what the API documents, so a working set-credential body encrypted cleanly, decoded
-// to an all-zero struct, and failed at dispatch, installer exit 0.
+// is what the API documents, so such a body encrypted cleanly, decoded to an all-zero
+// struct and failed far away at dispatch, installer exit 0.
 func credentialKey(k string) string {
 	return strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(k))
 }
 
 // canonicalCredentials validates the document and folds its keys. It refuses anything that
-// is not a non-empty JSON OBJECT (`null`, `[]` and `"x"` all parse, none is a credential)
-// and anything missing a required field — an incomplete document would otherwise fail at
-// dispatch, where nothing points back here.
+// is not a non-empty JSON OBJECT (`null`, `[]` and `"x"` parse, none is a credential) and
+// anything missing a required field, which would otherwise fail far away at dispatch.
 func canonicalCredentials(provider model.Provider, credsJSON []byte) ([]byte, error) {
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(credsJSON, &doc); err != nil {
@@ -84,21 +80,28 @@ func canonicalCredentials(provider model.Provider, credsJSON []byte) ([]byte, er
 	return json.Marshal(folded)
 }
 
+// requiredConfigKeys are the non-secret ProviderConfig columns a dispatch adapter REFUSES
+// to create a campaign without; omitted providers have only optional config (Google Ads'
+// login_customer_id). Without them the row is installable and dead.
+var requiredConfigKeys = map[model.Provider][]string{
+	model.ProviderLinkedInAds: {"org_id"},
+	model.ProviderMetaAds:     {"page_id"},
+	model.ProviderTwitterAds:  {"funding_instrument_id"},
+}
+
 // InstallSystemCredentials installs or rotates the system account's credentials for one
 // provider. It is IDEMPOTENT — a second run rotates onto the existing row rather than
 // failing the singleton constraint — which is what makes it safe in a deployment job.
 // credsJSON is the plaintext document in the snake_case form set-credential documents; its
-// keys are folded (see credentialKey) before encryption and never logged.
-//
-// accountID may be empty: that is the credentials-first state, and account discovery turns
-// it into an account id. Requiring one would mean knowing the customer id before holding
-// the credential that could tell you what it is.
+// keys are folded (see credentialKey) before encryption and never logged. accountID may be
+// empty: that is the credentials-first state, and account discovery turns it into an id.
 func InstallSystemCredentials(
 	ctx context.Context,
 	repo domain.ConnectionRepository,
 	enc domain.Encryptor,
 	provider model.Provider,
 	accountID string,
+	providerConfig map[string]string,
 	credsJSON []byte,
 ) error {
 	if repo == nil || enc == nil {
@@ -106,6 +109,11 @@ func InstallSystemCredentials(
 	}
 	if !provider.Valid() {
 		return fmt.Errorf("bootstrap: %q is not a supported provider", provider)
+	}
+	for _, want := range requiredConfigKeys[provider] {
+		if strings.TrimSpace(providerConfig[want]) == "" {
+			return fmt.Errorf("bootstrap: %s requires -config %s", provider, want)
+		}
 	}
 	canonical, err := canonicalCredentials(provider, credsJSON)
 	if err != nil {
@@ -120,31 +128,38 @@ func InstallSystemCredentials(
 	existing, gerr := repo.Get(ctx, model.SystemProjectID, provider)
 	switch {
 	case gerr == nil:
-		// Only SetCredential, deliberately: Update would also rewrite the account
-		// id, so a rotation omitting -account-id would CLEAR a selected account.
+		// Only SetCredential: Update would also rewrite the account id, so a rotation
+		// omitting -account-id would CLEAR a selected account.
 		if _, serr := repo.SetCredential(ctx, model.SystemProjectID, provider, ct, systemActor); serr != nil {
 			return fmt.Errorf("bootstrap: rotate system %s credentials: %w", provider, serr)
 		}
-		if accountID != "" && accountID != existing.AccountID {
+		// Config is rewritten only when supplied, for the same reason as the account id:
+		// an omitted flag must not clear a column somebody set.
+		if idChanged := accountID != "" && accountID != existing.AccountID; idChanged || len(providerConfig) > 0 {
 			upd := *existing
-			upd.AccountID = accountID
+			if idChanged {
+				upd.AccountID = accountID
+			}
+			if len(providerConfig) > 0 {
+				upd.ProviderConfig = providerConfig
+			}
 			upd.UpdatedBy = systemActor
-			// SetCredential bumped the version. Passing the stale one fails the
-			// optimistic check, leaving the credential rotated and the id not.
+			// SetCredential bumped the version; the stale one fails the optimistic
+			// check, leaving the credential rotated and the id not.
 			if _, uerr := repo.Update(ctx, &upd, existing.Version+1); uerr != nil {
-				return fmt.Errorf("bootstrap: set system %s account id: %w", provider, uerr)
+				return fmt.Errorf("bootstrap: set system %s account id/config: %w", provider, uerr)
 			}
 		}
 		return nil
 	case errors.Is(gerr, domain.ErrNotFound):
-		// Not-found is the ONLY error that may create: on any other, the row's
-		// state is unknown and creating over it overwrites a credential nobody
-		// meant to replace.
+		// Not-found is the ONLY error that may create: on any other the row's state is
+		// unknown, and creating over it overwrites a credential nobody meant to replace.
 		_, cerr := repo.Create(ctx, &model.Connection{
 			ProjectID:            model.SystemProjectID,
 			Provider:             provider,
 			Label:                "Linux Foundation system account",
 			AccountID:            accountID,
+			ProviderConfig:       providerConfig,
 			EncryptedCredentials: ct,
 			Status:               model.StatusActive,
 			CreatedBy:            systemActor,

@@ -14,8 +14,8 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// stubRepo records every call so a test can assert WHICH operation ran: create and
-// rotate are both "success" to the caller and only one is right for a given state.
+// stubRepo records every call so a test can assert WHICH operation ran: create and rotate
+// are both "success" to the caller and only one is right for a given state.
 type stubRepo struct {
 	row     *model.Connection
 	getErr  error
@@ -61,8 +61,8 @@ func (r *stubRepo) Delete(context.Context, string, model.Provider, *model.Actor)
 	return nil
 }
 
-// fakeEnc marks its output so a test can prove the stored blob is CIPHERTEXT: an
-// installer that forgot to encrypt still "decrypts fine" under an identity encryptor.
+// fakeEnc marks its output so a test can prove the stored blob is CIPHERTEXT: an installer
+// that forgot to encrypt still "decrypts fine" under an identity encryptor.
 type fakeEnc struct{ err error }
 
 func (e fakeEnc) Encrypt(plain []byte) ([]byte, error) {
@@ -76,15 +76,13 @@ func (e fakeEnc) Decrypt(ct []byte) ([]byte, error) {
 	return append([]byte{}, ct[len("enc:"):]...), nil
 }
 
-// goodCreds is the snake_case WIRE form — what design/connection.go documents and what
-// an operator holding a working set-credential body would actually pipe in.
+// goodCreds is the snake_case WIRE form design/connection.go documents.
 const goodCreds = `{"refresh_token":"rt","client_id":"ci","client_secret":"cs","developer_token":"dt"}`
 
 // TestStoredBlobDecodesIntoTheReader is the test that would have caught the original defect.
 // Encrypting the document verbatim was not wrong about JSON, it was wrong about WHO READS
-// IT — so this asserts on the DECODE, unmarshalling the stored blob into a struct shaped
-// like internal/dispatch's googleAdsCreds. Revert the folding and it fails with empty
-// fields, exactly how the bug presented.
+// IT — so this asserts on the DECODE, into a struct shaped like dispatch's googleAdsCreds.
+// Revert the folding and it fails with empty fields, exactly how the bug presented.
 func TestStoredBlobDecodesIntoTheReader(t *testing.T) {
 	for name, in := range map[string]string{
 		"wire snake_case": goodCreds,
@@ -94,7 +92,7 @@ func TestStoredBlobDecodesIntoTheReader(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			repo := &stubRepo{}
 			if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-				model.ProviderGoogleAds, "", []byte(in)); err != nil {
+				model.ProviderGoogleAds, "", nil, []byte(in)); err != nil {
 				t.Fatalf("install: %v", err)
 			}
 			var got struct{ ClientID, ClientSecret, DeveloperToken, RefreshToken string }
@@ -113,12 +111,12 @@ func TestStoredBlobDecodesIntoTheReader(t *testing.T) {
 	}
 }
 
-// TestInstallCreatesAtTheReservedScope pins the two properties the feature rests on: the
-// row lands at model.SystemProjectID, and the credential is stored ENCRYPTED.
+// TestInstallCreatesAtTheReservedScope: the row lands at model.SystemProjectID and the
+// credential is stored ENCRYPTED.
 func TestInstallCreatesAtTheReservedScope(t *testing.T) {
 	repo := &stubRepo{}
 	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderGoogleAds, "8666746580", []byte(goodCreds)); err != nil {
+		model.ProviderGoogleAds, "8666746580", nil, []byte(goodCreds)); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 	if repo.created == nil {
@@ -138,15 +136,16 @@ func TestInstallCreatesAtTheReservedScope(t *testing.T) {
 	}
 }
 
-// TestInstallIsIdempotent pins rotation: a second run must NOT Create (the singleton
-// index would reject it) and must rotate through SetCredential instead.
+// TestInstallIsIdempotent: a second run must NOT Create (the singleton index would reject
+// it) and must rotate through SetCredential instead.
 func TestInstallIsIdempotent(t *testing.T) {
 	repo := &stubRepo{row: &model.Connection{
 		ProjectID: model.SystemProjectID, Provider: model.ProviderGoogleAds,
-		AccountID: "8666746580", Version: 4, Status: model.StatusActive,
+		AccountID: "8666746580", ProviderConfig: map[string]string{"login_customer_id": "999"},
+		Version: 4, Status: model.StatusActive,
 	}}
 	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderGoogleAds, "8666746580", []byte(goodCreds)); err != nil {
+		model.ProviderGoogleAds, "8666746580", nil, []byte(goodCreds)); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 	for _, c := range repo.calls {
@@ -157,9 +156,10 @@ func TestInstallIsIdempotent(t *testing.T) {
 	if repo.setCT == nil {
 		t.Fatalf("rotation did not set a credential; calls = %v", repo.calls)
 	}
-	// No account-id change was asked for, so nothing may Update.
+	// Neither an account id nor config was supplied, so nothing may Update — an omitted
+	// flag must not blank a column somebody set.
 	if repo.updated != nil {
-		t.Fatalf("rotation updated the row with no account-id change: %+v", repo.updated)
+		t.Fatalf("rotation updated the row with nothing to change: %+v", repo.updated)
 	}
 }
 
@@ -171,7 +171,7 @@ func TestRotationUsesThePostCredentialVersion(t *testing.T) {
 		AccountID: "old", Version: 4, Status: model.StatusActive,
 	}}
 	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderGoogleAds, "new", []byte(goodCreds)); err != nil {
+		model.ProviderGoogleAds, "new", nil, []byte(goodCreds)); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 	if repo.updated == nil {
@@ -185,12 +185,12 @@ func TestRotationUsesThePostCredentialVersion(t *testing.T) {
 	}
 }
 
-// TestInstallDoesNotCreateOnAnUnreadableRow pins the fail-closed half: on a read error
-// that is not ErrNotFound the row's state is unknown, so nothing may be created.
+// TestInstallDoesNotCreateOnAnUnreadableRow: on a read error that is not ErrNotFound the
+// row's state is unknown, so nothing may be created.
 func TestInstallDoesNotCreateOnAnUnreadableRow(t *testing.T) {
 	repo := &stubRepo{getErr: errors.New("connection refused")}
 	err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderGoogleAds, "", []byte(goodCreds))
+		model.ProviderGoogleAds, "", nil, []byte(goodCreds))
 	if err == nil {
 		t.Fatal("install succeeded despite an unreadable row")
 	}
@@ -199,8 +199,8 @@ func TestInstallDoesNotCreateOnAnUnreadableRow(t *testing.T) {
 	}
 }
 
-// TestInstallRejectsUnusableInput covers the arms that must fail BEFORE anything is
-// written — `null`, `[]` and a bare string all parse as valid JSON, none is a credential.
+// TestInstallRejectsUnusableInput covers the arms that must fail BEFORE anything is written
+// — `null`, `[]` and a bare string all parse as valid JSON, none is a credential.
 func TestInstallRejectsUnusableInput(t *testing.T) {
 	cases := map[string]struct {
 		provider model.Provider
@@ -221,7 +221,7 @@ func TestInstallRejectsUnusableInput(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			repo := &stubRepo{}
 			if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-				tc.provider, "", []byte(tc.creds)); err == nil {
+				tc.provider, "", nil, []byte(tc.creds)); err == nil {
 				t.Fatal("install accepted an unusable input")
 			}
 			if len(repo.calls) != 0 {
@@ -231,12 +231,35 @@ func TestInstallRejectsUnusableInput(t *testing.T) {
 	}
 }
 
-// TestInstallDoesNotWriteWhenEncryptionFails pins that a failed Encrypt stops the
-// install: an empty blob would later read as an ABSENT credential, not a key problem.
+// TestInstallRequiresProviderConfigThatDispatchDemands: a provider whose adapter refuses to
+// create without a config column cannot be installed without it — the row would decrypt
+// fine and fail at campaign creation, far from the installer.
+func TestInstallRequiresProviderConfigThatDispatchDemands(t *testing.T) {
+	linkedInCreds := []byte(`{"access_token":"tok"}`)
+	repo := &stubRepo{}
+	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderLinkedInAds, "1", nil, linkedInCreds); err == nil {
+		t.Fatal("installed a linkedin row with no org_id")
+	}
+	if len(repo.calls) != 0 {
+		t.Fatalf("touched the repository before validating: %v", repo.calls)
+	}
+	cfg := map[string]string{"org_id": "987"}
+	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderLinkedInAds, "1", cfg, linkedInCreds); err != nil {
+		t.Fatalf("install with org_id: %v", err)
+	}
+	if got := repo.created.ProviderConfig["org_id"]; got != "987" {
+		t.Fatalf("org_id = %q, want 987 — config never reached the row", got)
+	}
+}
+
+// TestInstallDoesNotWriteWhenEncryptionFails: an empty blob would later read as an ABSENT
+// credential, not a key problem.
 func TestInstallDoesNotWriteWhenEncryptionFails(t *testing.T) {
 	repo := &stubRepo{}
 	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{err: errors.New("boom")},
-		model.ProviderGoogleAds, "", []byte(goodCreds)); err == nil {
+		model.ProviderGoogleAds, "", nil, []byte(goodCreds)); err == nil {
 		t.Fatal("install succeeded despite an encryption failure")
 	}
 	if len(repo.calls) != 0 {

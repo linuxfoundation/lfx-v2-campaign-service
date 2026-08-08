@@ -419,69 +419,45 @@ See [internal/dispatch](../../../internal/dispatch).
 
 ## The system account is a connection row, not a second mechanism
 
-A project that has connected no ad account of its own dispatches through the LF-owned
-system account, stored as an ordinary connection row at the reserved project scope
-`model.SystemProjectID` (`system:linuxfoundation`).
-
-A reserved scope rather than a `LFX_SYS_*` environment block, because a system account
-needs precisely what a project account needs — encryption at rest, an account id, provider
-config, a status, an `If-Match` version, an `updated_by` trail — all already on the row, so
-bootstrap and discovery work on it with no code of their own.
+A project that has connected no ad account of its own dispatches through the LF-owned system
+account, stored as an ordinary connection row at the reserved project scope
+`model.SystemProjectID` (`system:linuxfoundation`) — not an `LFX_SYS_*` environment block,
+because a system account needs exactly what a project account needs (encryption at rest, an
+account id, provider config, a status, an `If-Match` version, an `updated_by` trail).
 
 **Only a genuine absence falls back, and that asymmetry is the whole safety argument.** A
 repo error, an empty blob, a decrypt failure each mean the project HAS a connection that
 needs attention; running its campaign on the LF account instead spends LF money on a request
-the project believed was billed to itself. A missing row is the one state where no such
-intent was recorded, and a failure of the FALLBACK lookup is likewise not an absence —
-`resolveConn` is shared, so the system row is held to the same standard as any other.
+the project believed was billed to itself. A failure of the FALLBACK lookup is likewise not
+an absence — `resolveConn` is shared, so the system row is held to the same standard.
 
-The reserved value is unreachable through the API: `projectSlugProblem` enforces
-`^[a-z0-9]+(-[a-z0-9]+)*$`, which the colon cannot satisfy. Necessary and not sufficient —
-get/update/delete/test/set-credential stay permissive on `project_id` for historical UUID
-rows, so an existing system row was rewritable by anyone reaching the connections API for
-any project. `rejectSystemScope` closes those five at the shared helpers in
-`connection_handler.go`, answering 404 rather than 403 since confirming something is there
-is itself a disclosure.
-
-**A choke point only covers what actually passes through it.** Account discovery is a
-SEVENTH endpoint taking a caller-supplied `project_id` and the one that does not reach
-storage through those helpers — it calls `orch.ReadAccounts` itself — so it carries the
-guard inline, and it was the one initially missed. Left open, a `GET` on the reserved scope
-decrypts the LF credential and enumerates the Linux Foundation's own accounts. Its test
-needs a working orchestrator to mean anything: without one the call 503s before the guard
-is reached and passes against an unguarded implementation. Discovery still follows the same
-*fallback*, deliberately — a different thing from addressing the reserved scope: called
-with a project's own id it resolves through `credsSource.resolve` like every dispatch path,
-so a project with no connection sees the accounts its campaigns would actually run on.
+The reserved value cannot satisfy `projectSlugProblem`, so no create endpoint can plant a row
+there. Necessary and not sufficient: get/update/delete/test/set-credential stay permissive on
+`project_id` for historical UUID rows, so `rejectSystemScope` closes those five at the shared
+helpers in `connection_handler.go`, answering 404 rather than 403 since confirming something
+is there is itself a disclosure. **A choke point only covers what actually passes through
+it**: account discovery is a SEVENTH endpoint taking a caller-supplied `project_id`, so it
+carries the guard inline — left open, a `GET` on the reserved scope decrypts the LF credential
+and enumerates the Linux Foundation's own accounts. Its test needs a working orchestrator to
+mean anything: without one the call 503s first. Discovery still *falls back*, deliberately.
 
 ## Installing the system account
 
-Nothing can address the reserved scope over HTTP, so nothing can install it over HTTP
-either — which makes an installer a REQUIRED part of the feature, not a deployment detail:
-without one the fallback never fires and the change ships turned off.
-`internal/bootstrap`'s `InstallSystemCredentials`, driven by the `sysacct-bootstrap`
-binary, writes through the same repository and encryptor ports the HTTP layer uses, so its
-row is indistinguishable from an API-written one, attributed to the installer because no
-bearer token stands behind the reserved scope. Four properties are load-bearing:
+Nothing can address the reserved scope over HTTP, so nothing can install it over HTTP either
+— which makes an installer a REQUIRED part of the feature, not a deployment detail. It is the
+`bootstrap-system-account` subcommand of the service binary (`cmd/campaign-service/sysacct.go`
+→ `internal/bootstrap`) rather than a second command, because ko publishes only
+`cmd/campaign-service` and an unpublished binary is an unavailable installer. It is
+idempotent — a second run rotates through `SetCredential`, not `Create`, gated on the version
+`SetCredential` just left behind, and rewrites the account id or config only when the flag was
+given so an omission cannot clear a column somebody set. It fails closed on an unreadable row
+(only `ErrNotFound` may create). The credential comes from stdin, never a flag, which would
+land in shell history and every `ps` listing.
 
-- **Idempotent.** A second run rotates through `SetCredential`, not `Create` (the partial
-  unique index would reject that), and touches only the credential unless `-account-id`
-  was given, so it cannot clear an already-selected account. When it is given, the
-  `Update` is gated on the version `SetCredential` just left behind, or the rotation
-  lands half-applied.
-- **Fail-closed on an unreadable row.** Only `ErrNotFound` may create; on any other read
-  error the row's state is unknown and creating over it overwrites a credential nobody
-  meant to replace. Same asymmetry as the fallback itself.
-- **The credential comes from stdin, never a flag** — a flag lands in shell history and
-  every `ps` listing, indefinite exposure for a long-lived refresh token.
-- **Credential keys are folded before storage.** Valid JSON is not the bar — what the
-  READER matches is. Stored blobs and dispatch structs are both untagged, so
-  `encoding/json` falls back to a case-insensitive match that cannot bridge the underscore
-  in the snake_case wire form the API documents; a working set-credential body encrypted
-  cleanly, decoded to an all-zero struct and failed at dispatch as `credentials_incomplete`,
-  installer exit 0. `credentialKey` folds separators away, and a document missing a
-  required key is refused up front.
-
-`-account-id` is optional: without one the account is in the credentials-first state and
-discovery turns it into an account id. Requiring it would mean knowing the customer id
-before holding the credential that could tell you what it is.
+Two validations exist because **valid JSON is not the bar — what the READER matches is.**
+Stored blobs and dispatch structs are both untagged, so `encoding/json` falls back to a
+case-insensitive match that cannot bridge the underscore in the snake_case wire form the API
+documents; such a body encrypted cleanly, decoded to an all-zero struct and failed at dispatch
+as `credentials_incomplete`, installer exit 0. So keys are folded, and the non-secret config
+an adapter refuses to create without (LinkedIn `org_id`, Meta `page_id`, X
+`funding_instrument_id`) is required up front. `-account-id` stays optional — discovery fills it in from the credentials-first state.

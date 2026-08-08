@@ -300,19 +300,13 @@ func TestJWTAuth_EmptyTokenRejected(t *testing.T) {
 	}
 }
 
-// TestSystemScopeIsUnreachableThroughTheAPI: the reserved scope holds the LF-owned
-// credentials that every project without its own connection dispatches through, so no
-// API caller may read, rewrite, re-credential, test, delete it, or enumerate the
-// accounts it reaches.
-//
-// The cases must cover EVERY endpoint taking a caller-supplied project_id, which is
-// seven and not six: account discovery does not go through connection_handler.go and
-// was missed on the first pass precisely because of that. When an eighth is added,
-// it belongs here.
-//
-// The row EXISTS in the repo for each case. A test against an empty store would pass
-// against a service with no guard at all — the repo would answer "not found" and the
-// assertion could not tell the two apart.
+// TestSystemScopeIsUnreachableThroughTheAPI: no API caller may read, rewrite,
+// re-credential, test, delete the reserved scope, or enumerate the accounts it reaches.
+// The cases must cover EVERY endpoint taking a caller-supplied project_id — seven, not
+// six: account discovery does not go through connection_handler.go, which is why it was
+// missed. When an eighth is added, it belongs here. The row EXISTS in the repo for each
+// case; against an empty store the repo answers "not found" and the assertion could not
+// tell a guarded service from an unguarded one.
 func TestSystemScopeIsUnreachableThroughTheAPI(t *testing.T) {
 	newRepoWithSystemRow := func() *fakeRepo {
 		r := newFakeRepo()
@@ -351,9 +345,8 @@ func TestSystemScopeIsUnreachableThroughTheAPI(t *testing.T) {
 			_, err := s.TestGoogleAds(context.Background(), &conn.TestGoogleAdsPayload{ProjectID: model.SystemProjectID})
 			return err
 		},
-		// The SEVENTH endpoint. Given a WORKING orchestrator on purpose: without one
-		// the call 503s before the guard matters, and this would pass against an
-		// unguarded implementation. With one, unguarded returns 200 and the LF accounts.
+		// The SEVENTH endpoint. Given a WORKING orchestrator on purpose: without one the
+		// call 503s before the guard matters and this passes against an unguarded service.
 		"list-accounts": func(s *ConnectionService) error {
 			s.SetOrchestrator(&Orchestrator{
 				dispatchers: map[model.Provider]PlatformDispatcher{
@@ -385,9 +378,8 @@ func TestSystemScopeIsUnreachableThroughTheAPI(t *testing.T) {
 			if err == nil {
 				t.Fatalf("%s at the reserved scope succeeded; it must be refused", name)
 			}
-			// Create is refused earlier, by the slug pattern, and answers 400 — the
-			// reserved value is not a slug. The other five answer 404. Either is a
-			// refusal; what must never happen is the request reaching the row.
+			// Create is refused earlier by the slug pattern (400); the rest answer 404.
+			// Either is a refusal; what must never happen is reaching the row.
 			switch e := err.(type) {
 			case *conn.NotFoundError, *conn.BadRequestError:
 			default:
