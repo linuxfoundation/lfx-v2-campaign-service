@@ -62,27 +62,24 @@ are rejected as unrecognized.
 
 ### Interpolating free text into a query
 
-Until campaign lookup, every GAQL query here interpolated a digits-only id
-(`customerIDRE`) or a value from a closed allow-list (`validMetricsWindows`), so nothing
-needed escaping. A campaign **name** is the first genuinely caller-controlled string to
-reach a `WHERE` clause. `gaqlStringLiteral` renders it single-quoted, escaping backslash
-**first** and then the quote — the reverse order re-escapes the backslash the quote escape
-introduced and releases the quote.
+Until campaign lookup, every GAQL query here interpolated a digits-only id (`customerIDRE`) or
+a closed allow-list value (`validMetricsWindows`), so nothing needed escaping. A campaign
+**name** is the first genuinely caller-controlled string to reach a `WHERE` clause.
+`gaqlStringLiteral` renders it single-quoted, escaping backslash **first** and then the quote —
+the reverse order re-escapes the backslash the quote escape introduced and releases the quote.
 
 It rejects only **NUL, LF and CR**, exactly what Google Ads prohibits in `Campaign.name`. A
 blanket "reject every control character" rule is wrong here and was corrected in review: this
 lookup serves **adoption**, whose targets never passed through `sanitizeNamePart`, and Google
-accepts TAB, U+2028/U+2029 and zero-width joiners in a name — rejecting one answers "no such
-campaign" about a campaign that exists. Note the trap: `unicode.IsControl` covers category
-**Cc only**, so U+2028/U+2029 (Zl/Zp) slip past and invite an explicit check that over-rejects
-twice over. Allowing them risks nothing — the query rides in a JSON body that `encoding/json`
-escapes.
+accepts TAB, U+2028/U+2029 and zero-width joiners — rejecting one answers "no such campaign"
+about a campaign that exists. (`unicode.IsControl` covers category **Cc only**, so the line
+separators slip past it and invite an explicit check that over-rejects twice over.) Allowing
+them risks nothing: the query rides in a JSON body that `encoding/json` escapes.
 
 The name is queried **verbatim**, no `TrimSpace`: trimming is a no-op for the create path
-(`composeName` already trims), so it only ever alters adoption, answering `"  foo  "` with
-the campaign named `"foo"` and hiding the ambiguity if both exist. `TrimSpace` is used only
-to *detect* whitespace-only input. Anything new interpolating free text into GAQL must go
-through the helper.
+(`composeName` already trims), so it only ever alters adoption, answering `"  foo  "` with the
+campaign named `"foo"`. `TrimSpace` only *detects* whitespace-only input. Anything new
+interpolating free text into GAQL must go through the helper.
 
 ## Campaign lookup by name
 
@@ -90,7 +87,7 @@ through the helper.
 fail-closed logic mirrors the other clients' lookups (meta's `findCampaignByName`, linkedin's
 `findMatch`, twitter's and microsoft's) because callers make the same decision from the
 result. It is the first one **exported** — the others are called only from inside their own
-create path, this one also from the dispatch layer for adoption.
+create path, this one also from dispatch, for adoption.
 
 | outcome | result |
 |---|---|
@@ -102,32 +99,32 @@ create path, this one also from the dispatch layer for adoption.
 | unverifiable (undecodable row, no usable id, non-numeric id, malformed or cross-customer resource name, identity fields that disagree) | `("", error)` |
 
 **Why absence and ambiguity must differ.** Both callers act destructively on an absence:
-create takes `("", nil)` as licence to create, adoption as licence to report nothing to
-adopt. A false absence produces a **duplicate paid campaign**; an arbitrary pick binds a
-brief to the wrong one. Google Ads permits duplicate names in one account, so the ambiguous
-case is reachable, not defensive.
+create takes `("", nil)` as licence to create, adoption as licence to report nothing to adopt.
+A false absence produces a **duplicate paid campaign**; an arbitrary pick binds a brief to the
+wrong one. Google Ads permits duplicate names in one account, so the ambiguous case is
+reachable, not defensive. Rows are deduplicated by id before counting, so one campaign on
+several rows is not ambiguous.
 
 The name filter and `REMOVED` exclusion are applied **server-side** (a miss costs one page
-instead of an account walk) and **re-checked client-side** — not redundant, since an
-injected query still returns 2xx rows for OTHER campaigns. **The disposition matters as much
-as the check:** a name mismatch is an **error**, never a skip. Skipping every injected row
-leaves `("", nil)`, converting the detection into the false absence it was detecting.
-Generally: *a skip that reduces an unverifiable response to a clean absence is a
-false-absence bug.* Status is the deliberate asymmetry — `REMOVED` **is** a per-row skip,
+instead of an account walk) and **re-checked client-side** — not redundant, since an injected
+query still returns 2xx rows for OTHER campaigns. **The disposition matters as much as the
+check:** a name mismatch is an **error**, never a skip, because skipping every injected row
+leaves `("", nil)` — *a skip that reduces an unverifiable response to a clean absence is a
+false-absence bug.* Status is the deliberate asymmetry: `REMOVED` **is** a per-row skip,
 because a tombstone is unadoptable however it arrived.
 
 Identity is validated **whenever present**, not only as a fallback: both fields are selected,
-so both are evidence of what the row is, and a malformed or cross-customer resource name
-beside a plausible id — or two fields naming different campaigns — errors. The shape check is
-the full documented one (`customers/{this account}/campaigns/{digits}`), **not** the package's
-`resourceID` helper, which returns the trailing segment: right for parsing a mutate response
-we issued, wrong here, where it reads `garbage/4242` as `4242`.
+so both are evidence of what the row is, and a malformed or cross-customer resource name beside
+a plausible id — or two fields naming different campaigns — errors. The shape check is the full
+documented one (`customers/{this account}/campaigns/{digits}`), **not** `resourceID`, which
+returns the trailing segment: right for a mutate response we issued, wrong here, where it reads
+`garbage/4242` as `4242`.
 
-`gaqlSearch` rejects a top-level JSON `null` body: it unmarshals without error into a
-zero-valued response, indistinguishable from a genuine empty page and therefore a licence to
-create. Google's empty page is `{}` or `{"results":[]}`.
-
-Rows are deduplicated by id before counting, so one campaign on several rows is not ambiguous.
+A JSON `null` is refused at **both** levels: `gaqlSearch` rejects a top-level `null` body, and
+`results` decodes through `searchRows`, which rejects an explicit `{"results":null}`. Either
+would unmarshal without error into a zero-valued response — indistinguishable from a genuine
+empty page, therefore a licence to create. An **omitted** `results` stays legal: `{}` and
+`{"results":[]}` are Google's own empty page.
 
 ## Campaign creation (GA-2)
 

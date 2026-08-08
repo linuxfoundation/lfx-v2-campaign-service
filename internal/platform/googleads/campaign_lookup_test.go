@@ -52,6 +52,13 @@ func newLookupServer(t *testing.T, rows []json.RawMessage) (*httptest.Server, fu
 		mu.Unlock()
 
 		w.Header().Set("Content-Type", "application/json")
+		// Never `{"results":null}`: encoding a nil slice would emit exactly the shape the
+		// client now rejects, and the absence test would then assert on a page Google does
+		// not send — passing while the real empty page (`[]` or an omitted key) went
+		// unexercised.
+		if rows == nil {
+			rows = []json.RawMessage{}
+		}
 		_ = json.NewEncoder(w).Encode(searchResponse{Results: rows})
 	}))
 	t.Cleanup(srv.Close)
@@ -208,31 +215,22 @@ func TestGAQLStringLiteral(t *testing.T) {
 	}
 }
 
-// TestGAQLStringLiteral_RejectsOnlyWhatGoogleForbids pins the exact width of the
-// rejected set. Only NUL, LF and CR are prohibited in Campaign.name, so only those
-// three cannot belong to a real campaign; rejecting them costs no reachable lookup.
-func TestGAQLStringLiteral_RejectsOnlyWhatGoogleForbids(t *testing.T) {
+// TestGAQLStringLiteral_RejectsExactlyWhatGoogleForbids pins the exact width of the rejected
+// set in both directions. Only NUL, LF and CR are prohibited in Campaign.name, so only those
+// three cannot belong to a real campaign and rejecting them costs no reachable lookup.
+// Rejecting anything MORE is the more important error: adoption targets never passed through
+// sanitizeNamePart, so campaigns named with a TAB (Cc, but legal — what a blanket
+// unicode.IsControl rule gets wrong), U+2028/U+2029 (Zl/Zp) or a zero-width joiner (Cf,
+// ordinary in emoji sequences) really exist, and refusing one answers "no such campaign"
+// about a campaign sitting right there — the false absence that licenses a duplicate PAID
+// campaign.
+func TestGAQLStringLiteral_RejectsExactlyWhatGoogleForbids(t *testing.T) {
 	for _, in := range []string{"a\x00b", "a\nb", "a\rb"} {
 		if _, err := gaqlStringLiteral(in); err == nil {
 			t.Errorf("gaqlStringLiteral(%q) must reject a character Google Ads forbids", in)
 		}
 	}
-}
-
-// TestGAQLStringLiteral_AllowsEverythingGoogleAccepts is the other, more important half:
-// adoption targets never passed through sanitizeNamePart, so campaigns named this way
-// really exist, and refusing one answers "no such campaign" about a campaign sitting
-// right there — the false absence that licenses a duplicate PAID campaign. TAB is what a
-// blanket unicode.IsControl rule gets wrong (Cc, but legal); U+2028/U+2029 are Zl/Zp and
-// legal; the zero-width joiner is Cf and appears in ordinary emoji sequences.
-func TestGAQLStringLiteral_AllowsEverythingGoogleAccepts(t *testing.T) {
-	for _, in := range []string{
-		"a\tb",
-		"a\u2028b",
-		"a\u2029b",
-		"team \u200d rocket",
-		"plain name",
-	} {
+	for _, in := range []string{"a\tb", "a\u2028b", "a\u2029b", "team \u200d rocket", "plain name"} {
 		got, err := gaqlStringLiteral(in)
 		if err != nil {
 			t.Errorf("gaqlStringLiteral(%q) must not reject a name Google Ads accepts: %v", in, err)
@@ -527,24 +525,31 @@ func TestFindCampaignByName_IdentityFieldsMustAgree(t *testing.T) {
 	}
 }
 
-// TestFindCampaignByName_RejectsBareNullResponse pins the null guard in gaqlSearch: a
-// top-level null unmarshals WITHOUT error into a zero-valued response, which before the
-// guard read as the clean ("", nil) absence — licence to create a duplicate paid campaign.
-func TestFindCampaignByName_RejectsBareNullResponse(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "token") {
-			_, _ = w.Write([]byte(`{"access_token":"t","expires_in":3600}`))
-			return
-		}
-		_, _ = w.Write([]byte("null"))
-	}))
-	defer srv.Close()
+// TestFindCampaignByName_NullIsNeverAnAbsence pins the null guard at BOTH levels. A
+// top-level null, and an explicit `"results":null` one level in, each unmarshal WITHOUT
+// error into a zero-valued response — nil rows, no page token, byte for byte what a genuine
+// empty page produces. Before the guards that read as the clean ("", nil) absence: licence to
+// create a duplicate paid campaign. TestFindCampaignByName_AbsentIsNotAnError is the
+// companion — `[]`, the shape Google really sends, must still license a create.
+func TestFindCampaignByName_NullIsNeverAnAbsence(t *testing.T) {
+	for _, body := range []string{"null", `{"results":null,"nextPageToken":""}`} {
+		t.Run(body, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "token") {
+					_, _ = w.Write([]byte(`{"access_token":"t","expires_in":3600}`))
+					return
+				}
+				_, _ = w.Write([]byte(body))
+			}))
+			defer srv.Close()
 
-	id, err := newAccountsTestClient(t, srv).FindCampaignByName(context.Background(), "anything")
-	if err == nil {
-		t.Fatalf("a bare null response must not report a clean absence, got %q", id)
-	}
-	if !strings.Contains(err.Error(), "bare JSON null") {
-		t.Errorf("error = %v, want it to name the bare null response", err)
+			id, err := newAccountsTestClient(t, srv).FindCampaignByName(context.Background(), "anything")
+			if err == nil {
+				t.Fatalf("a null result set must not report a clean absence, got %q", id)
+			}
+			if id != "" {
+				t.Errorf("id = %q, want empty alongside the error", id)
+			}
+		})
 	}
 }

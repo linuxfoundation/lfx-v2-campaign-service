@@ -768,8 +768,29 @@ type searchRequest struct {
 // Rows are opaque JSON objects (GAQL SELECT shapes vary per query); callers
 // decode the fields they asked for.
 type searchResponse struct {
-	Results       []json.RawMessage `json:"results"`
-	NextPageToken string            `json:"nextPageToken"`
+	Results       searchRows `json:"results"`
+	NextPageToken string     `json:"nextPageToken"`
+}
+
+// searchRows is the repeated `results` field with one added rule: an EXPLICIT JSON null is
+// rejected. proto3 JSON emits an empty repeated field as `[]` or omits the key, so
+// `{"results":null}` is not a shape a conformant server produces, yet it decodes to a nil
+// slice indistinguishable from a genuine empty page — the same false absence the bare-null
+// guard below refuses, one level in. An OMITTED key is left alone (UnmarshalJSON is not
+// called for it, and `{}` is Google's own empty page).
+type searchRows []json.RawMessage
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (r *searchRows) UnmarshalJSON(b []byte) error {
+	if bytes.Equal(bytes.TrimSpace(b), []byte("null")) {
+		return errors.New("`results` was JSON null, not a result set")
+	}
+	var rows []json.RawMessage
+	if err := json.Unmarshal(b, &rows); err != nil {
+		return err
+	}
+	*r = rows
+	return nil
 }
 
 // maxSearchPages bounds cursor pagination so a server returning an endless
