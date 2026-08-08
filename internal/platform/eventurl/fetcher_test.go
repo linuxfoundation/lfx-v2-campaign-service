@@ -309,6 +309,48 @@ func TestFetchErrorsDoNotExposeTheTransportErrorThroughUnwrap(t *testing.T) {
 	}
 }
 
+// leakyBody fails its Read with a secret-bearing *url.Error. http2 stream errors really do
+// quote the request, so this is the shape the body-read branch has to survive — not a
+// hypothetical.
+type leakyBody struct{ readErr error }
+
+func (b leakyBody) Read([]byte) (int, error) { return 0, b.readErr }
+func (b leakyBody) Close() error             { return nil }
+
+// leakyTransport answers 200 with a body that fails on read, so the failure lands PAST the
+// client.Do branch the other redaction test covers.
+type leakyTransport struct{ err error }
+
+func (t leakyTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Body: leakyBody{readErr: t.err}, Header: http.Header{}}, nil
+}
+
+// TestBodyReadErrorsAreRedactedToo covers the SECOND construction site. The Do-path test
+// would stay green if only this branch regressed to carrying the raw error, so redaction
+// tested at one site proves nothing about the other — the leak is per-branch, and so is the
+// test. Both assertions matter: the message must not quote the URL, and errors.As must not
+// be able to walk back to the *url.Error the message was derived from.
+func TestBodyReadErrorsAreRedactedToo(t *testing.T) {
+	const secret = "s3cr3t"
+	leak := &url.Error{Op: "Get", URL: "http://u:" + secret + "@example.test/e?token=" + secret, Err: errors.New("stream error")}
+	f := &Fetcher{client: &http.Client{Transport: leakyTransport{err: leak}}}
+
+	_, err := f.Fetch(context.Background(), "http://example.test/e")
+	if err == nil {
+		t.Fatal("Fetch with a failing body read returned no error")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Errorf("the rendered error quotes the secret: %v", err)
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		t.Fatalf("the *url.Error is reachable through the chain, carrying URL %q", urlErr.URL)
+	}
+	if !errors.Is(err, ErrEventURLFetchFailed) {
+		t.Errorf("err = %v, want it to stay errors.Is-able as ErrEventURLFetchFailed", err)
+	}
+}
+
 // TestSafeIdentityKeepsOnlyCanonicalSentinels: the identity exists so a caller can tell "we
 // gave up" from "the page did not answer", which needs exactly the context sentinels — and
 // the value satisfying errors.Is must be the canonical singleton, not the wrapper that

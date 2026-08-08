@@ -1,6 +1,8 @@
 # 2026-08-08 — LFXV2-3041: the error CHAIN leaked what `Error()` redacted, and NAT64 has more than one prefix
 
-Two findings on PR #92, both real, both verified before acting.
+**Update** — the fetch error chain now carries only canonical sentinels this package names, and
+`NewFetcher` accepts the deployment's network-specific RFC 6052 NAT64 prefixes via
+`WithNAT64Prefixes`. Two findings on PR #92, both real, both verified before acting.
 
 ## 1. `Unwrap` handed out the `*url.Error` that `Error()` refused to print
 
