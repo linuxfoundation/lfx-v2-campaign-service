@@ -80,4 +80,10 @@ jobs:
         env:
           # Points the dbtest package at the service container above. The migrations run
           # from the test binary itself, so nothing needs to load schema here.
-          TEST_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/campaign_service_test?sslmode=disable"
+          #
+          # The credentials below are the ones this same file gives the service container a
+          # few lines up: a throwaway database that exists for the length of one job and is
+          # reachable only from inside it. secretlint reports the shape, not a leak, so the
+          # directive is per-line -- a path exclusion would leave test files unscanned, and
+          # `.gitleaks.toml` already allowlists `*_test.go`.
+          TEST_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/campaign_service_test?sslmode=disable" # secretlint-disable-line

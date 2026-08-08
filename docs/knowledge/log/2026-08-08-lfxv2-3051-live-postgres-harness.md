@@ -39,6 +39,14 @@ values as arguments rather than reading the environment, which is what makes the
 testable at all: "on CI with no database" cannot be exercised by a live test, because there is
 no database to run it against.
 
+**The container's DSN carries a `secretlint-disable-line` directive.** secretlint flags any
+`postgres://user:pass@host` literal, and the workflow has to state one somewhere: it is the
+same throwaway credential pair the file hands the service container a few lines above, for a
+database that exists for the length of one job and is reachable only from inside it. The
+directive is per-line, matching `internal/infrastructure/config/config_test.go:235`, rather
+than a path exclusion — `.gitleaks.toml` already allowlists `*_test.go`, so excluding a path
+from secretlint would leave a class of files with no scanner covering it at all.
+
 **What was deliberately not done.** No testcontainers dependency — a service container is the
 standard GitHub Actions idiom and adds no module. No per-test schema — migrating is the slow
 part, and isolation by unique key is what production does anyway. The image is pinned to
