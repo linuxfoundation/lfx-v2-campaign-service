@@ -96,6 +96,42 @@ layout, and refusing a legitimate event page is a real cost, not a conservative 
 The decoding is per-length, because only `/96` puts the address in the low 32 bits — the shorter
 layouts split it around the reserved octet at bits 64-71.
 
+## A configured prefix outranks the local-use denial, and the order is the whole feature
+
+RFC 8215 sets aside `64:ff9b:1::/48` for local-use NAT64 prefixes — it is the block an operator
+**picks their prefix from** — and `forbiddenNets` denies that `/48` wholesale. That denial is
+right for a prefix nobody declared: the layout is unknown, so the address cannot be decoded, and
+refusing is the fail-closed answer.
+
+But run it BEFORE the configured prefixes and it eats them too. The deployment
+`WithNAT64Prefixes` exists to serve becomes the one deployment it cannot express, because every
+address under the operator's own `/96` is refused before its embedded IPv4 is ever read — even
+`64:ff9b:1:1::808:808`, which names public `8.8.8.8`. So `guardDialAddress` consults the
+configured prefixes first, and the wholesale denial is what remains for the undeclared.
+
+A configured prefix's verdict is also **final**: under a declared translator the IPv6 address is
+not an endpoint at all, it is an encoding of the IPv4 destination, and that destination's verdict
+is the complete answer.
+
+EVERY matching prefix is judged, not the first. Prefixes may overlap — nothing rejects that,
+and nothing should, since `64:ff9b::/96` is always present and an operator's prefix may nest
+inside a wider block they also declare — and the prefix LENGTH decides where the embedded IPv4
+sits, so one address decodes differently under each. Stopping at the first match was a
+fail-open: with `2a01:4f8::/32` declared ahead of `2a01:4f8:808:808::/96`,
+`2a01:4f8:808:808::a9fe:a9fe` reads as public `8.8.8.8` at /32 and is allowed, while
+longest-prefix routing hands it to the /96 translator as `169.254.169.254`. Requiring every
+declared decoding to be permitted refuses that without needing to know which translator wins.
+
+Both directions are pinned by `TestConfiguredNAT64PrefixOutranksTheLocalUseDenial`. Asserting
+only the rejection would pass against a blanket deny, which is exactly the regression at issue —
+and the same trap caught a sibling assertion that merely `t.Log`ged when an unconfigured public
+address was allowed, so it would have passed just as happily against the option being neutered.
+
+Separately, `TestNAT64PrefixesReachTheDialerThroughNewFetcher` exercises the PUBLIC path.
+Building the `Control` hook by hand says nothing about whether `WithNAT64Prefixes` records the
+prefix or whether `NewFetcher` hands `cfg.nat64` to the dialer; drop either and the hand-built
+tests stay green while the only way an operator can configure this control is silently dead.
+
 **Nothing the RFC merely requires to be zero is checked** — not that reserved octet, not the
 trailing suffix bits. Every such check is a way to fail OPEN. `embeddedIPv4` returning nil means
 "no embedded address here", and the guard's only two outcomes are refuse and dial, so a refusal
