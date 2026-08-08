@@ -97,7 +97,7 @@ That wiring is a follow-up — nothing in production calls it yet.
 | more than one match | `("", error)` — ambiguous, never a silent pick |
 | a row whose name is **not** the queried name | `("", error)` — the filter was not honoured |
 | unrecognised status (`UNSPECIFIED`, `UNKNOWN`, empty) | `("", error)` |
-| unverifiable (undecodable row, no usable id, non-numeric id, malformed or cross-customer resource name, identity fields that disagree) | `("", error)` |
+| unverifiable (undecodable row, no usable id, non-canonical id, malformed or cross-customer resource name, identity fields that disagree) | `("", error)` |
 
 **Why absence and ambiguity must differ.** Both callers act destructively on an absence:
 create takes `("", nil)` as licence to create, adoption as licence to report nothing to adopt.
@@ -121,6 +121,16 @@ a plausible id — or two fields naming different campaigns — errors. The shap
 documented one (`customers/{this account}/campaigns/{digits}`), **not** `resourceID`, which
 returns the trailing segment: right for a mutate response we issued, wrong here, where it reads
 `garbage/4242` as `4242`.
+
+**Digits-only is not the id test.** Both ids go through `canonicalCampaignID`, which requires
+the canonical base-10 spelling of a **positive int64** — the type Google exposes campaign ids
+as. `customerIDRE` (`^[0-9]+$`) is the package's *interpolation-safety* matcher and passes
+`"0"`, a value past `math.MaxInt64`, and `"007"`. The last is the one with teeth: `"007"` and
+`"7"` are one campaign to the server and two strings to the identity comparison, so a string
+compare reports a disagreement that does not exist — or an agreement between two spellings only
+one of which is real. Canonicalising collapses the spellings, so the comparison is about
+campaigns. `campaign.id` is also **not** trimmed: a padded value is a malformed row, and
+`TrimSpace` would answer with campaign `4242` for a response this API does not produce.
 
 A JSON `null` is refused at **both** levels: `gaqlSearch` rejects a top-level `null` body, and
 `results` decodes through `searchRows`, which rejects an explicit `{"results":null}`. Either

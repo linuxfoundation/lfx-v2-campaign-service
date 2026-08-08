@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -81,12 +82,32 @@ func (c *Client) campaignIDFromResourceName(resourceName string) string {
 	if parts[1] != c.account.CustomerID {
 		return ""
 	}
-	// customerIDRE is the package's digits-only matcher; campaign ids are int64s in
-	// the same textual form, and the caller re-checks the result against it too.
-	if !customerIDRE.MatchString(parts[3]) {
+	return canonicalCampaignID(parts[3])
+}
+
+// canonicalCampaignID returns s when it is the canonical base-10 spelling of a positive
+// int64, and "" otherwise.
+//
+// customerIDRE (`^[0-9]+$`) is the package's digits-only matcher and it is NOT enough
+// here, because this is an IDENTITY check rather than an interpolation-safety one.
+// Google exposes campaign ids as int64, so "0", a value past math.MaxInt64, and the
+// leading-zero spelling "007" all match that regex and none of them names a campaign
+// this client can adopt. "007" is the dangerous one: it is the same campaign as "7" to
+// the server and a different string to the two-fields-disagree check below, so a
+// string comparison would report a disagreement where there is none, or agreement
+// between two spellings only one of which is real.
+//
+// Requiring the value to round-trip through ParseInt/FormatInt collapses every spelling
+// to one, so the comparison compares campaigns rather than text. There is deliberately
+// no TrimSpace: " 123 " is not a response this API produces, and trimming it would
+// convert "this row is malformed" into "this row is campaign 123" — the exact
+// substitution a fail-closed lookup exists to refuse.
+func canonicalCampaignID(s string) string {
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || v <= 0 || strconv.FormatInt(v, 10) != s {
 		return ""
 	}
-	return parts[3]
+	return s
 }
 
 // FindCampaignByName returns the numeric id of the single live campaign in this
@@ -199,7 +220,9 @@ func (c *Client) FindCampaignByName(ctx context.Context, name string) (string, e
 		// plausible id means the row identifies no single campaign in THIS account, and
 		// validating only in the fallback makes the check reachable exactly when the row
 		// is least suspicious.
-		id := strings.TrimSpace(row.Campaign.ID)
+		// NOT trimmed — see canonicalCampaignID. The id is identity evidence, so a
+		// padded value is a malformed row, not a value to normalise into a match.
+		id := row.Campaign.ID
 		fromName := c.campaignIDFromResourceName(row.Campaign.ResourceName)
 		if rn := strings.TrimSpace(row.Campaign.ResourceName); rn != "" && fromName == "" {
 			return "", fmt.Errorf("google-ads campaign lookup: campaign named %q has resource name %q, which is malformed or scoped to another customer; refusing to adopt it", lookup, rn)
@@ -218,10 +241,13 @@ func (c *Client) FindCampaignByName(ctx context.Context, name string) (string, e
 		if id == "" {
 			return "", fmt.Errorf("google-ads campaign lookup: campaign named %q has no usable id (resourceName %q); aborting rather than report it absent", lookup, row.Campaign.ResourceName)
 		}
-		if !customerIDRE.MatchString(id) {
-			// The id is interpolated into resource paths by every later call, so a
-			// non-numeric one must never leave this function.
-			return "", fmt.Errorf("google-ads campaign lookup: campaign named %q returned non-numeric id %q", lookup, id)
+		if canonicalCampaignID(id) == "" {
+			// Two reasons, and both matter. The id is interpolated into resource paths
+			// by every later call, so a non-numeric one must never leave this function.
+			// And it is the answer to "which campaign is this", so "0", an out-of-range
+			// value and a non-canonical spelling are all unusable even though they are
+			// all digits.
+			return "", fmt.Errorf("google-ads campaign lookup: campaign named %q returned id %q, which is not the canonical spelling of a positive int64 campaign id", lookup, id)
 		}
 		matches = append(matches, id)
 	}

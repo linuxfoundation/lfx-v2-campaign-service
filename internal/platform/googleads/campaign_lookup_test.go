@@ -424,24 +424,40 @@ func TestFindCampaignByName_ResourceNameFallbackValidatesShape(t *testing.T) {
 	}
 }
 
-// TestFindCampaignByName_NonNumericIDIsRejected drives the guard on the id field itself
-// (as opposed to the resource-name fallback above). The id is interpolated into resource
-// paths by every later call, so a non-numeric one must never leave this function.
-func TestFindCampaignByName_NonNumericIDIsRejected(t *testing.T) {
-	// The resource name is OMITTED so the row's only identity evidence is the id
-	// field; with one present it would be rejected by the resource-name guard first
-	// and this test would pass without ever reaching the numeric check.
-	srv, _ := newLookupServer(t, []json.RawMessage{
-		json.RawMessage(`{"campaign":{"id":"not-a-number","name":"bad id","status":"ENABLED"}}`),
-	})
-	client := newAccountsTestClient(t, srv)
+// TestFindCampaignByName_NonCanonicalIDIsRejected drives the guard on the id field itself
+// (as opposed to the resource-name fallback above), and pins that "all digits" is NOT the
+// test. Google exposes campaign ids as int64, so a digits-only value can still name no
+// campaign: "0" is not an id, a value past math.MaxInt64 cannot be one, and "007" is the
+// same campaign as "7" to the server but a different string to the identity comparison —
+// the spelling difference is precisely what makes it dangerous rather than merely untidy.
+// A padded value is a malformed row, and trimming it would answer with campaign 4242 for
+// a response that never came from this API.
+func TestFindCampaignByName_NonCanonicalIDIsRejected(t *testing.T) {
+	// The resource name is OMITTED in each case so the row's only identity evidence is
+	// the id field; with one present the row would be rejected by the resource-name
+	// guard first and these cases would pass without reaching the canonical check.
+	for _, id := range []string{
+		"not-a-number",
+		"0",                   // a valid int64, not a campaign
+		"-1",                  // digits-only fails to match this one; ParseInt does not
+		"9223372036854775808", // math.MaxInt64 + 1
+		"007",                 // non-canonical spelling of 7
+		" 4242 ",              // padded — malformed, not campaign 4242
+		"4242\n",              // trailing newline, same reasoning
+		"+4242",               // signed canonical form is still not the canonical form
+	} {
+		srv, _ := newLookupServer(t, []json.RawMessage{
+			json.RawMessage(`{"campaign":{"id":` + jsonQuote(id) + `,"name":"bad id","status":"ENABLED"}}`),
+		})
+		client := newAccountsTestClient(t, srv)
 
-	id, err := client.FindCampaignByName(context.Background(), "bad id")
-	if err == nil {
-		t.Fatalf("a non-numeric id must be rejected, got %q", id)
-	}
-	if !strings.Contains(err.Error(), "non-numeric id") {
-		t.Errorf("error does not name the non-numeric id: %v", err)
+		got, err := client.FindCampaignByName(context.Background(), "bad id")
+		if err == nil {
+			t.Fatalf("id %q must be rejected, got %q", id, got)
+		}
+		if !strings.Contains(err.Error(), "canonical spelling") {
+			t.Errorf("id %q: error does not say why it was refused: %v", id, err)
+		}
 	}
 }
 
