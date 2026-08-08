@@ -3271,9 +3271,11 @@ func TestGetCampaignMetrics_PlatformErrorIsScrubbedBeforeLogging(t *testing.T) {
 }
 
 // TestGetCampaignMetrics_UnusableConnectionIs409 and its toggle twin pin the fix for a
-// defect that credentials-first bootstrap CREATED rather than exposed. Before it, a stored
-// connection always had an account id, so ErrConnectionNotUsable arriving from credential
-// resolution was rare and its 503 was defensible. Now the ordinary first state of a
+// defect that credentials-first bootstrap made COMMON, not one it created. An account-less
+// row was always storable: Goa's Required("account_id") was a presence check on the JSON
+// KEY — the generated validator was `if body.AccountID == nil` — and the Go field is a plain
+// string, so `"account_id": ""` satisfied it. The state was reachable but unintended, which
+// is why its 503 went unexamined. Now the ordinary first state of a
 // connection — credentials stored, account not yet chosen — reaches these handlers, and a
 // 503 tells the caller "the platform did not respond, try later" about a platform that was
 // never contacted and a condition that changes only when a human edits the connection.

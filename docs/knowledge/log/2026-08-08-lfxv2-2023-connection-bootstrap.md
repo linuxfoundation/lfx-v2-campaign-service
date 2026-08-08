@@ -1,4 +1,4 @@
-# 2026-08-08 — Credentials-first connection bootstrap, and the 503 that was hiding behind a dead guard
+# 2026-08-08 — Credentials-first connection bootstrap, and the 503 hiding behind an unnamed guard
 
 **Update** — `GoogleAdsConnectionConfig` no longer declares `Required("account_id")`, so a Google
 Ads connection can be created with credentials alone and have its ad account chosen afterwards:
@@ -25,17 +25,24 @@ connection that cannot be finished from inside this API — the operator would h
 out-of-band regardless, and the only thing gained is a half-configured row. The rule to carry
 forward: an optional `account_id` and a discovery endpoint ship together or not at all.
 
-## What the change actually cost: a dead guard with no sentinel
+## What the change actually cost: a guard with no sentinel
 
 The design edit was one line. The defect it exposed was not.
 
 `validateGoogleAdsConnection` has always rejected an empty account id, and it returned a bare
-`fmt.Errorf` carrying no sentinel. That was harmless only because it was UNREACHABLE — the design
-required `account_id`, so no stored connection could lack one. Making the field optional turns
-that guard into the NORMAL state of a freshly created connection, and a bare error falls through
-to each handler's `default:` arm, which answers **503 "the platform did not respond"** — about a
-platform that was never contacted, with a remedy (wait) that can never work, for a project that
-has simply not finished setting up.
+`fmt.Errorf` carrying no sentinel. It is tempting to call that harmless-because-unreachable, and
+that would be wrong. Goa's `Required("account_id")` is a presence check on the JSON KEY — the
+generated validator this PR removes was literally `if body.AccountID == nil` — and the Go field
+is a plain string, so `"account_id": ""` or whitespace satisfied it and was stored. An
+account-less row was reachable all along; it was simply an unintended, undocumented state nobody
+had reasoned about, which is exactly why its handling went unexamined.
+
+What this change does is make that state SUPPORTED and omission-based, and thereby the normal
+first state of a freshly created connection. That is what converts a latent
+mis-classification into an unavoidable one: a bare error falls through to each handler's
+`default:` arm, which answers **503 "the platform did not respond"** — about a platform that was
+never contacted, with a remedy (wait) that can never work, for a project that has simply not
+finished setting up.
 
 The fix is `domain.ErrAccountNotSelected`, wrapped alongside `ErrConnectionNotUsable`. The roles
 are split: `ErrConnectionNotUsable` picks the status, `ErrAccountNotSelected` supplies the reason
@@ -84,17 +91,22 @@ always had on that handler, and it is the intended way to un-select an account.
 
 Two suppressed Copilot findings on #91, both correct on the merits.
 
-**The empty-account-id guard was never unreachable.** Several comments (and this bundle)
-claimed no account-less connection could exist before this change, because the design declared
-`Required("account_id")`. Goa's `Required` checks that the JSON KEY is present — the generated
-validator removed by this PR was literally `if body.AccountID == nil` — and the Go field is a
-plain string, so `"account_id": ""` or whitespace satisfied it and was persisted. The guard was
-reachable through an unintended, undocumented state; what this change does is convert that into a
-supported, omission-based lifecycle state, and thereby turn a latent mis-classification (bare
-error → default arm → 503) into the common path. Reworded at every site that repeated the claim:
+**The empty-account-id guard was never unreachable.** Several comments — and the first draft of
+this very entry — claimed no account-less connection could exist before this change, because the
+design declared `Required("account_id")`. That reasoning does not survive reading the generated
+code, for the reason now stated in the section above.
+
+The claim has been reworded at every site that carried it, including the body of this entry:
 `internal/dispatch/googleads.go`, `internal/domain/errors.go`, `internal/dispatch/googleads_test.go`,
-`internal/service/connection_test.go`, `docs/knowledge/code/internal-service.md`,
-`docs/knowledge/code/internal-dispatch.md`.
+`internal/service/connection_test.go`, `internal/service/brief_test.go`,
+`docs/knowledge/code/internal-service.md`, `docs/knowledge/code/internal-dispatch.md`.
+
+Worth keeping as a lesson in its own right: a correction appended to the END of a document does
+not correct the document. The original claim sat sixty lines above it, and a reader arriving at
+the top would have learned the disproven version first and possibly never reached the rebuttal. A
+knowledge base that teaches both conclusions is worse than one that teaches only the wrong one,
+because it also destroys the reader's basis for choosing. Fix the claim where it is made; use the
+correction section to record what was learned, not to carry the load.
 
 **Campaign dispatch does not answer 409.** `internal-service.md` said the credential-state three
 are "409 on the campaign dispatch and metrics paths". Campaign create is asynchronous: it answers
