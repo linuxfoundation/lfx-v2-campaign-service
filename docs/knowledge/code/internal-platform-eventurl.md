@@ -40,8 +40,24 @@ and `IsLinkLocalUnicast` is `fe80::/10` alone, so deprecated site-local `fec0::/
 every predicate. Both are enumerated in `forbiddenNets` and pinned by `TestIsForbiddenIP`, so
 the next range is added by editing a table. A true default-deny needs a destination allowlist,
 which becomes possible once the legitimate event hosts are known. **Over-rejection is a bug
-too**: a public page refused here is reported as a page with no event metadata, which is a
-different and wrong answer — hence the public-address cases in the same test.
+too**, and its cost is worth stating precisely: `Fetch` fails with `ErrEventURLForbidden`,
+which the endpoint answers **400** — so a legitimate public event page is refused outright,
+and the message tells the operator the address is off limits. That is not a soft degradation
+to "no metadata found"; it is a hard refusal blaming the caller for a URL that was fine.
+
+**IPv4 embedded in an IPv6 address is the gap the range tables cannot see.** `net.IP.To4`
+normalises exactly one embedding — IPv4-mapped `::ffff:0:0/96` — so every other notation
+carries an IPv4 destination past both the predicates and the IPv4-shaped ranges. Three are
+handled, in two different ways because a blanket deny costs differently. 6to4 (`2002::/16`,
+bits 16-47) is deprecated by RFC 7526, so the whole prefix is simply refused and nothing
+reachable is lost. The NAT64 well-known prefix (`64:ff9b::/96`) and RFC 2765's IPv4-translated
+`::ffff:0:0:0/96` are NOT deprecated — on a NAT64/SIIT network the first is how a v6-only host
+reaches the ordinary IPv4 internet — so denying them wholesale would refuse every legitimate
+IPv4 event host. Those two are DECODED instead: `ipv4EmbeddingNets` extracts the low 32 bits
+and re-runs `isForbiddenIP` on the IPv4 it names, which terminates because the decoded value
+is four bytes and can no longer match a `/96`. `64:ff9b::a9fe:a9fe` is the cloud metadata
+address; `64:ff9b::5db8:d822` is an ordinary public host and stays allowed. Both sides
+of each rule are pinned by the public-address cases in the same test.
 
 ## Parsing degrades, it does not guess
 
