@@ -1028,11 +1028,20 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// contacted for the last group.
 	//
 	// The classification of that last group is NO LONGER uniform across dispatchers, and this
-	// comment used to say it was. Google Ads tags every one of its preflight failures with
+	// comment used to say it was. Google Ads tags the preflight failures REACHABLE HERE with
 	// domain.ErrConnectionNotUsable (internal/dispatch/googleads.go): the three in
-	// validateGoogleAdsCredentials, the missing-account guard in validateGoogleAdsConnection,
-	// and the provider-config check. The caller maps them to 409 — correct, because none of
-	// them improves with time. Reddit, Meta, LinkedIn, X AND Microsoft still return bare
+	// validateGoogleAdsCredentials and the missing-account guard in
+	// validateGoogleAdsConnection, both of which resolveGoogleAdsClient runs. The caller maps
+	// them to 409 — correct, because none of them improves with time.
+	//
+	// The stored-login_customer_id check is NOT among them, though it is tagged: it lives in
+	// resolveGoogleAdsDiscoveryClient, which only the discovery endpoint calls. A malformed
+	// manager id therefore reaches this path unclassified, fails inside the client at
+	// validateLoginCustomerID, and falls through to 503 — retryable, for a stored value that
+	// no amount of retrying will fix. Hoisting the check into the shared validation is the
+	// fix; it is a behaviour change with its own test and lands separately.
+	//
+	// Reddit, Meta, LinkedIn, X AND Microsoft still return bare
 	// errors that fall through to the caller's default 503 arm; Microsoft is wired for
 	// toggles and runs the same active/incomplete preflight, so leaving it out of this list
 	// would hide a provider that is actually reachable here. Tagging
