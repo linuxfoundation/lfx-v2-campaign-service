@@ -163,7 +163,7 @@ leaving headroom over reusing a number a sibling branch might renumber into.
 ## Live-database tests (`dbtest/`)
 
 Almost every test in this package asserts over SQL **source text** — `campaign_repo_test.go`
-regexes the `ON CONFLICT` clauses, `stuck_claims_test.go` regexes the claim query. Those
+regexes the `ON CONFLICT` clauses, `campaign_repo_test.go` regexes the claim query. Those
 assertions are worth having, but they can only check that a string still looks the way
 someone decided it should look. They cannot check whether PostgreSQL accepts the statement,
 whether an index the statement depends on still exists, or whether a fix changed anything

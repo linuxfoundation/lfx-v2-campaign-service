@@ -12,8 +12,19 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/dbtest"
 )
+
+// sqlstateNoArbiterIndex is raised when an ON CONFLICT clause names a column set that no
+// unique or exclusion constraint matches. PostgreSQL's condition NAME for it is
+// invalid_column_reference, which reads as though a column were misspelled and is why it
+// is spelled out here: the columns are fine, it is the INDEX that is absent.
+const sqlstateNoArbiterIndex = "42P10"
+
+// testCampaignStatus is any value the partial index treats as live — the predicate under
+// test is status <> 'deleted', so the specific live value never matters.
+const testCampaignStatus = "draft"
 
 // insertBrief creates the parent row a campaign's FK requires and returns its id.
 //
@@ -39,11 +50,16 @@ func insertBrief(ctx context.Context, t *testing.T, pool *pgxpool.Pool) string {
 // insertCampaignSQL builds the statement both tests below run, with the ON CONFLICT
 // predicate substituted in. The predicate is the ONLY thing that varies — everything
 // around it stays byte-identical, so a difference in outcome can only come from it.
+// The platform is the real provider string rather than a literal invented here.
+// campaigns.platform carries no CHECK constraint, so an invented value would insert
+// happily and the test would still pass — while quietly asserting about a row shape the
+// service never writes. The index under test is keyed on (brief_id, platform), so the
+// value being a real one is the whole point.
 func insertCampaignSQL(predicate string) string {
 	return fmt.Sprintf(`
 		INSERT INTO campaigns (project_id, brief_id, platform, campaign_name, status)
-		VALUES ($1, $2, 'google_ads', $3, $4)
-		ON CONFLICT (brief_id, platform) %s DO NOTHING`, predicate)
+		VALUES ($1, $2, '%s', $3, $4)
+		ON CONFLICT (brief_id, platform) %s DO NOTHING`, model.ProviderGoogleAds, predicate)
 }
 
 // TestLiveOnConflictNeedsThePartialIndexPredicate is the reason this package exists.
@@ -74,15 +90,16 @@ func TestLiveOnConflictNeedsThePartialIndexPredicate(t *testing.T) {
 
 	t.Run("bare ON CONFLICT has no arbiter index", func(t *testing.T) {
 		_, err := pool.Exec(ctx, insertCampaignSQL(""),
-			project, briefID, dbtest.UniqueID(t, "bare"), "draft")
+			project, briefID, dbtest.UniqueID(t, "bare"), testCampaignStatus)
 
 		var pgErr *pgconn.PgError
 		if !errors.As(err, &pgErr) {
 			t.Fatalf("err = %v, want a *pgconn.PgError — the bare form must be REJECTED, "+
 				"because migration 000014 left only the partial index behind", err)
 		}
-		if pgErr.Code != "42P10" {
-			t.Fatalf("SQLSTATE = %s (%s), want 42P10 (invalid_column_reference)", pgErr.Code, pgErr.Message)
+		if pgErr.Code != sqlstateNoArbiterIndex {
+			t.Fatalf("SQLSTATE = %s (%s), want %s — no unique or exclusion constraint "+
+				"matches the ON CONFLICT specification", pgErr.Code, pgErr.Message, sqlstateNoArbiterIndex)
 		}
 	})
 
@@ -90,7 +107,7 @@ func TestLiveOnConflictNeedsThePartialIndexPredicate(t *testing.T) {
 		stmt := insertCampaignSQL("WHERE status <> 'deleted'")
 		name := dbtest.UniqueID(t, "predicated")
 
-		tag, err := pool.Exec(ctx, stmt, project, briefID, name, "draft")
+		tag, err := pool.Exec(ctx, stmt, project, briefID, name, testCampaignStatus)
 		if err != nil {
 			t.Fatalf("first insert: %v", err)
 		}
@@ -101,7 +118,7 @@ func TestLiveOnConflictNeedsThePartialIndexPredicate(t *testing.T) {
 		// The second one must be absorbed rather than raise a duplicate-key error: that
 		// is what "the partial index is the arbiter" MEANS, and it is the behaviour
 		// every dispatch retry depends on.
-		tag, err = pool.Exec(ctx, stmt, project, briefID, name, "draft")
+		tag, err = pool.Exec(ctx, stmt, project, briefID, name, testCampaignStatus)
 		if err != nil {
 			t.Fatalf("second insert: %v — the partial index is not acting as the arbiter", err)
 		}
@@ -125,13 +142,13 @@ func TestLiveSoftDeletedRowFreesThePlatformSlot(t *testing.T) {
 	briefID := insertBrief(ctx, t, pool)
 	stmt := insertCampaignSQL("WHERE status <> 'deleted'")
 
-	if _, err := pool.Exec(ctx, stmt, project, briefID, dbtest.UniqueID(t, "first"), "draft"); err != nil {
+	if _, err := pool.Exec(ctx, stmt, project, briefID, dbtest.UniqueID(t, "first"), testCampaignStatus); err != nil {
 		t.Fatalf("insert live campaign: %v", err)
 	}
 
 	// Sanity: while it is LIVE the slot really is held, so the re-insert below is
 	// evidence about the delete and not about a constraint that never bit.
-	tag, err := pool.Exec(ctx, stmt, project, briefID, dbtest.UniqueID(t, "dup"), "draft")
+	tag, err := pool.Exec(ctx, stmt, project, briefID, dbtest.UniqueID(t, "dup"), testCampaignStatus)
 	if err != nil {
 		t.Fatalf("duplicate insert against a live row: %v", err)
 	}
@@ -144,7 +161,7 @@ func TestLiveSoftDeletedRowFreesThePlatformSlot(t *testing.T) {
 		t.Fatalf("soft-delete: %v", err)
 	}
 
-	tag, err = pool.Exec(ctx, stmt, project, briefID, dbtest.UniqueID(t, "second"), "draft")
+	tag, err = pool.Exec(ctx, stmt, project, briefID, dbtest.UniqueID(t, "second"), testCampaignStatus)
 	if err != nil {
 		t.Fatalf("re-insert after soft delete: %v", err)
 	}

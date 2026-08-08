@@ -20,7 +20,7 @@ jobs:
     # source text, which cannot tell you whether the server accepts a statement or whether
     # an index it depends on still exists. Every test in that package skips when
     # TEST_DATABASE_URL is unset, so this container is what makes them run at all --
-    # dbtest.TestHarnessRunsInCI fails the build if this block is ever removed while CI
+    # dbtest.Pool fails the build -- rather than skipping -- if this block is ever removed while CI
     # still reports green.
     #
     # 16 is not an arbitrary choice: it is the version this repo already states its

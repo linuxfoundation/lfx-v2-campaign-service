@@ -4,8 +4,8 @@
 // Package dbtest gives the postgres package a LIVE database to test against.
 //
 // Every existing test in internal/infrastructure/postgres asserts over SQL *source
-// text* — campaign_repo_test.go regexes the ON CONFLICT clauses, stuck_claims_test.go
-// regexes the claim query. Those tests are worth having, but they can only check that
+// text* — campaign_repo_test.go regexes both the ON CONFLICT clauses and the claim
+// query. Those tests are worth having, but they can only check that
 // the string still looks the way someone decided it should look. They cannot tell you
 // whether PostgreSQL accepts the statement, whether an index the statement depends on
 // still exists, or whether a fix actually changed the observable behaviour.
@@ -23,9 +23,9 @@
 //
 // Unset, every helper here calls t.Skip. That keeps `go test ./...` working on a laptop
 // with no database, which is why the variable is opt-in rather than required — but see
-// TestHarnessRunsInCI, which fails if the harness is skipped in an environment that
-// promised to provide a database. A harness that silently skips everywhere is
-// indistinguishable from no harness at all.
+// verdict: on a CI runner, where a database was promised, Pool FAILS instead of skipping.
+// A harness that silently skips everywhere is indistinguishable from no harness at all,
+// and a skipped test reports success.
 package dbtest
 
 import (
@@ -71,7 +71,11 @@ func DSN() string { return strings.TrimSpace(os.Getenv(EnvDatabaseURL)) }
 // by schema, and it is the property the repos are built for anyway, since production
 // runs many projects against one schema.
 //
-// The returned pool is closed by the test framework when the package finishes.
+// The pool is never explicitly closed. That is deliberate and not an oversight: it is
+// shared by every test in the package via sync.Once, so no single test may close it, and
+// t.Cleanup on the FIRST caller would tear it down while later tests still hold it. The
+// connections are released when the test binary exits, which for a process whose whole
+// purpose is to end is the same thing.
 func Pool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 
@@ -121,6 +125,11 @@ func connectAndMigrate(dsn string) (*pgxpool.Pool, error) {
 	if err := postgres.Migrate(dsn); err != nil {
 		return nil, fmt.Errorf("migrate %s: %w", EnvDatabaseURL, err)
 	}
+	// 30s covers a cold container that has just passed its health check but is still
+	// warming, which is the slow case on a CI runner. It bounds the POOL open only;
+	// Migrate above is intentionally unbounded, because a migration that hangs is a
+	// defect worth seeing as a hung job with a stack, not as a timeout that names the
+	// harness instead of the migration.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -164,6 +173,9 @@ func UniqueID(t *testing.T, suffix string) string {
 		}
 	}, t.Name())
 
+	// 8 bytes is 64 bits. Every id in a run is drawn against every id in every previous
+	// run, and at that width the collision probability stays negligible for far more rows
+	// than a test database will ever hold.
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		// crypto/rand.Read never returns an error on any platform this builds for, and a
