@@ -1,5 +1,11 @@
 # 2026-08-08 — LFXV2-3040: system account credentials
 
+**Update** — the LF-owned system ad-account credentials now have a way IN. `internal/bootstrap`
+installs and rotates the row for `model.SystemProjectID`, which no HTTP route can reach
+(`rejectSystemScope`), driven by the `bootstrap-system-account` subcommand; `resolved` carries
+whether credentials came from that fallback so a defect in it pages an operator instead of
+returning a 400 to a project that owns no connection to edit. Lessons below.
+
 **Green gates say nothing about reachability.** The first cut compiled, vetted, linted and tested,
 and could not READ the system credentials; the second could not WRITE them. An installer is part of
 the feature, and so are its artifact and its environment — a `cmd/` binary ko never publishes is

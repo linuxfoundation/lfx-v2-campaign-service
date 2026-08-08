@@ -145,13 +145,13 @@ func TestSecondInstallRotates(t *testing.T) {
 		t.Fatalf("rotation must SetCredential only; calls = %v, updated = %+v", repo.calls, repo.updated)
 	}
 
-	repo = row("old", nil)
+	repo = row("8666746580", nil)
 	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderGoogleAds, "new", nil, []byte(goodCreds)); err != nil {
+		model.ProviderGoogleAds, "9746983954", nil, []byte(goodCreds)); err != nil {
 		t.Fatalf("rotate with a new account id: %v", err)
 	}
 	// Version 4 is the row's own: the Update runs BEFORE SetCredential bumps it.
-	if repo.updated == nil || repo.updVer != 4 || repo.updated.AccountID != "new" {
+	if repo.updated == nil || repo.updVer != 4 || repo.updated.AccountID != "9746983954" {
 		t.Fatalf("account id change: updated = %+v at version %d, want new at 4", repo.updated, repo.updVer)
 	}
 	if len(repo.calls) < 3 || repo.calls[len(repo.calls)-2] != "update" || repo.calls[len(repo.calls)-1] != "set-credential" {
@@ -277,13 +277,18 @@ func TestInstallWritesNothingWhenItCannotProceed(t *testing.T) {
 	}
 }
 
-// TestInstallRejectsMisshapenValues: the installer writes PAST the API, so a value design/
-// connection.go would reject with a 400 must not reach an ACTIVE system row and turn into a
-// dispatch failure nobody connects back to install time. An OMITTED account id is not a
-// misshapen one — that is the legal credentials-first state.
+// TestInstallRejectsMisshapenValues: the installer writes PAST the API, so a value the rest of
+// the system refuses must not reach an ACTIVE system row and turn into a dispatch failure nobody
+// connects back to install time. Both sources of the rule are covered: design/connection.go's
+// Pattern() (Meta, X, LinkedIn) AND the runtime validators for the three providers whose design
+// checks presence alone (Google Ads, Microsoft, Reddit) — reading only the design was the gap.
+// An OMITTED account id is not a misshapen one; that is the legal credentials-first state.
 func TestInstallRejectsMisshapenValues(t *testing.T) {
 	metaCreds := []byte(`{"access_token":"tok","app_secret":"sec"}`)
 	xCreds := []byte(`{"consumer_key":"a","consumer_secret":"b","access_token":"c","access_token_secret":"d"}`)
+	gaCreds := []byte(`{"refresh_token":"rt","client_id":"ci","client_secret":"cs","developer_token":"dt"}`)
+	msCreds := []byte(`{"client_id":"ci","client_secret":"cs","refresh_token":"rt","developer_token":"dt"}`)
+	rdCreds := []byte(`{"client_id":"ci","client_secret":"cs","refresh_token":"rt"}`)
 	cases := map[string]struct {
 		provider  model.Provider
 		accountID string
@@ -296,6 +301,15 @@ func TestInstallRejectsMisshapenValues(t *testing.T) {
 		"x id carrying a path separator":   {model.ProviderTwitterAds, "8r7gb", map[string]string{"funding_instrument_id": "a/b"}, xCreds, true},
 		"meta values in shape":             {model.ProviderMetaAds, "act_1", map[string]string{"page_id": "1"}, metaCreds, false},
 		"omitted account id is legal":      {model.ProviderMetaAds, "", map[string]string{"page_id": "1"}, metaCreds, false},
+
+		// Runtime-validator providers. Each of these exited 0 before the rule was added.
+		"google ads account id not numeric":       {model.ProviderGoogleAds, "foo", nil, gaCreds, true},
+		"google ads login customer id has dashes": {model.ProviderGoogleAds, "8666746580", map[string]string{"login_customer_id": "974-698-3954"}, gaCreds, true},
+		"google ads values in shape":              {model.ProviderGoogleAds, "8666746580", map[string]string{"login_customer_id": "9746983954"}, gaCreds, false},
+		"microsoft customer id not numeric":       {model.ProviderMicrosoftAds, "1234", map[string]string{"customer_id": "cus-9"}, msCreds, true},
+		"microsoft values in shape":               {model.ProviderMicrosoftAds, "1234", map[string]string{"customer_id": "9"}, msCreds, false},
+		"reddit account id with a path separator": {model.ProviderRedditAds, "t2_gv9../x", nil, rdCreds, true},
+		"reddit account id in shape":              {model.ProviderRedditAds, "t2_gv9wtbfa", nil, rdCreds, false},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

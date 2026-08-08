@@ -303,3 +303,39 @@ func TestUnusableSystemConnectionKeepsItsOrigin(t *testing.T) {
 		t.Errorf("project connection err = %v, must not be attributed to the system account", err)
 	}
 }
+
+// TestSystemScopedCoversEveryStoredStateDefectOnDiscovery: systemScoped is not a property of one
+// error site. resolveGoogleAdsDiscoveryClient rejects TWO classes of stored state — the
+// credentials themselves, and login_customer_id — and a defect in the LF fallback row is the
+// operator's page in both cases. Tagging only the first left a project running on the fallback a
+// 400 telling it to edit a connection it does not own and cannot reach.
+func TestSystemScopedCoversEveryStoredStateDefectOnDiscovery(t *testing.T) {
+	sysConn := usableConn(goodGoogleAdsCreds, "8666746580")
+	sysConn.ProviderConfig = map[string]string{"login_customer_id": "974-698-3954"}
+
+	d := NewGoogleAdsDispatcher(&scopedConnReader{
+		rows: map[string]*model.Connection{model.SystemProjectID: sysConn},
+	}, identityEncryptor{})
+
+	_, err := d.resolveGoogleAdsDiscoveryClient(context.Background(), "cncf", model.ProviderGoogleAds)
+	if !errors.Is(err, domain.ErrProviderConfigInvalid) {
+		t.Fatalf("err = %v, want the login_customer_id defect", err)
+	}
+	if !errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+		t.Errorf("err = %v, want it attributed to the SYSTEM connection", err)
+	}
+
+	// The same defect on the project's own row stays the project's to fix.
+	ownConn := usableConn(goodGoogleAdsCreds, "8666746580")
+	ownConn.ProviderConfig = map[string]string{"login_customer_id": "974-698-3954"}
+	d = NewGoogleAdsDispatcher(&scopedConnReader{
+		rows: map[string]*model.Connection{"cncf": ownConn},
+	}, identityEncryptor{})
+	_, err = d.resolveGoogleAdsDiscoveryClient(context.Background(), "cncf", model.ProviderGoogleAds)
+	if !errors.Is(err, domain.ErrConnectionNotUsable) {
+		t.Fatalf("err = %v, want ErrConnectionNotUsable", err)
+	}
+	if errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+		t.Errorf("err = %v, must not be attributed to the system account", err)
+	}
+}

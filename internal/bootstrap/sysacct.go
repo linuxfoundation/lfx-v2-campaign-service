@@ -88,19 +88,35 @@ var (
 	alnumID   = regexp.MustCompile(`^[A-Za-z0-9]+$`)
 )
 
-// valueShapes mirrors the Pattern()/MaxLength() rules design/connection.go puts on the
-// non-secret values a client interpolates into a request path or URN. The design is the
-// contract, but this installer writes PAST it, straight to the repository — so a value the
-// API would refuse with a 400 (`account_id: "foo"` for Meta, an X id containing `/`) would
-// otherwise land on an ACTIVE system row and fail every dispatch instead. Providers absent
-// here place no shape constraint on their ids in the design either.
+// valueShapes is the shape rule each non-secret id is ALREADY held to at the two places it
+// is read, gathered where it is WRITTEN. This installer writes past the API straight to the
+// repository, so without it a value the rest of the system refuses lands on an ACTIVE system
+// row and fails every dispatch instead — with the failure surfacing far from the operator who
+// typed it.
+//
+// Two sources, because the constraint lives in different places per provider, and mirroring
+// only one of them was the bug: design/connection.go carries a Pattern() for LinkedIn, Meta
+// and X, and for Google Ads, Microsoft and Reddit the constraint exists only as a RUNTIME
+// validator (dispatch's storedCustomerIDRE, microsoft's accountIDRE, reddit's accountIDRe —
+// the last two also guard header and path interpolation). Taking the design as the whole
+// contract let `-provider google-ads -account-id foo` install cleanly and exit 0.
+//
+// A provider/key absent here is unconstrained at BOTH sources — HubSpot's list id, Meta's
+// app_id — not merely absent from the design.
 var valueShapes = map[model.Provider]map[string]*regexp.Regexp{
+	// design/connection.go Pattern()
 	model.ProviderLinkedInAds: {"account_id": numericID, "org_id": numericID},
 	model.ProviderMetaAds:     {"account_id": regexp.MustCompile(`^act_[0-9]+$`), "page_id": numericID},
 	model.ProviderTwitterAds:  {"account_id": alnumID, "funding_instrument_id": alnumID},
+	// Runtime validators only — the design checks presence alone for these.
+	model.ProviderGoogleAds:    {"account_id": numericID, "login_customer_id": numericID},
+	model.ProviderMicrosoftAds: {"account_id": numericID, "customer_id": numericID},
+	model.ProviderRedditAds:    {"account_id": regexp.MustCompile(`^[A-Za-z0-9_]+$`)},
 }
 
-// maxValueLen is design/connection.go's MaxLength(64) on the same fields.
+// maxValueLen is design/connection.go's MaxLength(64). The runtime-only validators bound
+// nothing, so applying it to them too is a tightening, not a mirror — 64 characters is far
+// past any real numeric account id, and an unbounded value here reaches a header or a path.
 const maxValueLen = 64
 
 // requireShapes validates the values as SUPPLIED, and only those: an omitted account id is
@@ -120,7 +136,7 @@ func requireShapes(provider model.Provider, accountID string, cfg map[string]str
 			continue
 		}
 		if len(v) > maxValueLen || !re.MatchString(v) {
-			return fmt.Errorf("bootstrap: %s %s %q does not match the shape design/connection.go requires (%s, at most %d chars)",
+			return fmt.Errorf("bootstrap: %s %s %q does not match the shape this value is held to elsewhere (%s, at most %d chars) — see valueShapes",
 				provider, key, v, re, maxValueLen)
 		}
 	}
@@ -199,13 +215,23 @@ func InstallSystemCredentials(
 	existing, gerr := repo.Get(ctx, model.SystemProjectID, provider)
 	switch {
 	case gerr == nil:
-		// Two writes, and the port offers no way to make them one transaction, so the
-		// ORDER decides which mixed state a failure can leave behind. The account id and
-		// config go first and the secret LAST: a failed second write then leaves the row
-		// holding the credential it already had, which is the one the operator knows
-		// works. The other order commits the NEW secret against the OLD account — a
-		// pairing dispatch can observe and nothing in the row explains. Either way the
-		// command is idempotent, so a re-run converges.
+		// Two writes, and the port offers no combined write, so the ORDER only chooses
+		// WHICH mixed state a failure leaves behind — it does not remove one. Both orders
+		// are observable by dispatch: this one can run the OLD credential against the NEW
+		// account until the rerun, the reverse runs the NEW credential against the OLD
+		// account. This order is preferred because its residue is the credential the
+		// operator already knows works, so the row stays dispatchable on the previous
+		// account rather than stranded on a new one it cannot authenticate to; and because
+		// the write that can fail is the one whose retry is free of side effects.
+		//
+		// Two limits are real and NOT closed here. The mixed window persists until a rerun
+		// (the command is idempotent, so a rerun converges). And concurrent bootstrap runs
+		// can interleave: Update takes existing.Version optimistically, SetCredential does
+		// not, so two simultaneous rotations can finish with one run's account and the
+		// other's credential. Closing either needs a transactional write on
+		// domain.ConnectionRepository, which is a port change; it is deliberately not
+		// smuggled in here. Until then, run this command serially — it is a deployment
+		// job, not a request path.
 		//
 		// Config and account id are rewritten only when supplied: Update rewrites every
 		// column, so a rotation omitting -account-id would otherwise CLEAR the selection.
