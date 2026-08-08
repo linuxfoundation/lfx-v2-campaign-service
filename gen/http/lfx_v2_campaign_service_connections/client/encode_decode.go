@@ -6319,6 +6319,155 @@ func DecodeSetCredentialHubspotResponse(decoder func(*http.Response) goahttp.Dec
 	}
 }
 
+// BuildListGoogleAdsAccountsRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "list-google-ads-accounts" endpoint
+func (c *Client) BuildListGoogleAdsAccountsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.ListGoogleAdsAccountsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-google-ads-accounts", "*lfxv2campaignserviceconnections.ListGoogleAdsAccountsPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ListGoogleAdsAccountsLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "list-google-ads-accounts", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeListGoogleAdsAccountsRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-connections list-google-ads-accounts server.
+func EncodeListGoogleAdsAccountsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.ListGoogleAdsAccountsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-google-ads-accounts", "*lfxv2campaignserviceconnections.ListGoogleAdsAccountsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		return nil
+	}
+}
+
+// DecodeListGoogleAdsAccountsResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-connections list-google-ads-accounts
+// endpoint. restoreBody controls whether the response body should be restored
+// after having been read.
+// DecodeListGoogleAdsAccountsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - error: internal error
+func DecodeListGoogleAdsAccountsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ListGoogleAdsAccountsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-accounts", err)
+			}
+			err = ValidateListGoogleAdsAccountsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-accounts", err)
+			}
+			res := NewListGoogleAdsAccountsResultOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ListGoogleAdsAccountsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-accounts", err)
+			}
+			err = ValidateListGoogleAdsAccountsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-accounts", err)
+			}
+			return nil, NewListGoogleAdsAccountsBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ListGoogleAdsAccountsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-accounts", err)
+			}
+			err = ValidateListGoogleAdsAccountsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-accounts", err)
+			}
+			return nil, NewListGoogleAdsAccountsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ListGoogleAdsAccountsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-accounts", err)
+			}
+			err = ValidateListGoogleAdsAccountsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-accounts", err)
+			}
+			return nil, NewListGoogleAdsAccountsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ListGoogleAdsAccountsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-google-ads-accounts", err)
+			}
+			err = ValidateListGoogleAdsAccountsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-google-ads-accounts", err)
+			}
+			return nil, NewListGoogleAdsAccountsNotFound(&body)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-google-ads-accounts", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // marshalLfxv2campaignserviceconnectionsGoogleAdsConnectionConfigToGoogleAdsConnectionConfigRequestBody
 // builds a value of type *GoogleAdsConnectionConfigRequestBody from a value of
 // type *lfxv2campaignserviceconnections.GoogleAdsConnectionConfig.
@@ -6690,6 +6839,18 @@ func marshalHubspotConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsH
 func marshalHubspotCredentialsRequestBodyToLfxv2campaignserviceconnectionsHubspotCredentials(v *HubspotCredentialsRequestBody) *lfxv2campaignserviceconnections.HubspotCredentials {
 	res := &lfxv2campaignserviceconnections.HubspotCredentials{
 		PrivateAppToken: v.PrivateAppToken,
+	}
+
+	return res
+}
+
+// unmarshalAccessibleAccountResponseBodyToLfxv2campaignserviceconnectionsAccessibleAccount
+// builds a value of type *lfxv2campaignserviceconnections.AccessibleAccount
+// from a value of type *AccessibleAccountResponseBody.
+func unmarshalAccessibleAccountResponseBodyToLfxv2campaignserviceconnectionsAccessibleAccount(v *AccessibleAccountResponseBody) *lfxv2campaignserviceconnections.AccessibleAccount {
+	res := &lfxv2campaignserviceconnections.AccessibleAccount{
+		ID:    *v.ID,
+		Label: v.Label,
 	}
 
 	return res

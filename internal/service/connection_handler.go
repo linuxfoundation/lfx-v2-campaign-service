@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,6 +49,34 @@ func actorFromCtx(ctx context.Context) *model.Actor {
 	return nil
 }
 
+// attributedActor returns the authenticated actor for a write that will RECORD it, logging
+// when there is none.
+//
+// The write proceeds either way — refusing it would escalate a token-decoding regression into
+// a total outage — but "proceeds" must not mean "silently". A broken gateway, a claim rename
+// upstream, or a regression in actorFromToken all present identically: every row commits with
+// NULL attribution and nothing else fails. This warning is the only signal an operator gets,
+// and its rate is the thing to alert on: a steady trickle is unauthenticated traffic, a step
+// change across every write is the auth path having broken.
+//
+// It counts ATTEMPTS, not commits, and that is deliberate — the message says "attempted" so
+// the two are not confused. This resolver runs before the repository call, so a write that
+// then fails on a version conflict, a missing parent, or a database error still logs here.
+// Moving the warning after a successful commit would look more precise and be strictly worse:
+// whether an actor was present is decided at the gateway, upstream of anything the repository
+// does, so a failed write is evidence about the auth path in exactly the same way a
+// successful one is. Worse, a deploy that breaks auth AND breaks writes would go silent
+// precisely when the signal is most needed. Alert on the rate relative to total write
+// attempts, not to commits.
+func attributedActor(ctx context.Context, operation string) *model.Actor {
+	a := actorFromCtx(ctx)
+	if a == nil {
+		slog.WarnContext(ctx, "write attempted with no authenticated actor; attribution will be recorded as NULL if it commits",
+			"operation", operation)
+	}
+	return a
+}
+
 // actorFromToken best-effort decodes the JWT payload to extract principal
 // claims for attribution. It does not verify the signature (see JWTAuth).
 func actorFromToken(token string) *model.Actor {
@@ -84,14 +113,19 @@ func actorFromToken(token string) *model.Actor {
 // thin adapters (see connection.go) that convert the typed Goa payloads to and
 // from the generic domain model and call the core helpers here.
 type ConnectionService struct {
-	// mu guards repo and enc, which can be swapped in after construction: during
-	// a database cold start the service boots with a nil repo (every method
-	// returns 503) and the container injects the live repo+encryptor via
-	// SetBackend once the pool opens. Probe/handler requests read them
-	// concurrently with that swap, so access is guarded.
+	// mu guards repo, enc, and orch, which can be swapped in after construction: during
+	// a database cold start the service boots with nil values (every method returns 503)
+	// and the container injects the live values once the pool opens. Probe/handler
+	// requests read them concurrently with that swap, so access is guarded.
+	//
+	// The injection is TWO separate locked swaps, not one: SetBackend writes repo+enc,
+	// SetOrchestrator writes orch. A reader can therefore observe repo+enc installed
+	// while orch is still nil — which is why every orchestrator-backed method nil-checks
+	// orch under the read lock instead of assuming a backend implies an orchestrator.
 	mu   sync.RWMutex
 	repo domain.ConnectionRepository
 	enc  domain.Encryptor
+	orch *Orchestrator
 }
 
 var (
@@ -102,7 +136,8 @@ var (
 // NewConnectionService constructs a ConnectionService. A nil repo is valid: it
 // signals the database is not configured OR not yet ready, so every method
 // returns the typed 503 ServiceUnavailable (see resolveBackend) instead of
-// panicking on a nil repo.
+// panicking on a nil repo. A nil orchestrator is also valid for the account-listing
+// methods (they fail with 503 until it is wired).
 func NewConnectionService(repo domain.ConnectionRepository, enc domain.Encryptor) *ConnectionService {
 	return &ConnectionService{repo: repo, enc: enc}
 }
@@ -118,11 +153,19 @@ func (s *ConnectionService) SetBackend(repo domain.ConnectionRepository, enc dom
 	s.mu.Unlock()
 }
 
-// backend returns the current repo and encryptor under the read lock.
-func (s *ConnectionService) backend() (domain.ConnectionRepository, domain.Encryptor) {
+// SetOrchestrator injects the orchestrator for account-listing operations.
+// Called by the container after the orchestrator is constructed.
+func (s *ConnectionService) SetOrchestrator(orch *Orchestrator) {
+	s.mu.Lock()
+	s.orch = orch
+	s.mu.Unlock()
+}
+
+// backend returns the current repo, encryptor, and orchestrator under the read lock.
+func (s *ConnectionService) backend() (domain.ConnectionRepository, domain.Encryptor, *Orchestrator) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.repo, s.enc
+	return s.repo, s.enc, s.orch
 }
 
 // resolveBackend returns the repo+encryptor for one request, or the typed 503
@@ -132,11 +175,25 @@ func (s *ConnectionService) backend() (domain.ConnectionRepository, domain.Encry
 // SetBackend swap mid-handler. The routes are still mounted in the unavailable
 // mode so runtime matches the published OpenAPI contract.
 func (s *ConnectionService) resolveBackend() (domain.ConnectionRepository, domain.Encryptor, error) {
-	repo, enc := s.backend()
+	repo, enc, _ := s.backend()
 	if repo == nil {
 		return nil, nil, &conn.ConnServiceUnavailableError{Code: "503", Message: "connection storage is unavailable"}
 	}
 	return repo, enc, nil
+}
+
+// resolveBackendWithOrch returns the repo, encryptor, and orchestrator for account-listing
+// operations, or a typed 503 error when any of them is unavailable. The orchestrator is
+// only required for account discovery, while repo is needed by all connection operations.
+func (s *ConnectionService) resolveBackendWithOrch() (domain.ConnectionRepository, domain.Encryptor, *Orchestrator, error) {
+	repo, enc, orch := s.backend()
+	if repo == nil {
+		return nil, nil, nil, &conn.ConnServiceUnavailableError{Code: "503", Message: "connection storage is unavailable"}
+	}
+	if orch == nil {
+		return nil, nil, nil, &conn.ConnServiceUnavailableError{Code: "503", Message: "account discovery service is unavailable"}
+	}
+	return repo, enc, orch, nil
 }
 
 // createConn encrypts credentials, persists a new connection, and returns the

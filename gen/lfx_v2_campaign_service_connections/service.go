@@ -130,6 +130,9 @@ type Service interface {
 	// credential replacement is independently permissioned and audited. Not a
 	// rotate — the service does not generate or swap secrets upstream.
 	SetCredentialHubspot(context.Context, *SetCredentialHubspotPayload) (err error)
+	// Enumerate the Google Ads ad accounts accessible via the stored connection
+	// credential.
+	ListGoogleAdsAccounts(context.Context, *ListGoogleAdsAccountsPayload) (res *ListGoogleAdsAccountsResult, err error)
 }
 
 // Auther defines the authorization functions to be implemented by the service.
@@ -152,7 +155,14 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [42]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot"}
+var MethodNames = [43]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts"}
+
+type AccessibleAccount struct {
+	// Account identifier in the ad platform's namespace
+	ID string
+	// Human-readable account name or label
+	Label *string
+}
 
 // ConnectionTestResult is the result type of the
 // lfx-v2-campaign-service-connections service test-google-ads method.
@@ -392,8 +402,10 @@ type GoogleAdsConnection struct {
 type GoogleAdsConnectionConfig struct {
 	// Optional friendly name
 	Label *string
-	// Google Ads customer ID
-	AccountID string
+	// Google Ads customer ID. Optional: omit it to create the connection with
+	// credentials only, then choose one from GET
+	// .../connection-google-ads/accounts and set it with PUT.
+	AccountID *string
 	// Manager account used for API access
 	LoginCustomerID *string
 }
@@ -498,6 +510,21 @@ type LinkedinAdsConnectionConfig struct {
 type LinkedinAdsCredentials struct {
 	// OAuth access token
 	AccessToken string
+}
+
+// ListGoogleAdsAccountsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service list-google-ads-accounts method.
+type ListGoogleAdsAccountsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// ListGoogleAdsAccountsResult is the result type of the
+// lfx-v2-campaign-service-connections service list-google-ads-accounts method.
+type ListGoogleAdsAccountsResult struct {
+	Accounts []*AccessibleAccount
 }
 
 // MetaAdsConnection is the result type of the

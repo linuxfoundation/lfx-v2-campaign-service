@@ -4,6 +4,7 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/crypto"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
 )
 
@@ -1202,6 +1204,58 @@ func TestGoogleAds_ReadMetrics_ConnectionUnresolvedPropagates(t *testing.T) {
 	}
 }
 
+// TestGoogleAds_ReadMetrics_UnusableConnectionIsClassifiedNotRetryable pins the READ path's
+// half of the classification the ListAccounts table pins for discovery. The two reach the
+// validator through different resolvers, and only the discovery one used to tag the result:
+// an inactive or incomplete connection came back off resolveGoogleAdsClient bare, missed
+// the handler's ErrConnectionNotUsable arm (internal/service/brief.go), and answered 503 —
+// "the platform did not respond" about a platform never contacted, telling the caller to
+// retry a request no amount of waiting can satisfy. The status toggle resolves through the
+// same function and inherits the same guarantee.
+func TestGoogleAds_ReadMetrics_UnusableConnectionIsClassifiedNotRetryable(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("reached Google Ads with an unusable connection")
+	}))
+	defer apiSrv.Close()
+
+	cases := []struct {
+		name   string
+		mutate func(*model.Connection)
+		want   error
+	}{
+		{"inactive", func(c *model.Connection) { c.Status = model.StatusInactive }, domain.ErrConnectionInactive},
+		{"undecodable blob", func(c *model.Connection) { c.EncryptedCredentials = []byte(`{`) }, domain.ErrCredentialsUndecodable},
+		{"incomplete credentials", func(c *model.Connection) {
+			c.EncryptedCredentials = []byte(`{"ClientID":"a","ClientSecret":"b","DeveloperToken":"c"}`)
+		}, domain.ErrCredentialsIncomplete},
+		{"no account selected", func(c *model.Connection) { c.AccountID = "" }, domain.ErrAccountNotSelected},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := activeGoogleAdsConn(goodGoogleAdsCreds)
+			tc.mutate(conn)
+			d := NewGoogleAdsDispatcher(
+				fakeConnReader{conn: conn}, identityEncryptor{},
+				googleads.WithBaseURL(apiSrv.URL),
+			)
+			camp := &model.Campaign{Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+			_, err := d.ReadMetrics(context.Background(), "proj", model.ProviderGoogleAds, camp, model.MetricsWindowLast30Days)
+			if err == nil {
+				t.Fatal("expected a connection error, got nil")
+			}
+			if !errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Errorf("error = %v, want errors.Is(err, domain.ErrConnectionNotUsable): without it "+
+					"the handler falls to its default arm and answers 503 for a condition only an "+
+					"edit to the connection can clear", err)
+			}
+			if !errors.Is(err, tc.want) {
+				t.Errorf("error = %v, want errors.Is(err, %v): the reason sentinel is what the "+
+					"handler logs, and it must survive alongside the status marker", err, tc.want)
+			}
+		})
+	}
+}
+
 // TestGoogleAds_ReadMetrics_UnmappableWindowIs400AndNeverContactsPlatform pins the
 // translation boundary: a window outside the closed model vocabulary is caller input, so it
 // must surface as domain.ErrMetricsWindowUnsupported (400) and the platform must never be
@@ -1851,5 +1905,568 @@ func TestGoogleAds_Adoption_DoesNotBypassInputValidation(t *testing.T) {
 	}
 	if camp != nil {
 		t.Errorf("a pre-send validation failure created nothing, so the result must be nil to release the claim; got %+v", camp)
+	}
+}
+
+// TestGoogleAds_ListAccounts_EmptyUpstreamIsEmptySliceNotNil pins the empty-discovery
+// case end to end through the real dispatcher and the real client. A credential that
+// legitimately reaches zero ad accounts must produce an EMPTY slice, not nil: the two
+// have to stay distinguishable at the service boundary, or the caller that lands next
+// reads "no answer" and reports the platform as down for a correct, ordinary answer.
+// Building the slice with `var accounts []model.AccessibleAccount` would do exactly that.
+func TestGoogleAds_ListAccounts_EmptyUpstreamIsEmptySliceNotNil(t *testing.T) {
+	var mu sync.Mutex
+	var gotMethod, gotPath string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// activeGoogleAdsConn carries a login_customer_id, so discovery also expands the
+		// manager hierarchy. That second request is a POST to a customer-scoped search
+		// path; capturing it would clobber the assertion below, which is about the
+		// account-agnostic discovery call specifically.
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			_, _ = io.WriteString(w, `{"results":[]}`)
+			return
+		}
+		mu.Lock()
+		gotMethod, gotPath = r.Method, r.URL.Path
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"resourceNames":[]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	accounts, err := d.ListAccounts(context.Background(), "proj", model.ProviderGoogleAds)
+	if err != nil {
+		t.Fatalf("ListAccounts: %v", err)
+	}
+	if accounts == nil {
+		t.Fatal("ListAccounts returned nil for an empty upstream result; it must return an empty slice")
+	}
+	if len(accounts) != 0 {
+		t.Fatalf("expected 0 accounts, got %d", len(accounts))
+	}
+
+	// The REST binding for ListAccessibleCustomers is GET on an account-agnostic path —
+	// no customers/{id} segment, unlike every other Google Ads call this client makes.
+	mu.Lock()
+	method, path := gotMethod, gotPath
+	mu.Unlock()
+	if method != http.MethodGet {
+		t.Errorf("method = %q, want GET", method)
+	}
+	if !strings.HasSuffix(path, "/customers:listAccessibleCustomers") {
+		t.Errorf("path = %q, want the account-agnostic customers:listAccessibleCustomers", path)
+	}
+}
+
+// TestGoogleAds_ListAccounts_WorksBeforeAnAccountIsChosen pins the fix for the
+// chicken-and-egg in the discovery path. validateGoogleAdsConnection demands a non-empty
+// account id, and ListAccounts used to route through it — so a caller had to have already
+// pasted a customer id before they could ask which customer ids exist. A freshly
+// authorized connection has credentials and NO account id; that is the exact state
+// discovery is for, and it must not be rejected as a connection error.
+func TestGoogleAds_ListAccounts_WorksBeforeAnAccountIsChosen(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"resourceNames":["customers/1234567890"]}`)
+	}))
+	defer apiSrv.Close()
+
+	conn := activeGoogleAdsConn(goodGoogleAdsCreds)
+	conn.AccountID = ""       // not chosen yet — this is what discovery resolves
+	conn.ProviderConfig = nil // and no manager either, so no hierarchy to expand
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: conn}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	accounts, err := d.ListAccounts(context.Background(), "proj", model.ProviderGoogleAds)
+	if err != nil {
+		t.Fatalf("discovery must work with no account id chosen yet, got: %v", err)
+	}
+	if len(accounts) != 1 || accounts[0].ID != "1234567890" {
+		t.Errorf("accounts = %+v, want the one discovered customer id", accounts)
+	}
+}
+
+// TestGoogleAds_ListAccounts_StillRejectsUnusableConnections pins the other half: dropping
+// the account-id requirement must not drop the rest of the connection contract. An
+// inactive connection, one whose credential blob is missing OAuth fields, or one carrying a
+// dashed manager id is a connection problem and should read as one — not as an opaque
+// failure from Google.
+//
+// Each case must also satisfy errors.Is(err, domain.ErrConnectionNotUsable). That is not
+// decoration: the service layer that answers this endpoint has exactly one way to tell a
+// "the connection needs editing" failure (400) from "Google did not answer" (503), and it is
+// this sentinel. Without it every case here lands in the default arm and becomes a 503 — a
+// promise that retrying might help, made about three conditions that cannot change until a
+// human edits the connection. The substring assertions alone would not catch that: the
+// message stays identical whether or not the wrap is there.
+//
+// The dashed login_customer_id case is the one that motivated the check at the dispatch
+// boundary. The client validates it too, but it does so inside the same call that talks to
+// Google, so by the time it fails the error is indistinguishable here from an upstream one.
+func TestGoogleAds_ListAccounts_StillRejectsUnusableConnections(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("reached Google Ads with an unusable connection")
+	}))
+	defer apiSrv.Close()
+
+	cases := []struct {
+		name    string
+		mutate  func(*model.Connection)
+		enc     domain.Encryptor // nil means identityEncryptor
+		wantSub string
+	}{
+		{
+			name:    "inactive connection",
+			mutate:  func(c *model.Connection) { c.Status = model.StatusInactive },
+			wantSub: "not active",
+		},
+		{
+			// Caught inside creds.resolve, before any adapter sees the blob. It is the
+			// same class as the cases below — the row needs editing, not retrying — so it
+			// must carry the same sentinel even though a different function produces it.
+			name:    "connection row with an empty credential blob",
+			mutate:  func(c *model.Connection) { c.EncryptedCredentials = nil },
+			wantSub: "no stored credentials",
+		},
+		{
+			// Also inside creds.resolve, and note how narrow it is: a blob the encryptor
+			// could not even ATTEMPT to authenticate. That proves the row is bad and
+			// implicates nothing else, so it belongs in this table. A blob that failed
+			// AUTHENTICATION does not belong here at all — see
+			// TestGoogleAds_ListAccounts_DecryptFailureIsNotAConnectionProblem.
+			name:    "structurally malformed credential blob",
+			enc:     malformedEncryptor{},
+			wantSub: "decrypt",
+		},
+		{
+			name: "credentials missing the refresh token",
+			mutate: func(c *model.Connection) {
+				c.EncryptedCredentials = []byte(`{"clientId":"a","clientSecret":"b","developerToken":"c"}`)
+			},
+			wantSub: "incomplete",
+		},
+		{
+			name: "manager id stored with dashes",
+			mutate: func(c *model.Connection) {
+				c.ProviderConfig = map[string]string{"login_customer_id": "999-999-9999"}
+			},
+			wantSub: "login_customer_id",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := activeGoogleAdsConn(goodGoogleAdsCreds)
+			conn.AccountID = ""
+			if tc.mutate != nil {
+				tc.mutate(conn)
+			}
+			var enc domain.Encryptor = identityEncryptor{}
+			if tc.enc != nil {
+				enc = tc.enc
+			}
+			d := NewGoogleAdsDispatcher(
+				fakeConnReader{conn: conn}, enc,
+				googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+			)
+			_, err := d.ListAccounts(context.Background(), "proj", model.ProviderGoogleAds)
+			if err == nil {
+				t.Fatal("expected a connection error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("error = %v, want it to contain %q", err, tc.wantSub)
+			}
+			if !errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Errorf("error = %v, want errors.Is(err, domain.ErrConnectionNotUsable): without "+
+					"the sentinel the service layer cannot separate this from an upstream failure "+
+					"and answers 503, telling the caller to retry a request that cannot succeed "+
+					"until the connection is edited", err)
+			}
+			if errors.Is(err, domain.ErrNotFound) {
+				t.Errorf("error = %v, must NOT satisfy ErrNotFound: the connection exists, it is "+
+					"just unusable — a 404 would tell the caller to create a second one", err)
+			}
+		})
+	}
+}
+
+// TestGoogleAds_ListAccounts_UnusableReasonsAreClassifiedWithoutPlaintext pins the two
+// properties the discovery handler's log line depends on.
+//
+// FIRST: each stored-connection defect carries its own sentinel alongside
+// ErrConnectionNotUsable, so the reason survives as something `errors.Is` can read. The
+// status is still decided by the one sentinel; these only say WHICH defect it was.
+//
+// SECOND, and the reason the first matters: one of these conditions is detected by decoding
+// the DECRYPTED credential blob, and encoding/json QUOTES ITS INPUT — a *json.SyntaxError
+// names the offending character, a *json.UnmarshalTypeError names the field being read. That
+// error is dropped at the point of detection rather than wrapped, so the undecodable case
+// asserts its message by EQUALITY against the fixed text. A substring hunt for a planted
+// secret would be vacuous here: the blob most likely to leak yields only ONE character of
+// input, so "the marker is absent" can pass against a chain that still carries the json
+// error. Equality cannot: any re-wrap changes the string. The three blobs cover the two
+// error types plus a truncation.
+func TestGoogleAds_ListAccounts_UnusableReasonsAreClassifiedWithoutPlaintext(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("reached Google Ads with an unusable connection")
+	}))
+	defer apiSrv.Close()
+
+	const secretMarker = "sUp3r-s3cr3t-refresh-token"
+
+	cases := []struct {
+		name   string
+		mutate func(*model.Connection)
+		want   error
+	}{
+		{
+			name:   "inactive",
+			mutate: func(c *model.Connection) { c.Status = model.StatusInactive },
+			want:   domain.ErrConnectionInactive,
+		},
+		{
+			// The empty-credential column. It is the ONE case here that never reaches
+			// the decrypt/decode path at all — creds.resolve short-circuits on length —
+			// which is exactly why it was the case that regressed to
+			// reason=unclassified: it is wrapped in a different branch from every other
+			// row in this table, so a fix applied to the classification switch does not
+			// reach it.
+			name:   "absent credentials",
+			mutate: func(c *model.Connection) { c.EncryptedCredentials = nil },
+			want:   domain.ErrCredentialsAbsent,
+		},
+		{
+			// A *json.SyntaxError case: trailing garbage after a valid value makes
+			// encoding/json report "invalid character '@' after top-level value", quoting
+			// a byte of the decrypted blob.
+			name:   "undecodable blob, syntax error",
+			mutate: func(c *model.Connection) { c.EncryptedCredentials = []byte(`{"RefreshToken":"tok"}@`) },
+			want:   domain.ErrCredentialsUndecodable,
+		},
+		{
+			// A *json.UnmarshalTypeError case: the error names the struct field it was
+			// reading, i.e. which credential is malformed.
+			name:   "undecodable blob, type error",
+			mutate: func(c *model.Connection) { c.EncryptedCredentials = []byte(`{"RefreshToken":123}`) },
+			want:   domain.ErrCredentialsUndecodable,
+		},
+		{
+			name:   "undecodable blob, truncated",
+			mutate: func(c *model.Connection) { c.EncryptedCredentials = []byte(`{"RefreshToken":"` + secretMarker) },
+			want:   domain.ErrCredentialsUndecodable,
+		},
+		{
+			name: "incomplete credentials",
+			mutate: func(c *model.Connection) {
+				c.EncryptedCredentials = []byte(`{"ClientID":"a","ClientSecret":"b","DeveloperToken":"c"}`)
+			},
+			want: domain.ErrCredentialsIncomplete,
+		},
+		{
+			name: "invalid provider config",
+			mutate: func(c *model.Connection) {
+				c.ProviderConfig = map[string]string{"login_customer_id": "999-999-9999"}
+			},
+			want: domain.ErrProviderConfigInvalid,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := activeGoogleAdsConn(goodGoogleAdsCreds)
+			conn.AccountID = ""
+			tc.mutate(conn)
+			d := NewGoogleAdsDispatcher(
+				fakeConnReader{conn: conn}, identityEncryptor{},
+				googleads.WithBaseURL(apiSrv.URL),
+			)
+			_, err := d.ListAccounts(context.Background(), "proj", model.ProviderGoogleAds)
+			if err == nil {
+				t.Fatal("expected a connection error, got nil")
+			}
+			if !errors.Is(err, tc.want) {
+				t.Errorf("error = %v, want errors.Is(err, %v): the handler logs a reason token "+
+					"derived from these sentinels, and an unclassified error logs nothing that "+
+					"an operator can act on", err, tc.want)
+			}
+			if !errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Errorf("error = %v, want errors.Is(err, domain.ErrConnectionNotUsable): the "+
+					"reason sentinel names the defect, it does not replace the status marker", err)
+			}
+			if tc.want == domain.ErrCredentialsUndecodable {
+				const want = "the stored connection is not usable as configured: " +
+					"the stored credential blob could not be decoded: " +
+					"google ads credentials for project proj are not valid JSON"
+				if err.Error() != want {
+					t.Errorf("error = %q, want exactly %q: the decode error is derived from the "+
+						"decrypted blob and must not appear anywhere in this chain", err, want)
+				}
+			}
+		})
+	}
+}
+
+// TestGoogleAds_ListAccounts_DecryptFailureIsNotAConnectionProblem pins the other side of
+// the table above: a decrypt failure is not one condition, and the two halves ask different
+// people to act.
+//
+// A blob too short to hold a nonce was never authenticated, so it proves the stored ROW is
+// bad — that half stays in the table above and answers 400. A GCM AUTHENTICATION failure
+// proves something else entirely: the ciphertext is well formed and the key did not open it,
+// which means a wrong or rotated APPLICATION key, or tampering
+// (internal/infrastructure/crypto/aesgcm.go). The application key is deployment-wide, so
+// that failure hits EVERY project's connection in the same instant. Wrapped as
+// ErrConnectionNotUsable it would answer 400 to all of them — every operator told to go fix
+// a connection that is fine, and the one signal that says the deployment is broken erased.
+//
+// The first case runs the REAL AESGCM rather than a fake, because the classification is a
+// two-package contract: crypto must wrap the domain sentinel and creds.resolve must read it.
+// A fake asserting its own error back would prove neither half. The second case is an
+// encryptor whose error carries no classification at all; it must take the same path, since
+// an implementation that proves nothing about the row cannot be read as accusing it.
+func TestGoogleAds_ListAccounts_DecryptFailureIsNotAConnectionProblem(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("reached Google Ads with credentials that never decrypted")
+	}))
+	defer apiSrv.Close()
+
+	sealingKey := bytes.Repeat([]byte{0xA5}, crypto.KeySize)
+	sealer, err := crypto.NewAESGCM(sealingKey)
+	if err != nil {
+		t.Fatalf("build sealing encryptor: %v", err)
+	}
+	sealed, err := sealer.Encrypt([]byte(goodGoogleAdsCreds))
+	if err != nil {
+		t.Fatalf("seal credentials: %v", err)
+	}
+	// A DIFFERENT 32-byte key — the rotated-deployment-key scenario, exactly.
+	rotated, err := crypto.NewAESGCM(bytes.Repeat([]byte{0x5A}, crypto.KeySize))
+	if err != nil {
+		t.Fatalf("build rotated encryptor: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		enc  domain.Encryptor
+		blob []byte
+	}{
+		{name: "GCM authentication failure under a rotated key", enc: rotated, blob: sealed},
+		{name: "decrypt error with no classification", enc: errEncryptor{}, blob: []byte("anything")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := activeGoogleAdsConn(goodGoogleAdsCreds)
+			conn.AccountID = ""
+			conn.EncryptedCredentials = tc.blob
+			d := NewGoogleAdsDispatcher(
+				fakeConnReader{conn: conn}, tc.enc,
+				googleads.WithBaseURL(apiSrv.URL),
+			)
+			_, err := d.ListAccounts(context.Background(), "proj", model.ProviderGoogleAds)
+			if err == nil {
+				t.Fatal("expected a decrypt error, got nil")
+			}
+			if !errors.Is(err, domain.ErrCredentialDecryptionFailed) {
+				t.Errorf("error = %v, want errors.Is(err, domain.ErrCredentialDecryptionFailed): "+
+					"this is the only marker that carries the infrastructure/security "+
+					"classification to the service layer", err)
+			}
+			if errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Errorf("error = %v, must NOT satisfy ErrConnectionNotUsable: that maps to 400 "+
+					"and blames the project's connection row, but a wrong application key fails "+
+					"every project at once and needs ops, not the operator", err)
+			}
+			if errors.Is(err, domain.ErrCredentialsMalformed) {
+				t.Errorf("error = %v, must NOT satisfy ErrCredentialsMalformed: nothing here "+
+					"showed the stored blob to be structurally bad", err)
+			}
+		})
+	}
+}
+
+// TestGoogleAds_ListAccounts_MissingConnectionKeepsErrNotFound pins the ONE error
+// distinction this staged adapter owes the service layer that lands next. Discovery is a
+// read, and its two failure modes ask the operator to do opposite things: "this project has
+// no Google Ads connection" is a setup state the operator fixes by creating one (404), while
+// "the call to Google failed" is an outage worth retrying (503). Both arrive here as a
+// non-nil error, so the only thing separating them is whether domain.ErrNotFound survives
+// the credential resolution — resolve() wraps it with %w for precisely this reason, and a
+// future refactor that flattens the wrap to a plain string error would silently collapse
+// the 404 into a 503 with every existing test still green.
+//
+// The test also asserts Google is never contacted: a missing connection has no credential
+// to send, so reaching upstream at all would mean the guard ran too late.
+func TestGoogleAds_ListAccounts_MissingConnectionKeepsErrNotFound(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("contacted Google Ads for a project with no stored connection")
+	}))
+	defer apiSrv.Close()
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{err: domain.ErrNotFound}, identityEncryptor{},
+		googleads.WithBaseURL(apiSrv.URL),
+	)
+	accounts, err := d.ListAccounts(context.Background(), "proj", model.ProviderGoogleAds)
+	if err == nil {
+		t.Fatal("expected an error for a project with no connection, got nil")
+	}
+	if accounts != nil {
+		t.Errorf("accounts = %+v, want nil on error", accounts)
+	}
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("error = %v, want it to still satisfy errors.Is(err, domain.ErrNotFound) "+
+			"so the caller can answer 404 rather than 503", err)
+	}
+}
+
+// TestGoogleAds_ListAccounts_TranslatesIDAndLabel pins the actual translation this adapter
+// performs. AccessibleAccount is a two-field projection, and each field comes from a
+// different upstream shape: the ID is the trailing segment of a `customers/{id}` resource
+// name, and the Label is the descriptiveName that only exists on rows returned by the
+// manager-hierarchy expansion. The existing empty and no-account-chosen tests exercise the
+// paths but never a populated Label, so a change that dropped DescriptiveName on the way
+// through the adapter — the field an operator actually reads when picking an account —
+// would leave every discovery test passing.
+func TestGoogleAds_ListAccounts_TranslatesIDAndLabel(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// The hierarchy expansion is where a display name is available at all; the flat
+		// listAccessibleCustomers response carries resource names and nothing else.
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			_, _ = io.WriteString(w, `{"results":[{"customerClient":{"id":"2222222222","descriptiveName":"CNCF Ad Account"}}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"resourceNames":["customers/2222222222"]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	accounts, err := d.ListAccounts(context.Background(), "proj", model.ProviderGoogleAds)
+	if err != nil {
+		t.Fatalf("ListAccounts: %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("accounts = %+v, want exactly 1", accounts)
+	}
+	// Bare numeric id, NOT the customers/ resource name: the id is what a caller pastes
+	// back as the connection's AccountID.
+	if accounts[0].ID != "2222222222" {
+		t.Errorf("ID = %q, want the bare numeric customer id", accounts[0].ID)
+	}
+	if accounts[0].Label != "CNCF Ad Account" {
+		t.Errorf("Label = %q, want the descriptiveName from the expanded row", accounts[0].Label)
+	}
+}
+
+// TestValidateGoogleAdsCredentials_WhitespaceOnlyIsIncomplete pins the trim. A credential
+// pasted into a form arrives with surrounding whitespace routinely, and a field that is
+// ONLY whitespace is the empty case wearing a disguise: `!= ""` accepts it, and the value
+// then reaches Google, which rejects it as an opaque upstream failure rather than the local
+// "incomplete credentials" error that names the field to fix.
+//
+// The second half matters as much as the first: trimming must happen IN PLACE, so the
+// strings checked for emptiness are the same strings handed to NewClient. Trimming only
+// inside the check would pass the guard and still send the padded value.
+func TestValidateGoogleAdsCredentials_WhitespaceOnlyIsIncomplete(t *testing.T) {
+	for _, field := range []string{"ClientID", "ClientSecret", "DeveloperToken", "RefreshToken"} {
+		t.Run(field+" whitespace only", func(t *testing.T) {
+			creds := googleAdsCreds{ClientID: "cid", ClientSecret: "csec", DeveloperToken: "dev", RefreshToken: "rt"}
+			switch field {
+			case "ClientID":
+				creds.ClientID = "   "
+			case "ClientSecret":
+				creds.ClientSecret = "\t\n"
+			case "DeveloperToken":
+				creds.DeveloperToken = " "
+			case "RefreshToken":
+				creds.RefreshToken = "\n  "
+			}
+			raw, err := json.Marshal(creds)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			res := &resolved{plaintext: raw, status: model.StatusActive}
+			if _, err := validateGoogleAdsCredentials("proj", res); err == nil {
+				t.Fatalf("a whitespace-only %s passed as present; want an incomplete-credentials error", field)
+			} else if !strings.Contains(err.Error(), "incomplete") {
+				t.Errorf("error = %v, want the local incomplete-credentials error", err)
+			}
+		})
+	}
+
+	t.Run("padded values are returned trimmed", func(t *testing.T) {
+		raw, err := json.Marshal(googleAdsCreds{
+			ClientID: " cid ", ClientSecret: "\tcsec\n", DeveloperToken: " dev", RefreshToken: "rt ",
+		})
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		got, err := validateGoogleAdsCredentials("proj", &resolved{plaintext: raw, status: model.StatusActive})
+		if err != nil {
+			t.Fatalf("validateGoogleAdsCredentials: %v", err)
+		}
+		want := googleAdsCreds{ClientID: "cid", ClientSecret: "csec", DeveloperToken: "dev", RefreshToken: "rt"}
+		if got != want {
+			t.Errorf("creds = %+v, want %+v (the trimmed values must be what reaches NewClient)", got, want)
+		}
+	})
+}
+
+// TestValidateGoogleAdsConnection_NoAccountSelected pins the sentinel pair on the empty
+// account-id guard. Until credentials-first bootstrap existed, an account-less connection
+// was an unintended state rather than an impossible one — Required("account_id") checked
+// only that the JSON key was present, so `"account_id": ""` was accepted and stored — and
+// the guard returned a bare error carrying no sentinel at all.
+//
+// That is now the ordinary state of a freshly created connection, and a bare error would
+// fall to each handler's default arm and answer 503 "the platform did not respond" for a
+// project that has simply not finished setting up. Both sentinels are load-bearing and
+// serve different consumers: ErrConnectionNotUsable is what every handler switches on to
+// pick a non-retryable status, and ErrAccountNotSelected is what unusableConnectionReason
+// turns into the log's fixed reason token. Asserting only one would let the other be
+// dropped silently.
+func TestValidateGoogleAdsConnection_NoAccountSelected(t *testing.T) {
+	raw := []byte(goodGoogleAdsCreds)
+	// Whitespace, not "", so this also pins that the check runs on the TRIMMED value —
+	// a connection holding " " has no more selected an account than one holding "".
+	for _, accountID := range []string{"", "   "} {
+		_, gotID, err := validateGoogleAdsConnection("proj", &resolved{
+			plaintext: raw, status: model.StatusActive, accountID: accountID,
+		})
+		if err == nil {
+			t.Fatalf("accountID %q: want an error, got nil", accountID)
+		}
+		if !errors.Is(err, domain.ErrConnectionNotUsable) {
+			t.Errorf("accountID %q: want ErrConnectionNotUsable in the chain, got %v", accountID, err)
+		}
+		if !errors.Is(err, domain.ErrAccountNotSelected) {
+			t.Errorf("accountID %q: want ErrAccountNotSelected in the chain, got %v", accountID, err)
+		}
+		if gotID != "" {
+			t.Errorf("accountID %q: returned id = %q, want empty on the error path", accountID, gotID)
+		}
 	}
 }

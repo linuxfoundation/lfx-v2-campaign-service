@@ -220,3 +220,8 @@ func TestHubspotLfxV2CampaignServiceConnectionsPath(projectID string) string {
 func SetCredentialHubspotLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/connection-hubspot/set-credential", projectID)
 }
+
+// ListGoogleAdsAccountsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-google-ads-accounts HTTP endpoint.
+func ListGoogleAdsAccountsLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/connection-google-ads/accounts", projectID)
+}

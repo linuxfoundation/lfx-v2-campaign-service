@@ -141,6 +141,11 @@ const toggleCallTimeout = 45 * time.Second
 // DefaultWriteTimeout.
 const metricsCallTimeout = 20 * time.Second
 
+// accountsCallTimeout bounds the SYNCHRONOUS account-listing platform call, which — like
+// metrics and toggle — runs on the HTTP request goroutine. Account discovery is a pure read
+// with no cascade, so it can use the same ceiling as metrics reads.
+const accountsCallTimeout = 20 * time.Second
+
 // jobFinalizeTimeout bounds the terminal job-status write, which runs on a
 // context detached from the dispatch context so a cancelled run still reaches a
 // terminal state instead of being stuck queued/running.
@@ -196,6 +201,26 @@ type MetricsReader interface {
 	ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error)
 }
 
+// AccountLister is an OPTIONAL dispatcher capability: enumerate accessible ad accounts for a
+// project's stored, encrypted connection. Not every platform's dispatcher implements it, so —
+// like StatusToggler and MetricsReader — the orchestrator type-asserts for it rather than
+// adding it to PlatformDispatcher; a dispatcher that doesn't implement it yields a clean
+// "not supported" error (ErrAccountsUnsupported → 400). This is a pure read that never mutates
+// platform or DB state.
+type AccountLister interface {
+	// ListAccounts enumerates the accessible ad accounts for a project's connection.
+	// Returns a list of accessible accounts with minimal identifying information (ID and label).
+	//
+	// A successful call MUST return a NON-NIL slice, even when the credential reaches zero
+	// accounts — return an empty slice, not nil. This deviates from the usual Go convention
+	// that nil and empty are interchangeable, deliberately: the caller cannot otherwise tell
+	// "the provider authoritatively has nothing for you" from an implementation that fell
+	// through a branch and returned its zero values, and the two mean opposite things to an
+	// operator choosing an account. ReadAccounts treats (nil, nil) as a contract violation
+	// and converts it to a 503 rather than reporting an empty account list as fact.
+	ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error)
+}
+
 // Status-toggle classification sentinels. These distinguish a client/state error (the
 // toggle never reached the ad platform) from a real platform-call failure, so the service
 // can return an accurate status + message instead of blaming the platform for everything.
@@ -216,6 +241,9 @@ var (
 	// ErrCampaignAccountMismatch: the campaign was created under a different ad account
 	// than the project's current connection resolves to, so its id cannot be read safely.
 	ErrCampaignAccountMismatch = domain.ErrCampaignAccountMismatch
+
+	// ErrAccountsUnsupported: the platform has no account-listing capability wired.
+	ErrAccountsUnsupported = domain.ErrAccountsUnsupported
 )
 
 // noUpstreamCreator lets a dispatcher signal that a returned error occurred
@@ -994,16 +1022,30 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrToggleUnsupported, platform)
 	}
-	// Any error from here is from the platform call itself (or the dispatcher's own pre-flight
-	// cred resolution) — surfaced as a platform failure by the caller. This deliberately
-	// includes a dispatcher's CONNECTION-STATE pre-flight failures (connection not ACTIVE,
-	// incomplete credentials, missing account id): the ad platform is never contacted, so a 503
-	// slightly over-attributes to the platform, but these are surfaced as-is (not a distinct
-	// sentinel) because the remedy — reactivate/repair the connection then retry — is the same
-	// operator action a platform 503 already prompts, and the classification is UNIFORM across
-	// all dispatchers (reddit/meta/linkedin/twitter/googleads resolve identically). Promoting
-	// connection-state to its own 409/422 sentinel is a cross-dispatcher change tracked as
-	// follow-up rather than a reddit-only divergence. Bound the
+	// Any error from here is from the platform call itself, from the dispatcher's own
+	// pre-flight cred resolution, or from its CONNECTION-STATE checks (connection not ACTIVE,
+	// undecodable or incomplete credentials, missing account id) — the ad platform is never
+	// contacted for the last group.
+	//
+	// The classification of that last group is NO LONGER uniform across dispatchers, and this
+	// comment used to say it was. Google Ads tags the preflight failures REACHABLE HERE with
+	// domain.ErrConnectionNotUsable (internal/dispatch/googleads.go): the three in
+	// validateGoogleAdsCredentials and the missing-account guard in
+	// validateGoogleAdsConnection, both of which resolveGoogleAdsClient runs. The caller maps
+	// them to 409 — correct, because none of them improves with time.
+	//
+	// The stored-login_customer_id check is NOT among them, though it is tagged: it lives in
+	// resolveGoogleAdsDiscoveryClient, which only the discovery endpoint calls. A malformed
+	// manager id therefore reaches this path unclassified, fails inside the client at
+	// validateLoginCustomerID, and falls through to 503 — retryable, for a stored value that
+	// no amount of retrying will fix. Hoisting the check into the shared validation is the
+	// fix; it is a behaviour change with its own test and lands separately.
+	//
+	// Reddit, Meta, LinkedIn, X AND Microsoft still return bare
+	// errors that fall through to the caller's default 503 arm; Microsoft is wired for
+	// toggles and runs the same active/incomplete preflight, so leaving it out of this list
+	// would hide a provider that is actually reachable here. Tagging
+	// theirs is the outstanding half of that work, tracked with the adapters. Bound the
 	// whole (possibly multi-PATCH, each with its own retry budget) cascade with a total
 	// deadline UNDER the HTTP write timeout, so a slow toggle is cancelled and returned to the
 	// caller as an error rather than mutating the platform after the response can no longer be
@@ -1044,4 +1086,36 @@ func (o *Orchestrator) ReadCampaignMetrics(ctx context.Context, projectID string
 		return nil, fmt.Errorf("%s metrics reader returned a nil result with no error", platform)
 	}
 	return m, nil
+}
+
+// ReadAccounts enumerates the accessible ad accounts for a project's stored connection.
+// It never mutates the platform or the DB — a pure read, not persisted here.
+func (o *Orchestrator) ReadAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrAccountsUnsupported, platform)
+	}
+	lister, ok := d.(AccountLister)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrAccountsUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
+	defer cancel()
+	accounts, aerr := lister.ListAccounts(callCtx, projectID, platform)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if accounts == nil {
+		// An AccountLister returning (nil, nil) is a contract violation, not success. Nothing
+		// downstream would CRASH on it — len and range are nil-safe, and the handler's
+		// conversion loop would happily produce an empty `[]`. That is exactly the problem:
+		// the caller cannot tell "this credential reaches zero ad accounts" from "the lister
+		// silently gave up", and would render an empty account picker with no error, sending
+		// the operator to look for a permissions problem at the provider that does not exist.
+		// Failing loudly here is what keeps the empty list meaningful — every lister on this
+		// path builds its slice with make(..., 0, n) precisely so an empty answer stays
+		// distinguishable from no answer.
+		return nil, fmt.Errorf("%s account lister returned a nil result with no error", platform)
+	}
+	return accounts, nil
 }

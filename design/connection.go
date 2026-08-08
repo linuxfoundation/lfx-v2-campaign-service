@@ -326,17 +326,51 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 	Required("refresh_token", "client_id", "client_secret", "developer_token")
 })
 
+// GoogleAdsConnectionConfig is the ONE provider config where account_id is optional, and
+// the reason is specific rather than a general loosening: Google Ads is the only provider
+// with an account-DISCOVERY endpoint, so it is the only one where a caller can create a
+// connection without an account id and then find out what to put there.
+//
+// That is the bootstrap this enables — credentials first, account chosen afterwards:
+//
+//	POST   /projects/{id}/connection-google-ads          (credentials, no account_id)
+//	GET    /projects/{id}/connection-google-ads/accounts (discovery: what can this reach?)
+//	PUT    /projects/{id}/connection-google-ads          (set the chosen account_id)
+//
+// Requiring the id at step one meant the caller had to already know the answer that step two
+// exists to produce, which made discovery useful only for RE-POINTING a connection that was
+// already complete.
+//
+// The other providers keep Required("account_id") deliberately. Relaxing it for them would
+// create a connection that can never be finished from inside this API — there is no list to
+// choose from, so the operator would have to obtain the id out-of-band anyway, and the only
+// thing gained is a half-configured row. Add the requirement back for Google Ads, or drop it
+// for another provider, only together with that provider's discovery endpoint.
+//
+// A connection in this state stays status=active, and account_id comes back as "". See
+// docs/knowledge/code/internal-service.md — "active" says the connection is ENABLED for
+// credential-based operations such as discovery (which refuses a non-active connection),
+// NOT that the credentials were verified: nothing verifies them, so an active row can hold
+// material the platform will reject. Readiness to run a campaign is account_id being
+// non-empty, and the operations that need it say so with reason=account_not_selected.
 var GoogleAdsConnectionConfig = Type("google-ads-connection-config", func() {
 	Attribute("label", String, "Optional friendly name", func() { Example("TLF Main") })
-	Attribute("account_id", String, "Google Ads customer ID", func() { Example("8666746580") })
+	Attribute("account_id", String, "Google Ads customer ID. Optional: omit it to create the connection with credentials only, then choose one from GET .../connection-google-ads/accounts and set it with PUT.", func() { Example("8666746580") })
 	Attribute("login_customer_id", String, "Manager account used for API access", func() { Example("9746983954") })
-	Required("account_id")
 })
 
 var GoogleAdsConnection = Type("google-ads-connection", func() {
 	commonConnectionAttrs()
 	Attribute("login_customer_id", String, "Manager account used for API access")
 	commonConnectionRequired()
+})
+
+// AccessibleAccount represents an ad account reachable via the connection's
+// stored credential. Returned by account discovery operations.
+var AccessibleAccount = Type("accessible-account", func() {
+	Attribute("id", String, "Account identifier in the ad platform's namespace", func() { Example("8666746580") })
+	Attribute("label", String, "Human-readable account name or label")
+	Required("id")
 })
 
 // ─── LinkedIn Ads ───
@@ -551,4 +585,32 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	connectionMethods("twitter-ads", "X/Twitter Ads", TwitterAdsConnectionConfig, TwitterAdsCredentials, TwitterAdsConnection)
 	connectionMethods("microsoft-ads", "Microsoft Ads", MicrosoftAdsConnectionConfig, MicrosoftAdsCredentials, MicrosoftAdsConnection)
 	connectionMethods("hubspot", "HubSpot", HubSpotConnectionConfig, HubSpotCredentials, HubSpotConnection)
+
+	// Google Ads specific: account discovery (not in connectionMethods, as other providers
+	// will add their own account-discovery methods in follow-up PRs).
+	Method("list-google-ads-accounts", func() {
+		Description("Enumerate the Google Ads ad accounts accessible via the stored connection credential.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Required("project_id")
+		})
+		Result(func() {
+			Attribute("accounts", ArrayOf(AccessibleAccount))
+			Required("accounts")
+		})
+		Error("NotFound", NotFoundError, "Resource not found")
+		Error("BadRequest", BadRequestError, "Bad request")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-google-ads/accounts")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("BadRequest", StatusBadRequest)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
 })
