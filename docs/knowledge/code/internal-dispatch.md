@@ -453,8 +453,47 @@ for any project at all. `rejectSystemScope` closes those five at the shared help
 per-provider adapters — and answers 404 rather than 403, since confirming that something
 is there is itself a disclosure.
 
-Account discovery follows the same fallback, deliberately. It resolves through
+**A choke point only covers what actually passes through it.** Account discovery is a
+seventh endpoint taking a caller-supplied `project_id`, and the one that does NOT reach
+storage through those helpers — it calls `orch.ReadAccounts` itself — so it carries the
+guard inline and was the one initially missed. Left open, a `GET` on the reserved scope
+decrypts the LF credential and enumerates the Linux Foundation's own accounts. The test
+that pins this enumerates all seven and gives the discovery case a working orchestrator on
+purpose: without one the call 503s before the guard is reached, and the case would pass
+against an unguarded implementation for the wrong reason.
+
+Account discovery still follows the same *fallback*, deliberately — a different thing from
+addressing the reserved scope. Called with a project's own id it resolves through
 `credsSource.resolve` like every dispatch path, so a project with no connection is shown
-the accounts its campaigns would actually run on. The alternative — discovery reporting
-404 while dispatch quietly succeeds — is the worse inconsistency. Account ids are not
-secrets; the credentials never leave the service either way.
+the accounts its campaigns would actually run on; discovery reporting 404 while dispatch
+quietly succeeds is the worse inconsistency. Account ids are not secrets, and the
+credentials never leave the service either way.
+
+## Installing the system account
+
+Nothing can address the reserved scope over HTTP, so nothing can install it over HTTP
+either. An installer is therefore a REQUIRED part of the feature, not a deployment detail:
+without one the fallback can never fire and the change ships turned off.
+
+`internal/bootstrap`'s `InstallSystemCredentials`, driven by the `sysacct-bootstrap`
+binary, speaks to the same two ports the HTTP layer uses — the repository and the
+encryptor — so its row is indistinguishable from an API-written one: same encryption, same
+version counter, same audit fields. It attributes the write to the installer rather than a
+person, because there is no bearer token behind the reserved scope.
+
+Three properties are load-bearing:
+
+- **Idempotent.** A second run rotates through `SetCredential` rather than `Create`, which
+  the partial unique index would reject. Rotation touches only the credential unless
+  `-account-id` was given, so it cannot silently clear an account someone already
+  selected — and when it is given, the `Update` is gated on the version `SetCredential`
+  just left behind, not the one read before it, or the rotation lands half-applied.
+- **Fail-closed on an unreadable row.** Only `ErrNotFound` may create; on any other read
+  error the row's state is unknown, and creating over an existing-but-unreadable row
+  overwrites a credential nobody meant to replace. Same asymmetry as the fallback itself.
+- **The credential comes from stdin, never a flag** — a flag lands in shell history and in
+  every `ps` listing, which for a long-lived refresh token is an indefinite exposure.
+
+`-account-id` is optional: a system account without one is the credentials-first state, and
+account discovery is what turns it into an account id. Requiring it up front would mean
+knowing the customer id before holding the credential that could tell you what it is.

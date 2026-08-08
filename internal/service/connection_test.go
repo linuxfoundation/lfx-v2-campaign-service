@@ -302,7 +302,13 @@ func TestJWTAuth_EmptyTokenRejected(t *testing.T) {
 
 // TestSystemScopeIsUnreachableThroughTheAPI: the reserved scope holds the LF-owned
 // credentials that every project without its own connection dispatches through, so no
-// API caller may read, rewrite, re-credential, test or delete it.
+// API caller may read, rewrite, re-credential, test, delete it, or enumerate the
+// accounts it reaches.
+//
+// The cases must cover EVERY endpoint taking a caller-supplied project_id, which is
+// seven and not six: account discovery does not go through connection_handler.go and
+// was missed on the first pass precisely because of that. When an eighth is added,
+// it belongs here.
 //
 // The row EXISTS in the repo for each case. A test against an empty store would pass
 // against a service with no guard at all — the repo would answer "not found" and the
@@ -343,6 +349,26 @@ func TestSystemScopeIsUnreachableThroughTheAPI(t *testing.T) {
 		},
 		"test": func(s *ConnectionService) error {
 			_, err := s.TestGoogleAds(context.Background(), &conn.TestGoogleAdsPayload{ProjectID: model.SystemProjectID})
+			return err
+		},
+		// Account discovery is the SEVENTH endpoint taking a caller-supplied
+		// project_id and the only one that does not reach the repo through a helper
+		// in connection_handler.go, which is why it was the one initially missed.
+		// The service is given a WORKING orchestrator here on purpose: without one
+		// the call would 503 before the guard mattered, and the case would pass
+		// against an unguarded implementation for the wrong reason. With one, the
+		// unguarded implementation returns 200 and the LF account list.
+		"list-accounts": func(s *ConnectionService) error {
+			s.SetOrchestrator(&Orchestrator{
+				dispatchers: map[model.Provider]PlatformDispatcher{
+					model.ProviderGoogleAds: &mockAccountListerDispatcher{
+						accounts: []model.AccessibleAccount{{ID: "customers/8666746580", Label: "Linux Foundation"}},
+					},
+				},
+			})
+			_, err := s.ListGoogleAdsAccounts(context.Background(), &conn.ListGoogleAdsAccountsPayload{
+				ProjectID: model.SystemProjectID,
+			})
 			return err
 		},
 		"create": func(s *ConnectionService) error {

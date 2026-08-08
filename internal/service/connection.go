@@ -145,6 +145,16 @@ func unusableConnectionReason(err error) string {
 }
 
 func (s *ConnectionService) ListGoogleAdsAccounts(ctx context.Context, p *conn.ListGoogleAdsAccountsPayload) (*conn.ListGoogleAdsAccountsResult, error) {
+	// Account discovery is the SEVENTH endpoint taking a caller-supplied project_id and
+	// the only one not reaching the repo through a helper in connection_handler.go —
+	// which is exactly why it is easy to miss. Left open, GET on the reserved scope
+	// decrypts the LF credential and enumerates the Linux Foundation's own ad accounts.
+	// A project WITH NO connection still sees the system account's accounts under its
+	// own id, deliberately (internal/dispatch/creds.go); addressing the reserved scope
+	// directly is the different thing, and it is what this rejects.
+	if err := rejectSystemScope(p.ProjectID); err != nil {
+		return nil, err
+	}
 	_, _, orch, err := s.resolveBackendWithOrch()
 	if err != nil {
 		return nil, err

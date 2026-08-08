@@ -61,3 +61,35 @@ store the repo answers "not found" on its own, so the assertion would pass again
 service with no guard whatsoever.
 
 LFXV2-3040
+
+## A choke point only covers what passes through it
+
+The guard went in at the shared helpers in `internal/service/connection_handler.go`
+because all six connection endpoints reach storage through them — one place instead of
+forty-odd per-provider adapters. That reasoning was right and the conclusion was wrong:
+there is a seventh endpoint taking a caller-supplied `project_id`, and it is the one that
+does not use those helpers. `ListGoogleAdsAccounts` calls `orch.ReadAccounts` directly, so
+a `GET` on the reserved scope decrypted the LF credential and enumerated the Linux
+Foundation's own ad accounts — the exact disclosure the other six answer 404 to avoid.
+
+The tell was in the PR's own prose: it said "all six", and six was derived from the
+abstraction rather than counted from the routes. When a guard is justified by "every path
+goes through here", the claim to verify is not the guard — it is the *every*. The test now
+hands the discovery case a working orchestrator, because without one the call 503s before
+the guard is reached and would pass against an unguarded implementation.
+
+## An installer is part of the feature, not a deployment detail
+
+The reserved scope is unaddressable over HTTP, which is the point — and it means no
+request can install the credentials either. The first version of this change shipped with
+no way to put a row there at all. That is twice now that this gap produced something which
+compiled, vetted, linted and did nothing: the first attempt could not read the system
+credentials, and this one could not write them.
+
+`sysacct-bootstrap` speaks to the repository and the encryptor directly, so its row is
+indistinguishable from an API-written one. Two properties came straight from bugs the
+tests then pinned: `SetCredential` bumps the version, so an `Update` gated on the version
+read *before* it leaves a rotation half-applied; and only `ErrNotFound` may create,
+because creating on top of an existing-but-unreadable row overwrites a credential nobody
+meant to replace. That second one is the fallback's own absence-versus-uncertainty
+asymmetry arriving somewhere else, which is a decent sign it is the real invariant.
