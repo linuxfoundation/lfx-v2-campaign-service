@@ -85,6 +85,62 @@ var ipv4EmbeddingNets = []net.IPNet{
 	{IP: net.ParseIP("::ffff:0:0:0"), Mask: net.CIDRMask(96, 128)}, // RFC 2765 IPv4-translated
 }
 
+// rfc6052PrefixLens are the only prefix lengths RFC 6052 §2.2 defines. A NAT64 prefix of any
+// other length is not a valid translation prefix and is rejected at configuration time.
+var rfc6052PrefixLens = map[int]bool{32: true, 40: true, 48: true, 56: true, 64: true, 96: true}
+
+// embeddedIPv4 extracts the IPv4 destination an RFC 6052 §2.2 address carries, for a prefix of
+// the given length. It is NOT simply "the low 32 bits": only the /96 layout puts the address
+// there. The shorter layouts split it around bits 64-71, which the RFC reserves and requires to
+// be zero; that octet IS checked, because it is what makes the layout self-describing.
+//
+// The trailing suffix bits are NOT checked, deliberately. The RFC requires them to be zero too,
+// so checking them would reject fewer addresses — and this is a security guard, where the cost
+// of trusting a translator to have honoured a MUST is a reachable metadata endpoint. The
+// reserved octet is different: without it every /64-layout address would decode, and THAT is
+// the over-rejection this function has to avoid.
+//
+//	/32  bytes 4-7           /40  bytes 5-7 + 9      /48  bytes 6-7 + 9-10
+//	/56  byte 7 + 9-11       /64  bytes 9-12         /96  bytes 12-15
+//
+// Returns nil when ip does not carry a well-formed embedding at this length.
+func embeddedIPv4(ip net.IP, prefixLen int) net.IP {
+	if len(ip) != net.IPv6len || !rfc6052PrefixLens[prefixLen] {
+		return nil
+	}
+	if prefixLen != 96 {
+		// Bits 64-71 are reserved and MUST be zero (RFC 6052 §2.2). This is the one field
+		// that makes the layout self-describing, so an address that violates it is not an
+		// embedding and must not be decoded as one.
+		if ip[8] != 0 {
+			return nil
+		}
+	}
+	start := prefixLen / 8
+	out := make(net.IP, 0, net.IPv4len)
+	for i := start; len(out) < net.IPv4len; i++ {
+		if i == 8 {
+			continue // the reserved octet is not part of the address
+		}
+		out = append(out, ip[i])
+	}
+	return net.IPv4(out[0], out[1], out[2], out[3])
+}
+
+// nat64Prefix is a configured RFC 6052 translation prefix: the network AND the length, because
+// the length alone determines where in the address the IPv4 destination sits.
+type nat64Prefix struct {
+	net    net.IPNet
+	length int
+}
+
+// wellKnownNAT64 is the prefix RFC 6052 §2.1 assigns for general use, and the only one that can
+// be known without configuration. Every Fetcher starts with it.
+var wellKnownNAT64 = nat64Prefix{
+	net:    net.IPNet{IP: net.ParseIP("64:ff9b::"), Mask: net.CIDRMask(96, 128)},
+	length: 96,
+}
+
 // isForbiddenIP reports whether ip is an address this service must not connect to.
 //
 // This is a DENYLIST, and calling it default-deny would be a comfortable lie: a
@@ -126,20 +182,57 @@ func isForbiddenIP(ip net.IP) bool {
 // fetchError renders a URL-FREE message while keeping its cause reachable, so a caller
 // can still ask errors.Is(err, context.Canceled) after the text has been stripped.
 //
-// Unwrap returns both the sentinel and the cause (Go 1.20 multi-unwrap), which is what
-// lets one value answer to ErrEventURLFetchFailed and to context.Canceled at once. The
-// cause is UNEXPORTED on purpose: a *url.Error carries the full request URL — userinfo
-// and every query value the caller supplied — in an EXPORTED field, so reflection-based
-// logging or a JSON marshal of the error would print what Error() withheld.
+// Unwrap returns both the sentinel and the identity (Go 1.20 multi-unwrap), which is what
+// lets one value answer to ErrEventURLFetchFailed and to context.Canceled at once.
+//
+// identity is NOT the transport's error. Keeping the original here — even unexported —
+// would leak: Unwrap hands it to anyone walking the chain, so errors.As(err, &urlErr)
+// recovers the *url.Error and its EXPORTED URL field, userinfo and query included, and
+// chain-walking telemetry or middleware would print exactly what Error() withheld. An
+// unexported field is not a boundary when the type publishes an Unwrap.
+//
+// So the chain carries only values THIS package can vouch for: canonical sentinels from
+// safeIdentity, never anything net/http constructed. Default-deny — an unrecognized cause
+// contributes nothing at all, because it is precisely the case whose contents are least
+// vouched for.
 type fetchError struct {
 	sentinel error
 	detail   string
-	cause    error
+	identity error
 }
 
 func (e *fetchError) Error() string { return fmt.Sprintf("%v: %s", e.sentinel, e.detail) }
 
-func (e *fetchError) Unwrap() []error { return []error{e.sentinel, e.cause} }
+func (e *fetchError) Unwrap() []error {
+	if e.identity == nil {
+		return []error{e.sentinel}
+	}
+	return []error{e.sentinel, e.identity}
+}
+
+// safeIdentity maps a transport error onto the canonical sentinels a caller legitimately
+// branches on, and nothing else. It is the errors.Is half of what safeCause does for the
+// message: same recognized set, same default-deny, but returning a value the chain may
+// safely expose rather than a string.
+//
+// Only the context sentinels and io's EOFs qualify: they are package-level singletons that
+// carry no fields, so exposing one reveals nothing about the request. A *net.DNSError or a
+// *url.Error would have to be REBUILT to be safe (their Name/URL fields are the caller's
+// input), and no caller needs to branch on those — safeCause already describes them in the
+// message.
+func safeIdentity(err error) error {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return context.Canceled
+	case errors.Is(err, context.DeadlineExceeded):
+		return context.DeadlineExceeded
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		return io.ErrUnexpectedEOF
+	case errors.Is(err, io.EOF):
+		return io.EOF
+	}
+	return nil
+}
 
 // safeCause maps a transport error onto a fixed vocabulary of URL-free descriptions.
 //
@@ -185,6 +278,50 @@ type Fetcher struct {
 	client *http.Client
 }
 
+// Option configures a Fetcher at construction. There is no setter: the guard must be fixed
+// before the client can dial, so configuration that arrives later would be configuration that
+// arrives too late.
+type Option func(*fetcherConfig)
+
+type fetcherConfig struct {
+	nat64 []nat64Prefix
+}
+
+// WithNAT64Prefixes declares the deployment's NETWORK-SPECIFIC RFC 6052 translation prefixes,
+// in addition to the well-known 64:ff9b::/96 that is always applied.
+//
+// This cannot be discovered in-process and must not be guessed. A network-specific prefix is
+// ordinary global unicast space the operator was assigned, so it is indistinguishable from any
+// other public prefix by inspection — and speculatively decoding every address at all six RFC
+// 6052 layouts would over-reject: roughly one global address in 256 has a zero octet at bits
+// 64-71 and bytes that read as 10.0.0.0/8 at the /64 layout, and refusing a legitimate event
+// page is a real cost, not a conservative default.
+//
+// On a cluster that HAS such a prefix, an unlisted one is a live SSRF hole: the translator, not
+// this process, makes the IPv4 connection, so an encoded 169.254.169.254 passes every check
+// here. Where the prefix cannot be enumerated, the destination policy belongs at an egress
+// boundary instead — this option is the in-process half, not a substitute for it.
+//
+// Each cidr must be a valid RFC 6052 length (/32, /40, /48, /56, /64, /96); anything else is a
+// misconfiguration that would silently decode at the wrong offset. It panics rather than
+// returning an error because the only caller is the composition root: a NAT64 prefix typed
+// wrong is a deployment that must not start, not a request that fails.
+func WithNAT64Prefixes(cidrs ...string) Option {
+	return func(c *fetcherConfig) {
+		for _, cidr := range cidrs {
+			_, n, err := net.ParseCIDR(cidr)
+			if err != nil || n.IP.To4() != nil {
+				panic(fmt.Sprintf("eventurl: %q is not an IPv6 CIDR", cidr))
+			}
+			ones, _ := n.Mask.Size()
+			if !rfc6052PrefixLens[ones] {
+				panic(fmt.Sprintf("eventurl: /%d is not an RFC 6052 prefix length (32, 40, 48, 56, 64, 96)", ones))
+			}
+			c.nat64 = append(c.nat64, nat64Prefix{net: *n, length: ones})
+		}
+	}
+}
+
 // guardDialAddress is the net.Dialer.Control hook that refuses a non-public address.
 //
 // The check lives HERE, and not next to a prior LookupIPAddr, because Control runs after
@@ -194,25 +331,43 @@ type Fetcher struct {
 // the check and 127.0.0.1 for the connection. Checking here, that second answer IS the
 // one inspected — and every address a multi-address host offers is inspected, not just
 // the first.
-func guardDialAddress(_, address string, _ syscall.RawConn) error {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return fmt.Errorf("%w: unparsable dial address %q", ErrEventURLForbidden, address)
+func guardDialAddress(nat64 []nat64Prefix) func(string, string, syscall.RawConn) error {
+	return func(_, address string, _ syscall.RawConn) error {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			return fmt.Errorf("%w: unparsable dial address %q", ErrEventURLForbidden, address)
+		}
+		ip := net.ParseIP(host)
+		if ip == nil {
+			return fmt.Errorf("%w: unparsable dial address %q", ErrEventURLForbidden, address)
+		}
+		if isForbiddenIP(ip) {
+			return fmt.Errorf("%w: %s", ErrEventURLForbidden, ip)
+		}
+		// Configured translation prefixes are judged by the IPv4 they name, exactly as the
+		// well-known one is inside isForbiddenIP. Kept out of that function because the set
+		// is per-Fetcher: it is deployment configuration, not a property of the IANA registry.
+		for _, p := range nat64 {
+			if !p.net.Contains(ip) {
+				continue
+			}
+			v4 := embeddedIPv4(ip, p.length)
+			if v4 != nil && isForbiddenIP(v4) {
+				return fmt.Errorf("%w: %s names %s through a nat64 prefix", ErrEventURLForbidden, ip, v4)
+			}
+		}
+		return nil
 	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return fmt.Errorf("%w: unparsable dial address %q", ErrEventURLForbidden, address)
-	}
-	if isForbiddenIP(ip) {
-		return fmt.Errorf("%w: %s", ErrEventURLForbidden, ip)
-	}
-	return nil
 }
 
 // NewFetcher constructs a Fetcher with the standard SSRF-safe defaults. It is the only
 // constructor in non-test code, so no production path can obtain an unguarded fetcher.
-func NewFetcher() *Fetcher {
-	dialer := &net.Dialer{Timeout: connectTimeout, Control: guardDialAddress}
+func NewFetcher(opts ...Option) *Fetcher {
+	cfg := fetcherConfig{nat64: []nat64Prefix{wellKnownNAT64}}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	dialer := &net.Dialer{Timeout: connectTimeout, Control: guardDialAddress(cfg.nat64)}
 	return &Fetcher{
 		client: &http.Client{
 			Timeout:       fetchTimeout,
@@ -291,13 +446,13 @@ func (f *Fetcher) Fetch(ctx context.Context, eventURL string) ([]byte, error) {
 		if errors.Is(err, ErrEventURLForbidden) {
 			return nil, fmt.Errorf("%w", ErrEventURLForbidden)
 		}
-		// The cause is CARRIED but not RENDERED. Keeping it reachable is required: a
-		// cancelled or timed-out request must stay errors.Is-able as
-		// context.Canceled/DeadlineExceeded, or a caller that distinguishes "we gave
-		// up" from "the page did not answer" cannot. Rendering it is not — client.Do
-		// fails with a *url.Error whose text is the caller's URL, userinfo and query
-		// values included, and this error reaches logs.
-		return nil, &fetchError{sentinel: ErrEventURLFetchFailed, detail: safeCause(err), cause: err}
+		// Neither the cause nor its text survives. A cancelled or timed-out request must
+		// stay errors.Is-able as context.Canceled/DeadlineExceeded — a caller that
+		// distinguishes "we gave up" from "the page did not answer" needs that — but the
+		// value satisfying it is the canonical sentinel, not what client.Do returned. Do
+		// fails with a *url.Error whose text AND exported URL field are the caller's URL,
+		// userinfo and query values included, and this error reaches logs.
+		return nil, &fetchError{sentinel: ErrEventURLFetchFailed, detail: safeCause(err), identity: safeIdentity(err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -314,7 +469,7 @@ func (f *Fetcher) Fetch(ctx context.Context, eventURL string) ([]byte, error) {
 	if err != nil {
 		// Same treatment as the Do error above: a body read fails with whatever the
 		// transport hands back, and http2 stream errors do quote the request.
-		return nil, &fetchError{sentinel: ErrEventURLFetchFailed, detail: safeCause(err), cause: err}
+		return nil, &fetchError{sentinel: ErrEventURLFetchFailed, detail: safeCause(err), identity: safeIdentity(err)}
 	}
 	if len(body) > maxResponseBytes {
 		return nil, fmt.Errorf("%w: response exceeds size limit", ErrEventURLFetchFailed)
