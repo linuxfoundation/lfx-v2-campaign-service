@@ -63,7 +63,11 @@ func (s *ConnectionService) CreateGoogleAds(ctx context.Context, p *conn.CreateG
 		ProjectID: p.ProjectID,
 		Provider:  model.ProviderGoogleAds,
 		Label:     strVal(cfg.Label),
-		AccountID: cfg.AccountID,
+		// Optional for Google Ads alone (design/connection.go explains why): omitting it
+		// stores "" and creates a credentials-only connection, which is the first step of
+		// the discovery bootstrap. The column is NOT NULL TEXT, so "" is a legal value and
+		// no migration is involved — "unfinished" is spelled as an empty string, not NULL.
+		AccountID: strVal(cfg.AccountID),
 		ProviderConfig: map[string]string{
 			"login_customer_id": strVal(cfg.LoginCustomerID),
 		},
@@ -90,7 +94,11 @@ func (s *ConnectionService) UpdateGoogleAds(ctx context.Context, p *conn.UpdateG
 		ProjectID: p.ProjectID,
 		Provider:  model.ProviderGoogleAds,
 		Label:     strVal(cfg.Label),
-		AccountID: cfg.AccountID,
+		// PUT is a full replace, so omitting account_id CLEARS a previously chosen one — the
+		// same semantics label and login_customer_id have always had on this handler. That is
+		// the intended way to un-select an account, and it is why this handler is also the
+		// second half of the bootstrap: the caller PUTs back the id chosen from discovery.
+		AccountID: strVal(cfg.AccountID),
 		ProviderConfig: map[string]string{
 			"login_customer_id": strVal(cfg.LoginCustomerID),
 		},
@@ -139,6 +147,8 @@ func unusableConnectionReason(err error) string {
 		return "credential_blob_malformed"
 	case errors.Is(err, domain.ErrCredentialsAbsent):
 		return "credentials_absent"
+	case errors.Is(err, domain.ErrAccountNotSelected):
+		return "account_not_selected"
 	default:
 		return "unclassified"
 	}

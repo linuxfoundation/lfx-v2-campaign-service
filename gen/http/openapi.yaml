@@ -4988,7 +4988,7 @@ definitions:
         properties:
             account_id:
                 type: string
-                description: Google Ads customer ID
+                description: 'Google Ads customer ID. Optional: omit it to create the connection with credentials only, then choose one from GET .../connection-google-ads/accounts and set it with PUT.'
                 example: "8666746580"
             label:
                 type: string
@@ -5002,8 +5002,6 @@ definitions:
             account_id: "8666746580"
             label: TLF Main
             login_customer_id: "9746983954"
-        required:
-            - account_id
     GoogleAdsCredentials:
         title: GoogleAdsCredentials
         type: object

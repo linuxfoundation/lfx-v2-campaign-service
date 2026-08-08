@@ -243,7 +243,18 @@ func validateGoogleAdsConnection(projectID string, res *resolved) (googleAdsCred
 	}
 	accountID := strings.TrimSpace(res.accountID)
 	if accountID == "" {
-		return creds, "", fmt.Errorf("google ads connection for project %s has no account id (customer id)", projectID)
+		// BOTH sentinels, for the same reason every other branch on this path wraps two:
+		// ErrConnectionNotUsable decides the HTTP status, ErrAccountNotSelected names the
+		// reason for the log line's fixed vocabulary (unusableConnectionReason).
+		//
+		// This guard used to return a bare error, which was harmless only because it was
+		// unreachable — GoogleAdsConnectionConfig required account_id, so no connection
+		// could exist without one. Credentials-first bootstrap makes it the NORMAL state of
+		// a freshly created connection, and a bare error here falls to each handler's
+		// default arm and answers 503: "the platform did not respond", for a project that
+		// simply has not finished setting up, with a remedy (wait) that can never work.
+		return creds, "", fmt.Errorf("google ads connection for project %s has no account id (customer id): %w: %w",
+			projectID, domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected)
 	}
 	return creds, accountID, nil
 }
@@ -251,16 +262,18 @@ func validateGoogleAdsConnection(projectID string, res *resolved) (googleAdsCred
 // validateGoogleAdsCredentials is validateGoogleAdsConnection WITHOUT the account-id
 // requirement, for the one operation that cannot have one yet: account discovery.
 //
-// Be precise about which lifecycle this serves TODAY. `design/connection.go:333` still
-// declares `Required("account_id")` on GoogleAdsConnectionConfig, so a connection cannot
-// currently be created without one: the credentials-first, account-chosen-afterwards
-// bootstrap is NOT yet reachable. What IS reachable, and what this relaxation exists for,
-// is RE-POINTING — an operator with a working connection asking "which other customer ids
-// does this credential reach?" before switching account_id. Demanding a non-empty account
-// id would still not block that (one is stored), but the check would be answering a
-// question discovery does not ask, and it would have to be removed anyway the moment the
-// design drops the requirement. Keeping the relaxation here means only the design changes
-// when bootstrap lands, not this path.
+// It serves BOTH lifecycles now that GoogleAdsConnectionConfig no longer declares
+// Required("account_id"): re-pointing an existing connection ("which other customer ids
+// does this credential reach?") and first-time bootstrap, where the connection is created
+// with credentials only and the account is chosen from this endpoint's answer. The
+// relaxation was written for the endpoint's own semantics rather than for whatever the row
+// happens to hold, which is why enabling bootstrap needed only the design change.
+//
+// The ACTIVE-status check below is what makes bootstrap possible at all rather than being
+// merely compatible with it: a credentials-only connection is stored as active, so if this
+// demanded some other status the caller could never reach the endpoint that tells them
+// which account to pick. See domain.ErrAccountNotSelected for how the paths that DO need
+// an account id report its absence.
 //
 // Every other check — active status, decodable blob, all four OAuth fields present — still
 // applies, because a discovery call against a stale or half-configured connection should
@@ -330,9 +343,9 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsClient(ctx context.Context, projec
 
 // resolveGoogleAdsDiscoveryClient builds a client for the ACCOUNT-DISCOVERY path: same
 // credential resolution and the same connection checks as resolveGoogleAdsClient, minus the
-// account-id requirement (see validateGoogleAdsCredentials for which lifecycle that serves
-// today — re-pointing, not first-time bootstrap, since GoogleAdsConnectionConfig still
-// declares Required("account_id")).
+// account-id requirement (see validateGoogleAdsCredentials for the two lifecycles that
+// serves: re-pointing an existing connection, and first-time bootstrap of one created with
+// credentials only).
 //
 // CustomerID is left empty regardless of whether the connection stores one, because the
 // upstream operation is account-AGNOSTIC: it asks which customer ids the credential itself

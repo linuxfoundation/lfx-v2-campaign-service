@@ -2043,3 +2043,38 @@ func TestValidateGoogleAdsCredentials_WhitespaceOnlyIsIncomplete(t *testing.T) {
 		}
 	})
 }
+
+// TestValidateGoogleAdsConnection_NoAccountSelected pins the sentinel pair on the empty
+// account-id guard. Until credentials-first bootstrap existed, this guard was UNREACHABLE
+// — the design required account_id, so no connection could be stored without one — and
+// being unreachable it returned a bare error carrying no sentinel at all.
+//
+// That is now the ordinary state of a freshly created connection, and a bare error would
+// fall to each handler's default arm and answer 503 "the platform did not respond" for a
+// project that has simply not finished setting up. Both sentinels are load-bearing and
+// serve different consumers: ErrConnectionNotUsable is what every handler switches on to
+// pick a non-retryable status, and ErrAccountNotSelected is what unusableConnectionReason
+// turns into the log's fixed reason token. Asserting only one would let the other be
+// dropped silently.
+func TestValidateGoogleAdsConnection_NoAccountSelected(t *testing.T) {
+	raw := []byte(goodGoogleAdsCreds)
+	// Whitespace, not "", so this also pins that the check runs on the TRIMMED value —
+	// a connection holding " " has no more selected an account than one holding "".
+	for _, accountID := range []string{"", "   "} {
+		_, gotID, err := validateGoogleAdsConnection("proj", &resolved{
+			plaintext: raw, status: model.StatusActive, accountID: accountID,
+		})
+		if err == nil {
+			t.Fatalf("accountID %q: want an error, got nil", accountID)
+		}
+		if !errors.Is(err, domain.ErrConnectionNotUsable) {
+			t.Errorf("accountID %q: want ErrConnectionNotUsable in the chain, got %v", accountID, err)
+		}
+		if !errors.Is(err, domain.ErrAccountNotSelected) {
+			t.Errorf("accountID %q: want ErrAccountNotSelected in the chain, got %v", accountID, err)
+		}
+		if gotID != "" {
+			t.Errorf("accountID %q: returned id = %q, want empty on the error path", accountID, gotID)
+		}
+	}
+}

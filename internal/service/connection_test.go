@@ -105,7 +105,7 @@ func TestCreateGoogleAds_HappyPath(t *testing.T) {
 	s := newTestService(t, newFakeRepo())
 	res, err := s.CreateGoogleAds(context.Background(), &conn.CreateGoogleAdsPayload{
 		ProjectID: "cncf",
-		Config:    &conn.GoogleAdsConnectionConfig{AccountID: "8666746580"},
+		Config:    &conn.GoogleAdsConnectionConfig{AccountID: strPtr("8666746580")},
 		Credentials: &conn.GoogleAdsCredentials{
 			RefreshToken: "rt", ClientID: "ci", ClientSecret: "cs", DeveloperToken: "dt",
 		},
@@ -131,7 +131,7 @@ func TestCreateConnection_RejectsUUIDProjectID(t *testing.T) {
 	s := newTestService(t, newFakeRepo())
 	_, err := s.CreateGoogleAds(context.Background(), &conn.CreateGoogleAdsPayload{
 		ProjectID: "a09410d0-0ec0-11ea-8e8f-416e2d8da950", // a UUID, not a slug
-		Config:    &conn.GoogleAdsConnectionConfig{AccountID: "8666746580"},
+		Config:    &conn.GoogleAdsConnectionConfig{AccountID: strPtr("8666746580")},
 		Credentials: &conn.GoogleAdsCredentials{
 			RefreshToken: "rt", ClientID: "ci", ClientSecret: "cs", DeveloperToken: "dt",
 		},
@@ -163,7 +163,7 @@ func TestCreateGoogleAds_ConflictMapsToConflictError(t *testing.T) {
 	s := newTestService(t, repo)
 	_, err := s.CreateGoogleAds(context.Background(), &conn.CreateGoogleAdsPayload{
 		ProjectID:   "cncf",
-		Config:      &conn.GoogleAdsConnectionConfig{AccountID: "x"},
+		Config:      &conn.GoogleAdsConnectionConfig{AccountID: strPtr("x")},
 		Credentials: &conn.GoogleAdsCredentials{RefreshToken: "a", ClientID: "b", ClientSecret: "c", DeveloperToken: "d"},
 	})
 	if _, ok := err.(*conn.ConflictError); !ok {
@@ -190,7 +190,7 @@ func TestNilRepo_ReturnsServiceUnavailable(t *testing.T) {
 	}
 	if _, err := s.CreateGoogleAds(context.Background(), &conn.CreateGoogleAdsPayload{
 		ProjectID:   "cncf",
-		Config:      &conn.GoogleAdsConnectionConfig{AccountID: "x"},
+		Config:      &conn.GoogleAdsConnectionConfig{AccountID: strPtr("x")},
 		Credentials: &conn.GoogleAdsCredentials{RefreshToken: "a", ClientID: "b", ClientSecret: "c", DeveloperToken: "d"},
 	}); !isServiceUnavailable(err) {
 		t.Errorf("CreateGoogleAds: expected *conn.ConnServiceUnavailableError, got %T (%v)", err, err)
@@ -238,7 +238,7 @@ func TestUpdateGoogleAds_MissingIfMatchMapsToPreconditionRequired(t *testing.T) 
 	s := newTestService(t, newFakeRepo())
 	_, err := s.UpdateGoogleAds(context.Background(), &conn.UpdateGoogleAdsPayload{
 		ProjectID: "cncf",
-		Config:    &conn.GoogleAdsConnectionConfig{AccountID: "x"},
+		Config:    &conn.GoogleAdsConnectionConfig{AccountID: strPtr("x")},
 		IfMatch:   nil,
 	})
 	if _, ok := err.(*conn.PreconditionRequiredError); !ok {
@@ -256,7 +256,7 @@ func TestUpdateGoogleAds_StaleETagMapsToPreconditionFailed(t *testing.T) {
 	ifMatch := "3"
 	_, err := s.UpdateGoogleAds(context.Background(), &conn.UpdateGoogleAdsPayload{
 		ProjectID: "cncf",
-		Config:    &conn.GoogleAdsConnectionConfig{AccountID: "x"},
+		Config:    &conn.GoogleAdsConnectionConfig{AccountID: strPtr("x")},
 		IfMatch:   &ifMatch,
 	})
 	if _, ok := err.(*conn.PreconditionFailedError); !ok {
@@ -297,5 +297,44 @@ func TestJWTAuth_EmptyTokenRejected(t *testing.T) {
 	s := newTestService(t, newFakeRepo())
 	if _, err := s.JWTAuth(context.Background(), "", nil); err == nil {
 		t.Fatal("expected error for empty token")
+	}
+}
+
+// TestCreateGoogleAds_WithoutAccountID pins the create half of the credentials-first
+// bootstrap: POST with credentials and no account id must SUCCEED and store "".
+//
+// Three assertions, each guarding a different way this could regress:
+//
+//  1. It is accepted at all. Goa enforces Required at the transport layer, so the
+//     Required("account_id") this change removed would have rejected the request before
+//     any of this code ran.
+//  2. status is ACTIVE. This is not cosmetic — validateGoogleAdsCredentials refuses a
+//     non-active connection, so a "pending"-style status here would leave the connection
+//     unable to reach the discovery endpoint that exists to finish it, and the bootstrap
+//     would dead-end at step two.
+//  3. account_id round-trips as "". The response type still declares it Required, which is
+//     satisfied by an empty string because the Go field is a plain string; if it ever
+//     becomes a pointer, the response contract has to change with it and this fails.
+func TestCreateGoogleAds_WithoutAccountID(t *testing.T) {
+	s := newTestService(t, newFakeRepo())
+	res, err := s.CreateGoogleAds(context.Background(), &conn.CreateGoogleAdsPayload{
+		ProjectID: "cncf",
+		Config:    &conn.GoogleAdsConnectionConfig{Label: strPtr("TLF Main")},
+		Credentials: &conn.GoogleAdsCredentials{
+			RefreshToken: "rt", ClientID: "ci", ClientSecret: "cs", DeveloperToken: "dt",
+		},
+	})
+	if err != nil {
+		t.Fatalf("a credentials-only connection must be creatable: %v", err)
+	}
+	if res.AccountID != "" {
+		t.Errorf("account_id = %q, want the empty string", res.AccountID)
+	}
+	if res.Status != string(model.StatusActive) {
+		t.Errorf("status = %q, want %q — discovery refuses a non-active connection, so any "+
+			"other status would make the account unchoosable", res.Status, model.StatusActive)
+	}
+	if !res.HasCredentials {
+		t.Error("expected has_credentials = true: the credentials are exactly what WAS supplied")
 	}
 }

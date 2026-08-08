@@ -190,10 +190,36 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   carries instead is `reason=`, from `unusableConnectionReason` — a fixed token
   (`connection_inactive`, `credentials_absent`, `credentials_undecodable`,
   `credentials_incomplete`, `provider_config_invalid`, `credential_blob_malformed`,
-  `unclassified`) read off the reason
+  `account_not_selected`, `unclassified`) read off the reason
   sentinel the dispatch layer wraps alongside `ErrConnectionNotUsable`. A closed vocabulary is what
   a log line wants anyway: greppable, alertable, and with no payload to carry a secret in.
 - Anything else → **503** — the platform was reached and did not answer.
+
+**`account_not_selected` is the one reason in that vocabulary that is not a fault.** Every other
+token describes something WRONG with stored state; this one describes state that is merely
+UNFINISHED, and it is the only one a caller reaches by doing exactly what the API told them to
+do. It exists because `GoogleAdsConnectionConfig` dropped `Required("account_id")` to allow the
+credentials-first bootstrap (`design/connection.go`): a connection can now be created with
+credentials alone, discovery run against it, and the chosen account PUT back afterwards.
+
+Note that `status=active` on such a connection is deliberate, not a gap in the lifecycle.
+**"Active" describes the CREDENTIALS — they are live and usable — not readiness to run a
+campaign.** It has to: `validateGoogleAdsCredentials` refuses a non-active connection, so a
+distinct "pending" status would make the discovery endpoint unreachable for exactly the
+connections that need it, and the bootstrap would dead-end at step two. Readiness is a separate,
+derived fact — `account_id` being non-empty — and the operations that need it report its absence
+with this reason rather than inventing a second status to carry the same bit.
+
+**The status differs by handler on purpose, and the three agree on the property that matters.**
+Account discovery answers **400**: the connection IS the resource being acted on, and the request
+asks about a connection that is not usable as configured. The campaign status toggle and the
+per-campaign metrics read answer **409**: there the CAMPAIGN is the resource, and an unfinished
+connection is a precondition conflict — the same classification those handlers already give
+`ErrCampaignNotProvisioned`. All three are non-retryable, which is the property a client acts on,
+and it is the property the original code got wrong: before this sentinel existed the empty-id
+guard returned a bare error, which fell through to each handler's `default:` arm and answered
+**503 "the platform did not respond"** — for a platform never contacted, with a remedy (wait)
+that can never work, since only a human choosing an account changes the state.
 
 Two DIFFERENT guards protect the empty-vs-nil distinction, and they fail in opposite directions —
 document them separately so a future change preserves each for its own reason:

@@ -3269,3 +3269,88 @@ func TestGetCampaignMetrics_PlatformErrorIsScrubbedBeforeLogging(t *testing.T) {
 		t.Errorf("the control character was not normalized before logging:\n%s", logged)
 	}
 }
+
+// TestGetCampaignMetrics_UnusableConnectionIs409 and its toggle twin pin the fix for a
+// defect that credentials-first bootstrap CREATED rather than exposed. Before it, a stored
+// connection always had an account id, so ErrConnectionNotUsable arriving from credential
+// resolution was rare and its 503 was defensible. Now the ordinary first state of a
+// connection — credentials stored, account not yet chosen — reaches these handlers, and a
+// 503 tells the caller "the platform did not respond, try later" about a platform that was
+// never contacted and a condition that changes only when a human edits the connection.
+//
+// Asserting the STATUS, not just that an error occurred: the default arm below also
+// errors, so a test that only checked for non-nil would pass against the bug.
+//
+// One test per handler. The two arms are near-identical prose in two different switches,
+// which is exactly why a single test would leave the other one at 503.
+func TestGetCampaignMetrics_UnusableConnectionIs409(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	disp := &metricsOnlyDispatcher{err: fmt.Errorf("no account id: %w: %w",
+		domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected)}
+	s := newMetricsService(camp, disp)
+	_, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("want a 409 ConflictError, got %T: %v", err, err)
+	}
+	if conflict.Code != "409" {
+		t.Errorf("code = %q, want 409", conflict.Code)
+	}
+	assertAccountNotSelectedLog(t, buf.String())
+}
+
+func TestToggleCampaignStatus_UnusableConnectionIs409(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	tog := &stubToggler{err: fmt.Errorf("no account id: %w: %w",
+		domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected)}
+	s, _ := newToggleService(camp, tog)
+	im := "1"
+	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("want a 409 ConflictError, got %T: %v", err, err)
+	}
+	if conflict.Code != "409" {
+		t.Errorf("code = %q, want 409", conflict.Code)
+	}
+	assertAccountNotSelectedLog(t, buf.String())
+}
+
+// assertAccountNotSelectedLog checks both halves of the logging contract on these arms:
+// the fixed reason token IS present (an operator has to be able to tell "no account
+// chosen" apart from "credentials rotted"), and the wrapped cause is NOT — one of the
+// conditions behind ErrConnectionNotUsable is detected by decoding the DECRYPTED
+// credential blob, so this vocabulary is the only thing these arms may log.
+func assertAccountNotSelectedLog(t *testing.T, logged string) {
+	t.Helper()
+	if !strings.Contains(logged, "account_not_selected") {
+		t.Errorf("log is missing the reason token, so the two unusable-connection causes are\n"+
+			"indistinguishable to an operator:\n%s", logged)
+	}
+	if strings.Contains(logged, "no account id") {
+		t.Errorf("the wrapped cause reached the log; only the fixed reason token may be logged\n"+
+			"on this arm:\n%s", logged)
+	}
+}

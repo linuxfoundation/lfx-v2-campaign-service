@@ -546,6 +546,20 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "error", safeErrSummary(merr))
 			return nil, &briefs.ConflictError{Code: "409", Message: "the campaign belongs to a different ad account than this project's current connection — reconnect the original account to read its metrics"}
+		case errors.Is(merr, domain.ErrConnectionNotUsable):
+			// The project's connection cannot be used as it stands — most often, now that
+			// credentials-first bootstrap exists, because no ad account has been selected
+			// yet. The platform was never contacted and never will be until a human edits
+			// the connection, so the 503 below would be a false promise: it tells the caller
+			// to retry a request that cannot succeed with time alone.
+			//
+			// Logged with the fixed reason token rather than the error, for the reason
+			// spelled out at unusableConnectionReason: one of the conditions behind this
+			// sentinel is detected by decoding the DECRYPTED credential blob.
+			slog.WarnContext(ctx, "campaign metrics read blocked: the project's connection is not usable",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "reason", unusableConnectionReason(merr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection is not ready — it may have no ad account selected yet, or its stored credentials need attention; finish setting up the connection before reading metrics"}
 		default:
 			slog.WarnContext(ctx, "campaign metrics read failed on the ad platform",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
@@ -815,6 +829,23 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "status", p.Status, "error", safeErrSummary(terr))
 			return nil, &briefs.ConflictError{Code: "409", Message: "the campaign belongs to a different ad account than this project's current connection — reconnect the original account to change its status"}
+		case errors.Is(terr, domain.ErrConnectionNotUsable):
+			// Credential resolution refused the connection BEFORE the platform was contacted,
+			// so — like the two branches above — nothing changed upstream and this is decidable
+			// without asking the platform. The common case now that credentials-first bootstrap
+			// exists is that no ad account has been selected yet.
+			//
+			// This must sit ABOVE the unconfirmed check as well as the default: nothing on this
+			// path is ambiguous, and the default's 503 would tell the caller to retry a request
+			// that cannot succeed until a human edits the connection.
+			//
+			// Logged with the fixed reason token, not the error, for the reason at
+			// unusableConnectionReason: one condition behind this sentinel is detected by
+			// decoding the DECRYPTED credential blob.
+			slog.WarnContext(ctx, "campaign status toggle blocked: the project's connection is not usable",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "status", p.Status, "reason", unusableConnectionReason(terr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection is not ready — it may have no ad account selected yet, or its stored credentials need attention; finish setting up the connection before changing campaign status"}
 		case errors.As(terr, &unconfirmed) && unconfirmed.Unconfirmed():
 			// UNCONFIRMED: a transport/5xx/redirect error means the PATCH MAY already have
 			// applied on the platform. Do NOT say "not modified" (it might be) and do NOT

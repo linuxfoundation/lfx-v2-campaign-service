@@ -202,4 +202,26 @@ var (
 	// platform will not accept (a dashed login_customer_id, say). Distinct from the
 	// credential cases because the fix is a different form field.
 	ErrProviderConfigInvalid = errors.New("a stored provider config value is invalid")
+
+	// ErrAccountNotSelected — the connection is complete except that no ad account has
+	// been chosen. Every other sentinel here describes something WRONG with stored state;
+	// this one describes state that is merely UNFINISHED, and it is the only one a caller
+	// reaches by doing exactly what the API told them to do.
+	//
+	// It became reachable when GoogleAdsConnectionConfig dropped Required("account_id") to
+	// allow credentials-first bootstrap (design/connection.go). Before that a connection
+	// could not exist without an account id, so the guard that produces this was dead code
+	// — and, being dead, it returned a bare error carrying no sentinel at all. That is
+	// precisely the shape of defect this vocabulary exists to prevent: with no sentinel the
+	// condition fell to the default arm and reported 503, telling an operator to wait for a
+	// state that changes only when a human picks an account.
+	//
+	// Note the deliberate status asymmetry across handlers, which is not an inconsistency:
+	// account discovery answers 400 (the connection IS the resource being acted on, and the
+	// request is asking about a connection that is not usable as configured), while the
+	// campaign toggle and metrics reads answer 409 (the campaign is the resource; an
+	// unfinished connection is a precondition conflict, matching how those handlers already
+	// classify ErrCampaignNotProvisioned). All three are non-retryable, which is the
+	// property that actually matters and the one 503 got wrong.
+	ErrAccountNotSelected = errors.New("no ad account has been selected for the stored connection")
 )
