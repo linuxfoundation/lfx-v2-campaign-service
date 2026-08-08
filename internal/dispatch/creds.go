@@ -124,9 +124,8 @@ type connReader interface {
 	Get(ctx context.Context, projectID string, provider model.Provider) (*model.Connection, error)
 }
 
-// credsSource resolves a project's decrypted platform credentials, from the project's
-// own connection or from the LF-owned system account. It is the ONLY shared piece
-// across adapters: the mechanical Get-then-Decrypt. It deliberately does
+// credsSource resolves a project's decrypted platform credentials. It is the ONLY
+// shared piece across adapters: the mechanical Get-then-Decrypt. It deliberately does
 // NOT interpret the plaintext — credential shapes differ per platform (OAuth2 refresh
 // tokens, OAuth1 4-tuples, static bearer tokens), so each adapter unmarshals the blob
 // itself. ProviderConfig (non-secret columns) and AccountID come back untouched too.
@@ -159,12 +158,10 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 	conn, err := s.repo.Get(ctx, projectID, provider)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			// No connection of its own: fall back to the LF-owned system account, so a
-			// project can run campaigns before connecting a platform account. ONLY a
-			// genuine absence falls back, and that asymmetry is the whole safety
-			// argument — every other failure means the project HAS a connection needing
-			// attention, and running its campaign on the LF account would spend LF money
-			// on a request it believed was its own.
+			// No connection of its own: fall back to the LF-owned system account. ONLY a
+			// genuine absence falls back — every other failure means the project HAS a
+			// connection needing attention, and running its campaign on the LF account
+			// would spend LF money on a request it believed was its own.
 			if sysConn, sysErr := s.systemConn(ctx, projectID, provider); sysErr != nil {
 				return nil, sysErr
 			} else if sysConn != nil {

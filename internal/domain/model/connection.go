@@ -26,21 +26,16 @@ const (
 // SystemProjectID is the reserved connection scope holding the LF-owned platform
 // credentials a project falls back to when it has connected no account of its own.
 //
-// A reserved scope rather than a new table or a set of LFX_SYS_* environment
-// variables: a system account needs exactly what a project account needs —
-// encryption at rest, an account id, provider config, a status, a version for
-// If-Match, and an updated_by audit trail. All of that already exists on the
-// connection row, and reusing it means the bootstrap flow that installs
-// credentials before an account is known, and the account-discovery endpoint that
-// finds one, work on the system account with no new code.
+// A reserved scope rather than a new table or LFX_SYS_* environment variables: a
+// system account needs exactly what a project account needs (encryption at rest,
+// an account id, provider config, a status, an If-Match version, an updated_by
+// trail), so bootstrap and account discovery work on it with no new code.
 //
-// The value is deliberately UNREACHABLE through the API. projectSlugProblem
-// enforces `^[a-z0-9]+(-[a-z0-9]+)*$`, which the colon cannot satisfy, so no
-// create endpoint can plant a row here. That is necessary but NOT sufficient:
-// get/update/delete/set-credential are permissive on project_id for historical
-// UUID rows, so an existing system row would otherwise be rewritable by anyone
-// who can reach the connections API for any project. Those paths reject this
-// scope explicitly (see rejectSystemScope in internal/service).
+// The value is deliberately UNREACHABLE through the API: projectSlugProblem's
+// `^[a-z0-9]+(-[a-z0-9]+)*$` cannot match the colon, so no create endpoint can
+// plant a row here. Necessary but NOT sufficient — the other paths stay permissive
+// on project_id for historical UUID rows and reject this scope explicitly (see
+// rejectSystemScope in internal/service).
 const SystemProjectID = "system:linuxfoundation"
 
 // Table returns the Postgres table name backing this provider's connections.

@@ -147,9 +147,9 @@ func TestApplyCampaignConfig(t *testing.T) {
 	})
 }
 
-// scopedConnReader answers per PROJECT SCOPE, unlike fakeConnReader. The fallback is
-// entirely about WHICH scope was asked, so a fake that cannot tell them apart would pass
-// against an implementation that never consults the system scope at all.
+// scopedConnReader answers per PROJECT SCOPE, unlike fakeConnReader: the fallback is entirely
+// about WHICH scope was asked, so a fake that cannot tell them apart passes against an
+// implementation that never consults the system scope at all.
 type scopedConnReader struct {
 	rows map[string]*model.Connection
 	errs map[string]error
@@ -176,8 +176,8 @@ func usableConn(creds, accountID string) *model.Connection {
 	}
 }
 
-// TestResolveFallsBackToSystemAccount: a project with no connection of its own runs
-// on the LF-owned system account rather than failing.
+// TestResolveFallsBackToSystemAccount: a project with no connection of its own runs on the LF
+// system account rather than failing.
 func TestResolveFallsBackToSystemAccount(t *testing.T) {
 	repo := &scopedConnReader{rows: map[string]*model.Connection{
 		model.SystemProjectID: usableConn(`{"sys":true}`, "sys-account"),
@@ -195,13 +195,12 @@ func TestResolveFallsBackToSystemAccount(t *testing.T) {
 	}
 }
 
-// TestResolveDoesNotFallBackFromABrokenProjectConnection: the asymmetry that makes the
-// fallback safe. A project that HAS a connection recorded an intent to bill its own
-// account; running it on the LF account instead spends LF money nobody aimed there.
+// TestResolveDoesNotFallBackFromABrokenProjectConnection: a project that HAS a connection
+// recorded an intent to bill its own. This asymmetry is what makes the fallback safe.
 func TestResolveDoesNotFallBackFromABrokenProjectConnection(t *testing.T) {
 	cases := map[string]*model.Connection{
-		// One refused by resolve, one by the adapter after it (status rides out on
-		// `resolved`). Both must stop at the project's row, never the system account's.
+		// One refused by resolve, one by the adapter after it. Both must stop at the
+		// project's row, never the system account's.
 		"no stored credentials": {Provider: model.ProviderGoogleAds, Status: model.StatusActive},
 		"inactive":              {Provider: model.ProviderGoogleAds, AccountID: "1", EncryptedCredentials: []byte(`{}`), Status: model.StatusInactive},
 	}
@@ -225,8 +224,7 @@ func TestResolveDoesNotFallBackFromABrokenProjectConnection(t *testing.T) {
 	}
 }
 
-// TestResolveWithNoSystemAccountReportsTheProject: two lookups miss, but the error names
-// the CALLER's project — nothing they can do about an absent system account.
+// TestResolveWithNoSystemAccountReportsTheProject: two misses, but the error names the caller's.
 func TestResolveWithNoSystemAccountReportsTheProject(t *testing.T) {
 	repo := &scopedConnReader{}
 	_, err := newCredsSource(repo, identityEncryptor{}).
@@ -239,8 +237,7 @@ func TestResolveWithNoSystemAccountReportsTheProject(t *testing.T) {
 	}
 }
 
-// TestResolveHoldsTheSystemAccountToTheSameStandard: an unusable system row is refused,
-// not trusted because it is ours.
+// TestResolveHoldsTheSystemAccountToTheSameStandard: refused, not trusted because it is ours.
 func TestResolveHoldsTheSystemAccountToTheSameStandard(t *testing.T) {
 	repo := &scopedConnReader{rows: map[string]*model.Connection{
 		model.SystemProjectID: {Provider: model.ProviderGoogleAds, Status: model.StatusActive},
@@ -252,8 +249,7 @@ func TestResolveHoldsTheSystemAccountToTheSameStandard(t *testing.T) {
 	}
 }
 
-// TestSystemLookupFailureIsNotAnAbsence: a database error on the fallback lookup must
-// not be reported as "you have no connection" — that answers 404 to what is a 503.
+// TestSystemLookupFailureIsNotAnAbsence: a DB error on the fallback is a 503, not a 404.
 func TestSystemLookupFailureIsNotAnAbsence(t *testing.T) {
 	repo := &scopedConnReader{errs: map[string]error{model.SystemProjectID: errors.New("connection refused")}}
 	_, err := newCredsSource(repo, identityEncryptor{}).
@@ -263,8 +259,7 @@ func TestSystemLookupFailureIsNotAnAbsence(t *testing.T) {
 	}
 }
 
-// TestResolveAtTheSystemScopeDoesNotRecurse: dispatching a brief already scoped to the
-// reserved project must not ask for the same row twice.
+// TestResolveAtTheSystemScopeDoesNotRecurse: a brief already at the reserved scope asks once.
 func TestResolveAtTheSystemScopeDoesNotRecurse(t *testing.T) {
 	repo := &scopedConnReader{}
 	if _, err := newCredsSource(repo, identityEncryptor{}).

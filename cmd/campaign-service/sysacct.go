@@ -20,14 +20,11 @@ import (
 )
 
 const (
-	// bootstrapSystemAccountCmd installs the LF-owned system ad-account credentials that
-	// projects without a connection of their own fall back to:
-	//
-	//	campaign-service bootstrap-system-account -provider google-ads \
-	//	  [-account-id 8666746580] [-config login_customer_id=999] < creds.json
-	//
-	// A subcommand of the SERVING binary because ko publishes only cmd/campaign-service —
-	// a separate binary would have no published artifact for the deployment Job to run.
+	// bootstrapSystemAccountCmd installs the LF-owned credentials unconnected projects fall
+	// back to: `campaign-service bootstrap-system-account -provider google-ads
+	// [-account-id 8666746580] [-config login_customer_id=999] < creds.json`. A subcommand of
+	// the SERVING binary because ko publishes only cmd/campaign-service — a separate binary
+	// would have no published artifact for the deployment Job to run.
 	bootstrapSystemAccountCmd = "bootstrap-system-account"
 
 	// maxCredentialBytes bounds the stdin read: a credential is a handful of tokens, so
@@ -36,9 +33,9 @@ const (
 	bootstrapTimeout   = 30 * time.Second
 )
 
-// parseProviderConfig turns `k=v,k2=v2` into the connection's non-secret config columns —
-// the account plumbing an adapter reads out of ProviderConfig (LinkedIn's org_id, Meta's
-// page_id, X's funding_instrument_id), without which a row fails at campaign create.
+// parseProviderConfig turns `k=v,k2=v2` into the connection's non-secret config columns — the
+// plumbing an adapter reads out of ProviderConfig (LinkedIn's org_id, Meta's page_id, X's
+// funding_instrument_id), without which a row fails at campaign create.
 func parseProviderConfig(s string) (map[string]string, error) {
 	if strings.TrimSpace(s) == "" {
 		return nil, nil
@@ -54,9 +51,9 @@ func parseProviderConfig(s string) (map[string]string, error) {
 	return cfg, nil
 }
 
-// runSysacctBootstrap is the subcommand entry point. The credential document is read from
-// STDIN, never a flag: a flag lands in shell history and every `ps` listing, indefinite
-// exposure for a long-lived refresh token.
+// runSysacctBootstrap is the subcommand entry point. The credential is read from STDIN, never
+// a flag: a flag lands in shell history and every `ps` listing, indefinite exposure for a
+// long-lived refresh token.
 func runSysacctBootstrap(args []string) error {
 	fs := flag.NewFlagSet(bootstrapSystemAccountCmd, flag.ContinueOnError)
 	provider := fs.String("provider", "", "provider to install (e.g. google-ads)")

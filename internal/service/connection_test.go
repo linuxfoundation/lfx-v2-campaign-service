@@ -300,13 +300,11 @@ func TestJWTAuth_EmptyTokenRejected(t *testing.T) {
 	}
 }
 
-// TestSystemScopeIsUnreachableThroughTheAPI: no API caller may read, rewrite,
-// re-credential, test, delete the reserved scope, or enumerate the accounts it reaches.
-// The cases must cover EVERY endpoint taking a caller-supplied project_id — seven, not
-// six: account discovery does not go through connection_handler.go, which is why it was
-// missed. When an eighth is added, it belongs here. The row EXISTS in the repo for each
-// case; against an empty store the repo answers "not found" and the assertion could not
-// tell a guarded service from an unguarded one.
+// TestSystemScopeIsUnreachableThroughTheAPI: no API caller may read, rewrite, re-credential,
+// test, delete the reserved scope, or enumerate the accounts it reaches. The cases cover EVERY
+// endpoint taking a caller-supplied project_id — seven, not six: account discovery bypasses
+// connection_handler.go, which is why it was missed; an eighth belongs here too. The row EXISTS
+// for each case, or the repo's own "not found" would make a guarded service look unguarded.
 func TestSystemScopeIsUnreachableThroughTheAPI(t *testing.T) {
 	newRepoWithSystemRow := func() *fakeRepo {
 		r := newFakeRepo()
@@ -345,8 +343,8 @@ func TestSystemScopeIsUnreachableThroughTheAPI(t *testing.T) {
 			_, err := s.TestGoogleAds(context.Background(), &conn.TestGoogleAdsPayload{ProjectID: model.SystemProjectID})
 			return err
 		},
-		// The SEVENTH endpoint. Given a WORKING orchestrator on purpose: without one the
-		// call 503s before the guard matters and this passes against an unguarded service.
+		// The SEVENTH endpoint. Given a WORKING orchestrator on purpose: without one the call
+		// 503s before the guard matters and this would pass against an unguarded service.
 		"list-accounts": func(s *ConnectionService) error {
 			s.SetOrchestrator(&Orchestrator{
 				dispatchers: map[model.Provider]PlatformDispatcher{
