@@ -259,6 +259,161 @@ the platform's API limitation (NOT a reduced range, average, or extrapolation). 
 permanent X API constraint documented in the knowledge base. Spend is returned by X as
 `billed_charge_local_micro`, already in micro-currency units (no USD parsing or conversion).
 
+## Account discovery (optional capability)
+
+`GoogleAdsDispatcher.ListAccounts(ctx, projectID, platform) ([]model.AccessibleAccount, error)`
+enumerates the ad accounts reachable **upstream at the provider** with the connection's stored
+credential. It exists so an operator configuring a connection can pick the right account instead
+of pasting a customer ID by hand.
+
+**Now fully wired.** The adapter landed one PR ahead of its caller; both halves are present as of
+this change. `internal/service/orchestrator.go` declares `AccountLister` alongside `StatusToggler`
+and `MetricsReader`, and `Orchestrator.ReadAccounts` reaches it through the same optional-capability
+type assertion `MetricsReader` uses — a platform whose dispatcher does not implement the interface
+yields `ErrAccountsUnsupported`, which the service layer maps to 400 rather than to a 503 that
+invites a pointless retry.
+
+Note what it is NOT: this does not list anything this service stores. A project holds at most one
+connection per provider, and that singleton is read via `GET .../connection-{provider}`.
+`AccessibleAccount` (`ID`, `Label`) is a live projection of the provider's own account list, never
+persisted — the same live-read-only discipline as `ReadMetrics`. Errors from the provider CALL
+propagate verbatim: a read has no ambiguous mutation to protect, and the adapter does not classify
+those, leaving the HTTP status mapping to the service layer.
+
+**Errors that arise BEFORE any request are classified here, and must be.** The service layer has
+exactly one default arm for an unrecognized error, and it answers 503 — "the provider call failed,
+retry later". Three conditions would land there wrongly: an inactive connection, a credential blob
+that is incomplete or structurally malformed, and a `login_customer_id` stored with dashes. (A blob
+that fails AUTHENTICATION is not one of them — see the decrypt split below.) None of them
+improve with time; all of them need a human to edit the connection. So each is wrapped with
+`domain.ErrConnectionNotUsable`, in the layer that knows the failure was pre-send, because nothing
+downstream can recover the distinction.
+
+Ownership of that wrap is SPLIT, and the split follows which function is in a position to know.
+`validateGoogleAdsCredentials` tags the three CREDENTIAL-STATE failures — a non-`active` status,
+a blob that is not valid JSON, a blob missing a required field — and it is used by every Google
+Ads path, so campaign dispatch and the metrics read get the classification too, not just
+discovery. `resolveGoogleAdsDiscoveryClient` tags the one that is not about the credential at
+all: a `login_customer_id` stored with dashes. Reading either as "the resolver wraps every
+pre-send failure" would suggest the campaign paths are unclassified, which is the opposite of
+what happens.
+
+The manager-id check is duplicated on purpose. `Client.validateLoginCustomerID` still validates it
+(the backstop for every other caller), but it does so inside the same call that talks to Google, so
+by the time it fires the error is indistinguishable at this boundary from a genuine upstream
+failure. `storedCustomerIDRE` in `internal/dispatch/googleads.go` therefore checks the STORED value
+where it is read — the check has to happen where the answer is still classifiable. The two regexps
+must stay in step.
+
+`creds.resolve` classifies each of its failure branches, and the splits are deliberate. A connection
+row with an EMPTY credential blob is permanently unusable as it stands, so it carries
+`domain.ErrConnectionNotUsable` (→ 400) alongside `domain.ErrCredentialsAbsent` for the reason
+token — without that second sentinel the most trivially diagnosable state in the set logs as
+`reason=unclassified`. Two branches do not:
+`domain.ErrNotFound` means there is no connection at all (→ 404, and the caller should create one,
+not edit one), and a repository failure is a genuine "try again later" (→ 503). Flattening either
+into "not usable" would lose a distinction the service layer depends on.
+
+**A decrypt failure is not one condition, and it splits again.** Only a blob the encryptor could not
+even ATTEMPT to authenticate — `domain.ErrCredentialsMalformed`, for AES-GCM a ciphertext shorter
+than a nonce PLUS the authentication tag (`Seal` appends `Overhead()` bytes to every message,
+including an empty one, so anything shorter is provably truncated) — is proven bad ROW data, and
+only that branch earns `ErrConnectionNotUsable` → 400. Getting that boundary wrong is not cosmetic:
+a blob between the two lengths reaches `Open`, fails authentication, and is then classified as the
+key condition below. A GCM AUTHENTICATION failure carries `domain.ErrCredentialDecryptionFailed`
+instead: it means a wrong or rotated APPLICATION key, or tampering or corruption of that one row
+(`internal/infrastructure/crypto/aesgcm.go` states both), and the tag check CANNOT distinguish them.
+The blast radius therefore is not decided by the sentinel — a wrong deployment key fails every
+project at once, one corrupted row fails only that row, and the COUNT of failures is what tells a
+responder which. Reported as "not usable as configured" it would answer 400 to a whole deployment's
+worth of operators, each told to go fix a connection that is fine, and would erase the 500 that is
+the only signal a key rotation went wrong; answering 500 for one corrupted row over-escalates, which
+is the recoverable direction. An unrecognized decrypt error takes the authentication path on
+purpose: an `Encryptor` that proves nothing about the row must not be read as accusing it.
+
+**Which defect it was is carried by a second sentinel, and the log line is why.** Alongside
+`ErrConnectionNotUsable`, each stored-connection defect wraps one of
+`domain.ErrConnectionInactive`, `ErrCredentialsAbsent`, `ErrCredentialsUndecodable`,
+`ErrCredentialsIncomplete`, or `ErrProviderConfigInvalid`. The status is still decided by the one
+sentinel; these only name the
+reason. They have to be sentinels rather than message text because the service layer cannot log the
+error at all: `validateGoogleAdsCredentials` detects the undecodable case by decoding the DECRYPTED
+blob, and `encoding/json` quotes its input — a `*json.SyntaxError` names the offending character, a
+`*json.UnmarshalTypeError` names the field being read. So that unmarshal error is **dropped, not
+wrapped**: nothing a reader could act on is lost (the remedy is "re-save the credential", not "fix
+byte 41"), and `errors.Is` over a fixed vocabulary carries the diagnosis with no payload attached to
+carry secrets in.
+
+The two decrypt sentinels are declared in `internal/domain` rather than in `crypto` because callers depend
+on the `domain.Encryptor` PORT and never import the implementation; the port's doc states the
+wrapping obligation, and `crypto`'s `ErrCiphertextTooShort` / `ErrDecryptionFailed` each wrap their
+domain sentinel so `errors.Is` carries the classification across the layer without inverting the
+dependency. Note the decrypt branches wrap BOTH a sentinel and the decrypt error (`%w: %w`), and
+the service layer never returns that cause to a caller — but whether it LOGS it depends on which
+sentinel the branch carried. Authenticated-decryption failure (`ErrCredentialDecryptionFailed` →
+500) logs the cause: that error is constructed by the encryptor from ciphertext and key material
+only. Malformed ciphertext reaches `ErrConnectionNotUsable` → 400, whose handler deliberately
+suppresses the cause and logs `reason=credential_blob_malformed` alone, because the conditions on
+that arm include one detected by decoding the DECRYPTED blob.
+
+Google Ads is the only implementation today, via
+`Client.ListAccessibleCustomers` → `customers:listAccessibleCustomers`. That endpoint is
+**account-agnostic** — it has no `customers/{id}` path segment, unlike every other Google Ads call
+— and it is sent with a nil body (so no `Content-Type`) and `idempotent=true` (a pure read, so
+retrying a 429 cannot double-apply anything).
+
+**Discovery runs without an account id, deliberately, at both layers.** The call is
+account-agnostic: it asks which customer ids the CREDENTIAL reaches, so an account id is not
+a narrower version of the question, it is a different one.
+
+Both lifecycles are now SUPPORTED. `GoogleAdsConnectionConfig` no longer declares
+`Required("account_id")` (Google Ads alone — it is the only provider with a discovery endpoint,
+so the only one where a caller can create a connection and then find out what to put in it), so
+this endpoint serves BOTH re-pointing an existing connection ("which other customer ids does this
+credential reach?") and first-time bootstrap:
+
+```
+POST   /projects/{id}/connection-google-ads          (credentials, no account_id)
+GET    /projects/{id}/connection-google-ads/accounts (discovery)
+PUT    /projects/{id}/connection-google-ads          (set the chosen account_id)
+```
+
+A connection in the intermediate state stays `status=active` and stores `account_id` as `""`.
+That is not a loose end: `validateGoogleAdsCredentials` REFUSES a non-active connection, so any
+"pending"-style status would make step two unreachable and dead-end the bootstrap it exists to
+serve. `active` says the connection is ENABLED for credential-based operations, NOT that the
+credentials were verified — nothing verifies them, so an active row can hold material the
+platform will reject. Readiness to run a campaign is `account_id` being non-empty, and the paths
+that need it say so with `ErrAccountNotSelected`.
+
+The two preconditions below were relaxed for the endpoint's own semantics rather than for the
+stored value, which is why the design change above was all that bootstrap additionally needed:
+
+- The dispatcher's `validateGoogleAdsConnection` demands a non-empty `accountID`. Discovery now
+  routes through `validateGoogleAdsCredentials` (via `resolveGoogleAdsDiscoveryClient`) instead,
+  which keeps every other check — active status, decodable blob, all four OAuth fields — so a
+  discovery call against a stale or half-configured connection still fails as a *connection*
+  problem rather than as an opaque error from Google.
+- `Client.doRequest` validates `c.account.CustomerID` as digits-only. The account-agnostic paths
+  call `doRequestValidated` instead, which is `doRequest` with the id precondition discharged by
+  the caller. It exists ONLY so those paths can share one copy of the URL construction, header
+  set, body bounding, retry gating, and `apiError`/`transportError` classification. The
+  `login-customer-id` header is still attached and still validated (`validateLoginCustomerID`).
+
+**A manager credential needs the hierarchy walked, because the flat list does not do it.**
+`customers:listAccessibleCustomers` returns the accounts the authenticated user can act on
+DIRECTLY; a `login-customer-id` header does not make it enumerate that manager's children. On an
+MCC connection — the normal shape for agency-managed accounts — the flat list is therefore often
+just the manager itself, and every child ad account the caller actually wants to pick is missing.
+So when a manager id is configured, `listManagerClients` expands it with a `customer_client` GAQL
+query scoped to the manager (`gaqlSearchForCustomer`, which takes an explicit customer id rather
+than the client's empty one). Manager rows are filtered out of the result: a manager account
+cannot hold campaigns, so offering one would let a caller select an account that fails at the
+first create. Only `status = 'ENABLED'` clients are requested. The expansion also supplies
+`descriptive_name`, which the flat endpoint does not return at all — so labels appear only for
+accounts reached this way. Without a manager id there is no hierarchy root to walk and the direct
+list is the whole answer.
+
 ## Channel kinds: paid ads vs email
 
 `model.ChannelKind` classifies each provider as **`paid-ads`** or **`email`** (`Provider.Kind()`,

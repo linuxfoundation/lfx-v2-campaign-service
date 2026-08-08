@@ -86,4 +86,155 @@ var (
 	// Distinct from ErrPreconditionFailed: the caller's ETag may be perfectly current. The
 	// correct client response is to retry shortly, not to refetch and rebuild the request.
 	ErrCampaignWriteInProgress = errors.New("another write to this campaign is already in progress")
+
+	// ErrAccountsUnsupported indicates the platform has no account-listing capability
+	// wired. The platform is never contacted.
+	//
+	// `Orchestrator.ReadAccounts` returns it when the platform's dispatcher does not
+	// implement the service-side `AccountLister` interface, and the account-discovery
+	// handler maps it to 400 — a request for a platform this service cannot enumerate is
+	// a caller error, not a transient upstream failure.
+	//
+	// It lives here rather than in internal/service for the same reason as
+	// ErrToggleUnsupported: a platform dispatcher must be able to return it without
+	// importing the orchestration layer.
+	ErrAccountsUnsupported = errors.New("account discovery is not supported for this platform")
+
+	// ErrConnectionNotUsable indicates the project's stored connection cannot be used as
+	// it stands: it is not active, its credential blob is incomplete or undecodable, or a
+	// stored config value is malformed. The ad platform is never contacted.
+	//
+	// It exists to keep these OUT of the retryable bucket. Without it, the discovery
+	// handler's default arm answers 503 for a connection that is missing a refresh token
+	// or carries a dashed `login_customer_id` — telling the caller to retry a request that
+	// cannot succeed until someone edits the connection, and burying the one thing that
+	// would let them fix it. A 503 is a promise that waiting might help; none of these
+	// improve with time.
+	//
+	// Distinct from ErrNotFound (no connection at all — 404) and from an upstream failure
+	// (the platform was reached and did not answer — 503). Platform adapters wrap their
+	// own typed setup errors with this sentinel (%w), the same arrangement as
+	// ErrMetricsWindowUnsupported, so the service layer classifies without importing every
+	// platform package.
+	ErrConnectionNotUsable = errors.New("the stored connection is not usable as configured")
+
+	// ErrCredentialsMalformed indicates the stored credential blob is structurally
+	// invalid — the Encryptor could not even ATTEMPT to authenticate it (for the
+	// AES-GCM implementation: shorter than a nonce PLUS the authentication tag, since
+	// Seal appends a tag of Overhead() bytes to every message including an empty one,
+	// so anything below that minimum is provably truncated and no key could open it).
+	// Getting this boundary wrong is not cosmetic: a blob between those two lengths
+	// falls through to Open, fails authentication, and is then classified as the
+	// deployment-key condition below — one truncated row would send someone to look at
+	// the application key. That is proven bad ROW data: the
+	// row must be re-saved before this connection can work again, and nothing about
+	// the deployment is wrong. The credential-resolution path wraps it with
+	// ErrConnectionNotUsable, so it reaches the caller as a 400.
+	ErrCredentialsMalformed = errors.New("the stored credential blob is malformed")
+
+	// ErrCredentialDecryptionFailed indicates a well-formed blob that failed
+	// authenticated decryption. It is deliberately NOT ErrConnectionNotUsable: a GCM
+	// authentication failure means a wrong or ROTATED APPLICATION KEY, or tampered or
+	// corrupted data (internal/infrastructure/crypto/aesgcm.go states both).
+	//
+	// GCM CANNOT TELL THOSE TWO APART, and the blast radius differs: a wrong deployment
+	// key fails every project's connection in the same instant, while one tampered or
+	// corrupted row fails exactly that row. The tag check returns the same failure
+	// either way, so this sentinel means "authentication failed, blast radius not yet
+	// determined" — never "the deployment is broken". A responder's FIRST question is
+	// which of the two it is, and the cheap discriminator is the count: one project
+	// failing is a row, every project failing at once is the key.
+	//
+	// It still maps to 500 rather than 400 because the ambiguity is asymmetric, not
+	// because the deployment case is the likely one. Answering 400 would tell an
+	// operator to go fix a connection that may be entirely fine and would suppress the
+	// only signal that surfaces a key rotation gone wrong; answering 500 for a single
+	// tampered row over-escalates one project. Over-escalating is the recoverable
+	// direction.
+	//
+	// It is also the DEFAULT for an unrecognised decrypt failure. An Encryptor that
+	// proves nothing about the row must not be read as proving the row is at fault:
+	// mistaking an outage for user error is the expensive direction of this call.
+	ErrCredentialDecryptionFailed = errors.New("stored credentials could not be decrypted")
+
+	// The sentinels below name WHICH stored-connection defect made a connection
+	// unusable. Each is wrapped ALONGSIDE ErrConnectionNotUsable at the point the defect
+	// is detected, so the HTTP status is decided by that one sentinel while the reason
+	// stays machine-readable.
+	//
+	// They exist for the log line, and the log line is the reason they must be sentinels
+	// rather than message text. The status they accompany is not fixed — discovery answers
+	// 400 and the synchronous campaign handlers answer 409 — so what an operator needs from
+	// these is WHICH defect was rejected, independent of how it was reported. The errors
+	// themselves cannot be logged: one of them is produced by
+	// decoding the DECRYPTED credential blob, and an error derived from plaintext must
+	// never reach centralized logs. `errors.Is` over a fixed vocabulary carries the
+	// diagnosis with no payload attached to carry secrets in.
+
+	// ErrConnectionInactive — the connection row exists and its credentials may be fine,
+	// but its status is not "active". Nothing was validated beyond that.
+	ErrConnectionInactive = errors.New("the stored connection is not active")
+
+	// ErrCredentialsAbsent — the connection row exists but its credential column is
+	// EMPTY. Nothing was decrypted because there was nothing to decrypt.
+	//
+	// It needs its own sentinel rather than riding on ErrConnectionNotUsable alone
+	// because the reason vocabulary is what an operator greps: without it this known,
+	// fully-diagnosed condition logs as "unclassified", which reads as "we do not know",
+	// and the one state that is trivially fixable becomes the one that looks mysterious.
+	// It is also the state a half-finished connection sits in, so it is not rare.
+	//
+	// Distinct from ErrCredentialsMalformed (bytes present, structurally unopenable) and
+	// from ErrCredentialsIncomplete (decrypted and decoded, one field empty): only this
+	// one means the operator never got as far as saving a credential.
+	ErrCredentialsAbsent = errors.New("the stored connection has no credentials")
+
+	// ErrCredentialsUndecodable — the decrypted blob is not valid JSON for the platform's
+	// credential shape. Its cause is DERIVED FROM PLAINTEXT and is deliberately dropped
+	// at the point of detection rather than wrapped; see the producing validator.
+	ErrCredentialsUndecodable = errors.New("the stored credential blob could not be decoded")
+
+	// ErrCredentialsIncomplete — the blob decoded, but a required field is empty.
+	// Deliberately does not name which: the field names are a fixed, non-secret list that
+	// belongs in the API response, and naming the missing one per project adds nothing a
+	// log reader can act on.
+	ErrCredentialsIncomplete = errors.New("the stored credentials are missing a required field")
+
+	// ErrProviderConfigInvalid — a non-secret provider_config column holds a value the
+	// platform will not accept (a dashed login_customer_id, say). Distinct from the
+	// credential cases because the fix is a different form field.
+	ErrProviderConfigInvalid = errors.New("a stored provider config value is invalid")
+
+	// ErrAccountNotSelected — the connection is complete except that no ad account has
+	// been chosen. Every other sentinel here describes something WRONG with stored state;
+	// this one describes state that is merely UNFINISHED, and it is the only one a caller
+	// reaches by doing exactly what the API told them to do.
+	//
+	// It became a SUPPORTED state when GoogleAdsConnectionConfig dropped
+	// Required("account_id") to allow credentials-first bootstrap (design/connection.go).
+	// It was not, however, previously impossible: Required checked only that the JSON key
+	// was present (the generated validator was `if body.AccountID == nil`) and the Go field
+	// is a plain string, so `"account_id": ""` was accepted and stored. The guard that
+	// produces this sentinel was therefore reachable before — via an unintended, unnamed
+	// state — and it returned a bare error carrying no sentinel at all. That is precisely
+	// the shape of defect this vocabulary exists to prevent: with no sentinel the condition
+	// fell to the default arm and reported 503, telling an operator to wait for a state that
+	// changes only when a human picks an account. Bootstrap did not create the defect; it
+	// made it the common path and gave the state a name.
+	//
+	// It is wrapped ALONGSIDE ErrConnectionNotUsable, and the two have distinct jobs:
+	// ErrConnectionNotUsable selects the HTTP status, this one supplies the reason token
+	// (unusableConnectionReason -> "account_not_selected") and the specific message.
+	//
+	// It reaches exactly two handlers, the campaign status toggle and the per-campaign
+	// metrics read, both of which answer 409: the campaign is the resource there, and an
+	// unfinished connection is a precondition conflict, matching how those handlers already
+	// classify ErrCampaignNotProvisioned. Non-retryable is the property that actually
+	// matters and the one 503 got wrong.
+	//
+	// Account discovery does NOT map this sentinel. It calls validateGoogleAdsCredentials,
+	// which deliberately omits the account-id check — accepting an account-less connection
+	// is precisely what makes the bootstrap possible, since discovery is how the operator
+	// finds the account to select. Discovery's own 400 covers its other unusable states.
+	ErrAccountNotSelected = errors.New("no ad account has been selected for the stored connection")
 )

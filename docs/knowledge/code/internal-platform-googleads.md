@@ -60,6 +60,111 @@ row cap alone doesn't bound memory, so the byte cap is the real memory guard.
 replaced by `campaign.start_date_time` / `campaign.end_date_time` — the old fields
 are rejected as unrecognized.
 
+### Interpolating free text into a query
+
+Until campaign lookup, every GAQL query here interpolated a digits-only id (`customerIDRE`) or
+a closed allow-list value (`validMetricsWindows`), so nothing needed escaping. A campaign
+**name** is the first genuinely caller-controlled string to reach a `WHERE` clause.
+`gaqlStringLiteral` renders it single-quoted, escaping backslash **first** and then the quote —
+the reverse order re-escapes the backslash the quote escape introduced and releases the quote.
+
+It rejects only **NUL, LF and CR**, exactly what Google Ads prohibits in `Campaign.name`. A
+blanket "reject every control character" rule is wrong here and was corrected in review: this
+lookup serves **adoption**, whose targets never passed through `sanitizeNamePart`, and Google
+accepts TAB, U+2028/U+2029 and zero-width joiners — rejecting one answers "no such campaign"
+about a campaign that exists. (`unicode.IsControl` covers category **Cc only**, so the line
+separators slip past it and invite an explicit check that over-rejects twice over.) Allowing
+them risks nothing: the query rides in a JSON body that `encoding/json` escapes.
+
+**Invalid UTF-8 is the one rejection that is not about what Google forbids.** It is about what
+*this process* would change. `encoding/json` substitutes U+FFFD for each malformed byte and
+returns **no error**, so a name carrying one is silently rewritten between the guard and the
+wire: the query asks about a name the caller never passed, and its inevitable miss is reported
+as the clean `("", nil)` absence that licenses a create. Nothing downstream catches it — the
+rune loop sees `utf8.RuneError`, which is none of NUL/LF/CR; the length check counts it as one
+rune; and the row-level name re-check needs a row, which a query that matches nothing does not
+return. Rejecting costs no reachable lookup either, since Google Ads' JSON and proto surfaces
+both require valid UTF-8, so no stored campaign name can contain a malformed byte. The general
+form: *an encoder that lossily repairs its input is a silent query rewriter, and a fail-closed
+lookup must validate against what will actually be transmitted, not what it was handed.*
+
+The name is queried **verbatim**, no `TrimSpace`: trimming is a no-op for the create path
+(`composeName` already trims), so it only ever alters adoption, answering `"  foo  "` with the
+campaign named `"foo"`. `TrimSpace` only *detects* whitespace-only input. Anything new
+interpolating free text into GAQL must go through the helper.
+
+## Campaign lookup by name
+
+`FindCampaignByName` returns the id of the single live campaign with exactly that name. The
+fail-closed logic mirrors the other clients' lookups (meta's `findCampaignByName`, linkedin's
+`findMatch`, twitter's and microsoft's) because callers make the same decision from the
+result. It is the first one **exported** — the others are called only from inside their own
+create path; this one is exported because dispatch's adoption path is intended to call it.
+That wiring is a follow-up — nothing in production calls it yet.
+
+| outcome | result |
+|---|---|
+| exactly one live (`ENABLED`/`PAUSED`) match | `(id, nil)` |
+| no live match — only `REMOVED` rows, or none | `("", nil)` — a clean, trustworthy absence |
+| more than one match | `("", error)` — ambiguous, never a silent pick |
+| a row whose name is **not** the queried name | `("", error)` — the filter was not honoured |
+| unrecognised status (`UNSPECIFIED`, `UNKNOWN`, empty) | `("", error)` |
+| unverifiable (undecodable row, no usable id, non-canonical id, malformed or cross-customer resource name, identity fields that disagree) | `("", error)` |
+
+**Why absence and ambiguity must differ.** Both callers act destructively on an absence:
+create takes `("", nil)` as licence to create, adoption as licence to report nothing to adopt.
+A false absence produces a **duplicate paid campaign**; an arbitrary pick binds a brief to the
+wrong one. Two live campaigns sharing a name is **anomalous, not routine** — v23 rejects a
+mutate whose name another `ENABLED`/`PAUSED` campaign holds (`DUPLICATE_CAMPAIGN_NAME`) — so
+this branch fail-closes on a response that should not be possible. Rows are deduplicated by id
+first, so one campaign on several rows is not ambiguous.
+
+The name filter and `REMOVED` exclusion are applied **server-side** (a miss costs one page
+instead of an account walk) and **re-checked client-side** — not redundant, since an injected
+query still returns 2xx rows for OTHER campaigns. **The disposition matters as much as the
+check:** a name mismatch is an **error**, never a skip, because skipping every injected row
+leaves `("", nil)` — *a skip that reduces an unverifiable response to a clean absence is a
+false-absence bug.* Status is the deliberate asymmetry: `REMOVED` **is** a per-row skip,
+because a tombstone is unadoptable however it arrived.
+
+Identity is validated **whenever present**, not only as a fallback: both fields are selected,
+so both are evidence of what the row is, and a malformed or cross-customer resource name beside
+a plausible id — or two fields naming different campaigns — errors. The shape check is the full
+documented one (`customers/{this account}/campaigns/{digits}`), **not** `resourceID`, which
+returns the trailing segment: right for a mutate response we issued, wrong here, where it reads
+`garbage/4242` as `4242`.
+
+Presence is tested on the **raw** field. Trimming it first would fold a whitespace-only
+resource name into "field absent" and let the row be adopted on its id alone — a row whose two
+selected identity fields do not agree, accepted as though only one had been asked for. Absent
+and present-but-garbage are the distinction the guard exists to draw.
+
+**Digits-only is not the id test.** Both ids go through `canonicalCampaignID`, which requires
+the canonical base-10 spelling of a **positive int64** — the type Google exposes campaign ids
+as. `customerIDRE` (`^[0-9]+$`) is the package's *interpolation-safety* matcher and passes
+`"0"`, a value past `math.MaxInt64`, and `"007"`. The last is the one with teeth: `"007"` and
+`"7"` are one campaign to the server and two strings to the identity comparison, so a string
+compare reports a disagreement that does not exist — or an agreement between two spellings only
+one of which is real. Canonicalising collapses the spellings, so the comparison is about
+campaigns. `campaign.id` is also **not** trimmed: a padded value is a malformed row, and
+`TrimSpace` would answer with campaign `4242` for a response this API does not produce.
+
+A JSON `null` is refused at **three** levels: `gaqlSearch` rejects a top-level `null` body,
+`results` decodes through `searchRows`, and `nextPageToken` decodes through `pageToken`. Each
+would otherwise unmarshal without error into a zero-valued field, indistinguishable from a
+genuine response, therefore a licence to create. An **omitted** key stays legal at every
+level: `{}` and `{"results":[]}` are Google's own empty page, and a final page omits the
+cursor.
+
+The cursor case fails by a different route and is worth stating separately. `"nextPageToken":
+null` decodes to `""`, which is exactly the value the pagination loop reads as "that was the
+last page". The result set is not empty and is not misread as empty — it is read as
+COMPLETE, and paging stops at page 1. A campaign on page 2 is then reported absent, and
+`FindCampaignByName` treats absence as a licence to create a duplicate PAID campaign. Same
+false absence as the other two, reached by silent truncation rather than by an empty page.
+proto3 JSON emits an unset string as `""` or omits it and never emits `null`, so refusing it
+costs nothing a conformant server would send.
+
 ## Campaign creation (GA-2)
 
 `CreateCampaign` (in `campaign.go`) creates a PAUSED search campaign as two
@@ -537,24 +642,28 @@ searches: it takes an EXPLICIT customer id (validated there, since it is interpo
 resource path) rather than the client's configured one, and `gaqlSearch` is now a thin
 delegation to it.
 
-**A manager credential needs the hierarchy walked — and the flat list discarded.**
+**A manager credential needs the hierarchy walked, and the flat list is not consulted at all.**
 `customers:listAccessibleCustomers` returns the accounts the authenticated user can act on
 DIRECTLY; a `login-customer-id` header does not make it enumerate that manager's children —
 that is a property of the endpoint, not of the header. On an MCC connection the flat list is
 therefore often just the manager itself, with every child ad account missing.
 
-So `ListAccessibleCustomers` has two modes, and they do not merge:
+So `ListAccessibleCustomers` has two modes, they do not merge, and **each consults exactly one
+data source**. That is not the same as one HTTP request: the manager mode's GAQL read pages
+until `nextPageToken` is empty, and either mode retries a 429. What the invariant rules out is
+a mode issuing a request whose response it will not read. The mode is decided from
+`login_customer_id` before anything goes over the wire:
 
 - **No `login_customer_id`.** The direct list IS the answer. Every account in it is one the
   credential addresses on its own behalf. A manager account can still be in there and cannot
   hold campaigns, but the response carries no `manager` flag, so there is nothing to recognise
   it by; a round-trip per row to find out would cost more than it saves on a list this short.
-- **`login_customer_id` set.** The selectable set is exactly `listManagerClients`' output: a
+- **`login_customer_id` set.** `expandManagerHierarchy` returns immediately, and the flat endpoint
+  is **never called**. The selectable set is exactly `listManagerClients`' output: a
   `customer_client` GAQL query scoped to the manager, requesting only `status = 'ENABLED'`
-  clients and dropping rows where `customer_client.manager` is true. The flat list is validated
-  and then **not used as a source of selectable accounts.**
+  clients and dropping rows where `customer_client.manager` is true.
 
-Discarding it is the point, not an oversight. `listAccessibleCustomers` is UNSCOPED — the
+Not calling it is the point, not an oversight. `listAccessibleCustomers` is UNSCOPED — the
 header does not filter it — while every OTHER request this client makes carries that header, so
 an account is addressable through this client only if it sits under the configured manager. An
 account the user reaches directly but which belongs to a different hierarchy comes back in the
@@ -571,9 +680,19 @@ per path through the hierarchy and a client of a sub-manager that is itself a cl
 appears twice. A row with no id is a hard error rather than a silent drop, since dropping it
 would understate the list the operator chooses from.
 
-Validation of the flat list still runs in BOTH modes even though manager mode discards its
-contents: a resource name that is not `customers/{digits}` means the 2xx did not match the
-documented contract, and that is worth failing on wherever it is noticed.
+Flat-list resource names are validated as `customers/{digits}` in direct mode, where a caller
+persists the value as the connection's account id and interpolates it into later request
+paths. That validation used to run in manager mode too, on rows nothing would consume — which
+only meant the discarded response had one more way to fail the request. Manager-mode ids are
+validated inside `listManagerClients` instead.
+
+**Only one data source means only one failure mode.** Fetching the flat list and then throwing
+it away spent request quota and whatever deadline the caller passed down, but the behavioural
+cost was worse: a timeout, 429, or 5xx on a response that was never going to be read still
+propagated out and failed the whole discovery, even though the hierarchy query alone would
+have answered correctly. `TestListAccessibleCustomers_ManagerModeNeverCallsTheFlatList` pins
+this by failing the flat endpoint with a 500 and requiring discovery to succeed anyway —
+every other manager-mode test serves both endpoints and so passes either way.
 
 The REST binding is GET (not the POST used by `:search` and `:mutate`), it takes no request
 body at all, and it is sent with `idempotent=true` — a pure read, so retrying a 429 cannot

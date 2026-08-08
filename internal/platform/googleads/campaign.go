@@ -761,6 +761,10 @@ const (
 	StatusEnabled = "ENABLED"
 	// StatusPaused stops a campaign serving.
 	StatusPaused = "PAUSED"
+	// StatusRemoved is Google's tombstone state. A removed campaign still matches a
+	// name query and can never serve or be re-enabled, so FindCampaignByName must not
+	// adopt one or read it as an idempotent create hit.
+	StatusRemoved = "REMOVED"
 )
 
 // campaignStatusUpdate is the update payload for campaigns:mutate. resourceName identifies
