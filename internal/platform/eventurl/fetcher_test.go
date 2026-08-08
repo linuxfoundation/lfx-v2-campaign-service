@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -39,6 +40,15 @@ func TestIsForbiddenIP(t *testing.T) {
 		"198.18.0.1",      // benchmarking
 		"240.0.0.1",       // reserved
 		"255.255.255.255", // broadcast
+		// The ranges Go's own predicates do NOT cover, each reachable before it was
+		// listed: IsUnspecified matches ONLY 0.0.0.0, so the rest of 0/8 passed, and
+		// IsLinkLocalUnicast is fe80::/10, so deprecated site-local fec0::/10 passed.
+		"0.0.0.1", "0.255.255.255", // RFC 1122 "this network", past the unspecified address
+		"fec0::1",                                  // RFC 3879 site-local
+		"192.0.2.1", "198.51.100.1", "203.0.113.1", // RFC 5737 TEST-NET-1/2/3
+		"100::1",       // RFC 6666 discard-only
+		"2001::1",      // RFC 2928 IETF protocol assignments
+		"64:ff9b:1::1", // RFC 8215 local-use NAT64
 		// The 4-in-6 spellings of two of the above: same host, different notation.
 		"::ffff:127.0.0.1", "::ffff:169.254.169.254",
 	}
@@ -51,7 +61,9 @@ func TestIsForbiddenIP(t *testing.T) {
 			t.Errorf("isForbiddenIP(%s) = false, want true", s)
 		}
 	}
-	for _, s := range []string{"93.184.216.34", "8.8.8.8", "2606:2800:220:1::1"} {
+	// Over-rejection is a false absence too: a public page refused here is reported to the
+	// caller as a page with no event metadata, which is a different and wrong answer.
+	for _, s := range []string{"93.184.216.34", "8.8.8.8", "1.1.1.1", "2606:2800:220:1::1"} {
 		if isForbiddenIP(net.ParseIP(s)) {
 			t.Errorf("isForbiddenIP(%s) = true, want false", s)
 		}
@@ -98,9 +110,13 @@ func TestFetchAcceptsUppercaseScheme(t *testing.T) {
 }
 
 func TestFetchDoesNotFollowRedirects(t *testing.T) {
-	var reached bool
+	// atomic, not a plain bool: the handler runs on the test server's goroutine and the
+	// assertion reads from the test's, and a redirect the client never follows leaves NO
+	// happens-before edge between the two — the very case this test exists to detect is
+	// the one with no synchronisation to borrow.
+	var reached atomic.Bool
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		reached = true
+		reached.Store(true)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer target.Close()
@@ -116,7 +132,7 @@ func TestFetchDoesNotFollowRedirects(t *testing.T) {
 	if !errors.Is(err, ErrEventURLFetchFailed) {
 		t.Errorf("Fetch(redirect) error = %v, want ErrEventURLFetchFailed", err)
 	}
-	if reached {
+	if reached.Load() {
 		t.Error("the redirect was followed; the target server was contacted")
 	}
 }

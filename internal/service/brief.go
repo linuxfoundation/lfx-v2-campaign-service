@@ -19,7 +19,6 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
-	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 
 	"goa.design/goa/v3/security"
 )
@@ -45,18 +44,6 @@ type BriefService struct {
 	// indexingDisabled is a CONFIGURATION fact (NATS_URL empty), not an observation of the
 	// publisher: a Noop also appears when the broker is merely unreachable. See DisableIndexing.
 	indexingDisabled bool
-	// eventFetcher fetches a caller-supplied event page. It is held rather than built per
-	// request because it owns an *http.Transport: a per-request client keeps no idle
-	// connections and starts a fresh TCP+TLS handshake for every fetch, and its
-	// connection pool is garbage rather than reused. Never nil after construction.
-	eventFetcher eventFetcher
-}
-
-// eventFetcher is the fetch half of the event-URL path, named as an interface here so a
-// test can supply a stub without a live server and without reaching for the unguarded
-// constructor. *eventurl.Fetcher is the only production implementation.
-type eventFetcher interface {
-	Fetch(ctx context.Context, eventURL string) ([]byte, error)
 }
 
 var (
@@ -157,8 +144,7 @@ func derefStr(s *string) string {
 // default to a Noop publisher.
 func NewBriefService(b domain.BriefRepository, c domain.CampaignRepository, j domain.JobRepository, orch *Orchestrator) *BriefService {
 	return &BriefService{briefs: b, campaigns: c, jobs: j, orch: orch,
-		indexer:      indexer.Noop{},
-		eventFetcher: eventurl.NewFetcher(),
+		indexer: indexer.Noop{},
 	}
 }
 
@@ -429,39 +415,6 @@ func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPay
 		return mapBriefErr(aerr)
 	}
 	return nil
-}
-
-// FetchEventURL fetches and parses an event URL, extracting structured event details
-// (name, description, location, dates, image) using JSON-LD, OpenGraph, or HTML fallback.
-// The parsed details are returned but not persisted.
-func (s *BriefService) FetchEventURL(ctx context.Context, p *briefs.FetchEventURLPayload) (any, error) {
-	if p.URL == "" {
-		return nil, &briefs.BadRequestError{Code: "400", Message: "url is required"}
-	}
-
-	// Snapshot under the lock like every other handler; the field is set at construction
-	// and never nil.
-	s.mu.RLock()
-	fetcher := s.eventFetcher
-	s.mu.RUnlock()
-
-	body, err := fetcher.Fetch(ctx, p.URL)
-	if err != nil {
-		return nil, mapEventURLErr(err)
-	}
-
-	details := eventurl.NewParser().Parse(body)
-
-	// Fail closed: a page that yields no name is a 400, not an empty success that flows
-	// silently into brief generation. Routed through mapEventURLErr rather than built
-	// inline so the sentinel is REACHABLE — an unreachable arm in the mapping table is
-	// indistinguishable from a mapping that was never wired.
-	if details.Name == "" {
-		return nil, mapEventURLErr(eventurl.ErrEventDetailsEmpty)
-	}
-
-	// Return the parsed details as JSON (marshaled through any).
-	return details, nil
 }
 
 // ─── Campaigns ───
@@ -1117,25 +1070,6 @@ func parseBriefIfMatch(ifMatch *string) (int64, error) {
 		return 0, &briefs.BadRequestError{Code: "400", Message: "If-Match must be an integer version"}
 	}
 	return v, nil
-}
-
-func mapEventURLErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	// Map event URL errors to appropriate HTTP status codes.
-	switch {
-	case errors.Is(err, eventurl.ErrEventURLInvalid):
-		return &briefs.BadRequestError{Code: "400", Message: "event URL is invalid or unsupported"}
-	case errors.Is(err, eventurl.ErrEventURLForbidden):
-		return &briefs.BadRequestError{Code: "400", Message: "event URL resolves to a forbidden address"}
-	case errors.Is(err, eventurl.ErrEventURLFetchFailed):
-		return &briefs.ConnServiceUnavailableError{Code: "503", Message: "event URL could not be fetched"}
-	case errors.Is(err, eventurl.ErrEventDetailsEmpty):
-		return &briefs.BadRequestError{Code: "400", Message: "no event details could be extracted from the URL"}
-	default:
-		return &briefs.InternalServerError{Code: "500", Message: "an internal server error occurred"}
-	}
 }
 
 func mapBriefErr(err error) error {

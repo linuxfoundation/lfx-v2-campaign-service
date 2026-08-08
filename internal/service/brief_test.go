@@ -26,7 +26,6 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
-	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	goahttp "goa.design/goa/v3/http"
 )
 
@@ -3268,66 +3267,5 @@ func TestGetCampaignMetrics_PlatformErrorIsScrubbedBeforeLogging(t *testing.T) {
 	}
 	if !strings.Contains(logged, "\\ufffd") && !strings.ContainsRune(logged, unicode.ReplacementChar) {
 		t.Errorf("the control character was not normalized before logging:\n%s", logged)
-	}
-}
-
-// stubEventFetcher stands in for *eventurl.Fetcher. The injection seam exists so this
-// test needs no live server and never reaches for the unguarded constructor.
-type stubEventFetcher struct {
-	body []byte
-	err  error
-}
-
-func (s stubEventFetcher) Fetch(context.Context, string) ([]byte, error) { return s.body, s.err }
-
-func TestFetchEventURL(t *testing.T) {
-	page := `<html><head><script type="application/ld+json">
-	{"@type":"Event","name":"KubeCon"}</script></head></html>`
-
-	for _, tc := range []struct {
-		name  string
-		stub  stubEventFetcher
-		url   string
-		check func(*testing.T, any, error)
-	}{
-		{"empty url", stubEventFetcher{}, "", func(t *testing.T, _ any, err error) {
-			var bad *briefs.BadRequestError
-			if !errors.As(err, &bad) {
-				t.Fatalf("err = %v, want BadRequestError", err)
-			}
-		}},
-		{"parsed", stubEventFetcher{body: []byte(page)}, "https://e.com/k",
-			func(t *testing.T, res any, err error) {
-				d, ok := res.(eventurl.EventDetails)
-				if err != nil || !ok || d.Name != "KubeCon" {
-					t.Fatalf("FetchEventURL = %#v, %v; want EventDetails{Name:\"KubeCon\"}", res, err)
-				}
-			}},
-		// A page with no extractable name must be a 400, not an empty success that
-		// flows on into brief generation.
-		{"no details", stubEventFetcher{body: []byte(`<html></html>`)}, "https://e.com/k",
-			func(t *testing.T, _ any, err error) {
-				var bad *briefs.BadRequestError
-				if !errors.As(err, &bad) || !strings.Contains(bad.Message, "no event details") {
-					t.Fatalf("err = %v, want the empty-details BadRequestError", err)
-				}
-			}},
-		// A transport failure is retryable and must NOT be flattened into the 400s.
-		{"fetch failed", stubEventFetcher{err: eventurl.ErrEventURLFetchFailed}, "https://e.com/k",
-			func(t *testing.T, _ any, err error) {
-				var unavailable *briefs.ConnServiceUnavailableError
-				if !errors.As(err, &unavailable) {
-					t.Fatalf("err = %v, want ConnServiceUnavailableError", err)
-				}
-			}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			s := NewBriefService(nil, nil, nil, nil)
-			s.eventFetcher = tc.stub
-			res, err := s.FetchEventURL(context.Background(), &briefs.FetchEventURLPayload{
-				ProjectID: "tlf", URL: tc.url,
-			})
-			tc.check(t, res, err)
-		})
 	}
 }

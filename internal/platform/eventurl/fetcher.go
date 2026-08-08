@@ -28,17 +28,36 @@ const (
 
 // forbiddenNets are ranges that must never be reachable through a caller-supplied URL
 // but that no net.IP predicate covers. The predicates handle the rest (see isForbiddenIP).
+//
+// Go's predicates are narrower than their names suggest, and the gaps are the entries
+// below rather than obvious omissions: IsUnspecified matches ONLY 0.0.0.0, leaving the
+// rest of 0/8 — which a Linux host treats as "this network" and routes locally — and
+// IsLinkLocalUnicast is fe80::/10 alone, so deprecated site-local fec0::/10 passes every
+// check. Both are the addresses an SSRF probe reaches for once the obvious ones are shut.
 var forbiddenNets = []net.IPNet{
-	{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}, // RFC 6598 CGNAT
-	{IP: net.IPv4(192, 0, 0, 0), Mask: net.CIDRMask(24, 32)},  // RFC 6890 IETF protocol assignments
-	{IP: net.IPv4(198, 18, 0, 0), Mask: net.CIDRMask(15, 32)}, // RFC 2544 benchmarking
-	{IP: net.IPv4(240, 0, 0, 0), Mask: net.CIDRMask(4, 32)},   // RFC 1112 reserved, incl. 255.255.255.255
+	{IP: net.IPv4(0, 0, 0, 0), Mask: net.CIDRMask(8, 32)},         // RFC 1122 "this network"
+	{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)},     // RFC 6598 CGNAT
+	{IP: net.IPv4(192, 0, 0, 0), Mask: net.CIDRMask(24, 32)},      // RFC 6890 IETF protocol assignments
+	{IP: net.IPv4(192, 0, 2, 0), Mask: net.CIDRMask(24, 32)},      // RFC 5737 TEST-NET-1
+	{IP: net.IPv4(198, 18, 0, 0), Mask: net.CIDRMask(15, 32)},     // RFC 2544 benchmarking
+	{IP: net.IPv4(198, 51, 100, 0), Mask: net.CIDRMask(24, 32)},   // RFC 5737 TEST-NET-2
+	{IP: net.IPv4(203, 0, 113, 0), Mask: net.CIDRMask(24, 32)},    // RFC 5737 TEST-NET-3
+	{IP: net.IPv4(240, 0, 0, 0), Mask: net.CIDRMask(4, 32)},       // RFC 1112 reserved, incl. 255.255.255.255
+	{IP: net.ParseIP("fec0::"), Mask: net.CIDRMask(10, 128)},      // RFC 3879 deprecated site-local
+	{IP: net.ParseIP("100::"), Mask: net.CIDRMask(64, 128)},       // RFC 6666 discard-only
+	{IP: net.ParseIP("2001::"), Mask: net.CIDRMask(23, 128)},      // RFC 2928 IETF protocol assignments
+	{IP: net.ParseIP("64:ff9b:1::"), Mask: net.CIDRMask(48, 128)}, // RFC 8215 local NAT64
 }
 
 // isForbiddenIP reports whether ip is an address this service must not connect to.
 //
-// It default-DENIES: the caller only proceeds for an address that fails every check
-// here, so a range nobody thought of stays reachable only if it is genuinely public.
+// This is a DENYLIST, and calling it default-deny would be a comfortable lie: a
+// special-use range nobody enumerated stays reachable. A true default-deny needs a
+// public-address policy or a destination allowlist, which is the right shape once the
+// set of legitimate event hosts is known — until then the honest description of this
+// guard is "every special-use range IANA has registered", enumerated above and pinned
+// by TestIsForbiddenIP so a new one is added by editing a table, not by reasoning.
+//
 // The 4-in-6 form is normalized first, because a mapped address like ::ffff:169.254.169.254
 // is the same host as its IPv4 spelling and must not slip past an IPv4-shaped range test.
 func isForbiddenIP(ip net.IP) bool {

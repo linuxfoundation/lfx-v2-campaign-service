@@ -367,30 +367,6 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		})
 	})
 
-	Method("fetch-event-url", func() {
-		Description("Fetch and parse an event URL, extracting structured event details (name, description, location, date/time). The parsed details are returned but not persisted — use create-brief to store them with a slug. Returns 400 if the URL is invalid/forbidden, 503 if the fetch fails, or 400 if no event metadata is found.")
-		Payload(func() {
-			bearerToken()
-			projectIDAttr()
-			Attribute("url", String, "Event page URL to fetch and parse", func() {
-				Format(FormatURI)
-				// Bounded at the edge so a multi-megabyte "URL" is rejected by the
-				// generated validation rather than carried into url.Parse and a
-				// request. 2048 is the de-facto browser/CDN ceiling.
-				MaxLength(2048)
-			})
-			Required("project_id", "url")
-		})
-		Result(Any, "Parsed event details (name, description, location, date, image, extracted_from)")
-		commonBriefErrors(false)
-		HTTP(func() {
-			POST("/projects/{project_id}/fetch-event-url")
-			Header("bearer_token:Authorization")
-			Response(StatusOK)
-			briefErrorResponses(false)
-		})
-	})
-
 	Method("create-campaigns", func() {
 		Description("Create campaigns across the selected platforms (async -> job).")
 		Payload(func() {

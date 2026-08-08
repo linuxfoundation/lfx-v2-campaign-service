@@ -22,7 +22,6 @@ type Endpoints struct {
 	UpdateBrief          goa.Endpoint
 	ApproveBrief         goa.Endpoint
 	DeleteBrief          goa.Endpoint
-	FetchEventURL        goa.Endpoint
 	CreateCampaigns      goa.Endpoint
 	GetCampaign          goa.Endpoint
 	GetCampaignMetrics   goa.Endpoint
@@ -44,7 +43,6 @@ func NewEndpoints(s Service) *Endpoints {
 		UpdateBrief:          NewUpdateBriefEndpoint(s, a.JWTAuth),
 		ApproveBrief:         NewApproveBriefEndpoint(s, a.JWTAuth),
 		DeleteBrief:          NewDeleteBriefEndpoint(s, a.JWTAuth),
-		FetchEventURL:        NewFetchEventURLEndpoint(s, a.JWTAuth),
 		CreateCampaigns:      NewCreateCampaignsEndpoint(s, a.JWTAuth),
 		GetCampaign:          NewGetCampaignEndpoint(s, a.JWTAuth),
 		GetCampaignMetrics:   NewGetCampaignMetricsEndpoint(s, a.JWTAuth),
@@ -64,7 +62,6 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.UpdateBrief = m(e.UpdateBrief)
 	e.ApproveBrief = m(e.ApproveBrief)
 	e.DeleteBrief = m(e.DeleteBrief)
-	e.FetchEventURL = m(e.FetchEventURL)
 	e.CreateCampaigns = m(e.CreateCampaigns)
 	e.GetCampaign = m(e.GetCampaign)
 	e.GetCampaignMetrics = m(e.GetCampaignMetrics)
@@ -209,29 +206,6 @@ func NewDeleteBriefEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpo
 			return nil, err
 		}
 		return nil, s.DeleteBrief(ctx, p)
-	}
-}
-
-// NewFetchEventURLEndpoint returns an endpoint function that calls the method
-// "fetch-event-url" of service "lfx-v2-campaign-service-briefs".
-func NewFetchEventURLEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
-	return func(ctx context.Context, req any) (any, error) {
-		p := req.(*FetchEventURLPayload)
-		var err error
-		sc := security.JWTScheme{
-			Name:           "jwt",
-			Scopes:         []string{},
-			RequiredScopes: []string{},
-		}
-		var token string
-		if p.BearerToken != nil {
-			token = *p.BearerToken
-		}
-		ctx, err = authJWTFn(ctx, token, &sc)
-		if err != nil {
-			return nil, err
-		}
-		return s.FetchEventURL(ctx, p)
 	}
 }
 

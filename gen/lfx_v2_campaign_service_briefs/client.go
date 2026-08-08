@@ -21,7 +21,6 @@ type Client struct {
 	UpdateBriefEndpoint          goa.Endpoint
 	ApproveBriefEndpoint         goa.Endpoint
 	DeleteBriefEndpoint          goa.Endpoint
-	FetchEventURLEndpoint        goa.Endpoint
 	CreateCampaignsEndpoint      goa.Endpoint
 	GetCampaignEndpoint          goa.Endpoint
 	GetCampaignMetricsEndpoint   goa.Endpoint
@@ -33,7 +32,7 @@ type Client struct {
 
 // NewClient initializes a "lfx-v2-campaign-service-briefs" service client
 // given the endpoints.
-func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, createCampaigns, getCampaign, getCampaignMetrics, updateCampaign, toggleCampaignStatus, deleteCampaign, getJob goa.Endpoint) *Client {
+func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, createCampaigns, getCampaign, getCampaignMetrics, updateCampaign, toggleCampaignStatus, deleteCampaign, getJob goa.Endpoint) *Client {
 	return &Client{
 		CreateBriefEndpoint:          createBrief,
 		FindBriefEndpoint:            findBrief,
@@ -41,7 +40,6 @@ func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, dele
 		UpdateBriefEndpoint:          updateBrief,
 		ApproveBriefEndpoint:         approveBrief,
 		DeleteBriefEndpoint:          deleteBrief,
-		FetchEventURLEndpoint:        fetchEventURL,
 		CreateCampaignsEndpoint:      createCampaigns,
 		GetCampaignEndpoint:          getCampaign,
 		GetCampaignMetricsEndpoint:   getCampaignMetrics,
@@ -158,24 +156,6 @@ func (c *Client) ApproveBrief(ctx context.Context, p *ApproveBriefPayload) (res 
 func (c *Client) DeleteBrief(ctx context.Context, p *DeleteBriefPayload) (err error) {
 	_, err = c.DeleteBriefEndpoint(ctx, p)
 	return
-}
-
-// FetchEventURL calls the "fetch-event-url" endpoint of the
-// "lfx-v2-campaign-service-briefs" service.
-// FetchEventURL may return the following errors:
-//   - "BadRequest" (type *BadRequestError): Bad request
-//   - "NotFound" (type *NotFoundError): Resource not found
-//   - "Conflict" (type *ConflictError): Conflict
-//   - "InternalServerError" (type *InternalServerError): Internal server error
-//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
-//   - error: internal error
-func (c *Client) FetchEventURL(ctx context.Context, p *FetchEventURLPayload) (res any, err error) {
-	var ires any
-	ires, err = c.FetchEventURLEndpoint(ctx, p)
-	if err != nil {
-		return
-	}
-	return ires.(any), nil
 }
 
 // CreateCampaigns calls the "create-campaigns" endpoint of the
