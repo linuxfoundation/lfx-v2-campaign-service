@@ -40,6 +40,14 @@ const (
 // bits 16-47, so 2002:7f00:1:: is a spelling of 127.0.0.1 that no IPv4-shaped range test
 // and no net.IP predicate looks at. Decoding the embedded address and re-testing it would
 // work too; refusing the whole deprecated range is simpler and loses nothing reachable.
+//
+// The IPv4-compatible form ::/96 is the same trick with a shorter prefix — ::a9fe:a9fe names
+// 169.254.169.254 and To4 does NOT normalise it (To4 requires bytes 10-11 to be 0xffff, which
+// this form leaves zero). RFC 4291 deprecated it, so it gets 6to4's treatment rather than the
+// decoding below. The three /96s are disjoint despite looking alike: IPv4-compatible is twelve
+// zero bytes, IPv4-mapped ::ffff:0:0/96 sets bytes 10-11, and IPv4-translated ::ffff:0:0:0/96
+// sets bytes 8-9. Neither :: nor ::1 loses anything by the deny — both are already refused by
+// IsUnspecified and IsLoopback.
 var forbiddenNets = []net.IPNet{
 	{IP: net.IPv4(0, 0, 0, 0), Mask: net.CIDRMask(8, 32)},         // RFC 1122 "this network"
 	{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)},     // RFC 6598 CGNAT
@@ -52,12 +60,14 @@ var forbiddenNets = []net.IPNet{
 	{IP: net.IPv4(240, 0, 0, 0), Mask: net.CIDRMask(4, 32)},       // RFC 1112 reserved, incl. 255.255.255.255
 	{IP: net.ParseIP("fec0::"), Mask: net.CIDRMask(10, 128)},      // RFC 3879 deprecated site-local
 	{IP: net.ParseIP("100::"), Mask: net.CIDRMask(64, 128)},       // RFC 6666 discard-only
+	{IP: net.ParseIP("100:0:0:1::"), Mask: net.CIDRMask(64, 128)}, // RFC 9780 dummy prefix
 	{IP: net.ParseIP("2001::"), Mask: net.CIDRMask(23, 128)},      // RFC 2928 IETF protocol assignments
 	{IP: net.ParseIP("2001:db8::"), Mask: net.CIDRMask(32, 128)},  // RFC 3849 documentation
 	{IP: net.ParseIP("2002::"), Mask: net.CIDRMask(16, 128)},      // RFC 7526 deprecated 6to4
 	{IP: net.ParseIP("3fff::"), Mask: net.CIDRMask(20, 128)},      // RFC 9637 documentation
 	{IP: net.ParseIP("5f00::"), Mask: net.CIDRMask(16, 128)},      // RFC 9602 SRv6 SIDs
 	{IP: net.ParseIP("64:ff9b:1::"), Mask: net.CIDRMask(48, 128)}, // RFC 8215 local NAT64
+	{IP: net.ParseIP("::"), Mask: net.CIDRMask(96, 128)},          // RFC 4291 deprecated IPv4-compatible
 }
 
 // ipv4EmbeddingNets are prefixes whose LOW 32 BITS are a literal IPv4 destination, to be
