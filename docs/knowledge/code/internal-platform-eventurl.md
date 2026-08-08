@@ -47,14 +47,17 @@ to "no metadata found"; it is a hard refusal blaming the caller for a URL that w
 
 **IPv4 embedded in an IPv6 address is the gap the range tables cannot see.** `net.IP.To4`
 normalises exactly one embedding — IPv4-mapped `::ffff:0:0/96` — so every other notation
-carries an IPv4 destination past both the predicates and the IPv4-shaped ranges. Three are
+carries an IPv4 destination past both the predicates and the IPv4-shaped ranges. Four are
 handled, in two different ways because a blanket deny costs differently. 6to4 (`2002::/16`,
-bits 16-47) is deprecated by RFC 7526, so the whole prefix is simply refused and nothing
-reachable is lost. The NAT64 well-known prefix (`64:ff9b::/96`) and RFC 2765's IPv4-translated
+bits 16-47) is deprecated by RFC 7526 and IPv4-compatible (`::/96`, low 32 bits) by RFC 4291,
+so both prefixes are simply refused and nothing reachable is lost — which is why `::5db8:d822`,
+a public address in the deprecated form, is denied rather than decoded. The three `/96`s here
+look alike and are disjoint: IPv4-compatible is twelve zero bytes, IPv4-mapped sets bytes
+10-11, IPv4-translated sets bytes 8-9. The NAT64 well-known prefix (`64:ff9b::/96`) and RFC 2765's IPv4-translated
 `::ffff:0:0:0/96` are NOT deprecated — on a NAT64/SIIT network the first is how a v6-only host
 reaches the ordinary IPv4 internet — so denying them wholesale would refuse every legitimate
 IPv4 event host. Those two are DECODED instead: `ipv4EmbeddingNets` extracts the low 32 bits
 and re-runs `isForbiddenIP` on the IPv4 it names, which terminates because the decoded value
 is four bytes and can no longer match a `/96`. `64:ff9b::a9fe:a9fe` is the cloud metadata
-address; `64:ff9b::5db8:d822` is an ordinary public host and stays allowed.
-Hence the public-address cases in the same test.
+address; `64:ff9b::5db8:d822` is an ordinary public host and stays allowed. Both sides
+of each rule are pinned by the public-address cases in the same test.
