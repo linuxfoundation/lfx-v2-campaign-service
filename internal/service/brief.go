@@ -19,6 +19,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 
 	"goa.design/goa/v3/security"
 )
@@ -415,6 +416,32 @@ func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPay
 		return mapBriefErr(aerr)
 	}
 	return nil
+}
+
+// FetchEventURL fetches and parses an event URL, extracting structured event details
+// (name, description, location, dates, image) using JSON-LD, OpenGraph, or HTML fallback.
+// The parsed details are returned but not persisted.
+func (s *BriefService) FetchEventURL(ctx context.Context, p *briefs.FetchEventURLPayload) (any, error) {
+	if p.URL == "" {
+		return nil, &briefs.BadRequestError{Code: "400", Message: "url is required"}
+	}
+
+	fetcher := eventurl.NewFetcher()
+	body, err := fetcher.Fetch(ctx, p.URL)
+	if err != nil {
+		return nil, mapEventURLErr(err)
+	}
+
+	parser := eventurl.NewParser()
+	details := parser.Parse(body)
+
+	// Fail closed: if no event name was extracted, reject the result.
+	if details.Name == "" {
+		return nil, &briefs.BadRequestError{Code: "400", Message: "no event details could be extracted from the URL"}
+	}
+
+	// Return the parsed details as JSON (marshaled through any).
+	return details, nil
 }
 
 // ─── Campaigns ───
@@ -1070,6 +1097,25 @@ func parseBriefIfMatch(ifMatch *string) (int64, error) {
 		return 0, &briefs.BadRequestError{Code: "400", Message: "If-Match must be an integer version"}
 	}
 	return v, nil
+}
+
+func mapEventURLErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	// Map event URL errors to appropriate HTTP status codes.
+	switch {
+	case errors.Is(err, eventurl.ErrEventURLInvalid):
+		return &briefs.BadRequestError{Code: "400", Message: "event URL is invalid or unsupported"}
+	case errors.Is(err, eventurl.ErrEventURLForbidden):
+		return &briefs.BadRequestError{Code: "400", Message: "event URL resolves to a forbidden address"}
+	case errors.Is(err, eventurl.ErrEventURLFetchFailed):
+		return &briefs.ConnServiceUnavailableError{Code: "503", Message: "event URL could not be fetched"}
+	case errors.Is(err, eventurl.ErrEventDetailsEmpty):
+		return &briefs.BadRequestError{Code: "400", Message: "no event details could be extracted from the URL"}
+	default:
+		return &briefs.InternalServerError{Code: "500", Message: "an internal server error occurred"}
+	}
 }
 
 func mapBriefErr(err error) error {

@@ -1105,6 +1105,168 @@ func DecodeDeleteBriefResponse(decoder func(*http.Response) goahttp.Decoder, res
 	}
 }
 
+// BuildFetchEventURLRequest instantiates a HTTP request object with method and
+// path set to call the "lfx-v2-campaign-service-briefs" service
+// "fetch-event-url" endpoint
+func (c *Client) BuildFetchEventURLRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.FetchEventURLPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "fetch-event-url", "*lfxv2campaignservicebriefs.FetchEventURLPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: FetchEventURLLfxV2CampaignServiceBriefsPath(projectID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "fetch-event-url", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeFetchEventURLRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs fetch-event-url server.
+func EncodeFetchEventURLRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.FetchEventURLPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "fetch-event-url", "*lfxv2campaignservicebriefs.FetchEventURLPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		body := NewFetchEventURLRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "fetch-event-url", err)
+		}
+		return nil
+	}
+}
+
+// DecodeFetchEventURLResponse returns a decoder for responses returned by the
+// lfx-v2-campaign-service-briefs fetch-event-url endpoint. restoreBody
+// controls whether the response body should be restored after having been read.
+// DecodeFetchEventURLResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - error: internal error
+func DecodeFetchEventURLResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body any
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "fetch-event-url", err)
+			}
+			return body, nil
+		case http.StatusBadRequest:
+			var (
+				body FetchEventURLBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "fetch-event-url", err)
+			}
+			err = ValidateFetchEventURLBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "fetch-event-url", err)
+			}
+			return nil, NewFetchEventURLBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body FetchEventURLConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "fetch-event-url", err)
+			}
+			err = ValidateFetchEventURLConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "fetch-event-url", err)
+			}
+			return nil, NewFetchEventURLConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body FetchEventURLServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "fetch-event-url", err)
+			}
+			err = ValidateFetchEventURLServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "fetch-event-url", err)
+			}
+			return nil, NewFetchEventURLServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body FetchEventURLInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "fetch-event-url", err)
+			}
+			err = ValidateFetchEventURLInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "fetch-event-url", err)
+			}
+			return nil, NewFetchEventURLInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body FetchEventURLNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "fetch-event-url", err)
+			}
+			err = ValidateFetchEventURLNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "fetch-event-url", err)
+			}
+			return nil, NewFetchEventURLNotFound(&body)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "fetch-event-url", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildCreateCampaignsRequest instantiates a HTTP request object with method
 // and path set to call the "lfx-v2-campaign-service-briefs" service
 // "create-campaigns" endpoint

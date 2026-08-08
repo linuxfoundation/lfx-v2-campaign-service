@@ -37,6 +37,7 @@ A brief is the funnel unit: it carries the **program** (`program_type` = events 
 | POST | `/projects/{projectId}/briefs/{brief_id}/refresh` | `campaign_manager` | JSON | Re-run generation against latest event data, producing a new version. |
 | POST | `/projects/{projectId}/briefs/{brief_id}/approve` | `campaign_manager` | JSON | Approve a brief for campaign creation (requires `If-Match`; approval is version-gated so a brief replaced since it was fetched cannot be approved on stale content). |
 | DELETE | `/projects/{projectId}/briefs/{brief_id}` | `campaign_manager` | JSON | Archive a brief (soft delete). |
+| POST | `/projects/{projectId}/fetch-event-url` | `campaign_manager` | JSON | Fetch and parse an event URL, extracting structured event details (name, description, location, date, image). The parsed details are returned but not persisted — use create-brief to store them. Accepts `url` in the request body. Returns parsed `EventDetails` on success (`200`), or `400` if the URL is invalid/forbidden/yields no metadata, or `503` if the fetch fails. |
 
 > Listing briefs and viewing a brief's version history are served by the Query Service, not by dedicated endpoints here.
 

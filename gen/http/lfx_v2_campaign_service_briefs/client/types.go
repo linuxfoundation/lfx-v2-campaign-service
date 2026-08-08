@@ -26,6 +26,13 @@ type UpdateBriefRequestBody struct {
 	Brief *BriefInputRequestBody `form:"brief" json:"brief" xml:"brief"`
 }
 
+// FetchEventURLRequestBody is the type of the "lfx-v2-campaign-service-briefs"
+// service "fetch-event-url" endpoint HTTP request body.
+type FetchEventURLRequestBody struct {
+	// Event page URL to fetch and parse
+	URL string `form:"url" json:"url" xml:"url"`
+}
+
 // CreateCampaignsRequestBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
 // request body.
@@ -650,6 +657,56 @@ type DeleteBriefNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// FetchEventURLBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "fetch-event-url" endpoint HTTP
+// response body for the "BadRequest" error.
+type FetchEventURLBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// FetchEventURLConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "fetch-event-url" endpoint HTTP
+// response body for the "Conflict" error.
+type FetchEventURLConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// FetchEventURLServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "fetch-event-url" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type FetchEventURLServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// FetchEventURLInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "fetch-event-url" endpoint HTTP
+// response body for the "InternalServerError" error.
+type FetchEventURLInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// FetchEventURLNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "fetch-event-url" endpoint HTTP
+// response body for the "NotFound" error.
+type FetchEventURLNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // CreateCampaignsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -1131,6 +1188,16 @@ func NewUpdateBriefRequestBody(p *lfxv2campaignservicebriefs.UpdateBriefPayload)
 	body := &UpdateBriefRequestBody{}
 	if p.Brief != nil {
 		body.Brief = marshalLfxv2campaignservicebriefsBriefInputToBriefInputRequestBody(p.Brief)
+	}
+	return body
+}
+
+// NewFetchEventURLRequestBody builds the HTTP request body from the payload of
+// the "fetch-event-url" endpoint of the "lfx-v2-campaign-service-briefs"
+// service.
+func NewFetchEventURLRequestBody(p *lfxv2campaignservicebriefs.FetchEventURLPayload) *FetchEventURLRequestBody {
+	body := &FetchEventURLRequestBody{
+		URL: p.URL,
 	}
 	return body
 }
@@ -1668,6 +1735,61 @@ func NewDeleteBriefInternalServerError(body *DeleteBriefInternalServerErrorRespo
 // NewDeleteBriefNotFound builds a lfx-v2-campaign-service-briefs service
 // delete-brief endpoint NotFound error.
 func NewDeleteBriefNotFound(body *DeleteBriefNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewFetchEventURLBadRequest builds a lfx-v2-campaign-service-briefs service
+// fetch-event-url endpoint BadRequest error.
+func NewFetchEventURLBadRequest(body *FetchEventURLBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewFetchEventURLConflict builds a lfx-v2-campaign-service-briefs service
+// fetch-event-url endpoint Conflict error.
+func NewFetchEventURLConflict(body *FetchEventURLConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewFetchEventURLServiceUnavailable builds a lfx-v2-campaign-service-briefs
+// service fetch-event-url endpoint ServiceUnavailable error.
+func NewFetchEventURLServiceUnavailable(body *FetchEventURLServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewFetchEventURLInternalServerError builds a lfx-v2-campaign-service-briefs
+// service fetch-event-url endpoint InternalServerError error.
+func NewFetchEventURLInternalServerError(body *FetchEventURLInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewFetchEventURLNotFound builds a lfx-v2-campaign-service-briefs service
+// fetch-event-url endpoint NotFound error.
+func NewFetchEventURLNotFound(body *FetchEventURLNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
 		Code:    *body.Code,
 		Message: *body.Message,
@@ -2971,6 +3093,66 @@ func ValidateDeleteBriefInternalServerErrorResponseBody(body *DeleteBriefInterna
 // ValidateDeleteBriefNotFoundResponseBody runs the validations defined on
 // delete-brief_NotFound_response_body
 func ValidateDeleteBriefNotFoundResponseBody(body *DeleteBriefNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateFetchEventURLBadRequestResponseBody runs the validations defined on
+// fetch-event-url_BadRequest_response_body
+func ValidateFetchEventURLBadRequestResponseBody(body *FetchEventURLBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateFetchEventURLConflictResponseBody runs the validations defined on
+// fetch-event-url_Conflict_response_body
+func ValidateFetchEventURLConflictResponseBody(body *FetchEventURLConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateFetchEventURLServiceUnavailableResponseBody runs the validations
+// defined on fetch-event-url_ServiceUnavailable_response_body
+func ValidateFetchEventURLServiceUnavailableResponseBody(body *FetchEventURLServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateFetchEventURLInternalServerErrorResponseBody runs the validations
+// defined on fetch-event-url_InternalServerError_response_body
+func ValidateFetchEventURLInternalServerErrorResponseBody(body *FetchEventURLInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateFetchEventURLNotFoundResponseBody runs the validations defined on
+// fetch-event-url_NotFound_response_body
+func ValidateFetchEventURLNotFoundResponseBody(body *FetchEventURLNotFoundResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
