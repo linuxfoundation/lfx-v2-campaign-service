@@ -46,6 +46,18 @@ type ConnectionRepository interface {
 // Encryptor encrypts and decrypts credential payloads at the application layer
 // (AES-256-GCM). The key lives only in the application (from a k8s secret), not
 // in the database.
+//
+// Decrypt failures are CLASSIFIED, and the classification is part of this contract
+// because callers of this port cannot import the implementation to tell the cases
+// apart. An implementation must wrap ErrCredentialsMalformed when the stored blob was
+// structurally unusable and was never authenticated (bad row data — the connection
+// owner must re-save it), and ErrCredentialDecryptionFailed when a well-formed blob
+// failed authentication (wrong/rotated application key, or tampering/corruption of
+// that one row — an authentication failure does NOT distinguish them, so callers must
+// not read this sentinel as proof that every stored credential is affected; the blast
+// radius is determined by how many rows fail, not by the sentinel).
+// Callers treat an error carrying NEITHER as the latter: see the two sentinels' own
+// documentation for why that default is the safe one.
 type Encryptor interface {
 	Encrypt(plaintext []byte) (ciphertext []byte, err error)
 	Decrypt(ciphertext []byte) (plaintext []byte, err error)

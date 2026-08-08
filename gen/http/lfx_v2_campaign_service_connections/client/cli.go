@@ -1407,3 +1407,24 @@ func BuildSetCredentialHubspotPayload(lfxV2CampaignServiceConnectionsSetCredenti
 
 	return v, nil
 }
+
+// BuildListGoogleAdsAccountsPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-google-ads-accounts endpoint from
+// CLI flags.
+func BuildListGoogleAdsAccountsPayload(lfxV2CampaignServiceConnectionsListGoogleAdsAccountsProjectID string, lfxV2CampaignServiceConnectionsListGoogleAdsAccountsBearerToken string) (*lfxv2campaignserviceconnections.ListGoogleAdsAccountsPayload, error) {
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsListGoogleAdsAccountsProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListGoogleAdsAccountsBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsListGoogleAdsAccountsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListGoogleAdsAccountsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}

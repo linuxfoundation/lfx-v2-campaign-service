@@ -11,9 +11,10 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // KeySize is the required AES-256 key length in bytes.
@@ -22,14 +23,29 @@ const KeySize = 32
 // ErrKeySize is returned when the configured key is not 32 bytes.
 var ErrKeySize = fmt.Errorf("encryption key must be %d bytes (AES-256)", KeySize)
 
-// ErrCiphertextTooShort is returned when a ciphertext is too short to contain a
-// nonce — a malformed-input / data error (map to 422, not 500).
-var ErrCiphertextTooShort = errors.New("ciphertext too short")
+// The two Decrypt failures below carry DIFFERENT domain classifications, and the
+// wrapping is the mechanism that carries them: callers live above this package (the
+// dispatch and service layers depend on domain.Encryptor, not on crypto), so they
+// cannot import these sentinels to tell the cases apart. Wrapping the domain
+// sentinel lets `errors.Is` do it without inverting the dependency. Both remain
+// usable as `crypto.Err…` inside this package and its tests, and ErrCiphertextTooShort
+// is still returned by identity so an `==` comparison keeps working.
+
+// ErrCiphertextTooShort is returned when a sealed value is too short to be GCM
+// output at all — a malformed-input / data error. The blob is never authenticated,
+// so this proves the stored ROW is bad and nothing else: domain.ErrCredentialsMalformed,
+// which credsSource.resolve wraps with domain.ErrConnectionNotUsable, mapping to
+// **400** (not 422 — an earlier revision of this comment said 422 and was wrong about
+// the contract it was describing; the resolve path is the authority, see
+// internal/dispatch/creds.go).
+var ErrCiphertextTooShort = fmt.Errorf("%w: ciphertext too short", domain.ErrCredentialsMalformed)
 
 // ErrDecryptionFailed is returned when GCM authentication fails — tampered data
 // or a wrong/rotated key. This is an infrastructure/security condition (map to
-// 500 and alert ops), distinct from a malformed-input error.
-var ErrDecryptionFailed = errors.New("decryption authentication failed")
+// 500 and alert ops), distinct from a malformed-input error: a wrong deployment key
+// fails EVERY connection, so it must not be reported as a per-connection data
+// problem. Hence domain.ErrCredentialDecryptionFailed, not ErrCredentialsMalformed.
+var ErrDecryptionFailed = fmt.Errorf("%w: decryption authentication failed", domain.ErrCredentialDecryptionFailed)
 
 // AESGCM implements domain.Encryptor using AES-256-GCM. The nonce is randomly
 // generated per message and prepended to the ciphertext.
@@ -75,8 +91,25 @@ func (a *AESGCM) Encrypt(plaintext []byte) ([]byte, error) {
 
 // Decrypt opens nonce||ciphertext produced by Encrypt.
 func (a *AESGCM) Decrypt(sealed []byte) ([]byte, error) {
-	ns := a.aead.NonceSize()
-	if len(sealed) < ns {
+	// The minimum is nonce + AUTHENTICATION TAG, not nonce alone. Seal appends a
+	// tag of Overhead() bytes to every message, including an empty one, so any
+	// value shorter than ns+Overhead() cannot be output this package produced —
+	// it is provably truncated, and no key could ever open it.
+	//
+	// Checking only `< ns` would let that range fall through to Open, which fails
+	// authentication and is therefore classified as ErrDecryptionFailed — the
+	// condition that maps to 500 and pages ops. That classification is deliberately
+	// conservative rather than a diagnosis: an authentication failure is equally
+	// consistent with a wrong or rotated deployment key (every connection broken)
+	// and with corruption of this ONE full-length row (every other connection
+	// fine), and GCM cannot tell them apart, so neither this package nor the
+	// handler claims to. A provably truncated blob is different in kind — it is
+	// decidable here, and it is always about one row — so letting it reach Open
+	// would convert a certainty into that ambiguity and put a single bad row into
+	// the arm that pages someone. Rejecting the full minimum keeps the blast radius
+	// honest: what is knowably one bad row is reported as one bad row.
+	ns, overhead := a.aead.NonceSize(), a.aead.Overhead()
+	if len(sealed) < ns+overhead {
 		return nil, ErrCiphertextTooShort
 	}
 	nonce, ciphertext := sealed[:ns], sealed[ns:]

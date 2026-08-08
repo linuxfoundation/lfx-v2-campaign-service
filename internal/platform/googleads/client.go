@@ -768,8 +768,55 @@ type searchRequest struct {
 // Rows are opaque JSON objects (GAQL SELECT shapes vary per query); callers
 // decode the fields they asked for.
 type searchResponse struct {
-	Results       []json.RawMessage `json:"results"`
-	NextPageToken string            `json:"nextPageToken"`
+	Results       searchRows `json:"results"`
+	NextPageToken pageToken  `json:"nextPageToken"`
+}
+
+// searchRows is the repeated `results` field with one added rule: an EXPLICIT JSON null is
+// rejected. proto3 JSON emits an empty repeated field as `[]` or omits the key, so
+// `{"results":null}` is not a shape a conformant server produces, yet it decodes to a nil
+// slice indistinguishable from a genuine empty page — the same false absence the bare-null
+// guard below refuses, one level in. An OMITTED key is left alone (UnmarshalJSON is not
+// called for it, and `{}` is Google's own empty page).
+type searchRows []json.RawMessage
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (r *searchRows) UnmarshalJSON(b []byte) error {
+	if bytes.Equal(bytes.TrimSpace(b), []byte("null")) {
+		return errors.New("`results` was JSON null, not a result set")
+	}
+	var rows []json.RawMessage
+	if err := json.Unmarshal(b, &rows); err != nil {
+		return err
+	}
+	*r = rows
+	return nil
+}
+
+// pageToken is `nextPageToken` with the same rule searchRows applies to `results`, for the
+// same reason and at higher stakes. Decoded as a plain string, an EXPLICIT `null` is
+// indistinguishable from an omitted key and from `""` — all three yield "" — and "" is what
+// this loop reads as "that was the last page". So a server that answers `{"results":[...],
+// "nextPageToken":null}` truncates pagination silently.
+//
+// That truncation is a FALSE ABSENCE, which is the expensive direction here: FindCampaignByName
+// treats "no match in any page" as a licence to CREATE, so a match sitting on page 2 becomes a
+// duplicate paid campaign. proto3 JSON omits an unset string field or emits ""; it never emits
+// null, so refusing it costs nothing a conformant server would send. An omitted key is left
+// alone — UnmarshalJSON is not called for it, and `{}` is Google's own final page.
+type pageToken string
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (t *pageToken) UnmarshalJSON(b []byte) error {
+	if bytes.Equal(bytes.TrimSpace(b), []byte("null")) {
+		return errors.New("`nextPageToken` was JSON null, not a cursor")
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	*t = pageToken(s)
+	return nil
 }
 
 // maxSearchPages bounds cursor pagination so a server returning an endless
@@ -823,7 +870,7 @@ func (c *Client) gaqlSearchForCustomer(ctx context.Context, customerID, query st
 	path := "customers/" + customerID + "/googleAds:search"
 	var out []json.RawMessage
 	var totalBytes int
-	pageToken := ""
+	cursor := ""
 	seen := map[string]struct{}{}
 
 	for page := 0; page < maxSearchPages; page++ {
@@ -834,9 +881,19 @@ func (c *Client) gaqlSearchForCustomer(ctx context.Context, customerID, query st
 		// into `path` above, the manager id because it is sent as a header. Re-running
 		// doRequest's check would instead validate c.account.CustomerID, which the
 		// discovery path deliberately leaves empty.
-		raw, err := c.doRequestValidated(ctx, http.MethodPost, path, searchRequest{Query: query, PageToken: pageToken}, true /* idempotent */)
+		raw, err := c.doRequestValidated(ctx, http.MethodPost, path, searchRequest{Query: query, PageToken: cursor}, true /* idempotent */)
 		if err != nil {
 			return nil, fmt.Errorf("gaql search: %w", err)
+		}
+		// A top-level JSON `null` unmarshals into searchResponse WITHOUT error and
+		// leaves it zero-valued, so it would return a nil row set and no page token —
+		// indistinguishable from a genuine empty result. For a caller that reads an
+		// empty result as a licence to create, that turns an unverifiable response into
+		// a duplicate paid campaign. Google's real empty page is `{}` or
+		// `{"results":[]}`, both well-formed objects, so rejecting the bare null costs
+		// nothing legitimate.
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return nil, &transportError{Method: http.MethodPost, Path: path, Err: errors.New("search response was a bare JSON null, not a result set")}
 		}
 		var sr searchResponse
 		if err := json.Unmarshal(raw, &sr); err != nil {
@@ -866,11 +923,11 @@ func (c *Client) gaqlSearchForCustomer(ctx context.Context, customerID, query st
 			return out, nil
 		}
 		// Guard against a server that repeats the same non-empty cursor.
-		if _, dup := seen[sr.NextPageToken]; dup {
+		if _, dup := seen[string(sr.NextPageToken)]; dup {
 			return nil, fmt.Errorf("gaql search %q: server repeated page token — aborting", path)
 		}
-		seen[sr.NextPageToken] = struct{}{}
-		pageToken = sr.NextPageToken
+		seen[string(sr.NextPageToken)] = struct{}{}
+		cursor = string(sr.NextPageToken)
 	}
 	return nil, fmt.Errorf("gaql search %q: exceeded %d pages with a page token still present", path, maxSearchPages)
 }
@@ -904,25 +961,50 @@ type listAccessibleCustomersResponse struct {
 // customer ids exist, so requiring one would be circular — and it is the reason
 // doRequestValidated exists.
 //
-// There are two MODES, and they do not merge — which source answers depends entirely on
-// whether a login-customer-id is configured.
+// There are two MODES, and each consults exactly ONE data source — which source answers
+// depends entirely on whether a login-customer-id is configured, and the mode is decided
+// BEFORE anything goes over the wire. One SOURCE is not one HTTP request: a GAQL read
+// pages until its nextPageToken is empty, and either mode retries a 429. The invariant is
+// that a mode never issues a request whose response it will not read.
 //
 // Without one: customers:listAccessibleCustomers stands alone. It gives the accounts the
 // authenticated user can act on DIRECTLY, unlabelled (the response carries resource names
 // only), and there is no hierarchy root to walk.
 //
 // With one: the answer is the manager's ENABLED, non-manager children from
-// customer_client, and the flat list is DISCARDED rather than merged. Every other request
-// this client makes carries the login-customer-id header, so an account outside that
-// hierarchy is not addressable through this client even though the unscoped flat list
-// returns it — offering it would present a choice that fails at first dispatch. The
-// expansion is also labelled and already has managers filtered out. See the MANAGER MODE
-// comment in the body for the full reasoning.
-//
-// Resource-name validation runs over the flat list in BOTH modes: a malformed 2xx must
-// fail the read rather than yield an account id a caller would persist and interpolate
-// into later request paths.
+// customer_client, and the flat list is not consulted at all. Every other request this
+// client makes carries the login-customer-id header, so an account outside that hierarchy
+// is not addressable through this client even though the unscoped flat list returns it —
+// offering it would present a choice that fails at first dispatch. The expansion is also
+// labelled and already has managers filtered out. See the MANAGER MODE comment in the
+// body for the full reasoning.
 func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCustomer, error) {
+	// The login-customer-id header is validated in both modes, before either request.
+	if err := c.validateLoginCustomerID(); err != nil {
+		return nil, err
+	}
+
+	// MANAGER MODE — return before issuing the flat request, not after discarding it.
+	//
+	// The flat list contributes NOTHING to the manager-mode answer (see the reasoning
+	// below), so issuing it would be a second Google Ads round-trip whose result is
+	// thrown away. That is not merely wasteful: it spends request quota and whatever
+	// deadline the caller passed down, and — the part that actually breaks behaviour —
+	// its own timeout, 429, or 5xx propagates and fails the whole discovery even when
+	// the hierarchy query alone would have answered correctly. A call whose success is
+	// not needed must not be able to cause a failure.
+	//
+	// This is why the mode branch sits here rather than after the flat read: the
+	// ordering IS the fix. An earlier revision validated flat-list resource names in
+	// both modes "regardless of which branch consumes them"; in manager mode those rows
+	// are never consumed, so that validation only supplied one more way to fail. The
+	// manager-mode rows get their own id validation inside listManagerClients.
+	if c.account.LoginCustomerID != "" {
+		return c.expandManagerHierarchy(ctx)
+	}
+
+	// DIRECT MODE. The flat list is the answer.
+	//
 	// The ListAccessibleCustomers endpoint is account-agnostic; it does NOT have a
 	// customer_id path segment. The path is just customers:listAccessibleCustomers.
 	//
@@ -934,20 +1016,14 @@ func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCusto
 	// itself wraps): the URL construction, header set, body bounding, and
 	// apiError/transportError classification are identical, so duplicating them here
 	// would be a second copy to keep in sync. The one thing it deliberately bypasses is
-	// doRequest's digits-only CustomerID precondition — see below. The nil body means
-	// the layer omits Content-Type, and idempotent=true is correct because this is a
-	// pure read: retrying a 429 cannot double-apply anything, which is exactly the case
-	// the shared retry is gated on.
+	// doRequest's digits-only CustomerID precondition: doRequest insists on a
+	// digits-only c.account.CustomerID, and this call is how a caller LEARNS one.
+	// Requiring an account id before account discovery is the chicken-and-egg that made
+	// the endpoint unreachable for a connection that has credentials but no account
+	// chosen yet. The nil body means the layer omits Content-Type, and idempotent=true
+	// is correct because this is a pure read: retrying a 429 cannot double-apply
+	// anything, which is exactly the case the shared retry is gated on.
 	const path = "customers:listAccessibleCustomers"
-
-	// doRequestValidated, not doRequest: doRequest insists on a digits-only
-	// c.account.CustomerID, and this call is how a caller LEARNS one. Requiring an
-	// account id before account discovery is the chicken-and-egg that made the endpoint
-	// unreachable for a connection that has credentials but no account chosen yet. The
-	// login-customer-id header is still attached and still validated.
-	if err := c.validateLoginCustomerID(); err != nil {
-		return nil, err
-	}
 
 	raw, err := c.doRequestValidated(ctx, http.MethodGet, path, nil, true)
 	if err != nil {
@@ -964,12 +1040,11 @@ func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCusto
 	// empty here, and a manager account in this list is indistinguishable from an ad
 	// account by its resource name alone.
 	//
-	// Validation runs over every row regardless of which branch below consumes them: the
-	// AccessibleCustomer contract promises "customers/{digits}", a caller persists this
-	// value as the connection's account id and interpolates it into later request paths,
-	// and a malformed 2xx must not put an empty, wrong-kind, or path-bearing string on
-	// that route. Fail the read rather than hand back an account id that is unusable at
-	// best.
+	// The AccessibleCustomer contract promises "customers/{digits}", a caller persists
+	// this value as the connection's account id and interpolates it into later request
+	// paths, and a malformed 2xx must not put an empty, wrong-kind, or path-bearing
+	// string on that route. Fail the read rather than hand back an account id that is
+	// unusable at best.
 	direct := make([]AccessibleCustomer, 0, len(resp2xx.ResourceNames))
 	seen := make(map[string]struct{}, len(resp2xx.ResourceNames))
 	for _, resName := range resp2xx.ResourceNames {
@@ -987,32 +1062,36 @@ func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]AccessibleCusto
 		direct = append(direct, AccessibleCustomer{ResourceName: resName})
 	}
 
-	// Without a configured manager, the direct list IS the answer: every account in it is
-	// one the credential addresses on its own behalf, and there is no hierarchy root to
-	// walk. (A manager account can still be in here and cannot hold campaigns, but with
-	// no `manager` flag on this response there is nothing to recognise it by, and a
-	// round-trip per row to find out would cost more than it saves on a list this short.)
-	if c.account.LoginCustomerID == "" {
-		return direct, nil
-	}
+	// The direct list IS the answer: every account in it is one the credential addresses
+	// on its own behalf, and there is no hierarchy root to walk. (A manager account can
+	// still be in here and cannot hold campaigns, but with no `manager` flag on this
+	// response there is nothing to recognise it by, and a round-trip per row to find out
+	// would cost more than it saves on a list this short.)
+	return direct, nil
+}
 
-	// MANAGER MODE. This is not a merge, and that is the whole point.
-	//
-	// listAccessibleCustomers is explicitly UNSCOPED — the login-customer-id header does
-	// not filter it, and it does not walk a hierarchy either. Every OTHER request this
-	// client makes does carry that header, so an account is only addressable through this
-	// client if it sits under the configured manager. An account the user reaches
-	// directly but which belongs to a different hierarchy therefore comes back in the
-	// flat list and then fails with PERMISSION_DENIED the moment anything is done with
-	// it. Returning it presents the caller a choice that cannot work, and the failure
-	// lands at first dispatch — long after the connection was saved — where it reads as a
-	// credential problem rather than a wrong-account one.
-	//
-	// So in manager mode the selectable set is exactly the manager's ENABLED, non-manager
-	// children. That set is also strictly better shaped: customer_client carries
-	// descriptive_name, so those accounts come back labelled, and listManagerClients has
-	// already dropped the managers the flat list cannot identify. Any account present in
-	// both lists is in the expansion too, so nothing addressable is lost.
+// expandManagerHierarchy answers account discovery for a client configured with a manager
+// (MCC) login-customer-id. It is the whole of manager mode: the flat
+// customers:listAccessibleCustomers response is never fetched, because it is not a merge
+// and that is the whole point.
+//
+// listAccessibleCustomers is explicitly UNSCOPED — the login-customer-id header does not
+// filter it, and it does not walk a hierarchy either. Every OTHER request this client
+// makes does carry that header, so an account is only addressable through this client if
+// it sits under the configured manager. An account the user reaches directly but which
+// belongs to a different hierarchy therefore comes back in the flat list and then fails
+// with PERMISSION_DENIED the moment anything is done with it. Returning it presents the
+// caller a choice that cannot work, and the failure lands at first dispatch — long after
+// the connection was saved — where it reads as a credential problem rather than a
+// wrong-account one.
+//
+// So in manager mode the selectable set is exactly the manager's ENABLED, non-manager
+// children. That set is also strictly better shaped: customer_client carries
+// descriptive_name, so those accounts come back labelled, and listManagerClients has
+// already dropped the managers the flat list cannot identify. Any account present in both
+// lists is in the expansion too, so nothing addressable is lost — which is precisely why
+// fetching the flat list first would have been pure cost.
+func (c *Client) expandManagerHierarchy(ctx context.Context) ([]AccessibleCustomer, error) {
 	children, cerr := c.listManagerClients(ctx, c.account.LoginCustomerID)
 	if cerr != nil {
 		return nil, cerr

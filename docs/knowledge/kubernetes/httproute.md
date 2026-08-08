@@ -19,7 +19,18 @@ every endpoint is nested under a project and gated on that project's
 the token that distinguishes a campaign-service path (`connection-*`, `briefs`,
 `jobs`, the `{provider}/metrics` segment, `google-ads/keywords|audience`, `hubspot`)
 sits *after* the variable `{projectId}` — which a `PathPrefix`/`Exact` match cannot
-reach past. The route therefore uses a **`RegularExpression` path match** selecting
+reach past.
+
+**`connection-google-ads` is spelled out as its own alternation branch**, separate
+from the rest of the `connection-*` family. The family shares `/test` and
+`/set-credential`, but google-ads carries one more ruled sub-path the others do not
+have yet: **`/accounts`** (ad-account discovery). Folding `/accounts` into the shared
+alternation would admit it for *every* provider, and a path the RuleSet does not rule
+is a route/rule parity violation — the `parity_test` exists to catch exactly that.
+As each further provider gains its own discovery endpoint, move it out of the shared
+branch rather than widening the shared one.
+
+The route therefore uses a **`RegularExpression` path match** selecting
 exactly this service's project-nested subpaths; `project-service`'s `/projects/`
 routes are unaffected because Traefik resolves overlap by match specificity.
 

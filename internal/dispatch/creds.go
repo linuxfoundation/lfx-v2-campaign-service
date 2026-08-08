@@ -157,19 +157,62 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 	conn, err := s.repo.Get(ctx, projectID, provider)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, notCreated(fmt.Errorf("no %s connection configured for project %s", provider, projectID))
+			// Wrap the sentinel rather than dropping it: read-only callers such as
+			// account discovery need to tell "this project has no connection" (404)
+			// apart from "the platform call failed" (503). The dispatch paths only
+			// consult NoUpstreamCreate, so preserving it changes nothing for them.
+			return nil, notCreated(fmt.Errorf("no %s connection configured for project %s: %w", provider, projectID, domain.ErrNotFound))
 		}
 		// A repo error (DB down) is NOT a pre-create signal we can prove, but no
 		// upstream call was made either — the create never started. Treat as
 		// not-created so a transient DB blip doesn't wedge the claim.
 		return nil, notCreated(fmt.Errorf("load %s connection: %w", provider, err))
 	}
+	// The branches below are tagged with domain.ErrConnectionNotUsable; the two above
+	// deliberately are not. The distinction is whether the connection ROW itself is the
+	// thing that needs editing. A row with no credential blob is permanently unusable as
+	// it stands and no amount of retrying changes that — read-only callers must answer
+	// 400, not 503. A missing connection (ErrNotFound) is a 404 and a repo failure is a
+	// genuine "try again later", so flattening either into "not usable" would destroy a
+	// distinction the service layer depends on.
 	if len(conn.EncryptedCredentials) == 0 {
-		return nil, notCreated(fmt.Errorf("%s connection for project %s has no stored credentials", provider, projectID))
+		// Both sentinels, not just the status one. ErrConnectionNotUsable answers "what
+		// HTTP status", ErrCredentialsAbsent answers "why" — and the discovery handler
+		// logs the why from a fixed vocabulary (unusableConnectionReason). Wrapping only
+		// the status sentinel logged this as "unclassified", i.e. "cause unknown", for
+		// the single most knowable failure in the set.
+		return nil, notCreated(fmt.Errorf("%s connection for project %s has no stored credentials: %w: %w",
+			provider, projectID, domain.ErrConnectionNotUsable, domain.ErrCredentialsAbsent))
 	}
 	plaintext, derr := s.enc.Decrypt(conn.EncryptedCredentials)
 	if derr != nil {
-		return nil, notCreated(fmt.Errorf("decrypt %s credentials: %w", provider, derr))
+		// derr is NOT echoed to callers by the service layer — a decrypt failure can
+		// carry ciphertext detail — and whether it is even LOGGED depends on which of
+		// the two classifications below it lands in. The 500 arm (authenticated-decryption
+		// failure) logs the cause, because that error is built by the encryptor from
+		// ciphertext and key material only. The 400 arm (ErrConnectionNotUsable) does not:
+		// it logs a fixed reason token and nothing else, since the conditions reaching it
+		// include one detected by decoding the DECRYPTED blob. Both arms return a fixed
+		// message. Do not "restore" logging of the cause on the 400 path.
+		//
+		// A decrypt failure is NOT one condition, and which sentinel it carries decides
+		// whether a human edits a connection or ops gets paged. Only a blob the encryptor
+		// could not even attempt to authenticate (domain.ErrCredentialsMalformed — for
+		// AES-GCM, shorter than a nonce PLUS the authentication tag) is proven bad row
+		// data, and only that earns ErrConnectionNotUsable → 400. A GCM AUTHENTICATION
+		// failure keeps its own classification: a wrong or rotated application key, or
+		// tampering/corruption of this one row. GCM cannot tell those apart, so the
+		// sentinel does not claim to either — it says "authentication failed", and how
+		// many projects are affected is what tells a responder which it was.
+		// Reported as "not usable as configured" it would tell an operator to fix a
+		// connection that may be fine, and would bury the 500 that surfaces a broken
+		// deployment key. An unrecognised decrypt error takes that same path on purpose: an
+		// encryptor that proves nothing about the row must not be read as proving the row
+		// is at fault.
+		if errors.Is(derr, domain.ErrCredentialsMalformed) {
+			return nil, notCreated(fmt.Errorf("decrypt %s credentials: %w: %w", provider, domain.ErrConnectionNotUsable, derr))
+		}
+		return nil, notCreated(fmt.Errorf("decrypt %s credentials: %w: %w", provider, domain.ErrCredentialDecryptionFailed, derr))
 	}
 	return &resolved{
 		plaintext:      plaintext,

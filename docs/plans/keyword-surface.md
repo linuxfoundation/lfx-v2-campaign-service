@@ -4,7 +4,9 @@ SPDX-License-Identifier: MIT -->
 # Keyword Surface Implementation Plan (LFXV2-2023 Roadmap Item 4)
 
 **Status:** Research complete. Dependencies and phasing are **settled inside this plan** — PR #69
-has merged, so nothing here is blocked, and the three-PR split below is fixed. Four decisions
+has merged, so nothing here is blocked, and the PR split below is fixed — see *PR sequence
+(corrected)*, which supersedes the ordering the three `### PR n` sections were originally written
+against. Four decisions
 remain genuinely open and are the only things a human still has to answer; they are stated in full
 under *Open Questions for Human Decision*: **1** bid currency and precision (Phase 2 only),
 **3** pagination for large keyword sets, **4** metrics-window alignment (which day counts, and
@@ -1173,8 +1175,28 @@ func (c *Client) AuthorizeKeywordCriteria(ctx context.Context, campaignID string
 // internal/platform/googleads/adgroup_ad.go already validates exactly this four-segment,
 // tilde-joined shape. This is why ad_group_id is carried on every KeywordAction rather
 // than only appearing in the list response.
-func (c *Client) keywordCriterionResourceName(adGroupID, criterionID string) string {
-  return c.customerPath(fmt.Sprintf("adGroupCriteria/%s~%s", adGroupID, criterionID))
+//
+// It returns an ERROR, not just a string. Both components arrive from the request body,
+// and this function interpolates them into a resource path — the exact injection shape
+// numericID exists to stop (adgroup_ad.go: "so an id interpolated into a resourceName
+// can't alter the resource path"). A signature returning only a string cannot reject
+// anything, which would both contradict the platform-boundary validation rule stated
+// earlier in this plan and make the planned invalid-ID test impossible to write: there
+// would be no failure for it to assert. Reject either malformed component here, and
+// propagate before a single mutate operation is constructed or sent.
+//
+// The message wording is not free-form: it copies the package's existing numeric-id
+// rejections verbatim in shape — `google-ads: ` prefix, `<what> id %q is not numeric`
+// (adgroup_ad.go:373,376; campaign.go's campaign-id check). An implementer looking for a
+// validator to copy will find those, so a third phrasing here is a divergence, not a choice.
+func (c *Client) keywordCriterionResourceName(adGroupID, criterionID string) (string, error) {
+  if !numericID(adGroupID) {
+    return "", fmt.Errorf("google-ads: ad group id %q is not numeric", adGroupID)
+  }
+  if !numericID(criterionID) {
+    return "", fmt.Errorf("google-ads: criterion id %q is not numeric", criterionID)
+  }
+  return c.customerPath(fmt.Sprintf("adGroupCriteria/%s~%s", adGroupID, criterionID)), nil
 }
 ```
 
@@ -1718,6 +1740,55 @@ becomes misleading; the guard is no longer toggler-only.
 > satisfy. The two are merged into PR 1 below. This is a general property of Goa in this repo, not
 > a quirk of keywords: **any PR that adds a method to a service design must implement it.**
 
+## PR sequence (corrected)
+
+The public surface and its only working implementation must land in the SAME merge. The
+platform client is internal, so it can land ahead of both without publishing anything.
+
+| PR | Contents | Public surface after merge | Est. |
+|---|---|---|---|
+| **A** | `internal/platform/googleads/keywords.go` + tests. No design, no handler, no dispatcher method. | none — nothing reachable changes | ≈450 (platform client ~300 + its tests ~150) |
+| **B** | `design/brief.go`, `model/keyword.go`, `errors.go`, orchestrator, handlers, **and** the `internal/dispatch/googleads.go` `ListKeywords`/`UpdateKeywords` methods + the `KeywordManager` guard assertion. | two endpoints that WORK for Google Ads | ≈800 (service ~500 + dispatcher ~200 + dispatcher tests ~100) |
+| **C** | `internal/service/brief_test.go` — the `### PR 3` section below, unchanged. Tests only. | unchanged from B | ≈200 |
+
+These are the ≈500 (PR 1) and ≈750 (PR 2) from the `### PR n` headings below, re-cut along the
+new boundary rather than re-guessed. PR 2's own breakdown is `~750 = platform client ~300 +
+dispatcher ~200 + tests ~250`, and the reorder moves the platform client — and only the tests
+that cover it — into PR A. Everything else stays put:
+
+| | source | → A | → B |
+|---|---|---|---|
+| PR 1 service layer | ~500 | — | ~500 |
+| PR 2 platform client | ~300 | ~300 | — |
+| PR 2 dispatcher | ~200 | — | ~200 |
+| PR 2 tests | ~250 | ~150 | ~100 |
+| **total** | **1250** | **≈450** | **≈800** |
+
+The one number not inherited from an existing heading is the 150/100 split of PR 2's ~250 test
+budget. It is an estimate, weighted toward the client because the client is where the request
+shaping, the response parsing and the error classification live, while the dispatcher method is
+mostly resolve-client-then-delegate. Nothing else is added or dropped by the reorder — the totals
+on each side of the table agree because the same work simply crosses a different line.
+
+Both stay under the 1000-line cap, and neither merge leaves `main` advertising a capability that
+returns 400 for every caller. PR A is dead code between the two merges — unreferenced, untested
+by any integration path, and that is fine: unreachable internal code misleads nobody, whereas a
+published OpenAPI operation does.
+
+Non-Google platforms still return `ErrKeywordManagerUnsupported` → 400 after PR B, which is
+correct and not the same defect: the endpoint genuinely works, and 400 is the accurate answer for
+a platform with no keyword-manager capability. The defect was publishing an endpoint that
+answered 400 for **every** platform including the one it named.
+
+**PR C is the `### PR 3` section below, renamed and nothing else.** It was written as a tests-only
+follow-up to "PR 2", and the reorder does not touch it: it exercises the two endpoints end to end,
+so its only real precondition is that both endpoints work, which is true from B onward. It could
+equally be folded into B; it is kept separate because B is already ≈800 and an integration suite is
+the one thing that can be added after the fact without ever leaving `main` in a wrong state.
+
+The three sections below are kept for their file lists and test lists, which are unchanged — read
+"PR 1" as PR B's service half, "PR 2" as PR A plus PR B's dispatcher half, and "PR 3" as PR C.
+
 ### PR 1: Goa Design + Domain Model + Orchestrator + Handlers (≈500 lines)
 
 **Branch:** `feat/LFXV2-2023-keyword-surface`
@@ -1738,10 +1809,21 @@ becomes misleading; the guard is no longer toggler-only.
 - Add timeouts + error mapping
 - Add unit tests for error cases (unsupported platform, unprovisioned campaign, empty actions array)
 
-No dispatcher implements `KeywordManager` yet at this point, which is the correct intermediate
-state and not a gap: the capability is optional, so both endpoints return a clean
-`ErrKeywordManagerUnsupported` → 400 until PR 2 wires Google Ads. That is exactly how
-`get-campaign-metrics` behaved between its foundation PR and the first platform adapter.
+**⚠️ This ordering was WRONG and has been corrected — see "PR sequence (corrected)" above.**
+An earlier revision of this plan landed the design, OpenAPI, and handlers first and argued that
+"no dispatcher implements `KeywordManager` yet is the correct intermediate state, not a gap,"
+by analogy with `get-campaign-metrics`.
+
+That is the very defect this plan's own phase-boundary rule rejects. From the enum note above:
+publishing something in the generated client and the OpenAPI document "while the handler rejects
+them" is "an advertised capability that does not exist". The rule does not stop applying because
+the unimplemented thing is a whole endpoint rather than an enum member — if anything it applies
+harder, and a merge to `main` between PR 1 and PR 2 would leave `main` publishing two documented
+Google Ads endpoints that return 400 for every real caller. The `get-campaign-metrics` precedent
+is a description of what was done before, not a justification.
+
+The size pressure that motivated the split is real, so the answer is to reorder rather than to
+merge the two into one over-cap PR.
 
 **Test cases to add:**
 - `TestBriefService_ListCampaignKeywords_HappyPath`
@@ -1762,7 +1844,9 @@ state and not a gap: the capability is optional, so both endpoints return a clea
 ### PR 2: Google Ads Keyword Operations — Phase 1 (≈750 lines)
 
 **Branch:** `feat/LFXV2-2023-keyword-googleads-phase1`
-**Base:** `origin/main`, opened once PR 1 has merged
+**Base:** `origin/main`. Under the corrected sequence above, the platform-client half of this
+section is PR **A** and lands FIRST; the dispatcher methods and guard assertion move into PR
+**B** alongside the design and handlers, so the endpoint and its implementation merge together.
 **Files:** `internal/platform/googleads/keywords.go` **(new — this PR must include the platform
 client, not just the adapter)**, `internal/platform/googleads/keywords_test.go`,
 `internal/dispatch/googleads.go` (add `ListKeywords`/`UpdateKeywords` — **methods only**),
@@ -1837,10 +1921,12 @@ client, not just the adapter)**, `internal/platform/googleads/keywords_test.go`,
 budgeted because the platform-client layer was missing from that estimate; still under the
 1000-line cap, but if it grows, split the platform client into its own PR ahead of the adapter.
 
-### PR 3: Integration Tests (≈200 lines)
+### PR 3: Integration Tests (≈200 lines) — this is **PR C**
 
 **Branch:** `feat/LFXV2-2023-keyword-integration-phase1`
-**Base:** `origin/main`, opened once PR 2 has merged
+**Base:** `origin/main`, opened once **PR B** has merged (the corrected sequence above renames
+"once PR 2 has merged" — B is where both endpoints become reachable, which is what these tests
+require)
 **Files:** `internal/service/brief_test.go` (new E2E-style tests) — **tests only**
 
 > **No generated specs in this PR.** An earlier draft assigned "the OpenAPI snapshot" here.
