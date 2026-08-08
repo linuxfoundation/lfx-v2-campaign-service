@@ -237,6 +237,15 @@ func TestFetchErrorsDoNotLeakTheURL(t *testing.T) {
 	} else if strings.Contains(err.Error(), secret) {
 		t.Errorf("parse error leaked the caller's URL: %v", err)
 	}
+
+	// The scheme branch is the least obvious leak, because quoting the scheme looks
+	// harmless: a scheme is ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ), so the whole
+	// secret parses as one.
+	if _, err := NewFetcher().Fetch(context.Background(), secret+"-scheme://example.com/"); err == nil {
+		t.Error("Fetch(bad scheme) error = nil, want an error")
+	} else if strings.Contains(err.Error(), secret) {
+		t.Errorf("scheme error leaked the caller's input: %v", err)
+	}
 }
 
 // TestSafeCauseNeverEchoesUnknownText is the default-deny half of the redaction: the set

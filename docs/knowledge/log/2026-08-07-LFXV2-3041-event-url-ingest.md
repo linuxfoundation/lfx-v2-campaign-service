@@ -47,8 +47,15 @@ never succeed is reported as retryable. The deny list enumerates what the `net.I
 predicates miss — CGNAT, IETF protocol assignments, benchmarking, documentation, SRv6 SIDs,
 and reserved (which carries the broadcast address); it is not default-deny, see below.
 4-in-6 spellings are normalized first — `::ffff:169.254.169.254` is the metadata address in
-different notation. Both sentinels wrap their cause with `%w`, so a cancelled fetch stays
-`errors.Is`-able as `context.Canceled` rather than becoming an opaque upstream failure.
+different notation.
+
+The two sentinels treat their cause **differently, on purpose**. `ErrEventURLFetchFailed`
+carries it (through `fetchError`'s multi-unwrap), so a cancelled fetch stays `errors.Is`-able
+as `context.Canceled` rather than becoming an opaque upstream failure. `ErrEventURLForbidden`
+**discards** it: the dial error names the address and the failure mode, which is exactly the
+reachability information a caller probing internal ranges is asking for, and the sentinel
+alone already says everything a legitimate caller can act on. Do not "fix" the asymmetry by
+wrapping the cause there.
 
 ## The guard makes the obvious test unrunnable
 

@@ -227,7 +227,11 @@ func (f *Fetcher) Fetch(ctx context.Context, eventURL string) ([]byte, error) {
 	// url.Parse lower-cases the scheme (RFC 3986 §3.1), so this comparison already
 	// covers "HTTPS://". Host and path are deliberately left alone.
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return nil, fmt.Errorf("%w: unsupported scheme %q", ErrEventURLInvalid, parsed.Scheme)
+		// The scheme is NOT echoed, even though it looks like the one harmless piece of
+		// the URL to quote. A scheme is ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ), so
+		// "s3cr3t-token://host" parses with the token as a perfectly valid scheme and
+		// the invariant here is that no part of the caller's input reaches the message.
+		return nil, fmt.Errorf("%w: scheme is not http or https", ErrEventURLInvalid)
 	}
 	if parsed.Hostname() == "" {
 		return nil, fmt.Errorf("%w: missing hostname", ErrEventURLInvalid)
