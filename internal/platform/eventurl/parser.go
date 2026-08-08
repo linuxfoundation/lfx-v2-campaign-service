@@ -39,7 +39,13 @@ type EventDetails struct {
 	StartDate   string `json:"startDate,omitempty"`
 	EndDate     string `json:"endDate,omitempty"`
 	Image       string `json:"image,omitempty"`
-	// URL is the page that was fetched. It is deliberately NOT emitted as
+	// URL is the event's own landing page AS THE PAGE DECLARES IT — JSON-LD `url` or
+	// og:url — and NOT the URL that was fetched, which this package never sees a reason
+	// to record. Callers commonly paste a link carrying tracking parameters; a declared
+	// canonical is the better destination, and a caller wanting the fetched URL as a
+	// fallback supplies it itself (see service.FetchEventURL).
+	//
+	// It is deliberately NOT emitted as
 	// `registrationUrl`: the dispatchers treat that as the link an ad sends a human to,
 	// and an event's landing page is often not its registration form. A caller that
 	// wants the two to be the same says so explicitly.
