@@ -53,3 +53,25 @@ part, and isolation by unique key is what production does anyway. The image is p
 `16-alpine` rather than a digest: 16 is the major this repo already states the 000013/000014
 staging was verified against, and a hand-maintained digest goes stale on every upstream CVE
 rebuild, which is the likelier failure than a bad rebuild of the same major.
+
+**Unrelated fix carried on this branch: a semantic merge conflict that broke `main`.**
+Merging `origin/main` in produced a red `internal/dispatch` suite, and the failure was not
+this branch's: `TestGoogleAds_ListAccounts_EmptyUpstreamIsEmptySliceNotNil` fails on
+`origin/main` itself. Two PRs merged cleanly at the text level and disagreed at the
+behavioural one. One taught `ListAccessibleCustomers` to return EARLY in manager mode —
+deliberately, because the flat list contributes nothing to the manager-mode answer, so
+issuing it can only add a way for discovery to fail. The other landed a test whose comment
+still asserted the old shape ("discovery also expands the manager hierarchy") and whose
+assertions read the flat request's method and path. With the flat request no longer issued,
+those reads saw the zero value and the test reported `method = ""`.
+
+The test's claim is worth keeping, so it was split rather than deleted: manager mode now
+asserts the flat list is NOT requested (revert-checked — clearing `login_customer_id` on the
+manager connection produces exactly that diagnostic), and a second dispatcher with no
+`login_customer_id` pins the direct-mode binding the original assertion was about — GET on
+the account-agnostic `customers:listAccessibleCustomers`. Both modes still assert the
+empty-slice-not-nil invariant the test is named for.
+
+Fixed here because `make test` runs the whole repo: this branch's CI cannot go green while
+`main`'s is red, so the fix is a prerequisite rather than a scope creep.
+
