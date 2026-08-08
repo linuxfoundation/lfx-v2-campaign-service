@@ -72,6 +72,22 @@ paid `html.Parse`, the most expensive step, three times on a body that may be 10
 block cannot overwrite the `Event`'s own name. That rule is only meaningful if traversal order
 is document order, which is why `jsonLDNodes` pushes array elements onto its stack in reverse.
 
+**Each strategy fills its own candidate; a losing strategy contributes nothing.** Threading one
+`EventDetails` through all three looks like harmless reuse and is not: JSON-LD that yields a
+description but no name loses, OpenGraph then supplies the name, and the record goes out stamped
+`extracted_from="opengraph"` carrying a description no OpenGraph tag on the page contained. That
+is two sources merged under one provenance label — and `extracted_from` exists precisely so a
+human can judge how far to trust the rest of the record, so a label true of only some fields is
+worse than no label at all. Provenance is all-or-nothing to mean anything.
+
+The `<script type=...>` match parses the value as a **media type** and compares it without its
+parameters. `type` is a media type, RFC 2045 permits parameters on one, and
+`application/ld+json;profile="http://www.w3.org/ns/json-ld#compacted"` is the form the JSON-LD
+spec itself defines. Comparing the whole attribute skips such a block and falls through to
+weaker metadata — a silent quality regression, since nothing errors and the caller sees only a
+thinner record. `mime.ParseMediaType` also folds case and trims surrounding space, so it
+subsumes the previous `EqualFold`+`TrimSpace` handling.
+
 JSON-LD's shapes are the part that silently loses data if taken literally:
 
 - The root is commonly an **array** (a page emits Organization, BreadcrumbList and Event as one

@@ -6,6 +6,7 @@ package eventurl
 import (
 	"bytes"
 	"encoding/json"
+	"mime"
 	"strings"
 	"unicode/utf8"
 
@@ -87,28 +88,39 @@ func NewParser() *Parser {
 // Returns an empty EventDetails if no usable metadata is found; the caller checks Name
 // and answers ErrEventDetailsEmpty rather than letting an empty success through.
 func (p *Parser) Parse(body []byte) EventDetails {
-	details := EventDetails{}
-
 	// One parse, three passes. The tree is only read, so parsing per strategy paid
 	// html.Parse — the most expensive step — three times per fetch on a body that may
 	// be 10MiB. bytes.NewReader also avoids copying the body to a string.
 	doc, err := html.Parse(bytes.NewReader(body))
 	if err != nil {
-		return details
+		return EventDetails{}
 	}
 
-	if p.parseJSONLD(doc, &details) && details.Name != "" {
-		details.ExtractedFrom = "jsonld"
-		details.clampFields()
-		return details
+	// Each strategy fills a FRESH candidate, and only a candidate that wins is adopted.
+	// Sharing one struct across the three would let a losing strategy's fields survive
+	// into the winner's result: JSON-LD that yields a description but no name returns
+	// false, OpenGraph then supplies the name, and the result is stamped
+	// ExtractedFrom="opengraph" while carrying a description the OpenGraph tags never
+	// contained. That is two pages' worth of metadata merged into one record with a
+	// provenance label that is simply wrong — and ExtractedFrom exists precisely so a
+	// human can judge how much to trust the rest. Provenance has to be all-or-nothing
+	// to mean anything.
+	for _, strategy := range []struct {
+		name  string
+		parse func(*html.Node, *EventDetails) bool
+	}{
+		{"jsonld", p.parseJSONLD},
+		{"opengraph", p.parseOpenGraph},
+	} {
+		candidate := EventDetails{}
+		if strategy.parse(doc, &candidate) && candidate.Name != "" {
+			candidate.ExtractedFrom = strategy.name
+			candidate.clampFields()
+			return candidate
+		}
 	}
 
-	if p.parseOpenGraph(doc, &details) && details.Name != "" {
-		details.ExtractedFrom = "opengraph"
-		details.clampFields()
-		return details
-	}
-
+	details := EventDetails{}
 	p.parseFallback(doc, &details)
 	if details.Name != "" {
 		details.ExtractedFrom = "fallback"
@@ -221,8 +233,20 @@ func (p *Parser) parseJSONLD(doc *html.Node, details *EventDetails) bool {
 
 func isJSONLDScript(n *html.Node) bool {
 	for _, attr := range n.Attr {
-		// The media type is case-insensitive (RFC 9110 §8.3.1).
-		if attr.Key == "type" && strings.EqualFold(strings.TrimSpace(attr.Val), "application/ld+json") {
+		// The media type is case-insensitive (RFC 9110 §8.3.1) and is compared WITHOUT
+		// its parameters. `type="application/ld+json"`
+		// is a media type, and RFC 2045 lets one carry parameters — `application/ld+json;
+		// profile="http://www.w3.org/ns/json-ld#compacted"` is the shape the JSON-LD spec
+		// itself defines, and it is valid markup. Comparing the whole attribute skips such
+		// a block and silently falls through to the weaker OpenGraph or <title> metadata,
+		// which is a quality regression no error reports. mime.ParseMediaType also folds
+		// case and trims surrounding whitespace, so it subsumes the previous handling; a
+		// value it cannot parse is not a media type and is skipped.
+		if attr.Key == "type" {
+			mediaType, _, err := mime.ParseMediaType(attr.Val)
+			if err != nil || mediaType != "application/ld+json" {
+				continue
+			}
 			return true
 		}
 	}
