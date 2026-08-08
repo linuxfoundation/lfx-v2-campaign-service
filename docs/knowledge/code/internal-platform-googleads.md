@@ -60,6 +60,52 @@ row cap alone doesn't bound memory, so the byte cap is the real memory guard.
 replaced by `campaign.start_date_time` / `campaign.end_date_time` — the old fields
 are rejected as unrecognized.
 
+### Interpolating free text into a query
+
+Until campaign lookup, every GAQL query in this package interpolated either a
+digits-only id (`customerIDRE`) or a value from a closed allow-list
+(`validMetricsWindows`). Neither can carry a quote, so nothing needed escaping.
+
+A campaign **name** is the first genuinely caller-controlled string to reach a `WHERE`
+clause, and it cannot be allow-listed. `gaqlStringLiteral` renders it as a
+single-quoted literal, escaping backslash **first** and then the quote — reversing that
+order re-escapes the backslash the quote escape introduced and releases the quote.
+Control characters are **rejected**, not escaped: GAQL has no portable escape for them
+and Google Ads forbids them in a name, so such a name cannot match a real campaign.
+
+Anything new that interpolates free text into GAQL must go through that helper.
+
+## Campaign lookup by name
+
+`FindCampaignByName` returns the id of the single non-`REMOVED` campaign with exactly
+that name. The contract matches the meta and linkedin lookups because callers make the
+same decision from it:
+
+| outcome | result |
+|---|---|
+| exactly one live match | `(id, nil)` |
+| no live match | `("", nil)` — a clean, trustworthy absence |
+| more than one match | `("", error)` — ambiguous, never a silent pick |
+| unverifiable (undecodable row, matched row with no id, non-numeric id) | `("", error)` |
+
+**Why absence and ambiguity must be different values.** Both callers act destructively
+on an absence: the create path takes `("", nil)` as licence to create a campaign, and
+the adoption path takes it as licence to report there is nothing to adopt. A false
+absence therefore produces a **duplicate paid campaign**, and picking arbitrarily among
+same-name campaigns binds a brief to the wrong one — real spend either way. Google Ads
+permits duplicate campaign names in one account, so the ambiguous case is reachable, not
+defensive.
+
+The name filter and the `REMOVED` exclusion are applied **server-side** (a miss costs one
+page instead of a walk of the account, and a tombstone tail cannot page the query out)
+and then **re-checked client-side**. The re-check is not redundant: if the escaping ever
+regressed, an injected query would still return 2xx rows for OTHER campaigns, and a
+server-side-only filter would hand one back as an exact match. The client-side equality
+check turns a silent wrong binding into a visible zero-match or ambiguity error.
+
+Rows are deduplicated by id before counting, so one campaign returned on several rows is
+not misreported as ambiguous.
+
 ## Campaign creation (GA-2)
 
 `CreateCampaign` (in `campaign.go`) creates a PAUSED search campaign as two
