@@ -1022,16 +1022,30 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrToggleUnsupported, platform)
 	}
-	// Any error from here is from the platform call itself (or the dispatcher's own pre-flight
-	// cred resolution) — surfaced as a platform failure by the caller. This deliberately
-	// includes a dispatcher's CONNECTION-STATE pre-flight failures (connection not ACTIVE,
-	// incomplete credentials, missing account id): the ad platform is never contacted, so a 503
-	// slightly over-attributes to the platform, but these are surfaced as-is (not a distinct
-	// sentinel) because the remedy — reactivate/repair the connection then retry — is the same
-	// operator action a platform 503 already prompts, and the classification is UNIFORM across
-	// all dispatchers (reddit/meta/linkedin/twitter/googleads resolve identically). Promoting
-	// connection-state to its own 409/422 sentinel is a cross-dispatcher change tracked as
-	// follow-up rather than a reddit-only divergence. Bound the
+	// Any error from here is from the platform call itself, from the dispatcher's own
+	// pre-flight cred resolution, or from its CONNECTION-STATE checks (connection not ACTIVE,
+	// undecodable or incomplete credentials, missing account id) — the ad platform is never
+	// contacted for the last group.
+	//
+	// The classification of that last group is NO LONGER uniform across dispatchers, and this
+	// comment used to say it was. Google Ads tags the preflight failures REACHABLE HERE with
+	// domain.ErrConnectionNotUsable (internal/dispatch/googleads.go): the three in
+	// validateGoogleAdsCredentials and the missing-account guard in
+	// validateGoogleAdsConnection, both of which resolveGoogleAdsClient runs. The caller maps
+	// them to 409 — correct, because none of them improves with time.
+	//
+	// The stored-login_customer_id check is NOT among them, though it is tagged: it lives in
+	// resolveGoogleAdsDiscoveryClient, which only the discovery endpoint calls. A malformed
+	// manager id therefore reaches this path unclassified, fails inside the client at
+	// validateLoginCustomerID, and falls through to 503 — retryable, for a stored value that
+	// no amount of retrying will fix. Hoisting the check into the shared validation is the
+	// fix; it is a behaviour change with its own test and lands separately.
+	//
+	// Reddit, Meta, LinkedIn, X AND Microsoft still return bare
+	// errors that fall through to the caller's default 503 arm; Microsoft is wired for
+	// toggles and runs the same active/incomplete preflight, so leaving it out of this list
+	// would hide a provider that is actually reachable here. Tagging
+	// theirs is the outstanding half of that work, tracked with the adapters. Bound the
 	// whole (possibly multi-PATCH, each with its own retry budget) cascade with a total
 	// deadline UNDER the HTTP write timeout, so a slow toggle is cancelled and returned to the
 	// caller as an error rather than mutating the platform after the response can no longer be

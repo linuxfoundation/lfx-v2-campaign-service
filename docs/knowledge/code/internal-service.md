@@ -124,9 +124,11 @@ optional-capability pattern as `StatusToggler`) rather than requiring every disp
 implement it; a dispatcher that isn't a `MetricsReader` — or a platform with no dispatcher
 registered at all — returns `ErrMetricsUnsupported` (400) without ever contacting the
 platform. An unprovisioned campaign (`PlatformCampaignID` empty, or `campaign == nil`)
-returns `ErrCampaignNotProvisioned` (409) before any platform call, same as the toggle. Any
-other error from the dispatcher's `ReadMetrics` call propagates as-is (503) — a read has no
-ambiguous mutation to protect, so there is no UNCONFIRMED classification here. The call is
+returns `ErrCampaignNotProvisioned` (409) before any platform call, same as the toggle. A
+connection the dispatcher refuses BEFORE contacting the platform — `ErrCampaignAccountMismatch`,
+`ErrAccountNotSelected`, `ErrConnectionNotUsable` — is also a 409 (see the classification
+section below). Everything else propagates as-is (503) — a read has no ambiguous mutation to
+protect, so there is no UNCONFIRMED classification here. The call is
 bounded by `metricsCallTimeout` (20s, distinct from `toggleCallTimeout`'s 45s — reads should
 fail fast rather than hold a request open).
 
@@ -181,19 +183,76 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   value such as a dashed `login_customer_id`. The platform is never contacted. This arm is what
   keeps the 503 below honest: a 503 promises that waiting might help, and none of these conditions
   change until a human edits the connection. The distinction cannot be made here — a setup failure
-  and an upstream one arrive as the same type — so `internal/dispatch/googleads.go`
-  (`resolveGoogleAdsDiscoveryClient`) wraps every pre-send failure with the sentinel, and this arm
-  reads it. Neither the cause NOR its text leaves this function — not in the response and not in
+  and an upstream one arrive as the same type — so `internal/dispatch/googleads.go` wraps the
+  pre-send failures with the sentinel and this arm reads it. The wrap has two owners:
+  `validateGoogleAdsCredentials` tags the credential-state three (inactive, undecodable,
+  incomplete), which is why they reach callers beyond discovery — but the SHAPE they reach them in
+  depends on whether the caller is synchronous. The **status toggle** and the **metrics read**
+  (`internal/service/brief.go`) are synchronous, so they answer a **409** off this same sentinel.
+  **Campaign create is not**: it answers `202` and the identical failure surfaces later in the
+  polled job result, never as a 409 — see `docs/api-catalog.md`. Do not describe "campaign
+  dispatch" as receiving a 409; the dispatch layer produces the error, and only the two
+  synchronous readers turn it into a status code.
+  `resolveGoogleAdsDiscoveryClient` tags the dashed `login_customer_id`. Neither the cause NOR its text leaves this function — not in the response and not in
   the log line. One of the wrapped errors is computed over the decrypted credential blob, and
   `encoding/json` quotes its input, so logging the cause would put credential-derived bytes into
   centralized logs for exactly the connection whose credentials are malformed. What the log line
   carries instead is `reason=`, from `unusableConnectionReason` — a fixed token
   (`connection_inactive`, `credentials_absent`, `credentials_undecodable`,
   `credentials_incomplete`, `provider_config_invalid`, `credential_blob_malformed`,
-  `unclassified`) read off the reason
+  `account_not_selected`, `unclassified`) read off the reason
   sentinel the dispatch layer wraps alongside `ErrConnectionNotUsable`. A closed vocabulary is what
   a log line wants anyway: greppable, alertable, and with no payload to carry a secret in.
 - Anything else → **503** — the platform was reached and did not answer.
+
+**`account_not_selected` is the one reason in that vocabulary that is not a fault.** Every other
+token describes something WRONG with stored state; this one describes state that is merely
+UNFINISHED, and it is the only one a caller reaches by doing exactly what the API told them to
+do. It is NAMED because `GoogleAdsConnectionConfig` dropped `Required("account_id")` to allow the
+credentials-first bootstrap (`design/connection.go`): a connection can now be created with
+credentials alone, discovery run against it, and the chosen account PUT back afterwards.
+
+It was not, however, previously impossible — and the distinction matters, because the guard that
+produces this token predates the bootstrap and used to return a bare error. Goa's `Required`
+checks that the JSON KEY is present; the generated validator was `if body.AccountID == nil`, and
+the Go field is a plain string, so `"account_id": ""` (or whitespace) satisfied it and was stored.
+An account-less row was reachable all along as an unintended, undocumented state. What this change
+did was turn it into a supported, omission-based lifecycle state — and, in doing so, make the
+mis-classified 503 the common case rather than a latent one.
+
+Note that `status=active` on such a connection is deliberate, not a gap in the lifecycle.
+**`active` says the connection is ENABLED for credential-based operations — it does not say the
+credentials were verified.** Nothing verifies them: `createConn` serializes, encrypts and
+persists exactly what was supplied, and `testConn` says so itself (upstream verification is not
+implemented), so an active row can hold OAuth material the platform will reject. What `active`
+buys is reachability — `validateGoogleAdsCredentials` refuses a non-active connection, so a
+distinct "pending" status would make discovery unreachable for exactly the connections that need
+it, and the bootstrap would dead-end at step two. Readiness to run a campaign is a separate,
+derived fact — `account_id` being non-empty — and the operations that need it report its absence
+with this reason rather than inventing a second status to carry the same bit.
+
+**Only the two campaign handlers see this sentinel, and both answer 409.** The campaign status
+toggle and the per-campaign metrics read each match `ErrAccountNotSelected` *before* the general
+`ErrConnectionNotUsable` arm — it is always wrapped alongside that sentinel, so a broad match
+would swallow it and return the ambiguous "no account selected, or the credentials need
+attention" message for a connection whose credentials are fine. The CAMPAIGN is the resource
+there, and an unfinished connection is a precondition conflict — the same classification those
+handlers already give `ErrCampaignNotProvisioned`. Non-retryable is the property a client acts
+on, and the one the original code got wrong: before this sentinel existed the empty-id guard
+returned a bare error, which fell through to each handler's `default:` arm and answered
+**503 "the platform did not respond"** — for a platform never contacted, with a remedy (wait)
+that can never work, since only a human choosing an account changes the state.
+
+**Account discovery does not map it at all.** Discovery calls `validateGoogleAdsCredentials`,
+not `validateGoogleAdsConnection`, so the account-id check never runs: accepting an account-less
+connection is exactly what makes the bootstrap work, since discovery is how the operator finds
+the account to select. Discovery's 400 is reserved for its *other* unusable states (inactive,
+credential blob absent/incomplete/malformed, provider config invalid).
+
+The distinction is carried in the response **message**, not a field. `ConflictError` is a shared
+Goa type with exactly `code` and `message`, so exposing a machine-readable `reason` would mean
+changing a type every 409 in this service returns; the reason token reaches operators through
+the log instead.
 
 Two DIFFERENT guards protect the empty-vs-nil distinction, and they fail in opposite directions —
 document them separately so a future change preserves each for its own reason:

@@ -262,6 +262,11 @@ func (s *BriefService) CreateBrief(ctx context.Context, p *briefs.CreateBriefPay
 		Copy:         marshalAny(in.Copy),
 		Keywords:     marshalAny(in.Keywords),
 		Targeting:    marshalAny(in.Targeting),
+		// A nil actor — no bearer token, or claims this service could not decode — is
+		// stored as NULL rather than rejected: losing the attribution is bad, refusing
+		// the write because of it is worse. attributedActor logs it so the loss is at
+		// least visible. See model.CampaignBrief.CreatedBy.
+		CreatedBy: attributedActor(ctx, "create brief"),
 	}
 	// The index message co-commits with the row (see briefIndexPayload); the relay delivers it.
 	created, err := briefRepo.CreateBrief(ctx, b, s.briefIndexPayload(indexer.ActionCreated))
@@ -374,6 +379,9 @@ func (s *BriefService) UpdateBrief(ctx context.Context, p *briefs.UpdateBriefPay
 		Copy:         marshalAny(in.Copy),
 		Keywords:     marshalAny(in.Keywords),
 		Targeting:    marshalAny(in.Targeting),
+		// Only updated_by moves on an edit; created_by is untouched by the UPDATE and
+		// keeps naming the original author.
+		UpdatedBy: attributedActor(ctx, "update brief"),
 	}
 	updated, uerr := briefRepo.ReplaceBrief(ctx, b, version, s.briefIndexPayload(indexer.ActionUpdated))
 	if uerr != nil {
@@ -391,7 +399,7 @@ func (s *BriefService) ApproveBrief(ctx context.Context, p *briefs.ApproveBriefP
 	if err != nil {
 		return nil, err
 	}
-	b, aerr := briefRepo.Approve(ctx, p.ProjectID, p.BriefID, actorFromCtx(ctx), version, s.briefIndexPayload(indexer.ActionUpdated))
+	b, aerr := briefRepo.Approve(ctx, p.ProjectID, p.BriefID, attributedActor(ctx, "approve brief"), version, s.briefIndexPayload(indexer.ActionUpdated))
 	if aerr != nil {
 		return nil, mapBriefErr(aerr)
 	}
@@ -410,7 +418,7 @@ func (s *BriefService) DeleteBrief(ctx context.Context, p *briefs.DeleteBriefPay
 	// The index message is built INSIDE the archive transaction and co-committed to the
 	// outbox, so a dropped publish is recoverable by the relay. Archiving is terminal: without
 	// this, one lost message leaves the brief searchable forever.
-	_, aerr := briefRepo.ArchiveBrief(ctx, p.ProjectID, p.BriefID, s.briefIndexPayload(indexer.ActionDeleted))
+	_, aerr := briefRepo.ArchiveBrief(ctx, p.ProjectID, p.BriefID, attributedActor(ctx, "archive brief"), s.briefIndexPayload(indexer.ActionDeleted))
 	if aerr != nil {
 		return mapBriefErr(aerr)
 	}
@@ -546,6 +554,34 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "error", safeErrSummary(merr))
 			return nil, &briefs.ConflictError{Code: "409", Message: "the campaign belongs to a different ad account than this project's current connection — reconnect the original account to read its metrics"}
+		case errors.Is(merr, domain.ErrAccountNotSelected):
+			// Split out from the general unusable-connection arm below, and placed ABOVE it,
+			// because ErrAccountNotSelected is always wrapped alongside ErrConnectionNotUsable
+			// — a broad match would swallow it and the caller would be told "select an account
+			// or repair the credentials" for a connection whose credentials are fine.
+			//
+			// The distinction is carried in the MESSAGE, not a separate field: ConflictError is
+			// a shared Goa type with exactly code and message (design/brief.go), so there is no
+			// machine-readable reason to populate without changing a type every 409 in this
+			// service returns. The reason token still reaches operators through the log.
+			slog.WarnContext(ctx, "campaign metrics read blocked: no ad account selected on the project's connection",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "reason", unusableConnectionReason(merr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection has no ad account selected — choose one from the connection's accounts endpoint and save it before reading metrics"}
+		case errors.Is(merr, domain.ErrConnectionNotUsable):
+			// Everything else that makes the connection unusable: inactive, credentials
+			// absent/incomplete/malformed, provider config invalid. The platform was never
+			// contacted and never will be until a human edits the connection, so the 503 below
+			// would be a false promise — it tells the caller to retry a request that cannot
+			// succeed with time alone.
+			//
+			// Logged with the fixed reason token rather than the error, for the reason
+			// spelled out at unusableConnectionReason: one of the conditions behind this
+			// sentinel is detected by decoding the DECRYPTED credential blob.
+			slog.WarnContext(ctx, "campaign metrics read blocked: the project's connection is not usable",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "reason", unusableConnectionReason(merr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection is not ready — its stored credentials or provider settings need attention; repair the connection before reading metrics"}
 		default:
 			slog.WarnContext(ctx, "campaign metrics read failed on the ad platform",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
@@ -815,6 +851,32 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "status", p.Status, "error", safeErrSummary(terr))
 			return nil, &briefs.ConflictError{Code: "409", Message: "the campaign belongs to a different ad account than this project's current connection — reconnect the original account to change its status"}
+		case errors.Is(terr, domain.ErrAccountNotSelected):
+			// Above the general arm for the reason given on the metrics branch: the sentinel is
+			// always wrapped alongside ErrConnectionNotUsable, so a broad match would swallow
+			// it and hand back the ambiguous "or its credentials need attention" message for a
+			// connection whose credentials are fine. The distinction rides in the message
+			// because ConflictError carries only code and message.
+			slog.WarnContext(ctx, "campaign status toggle blocked: no ad account selected on the project's connection",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "status", p.Status, "reason", unusableConnectionReason(terr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection has no ad account selected — choose one from the connection's accounts endpoint and save it before changing campaign status"}
+		case errors.Is(terr, domain.ErrConnectionNotUsable):
+			// Credential resolution refused the connection BEFORE the platform was contacted,
+			// so — like the branches above — nothing changed upstream and this is decidable
+			// without asking the platform.
+			//
+			// This must sit ABOVE the unconfirmed check as well as the default: nothing on this
+			// path is ambiguous, and the default's 503 would tell the caller to retry a request
+			// that cannot succeed until a human edits the connection.
+			//
+			// Logged with the fixed reason token, not the error, for the reason at
+			// unusableConnectionReason: one condition behind this sentinel is detected by
+			// decoding the DECRYPTED credential blob.
+			slog.WarnContext(ctx, "campaign status toggle blocked: the project's connection is not usable",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "status", p.Status, "reason", unusableConnectionReason(terr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection is not ready — its stored credentials or provider settings need attention; repair the connection before changing campaign status"}
 		case errors.As(terr, &unconfirmed) && unconfirmed.Unconfirmed():
 			// UNCONFIRMED: a transport/5xx/redirect error means the PATCH MAY already have
 			// applied on the platform. Do NOT say "not modified" (it might be) and do NOT
