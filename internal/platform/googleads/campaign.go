@@ -478,8 +478,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, fmt.Errorf("google-ads campaign budget must be > 0 (rounds to %d micros), got %.6f", amountMicros, in.Budget)
 	}
 
-	budgetName := composeName("Budget", in)
-	campaignName := composeName("Search Campaign", in)
+	budgetName := ComposeName("Budget", in)
+	campaignName := ComposeName("Search Campaign", in)
 	// Budget name is limited in UTF-8 BYTES (len is the byte count); campaign name in
 	// CHARACTERS (utf8.RuneCountInString). See maxBudgetNameBytes/maxCampaignNameRunes.
 	if err := validateEntityName("budget", budgetName, len(budgetName), maxBudgetNameBytes, "UTF-8 bytes"); err != nil {
@@ -701,10 +701,12 @@ func (c *Client) validateResourceKind(kind, resourceName string, requireNumericI
 	return nil
 }
 
-// composeName builds a deterministic budget/campaign name from the input. The
+// ComposeName builds a deterministic budget/campaign name from the input. The
 // NameSuffix (when supplied) makes it unique+stable per logical campaign so a retry
-// collides on DUPLICATE_NAME rather than silently double-creating.
-func composeName(kind string, in CampaignInput) string {
+// collides on DUPLICATE_NAME rather than silently double-creating. It is exported so
+// the dispatcher can compute the campaign name before calling FindCampaignByName, for
+// adopt-on-create idempotency (LFXV2-3042).
+func ComposeName(kind string, in CampaignInput) string {
 	parts := []string{"LFX", kind}
 	if p := sanitizeNamePart(in.Project); p != "" {
 		parts = append(parts, p)

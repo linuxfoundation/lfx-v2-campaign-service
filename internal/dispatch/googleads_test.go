@@ -77,6 +77,11 @@ func googleAdsServers(t *testing.T, budgetH, campaignH http.HandlerFunc) ([]goog
 		cap.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+			// The adoption lookup call (LFXV2-3042): return empty results (campaign absent)
+			// so existing tests proceed to create. Tests that want to test adoption
+			// pass their own custom server setup.
+			_, _ = io.WriteString(w, `{"results":[]}`)
 		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
 			budgetH(w, r)
 		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
@@ -1053,7 +1058,11 @@ func TestGoogleAds_DispatchWiresKeywordsAndAudienceSegments(t *testing.T) {
 		},
 	)
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+			// Adoption lookup: return empty results so the test proceeds to create.
+			_, _ = io.WriteString(w, `{"results":[]}`)
 		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
 			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
 		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
@@ -1512,5 +1521,275 @@ func TestGoogleAds_ToggleStatus_ActivateSucceedsChildrenFirst(t *testing.T) {
 		if !strings.HasSuffix(gotPaths[i], want) {
 			t.Errorf("call %d = %v, want %v (children must be enabled before the campaign gate opens)", i, gotPaths[i], want)
 		}
+	}
+}
+
+// TestGoogleAds_Adoption_FindsAndAdoptsExistingCampaign tests the happy path for
+// adopt-on-create: a retried dispatch finds an existing campaign with the same name
+// and returns it as an adopted campaign without creating a new one or spending budget.
+func TestGoogleAds_Adoption_FindsAndAdoptsExistingCampaign(t *testing.T) {
+	var searchCalled, createCalled bool
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+			// The lookup response: one existing campaign with the adoption target id.
+			searchCalled = true
+			_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"999","name":"LFX | Search Campaign | cncf | KubeCon NA 2026 | brief-1","status":"ENABLED","resourceName":"customers/1234567890/campaigns/999"}}]}`)
+		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"),
+			strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
+			// Should never reach here on adoption.
+			createCalled = true
+			http.Error(w, "should not create on adoption", http.StatusBadRequest)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)},
+		identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL),
+		googleads.WithBaseURL(apiSrv.URL),
+	)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50}}`)
+	brief := testBrief() // "brief-1" / "cncf" / "KubeCon NA 2026"
+
+	camp, err := d.Dispatch(context.Background(), brief, model.ProviderGoogleAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch on adoption must succeed, got: %v", err)
+	}
+	if camp == nil || camp.PlatformCampaignID != "999" {
+		t.Fatalf("adoption must return campaign with id 999, got: %+v", camp)
+	}
+	if camp.Status != campaignStatusCreated {
+		t.Errorf("adoption status = %q, want %q", camp.Status, campaignStatusCreated)
+	}
+	if !searchCalled {
+		t.Error("adoption must call googleAds:search")
+	}
+	if createCalled {
+		t.Error("adoption must not call create/mutate endpoints")
+	}
+}
+
+// TestGoogleAds_Adoption_ProceedsToCreateWhenAbsent tests the normal (non-adoption) path:
+// when FindCampaignByName returns a clean absence, the dispatcher proceeds to create.
+func TestGoogleAds_Adoption_ProceedsToCreateWhenAbsent(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+			// Empty results: campaign not found, proceed to create.
+			_, _ = io.WriteString(w, `{"results":[]}`)
+		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
+		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroups/333"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupAds/333~444"}]}`)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)},
+		identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL),
+		googleads.WithBaseURL(apiSrv.URL),
+	)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50}}`)
+	brief := testBrief()
+
+	camp, err := d.Dispatch(context.Background(), brief, model.ProviderGoogleAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch on absent campaign must proceed to create, got: %v", err)
+	}
+	if camp == nil || camp.PlatformCampaignID != "222" {
+		t.Errorf("created campaign id = %q, want 222", camp.PlatformCampaignID)
+	}
+	if camp.Status != campaignStatusCreated {
+		t.Errorf("creation status = %q, want %q", camp.Status, campaignStatusCreated)
+	}
+}
+
+// TestGoogleAds_Adoption_ErrorsOnLookupFailure tests that a lookup transport error
+// releases the claim (pre-create error), not retaining it.
+func TestGoogleAds_Adoption_ErrorsOnLookupFailure(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			// Lookup fails with a 500.
+			http.Error(w, "backend error", http.StatusInternalServerError)
+		} else {
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)},
+		identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL),
+		googleads.WithBaseURL(apiSrv.URL),
+	)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50}}`)
+	brief := testBrief()
+
+	camp, err := d.Dispatch(context.Background(), brief, model.ProviderGoogleAds, cfg)
+	if err == nil {
+		t.Fatal("lookup failure must error, got nil")
+	}
+	if camp != nil {
+		t.Errorf("lookup failure must return nil campaign, got %+v", camp)
+	}
+	var preCreateErr interface{ NoUpstreamCreate() bool }
+	if !errors.As(err, &preCreateErr) {
+		t.Errorf("lookup failure must be a pre-create error (release claim), got: %v", err)
+	}
+}
+
+// TestGoogleAds_Adoption_ErrorsOnNameMismatch tests the fail-closed contract: a row
+// returned by the lookup that does not match the exact-match query is an error,
+// not a skip. This prevents a false absence on an injected query.
+func TestGoogleAds_Adoption_ErrorsOnNameMismatch(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			// Return a campaign with a WRONG name (name mismatch).
+			_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"999","name":"wrong name","status":"ENABLED","resourceName":"customers/1234567890/campaigns/999"}}]}`)
+		} else {
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)},
+		identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL),
+		googleads.WithBaseURL(apiSrv.URL),
+	)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50}}`)
+	brief := testBrief()
+
+	camp, err := d.Dispatch(context.Background(), brief, model.ProviderGoogleAds, cfg)
+	if err == nil {
+		t.Fatal("name mismatch must error, not adopt")
+	}
+	if camp != nil {
+		t.Errorf("name mismatch must return nil campaign, got %+v", camp)
+	}
+	if !strings.Contains(err.Error(), "name filter was not honoured") {
+		t.Errorf("error should mention the unhonoured filter: %v", err)
+	}
+}
+
+// TestGoogleAds_Adoption_ErrorsOnAccountMismatch tests that a campaign found in a
+// different customer account returns an error (not adoption).
+func TestGoogleAds_Adoption_ErrorsOnAccountMismatch(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			// Return a campaign with a resource name from a DIFFERENT customer.
+			_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"999","name":"LFX | Search Campaign | cncf | KubeCon NA 2026 | brief-1","status":"ENABLED","resourceName":"customers/9999999999/campaigns/999"}}]}`)
+		} else {
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)},
+		identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL),
+		googleads.WithBaseURL(apiSrv.URL),
+	)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50}}`)
+	brief := testBrief()
+
+	camp, err := d.Dispatch(context.Background(), brief, model.ProviderGoogleAds, cfg)
+	if err == nil {
+		t.Fatal("account mismatch must error, not adopt")
+	}
+	if camp != nil {
+		t.Errorf("account mismatch must return nil campaign, got %+v", camp)
+	}
+	if !strings.Contains(err.Error(), "scoped to another customer") {
+		t.Errorf("error should mention the account mismatch: %v", err)
+	}
+}
+
+// TestGoogleAds_Adoption_SkipsRemovedCampaign tests that a REMOVED (tombstoned)
+// campaign is correctly skipped during lookup, returning a clean absence.
+func TestGoogleAds_Adoption_SkipsRemovedCampaign(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+			// Return a REMOVED campaign (should be skipped by FindCampaignByName).
+			_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"999","name":"LFX | Search Campaign | cncf | KubeCon NA 2026 | brief-1","status":"REMOVED","resourceName":"customers/1234567890/campaigns/999"}}]}`)
+		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
+			// Lookup returned no live matches (REMOVED was skipped), so we proceed to create.
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
+		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroups/333"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupAds/333~444"}]}`)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)},
+		identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL),
+		googleads.WithBaseURL(apiSrv.URL),
+	)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50}}`)
+	brief := testBrief()
+
+	camp, err := d.Dispatch(context.Background(), brief, model.ProviderGoogleAds, cfg)
+	if err != nil {
+		t.Fatalf("REMOVED campaign should be skipped, proceeding to create, got: %v", err)
+	}
+	if camp == nil {
+		t.Fatal("creation must return a campaign")
+	}
+	// A REMOVED row was skipped, so we proceeded to create (campaign id 222).
+	if camp.PlatformCampaignID != "222" {
+		t.Errorf("created campaign id = %q, want 222 (not 999 from the removed row)", camp.PlatformCampaignID)
 	}
 }

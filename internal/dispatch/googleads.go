@@ -141,6 +141,22 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		d.opts...,
 	)
 
+	// ComposeName is deterministic in the brief, so a RETRIED dispatch asks for the same
+	// name a previous attempt may already have created. Adopt it rather than create a
+	// second PAID campaign. Only a verified absence licenses the create below:
+	// FindCampaignByName errors on anything it cannot verify (transport failure, a name
+	// that does not match the WHERE clause, a campaign in another customer), so the
+	// lookup never reduces an unverifiable response to a clean "not found".
+	campaignName := googleads.ComposeName("Search Campaign", in)
+	adoptID, adoptErr := client.FindCampaignByName(ctx, campaignName)
+	if adoptErr != nil {
+		// notCreated: nothing was created upstream, so the orchestrator releases the
+		// claim. FindCampaignByName already wraps with its own context.
+		return nil, notCreated(adoptErr)
+	}
+	if adoptID != "" {
+		return campaignFromGoogleAdsAdoption(ctx, adoptID, campaignName, accountID, res.label), nil
+	}
 	// The GA client's contract (mirrors reddit/meta/twitter): (nil, err) ONLY when
 	// NOTHING was (or may have been) created — a validation/pre-send/definite failure.
 	// Otherwise it returns a NON-NIL partial result alongside the error (an ambiguous
@@ -212,6 +228,40 @@ func campaignFromGoogleAds(ctx context.Context, r *googleads.CampaignResult, cfg
 		// still persisted with its id/status/config). Mirrors the meta/twitter/linkedin adapters.
 		slog.WarnContext(ctx, "failed to marshal google ads campaign result blob (Result left empty)",
 			"campaign_id", c.PlatformCampaignID, "error", err)
+	} else {
+		c.Result = raw
+	}
+	return c
+}
+
+// campaignFromGoogleAdsAdoption builds the campaign model for an ADOPTED campaign. The lookup
+// answers only "a campaign with this name exists here" — it says nothing about the budget, ad
+// group and ad a create would also have made, so an adoption of a campaign whose previous
+// attempt died mid-sequence yields a campaign that will not serve. It is still the right
+// outcome: the alternative is a duplicate paid campaign, and the shell is now recorded and
+// visible for reconciliation rather than orphaned. Completing a partial adoption is
+// LFXV2-3042's follow-up, and needs an ad-group lookup this client does not yet have.
+func campaignFromGoogleAdsAdoption(ctx context.Context, campaignID, campaignName, accountID, accountLabel string) *model.Campaign {
+	c := &model.Campaign{
+		PlatformCampaignID: campaignID,
+		CampaignName:       campaignName,
+		Status:             campaignStatusCreated,
+	}
+	// The blob must carry CustomerID: googleAdsCreationCustomerID reads it to detect a
+	// later read/toggle against a DIFFERENT customer, and treats an absent one as
+	// "unknown, proceed" — so omitting it would silently disable that check.
+	adoptionResult := &googleads.CampaignResult{
+		Platform:     "google-ads",
+		AccountLabel: accountLabel,
+		CustomerID:   accountID,
+		CampaignID:   campaignID,
+		CampaignName: campaignName,
+		GoogleAdsURL: "https://ads.google.com/aw/campaigns?ocid=" + accountID,
+		Steps:        []string{"Campaign adopted: " + campaignID + " (already exists on account, no budget/ad group created)"},
+	}
+	if raw, err := json.Marshal(adoptionResult); err != nil {
+		slog.WarnContext(ctx, "failed to marshal adoption result blob (Result left empty)",
+			"campaign_id", campaignID, "error", err)
 	} else {
 		c.Result = raw
 	}
