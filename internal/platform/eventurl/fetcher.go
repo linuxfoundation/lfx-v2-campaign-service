@@ -329,7 +329,11 @@ func WithNAT64Prefixes(cidrs ...string) Option {
 	}
 }
 
-// guardDialAddress is the net.Dialer.Control hook that refuses a non-public address.
+// guardDialAddress is the net.Dialer.Control hook that refuses a DENIED address.
+//
+// Denied, not "non-public": isForbiddenIP enumerates what it rejects and returns false for
+// everything else, so this hook is a denylist and calling it anything stronger would let a
+// caller read the residual gap as closed.
 //
 // The check lives HERE, and not next to a prior LookupIPAddr, because Control runs after
 // resolution and immediately before connect, on the very address the kernel is about to
@@ -443,7 +447,12 @@ func NewFetcher(opts ...Option) *Fetcher {
 
 // Fetch retrieves the body of eventURL with SSRF protections. It rejects:
 //   - non-http/https schemes
-//   - any URL whose connection would land on a non-public address (see isForbiddenIP)
+//   - any URL whose connection would land on an address isForbiddenIP DENIES — an
+//     enumeration (loopback, private, link-local, multicast, and the reserved and
+//     documentation ranges in forbiddenNets), not a test for "non-public". Anything the
+//     enumeration does not name is allowed, which is the honest description: see the
+//     package doc for the residual case, an operator's network-specific NAT64 prefix
+//     that the service was never told about and so cannot decode.
 //   - redirects, and any non-2xx response
 //   - bodies exceeding maxResponseBytes
 //
