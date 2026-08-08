@@ -87,7 +87,8 @@ interpolating free text into GAQL must go through the helper.
 fail-closed logic mirrors the other clients' lookups (meta's `findCampaignByName`, linkedin's
 `findMatch`, twitter's and microsoft's) because callers make the same decision from the
 result. It is the first one **exported** — the others are called only from inside their own
-create path, this one also from dispatch, for adoption.
+create path; this one is exported because dispatch's adoption path is intended to call it.
+That wiring is a follow-up — nothing in production calls it yet.
 
 | outcome | result |
 |---|---|
@@ -101,9 +102,10 @@ create path, this one also from dispatch, for adoption.
 **Why absence and ambiguity must differ.** Both callers act destructively on an absence:
 create takes `("", nil)` as licence to create, adoption as licence to report nothing to adopt.
 A false absence produces a **duplicate paid campaign**; an arbitrary pick binds a brief to the
-wrong one. Google Ads permits duplicate names in one account, so the ambiguous case is
-reachable, not defensive. Rows are deduplicated by id before counting, so one campaign on
-several rows is not ambiguous.
+wrong one. Two live campaigns sharing a name is **anomalous, not routine** — v23 rejects a
+mutate whose name another `ENABLED`/`PAUSED` campaign holds (`DUPLICATE_CAMPAIGN_NAME`) — so
+this branch fail-closes on a response that should not be possible. Rows are deduplicated by id
+first, so one campaign on several rows is not ambiguous.
 
 The name filter and `REMOVED` exclusion are applied **server-side** (a miss costs one page
 instead of an account walk) and **re-checked client-side** — not redundant, since an injected
