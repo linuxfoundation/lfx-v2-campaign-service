@@ -76,6 +76,18 @@ about a campaign that exists. (`unicode.IsControl` covers category **Cc only**, 
 separators slip past it and invite an explicit check that over-rejects twice over.) Allowing
 them risks nothing: the query rides in a JSON body that `encoding/json` escapes.
 
+**Invalid UTF-8 is the one rejection that is not about what Google forbids.** It is about what
+*this process* would change. `encoding/json` substitutes U+FFFD for each malformed byte and
+returns **no error**, so a name carrying one is silently rewritten between the guard and the
+wire: the query asks about a name the caller never passed, and its inevitable miss is reported
+as the clean `("", nil)` absence that licenses a create. Nothing downstream catches it — the
+rune loop sees `utf8.RuneError`, which is none of NUL/LF/CR; the length check counts it as one
+rune; and the row-level name re-check needs a row, which a query that matches nothing does not
+return. Rejecting costs no reachable lookup either, since Google Ads' JSON and proto surfaces
+both require valid UTF-8, so no stored campaign name can contain a malformed byte. The general
+form: *an encoder that lossily repairs its input is a silent query rewriter, and a fail-closed
+lookup must validate against what will actually be transmitted, not what it was handed.*
+
 The name is queried **verbatim**, no `TrimSpace`: trimming is a no-op for the create path
 (`composeName` already trims), so it only ever alters adoption, answering `"  foo  "` with the
 campaign named `"foo"`. `TrimSpace` only *detects* whitespace-only input. Anything new

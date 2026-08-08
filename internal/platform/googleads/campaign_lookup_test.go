@@ -324,12 +324,43 @@ func TestFindCampaignByName_RejectsUnusableNames(t *testing.T) {
 		{"whitespace only", "   "},
 		{"over the character limit", strings.Repeat("a", maxCampaignNameRunes+1)},
 		{"control character", "bad\x00name"},
+		{"invalid utf-8", "bad\xffname"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if id, err := client.FindCampaignByName(context.Background(), tc.in); err == nil {
 				t.Fatalf("expected rejection, got id %q", id)
 			}
 		})
+	}
+}
+
+// TestFindCampaignByName_InvalidUTF8IsNotQueried pins the one rejection in gaqlStringLiteral
+// that is NOT about what Google Ads forbids.
+//
+// A malformed byte survives every guard ahead of it: the length check counts it as one rune,
+// and ranging the string yields utf8.RuneError, which is none of NUL, LF or CR. It does not
+// survive encoding/json, which substitutes U+FFFD for it and returns NO error — so without
+// this guard the query on the wire asks about a name the caller never passed. Its miss then
+// comes back as ("", nil), the licence to create, and the row-level name re-check cannot
+// catch it because a query that matches nothing returns no row to re-check.
+//
+// The assertion that no query was sent is the point: an error alone would also be produced
+// by a guard placed after the request, which would have already asked the wrong question.
+func TestFindCampaignByName_InvalidUTF8IsNotQueried(t *testing.T) {
+	// The server holds a campaign under the SUBSTITUTED name. If the malformed byte ever
+	// reached the wire, this row would match and the lookup would return an id for a
+	// campaign whose name is not the one requested.
+	srv, gotQuery := newLookupServer(t, []json.RawMessage{
+		lookupRow("55", "bad\ufffdname", StatusEnabled),
+	})
+	client := newAccountsTestClient(t, srv)
+
+	id, err := client.FindCampaignByName(context.Background(), "bad\xffname")
+	if err == nil {
+		t.Fatalf("invalid UTF-8 must be rejected, got id %q", id)
+	}
+	if q := gotQuery(); q != "" {
+		t.Errorf("a name that json.Marshal would rewrite was sent to the server: %s", q)
 	}
 }
 

@@ -38,7 +38,21 @@ import (
 // refusing one answers "no such campaign" about a campaign that exists — the false
 // absence that licenses a duplicate PAID campaign. The rest is safe to pass through: the
 // query rides in a JSON body and encoding/json escapes those runes on the way out.
+//
+// Invalid UTF-8 is refused separately, and for a different reason than the three forbidden
+// runes: not because Google would reject the name, but because this process would CHANGE it.
+// encoding/json substitutes U+FFFD for each malformed byte and returns no error, so a name
+// carrying one is silently rewritten between this function and the wire — the query asks
+// about a name the caller never passed, and its inevitable miss is reported as the clean
+// ("", nil) absence that licenses a create. The range loop above cannot catch this: ranging
+// a malformed byte yields utf8.RuneError, which is none of NUL, LF or CR. Nor can the
+// row-level name re-check, because a query that matches nothing returns no row to check.
+// Rejecting costs no reachable lookup either — Google Ads' JSON and proto surfaces both
+// require valid UTF-8, so no stored campaign name can contain a malformed byte.
 func gaqlStringLiteral(s string) (string, error) {
+	if !utf8.ValidString(s) {
+		return "", fmt.Errorf("google-ads: campaign name for lookup is not valid UTF-8; encoding it would substitute U+FFFD and query a different name")
+	}
 	for _, r := range s {
 		if r == '\x00' || r == '\n' || r == '\r' {
 			return "", fmt.Errorf("google-ads: campaign name contains %U, which Google Ads forbids in a campaign name, so it cannot match a real campaign", r)
