@@ -66,6 +66,14 @@ func TestIsForbiddenIP(t *testing.T) {
 		// metadata address on any NAT64 network; ::ffff:0:7f00:1 is 127.0.0.1.
 		"64:ff9b::a9fe:a9fe", "64:ff9b::7f00:1", "64:ff9b::a00:1",
 		"::ffff:0:a9fe:a9fe", "::ffff:0:7f00:1",
+		// IPv4-compatible ::/96 (RFC 4291, deprecated) embeds IPv4 in the low 32 bits too,
+		// and To4 leaves it alone because bytes 10-11 are zero rather than 0xffff. Denied
+		// as a whole prefix, like 6to4 — hence ::5db8:d822, a PUBLIC address in that form,
+		// is refused here and deliberately absent from the allowed list below.
+		"::a9fe:a9fe", "::7f00:1", "::5db8:d822",
+		// RFC 9780's dummy prefix sits outside the RFC 6666 discard block above and no
+		// predicate rejects it.
+		"100:0:0:1::1",
 	}
 	for _, s := range forbidden {
 		ip := net.ParseIP(s)
