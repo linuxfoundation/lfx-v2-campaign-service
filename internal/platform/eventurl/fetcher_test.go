@@ -48,6 +48,9 @@ func TestIsForbiddenIP(t *testing.T) {
 		"192.0.2.1", "198.51.100.1", "203.0.113.1", // RFC 5737 TEST-NET-1/2/3
 		"100::1",       // RFC 6666 discard-only
 		"2001::1",      // RFC 2928 IETF protocol assignments
+		"2001:db8::1",  // RFC 3849 documentation — outside 2001::/23, despite the prefix
+		"3fff::1",      // RFC 9637 documentation
+		"5f00::1",      // RFC 9602 SRv6 SIDs
 		"64:ff9b:1::1", // RFC 8215 local-use NAT64
 		// The 4-in-6 spellings of two of the above: same host, different notation.
 		"::ffff:127.0.0.1", "::ffff:169.254.169.254",
@@ -163,5 +166,27 @@ func TestFetchRejectsOversizedBody(t *testing.T) {
 	_, err := newUnguardedFetcher().Fetch(context.Background(), srv.URL)
 	if !errors.Is(err, ErrEventURLFetchFailed) || !strings.Contains(err.Error(), "size limit") {
 		t.Errorf("Fetch(oversized) error = %v, want a size-limit ErrEventURLFetchFailed", err)
+	}
+}
+
+// TestFetchPreservesContextCancellation pins the %w on the transport cause. A cancelled
+// fetch is not an upstream failure the caller should retry — it is this service giving up —
+// and only errors.Is can tell the two apart once both wear ErrEventURLFetchFailed. With %v
+// the cause is flattened into the message and the identity is gone.
+func TestFetchPreservesContextCancellation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := newUnguardedFetcher().Fetch(ctx, srv.URL)
+	if !errors.Is(err, ErrEventURLFetchFailed) {
+		t.Fatalf("Fetch err = %v, want ErrEventURLFetchFailed", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Fetch err = %v, want it to unwrap to context.Canceled", err)
 	}
 }

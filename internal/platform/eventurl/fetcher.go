@@ -46,6 +46,9 @@ var forbiddenNets = []net.IPNet{
 	{IP: net.ParseIP("fec0::"), Mask: net.CIDRMask(10, 128)},      // RFC 3879 deprecated site-local
 	{IP: net.ParseIP("100::"), Mask: net.CIDRMask(64, 128)},       // RFC 6666 discard-only
 	{IP: net.ParseIP("2001::"), Mask: net.CIDRMask(23, 128)},      // RFC 2928 IETF protocol assignments
+	{IP: net.ParseIP("2001:db8::"), Mask: net.CIDRMask(32, 128)},  // RFC 3849 documentation
+	{IP: net.ParseIP("3fff::"), Mask: net.CIDRMask(20, 128)},      // RFC 9637 documentation
+	{IP: net.ParseIP("5f00::"), Mask: net.CIDRMask(16, 128)},      // RFC 9602 SRv6 SIDs
 	{IP: net.ParseIP("64:ff9b:1::"), Mask: net.CIDRMask(48, 128)}, // RFC 8215 local NAT64
 }
 
@@ -178,7 +181,10 @@ func (f *Fetcher) Fetch(ctx context.Context, eventURL string) ([]byte, error) {
 		if errors.Is(err, ErrEventURLForbidden) {
 			return nil, fmt.Errorf("%w", ErrEventURLForbidden)
 		}
-		return nil, fmt.Errorf("%w: fetch failed: %v", ErrEventURLFetchFailed, err)
+		// %w on the cause, not %v: a cancelled or timed-out request must stay
+		// errors.Is-able as context.Canceled/DeadlineExceeded, or a caller that
+		// distinguishes "we gave up" from "the page did not answer" cannot.
+		return nil, fmt.Errorf("%w: fetch failed: %w", ErrEventURLFetchFailed, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -193,7 +199,7 @@ func (f *Fetcher) Fetch(ctx context.Context, eventURL string) ([]byte, error) {
 	// silently truncated into a parse of half a page.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to read response: %v", ErrEventURLFetchFailed, err)
+		return nil, fmt.Errorf("%w: failed to read response: %w", ErrEventURLFetchFailed, err)
 	}
 	if len(body) > maxResponseBytes {
 		return nil, fmt.Errorf("%w: response exceeds size limit", ErrEventURLFetchFailed)
