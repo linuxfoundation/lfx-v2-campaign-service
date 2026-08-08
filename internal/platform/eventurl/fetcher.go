@@ -1,11 +1,15 @@
 // Copyright The Linux Foundation and each contributor to LFX.
 // SPDX-License-Identifier: MIT
 
-// Package eventurl fetches event pages under SSRF protections.
+// Package eventurl fetches event pages under SSRF protections and extracts event details
+// from what it fetched.
 //
-// Fetching only. Extracting event metadata from a fetched body is a separate concern and
-// lands separately; this package's contract is that a body it returns came from an
-// address the service is willing to connect to.
+// The two halves keep separate contracts, and the boundary is worth stating because it is
+// what the SSRF guards rest on. Fetcher's contract is that a body it returns came from an
+// address the service is willing to connect to, and nothing more: the bytes themselves are
+// hostile. Parser's contract is that any EventDetails it returns is storable — bounded,
+// valid UTF-8, NUL-free — and that every field in one record came from one source, named in
+// ExtractedFrom.
 package eventurl
 
 import (

@@ -215,11 +215,22 @@ JSON-LD's shapes are the part that silently loses data if taken literally:
   rather than taking the first: unlike a name, no single component stands for the whole, and
   `San Francisco` alone is a materially worse venue line than `San Francisco, CA, US`.
 
-Traversal is **iterative and explicitly bounded** (`maxJSONLDNodes`, `maxJSONLDDepth`).
-`encoding/json`'s 10000-level nesting limit is not a usable bound: it caps what *decodes*, and a
-document that decodes fine can describe far more graph nodes than any real page. The recursive
-form also appended each child slice into its parent, so a nested `@graph` chain copied the
-accumulated result once per level — quadratic allocation driven by attacker-controlled nesting.
+Traversal is **iterative and explicitly bounded** (`maxJSONLDNodes`, `maxJSONLDDepth`,
+`maxJSONLDScheduled`). `encoding/json`'s 10000-level nesting limit is not a usable bound: it caps
+what *decodes*, and a document that decodes fine can describe far more graph nodes than any real
+page. The recursive form also appended each child slice into its parent, so a nested `@graph`
+chain copied the accumulated result once per level — quadratic allocation driven by
+attacker-controlled nesting.
+
+**`maxJSONLDScheduled` is what makes the other two hold.** `maxJSONLDNodes` counts what lands in
+`out`, and only maps land there — so a document made mostly of *non*-maps never trips it. A
+top-level array had every element pushed onto the stack in one shot, before the loop could
+re-check the node cap even once; `[1,1,1,…]` filling the fetcher's 10 MiB body is roughly five
+million frames queued while `out` stays empty. Bounding **scheduled values** bounds the walk
+whatever the document is made of. An oversized array is truncated from the **tail**, not refused
+mid-loop: elements are pushed in reverse so the stack pops them in document order, and refusing
+partway through would drop the *head* — precisely what `parseJSONLD`'s "first named Event in
+document order wins" rule depends on.
 
 Neither cap bounds **peak memory**, and reading them that way is a mistake worth naming:
 `json.Unmarshal` materializes the entire value before `jsonLDNodes` is handed anything, so by
@@ -245,6 +256,15 @@ us a Go string that is already invalid, and Postgres refuses it either way. `san
 truncation, since either can change the byte length. The markup path never reaches the NUL pass
 (`html.Parse` already replaces a raw NUL with U+FFFD per the HTML spec); JSON-LD does, because
 `encoding/json` decodes a JSON `\u0000` escape into a real one.
+
+**Sanitizing runs before a field is judged usable, not after.** `Parse` clamps each strategy's
+candidate — and `parseJSONLD` clamps each node's — *before* testing `Name != ""`. The ordering is
+not cosmetic: a name of nothing but NUL bytes is non-empty when the node is chosen and empty by
+the time the record is returned, so judging first let such a node win its strategy outright. The
+caller then received an empty record stamped `extractedFrom="jsonld"` while the page's second,
+valid `Event` node and its OpenGraph title both went unread — a page-controlled way to make this
+service report "no event details here" about a page that plainly has them. A field that cannot
+survive storage is not a field the page supplied.
 
 ## The JSON keys belong to the brief blob, not to this struct
 

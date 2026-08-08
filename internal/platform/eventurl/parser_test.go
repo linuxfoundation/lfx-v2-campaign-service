@@ -350,3 +350,70 @@ func TestClampSanitizesInvalidUTF8(t *testing.T) {
 		t.Errorf("Name = %q, want KubeCon", n)
 	}
 }
+
+// TestJSONLDNodesBoundsScheduledValuesNotJustNodes pins the bound that maxJSONLDNodes cannot
+// provide on its own.
+//
+// maxJSONLDNodes counts what lands in `out`, and only maps land there. A document made mostly
+// of non-maps therefore never trips it: the walk below queues every element of a top-level
+// array before the loop can re-check the node cap even once, so `out` stays empty while the
+// stack grows with the array. 10 MiB of `[1,1,1,...]` -- comfortably inside the fetcher's body
+// cap -- is millions of frames, and the comment on jsonLDNodes claims a bound that would not
+// hold. maxJSONLDScheduled bounds the traversal by what it SCHEDULES, which is a property of
+// the walk rather than of the document's shape.
+//
+// The trailing Event is the assertion's whole point: it sits past the budget, so it must NOT
+// be reached. Losing the tail of an oversized array is the deliberate trade -- see the
+// truncation comment in jsonLDNodes for why the tail and not the head.
+func TestJSONLDNodesBoundsScheduledValuesNotJustNodes(t *testing.T) {
+	root := make([]interface{}, 0, maxJSONLDScheduled+1)
+	for i := 0; i < maxJSONLDScheduled; i++ {
+		root = append(root, float64(i))
+	}
+	root = append(root, map[string]interface{}{"@type": "Event", "name": "Past the budget"})
+
+	if got := jsonLDNodes(root); len(got) != 0 {
+		t.Errorf("jsonLDNodes returned %d nodes, want 0: every scalar ahead of the trailing "+
+			"Event was scheduled, which means the traversal walked the whole array and "+
+			"maxJSONLDNodes never bounded it", len(got))
+	}
+
+	// The retained prefix keeps document order, which is what parseJSONLD's "first named
+	// Event wins" rule rests on. A budget that dropped from the head would silently change
+	// which event a large page resolves to.
+	head := []interface{}{
+		map[string]interface{}{"@type": "Event", "name": "First"},
+		map[string]interface{}{"@type": "Event", "name": "Second"},
+	}
+	nodes := jsonLDNodes(head)
+	if len(nodes) != 2 || nodes[0]["name"] != "First" {
+		t.Errorf("nodes = %v, want First then Second in document order", nodes)
+	}
+}
+
+// TestParseJSONLDNameIsJudgedAfterSanitizing pins that a name which cannot survive storage is
+// not treated as a name.
+//
+// sanitize strips NUL bytes, so a name of nothing but NULs is non-empty when the node is
+// selected and empty by the time the record is returned. Judging usability before that ran let
+// the poisoned node win its strategy outright: parseJSONLD committed to it, Parse stamped
+// ExtractedFrom="jsonld", and the caller got an empty record -- with the page's second, valid
+// Event node and its OpenGraph title both sitting unread. An attacker-controlled page could
+// therefore make this service report "no event details here" about a page that plainly has
+// them, which is the fail-closed shape that matters: the caller acts on the absence.
+func TestParseJSONLDNameIsJudgedAfterSanitizing(t *testing.T) {
+	page := `<html><head>` +
+		`<script type="application/ld+json">{"@type":"Event","name":"\u0000\u0000"}</script>` +
+		`<script type="application/ld+json">{"@type":"Event","name":"KubeCon EU"}</script>` +
+		`<meta property="og:title" content="OpenGraph fallback">` +
+		`</head><body></body></html>`
+
+	got := NewParser().Parse([]byte(page))
+	if got.Name != "KubeCon EU" {
+		t.Errorf("Name = %q, want %q -- a name of NUL bytes alone is empty once stored, so it "+
+			"cannot be what makes a node the event this page is about", got.Name, "KubeCon EU")
+	}
+	if got.ExtractedFrom != "jsonld" {
+		t.Errorf("ExtractedFrom = %q, want jsonld", got.ExtractedFrom)
+	}
+}

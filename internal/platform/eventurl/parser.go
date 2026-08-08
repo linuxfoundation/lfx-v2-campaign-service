@@ -143,19 +143,28 @@ func (p *Parser) Parse(body []byte) EventDetails {
 		{"opengraph", p.parseOpenGraph},
 	} {
 		candidate := EventDetails{}
-		if strategy.parse(doc, &candidate) && candidate.Name != "" {
+		if !strategy.parse(doc, &candidate) {
+			continue
+		}
+		// Clamped BEFORE the name is judged usable, not after. sanitize strips NUL bytes
+		// and replaces invalid UTF-8, so a name made only of those is non-empty here and
+		// empty by the time it is returned: judging first meant a page whose first Event
+		// carried such a name won the strategy outright, and the caller received an empty
+		// record with ExtractedFrom="jsonld" while the page's OpenGraph title sat unread.
+		// A field that cannot survive storage is not a field the page supplied.
+		candidate.clampFields()
+		if candidate.Name != "" {
 			candidate.ExtractedFrom = strategy.name
-			candidate.clampFields()
 			return candidate
 		}
 	}
 
 	details := EventDetails{}
 	p.parseFallback(doc, &details)
+	details.clampFields()
 	if details.Name != "" {
 		details.ExtractedFrom = "fallback"
 	}
-	details.clampFields()
 	return details
 }
 
@@ -172,9 +181,18 @@ func (p *Parser) Parse(body []byte) EventDetails {
 // response at maxResponseBytes (10 MiB) and REFUSES anything larger rather than parsing a
 // truncated prefix, so the decoded value is bounded by what 10 MiB of JSON can describe.
 // These two caps bound the TRAVERSAL that follows, which is a different cost.
+//
+// maxJSONLDScheduled is the third bound, and it is the one that makes the other two hold.
+// maxJSONLDNodes counts what LANDS IN `out` — i.e. maps — so a document that is mostly not
+// maps never trips it: a top-level array of scalars leaves `out` empty forever while every
+// element is still queued and popped. 10 MiB of `[1,1,1,...]` is roughly five million such
+// elements, several times that in bytes of frame, and the cap the comment above promises
+// never fires once. Bounding SCHEDULED values instead bounds the traversal whatever the
+// document is made of.
 const (
-	maxJSONLDNodes = 512
-	maxJSONLDDepth = 16
+	maxJSONLDNodes     = 512
+	maxJSONLDDepth     = 16
+	maxJSONLDScheduled = 4096
 )
 
 // jsonLDNodes flattens one JSON-LD document into the node objects worth inspecting.
@@ -196,6 +214,9 @@ func jsonLDNodes(root interface{}) []map[string]interface{} {
 	}
 	var out []map[string]interface{}
 	stack := []frame{{v: root}}
+	// budget is what remains of maxJSONLDScheduled. Every value put on the stack spends one,
+	// including the root, so the stack can never hold more frames than the budget allowed.
+	budget := maxJSONLDScheduled - 1
 	for len(stack) > 0 && len(out) < maxJSONLDNodes {
 		f := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
@@ -205,13 +226,26 @@ func jsonLDNodes(root interface{}) []map[string]interface{} {
 		switch t := f.v.(type) {
 		case map[string]interface{}:
 			out = append(out, t)
-			if g, ok := t["@graph"]; ok {
+			if g, ok := t["@graph"]; ok && budget > 0 {
+				budget--
 				stack = append(stack, frame{v: g, depth: f.depth + 1})
 			}
 		case []interface{}:
+			// The array is truncated to the budget BEFORE anything is pushed, and truncated
+			// from the TAIL. Scheduling every element in one shot is what let a single large
+			// array defeat maxJSONLDNodes (see the constant's comment); refusing mid-loop
+			// instead would drop elements from the HEAD, because the push below runs in
+			// reverse — and the head is exactly what parseJSONLD's "first named Event in
+			// document order wins" rule depends on. Keeping the prefix keeps that rule
+			// meaningful on a document too large to walk in full.
+			n := len(t)
+			if n > budget {
+				n = budget
+			}
+			budget -= n
 			// Pushed in reverse so the stack pops them in document order, which is what
 			// makes parseJSONLD's "first named Event wins" rule deterministic.
-			for i := len(t) - 1; i >= 0; i-- {
+			for i := n - 1; i >= 0; i-- {
 				stack = append(stack, frame{v: t[i], depth: f.depth + 1})
 			}
 		}
@@ -367,6 +401,11 @@ func (p *Parser) parseJSONLD(doc *html.Node, details *EventDetails) bool {
 					// cannot be built without, and a node lacking it cannot be the event
 					// this page is about. Skipping it here (rather than merging it) is
 					// what keeps its stray fields out of the node that IS the event.
+					//
+					// Clamped first, for the same reason Parse clamps before judging: a
+					// name of NUL bytes alone is non-empty until sanitize runs, and would
+					// otherwise win this loop and lock out the real Event node behind it.
+					candidate.clampFields()
 					if candidate.Name == "" {
 						continue
 					}
