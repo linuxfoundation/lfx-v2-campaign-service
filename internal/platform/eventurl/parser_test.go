@@ -83,6 +83,63 @@ func TestParse(t *testing.T) {
 
 // TestParseClampsFields pins the field bound. The body limit is 10MiB and every field
 // is attacker-controlled, so without it one <title> lands megabytes in Postgres.
+// TestParseDoesNotMergeAcrossStrategies pins provenance as all-or-nothing.
+//
+// The page carries JSON-LD with a description but NO name, so the JSON-LD strategy loses,
+// and OpenGraph tags that supply a name and a different description. With one shared
+// EventDetails across the three strategies, the JSON-LD description survived into the
+// OpenGraph result: the record then claimed ExtractedFrom="opengraph" while holding a
+// description no OpenGraph tag on the page contains. ExtractedFrom exists so a human can
+// judge how much to trust the rest of the record, so a label that is true of only some
+// fields is worse than no label.
+func TestParseDoesNotMergeAcrossStrategies(t *testing.T) {
+	body := []byte(`<html><head>
+<script type="application/ld+json">{"@type":"Event","description":"jsonld description"}</script>
+<meta property="og:title" content="OG Event">
+<meta property="og:description" content="og description">
+</head><body></body></html>`)
+
+	got := NewParser().Parse(body)
+
+	if got.ExtractedFrom != "opengraph" {
+		t.Fatalf("ExtractedFrom = %q, want opengraph", got.ExtractedFrom)
+	}
+	if got.Name != "OG Event" {
+		t.Errorf("Name = %q, want OG Event", got.Name)
+	}
+	if got.Description != "og description" {
+		t.Errorf("Description = %q, want the OpenGraph description only — a losing strategy's field leaked into the winner's result", got.Description)
+	}
+}
+
+// TestParseJSONLDMediaTypeParameters: `type` is a media type, and RFC 2045 lets it carry
+// parameters. `application/ld+json;profile=...` is the form the JSON-LD spec defines, so a
+// whole-value comparison skips a perfectly valid block and falls through to weaker
+// metadata — a silent quality regression, since nothing errors.
+func TestParseJSONLDMediaTypeParameters(t *testing.T) {
+	for _, typ := range []string{
+		`application/ld+json`,
+		`application/ld+json;profile="http://www.w3.org/ns/json-ld#compacted"`,
+		`application/ld+json; charset=utf-8`,
+		`  APPLICATION/LD+JSON  `,
+	} {
+		t.Run(typ, func(t *testing.T) {
+			// The attribute is SINGLE-quoted: a media-type parameter value may itself be
+			// a quoted string, and inside a double-quoted attribute that quote would
+			// terminate the attribute rather than reach the parser.
+			body := []byte(`<html><head><script type='` + typ +
+				`'>{"@type":"Event","name":"Parameterised"}</script></head><body></body></html>`)
+			got := NewParser().Parse(body)
+			if got.ExtractedFrom != "jsonld" {
+				t.Fatalf("ExtractedFrom = %q, want jsonld", got.ExtractedFrom)
+			}
+			if got.Name != "Parameterised" {
+				t.Errorf("Name = %q, want Parameterised", got.Name)
+			}
+		})
+	}
+}
+
 func TestParseClampsFields(t *testing.T) {
 	// Multi-byte runes straddling the cut prove the truncation lands on a rune
 	// boundary: an invalid UTF-8 tail is rejected on insert, turning an oversized

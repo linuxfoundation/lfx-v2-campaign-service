@@ -63,3 +63,24 @@ literally, produces an empty field with nothing saying why — the failure mode 
 Every field is clamped on a RUNE boundary: a byte slice of UTF-8 can end mid-sequence, and
 Postgres rejects the invalid string on insert, turning an oversized field into a failed
 request rather than a short one.
+
+## Correction, same day — two defects found in review
+
+**Provenance was not all-or-nothing.** All three strategies wrote into one shared
+`EventDetails`, so a losing strategy's fields survived into the winner's result. A page with
+JSON-LD carrying a description but no name, plus OpenGraph tags carrying both, produced
+`extracted_from="opengraph"` with the JSON-LD description attached. Reverting the fix
+reproduces it exactly: `Description = "jsonld description"` under an `opengraph` label. Each
+strategy now fills a fresh candidate and only a winner is adopted.
+
+**The JSON-LD media type was compared whole.** `type` is a media type and may carry
+parameters; `application/ld+json;profile="..."` is the JSON-LD spec's own form, and a
+whole-value `EqualFold` skipped it, degrading silently to OpenGraph or `<title>` with nothing
+reported. Now parsed with `mime.ParseMediaType` and compared on the media type alone.
+
+The shared thread between them: **both failures are silent quality losses, not errors.** One
+produces a record that is wrong about where it came from, the other a record that is thinner
+than the page justified. Neither surfaces anywhere a caller or an operator would see, which is
+why both needed a test that asserts the *specific* value rather than merely that parsing
+succeeded.
+
