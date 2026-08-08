@@ -246,3 +246,107 @@ func TestEventDetailsUsesStoredBlobKeys(t *testing.T) {
 		}
 	}
 }
+
+// TestJSONLDTypeIsAllowListed pins that @type is matched against schema.org's Event
+// hierarchy and not by substring. A substring test for "event" claims EventVenue (a
+// Place), EventReservation (a Reservation) and the Event*Type enumerations, and an
+// `@graph` conventionally lists the venue BEFORE the event it hosts — so the wrong node
+// was routinely the first one matched.
+func TestJSONLDTypeIsAllowListed(t *testing.T) {
+	notEvents := []string{"EventVenue", "EventReservation", "EventStatusType", "EventAttendanceModeEnumeration"}
+	for _, typ := range notEvents {
+		t.Run(typ, func(t *testing.T) {
+			page := `<html><head><title>Real Title</title><script type="application/ld+json">` +
+				`{"@type":"` + typ + `","name":"Moscone Center"}` +
+				`</script></head><body></body></html>`
+			got := NewParser().Parse([]byte(page))
+			if got.Name == "Moscone Center" {
+				t.Errorf("@type %q was treated as an Event; name came from the venue node", typ)
+			}
+			if got.ExtractedFrom != "fallback" {
+				t.Errorf("ExtractedFrom = %q, want fallback (no Event node on the page)", got.ExtractedFrom)
+			}
+		})
+	}
+
+	// The subtypes and the IRI/CURIE spellings must still be admitted — over-rejecting
+	// is a silent quality regression in the other direction.
+	events := []string{"Event", "BusinessEvent", "EducationEvent", "Hackathon",
+		"https://schema.org/Event", "schema:MusicEvent"}
+	for _, typ := range events {
+		t.Run(typ, func(t *testing.T) {
+			page := `<html><head><script type="application/ld+json">` +
+				`{"@type":"` + typ + `","name":"KubeCon"}` +
+				`</script></head><body></body></html>`
+			if got := NewParser().Parse([]byte(page)); got.Name != "KubeCon" {
+				t.Errorf("@type %q was rejected: Name = %q, want KubeCon", typ, got.Name)
+			}
+		})
+	}
+}
+
+// TestJSONLDLocationResolvesPostalAddress pins the documented fallback. `location` is a
+// Place whose venue is in `name`, and when `name` is absent the fallback is `address` —
+// which schema.org emits as a PostalAddress NODE, not a string. Reading only string
+// sub-keys made that fallback resolve to empty for the exact shape it exists to serve.
+func TestJSONLDLocationResolvesPostalAddress(t *testing.T) {
+	page := `<html><head><script type="application/ld+json">{"@type":"Event","name":"KubeCon",
+		"location":{"@type":"Place","address":{"@type":"PostalAddress",
+		"streetAddress":"747 Howard St","addressLocality":"San Francisco",
+		"addressRegion":"CA","addressCountry":{"@type":"Country","name":"US"}}}}
+		</script></head><body></body></html>`
+	got := NewParser().Parse([]byte(page))
+	want := "747 Howard St, San Francisco, CA, US"
+	if got.Location != want {
+		t.Errorf("Location = %q, want %q", got.Location, want)
+	}
+}
+
+// TestJSONLDDoesNotMergeDistinctEvents pins that ONE node supplies every field. Merging
+// per-field across nodes composes an event that exists on no part of the page: the name
+// of one event beside the dates of another, with nothing downstream able to tell.
+func TestJSONLDDoesNotMergeDistinctEvents(t *testing.T) {
+	page := `<html><head><script type="application/ld+json">[
+		{"@type":"Event","name":"KubeCon EU","startDate":"2026-03-01"},
+		{"@type":"Event","description":"A different conference","endDate":"2026-09-30"}
+	]</script></head><body></body></html>`
+	got := NewParser().Parse([]byte(page))
+
+	if got.Name != "KubeCon EU" || got.StartDate != "2026-03-01" {
+		t.Fatalf("first Event not selected: Name=%q StartDate=%q", got.Name, got.StartDate)
+	}
+	if got.Description != "" {
+		t.Errorf("Description = %q, want empty: it belongs to the SECOND Event node", got.Description)
+	}
+	if got.EndDate != "" {
+		t.Errorf("EndDate = %q, want empty: it belongs to the SECOND Event node", got.EndDate)
+	}
+}
+
+// TestClampSanitizesInvalidUTF8 pins that invalid UTF-8 arriving IN the fetched bytes is
+// replaced, not merely left alone by a truncation that happens to cut cleanly. html.Parse
+// does not validate encoding, so a page declaring UTF-8 while emitting Latin-1 hands us a
+// string Postgres will refuse. A NUL is valid UTF-8 and refused too, so it is stripped.
+func TestClampSanitizesInvalidUTF8(t *testing.T) {
+	page := append([]byte("<html><head><title>Caf"), 0xE9) // lone Latin-1 é
+	page = append(page, []byte(" Event</title></head></html>")...)
+
+	got := NewParser().Parse(page)
+	if !utf8.ValidString(got.Name) {
+		t.Errorf("Name = %q is not valid UTF-8", got.Name)
+	}
+	if !strings.Contains(got.Name, "Caf") || !strings.Contains(got.Name, " Event") {
+		t.Errorf("Name = %q lost the surrounding valid text", got.Name)
+	}
+
+	// The NUL pass needs its own input. html.Parse already replaces a raw NUL with U+FFFD
+	// per the HTML spec, so the markup path never reaches it. JSON-LD does: encoding/json
+	// decodes the six-character escape below into a real NUL, which Postgres then refuses.
+	jsonLD := `<html><head><script type="application/ld+json">` +
+		`{"@type":"Event","name":"Kube\u0000Con"}</script></head><body></body></html>`
+	if n := NewParser().Parse([]byte(jsonLD)).Name; strings.ContainsRune(n, 0) {
+		t.Errorf("Name = %q still carries a NUL byte", n)
+	} else if n != "KubeCon" {
+		t.Errorf("Name = %q, want KubeCon", n)
+	}
+}

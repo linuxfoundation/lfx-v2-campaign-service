@@ -53,10 +53,34 @@ type EventDetails struct {
 	ExtractedFrom string `json:"extractedFrom,omitempty"` // "jsonld", "opengraph", or "fallback"
 }
 
-// clamp truncates s to at most maxBytes, cutting on a RUNE boundary: a byte slice of
-// UTF-8 can end mid-sequence, and Postgres rejects the invalid string on insert —
-// turning an oversized field into a failed request rather than a short one.
+// sanitize makes s storable in a Postgres text column.
+//
+// Two distinct hazards, and clamping addresses NEITHER of them:
+//
+// Invalid UTF-8 does not have to be introduced by truncation — it can arrive that way.
+// The fetched bytes are an arbitrary remote response, and `html.Parse` does not validate
+// encoding: a page declaring UTF-8 while emitting Latin-1, or one deliberately serving
+// malformed sequences, hands us a Go string that is not valid UTF-8 to begin with.
+// Clamping cuts on a rune boundary, so it only avoids CREATING invalid UTF-8; it cannot
+// notice what was already there. Postgres rejects the insert either way.
+//
+// A NUL byte is valid UTF-8, so ToValidUTF8 leaves it, and Postgres still refuses it in a
+// text value ("unsupported Unicode escape sequence"). It gets its own pass.
+//
+// Both replacements happen BEFORE clamping, since either can change the byte length.
+func sanitize(s string) string {
+	s = strings.ToValidUTF8(s, "�")
+	if strings.IndexByte(s, 0) >= 0 {
+		s = strings.ReplaceAll(s, "\x00", "")
+	}
+	return s
+}
+
+// clamp sanitizes s and truncates it to at most maxBytes, cutting on a RUNE boundary:
+// a byte slice of UTF-8 can end mid-sequence, and Postgres rejects the invalid string on
+// insert — turning an oversized field into a failed request rather than a short one.
 func clamp(s string, maxBytes int) string {
+	s = sanitize(s)
 	if len(s) <= maxBytes {
 		return s
 	}
@@ -66,8 +90,8 @@ func clamp(s string, maxBytes int) string {
 	return s[:maxBytes]
 }
 
-// clampFields bounds every field in one place, so a new extraction strategy cannot
-// introduce an unbounded one by forgetting to call it.
+// clampFields bounds and sanitizes every field in one place, so a new extraction strategy
+// cannot introduce an unbounded or unstorable one by forgetting to call it.
 func (d *EventDetails) clampFields() {
 	d.Name = clamp(d.Name, maxFieldBytes)
 	d.Description = clamp(d.Description, maxDescriptionBytes)
@@ -140,6 +164,14 @@ func (p *Parser) Parse(body []byte) EventDetails {
 // document that decodes fine can still describe far more graph nodes than any real page.
 // A page emitting more than a few hundred nodes, or nesting `@graph` past a handful of
 // levels, is not a page this parser is for.
+//
+// Neither constant bounds PEAK MEMORY, and it would be a mistake to read them that way:
+// json.Unmarshal runs to completion and materializes the entire value before jsonLDNodes
+// is handed anything, so by the time the node cap can apply, the allocation it might have
+// prevented has already happened. What bounds that is upstream — the fetcher caps a
+// response at maxResponseBytes (10 MiB) and REFUSES anything larger rather than parsing a
+// truncated prefix, so the decoded value is bounded by what 10 MiB of JSON can describe.
+// These two caps bound the TRAVERSAL that follows, which is a different cost.
 const (
 	maxJSONLDNodes = 512
 	maxJSONLDDepth = 16
@@ -178,7 +210,7 @@ func jsonLDNodes(root interface{}) []map[string]interface{} {
 			}
 		case []interface{}:
 			// Pushed in reverse so the stack pops them in document order, which is what
-			// makes setIfEmpty's "first node to supply a field wins" rule deterministic.
+			// makes parseJSONLD's "first named Event wins" rule deterministic.
 			for i := len(t) - 1; i >= 0; i-- {
 				stack = append(stack, frame{v: t[i], depth: f.depth + 1})
 			}
@@ -219,7 +251,12 @@ func jsonLDTextAt(v interface{}, depth int, keys ...string) string {
 		return t
 	case map[string]interface{}:
 		for _, k := range keys {
-			if s, ok := t[k].(string); ok && s != "" {
+			// The sub-property is resolved RECURSIVELY rather than asserted to string.
+			// schema.org applies the same string-or-node-or-array freedom at every level,
+			// not only the top one: an ImageObject's `url` is usually a string but a
+			// `name` may arrive as a one-element array. Asserting here would drop those
+			// exactly as asserting at the top level dropped the node shape.
+			if s := jsonLDTextAt(t[k], depth+1, keys...); s != "" {
 				return s
 			}
 		}
@@ -233,29 +270,120 @@ func jsonLDTextAt(v interface{}, depth int, keys ...string) string {
 	return ""
 }
 
+// jsonLDLocation resolves schema.org `location` to a human-readable venue string.
+//
+// It is separate from jsonLDText because `location` is the one property whose fallback is
+// not another string: a Place carries the venue in `name`, and when `name` is absent the
+// fallback is `address`, which is normally a PostalAddress NODE. Passing "address" to
+// jsonLDText's generic key list therefore resolved nothing for the exact shape the
+// fallback exists to serve — the location came back empty and no error said why.
+func jsonLDLocation(v interface{}) string {
+	return jsonLDLocationAt(v, 0)
+}
+
+func jsonLDLocationAt(v interface{}, depth int) string {
+	if depth > maxJSONLDDepth {
+		return ""
+	}
+	switch t := v.(type) {
+	case string:
+		return t
+	case []interface{}:
+		for _, e := range t {
+			if s := jsonLDLocationAt(e, depth+1); s != "" {
+				return s
+			}
+		}
+	case map[string]interface{}:
+		if s := jsonLDTextAt(t["name"], depth+1, "name"); s != "" {
+			return s
+		}
+		return jsonLDAddressAt(t["address"], depth+1)
+	}
+	return ""
+}
+
+// jsonLDAddressAt renders a PostalAddress. Its fields are JOINED rather than resolved
+// first-wins: "San Francisco" alone is a materially worse answer than "San Francisco, CA,
+// US" for a venue line, and unlike a name there is no single field that stands for the
+// whole. Order is schema.org's own narrowest-to-widest.
+func jsonLDAddressAt(v interface{}, depth int) string {
+	if depth > maxJSONLDDepth {
+		return ""
+	}
+	switch t := v.(type) {
+	case string:
+		return t
+	case []interface{}:
+		for _, e := range t {
+			if s := jsonLDAddressAt(e, depth+1); s != "" {
+				return s
+			}
+		}
+	case map[string]interface{}:
+		var parts []string
+		for _, k := range []string{"streetAddress", "addressLocality", "addressRegion", "addressCountry"} {
+			// addressCountry is frequently a Country node rather than a string, so each
+			// component goes through the same string-or-node resolution as everything else.
+			if s := jsonLDTextAt(t[k], depth+1, "name"); s != "" {
+				parts = append(parts, s)
+			}
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, ", ")
+		}
+		// A node that is not a PostalAddress at all still gets the ordinary name treatment.
+		return jsonLDTextAt(t["name"], depth+1, "name")
+	}
+	return ""
+}
+
 // parseJSONLD extracts event data from <script type="application/ld+json"> blocks.
+//
+// ONE node supplies every field, and the node is the first NAMED Event in document order.
+// The obvious alternative — let each Event node fill whatever the previous ones left empty —
+// composes an event that exists on no part of the page: a page whose `@graph` lists Event A
+// with only a name and Event B with only a description would yield A's name beside B's
+// dates, and nothing downstream could tell that the two halves describe different events.
+// A nameless Event node leaks its fields into the next named one the same way.
+//
+// This is the same all-or-nothing rule Parse applies BETWEEN strategies (JSON-LD vs
+// OpenGraph vs fallback); applying it between strategies but not between nodes within one
+// would leave the larger of the two mixing hazards open, since a single `@graph` routinely
+// carries several events while a page rarely carries competing metadata blocks.
 func (p *Parser) parseJSONLD(doc *html.Node, details *EventDetails) bool {
-	found := false
-	var walk func(*html.Node)
-	walk = func(n *html.Node) {
+	var walk func(*html.Node) bool
+	walk = func(n *html.Node) bool {
 		if n.Type == html.ElementNode && n.Data == "script" && isJSONLDScript(n) &&
 			n.FirstChild != nil && n.FirstChild.Type == html.TextNode {
 			var doc interface{}
 			if err := json.Unmarshal([]byte(n.FirstChild.Data), &doc); err == nil {
 				for _, node := range jsonLDNodes(doc) {
-					if p.extractFromJSONLD(node, details) {
-						found = true
+					var candidate EventDetails
+					if !p.extractFromJSONLD(node, &candidate) {
+						continue
 					}
+					// A name is what makes a node usable: it is the one field the brief
+					// cannot be built without, and a node lacking it cannot be the event
+					// this page is about. Skipping it here (rather than merging it) is
+					// what keeps its stray fields out of the node that IS the event.
+					if candidate.Name == "" {
+						continue
+					}
+					*details = candidate
+					return true
 				}
 			}
 		}
 		// Keep walking: a page carries several blocks and the Event is rarely first.
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			walk(c)
+			if walk(c) {
+				return true
+			}
 		}
+		return false
 	}
-	walk(doc)
-	return found
+	return walk(doc)
 }
 
 func isJSONLDScript(n *html.Node) bool {
@@ -280,17 +408,56 @@ func isJSONLDScript(n *html.Node) bool {
 	return false
 }
 
+// eventTypes is schema.org's Event plus its subtypes, keyed lower-case.
+//
+// This is an ALLOW-LIST rather than a substring test for "event" because the substring
+// version claimed types that are not events and never were: EventVenue is a Place,
+// EventReservation is a Reservation, and EventStatusType and EventAttendanceModeEnumeration
+// are enumerations. That is not a theoretical mismatch — an `@graph` conventionally lists
+// the venue before the event it hosts, so EventVenue was routinely the FIRST match, and the
+// old first-wins merge then locked the event name to the venue's while the real Event node
+// was still to come. The two defects compounded: either alone produced a wrong name.
+//
+// Omitting a real subtype costs a page that falls through to OpenGraph, which is a
+// recoverable degradation; admitting a non-event costs a brief built from the wrong node.
+var eventTypes = map[string]bool{
+	"event": true,
+	// Direct subtypes, schema.org v29.
+	"businessevent": true, "childrensevent": true, "comedyevent": true,
+	"courseinstance": true, "danceevent": true, "deliveryevent": true,
+	"educationevent": true, "eventseries": true, "exhibitionevent": true,
+	"festival": true, "foodevent": true, "hackathon": true,
+	"literaryevent": true, "musicevent": true, "publicationevent": true,
+	"saleevent": true, "screeningevent": true, "socialevent": true,
+	"sportsevent": true, "theaterevent": true, "visualartsevent": true,
+	// PublicationEvent's own subtypes.
+	"broadcastevent": true, "ondemandevent": true,
+}
+
+// isEventType reports whether one @type token names an Event.
+//
+// The token is normalised first: schema.org types travel as a bare name ("Event"), a full
+// IRI ("https://schema.org/Event"), or a compacted CURIE ("schema:Event") depending on
+// which generator emitted the page, and all three mean the same type. Matching only the
+// bare form would reject two shapes that are just as valid as the one we happen to expect.
+func isEventType(s string) bool {
+	s = strings.TrimSpace(s)
+	if i := strings.LastIndexAny(s, "/:#"); i >= 0 {
+		s = s[i+1:]
+	}
+	return eventTypes[strings.ToLower(s)]
+}
+
 // extractFromJSONLD extracts event fields from one JSON-LD node object.
 func (p *Parser) extractFromJSONLD(ld map[string]interface{}, details *EventDetails) bool {
-	// @type may be a string or an array of them; "event" matches the subtypes too
-	// (BusinessEvent, EducationEvent, …), which is what most conference pages emit.
+	// @type may be a string or an array of them (a node can declare several types).
 	var isEvent bool
 	switch t := ld["@type"].(type) {
 	case string:
-		isEvent = strings.Contains(strings.ToLower(t), "event")
+		isEvent = isEventType(t)
 	case []interface{}:
 		for _, tv := range t {
-			if s, ok := tv.(string); ok && strings.Contains(strings.ToLower(s), "event") {
+			if s, ok := tv.(string); ok && isEventType(s) {
 				isEvent = true
 				break
 			}
@@ -307,14 +474,17 @@ func (p *Parser) extractFromJSONLD(ld map[string]interface{}, details *EventDeta
 	setIfEmpty(&details.EndDate, jsonLDText(ld["endDate"]))
 	// A Place carries the venue in name, with address (itself often a PostalAddress
 	// node) as fallback; an ImageObject uses url, or contentUrl for a distribution.
-	setIfEmpty(&details.Location, jsonLDText(ld["location"], "name", "address"))
+	setIfEmpty(&details.Location, jsonLDLocation(ld["location"]))
 	setIfEmpty(&details.Image, jsonLDText(ld["image"], "url", "contentUrl"))
 
 	return details.Name != ""
 }
 
-// setIfEmpty fills dst only when still empty, so the FIRST node to supply a field wins
-// and a later Organization block cannot overwrite the Event's own name.
+// setIfEmpty fills dst only when still empty, so the FIRST strategy to supply a field wins:
+// JSON-LD is authored metadata and beats OpenGraph, which beats the <title> fallback.
+// Within JSON-LD it no longer arbitrates between nodes — parseJSONLD commits to a single
+// node before any field is written — so the only thing it orders here is that a node's own
+// value cannot be overwritten by a weaker later strategy.
 func setIfEmpty(dst *string, v string) {
 	if *dst == "" && v != "" {
 		*dst = v
