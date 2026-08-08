@@ -1749,7 +1749,7 @@ platform client is internal, so it can land ahead of both without publishing any
 |---|---|---|---|
 | **A** | `internal/platform/googleads/keywords.go` + tests. No design, no handler, no dispatcher method. | none — nothing reachable changes | ≈600 (platform client ~300 + tests ~300) |
 | **B** | `design/brief.go`, `model/keyword.go`, `errors.go`, orchestrator, handlers, **and** the `internal/dispatch/googleads.go` `ListKeywords`/`UpdateKeywords` methods + the `KeywordManager` guard assertion. | two endpoints that WORK for Google Ads | ≈650 (service ~450 + dispatcher ~200) |
-| **C** | `internal/dispatch/googleads_keywords_integration_test.go` — the `### PR 3` section below, unchanged. Tests only. | unchanged from B | ≈200 |
+| **C** | `internal/service/brief_test.go` — the `### PR 3` section below, unchanged. Tests only. | unchanged from B | ≈200 |
 
 The two estimates are the ≈500 and ≈750 in the `### PR n` headings below, re-cut along the new
 boundary rather than re-guessed: PR 2's own breakdown (`~750 = platform client ~300 + dispatcher
