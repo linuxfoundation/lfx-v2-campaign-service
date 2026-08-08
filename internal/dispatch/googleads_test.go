@@ -1194,6 +1194,58 @@ func TestGoogleAds_ReadMetrics_ConnectionUnresolvedPropagates(t *testing.T) {
 	}
 }
 
+// TestGoogleAds_ReadMetrics_UnusableConnectionIsClassifiedNotRetryable pins the READ path's
+// half of the classification the ListAccounts table pins for discovery. The two reach the
+// validator through different resolvers, and only the discovery one used to tag the result:
+// an inactive or incomplete connection came back off resolveGoogleAdsClient bare, missed
+// the handler's ErrConnectionNotUsable arm (internal/service/brief.go), and answered 503 —
+// "the platform did not respond" about a platform never contacted, telling the caller to
+// retry a request no amount of waiting can satisfy. The status toggle resolves through the
+// same function and inherits the same guarantee.
+func TestGoogleAds_ReadMetrics_UnusableConnectionIsClassifiedNotRetryable(t *testing.T) {
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("reached Google Ads with an unusable connection")
+	}))
+	defer apiSrv.Close()
+
+	cases := []struct {
+		name   string
+		mutate func(*model.Connection)
+		want   error
+	}{
+		{"inactive", func(c *model.Connection) { c.Status = model.StatusInactive }, domain.ErrConnectionInactive},
+		{"undecodable blob", func(c *model.Connection) { c.EncryptedCredentials = []byte(`{`) }, domain.ErrCredentialsUndecodable},
+		{"incomplete credentials", func(c *model.Connection) {
+			c.EncryptedCredentials = []byte(`{"ClientID":"a","ClientSecret":"b","DeveloperToken":"c"}`)
+		}, domain.ErrCredentialsIncomplete},
+		{"no account selected", func(c *model.Connection) { c.AccountID = "" }, domain.ErrAccountNotSelected},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := activeGoogleAdsConn(goodGoogleAdsCreds)
+			tc.mutate(conn)
+			d := NewGoogleAdsDispatcher(
+				fakeConnReader{conn: conn}, identityEncryptor{},
+				googleads.WithBaseURL(apiSrv.URL),
+			)
+			camp := &model.Campaign{Platform: model.ProviderGoogleAds, PlatformCampaignID: "777"}
+			_, err := d.ReadMetrics(context.Background(), "proj", model.ProviderGoogleAds, camp, model.MetricsWindowLast30Days)
+			if err == nil {
+				t.Fatal("expected a connection error, got nil")
+			}
+			if !errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Errorf("error = %v, want errors.Is(err, domain.ErrConnectionNotUsable): without it "+
+					"the handler falls to its default arm and answers 503 for a condition only an "+
+					"edit to the connection can clear", err)
+			}
+			if !errors.Is(err, tc.want) {
+				t.Errorf("error = %v, want errors.Is(err, %v): the reason sentinel is what the "+
+					"handler logs, and it must survive alongside the status marker", err, tc.want)
+			}
+		})
+	}
+}
+
 // TestGoogleAds_ReadMetrics_UnmappableWindowIs400AndNeverContactsPlatform pins the
 // translation boundary: a window outside the closed model vocabulary is caller input, so it
 // must surface as domain.ErrMetricsWindowUnsupported (400) and the platform must never be

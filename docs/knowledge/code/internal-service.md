@@ -124,9 +124,11 @@ optional-capability pattern as `StatusToggler`) rather than requiring every disp
 implement it; a dispatcher that isn't a `MetricsReader` — or a platform with no dispatcher
 registered at all — returns `ErrMetricsUnsupported` (400) without ever contacting the
 platform. An unprovisioned campaign (`PlatformCampaignID` empty, or `campaign == nil`)
-returns `ErrCampaignNotProvisioned` (409) before any platform call, same as the toggle. Any
-other error from the dispatcher's `ReadMetrics` call propagates as-is (503) — a read has no
-ambiguous mutation to protect, so there is no UNCONFIRMED classification here. The call is
+returns `ErrCampaignNotProvisioned` (409) before any platform call, same as the toggle. A
+connection the dispatcher refuses BEFORE contacting the platform — `ErrCampaignAccountMismatch`,
+`ErrAccountNotSelected`, `ErrConnectionNotUsable` — is also a 409 (see the classification
+section below). Everything else propagates as-is (503) — a read has no ambiguous mutation to
+protect, so there is no UNCONFIRMED classification here. The call is
 bounded by `metricsCallTimeout` (20s, distinct from `toggleCallTimeout`'s 45s — reads should
 fail fast rather than hold a request open).
 

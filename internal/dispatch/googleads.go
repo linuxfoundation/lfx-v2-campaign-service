@@ -278,11 +278,19 @@ func validateGoogleAdsConnection(projectID string, res *resolved) (googleAdsCred
 // Every other check — active status, decodable blob, all four OAuth fields present — still
 // applies, because a discovery call against a stale or half-configured connection should
 // fail as a connection problem rather than as an opaque error from Google.
+//
+// Each of those failures is tagged with domain.ErrConnectionNotUsable HERE, alongside the
+// sentinel naming the specific defect, because every caller needs it and none of them can
+// add it later: the handlers classify on that sentinel, and an untagged inactive-or-
+// incomplete connection falls to their default arm and answers 503 — "the platform did not
+// respond" for a connection the platform was never asked about, with a remedy (retry) that
+// no amount of waiting can satisfy. Tagging at the point of detection is also what keeps
+// the two resolve paths below from having to agree about it.
 func validateGoogleAdsCredentials(projectID string, res *resolved) (googleAdsCreds, error) {
 	var creds googleAdsCreds
 	if res.status != model.StatusActive {
-		return creds, fmt.Errorf("%w: google ads connection for project %s is %s, not active",
-			domain.ErrConnectionInactive, projectID, res.status)
+		return creds, fmt.Errorf("%w: %w: google ads connection for project %s is %s, not active",
+			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
 	}
 	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
 		// The unmarshal error is DROPPED, not wrapped. It is the one error on this path
@@ -293,8 +301,8 @@ func validateGoogleAdsCredentials(projectID string, res *resolved) (googleAdsCre
 		// credentials are malformed. Nothing is lost that a reader could act on — the
 		// remedy is "re-save the credential", not "fix byte 41" — and the sentinel keeps
 		// the condition distinguishable without carrying a payload.
-		return creds, fmt.Errorf("%w: google ads credentials for project %s are not valid JSON",
-			domain.ErrCredentialsUndecodable, projectID)
+		return creds, fmt.Errorf("%w: %w: google ads credentials for project %s are not valid JSON",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, projectID)
 	}
 	// Trim ONCE, in place, so the emptiness check and the values handed to NewClient are
 	// the same strings. Checking the untrimmed value lets a whitespace-only field — the
@@ -308,8 +316,8 @@ func validateGoogleAdsCredentials(projectID string, res *resolved) (googleAdsCre
 	creds.DeveloperToken = strings.TrimSpace(creds.DeveloperToken)
 	creds.RefreshToken = strings.TrimSpace(creds.RefreshToken)
 	if creds.ClientID == "" || creds.ClientSecret == "" || creds.DeveloperToken == "" || creds.RefreshToken == "" {
-		return creds, fmt.Errorf("%w: google ads credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)",
-			domain.ErrCredentialsIncomplete)
+		return creds, fmt.Errorf("%w: %w: google ads credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
 	}
 	return creds, nil
 }
@@ -358,15 +366,15 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 		return nil, err
 	}
 	// Everything from here to NewClient inspects STORED state, before any request exists.
-	// A failure means the connection needs editing, not retrying, so each one is wrapped
-	// with domain.ErrConnectionNotUsable — otherwise the discovery handler's default arm
-	// reports 503 and tells the operator to wait for a condition that will never change on
-	// its own. Errors from creds.resolve above are deliberately NOT wrapped: that layer
-	// distinguishes ErrNotFound (no connection — a 404) from a real storage failure (which
-	// IS transient and IS a 503), and flattening both into "not usable" would lose it.
+	// A failure means the connection needs editing, not retrying, so each one carries
+	// domain.ErrConnectionNotUsable — the validator tags its own, this function tags the
+	// login_customer_id check below. Errors from creds.resolve above are deliberately NOT
+	// tagged: that layer distinguishes ErrNotFound (no connection — a 404) from a real
+	// storage failure (which IS transient and IS a 503), and flattening both into "not
+	// usable" would lose it.
 	creds, err := validateGoogleAdsCredentials(projectID, res)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, err)
+		return nil, err
 	}
 	// login_customer_id is checked HERE, not only inside the client. The client validates
 	// it too (client.go validateLoginCustomerID, kept as the backstop for every other
