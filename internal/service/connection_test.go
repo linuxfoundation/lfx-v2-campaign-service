@@ -319,7 +319,10 @@ func TestCreateGoogleAds_WithoutAccountID(t *testing.T) {
 	s := newTestService(t, newFakeRepo())
 	res, err := s.CreateGoogleAds(context.Background(), &conn.CreateGoogleAdsPayload{
 		ProjectID: "cncf",
-		Config:    &conn.GoogleAdsConnectionConfig{Label: strPtr("TLF Main")},
+		// AccountID is nil EXPLICITLY. The absence is the subject of this test, not an
+		// incidental omission, and spelling it out keeps that legible if the fixture is
+		// ever copied — a reader who does not notice a missing field will notice a nil one.
+		Config: &conn.GoogleAdsConnectionConfig{Label: strPtr("TLF Main"), AccountID: nil},
 		Credentials: &conn.GoogleAdsCredentials{
 			RefreshToken: "rt", ClientID: "ci", ClientSecret: "cs", DeveloperToken: "dt",
 		},
