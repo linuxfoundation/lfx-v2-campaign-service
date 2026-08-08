@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -65,7 +66,13 @@ func canonicalCredentials(provider model.Provider, credsJSON []byte) ([]byte, er
 	}
 	var missing []string
 	for _, want := range requiredCredentialKeys[provider] {
-		if raw, ok := folded[credentialKey(want)]; !ok || len(raw) == 0 || string(raw) == `""` || string(raw) == "null" {
+		// Decoded as a STRING, not merely checked for presence: every dispatcher
+		// unmarshals these fields into string struct members, so `"client_id": 123`
+		// or `"  "` installs cleanly, exits 0, and fails at dispatch — the exact
+		// deferred failure this validation exists to prevent.
+		var v string
+		if raw, ok := folded[credentialKey(want)]; !ok ||
+			json.Unmarshal(raw, &v) != nil || strings.TrimSpace(v) == "" {
 			missing = append(missing, want)
 		}
 	}
@@ -74,6 +81,50 @@ func canonicalCredentials(provider model.Provider, credsJSON []byte) ([]byte, er
 		return nil, fmt.Errorf("bootstrap: %s credentials are missing %s", provider, strings.Join(missing, ", "))
 	}
 	return json.Marshal(folded)
+}
+
+var (
+	numericID = regexp.MustCompile(`^[0-9]+$`)
+	alnumID   = regexp.MustCompile(`^[A-Za-z0-9]+$`)
+)
+
+// valueShapes mirrors the Pattern()/MaxLength() rules design/connection.go puts on the
+// non-secret values a client interpolates into a request path or URN. The design is the
+// contract, but this installer writes PAST it, straight to the repository — so a value the
+// API would refuse with a 400 (`account_id: "foo"` for Meta, an X id containing `/`) would
+// otherwise land on an ACTIVE system row and fail every dispatch instead. Providers absent
+// here place no shape constraint on their ids in the design either.
+var valueShapes = map[model.Provider]map[string]*regexp.Regexp{
+	model.ProviderLinkedInAds: {"account_id": numericID, "org_id": numericID},
+	model.ProviderMetaAds:     {"account_id": regexp.MustCompile(`^act_[0-9]+$`), "page_id": numericID},
+	model.ProviderTwitterAds:  {"account_id": alnumID, "funding_instrument_id": alnumID},
+}
+
+// maxValueLen is design/connection.go's MaxLength(64) on the same fields.
+const maxValueLen = 64
+
+// requireShapes validates the values as SUPPLIED, and only those: an omitted account id is
+// the legal credentials-first state, and a key not supplied on a rotation keeps whatever the
+// row already holds — which was validated when it was written.
+func requireShapes(provider model.Provider, accountID string, cfg map[string]string) error {
+	supplied := make(map[string]string, len(cfg)+1)
+	for k, v := range cfg {
+		supplied[k] = v
+	}
+	if accountID != "" {
+		supplied["account_id"] = accountID
+	}
+	for key, re := range valueShapes[provider] {
+		v, ok := supplied[key]
+		if !ok {
+			continue
+		}
+		if len(v) > maxValueLen || !re.MatchString(v) {
+			return fmt.Errorf("bootstrap: %s %s %q does not match the shape design/connection.go requires (%s, at most %d chars)",
+				provider, key, v, re, maxValueLen)
+		}
+	}
+	return nil
 }
 
 // requiredConfigKeys are the non-secret ProviderConfig columns a dispatch adapter REFUSES to
@@ -132,6 +183,9 @@ func InstallSystemCredentials(
 	if !provider.Valid() {
 		return fmt.Errorf("bootstrap: %q is not a supported provider", provider)
 	}
+	if err := requireShapes(provider, accountID, providerConfig); err != nil {
+		return err
+	}
 	canonical, err := canonicalCredentials(provider, credsJSON)
 	if err != nil {
 		return err
@@ -145,12 +199,16 @@ func InstallSystemCredentials(
 	existing, gerr := repo.Get(ctx, model.SystemProjectID, provider)
 	switch {
 	case gerr == nil:
-		// Only SetCredential: Update would also rewrite the account id, so a rotation
-		// omitting -account-id would CLEAR a selected account.
-		if _, serr := repo.SetCredential(ctx, model.SystemProjectID, provider, ct, systemActor); serr != nil {
-			return fmt.Errorf("bootstrap: rotate system %s credentials: %w", provider, serr)
-		}
-		// Config is rewritten only when supplied, same reason as the account id.
+		// Two writes, and the port offers no way to make them one transaction, so the
+		// ORDER decides which mixed state a failure can leave behind. The account id and
+		// config go first and the secret LAST: a failed second write then leaves the row
+		// holding the credential it already had, which is the one the operator knows
+		// works. The other order commits the NEW secret against the OLD account — a
+		// pairing dispatch can observe and nothing in the row explains. Either way the
+		// command is idempotent, so a re-run converges.
+		//
+		// Config and account id are rewritten only when supplied: Update rewrites every
+		// column, so a rotation omitting -account-id would otherwise CLEAR the selection.
 		cfg := mergeConfig(existing.ProviderConfig, providerConfig)
 		if cfg != nil {
 			if cerr := requireConfig(provider, cfg); cerr != nil {
@@ -166,10 +224,12 @@ func InstallSystemCredentials(
 				upd.ProviderConfig = cfg
 			}
 			upd.UpdatedBy = systemActor
-			// SetCredential bumped the version; the stale one fails the optimistic check.
-			if _, uerr := repo.Update(ctx, &upd, existing.Version+1); uerr != nil {
+			if _, uerr := repo.Update(ctx, &upd, existing.Version); uerr != nil {
 				return fmt.Errorf("bootstrap: set system %s account id/config: %w", provider, uerr)
 			}
+		}
+		if _, serr := repo.SetCredential(ctx, model.SystemProjectID, provider, ct, systemActor); serr != nil {
+			return fmt.Errorf("bootstrap: rotate system %s credentials: %w", provider, serr)
 		}
 		return nil
 	case errors.Is(gerr, domain.ErrNotFound):

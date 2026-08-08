@@ -353,7 +353,9 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 	// IS transient and IS a 503), and flattening both into "not usable" would lose it.
 	creds, err := validateGoogleAdsCredentials(projectID, res)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, err)
+		// systemScoped: the same defect in the LF fallback row is an operator's page,
+		// not a 400 aimed at a project that owns no connection to fix.
+		return nil, res.systemScoped(fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, err))
 	}
 	// login_customer_id is checked HERE, not only inside the client. The client validates
 	// it too (client.go validateLoginCustomerID, kept as the backstop for every other

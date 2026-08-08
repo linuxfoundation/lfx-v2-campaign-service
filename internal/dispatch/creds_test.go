@@ -269,3 +269,37 @@ func TestResolveAtTheSystemScopeDoesNotRecurse(t *testing.T) {
 		t.Errorf("scopes asked = %v, want exactly one lookup", repo.gets)
 	}
 }
+
+// TestUnusableSystemConnectionKeepsItsOrigin: whose connection is broken decides who can fix
+// it. A defect in the project's own row is its owner's to edit and answers 400; the same
+// defect in the LF system row reaches a project that has no connection and cannot address the
+// system scope, so it must arrive carrying ErrSystemConnectionNotUsable and be paged instead.
+func TestUnusableSystemConnectionKeepsItsOrigin(t *testing.T) {
+	broken := func() *model.Connection {
+		c := usableConn(`{"sys":true}`, "sys-account")
+		c.EncryptedCredentials = nil
+		return c
+	}
+
+	_, err := newCredsSource(&scopedConnReader{
+		rows: map[string]*model.Connection{model.SystemProjectID: broken()},
+	}, identityEncryptor{}).resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+	if !errors.Is(err, domain.ErrConnectionNotUsable) {
+		t.Fatalf("system fallback err = %v, want ErrConnectionNotUsable", err)
+	}
+	if !errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+		t.Errorf("system fallback err = %v, want it to name the SYSTEM connection", err)
+	}
+
+	// The project's own broken row must NOT pick up the system marker, or every 400 that
+	// tells an owner to fix their connection becomes a 500 that tells nobody anything.
+	_, err = newCredsSource(&scopedConnReader{
+		rows: map[string]*model.Connection{"cncf": broken()},
+	}, identityEncryptor{}).resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+	if !errors.Is(err, domain.ErrConnectionNotUsable) {
+		t.Fatalf("project connection err = %v, want ErrConnectionNotUsable", err)
+	}
+	if errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+		t.Errorf("project connection err = %v, must not be attributed to the system account", err)
+	}
+}

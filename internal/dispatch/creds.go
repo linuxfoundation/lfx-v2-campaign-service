@@ -147,6 +147,21 @@ type resolved struct {
 	label          string // the connection's friendly name (Connection.Label column)
 	providerConfig map[string]string
 	status         model.ConnectionStatus
+	// fromSystem records that these credentials came from the LF system fallback, not
+	// from a row the project owns. Defects found LATER — by an adapter's validator, not
+	// by resolveConn — are otherwise indistinguishable, and misattributing them sends a
+	// project to edit a connection it does not have. See systemScoped.
+	fromSystem bool
+}
+
+// systemScoped re-attributes an unusable-connection error to the LF system row when that is
+// where the credentials came from. A no-op for every other error and every project-owned
+// connection, so callers can apply it unconditionally.
+func (r *resolved) systemScoped(err error) error {
+	if r == nil || !r.fromSystem || err == nil || !errors.Is(err, domain.ErrConnectionNotUsable) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", domain.ErrSystemConnectionNotUsable, err)
 }
 
 // resolve fetches the project's connection for the provider and decrypts its
@@ -165,7 +180,14 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 			if sysConn, sysErr := s.systemConn(ctx, projectID, provider); sysErr != nil {
 				return nil, sysErr
 			} else if sysConn != nil {
-				return s.resolveConn(ctx, model.SystemProjectID, sysConn, provider)
+				// Keep the ORIGIN of any defect. Downstream this is the difference
+				// between a 400 telling the project to edit a connection it does not
+				// have, and a 5xx paging whoever installed the LF credential.
+				res, rerr := s.resolveConn(ctx, model.SystemProjectID, sysConn, provider)
+				if res != nil {
+					res.fromSystem = true
+				}
+				return res, (&resolved{fromSystem: true}).systemScoped(rerr)
 			}
 			// Wrap the sentinel rather than dropping it: read-only callers such as
 			// account discovery need to tell "this project has no connection" (404)

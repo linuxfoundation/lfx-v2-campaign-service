@@ -196,6 +196,15 @@ func (s *ConnectionService) ListGoogleAdsAccounts(ctx context.Context, p *conn.L
 			slog.ErrorContext(ctx, "stored credentials failed authenticated decryption; check the application encryption key, and whether this is one row or every connection",
 				"project_id", p.ProjectID, "provider", string(model.ProviderGoogleAds), "error", aerr)
 			return nil, &conn.InternalServerError{Code: "500", Message: "account discovery could not be completed"}
+		case errors.Is(aerr, domain.ErrSystemConnectionNotUsable):
+			// The project has no connection of its own and the LF system row it fell back
+			// to is unusable. The 400 below would tell this caller to edit "the stored
+			// connection" — they have none, and the system scope is unaddressable. Nobody
+			// but an operator can act, so page one and say nothing specific to the caller.
+			// The reason is safe to log; the error itself is not (see the arm below).
+			slog.ErrorContext(ctx, "the LF system connection is not usable; account discovery is failing for every project without its own connection",
+				"provider", string(model.ProviderGoogleAds), "reason", unusableConnectionReason(aerr))
+			return nil, &conn.InternalServerError{Code: "500", Message: "account discovery could not be completed"}
 		case errors.Is(aerr, domain.ErrConnectionNotUsable):
 			// The connection EXISTS but cannot be used as it stands — inactive, an
 			// incomplete credential blob, or a malformed stored config value such as a

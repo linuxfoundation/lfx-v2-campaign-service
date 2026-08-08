@@ -123,8 +123,10 @@ func TestStoredBlobDecodesIntoTheReader(t *testing.T) {
 }
 
 // TestSecondInstallRotates: a second run must NOT Create (the singleton index would reject it)
-// but rotate through SetCredential. Phase two pins the ordering bug that half-applies a rotation
-// — an Update gated on the PRE-SetCredential version fails the optimistic check.
+// but rotate through SetCredential. Phase two pins the ORDER of the two writes, which is the
+// only thing standing in for a transaction: the account/config Update commits first, at the
+// row's own version, and the secret last. Reversed, a failed second write commits the NEW
+// secret against the OLD account id.
 func TestSecondInstallRotates(t *testing.T) {
 	row := func(accountID string, cfg map[string]string) *stubRepo {
 		return &stubRepo{row: &model.Connection{
@@ -148,9 +150,12 @@ func TestSecondInstallRotates(t *testing.T) {
 		model.ProviderGoogleAds, "new", nil, []byte(goodCreds)); err != nil {
 		t.Fatalf("rotate with a new account id: %v", err)
 	}
-	// Version 5 is what SetCredential left behind; the pre-rotation 4 would fail the check.
-	if repo.updated == nil || repo.updVer != 5 || repo.updated.AccountID != "new" {
-		t.Fatalf("account id change: updated = %+v at version %d, want new at 5", repo.updated, repo.updVer)
+	// Version 4 is the row's own: the Update runs BEFORE SetCredential bumps it.
+	if repo.updated == nil || repo.updVer != 4 || repo.updated.AccountID != "new" {
+		t.Fatalf("account id change: updated = %+v at version %d, want new at 4", repo.updated, repo.updVer)
+	}
+	if len(repo.calls) < 3 || repo.calls[len(repo.calls)-2] != "update" || repo.calls[len(repo.calls)-1] != "set-credential" {
+		t.Fatalf("write order = %v, want the account id committed before the secret", repo.calls)
 	}
 }
 
@@ -218,7 +223,7 @@ func TestRotationMergesConfigIntoTheRow(t *testing.T) {
 	metaRow := func() *stubRepo {
 		return &stubRepo{row: &model.Connection{
 			ProjectID: model.SystemProjectID, Provider: model.ProviderMetaAds,
-			AccountID: "act_1", ProviderConfig: map[string]string{"page_id": "p1", "app_id": "a1"},
+			AccountID: "act_1", ProviderConfig: map[string]string{"page_id": "111", "app_id": "a1"},
 			Version: 4, Status: model.StatusActive,
 		}}
 	}
@@ -226,14 +231,14 @@ func TestRotationMergesConfigIntoTheRow(t *testing.T) {
 
 	repo := metaRow()
 	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderMetaAds, "", map[string]string{"page_id": "p2"}, metaCreds); err != nil {
+		model.ProviderMetaAds, "", map[string]string{"page_id": "222"}, metaCreds); err != nil {
 		t.Fatalf("rotate with config: %v", err)
 	}
 	if repo.updated == nil {
 		t.Fatalf("config change did not Update; calls = %v", repo.calls)
 	}
-	if got := repo.updated.ProviderConfig; got["app_id"] != "a1" || got["page_id"] != "p2" {
-		t.Fatalf("config = %v, want page_id p2 with app_id a1 preserved", got)
+	if got := repo.updated.ProviderConfig; got["app_id"] != "a1" || got["page_id"] != "222" {
+		t.Fatalf("config = %v, want page_id 222 with app_id a1 preserved", got)
 	}
 
 	repo = metaRow()
@@ -267,6 +272,64 @@ func TestInstallWritesNothingWhenItCannotProceed(t *testing.T) {
 			}
 			if tc.repo.created != nil || tc.repo.setCT != nil || tc.repo.updated != nil {
 				t.Fatalf("wrote to the repository anyway; calls = %v", tc.repo.calls)
+			}
+		})
+	}
+}
+
+// TestInstallRejectsMisshapenValues: the installer writes PAST the API, so a value design/
+// connection.go would reject with a 400 must not reach an ACTIVE system row and turn into a
+// dispatch failure nobody connects back to install time. An OMITTED account id is not a
+// misshapen one — that is the legal credentials-first state.
+func TestInstallRejectsMisshapenValues(t *testing.T) {
+	metaCreds := []byte(`{"access_token":"tok","app_secret":"sec"}`)
+	xCreds := []byte(`{"consumer_key":"a","consumer_secret":"b","access_token":"c","access_token_secret":"d"}`)
+	cases := map[string]struct {
+		provider  model.Provider
+		accountID string
+		cfg       map[string]string
+		creds     []byte
+		wantErr   bool
+	}{
+		"meta account id not act_<digits>": {model.ProviderMetaAds, "foo", map[string]string{"page_id": "1"}, metaCreds, true},
+		"meta page id not numeric":         {model.ProviderMetaAds, "act_1", map[string]string{"page_id": "abc"}, metaCreds, true},
+		"x id carrying a path separator":   {model.ProviderTwitterAds, "8r7gb", map[string]string{"funding_instrument_id": "a/b"}, xCreds, true},
+		"meta values in shape":             {model.ProviderMetaAds, "act_1", map[string]string{"page_id": "1"}, metaCreds, false},
+		"omitted account id is legal":      {model.ProviderMetaAds, "", map[string]string{"page_id": "1"}, metaCreds, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			repo := &stubRepo{getErr: domain.ErrNotFound}
+			err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+				tc.provider, tc.accountID, tc.cfg, tc.creds)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr = %v", err, tc.wantErr)
+			}
+			if tc.wantErr && repo.created != nil {
+				t.Fatalf("wrote a misshapen row: %+v", repo.created)
+			}
+		})
+	}
+}
+
+// TestCredentialValuesMustBeNonEmptyStrings: presence is not enough. Every dispatcher decodes
+// these fields into string members, so a number or a whitespace-only value installs cleanly,
+// exits 0, and fails at dispatch — far from the command that caused it.
+func TestCredentialValuesMustBeNonEmptyStrings(t *testing.T) {
+	for name, creds := range map[string]string{
+		"numeric value":    `{"refresh_token":"rt","client_id":123,"client_secret":"cs","developer_token":"dt"}`,
+		"whitespace value": `{"refresh_token":"rt","client_id":"   ","client_secret":"cs","developer_token":"dt"}`,
+		"object value":     `{"refresh_token":"rt","client_id":{"a":1},"client_secret":"cs","developer_token":"dt"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := &stubRepo{getErr: domain.ErrNotFound}
+			err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+				model.ProviderGoogleAds, "8666746580", nil, []byte(creds))
+			if err == nil || repo.created != nil {
+				t.Fatalf("err = %v, created = %+v; want a refusal naming client_id", err, repo.created)
+			}
+			if !strings.Contains(err.Error(), "client_id") {
+				t.Errorf("err = %v, want it to name client_id", err)
 			}
 		})
 	}
