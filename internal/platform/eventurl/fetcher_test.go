@@ -354,10 +354,13 @@ func TestEmbeddedIPv4DecodesEveryRFC6052Layout(t *testing.T) {
 		}
 	}
 
-	// The reserved octet is what makes the layout self-describing. Without checking it, every
-	// global address would decode at the /64 layout and roughly one in 256 would over-reject.
-	if got := embeddedIPv4(net.ParseIP("2001:db8:a9fe:a9fe:01a9:fea9:fe00::"), 64); got != nil {
-		t.Errorf("embeddedIPv4 decoded an address whose reserved octet is nonzero: %v", got)
+	// A nonzero reserved octet must STILL decode. RFC 6052 requires bits 64-71 to be zero,
+	// but refusing to decode when they are not would fail OPEN: nil means "no embedded
+	// address", which means the dial proceeds. An attacker reaching for 169.254.169.254
+	// through a translated prefix would just set this octet. The length is known from the
+	// matched prefix, so the octet identifies nothing and buys nothing.
+	if got := embeddedIPv4(net.ParseIP("2001:db8:a9fe:a9fe:01a9:fea9:fe00::"), 64); !got.Equal(want) {
+		t.Errorf("embeddedIPv4 with a nonzero reserved octet = %v, want %v — a MUST-violating address must not fail open", got, want)
 	}
 	// A length RFC 6052 does not define must never be guessed at.
 	if got := embeddedIPv4(net.ParseIP("2001:db8::a9fe:a9fe"), 80); got != nil {
@@ -397,5 +400,16 @@ func TestConfiguredNAT64PrefixIsGuarded(t *testing.T) {
 	// 8.8.8.8 (08 08 08 08) at the same layout: public, and must stay reachable.
 	if err := guard("tcp6", "[2a01:4f8:1:808:8:800::]:443", nil); err != nil {
 		t.Errorf("a configured prefix naming a public IPv4 was refused: %v", err)
+	}
+
+	// The same metadata address with the RESERVED octet set to 01 instead of 00. RFC 6052
+	// says that octet MUST be zero, and the temptation is to treat a violation as "not an
+	// embedding" — but this guard only ever decides between "refuse" and "dial", so a
+	// refusal to decode IS a dial. That makes the reserved octet a one-byte bypass of the
+	// entire NAT64 check, reachable by anyone who can name a host.
+	if err := guard("tcp6", "[2a01:4f8:1:a9fe:1a9:fe00::]:443", nil); err == nil {
+		t.Error("a nonzero reserved octet bypassed the nat64 guard — the check fails open")
+	} else if !errors.Is(err, ErrEventURLForbidden) {
+		t.Errorf("err = %v, want ErrEventURLForbidden", err)
 	}
 }

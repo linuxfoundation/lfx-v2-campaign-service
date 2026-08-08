@@ -94,10 +94,21 @@ address in 256 has a zero octet at bits 64-71 and bytes that read as `10.0.0.0/8
 layout, and refusing a legitimate event page is a real cost, not a conservative default.
 
 The decoding is per-length, because only `/96` puts the address in the low 32 bits — the shorter
-layouts split it around the reserved octet at bits 64-71. That octet IS checked (it is what makes
-a layout self-describing, and without it every `/64`-layout address would decode); the trailing
-suffix bits are NOT, because trusting a translator to have honoured a MUST is not worth a
-reachable metadata endpoint.
+layouts split it around the reserved octet at bits 64-71.
+
+**Nothing the RFC merely requires to be zero is checked** — not that reserved octet, not the
+trailing suffix bits. Every such check is a way to fail OPEN. `embeddedIPv4` returning nil means
+"no embedded address here", and the guard's only two outcomes are refuse and dial, so a refusal
+to *decode* is a decision to *connect*. Checking bits 64-71 would therefore hand an attacker a
+one-byte bypass of the whole NAT64 check: set the reserved octet to `01`, and an address naming
+`169.254.169.254` sails through.
+
+The octet is not needed to identify the layout either. `embeddedIPv4` is only ever called after
+an address matched a prefix whose length is KNOWN — from configuration, or from the well-known
+`/96`. The length is given, not inferred, so there is nothing to self-describe. Nor is there
+over-rejection to weigh against it: inside a matched translation prefix, every address is bound
+for a translator by construction. (The over-rejection argument above is about *speculatively*
+decoding arbitrary addresses, which is exactly why this package does not do that.)
 
 **Residual risk, stated plainly:** an unlisted network-specific prefix is a live SSRF hole, and
 this option is the in-process half of the answer, not a substitute for a destination policy at

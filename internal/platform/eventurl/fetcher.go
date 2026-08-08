@@ -91,30 +91,28 @@ var rfc6052PrefixLens = map[int]bool{32: true, 40: true, 48: true, 56: true, 64:
 
 // embeddedIPv4 extracts the IPv4 destination an RFC 6052 §2.2 address carries, for a prefix of
 // the given length. It is NOT simply "the low 32 bits": only the /96 layout puts the address
-// there. The shorter layouts split it around bits 64-71, which the RFC reserves and requires to
-// be zero; that octet IS checked, because it is what makes the layout self-describing.
+// there. The shorter layouts split it around bits 64-71, the octet the RFC reserves.
 //
-// The trailing suffix bits are NOT checked, deliberately. The RFC requires them to be zero too,
-// so checking them would reject fewer addresses — and this is a security guard, where the cost
-// of trusting a translator to have honoured a MUST is a reachable metadata endpoint. The
-// reserved octet is different: without it every /64-layout address would decode, and THAT is
-// the over-rejection this function has to avoid.
+// NOTHING the RFC merely requires to be zero is checked — not the reserved octet, not the
+// trailing suffix bits. This is a security guard, and every such check is a way to FAIL OPEN:
+// an address that violates the MUST would decode to nil, and nil means "no embedded address
+// here", which means the dial proceeds. An attacker who wants to reach 169.254.169.254 through
+// a translated prefix would simply set the reserved octet nonzero. Whether a translator then
+// honours the address is the translator's business — this guard must not bet on it.
+//
+// Nor is the octet needed to identify the layout, because this function is only ever called
+// after an address matched a prefix whose length is KNOWN, from configuration or from the
+// well-known /96. The length is given, not inferred, so there is nothing to self-describe and
+// no over-rejection to trade against: within a matched translation prefix, every address is
+// bound for a translator by construction.
 //
 //	/32  bytes 4-7           /40  bytes 5-7 + 9      /48  bytes 6-7 + 9-10
 //	/56  byte 7 + 9-11       /64  bytes 9-12         /96  bytes 12-15
 //
-// Returns nil when ip does not carry a well-formed embedding at this length.
+// Returns nil only when ip is not a 16-byte address or prefixLen is not an RFC 6052 length.
 func embeddedIPv4(ip net.IP, prefixLen int) net.IP {
 	if len(ip) != net.IPv6len || !rfc6052PrefixLens[prefixLen] {
 		return nil
-	}
-	if prefixLen != 96 {
-		// Bits 64-71 are reserved and MUST be zero (RFC 6052 §2.2). This is the one field
-		// that makes the layout self-describing, so an address that violates it is not an
-		// embedding and must not be decoded as one.
-		if ip[8] != 0 {
-			return nil
-		}
 	}
 	start := prefixLen / 8
 	out := make(net.IP, 0, net.IPv4len)

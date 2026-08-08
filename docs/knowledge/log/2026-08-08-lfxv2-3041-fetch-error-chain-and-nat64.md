@@ -37,9 +37,21 @@ a zero octet at bits 64-71 and bytes reading as `10.0.0.0/8` at the `/64` layout
 legitimate event page is a real cost. Over-rejection is a false answer too, not a safe default.
 
 `embeddedIPv4` decodes per-length, because only `/96` puts the address in the low 32 bits; the
-shorter layouts split it around the reserved octet at bits 64-71. That octet IS checked — it is
-what makes a layout self-describing. The trailing suffix bits are deliberately NOT: a security
-guard should not condition on a translator having honoured a MUST.
+shorter layouts split it around the reserved octet at bits 64-71.
+
+**Correction, same day.** The first version of this checked that reserved octet, on the theory
+that it makes the layout self-describing. Cursor flagged it and was right: the check fails OPEN.
+A nil return means "no embedded address here", and this guard's only outcomes are refuse and
+dial — so declining to decode is a decision to connect. Setting bits 64-71 to `01` was a
+one-byte bypass of the entire NAT64 check.
+
+It was also inconsistent with the reasoning two paragraphs up. I had already refused to trust
+the translator on the suffix MUST, then trusted it on the reserved MUST. The self-describing
+argument does not apply: `embeddedIPv4` is only reached after an address matched a prefix whose
+length is known from configuration, so the length is given rather than inferred. And the
+over-rejection concern does not apply inside a matched translation prefix, where every address
+is bound for a translator by construction. **Nothing the RFC merely requires to be zero is
+checked now.**
 
 One test fixture had to be re-chosen. The first version used `2001:db8:1::/48`, which is the RFC
 3849 documentation range already in `forbiddenNets` — the public-IPv4 case would have passed on
