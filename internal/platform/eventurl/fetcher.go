@@ -177,8 +177,13 @@ func isForbiddenIP(ip net.IP) bool {
 	return false
 }
 
-// fetchError renders a URL-FREE message while keeping its cause reachable, so a caller
-// can still ask errors.Is(err, context.Canceled) after the text has been stripped.
+// fetchError renders a URL-FREE message while keeping the transport's IDENTITY answerable,
+// so a caller can still ask errors.Is(err, context.Canceled) after the text is stripped.
+//
+// The identity, and not the cause: the cause itself is discarded, and what the chain carries
+// is a canonical sentinel this package selected in its place (see safeIdentity). The
+// distinction is the security invariant below, not a detail — a chain that really did carry
+// the cause would hand back the *url.Error this type exists to withhold.
 //
 // Unwrap returns both the sentinel and the identity (Go 1.20 multi-unwrap), which is what
 // lets one value answer to ErrEventURLFetchFailed and to context.Canceled at once.
@@ -339,20 +344,40 @@ func guardDialAddress(nat64 []nat64Prefix) func(string, string, syscall.RawConn)
 		if ip == nil {
 			return fmt.Errorf("%w: unparsable dial address %q", ErrEventURLForbidden, address)
 		}
-		if isForbiddenIP(ip) {
-			return fmt.Errorf("%w: %s", ErrEventURLForbidden, ip)
-		}
-		// Configured translation prefixes are judged by the IPv4 they name, exactly as the
-		// well-known one is inside isForbiddenIP. Kept out of that function because the set
-		// is per-Fetcher: it is deployment configuration, not a property of the IANA registry.
+		// Configured translation prefixes are judged FIRST, and their verdict is FINAL.
+		//
+		// The order is the whole point. RFC 8215 sets aside 64:ff9b:1::/48 for local-use
+		// NAT64 prefixes — it is the block an operator PICKS THEIR PREFIX FROM — and
+		// forbiddenNets denies that /48 wholesale, because an address under an unknown
+		// prefix cannot be decoded and refusing is the fail-closed answer. Run that denial
+		// first and it also swallows every CONFIGURED prefix inside the block: the one
+		// case WithNAT64Prefixes exists to serve would be refused before its embedded IPv4
+		// was ever looked at, so even 64:ff9b:1:1::808:808 — public 8.8.8.8 — could not be
+		// reached. The blanket denial is the FALLBACK for prefixes nobody declared, not a
+		// veto over the ones an operator did.
+		//
+		// Final, because under a declared translator the IPv6 address is not an endpoint at
+		// all: it is an encoding of the IPv4 destination, and that destination's verdict is
+		// the complete answer. First match wins; overlapping prefixes are a misconfiguration
+		// of the same class WithNAT64Prefixes already panics on.
 		for _, p := range nat64 {
 			if !p.net.Contains(ip) {
 				continue
 			}
 			v4 := embeddedIPv4(ip, p.length)
-			if v4 != nil && isForbiddenIP(v4) {
+			if v4 == nil {
+				// Unreachable while WithNAT64Prefixes validates the length, and still a
+				// refusal rather than a fallthrough: "cannot decode" must never become
+				// "nothing forbidden found", which is what reaching the return below means.
+				return fmt.Errorf("%w: %s is not decodable at its configured /%d", ErrEventURLForbidden, ip, p.length)
+			}
+			if isForbiddenIP(v4) {
 				return fmt.Errorf("%w: %s names %s through a nat64 prefix", ErrEventURLForbidden, ip, v4)
 			}
+			return nil
+		}
+		if isForbiddenIP(ip) {
+			return fmt.Errorf("%w: %s", ErrEventURLForbidden, ip)
 		}
 		return nil
 	}

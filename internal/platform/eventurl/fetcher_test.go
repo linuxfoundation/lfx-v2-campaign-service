@@ -195,10 +195,16 @@ func TestFetchRejectsOversizedBody(t *testing.T) {
 	}
 }
 
-// TestFetchPreservesContextCancellation pins the %w on the transport cause. A cancelled
-// fetch is not an upstream failure the caller should retry — it is this service giving up —
-// and only errors.Is can tell the two apart once both wear ErrEventURLFetchFailed. With %v
-// the cause is flattened into the message and the identity is gone.
+// TestFetchPreservesContextCancellation pins the identity that survives redaction. A
+// cancelled fetch is not an upstream failure the caller should retry — it is this service
+// giving up — and only errors.Is can tell the two apart once both wear ErrEventURLFetchFailed.
+//
+// What makes the answer available is NOT a %w on the transport cause: that cause is thrown
+// away, because wrapping it would republish the *url.Error and its exported URL field. It is
+// that safeIdentity recognized the cancellation and put context.Canceled — a value this
+// package names, carrying nothing from the request — into the chain in its place. Widen
+// safeIdentity's default-deny to forward the original and the redaction test next to this
+// one is what fails.
 func TestFetchPreservesContextCancellation(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -433,10 +439,14 @@ func TestConfiguredNAT64PrefixIsGuarded(t *testing.T) {
 		t.Errorf("err = %v, want ErrEventURLForbidden", err)
 	}
 
-	// Unconfigured, the same address is invisible: this is what makes the option load-bearing
-	// rather than decorative, and what the knowledge doc records as the residual risk.
-	if err := guardDialAddress(nil)("tcp6", "[2a01:4f8:1:a9fe:a9:fe00::]:443", nil); err == nil {
-		t.Log("unconfigured: the encoded address is not detectable in-process, as documented")
+	// Unconfigured, the same address is invisible and therefore ALLOWED: this is what makes
+	// the option load-bearing rather than decorative, and what the knowledge doc records as
+	// the residual risk. The assertion has to fire in both directions — a version of this
+	// that only logged on success would pass just as happily against a blanket deny of the
+	// operator's own global unicast space, i.e. against the option being neutered.
+	if err := guardDialAddress(nil)("tcp6", "[2a01:4f8:1:a9fe:a9:fe00::]:443", nil); err != nil {
+		t.Errorf("unconfigured guard refused %v; the encoded address is not detectable "+
+			"in-process, so it must be allowed and the option must remain load-bearing", err)
 	}
 
 	// 8.8.8.8 (08 08 08 08) at the same layout: public, and must stay reachable.
@@ -453,5 +463,69 @@ func TestConfiguredNAT64PrefixIsGuarded(t *testing.T) {
 		t.Error("a nonzero reserved octet bypassed the nat64 guard — the check fails open")
 	} else if !errors.Is(err, ErrEventURLForbidden) {
 		t.Errorf("err = %v, want ErrEventURLForbidden", err)
+	}
+}
+
+// TestConfiguredNAT64PrefixOutranksTheLocalUseDenial pins the ORDER of the two checks.
+//
+// RFC 8215 reserves 64:ff9b:1::/48 for local-use NAT64 prefixes — it is the block an
+// operator picks their prefix FROM — and forbiddenNets denies that /48 wholesale, which is
+// the right answer for a prefix nobody declared and whose layout is therefore unknown. Run
+// that denial ahead of the configured prefixes and it eats them too: the exact deployment
+// WithNAT64Prefixes exists to serve becomes the one it cannot express, because every
+// address under the operator's own /96 is refused before its embedded IPv4 is read.
+//
+// Both halves are asserted. Only rejecting the metadata address would pass against a
+// blanket deny, which is the very regression this test exists to catch.
+func TestConfiguredNAT64PrefixOutranksTheLocalUseDenial(t *testing.T) {
+	// A /96 inside the RFC 8215 local-use block: the shape an operator actually configures.
+	guard := guardDialAddress([]nat64Prefix{{
+		net:    net.IPNet{IP: net.ParseIP("64:ff9b:1:1::"), Mask: net.CIDRMask(96, 128)},
+		length: 96,
+	}})
+
+	// 8.8.8.8 in the low 32 bits. Public, declared, and it must stay reachable.
+	if err := guard("tcp6", "[64:ff9b:1:1::808:808]:443", nil); err != nil {
+		t.Errorf("a configured prefix naming public 8.8.8.8 was refused: %v — the "+
+			"local-use denial is a fallback for undeclared prefixes, not a veto over "+
+			"declared ones", err)
+	}
+
+	// 169.254.169.254 in the same declared prefix is still refused, on the decoded address.
+	if err := guard("tcp6", "[64:ff9b:1:1::a9fe:a9fe]:443", nil); err == nil {
+		t.Error("a configured prefix naming 169.254.169.254 was allowed")
+	} else if !errors.Is(err, ErrEventURLForbidden) {
+		t.Errorf("err = %v, want ErrEventURLForbidden", err)
+	}
+
+	// UNDECLARED, the same public address stays refused by the wholesale local-use denial:
+	// nothing says which /96 it belongs to, so nothing can decode it, and refusing is the
+	// fail-closed answer. This is the fallback the reordering above must not remove.
+	if err := guardDialAddress(nil)("tcp6", "[64:ff9b:1:1::808:808]:443", nil); err == nil {
+		t.Error("an undeclared address in the RFC 8215 local-use block was allowed")
+	}
+}
+
+// TestNAT64PrefixesReachTheDialerThroughNewFetcher exercises the PUBLIC configuration path.
+//
+// TestConfiguredNAT64PrefixIsGuarded builds the hook by hand, so it says nothing about
+// whether WithNAT64Prefixes records the prefix or whether NewFetcher hands cfg.nat64 to the
+// dialer. Drop the append in the option, or construct the dialer with a bare
+// guardDialAddress(nil), and every other test in this file still passes while the only way
+// an operator can configure this control is silently dead.
+//
+// No socket is involved: the address is refused inside Control, before connect.
+func TestNAT64PrefixesReachTheDialerThroughNewFetcher(t *testing.T) {
+	f := NewFetcher(WithNAT64Prefixes("2a01:4f8:1::/48"))
+
+	_, err := f.Fetch(context.Background(), "http://[2a01:4f8:1:a9fe:a9:fe00::]/page.html")
+	if !errors.Is(err, ErrEventURLForbidden) {
+		t.Fatalf("Fetch through a configured nat64 prefix = %v, want ErrEventURLForbidden — "+
+			"the option never reached the dial hook", err)
+	}
+	// The well-known prefix must survive the option rather than be replaced by it.
+	if _, err := f.Fetch(context.Background(), "http://[64:ff9b::a9fe:a9fe]/page.html"); !errors.Is(err, ErrEventURLForbidden) {
+		t.Errorf("Fetch through the well-known prefix = %v, want ErrEventURLForbidden — "+
+			"configuring a prefix must not drop 64:ff9b::/96", err)
 	}
 }
