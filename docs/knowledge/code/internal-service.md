@@ -23,6 +23,23 @@ gated on `If-Match` (same strong-validator parsing as briefs); the ETag mirrors 
 row version. Like the other services it late-binds via `SetBackend` after a
 cold-start DB retry and returns a typed `503` (routes mounted) when no repo is wired.
 
+## Event-to-brief mapping
+
+`BriefFromEventDetails` maps parsed event metadata into a persisted `CampaignBrief`, completing
+the "event URL → campaign brief" pipeline (LFXV2-3043). It bridges `internal/platform/eventurl`'s
+parser and the brief repository:
+- Requires `EventDetails.Name` (extracted from the page by the parser). A missing name is a
+  client error — no usable title was found; it is returned as an error rather than a brief
+  that will fail dispatch later.
+- Stores the complete `EventDetails` as the brief's opaque JSON blob, which later consumers
+  (e.g., `internal/dispatch/reddit.go`'s `decodeBriefFields`) read back from it.
+- Deliberately leaves empty fields that require human judgment: Copy (ad copy), Keywords,
+  Targeting (targeting recommendations), and Platforms (binding selection) — only the creator
+  of the campaign knows what audiences and objectives apply. The brief starts draft, ready
+  for a human to author these before approval and dispatch.
+- Reuses the existing `BriefService.CreateBrief` persistence path, so indexing, outbox
+  enqueuing, and versioning are identical to UI-driven creation.
+
 `BriefService` implements brief CRUD and campaign endpoints. `FindBrief` looks a brief up by
 `(project_id, event_slug)` rather than by id — the key a caller holds when re-visiting an event
 page — returning `ErrNotFound` when the event has no brief yet. That 404 is an ordinary
