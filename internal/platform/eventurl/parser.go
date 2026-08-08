@@ -192,7 +192,28 @@ func jsonLDNodes(root interface{}) []map[string]interface{} {
 // normally a Place and `image` an ImageObject — so a plain assertion to string drops
 // the majority shape silently, and the field just comes back empty with nothing saying
 // why. keys names the sub-properties to try on a node object, in preference order.
+//
+// The array case recurses, and the depth is bounded for the same reason jsonLDNodes
+// bounds its traversal: both walk the SAME attacker-controlled document, and leaving one
+// of them open is an asymmetry a reader has to explain rather than read.
+//
+// It is worth being exact about what the bound is NOT for, so nobody later "hardens" it
+// against a threat it never faced. This was never a stack-overflow risk. encoding/json
+// refuses to decode past 10000 levels of nesting ("exceeded max depth"), so an array
+// arriving here is already capped at that, and 10000 frames of a function this small sit
+// far inside a goroutine stack that grows to 1GB. The bound buys two smaller things: the
+// traversal stops depending on an implementation detail of another package for its
+// termination, and a value nested deeper than any real schema.org property costs a
+// constant instead of a walk. A property nested past maxJSONLDDepth is treated as absent,
+// which is what the caller does with every property it cannot resolve.
 func jsonLDText(v interface{}, keys ...string) string {
+	return jsonLDTextAt(v, 0, keys...)
+}
+
+func jsonLDTextAt(v interface{}, depth int, keys ...string) string {
+	if depth > maxJSONLDDepth {
+		return ""
+	}
 	switch t := v.(type) {
 	case string:
 		return t
@@ -204,7 +225,7 @@ func jsonLDText(v interface{}, keys ...string) string {
 		}
 	case []interface{}:
 		for _, e := range t {
-			if s := jsonLDText(e, keys...); s != "" {
+			if s := jsonLDTextAt(e, depth+1, keys...); s != "" {
 				return s
 			}
 		}

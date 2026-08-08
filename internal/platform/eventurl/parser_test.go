@@ -190,6 +190,29 @@ func TestJSONLDNodesIsBounded(t *testing.T) {
 	}
 }
 
+// TestJSONLDTextIsDepthBounded pins the array recursion's cap.
+//
+// The assertion is on the RESULT, not on any observable of the walk, because the cap has
+// no other effect: a value nested past it is reported absent, exactly like a property the
+// parser could not resolve for any other reason. The shallow case is in the same test on
+// purpose — a cap that also swallowed ordinary one-level arrays would satisfy the deep
+// assertion perfectly, and `location` arriving as a single-element array is the common
+// real-world shape, not an edge case.
+func TestJSONLDTextIsDepthBounded(t *testing.T) {
+	deep := interface{}("Moscone Center")
+	for range maxJSONLDDepth + 2 {
+		deep = []interface{}{deep}
+	}
+	if got := jsonLDText(deep, "name"); got != "" {
+		t.Errorf("value nested past the cap resolved to %q, want %q", got, "")
+	}
+
+	shallow := interface{}([]interface{}{map[string]interface{}{"name": "Moscone Center"}})
+	if got := jsonLDText(shallow, "name"); got != "Moscone Center" {
+		t.Errorf("ordinary single-element array resolved to %q, want %q", got, "Moscone Center")
+	}
+}
+
 // TestParseJSONLDGraphOrderIsDocumentOrder pins the iterative traversal's ordering. The
 // stack pushes array elements in reverse precisely so they pop in document order; get
 // that backwards and setIfEmpty's "first node wins" rule silently selects the LAST
