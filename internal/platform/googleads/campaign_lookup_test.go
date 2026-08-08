@@ -213,32 +213,46 @@ func TestGAQLStringLiteral(t *testing.T) {
 	}
 }
 
-// TestGAQLStringLiteral_RejectsControlChars pins the decision to reject rather than
-// escape: GAQL has no portable escape for these, and Google Ads forbids them in a
-// campaign name, so such a name cannot match anything real.
-// The last two cases are the ones unicode.IsControl does NOT catch: U+2028 and U+2029
-// are categories Zl/Zp, so IsControl returns false for both even though they are line
-// terminators. Deleting the explicit checks for them makes exactly these two fail.
-func TestGAQLStringLiteral_RejectsControlChars(t *testing.T) {
-	for _, in := range []string{"a\x00b", "a\nb", "a\tb", "a\u2028b", "a\u2029b"} {
+// TestGAQLStringLiteral_RejectsOnlyWhatGoogleForbids pins the exact width of the
+// rejected set. Only NUL, LF and CR are prohibited in Campaign.name, so only those
+// three cannot belong to a real campaign; rejecting them costs no reachable lookup.
+func TestGAQLStringLiteral_RejectsOnlyWhatGoogleForbids(t *testing.T) {
+	for _, in := range []string{"a\x00b", "a\nb", "a\rb"} {
 		if _, err := gaqlStringLiteral(in); err == nil {
-			t.Errorf("gaqlStringLiteral(%q) must reject a control character", in)
+			t.Errorf("gaqlStringLiteral(%q) must reject a character Google Ads forbids", in)
 		}
 	}
 }
 
-// TestGAQLStringLiteral_AllowsFormatCharacters is the other side of that decision.
-// Category Cf (zero-width joiner, variation selector) appears inside ordinary emoji
-// sequences and terminates nothing in GAQL, so rejecting it would fail a lookup for a
-// campaign that genuinely exists — a false absence, which licenses a duplicate create.
-func TestGAQLStringLiteral_AllowsFormatCharacters(t *testing.T) {
-	const withZWJ = "team \u200d rocket"
-	got, err := gaqlStringLiteral(withZWJ)
-	if err != nil {
-		t.Fatalf("a zero-width joiner must not be rejected: %v", err)
-	}
-	if got != "'"+withZWJ+"'" {
-		t.Fatalf("gaqlStringLiteral(%q) = %s, want it quoted unchanged", withZWJ, got)
+// TestGAQLStringLiteral_AllowsEverythingGoogleAccepts is the other half of that
+// decision, and the more important half.
+//
+// This lookup serves ADOPTION, whose targets were created outside this service and
+// never passed through sanitizeNamePart. Google accepts every character below inside
+// Campaign.name, so campaigns named this way really can exist — and rejecting such a
+// name answers "no such campaign" about a campaign that is sitting right there, which
+// is the false absence that licenses a duplicate PAID campaign.
+//
+// TAB is the case a blanket unicode.IsControl rule gets wrong (it is category Cc but
+// perfectly legal in a name). U+2028/U+2029 are Zl/Zp, legal, and were wrongly rejected
+// by an explicit check. The zero-width joiner is category Cf and appears in ordinary
+// emoji sequences.
+func TestGAQLStringLiteral_AllowsEverythingGoogleAccepts(t *testing.T) {
+	for _, in := range []string{
+		"a\tb",
+		"a\u2028b",
+		"a\u2029b",
+		"team \u200d rocket",
+		"plain name",
+	} {
+		got, err := gaqlStringLiteral(in)
+		if err != nil {
+			t.Errorf("gaqlStringLiteral(%q) must not reject a name Google Ads accepts: %v", in, err)
+			continue
+		}
+		if got != "'"+in+"'" {
+			t.Errorf("gaqlStringLiteral(%q) = %s, want it quoted unchanged", in, got)
+		}
 	}
 }
 
@@ -327,22 +341,42 @@ func TestFindCampaignByName_RejectsUnusableNames(t *testing.T) {
 	}
 }
 
-// TestFindCampaignByName_TrimsToMatchTheCreatePath: composeName runs its parts through
-// sanitizeNamePart, which trims, so the stored name never carries surrounding space.
-// Looking up the untrimmed form would miss the campaign the create path just made.
-func TestFindCampaignByName_TrimsToMatchTheCreatePath(t *testing.T) {
-	srv, query := newLookupServer(t, []json.RawMessage{lookupRow("88", "trimmed", StatusEnabled)})
+// TestFindCampaignByName_QueriesTheNameVerbatim pins the exact-match contract against
+// the convenience of trimming.
+//
+// Trimming is a no-op for the create path (composeName's output is already trimmed), so
+// it only ever changes ADOPTION, where the caller names a campaign this service did not
+// create. There, silently trimming would answer a request for "  spaced  " with the
+// campaign named "spaced" — a different campaign than the one asked for, and if both
+// existed the ambiguity would be hidden rather than reported.
+func TestFindCampaignByName_QueriesTheNameVerbatim(t *testing.T) {
+	// The server holds only the TRIMMED campaign. Querying verbatim must therefore not
+	// match it: the client-side re-check rejects the response as unhonoured rather than
+	// binding a brief to a campaign with a different name.
+	srv, query := newLookupServer(t, []json.RawMessage{lookupRow("88", "spaced", StatusEnabled)})
 	client := newAccountsTestClient(t, srv)
 
-	id, err := client.FindCampaignByName(context.Background(), "  trimmed  ")
-	if err != nil {
-		t.Fatalf("FindCampaignByName: %v", err)
+	id, err := client.FindCampaignByName(context.Background(), "  spaced  ")
+	if err == nil {
+		t.Fatalf("a differently-named campaign must not satisfy an exact-match lookup, got id %q", id)
 	}
-	if id != "88" {
-		t.Fatalf("id = %q, want 88", id)
+	if !strings.Contains(query(), "campaign.name = '  spaced  '") {
+		t.Errorf("name was not sent verbatim: %s", query())
 	}
-	if !strings.Contains(query(), "campaign.name = 'trimmed'") {
-		t.Errorf("name was not trimmed before querying: %s", query())
+}
+
+// TestFindCampaignByName_RejectsWhitespaceOnlyName: TrimSpace is used to DETECT an
+// empty name, not to rewrite the query. A whitespace-only name identifies nothing, and
+// must fail rather than query for it.
+func TestFindCampaignByName_RejectsWhitespaceOnlyName(t *testing.T) {
+	srv, query := newLookupServer(t, []json.RawMessage{lookupRow("1", " ", StatusEnabled)})
+	client := newAccountsTestClient(t, srv)
+
+	if id, err := client.FindCampaignByName(context.Background(), "   "); err == nil {
+		t.Fatalf("a whitespace-only name must be rejected, got %q", id)
+	}
+	if q := query(); q != "" {
+		t.Errorf("a whitespace-only name must not reach the API: %s", q)
 	}
 }
 

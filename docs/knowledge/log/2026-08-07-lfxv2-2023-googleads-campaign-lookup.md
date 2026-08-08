@@ -98,12 +98,31 @@ response (an entity we just created) and wrong here: it reads `garbage/4242` as 
 `4242` and accepts a resource name scoped to a **different customer**. This resource name
 is the sole identity evidence for a campaign about to have a brief bound to it.
 
-**Second general lesson: `unicode.IsControl` covers category Cc only.** U+2028 LINE
-SEPARATOR and U+2029 PARAGRAPH SEPARATOR are Zl/Zp — `IsControl` returns false for both,
-yet they terminate a line to many parsers. They are rejected explicitly. Category Cf
-(zero-width joiner, variation selectors) is deliberately *allowed*: it appears in ordinary
-emoji sequences and terminates nothing in GAQL, so rejecting it would fail a lookup for a
-campaign that genuinely exists — a false absence again.
+**Second general lesson, and it cuts the other way: an over-broad rejection is a false
+absence too.** The first cut rejected every `unicode.IsControl` rune plus U+2028/U+2029
+(categories Zl/Zp, which `IsControl` misses — worth knowing on its own). That looked
+conservative and was not. Google Ads prohibits only **NUL, LF and CR** in `Campaign.name`;
+TAB, the line separators and zero-width joiners are all legal. Adoption targets campaigns
+this service never created and never sanitised, so a campaign really can be named with a
+TAB in it — and refusing to look it up answers "no such campaign" about a campaign sitting
+right there, licensing the duplicate create all over again.
 
-Rows are deduplicated by id before the count, so the same campaign arriving on several
-rows is not misreported as ambiguous and does not block a legitimate adoption.
+The rule that survives: **reject only what the upstream field itself cannot hold.** Then
+rejection costs no reachable lookup, because such a name could never have been stored.
+Nothing is at risk by allowing the rest — the query rides in a JSON body and
+`encoding/json` escapes control characters and U+2028/U+2029 on the way out.
+
+## Trimming quietly redefined the contract
+
+The lookup originally ran `strings.TrimSpace(name)` before querying, justified by the
+create path: `composeName` already trims, so the stored name never carries surrounding
+space. But that is precisely why the trim was pointless there — and it was not pointless
+for **adoption**, the caller that supplies a name this service did not compose. A request
+to adopt `"  foo  "` would return the campaign named `"foo"`: a different campaign than
+the one asked for, from a method whose contract is an exact-name match, with the ambiguity
+hidden rather than reported if both names existed.
+
+The name is now used verbatim; `TrimSpace` only *detects* whitespace-only input so it can
+be rejected. **General form: a normalisation applied for caller A's convenience becomes a
+silent contract change for caller B.** When a helper grows a second caller, re-derive the
+normalisation from the new caller's needs rather than inheriting it.

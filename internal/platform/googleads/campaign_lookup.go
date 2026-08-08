@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 )
 
@@ -41,26 +40,32 @@ import (
 // introduced when escaping a quote would itself be escaped a second time and the
 // quote would be released.
 //
-// Control characters are REJECTED rather than escaped. GAQL has no portable escape
-// for them, Google Ads forbids them in a campaign name outright (sanitizeNamePart
-// strips them on the create path for the same reason), and a name containing one
-// therefore cannot match a real campaign — so rejecting loses no reachable lookup
-// while keeping a NUL or newline from ever reaching the query builder.
+// The rejected set is EXACTLY the three characters Google Ads prohibits in
+// Campaign.name — NUL, LF and CR — and no more. That boundary is deliberate, and
+// drawing it wider was a bug worth recording here.
 //
-// unicode.IsControl covers category Cc ONLY. U+2028 LINE SEPARATOR and U+2029
-// PARAGRAPH SEPARATOR are Zl/Zp, so IsControl returns FALSE for both, yet they are
-// line terminators to many parsers and belong in the same bucket as a newline. They
-// are rejected explicitly rather than left to IsControl.
+// The tempting rule is "reject every control character": unicode.IsControl, plus
+// explicit checks for U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR, which
+// IsControl misses because they are categories Zl/Zp rather than Cc. But this lookup
+// serves ADOPTION, and adoption targets campaigns this service never created and never
+// ran through sanitizeNamePart. Google accepts a TAB inside Campaign.name — and a
+// U+2028, and a zero-width joiner — so campaigns named that way really can exist.
+// Rejecting one of those names answers "no such campaign" about a campaign that is
+// sitting right there, and an absence from this method is exactly what licenses the
+// create path to create a duplicate PAID campaign.
 //
-// Category Cf (zero-width joiner, variation selectors) is deliberately NOT rejected:
-// those appear inside legitimate emoji sequences, an operator may well use one in a
-// campaign name, and none of them terminates a GAQL literal. Rejecting them would
-// fail a lookup for a campaign that really exists — the false-absence outcome this
-// whole file is built to avoid.
+// NUL, LF and CR are safe to reject for the opposite reason: Google forbids them, so a
+// name containing one cannot BE a real campaign name and rejecting costs no reachable
+// lookup. They are also the only three that could terminate a line. Everything else
+// travels safely regardless — the query is carried in a JSON body, and encoding/json
+// escapes control characters and U+2028/U+2029 on the way out.
+//
+// The rule, then: reject only what the upstream field itself cannot hold. Escape
+// everything else and let the exact-match comparison do its job.
 func gaqlStringLiteral(s string) (string, error) {
 	for _, r := range s {
-		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
-			return "", fmt.Errorf("google-ads: campaign name contains a control character (%U) and cannot appear in a query", r)
+		if r == '\x00' || r == '\n' || r == '\r' {
+			return "", fmt.Errorf("google-ads: campaign name contains %U, which Google Ads forbids in a campaign name, so it cannot match a real campaign", r)
 		}
 	}
 	escaped := strings.ReplaceAll(s, `\`, `\\`)
@@ -146,13 +151,22 @@ func (c *Client) FindCampaignByName(ctx context.Context, name string) (string, e
 		return "", err
 	}
 
-	// Trim to match the create path: composeName runs its parts through
-	// sanitizeNamePart, which trims and collapses whitespace, so the stored name never
-	// carries surrounding space. Looking up the untrimmed form would miss it.
-	lookup := strings.TrimSpace(name)
-	if lookup == "" {
+	// The name is used VERBATIM. An earlier cut trimmed it first, reasoning that
+	// composeName runs its parts through sanitizeNamePart (which trims and collapses
+	// whitespace) so a stored name never carries surrounding space — but that makes
+	// trimming a no-op for the create path, which is the only caller that passes a
+	// composed name. It changes behaviour only for ADOPTION, where the caller supplies
+	// the name of a campaign this service did not create, and there it quietly breaks
+	// the contract: a request to adopt "  foo  " would return the campaign named "foo",
+	// and if both names existed it would hide the ambiguity instead of reporting it.
+	// A method that promises an exact-name match has to query the name it was given.
+	//
+	// Whitespace-only input is still rejected — TrimSpace is used to DETECT it, not to
+	// rewrite the query — because such a name identifies nothing.
+	if strings.TrimSpace(name) == "" {
 		return "", fmt.Errorf("google-ads: cannot look up a campaign by an empty name")
 	}
+	lookup := name
 	// Bound the name with the SAME limit and the SAME unit the create path enforces
 	// (maxCampaignNameRunes, characters — see validateEntityName). A name longer than
 	// Google accepts cannot identify a stored campaign, so this is an unmatchable query
