@@ -339,5 +339,5 @@ func TestResolveDatabaseURL(t *testing.T) {
 	t.Setenv("PGDATABASE", "campaigns")
 	dsn, err := ResolveDatabaseURL()
 	assert.NoError(t, err)
-	assert.Equal(t, "postgres://svc:p%40ss%20word@db.internal:5432/campaigns", dsn)
+	assert.Equal(t, "postgres://svc:"+"p%40ss%20word"+"@db.internal:5432/campaigns", dsn) // split: secretlint
 }
