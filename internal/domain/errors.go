@@ -131,6 +131,15 @@ var (
 	// hears nothing. This is the operator's page, so it is a 5xx and an ERROR log.
 	ErrSystemConnectionNotUsable = errors.New("the LF system connection is not usable as configured")
 
+	// ErrSystemConnectionOrigin records WHICH ROW the credentials came from, independently
+	// of how the failure is classified. ErrSystemConnectionNotUsable answers a different
+	// question — who has to fix it — and the two do not coincide: a blob that fails
+	// authenticated decryption is not a usability defect and gets neither marker, yet it
+	// is still the system row that failed. The operator log for that arm asks whether one
+	// row or every connection is broken, so naming the CALLER's project there sends whoever
+	// is paged to inspect a row that project does not have.
+	ErrSystemConnectionOrigin = errors.New("credentials came from the LF system connection")
+
 	// ErrCredentialsMalformed indicates the stored credential blob is structurally
 	// invalid — the Encryptor could not even ATTEMPT to authenticate it (for the
 	// AES-GCM implementation: shorter than a nonce PLUS the authentication tag, since

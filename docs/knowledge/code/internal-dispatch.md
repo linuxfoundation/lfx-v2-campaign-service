@@ -430,6 +430,16 @@ error, an empty blob, a decrypt failure each mean the project HAS a connection n
 and running its campaign on the LF account spends LF money on a request the project believed was
 billed to itself. `resolveConn` is shared, so a failed FALLBACK lookup is not an absence either.
 
+**Origin and classification are two questions, and one sentinel cannot answer both.**
+`ErrSystemConnectionNotUsable` answers "who must fix this" and only rides along with
+`ErrConnectionNotUsable`, so a failure it does not classify — a blob that fails authenticated
+decryption — reached the service layer indistinguishable from the same failure on the caller's own
+row. That arm logs a project id at ERROR and asks whether one row or every connection is broken;
+naming the caller sent whoever was paged to inspect a row that project does not have, and N
+projects failing over ONE corrupt system row read as N failing rows, which is the deployment-wide
+conclusion the arm is written not to assert. `ErrSystemConnectionOrigin` is wrapped onto every
+error the fallback produces, at the single site that knows the fallback was taken.
+
 No create endpoint can plant a row at the reserved scope (`projectSlugProblem` rejects it), and
 `rejectSystemScope` closes get/update/delete/test/set-credential — which stay permissive on
 `project_id` for historical UUID rows — at the shared helpers in `connection_handler.go`,
@@ -442,13 +452,13 @@ Nothing can install that scope over HTTP, so the installer is a REQUIRED part of
 not a second binary, since ko publishes only `cmd/campaign-service`, resolving its DSN through
 `config.ResolveDatabaseURL` because the chart injects `PG*` and leaves `DATABASE_URL` unset. It
 reads the credential from stdin (a flag lands in shell history and every `ps`), and only
-`ErrNotFound` may create. A rotation is TWO writes in this order: the version-gated `Update`
-that rewrites the account id and config columns FIRST, then the ungated `SetCredential`. The
-order matters to an operator reading a partial failure, because it decides which mixed state
-survives — a crash between the two leaves the NEW account id carrying the OLD credential, so the
-row keeps dispatching on the account whose credential is known to work rather than stranding a
-new account with none. The reverse order would produce the opposite residue. The window closes
-on a rerun; the command is idempotent.
+`ErrNotFound` may create. A rotation is ONE write — `UpdateWithCredential`, gated on the row's
+version — because account id, config and credential must not be separately observable by
+dispatch. As two writes there was no safe order: a crash between them left either the new account
+carrying the old credential or the new credential on the old account, and two concurrent runs
+could commit one run's account beside the other's because `SetCredential` is not version-gated. A
+losing writer now gets `ErrPreconditionFailed` and is told nothing was written; the command stays
+idempotent, so rerunning it converges.
 Keys are folded because stored blobs and dispatch structs are both untagged, so `encoding/json`
 falls back to a case-insensitive match that cannot bridge the underscore in the documented
 snake_case wire form. The config an adapter refuses to create without (LinkedIn `org_id`, Meta

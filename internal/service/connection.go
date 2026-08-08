@@ -193,8 +193,21 @@ func (s *ConnectionService) ListGoogleAdsAccounts(ctx context.Context, p *conn.L
 			// question for whoever answers is whether OTHER projects are failing too, which
 			// is what separates the two causes. The cause is safe to log: it is produced by
 			// the encryptor from ciphertext and key material only, never from plaintext.
+			//
+			// The row logged is the one that FAILED, which is not the caller's project when
+			// the credentials came from the system fallback — that project has no row at
+			// all, and naming it would send whoever answers to inspect something that does
+			// not exist while repeated failures of one corrupt system row looked like
+			// failures spread across many projects, i.e. the deployment-wide reading this
+			// arm must not assert. Origin is carried by ErrSystemConnectionOrigin, separate
+			// from the usability sentinels, because this error is not a usability defect.
+			credentialProject := p.ProjectID
+			if errors.Is(aerr, domain.ErrSystemConnectionOrigin) {
+				credentialProject = model.SystemProjectID
+			}
 			slog.ErrorContext(ctx, "stored credentials failed authenticated decryption; check the application encryption key, and whether this is one row or every connection",
-				"project_id", p.ProjectID, "provider", string(model.ProviderGoogleAds), "error", aerr)
+				"project_id", credentialProject, "requested_by_project_id", p.ProjectID,
+				"provider", string(model.ProviderGoogleAds), "error", aerr)
 			return nil, &conn.InternalServerError{Code: "500", Message: "account discovery could not be completed"}
 		case errors.Is(aerr, domain.ErrSystemConnectionNotUsable):
 			// The project has no connection of its own and the LF system row it fell back

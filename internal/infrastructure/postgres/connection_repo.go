@@ -125,6 +125,23 @@ func (r *ConnectionRepo) Create(ctx context.Context, c *model.Connection) (*mode
 // Update replaces config columns, gating on expectedVersion and bumping it.
 // Credentials are untouched. Returns ErrNotFound / ErrPreconditionFailed.
 func (r *ConnectionRepo) Update(ctx context.Context, c *model.Connection, expectedVersion int64) (*model.Connection, error) {
+	return r.update(ctx, c, nil, expectedVersion)
+}
+
+// UpdateWithCredential is Update with the credential blob written by the SAME statement,
+// so the row never holds one write's account beside the other's credential and a
+// concurrent writer loses on the version check instead of interleaving.
+func (r *ConnectionRepo) UpdateWithCredential(ctx context.Context, c *model.Connection, ciphertext []byte, expectedVersion int64) (*model.Connection, error) {
+	if len(ciphertext) == 0 {
+		// Writing an empty blob would leave a row that looks configured and cannot
+		// authenticate. Update is the call for "config only".
+		return nil, fmt.Errorf("update connection: credential ciphertext is required")
+	}
+	return r.update(ctx, c, ciphertext, expectedVersion)
+}
+
+// update is the one UPDATE both spellings issue; ciphertext nil leaves credentials alone.
+func (r *ConnectionRepo) update(ctx context.Context, c *model.Connection, ciphertext []byte, expectedVersion int64) (*model.Connection, error) {
 	if !c.Provider.Valid() {
 		return nil, fmt.Errorf("unknown provider %q", c.Provider)
 	}
@@ -136,6 +153,10 @@ func (r *ConnectionRepo) Update(ctx context.Context, c *model.Connection, expect
 		return nil, err
 	}
 	args := []any{nullStr(c.Label), c.AccountID, updatedBy}
+	if ciphertext != nil {
+		args = append(args, ciphertext)
+		sets = append(sets, fmt.Sprintf("credentials = $%d", len(args)))
+	}
 	for _, col := range cfgCols {
 		args = append(args, nullStr(c.ProviderConfig[col]))
 		sets = append(sets, fmt.Sprintf("%s = $%d", col, len(args)))

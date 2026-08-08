@@ -40,18 +40,19 @@ enforced on the system row:
 - **Required non-secret config** (`requiredConfigKeys`) is checked against the map about to be
   WRITTEN, not the flags as typed, so a key already on the row satisfies a rotation.
 
-## Rotation is idempotent, and its two writes are not atomic
+## Rotation is idempotent, and it is ONE version-gated write
 
 A second run rotates onto the existing row rather than failing the singleton constraint, which is
 what makes the command safe in a deployment job. `mergeConfig` overlays supplied flags on the
 existing config because `Update` rewrites every column — replacing would NULL siblings a flag did
 not mention.
 
-The port offers no combined write, so account/config and credential commit separately. Ordering
-account/config first leaves the previously-working credential in place if the second write fails,
-which keeps the row dispatchable rather than stranding it on an account it cannot authenticate to.
-Two limits are open and documented in the code: the mixed window persists until a rerun, and
-concurrent runs can interleave (`Update` is version-checked, `SetCredential` is not). Closing
-either needs a transactional write on the repository port. Run the command serially until then.
+Account, config and credential go in one `UpdateWithCredential` gated on the row's version, which
+is what makes a partial rotation unreachable. `Update`-then-`SetCredential` was two writes and the
+order only chose WHICH mixed state a crash left behind — the new account with the old credential,
+or the reverse — and neither is a state dispatch should ever observe. Concurrency was the sharper
+half: `SetCredential` is not version-gated, so two simultaneous rotations could commit one run's
+account beside the other's credential with nothing detecting it. Now the second writer loses the
+version check and the command says nothing was written and to rerun, which is true and actionable.
 
 See [internal/bootstrap](../../../internal/bootstrap).

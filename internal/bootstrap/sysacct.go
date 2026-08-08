@@ -252,47 +252,37 @@ func InstallSystemCredentials(
 	existing, gerr := repo.Get(ctx, model.SystemProjectID, provider)
 	switch {
 	case gerr == nil:
-		// Two writes, and the port offers no combined write, so the ORDER only chooses
-		// WHICH mixed state a failure leaves behind — it does not remove one. Both orders
-		// are observable by dispatch: this one can run the OLD credential against the NEW
-		// account until the rerun, the reverse runs the NEW credential against the OLD
-		// account. This order is preferred because its residue is the credential the
-		// operator already knows works, so the row stays dispatchable on the previous
-		// account rather than stranded on a new one it cannot authenticate to; and because
-		// the write that can fail is the one whose retry is free of side effects.
+		// ONE version-gated write. Update-then-SetCredential was two, and the order only
+		// chose WHICH mixed state a failure left behind: this one could run the old
+		// credential against the new account, the reverse the new credential against the
+		// old account. Concurrent runs were worse — SetCredential is not version-gated, so
+		// two rotations could finish with one run's account and the other's credential and
+		// nothing would detect it. UpdateWithCredential writes account, config and
+		// credential in a single statement gated on existing.Version, so a partial write is
+		// not reachable and a concurrent writer loses the version check instead.
 		//
-		// Two limits are real and NOT closed here. The mixed window persists until a rerun
-		// (the command is idempotent, so a rerun converges). And concurrent bootstrap runs
-		// can interleave: Update takes existing.Version optimistically, SetCredential does
-		// not, so two simultaneous rotations can finish with one run's account and the
-		// other's credential. Closing either needs a transactional write on
-		// domain.ConnectionRepository, which is a port change; it is deliberately not
-		// smuggled in here. Until then, run this command serially — it is a deployment
-		// job, not a request path.
-		//
-		// Config and account id are rewritten only when supplied: Update rewrites every
-		// column, so a rotation omitting -account-id would otherwise CLEAR the selection.
+		// Config and account id are rewritten only when supplied: the statement rewrites
+		// every column, so a rotation omitting -account-id would otherwise CLEAR the
+		// selection.
 		cfg := mergeConfig(existing.ProviderConfig, providerConfig)
 		if cfg != nil {
 			if cerr := requireConfig(provider, cfg); cerr != nil {
 				return cerr
 			}
 		}
-		if idChanged := accountID != "" && accountID != existing.AccountID; idChanged || cfg != nil {
-			upd := *existing
-			if idChanged {
-				upd.AccountID = accountID
-			}
-			if cfg != nil {
-				upd.ProviderConfig = cfg
-			}
-			upd.UpdatedBy = systemActor
-			if _, uerr := repo.Update(ctx, &upd, existing.Version); uerr != nil {
-				return fmt.Errorf("bootstrap: set system %s account id/config: %w", provider, uerr)
-			}
+		upd := *existing
+		if accountID != "" {
+			upd.AccountID = accountID
 		}
-		if _, serr := repo.SetCredential(ctx, model.SystemProjectID, provider, ct, systemActor); serr != nil {
-			return fmt.Errorf("bootstrap: rotate system %s credentials: %w", provider, serr)
+		if cfg != nil {
+			upd.ProviderConfig = cfg
+		}
+		upd.UpdatedBy = systemActor
+		if _, uerr := repo.UpdateWithCredential(ctx, &upd, ct, existing.Version); uerr != nil {
+			if errors.Is(uerr, domain.ErrPreconditionFailed) {
+				return fmt.Errorf("bootstrap: system %s connection changed while this command ran; nothing was written, rerun it: %w", provider, uerr)
+			}
+			return fmt.Errorf("bootstrap: rotate system %s connection: %w", provider, uerr)
 		}
 		return nil
 	case errors.Is(gerr, domain.ErrNotFound):

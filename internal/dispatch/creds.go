@@ -157,6 +157,16 @@ type resolved struct {
 // systemScoped re-attributes an unusable-connection error to the LF system row when that is
 // where the credentials came from. A no-op for every other error and every project-owned
 // connection, so callers can apply it unconditionally.
+// systemOrigin marks err as having come from the system row, for EVERY error the fallback
+// produces rather than only the ones systemScoped classifies. Applied at the single site that
+// knows the fallback was taken, so no later handler has to reconstruct it.
+func systemOrigin(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %w", domain.ErrSystemConnectionOrigin, err)
+}
+
 func (r *resolved) systemScoped(err error) error {
 	if r == nil || !r.fromSystem || err == nil || !errors.Is(err, domain.ErrConnectionNotUsable) {
 		return err
@@ -187,7 +197,7 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 				if res != nil {
 					res.fromSystem = true
 				}
-				return res, (&resolved{fromSystem: true}).systemScoped(rerr)
+				return res, systemOrigin((&resolved{fromSystem: true}).systemScoped(rerr))
 			}
 			// Wrap the sentinel rather than dropping it: read-only callers such as
 			// account discovery need to tell "this project has no connection" (404)

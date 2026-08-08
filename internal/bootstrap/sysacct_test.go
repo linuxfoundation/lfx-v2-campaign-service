@@ -24,6 +24,7 @@ type stubRepo struct {
 	setCT   []byte
 	updated *model.Connection
 	updVer  int64
+	updErr  error
 }
 
 func (r *stubRepo) Get(_ context.Context, projectID string, _ model.Provider) (*model.Connection, error) {
@@ -54,6 +55,18 @@ func (r *stubRepo) SetCredential(_ context.Context, _ string, _ model.Provider, 
 	r.calls = append(r.calls, "set-credential")
 	r.setCT = ct
 	return r.row, nil
+}
+
+// UpdateWithCredential records the ciphertext in the SAME field SetCredential uses, so a test
+// asserting "the secret was written" cannot pass by the row being rotated through the old
+// two-write path — the call list is what separates them.
+func (r *stubRepo) UpdateWithCredential(_ context.Context, c *model.Connection, ct []byte, expectedVersion int64) (*model.Connection, error) {
+	r.calls = append(r.calls, "update-with-credential")
+	r.updated, r.updVer, r.setCT = c, expectedVersion, ct
+	if r.updErr != nil {
+		return nil, r.updErr
+	}
+	return c, nil
 }
 
 func (r *stubRepo) Delete(context.Context, string, model.Provider, *model.Actor) error {
@@ -140,9 +153,13 @@ func TestSecondInstallRotates(t *testing.T) {
 		model.ProviderGoogleAds, "8666746580", nil, []byte(goodCreds)); err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
-	// Nothing changed, so nothing may Update — an omitted flag must not blank a set column.
-	if repo.created != nil || repo.setCT == nil || repo.updated != nil {
-		t.Fatalf("rotation must SetCredential only; calls = %v, updated = %+v", repo.calls, repo.updated)
+	// The credential goes in with the row, and an omitted flag must not blank a set column:
+	// the write rewrites every column, so "unchanged" has to mean the OLD value was resent.
+	if repo.created != nil || repo.setCT == nil || repo.updated == nil {
+		t.Fatalf("rotation must write the row and the secret together; calls = %v", repo.calls)
+	}
+	if repo.updated.AccountID != "8666746580" || repo.updated.ProviderConfig["login_customer_id"] != "999" {
+		t.Fatalf("rotation blanked a column nobody supplied: %+v", repo.updated)
 	}
 
 	repo = row("8666746580", nil)
@@ -150,12 +167,20 @@ func TestSecondInstallRotates(t *testing.T) {
 		model.ProviderGoogleAds, "9746983954", nil, []byte(goodCreds)); err != nil {
 		t.Fatalf("rotate with a new account id: %v", err)
 	}
-	// Version 4 is the row's own: the Update runs BEFORE SetCredential bumps it.
+	// Version 4 is the row's own, and the write is gated on it: a concurrent rotation that
+	// bumped the row must lose here rather than interleave.
 	if repo.updated == nil || repo.updVer != 4 || repo.updated.AccountID != "9746983954" {
 		t.Fatalf("account id change: updated = %+v at version %d, want new at 4", repo.updated, repo.updVer)
 	}
-	if len(repo.calls) < 3 || repo.calls[len(repo.calls)-2] != "update" || repo.calls[len(repo.calls)-1] != "set-credential" {
-		t.Fatalf("write order = %v, want the account id committed before the secret", repo.calls)
+	// ONE write. A second call is the mixed-state bug this replaced: the account and the
+	// credential must not be separately observable.
+	for _, c := range repo.calls {
+		if c == "update" || c == "set-credential" {
+			t.Fatalf("calls = %v, want account id and secret in one version-gated write", repo.calls)
+		}
+	}
+	if repo.calls[len(repo.calls)-1] != "update-with-credential" {
+		t.Fatalf("calls = %v, want the combined write last", repo.calls)
 	}
 }
 
@@ -246,11 +271,11 @@ func TestRotationMergesConfigIntoTheRow(t *testing.T) {
 		model.ProviderMetaAds, "", nil, metaCreds); err != nil {
 		t.Fatalf("rotate with no config: %v", err)
 	}
-	if repo.setCT == nil {
+	if repo.setCT == nil || repo.updated == nil {
 		t.Fatalf("credential not rotated; calls = %v", repo.calls)
 	}
-	if repo.updated != nil {
-		t.Fatalf("rewrote config nobody supplied: %+v", repo.updated.ProviderConfig)
+	if got := repo.updated.ProviderConfig; got["page_id"] != "111" || got["app_id"] != "a1" {
+		t.Fatalf("config = %v, want the row's own values resent when no -config is supplied", got)
 	}
 }
 
@@ -383,5 +408,28 @@ func TestInstallRejectsConfigKeysTheProviderDoesNotStore(t *testing.T) {
 				t.Fatalf("wrote a row carrying a key it cannot store: %+v", repo.created)
 			}
 		})
+	}
+}
+
+// TestRotationRefusesWhenTheRowMovedUnderIt pins the reason the write is version-gated: two
+// bootstrap runs at once must end with one of them refusing, not with one run's account id
+// paired to the other's credential. The message has to say nothing was written, because the
+// operator's next move is to rerun a command they just watched fail.
+func TestRotationRefusesWhenTheRowMovedUnderIt(t *testing.T) {
+	repo := &stubRepo{
+		row: &model.Connection{
+			ProjectID: model.SystemProjectID, Provider: model.ProviderGoogleAds,
+			AccountID: "8666746580", ProviderConfig: map[string]string{"login_customer_id": "999"},
+			Version: 4, Status: model.StatusActive,
+		},
+		updErr: domain.ErrPreconditionFailed,
+	}
+	err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderGoogleAds, "9746983954", nil, []byte(goodCreds))
+	if !errors.Is(err, domain.ErrPreconditionFailed) {
+		t.Fatalf("err = %v, want ErrPreconditionFailed", err)
+	}
+	if !strings.Contains(err.Error(), "nothing was written") || !strings.Contains(err.Error(), "rerun") {
+		t.Fatalf("err = %q, want it to say nothing was written and to rerun", err)
 	}
 }

@@ -80,6 +80,15 @@ func (r *fakeRepo) SetCredential(_ context.Context, projectID string, p model.Pr
 	return c, nil
 }
 
+func (r *fakeRepo) UpdateWithCredential(ctx context.Context, c *model.Connection, ct []byte, expectedVersion int64) (*model.Connection, error) {
+	upd, err := r.Update(ctx, c, expectedVersion)
+	if err != nil {
+		return nil, err
+	}
+	upd.EncryptedCredentials = ct
+	return upd, nil
+}
+
 func (r *fakeRepo) Delete(_ context.Context, projectID string, p model.Provider, _ *model.Actor) error {
 	if _, ok := r.store[repoKey(projectID, p)]; !ok {
 		return domain.ErrNotFound

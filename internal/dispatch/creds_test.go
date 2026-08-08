@@ -6,6 +6,7 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -337,5 +338,48 @@ func TestSystemScopedCoversEveryStoredStateDefectOnDiscovery(t *testing.T) {
 	}
 	if errors.Is(err, domain.ErrSystemConnectionNotUsable) {
 		t.Errorf("err = %v, must not be attributed to the system account", err)
+	}
+}
+
+// failingDecryptor stands in for a rotated application key or a corrupted blob: authenticated
+// decryption fails, which is neither a usability defect nor anything the caller can edit.
+type failingDecryptor struct{}
+
+func (failingDecryptor) Encrypt(p []byte) ([]byte, error) { return p, nil }
+func (failingDecryptor) Decrypt([]byte) ([]byte, error) {
+	return nil, fmt.Errorf("%w: decryption authentication failed", domain.ErrCredentialDecryptionFailed)
+}
+
+// TestSystemFallbackMarksOriginOnErrorsItDoesNotClassify: systemScoped only fires on
+// ErrConnectionNotUsable, so before ErrSystemConnectionOrigin a decryption failure from the
+// fallback arrived indistinguishable from one on the caller's own row — and the operator log
+// for that arm names a row by project id.
+func TestSystemFallbackMarksOriginOnErrorsItDoesNotClassify(t *testing.T) {
+	sysRow := usableConn(goodGoogleAdsCreds, "8666746580")
+
+	_, err := newCredsSource(&scopedConnReader{
+		rows: map[string]*model.Connection{model.SystemProjectID: sysRow},
+	}, failingDecryptor{}).resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+	if !errors.Is(err, domain.ErrCredentialDecryptionFailed) {
+		t.Fatalf("err = %v, want the decryption failure", err)
+	}
+	if errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+		t.Errorf("err = %v: a decryption failure is not a usability defect and must not be "+
+			"classified as one — origin and classification are separate questions", err)
+	}
+	if !errors.Is(err, domain.ErrSystemConnectionOrigin) {
+		t.Errorf("err = %v, want it to record that the SYSTEM row was the one read", err)
+	}
+
+	// The caller's own row must not pick up the marker, or every decryption failure is
+	// attributed to the system account and the single-row cause becomes uninvestigable.
+	_, err = newCredsSource(&scopedConnReader{
+		rows: map[string]*model.Connection{"cncf": usableConn(goodGoogleAdsCreds, "8666746580")},
+	}, failingDecryptor{}).resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+	if !errors.Is(err, domain.ErrCredentialDecryptionFailed) {
+		t.Fatalf("err = %v, want the decryption failure", err)
+	}
+	if errors.Is(err, domain.ErrSystemConnectionOrigin) {
+		t.Errorf("err = %v, must not be attributed to the system row", err)
 	}
 }
