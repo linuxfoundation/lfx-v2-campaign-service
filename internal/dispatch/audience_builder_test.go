@@ -95,9 +95,48 @@ func TestYearIn(t *testing.T) {
 		"No year here":       "",
 		"Event 123456":       "", // a longer digit run is not a year
 		"Event 999":          "",
+		// Four digits outside 19xx/20xx are not years. A first-digit-only check would
+		// extract "1000"/"2999" here and hand them to the warehouse client, which rejects
+		// them — so the two predicates have to agree on the same range.
+		"Event 9999":      "",
+		"Event 1899":      "",
+		"Event 2100":      "",
+		"Event 1900 Expo": "1900",
+		"Event 2099 Expo": "2099",
 	}
 	for in, want := range cases {
 		assert.Equal(t, want, yearIn(in), "input %q", in)
+	}
+}
+
+// TestResolvePastEditions_OutOfRangeYearDoesNotReachTheResolver pins the dispatch copy of the
+// range guard, which is independent of the warehouse client's and of the service's — drift in
+// any one of the three would leave the other two's tests green.
+//
+// An out-of-range currentYear must not be forwarded. Above the range the warehouse comparison
+// inverts ("past editions only" returns future ones); below it every edition is excluded. Here
+// the guard also gates the FALLBACK: an unusable currentYear falls through to yearIn(eventTerm),
+// and when the name carries no usable year either, the builder degrades to no editions rather
+// than querying with a year it cannot trust.
+func TestResolvePastEditions_OutOfRangeYearDoesNotReachTheResolver(t *testing.T) {
+	for _, bad := range []string{"9999", "3000", "0202", "1899", "2100"} {
+		r := &recordingResolver{events: []snowflake.Event{{EventName: "should not be reached"}}}
+		b := NewAudienceBuilder(nil, nil, r)
+
+		names, err := b.ResolvePastEditions(context.Background(), "Some Event", "Korea", bad)
+		require.NoError(t, err, "an unusable year degrades, it does not fail")
+		assert.Empty(t, names, "currentYear %q must not produce editions", bad)
+		assert.Empty(t, r.year, "currentYear %q must never reach the warehouse", bad)
+	}
+	// The boundaries INSIDE the range are still forwarded, so this is a range check and not a
+	// blanket reject.
+	for _, ok := range []string{"1900", "2026", "2099"} {
+		r := &recordingResolver{}
+		b := NewAudienceBuilder(nil, nil, r)
+
+		_, err := b.ResolvePastEditions(context.Background(), "Some Event", "Korea", ok)
+		require.NoError(t, err)
+		assert.Equal(t, ok, r.year, "currentYear %q must be forwarded", ok)
 	}
 }
 

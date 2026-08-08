@@ -40,6 +40,9 @@ type fakeBriefRepo struct {
 	// indexPayloads records EVERY co-committed message, so a test can assert that a write was
 	// indexed at all rather than only inspecting the most recent one.
 	indexPayloads [][]byte
+	// createErr, when set, fails CreateBrief BEFORE it stores anything — the shape of a
+	// version conflict or a database error, where the handler ran but no row committed.
+	createErr error
 }
 
 func newFakeBriefRepo() *fakeBriefRepo {
@@ -80,18 +83,32 @@ func (r *fakeBriefRepo) GetBrief(_ context.Context, projectID, id string) (*mode
 }
 
 func (r *fakeBriefRepo) CreateBrief(_ context.Context, b *model.CampaignBrief, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
+	if r.createErr != nil {
+		return nil, r.createErr
+	}
 	b.ID = "b-new"
 	b.Version = 1
+	// createBriefQuery binds ONE placeholder ($11) to both created_by and updated_by, so a
+	// freshly inserted row already answers "who touched this last". A fake that left
+	// UpdatedBy nil would let that half of the insert be deleted with every test still green.
+	b.UpdatedBy = b.CreatedBy
 	r.briefs[briefKey(b.ProjectID, b.ID)] = b
 	return b, r.enqueue(b, indexPayload)
 }
 
 func (r *fakeBriefRepo) ReplaceBrief(_ context.Context, b *model.CampaignBrief, _ int64, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
+	// replaceBriefQuery is an UPDATE: it never touches created_by, so the stored row keeps
+	// its original author. The caller builds a fresh model with CreatedBy unset, so a fake
+	// that simply overwrote the map entry would DROP the author — and an assertion that the
+	// edit did not rewrite authorship would then pass against a repository that erased it.
+	if prev, ok := r.briefs[briefKey(b.ProjectID, b.ID)]; ok {
+		b.CreatedBy = prev.CreatedBy
+	}
 	r.briefs[briefKey(b.ProjectID, b.ID)] = b
 	return b, r.enqueue(b, indexPayload)
 }
 
-func (r *fakeBriefRepo) Approve(_ context.Context, projectID, id string, _ *model.Actor, expectedVersion int64, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
+func (r *fakeBriefRepo) Approve(_ context.Context, projectID, id string, by *model.Actor, expectedVersion int64, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
 	b, ok := r.briefs[briefKey(projectID, id)]
 	if !ok {
 		return nil, domain.ErrNotFound
@@ -100,19 +117,26 @@ func (r *fakeBriefRepo) Approve(_ context.Context, projectID, id string, _ *mode
 		return nil, domain.ErrPreconditionFailed
 	}
 	b.Status = model.BriefApproved
+	// approveBriefQuery binds $1 to BOTH approved_by and updated_by: approving is a write,
+	// so it moves "who touched this last" as well as "who signed off".
+	b.ApprovedBy = by
+	b.UpdatedBy = by
 	return b, r.enqueue(b, indexPayload)
 }
 
 // ArchiveBrief mirrors the real repo's single-statement semantics: it applies the archive AND
 // returns the committed row. Modelling the mutation (status + version bump) matters — a fake
 // that only reported success would let a caller publishing a stale snapshot pass.
-func (r *fakeBriefRepo) ArchiveBrief(_ context.Context, projectID, id string, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
+// It also models the actor stamp: the real UPDATE sets updated_by in the same statement,
+// so a fake that dropped the argument would let a caller that never passes an actor pass.
+func (r *fakeBriefRepo) ArchiveBrief(_ context.Context, projectID, id string, by *model.Actor, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
 	b, ok := r.briefs[briefKey(projectID, id)]
 	if !ok || b.Status == model.BriefArchived {
 		// The real query guards on status <> 'archived', so a second archive is ErrNotFound.
 		return nil, domain.ErrNotFound
 	}
 	b.Status = model.BriefArchived
+	b.UpdatedBy = by
 	b.Version++
 	return b, r.enqueue(b, indexPayload)
 }
@@ -1553,7 +1577,7 @@ func TestDeleteBrief_ArchiveReturnsTheCommittedRow(t *testing.T) {
 	}
 
 	// The port returns the archived row, so a caller cannot publish a separately-read snapshot.
-	archived, aerr := repo.ArchiveBrief(ctx, "cncf", created.ID, nil)
+	archived, aerr := repo.ArchiveBrief(ctx, "cncf", created.ID, nil, nil)
 	if aerr != nil {
 		t.Fatalf("ArchiveBrief: %v", aerr)
 	}
@@ -1566,7 +1590,7 @@ func TestDeleteBrief_ArchiveReturnsTheCommittedRow(t *testing.T) {
 
 	// Archiving twice must be ErrNotFound: the real query guards on status <> 'archived', so a
 	// second archive commits nothing and therefore has no row to return.
-	if _, second := repo.ArchiveBrief(ctx, "cncf", created.ID, nil); !errors.Is(second, domain.ErrNotFound) {
+	if _, second := repo.ArchiveBrief(ctx, "cncf", created.ID, nil, nil); !errors.Is(second, domain.ErrNotFound) {
 		t.Errorf("second archive = %v, want ErrNotFound (nothing was committed, so nothing to index)", second)
 	}
 }
