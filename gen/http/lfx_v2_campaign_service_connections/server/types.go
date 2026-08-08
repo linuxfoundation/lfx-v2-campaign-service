@@ -721,6 +721,13 @@ type TestHubspotResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListGoogleAdsAccountsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-accounts"
+// endpoint HTTP response body.
+type ListGoogleAdsAccountsResponseBody struct {
+	Accounts []*AccessibleAccountResponseBody `form:"accounts" json:"accounts" xml:"accounts"`
+}
+
 // CreateGoogleAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "create-google-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -2331,6 +2338,55 @@ type SetCredentialHubspotNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListGoogleAdsAccountsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-accounts"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListGoogleAdsAccountsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListGoogleAdsAccountsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-accounts"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListGoogleAdsAccountsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListGoogleAdsAccountsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-accounts"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListGoogleAdsAccountsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListGoogleAdsAccountsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-google-ads-accounts"
+// endpoint HTTP response body for the "NotFound" error.
+type ListGoogleAdsAccountsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// AccessibleAccountResponseBody is used to define fields on response body
+// types.
+type AccessibleAccountResponseBody struct {
+	// Account identifier in the ad platform's namespace
+	ID string `form:"id" json:"id" xml:"id"`
+	// Human-readable account name or label
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+}
+
 // GoogleAdsConnectionConfigRequestBody is used to define fields on request
 // body types.
 type GoogleAdsConnectionConfigRequestBody struct {
@@ -2925,6 +2981,26 @@ func NewTestHubspotResponseBody(res *lfxv2campaignserviceconnections.ConnectionT
 	body := &TestHubspotResponseBody{
 		OK:      res.OK,
 		Message: res.Message,
+	}
+	return body
+}
+
+// NewListGoogleAdsAccountsResponseBody builds the HTTP response body from the
+// result of the "list-google-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsAccountsResponseBody(res *lfxv2campaignserviceconnections.ListGoogleAdsAccountsResult) *ListGoogleAdsAccountsResponseBody {
+	body := &ListGoogleAdsAccountsResponseBody{}
+	if res.Accounts != nil {
+		body.Accounts = make([]*AccessibleAccountResponseBody, len(res.Accounts))
+		for i, val := range res.Accounts {
+			if val == nil {
+				body.Accounts[i] = nil
+				continue
+			}
+			body.Accounts[i] = marshalLfxv2campaignserviceconnectionsAccessibleAccountToAccessibleAccountResponseBody(val)
+		}
+	} else {
+		body.Accounts = []*AccessibleAccountResponseBody{}
 	}
 	return body
 }
@@ -4700,6 +4776,50 @@ func NewSetCredentialHubspotNotFoundResponseBody(res *lfxv2campaignserviceconnec
 	return body
 }
 
+// NewListGoogleAdsAccountsBadRequestResponseBody builds the HTTP response body
+// from the result of the "list-google-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsAccountsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListGoogleAdsAccountsBadRequestResponseBody {
+	body := &ListGoogleAdsAccountsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListGoogleAdsAccountsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "list-google-ads-accounts" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsAccountsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListGoogleAdsAccountsServiceUnavailableResponseBody {
+	body := &ListGoogleAdsAccountsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListGoogleAdsAccountsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "list-google-ads-accounts" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsAccountsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListGoogleAdsAccountsInternalServerErrorResponseBody {
+	body := &ListGoogleAdsAccountsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListGoogleAdsAccountsNotFoundResponseBody builds the HTTP response body
+// from the result of the "list-google-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListGoogleAdsAccountsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListGoogleAdsAccountsNotFoundResponseBody {
+	body := &ListGoogleAdsAccountsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewCreateGoogleAdsPayload builds a lfx-v2-campaign-service-connections
 // service create-google-ads endpoint payload.
 func NewCreateGoogleAdsPayload(body *CreateGoogleAdsRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.CreateGoogleAdsPayload {
@@ -5154,6 +5274,16 @@ func NewTestHubspotPayload(projectID string, bearerToken *string) *lfxv2campaign
 func NewSetCredentialHubspotPayload(body *SetCredentialHubspotRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.SetCredentialHubspotPayload {
 	v := &lfxv2campaignserviceconnections.SetCredentialHubspotPayload{}
 	v.Credentials = unmarshalHubspotCredentialsRequestBodyToLfxv2campaignserviceconnectionsHubspotCredentials(body.Credentials)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListGoogleAdsAccountsPayload builds a lfx-v2-campaign-service-connections
+// service list-google-ads-accounts endpoint payload.
+func NewListGoogleAdsAccountsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListGoogleAdsAccountsPayload {
+	v := &lfxv2campaignserviceconnections.ListGoogleAdsAccountsPayload{}
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken
 

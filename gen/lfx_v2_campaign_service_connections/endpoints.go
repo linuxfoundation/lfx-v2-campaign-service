@@ -58,6 +58,7 @@ type Endpoints struct {
 	DeleteHubspot             goa.Endpoint
 	TestHubspot               goa.Endpoint
 	SetCredentialHubspot      goa.Endpoint
+	ListGoogleAdsAccounts     goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "lfx-v2-campaign-service-connections"
@@ -108,6 +109,7 @@ func NewEndpoints(s Service) *Endpoints {
 		DeleteHubspot:             NewDeleteHubspotEndpoint(s, a.JWTAuth),
 		TestHubspot:               NewTestHubspotEndpoint(s, a.JWTAuth),
 		SetCredentialHubspot:      NewSetCredentialHubspotEndpoint(s, a.JWTAuth),
+		ListGoogleAdsAccounts:     NewListGoogleAdsAccountsEndpoint(s, a.JWTAuth),
 	}
 }
 
@@ -156,6 +158,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.DeleteHubspot = m(e.DeleteHubspot)
 	e.TestHubspot = m(e.TestHubspot)
 	e.SetCredentialHubspot = m(e.SetCredentialHubspot)
+	e.ListGoogleAdsAccounts = m(e.ListGoogleAdsAccounts)
 }
 
 // NewCreateGoogleAdsEndpoint returns an endpoint function that calls the
@@ -1134,5 +1137,29 @@ func NewSetCredentialHubspotEndpoint(s Service, authJWTFn security.AuthJWTFunc) 
 			return nil, err
 		}
 		return nil, s.SetCredentialHubspot(ctx, p)
+	}
+}
+
+// NewListGoogleAdsAccountsEndpoint returns an endpoint function that calls the
+// method "list-google-ads-accounts" of service
+// "lfx-v2-campaign-service-connections".
+func NewListGoogleAdsAccountsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ListGoogleAdsAccountsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ListGoogleAdsAccounts(ctx, p)
 	}
 }

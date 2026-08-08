@@ -17,6 +17,7 @@ import (
 	"time"
 
 	audiences "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
+	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
@@ -1102,4 +1103,105 @@ func (s *ctxCapturingScanner) StuckDispatchClaims(ctx context.Context, _ int) ([
 	}
 	<-ctx.Done() // model a query that unwinds only when its context is cancelled
 	return nil, ctx.Err()
+}
+
+// fakeConnRepo is a ConnectionRepository that is present but never consulted. The wiring
+// test below needs a NON-NIL repo so the connection service gets past its storage check and
+// reaches the orchestrator check — the one this test is actually about.
+type fakeConnRepo struct{}
+
+func (fakeConnRepo) Get(context.Context, string, model.Provider) (*model.Connection, error) {
+	return nil, domain.ErrNotFound
+}
+func (fakeConnRepo) Create(context.Context, *model.Connection) (*model.Connection, error) {
+	return nil, domain.ErrNotFound
+}
+func (fakeConnRepo) Update(context.Context, *model.Connection, int64) (*model.Connection, error) {
+	return nil, domain.ErrNotFound
+}
+func (fakeConnRepo) SetCredential(context.Context, string, model.Provider, []byte, *model.Actor) (*model.Connection, error) {
+	return nil, domain.ErrNotFound
+}
+func (fakeConnRepo) Delete(context.Context, string, model.Provider, *model.Actor) error {
+	return domain.ErrNotFound
+}
+
+// fakeEncryptor is a no-op Encryptor, present for the same reason as fakeConnRepo.
+type fakeEncryptor struct{}
+
+func (fakeEncryptor) Encrypt(plaintext []byte) ([]byte, error)  { return plaintext, nil }
+func (fakeEncryptor) Decrypt(ciphertext []byte) ([]byte, error) { return ciphertext, nil }
+
+// TestConnectionService_AccountDiscoveryNeedsTheOrchestrator pins the wiring that both
+// container startup paths perform and that nothing else covered: the fast path
+// (NewContainer with a live pool) and the cold-start retry both call SetOrchestrator on the
+// connection service, and account discovery is permanently 503 until one of them runs.
+//
+// The service-level tests all inject an orchestrator by hand, so deleting EITHER container
+// call site leaves every one of them green while every deployed pod answers 503 forever.
+//
+// The repo is bound first and deliberately: with a nil repo the 503 comes from the STORAGE
+// check and the orchestrator check is never reached, so a test that skipped SetBackend would
+// pass no matter what SetOrchestrator did. The two 503s are told apart by their messages.
+func TestConnectionService_AccountDiscoveryNeedsTheOrchestrator(t *testing.T) {
+	// Both injection sites bind through backendSetter, so the concrete service must satisfy
+	// it. A signature change breaks this line rather than one call site.
+	var bs backendSetter = service.NewConnectionService(nil, nil)
+	bs.SetBackend(fakeConnRepo{}, fakeEncryptor{})
+
+	svc, ok := bs.(*service.ConnectionService)
+	require.True(t, ok)
+
+	// Pre-state: storage bound, orchestrator never injected. This is exactly what a pod
+	// looks like if either container call site is removed.
+	_, err := svc.ListGoogleAdsAccounts(context.Background(), &conn.ListGoogleAdsAccountsPayload{ProjectID: "p"})
+	var unavail *conn.ConnServiceUnavailableError
+	require.ErrorAs(t, err, &unavail,
+		"without SetOrchestrator, account discovery must report the typed 503")
+	require.Contains(t, unavail.Message, "account discovery",
+		"the 503 must come from the missing ORCHESTRATOR, not from missing storage")
+
+	// Post-injection: the same call now reaches the orchestrator. That orchestrator has no
+	// dispatchers, so it answers 400 unsupported — a DIFFERENT typed error, which is the
+	// point: only reaching the orchestration layer can produce it.
+	bs.SetOrchestrator(&service.Orchestrator{})
+	_, err = svc.ListGoogleAdsAccounts(context.Background(), &conn.ListGoogleAdsAccountsPayload{ProjectID: "p"})
+	var badReq *conn.BadRequestError
+	require.ErrorAs(t, err, &badReq,
+		"after SetOrchestrator the call must reach the orchestrator, not short-circuit on the nil check")
+}
+
+// TestContainer_BothStartupPathsInjectTheOrchestrator asserts that each of the two container
+// startup paths actually performs the injection the test above proves is necessary.
+//
+// The test above drives the SERVICE: it binds the backend and calls SetOrchestrator by hand,
+// so it proves discovery is 503 without the injection — but it never executes a line of
+// container.go, and deleting either call site leaves it green. Both sites need a live
+// pgxpool to reach in a unit test, so this asserts on the source, the way the shutdown-order
+// invariants in this package are asserted. Each function body is bounded at the next
+// top-level func so its sibling cannot satisfy the assertion on its behalf.
+func TestContainer_BothStartupPathsInjectTheOrchestrator(t *testing.T) {
+	src, err := os.ReadFile("container.go")
+	require.NoError(t, err)
+
+	body := func(sig string) string {
+		i := strings.Index(string(src), sig)
+		require.NotEqual(t, -1, i, "%s not found; update this test if it was renamed", sig)
+		rest := string(src)[i+len(sig):]
+		if j := strings.Index(rest, "\nfunc "); j != -1 {
+			rest = rest[:j]
+		}
+		return rest
+	}
+
+	// The fast path: NewContainer reached a live pool and wires everything synchronously.
+	assert.Contains(t, body("func (c *Container) wireLiveBackends("), "SetOrchestrator(orch)",
+		"the live-backend path must inject the orchestrator into the connection service; without "+
+			"it every pod that starts with a reachable DB answers 503 to account discovery forever")
+	// The cold-start path: the DB was unreachable at boot, the container came up in 503 mode,
+	// and a background goroutine binds the backends when the retry finally connects. It is
+	// the easier one to forget precisely because it is not the path anyone runs locally.
+	assert.Contains(t, body("func (c *Container) retryDatabaseInit("), "SetOrchestrator(orch)",
+		"the cold-start retry must inject the orchestrator too; otherwise a pod that booted "+
+			"before the database was reachable serves 503s for account discovery for its whole life")
 }

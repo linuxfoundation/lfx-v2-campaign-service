@@ -146,6 +146,74 @@ unreachable there (see `internal/platform/twitter` and `internal/dispatch/twitte
 below). A single global default would make every omitted-window request against an X
 campaign fail with a guaranteed 400.
 
+## Account discovery
+
+`ConnectionService.ListGoogleAdsAccounts` (backing `GET .../connection-google-ads/accounts`)
+enumerates the ad accounts reachable UPSTREAM with the connection's stored credential, so an
+operator can pick one instead of pasting a customer id by hand. It is a live read on the same
+never-persisted discipline as `GetCampaignMetrics`, and `Orchestrator.ReadAccounts` uses the
+same optional-capability pattern: it type-asserts the platform's dispatcher for `AccountLister`
+at call time and returns `ErrAccountsUnsupported` (400) without contacting the platform when
+that capability isn't wired.
+
+Note what it does NOT list: anything this service stores. A project holds at most one connection
+per provider, read via `GET .../connection-{provider}`.
+
+Five outcomes are distinguished deliberately, because collapsing them misdirects the caller.
+
+- `ErrAccountsUnsupported` → **400** — the platform has no discovery capability.
+- `domain.ErrNotFound` → **404** — the project has no stored connection. A setup state; a 503
+  here would tell the caller to retry something that cannot succeed until a connection exists.
+- `domain.ErrCredentialDecryptionFailed` → **500** — a well-formed credential blob failed
+  AUTHENTICATED decryption, which means a wrong or rotated application encryption key, or tampered
+  or corrupted data — and GCM's tag check CANNOT tell those apart. This arm sits ABOVE the
+  `ErrConnectionNotUsable` one and is checked first on purpose: a wrong deployment key would fail
+  every project's connection at once, and a 400 would send each of their operators to go fix a row
+  that is fine, while a 503 would promise that waiting helps. That does NOT mean this status
+  asserts an outage — one tampered or corrupted row produces exactly the same failure, and which
+  it was is answered by the COUNT of failing projects, not by the status. The 500 is chosen because
+  the ambiguity is asymmetric: over-escalating one bad row is recoverable, under-reporting a broken
+  key is not. It logs at ERROR because it is the arm that should page someone, and the cause IS
+  logged here — it is produced by the encryptor from ciphertext and key material only, never from
+  plaintext.
+- `domain.ErrConnectionNotUsable` → **400** — the connection EXISTS but cannot be used as it
+  stands: inactive, an incomplete or undecodable credential blob, or a malformed stored config
+  value such as a dashed `login_customer_id`. The platform is never contacted. This arm is what
+  keeps the 503 below honest: a 503 promises that waiting might help, and none of these conditions
+  change until a human edits the connection. The distinction cannot be made here — a setup failure
+  and an upstream one arrive as the same type — so `internal/dispatch/googleads.go`
+  (`resolveGoogleAdsDiscoveryClient`) wraps every pre-send failure with the sentinel, and this arm
+  reads it. Neither the cause NOR its text leaves this function — not in the response and not in
+  the log line. One of the wrapped errors is computed over the decrypted credential blob, and
+  `encoding/json` quotes its input, so logging the cause would put credential-derived bytes into
+  centralized logs for exactly the connection whose credentials are malformed. What the log line
+  carries instead is `reason=`, from `unusableConnectionReason` — a fixed token
+  (`connection_inactive`, `credentials_absent`, `credentials_undecodable`,
+  `credentials_incomplete`, `provider_config_invalid`, `credential_blob_malformed`,
+  `unclassified`) read off the reason
+  sentinel the dispatch layer wraps alongside `ErrConnectionNotUsable`. A closed vocabulary is what
+  a log line wants anyway: greppable, alertable, and with no payload to carry a secret in.
+- Anything else → **503** — the platform was reached and did not answer.
+
+Two DIFFERENT guards protect the empty-vs-nil distinction, and they fail in opposite directions —
+document them separately so a future change preserves each for its own reason:
+
+1. **A nil from an `AccountLister`** is a contract violation, and `ReadAccounts` maps it to 503.
+   A credential that legitimately reaches zero accounts must return an EMPTY list, so a nil from
+   a dispatcher means the dispatcher did not answer, not that the answer was "none".
+2. **A nil introduced LATER, by the service layer's own conversion loop**, never reaches that
+   guard — it is created after it. Nothing rejects it, so it serializes as a successful `null`
+   response body: clients were promised a list and get a null instead.
+
+Hence the rule that covers both: every layer builds its slice with `make(..., 0, n)`. Guard 1
+turns a missing answer into 503; guard 2 does not exist, which is exactly why the construction
+convention has to hold on the service side rather than being checked there.
+
+Both cold-start guards on this handler return 503 but mean different things:
+`resolveBackendWithOrch` checks the repo first ("connection storage is unavailable") and the
+orchestrator second ("account discovery service is unavailable"). A test that leaves BOTH unset
+only ever exercises the first.
+
 ## Campaign delete
 
 `BriefService.DeleteCampaign` (backing `DELETE .../campaigns/{id}`, `If-Match` required)

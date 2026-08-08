@@ -10,12 +10,22 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
 )
+
+// storedCustomerIDRE is the shape a STORED Google Ads account id must have: digits
+// only, no dashes, spaces, or grouping. It intentionally duplicates the client's
+// customerIDRE (internal/platform/googleads/client.go) rather than exporting it: the
+// client keeps its own copy as the backstop for every caller, while this one exists so
+// a malformed STORED value is caught at the dispatch boundary, where the failure can
+// still be classified as domain.ErrConnectionNotUsable instead of an upstream 503. The
+// two must stay in step — widen one and you must widen the other.
+var storedCustomerIDRE = regexp.MustCompile(`^[0-9]+$`)
 
 // googleAdsCreds is the credential shape stored (encrypted) for a Google Ads
 // connection. Google Ads authenticates with an OAuth2 application (client id/secret)
@@ -227,21 +237,68 @@ func campaignFromGoogleAds(ctx context.Context, r *googleads.CampaignResult, cfg
 // can't pass the empty check here and then fail the client's digits-only validator as a
 // confusing downstream error.
 func validateGoogleAdsConnection(projectID string, res *resolved) (googleAdsCreds, string, error) {
-	var creds googleAdsCreds
-	if res.status != model.StatusActive {
-		return creds, "", fmt.Errorf("google ads connection for project %s is %s, not active", projectID, res.status)
-	}
-	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return creds, "", fmt.Errorf("decode google ads credentials: %w", err)
-	}
-	if creds.ClientID == "" || creds.ClientSecret == "" || creds.DeveloperToken == "" || creds.RefreshToken == "" {
-		return creds, "", fmt.Errorf("google ads credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)")
+	creds, err := validateGoogleAdsCredentials(projectID, res)
+	if err != nil {
+		return creds, "", err
 	}
 	accountID := strings.TrimSpace(res.accountID)
 	if accountID == "" {
 		return creds, "", fmt.Errorf("google ads connection for project %s has no account id (customer id)", projectID)
 	}
 	return creds, accountID, nil
+}
+
+// validateGoogleAdsCredentials is validateGoogleAdsConnection WITHOUT the account-id
+// requirement, for the one operation that cannot have one yet: account discovery.
+//
+// Be precise about which lifecycle this serves TODAY. `design/connection.go:333` still
+// declares `Required("account_id")` on GoogleAdsConnectionConfig, so a connection cannot
+// currently be created without one: the credentials-first, account-chosen-afterwards
+// bootstrap is NOT yet reachable. What IS reachable, and what this relaxation exists for,
+// is RE-POINTING — an operator with a working connection asking "which other customer ids
+// does this credential reach?" before switching account_id. Demanding a non-empty account
+// id would still not block that (one is stored), but the check would be answering a
+// question discovery does not ask, and it would have to be removed anyway the moment the
+// design drops the requirement. Keeping the relaxation here means only the design changes
+// when bootstrap lands, not this path.
+//
+// Every other check — active status, decodable blob, all four OAuth fields present — still
+// applies, because a discovery call against a stale or half-configured connection should
+// fail as a connection problem rather than as an opaque error from Google.
+func validateGoogleAdsCredentials(projectID string, res *resolved) (googleAdsCreds, error) {
+	var creds googleAdsCreds
+	if res.status != model.StatusActive {
+		return creds, fmt.Errorf("%w: google ads connection for project %s is %s, not active",
+			domain.ErrConnectionInactive, projectID, res.status)
+	}
+	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
+		// The unmarshal error is DROPPED, not wrapped. It is the one error on this path
+		// derived from the DECRYPTED credential blob, and encoding/json quotes its input:
+		// a *json.SyntaxError names the offending character and a *json.UnmarshalTypeError
+		// names the field it was reading. Wrapping it put credential-derived bytes into
+		// every log line and error chain downstream, for exactly the connection whose
+		// credentials are malformed. Nothing is lost that a reader could act on — the
+		// remedy is "re-save the credential", not "fix byte 41" — and the sentinel keeps
+		// the condition distinguishable without carrying a payload.
+		return creds, fmt.Errorf("%w: google ads credentials for project %s are not valid JSON",
+			domain.ErrCredentialsUndecodable, projectID)
+	}
+	// Trim ONCE, in place, so the emptiness check and the values handed to NewClient are
+	// the same strings. Checking the untrimmed value lets a whitespace-only field — the
+	// normal result of a copy-paste into a credential form — pass as present and reach
+	// Google, where it fails as an opaque upstream error instead of the local
+	// incomplete-credentials error that tells the operator what to fix. Trimming only at
+	// the check would be worse still: the check would pass and the untrimmed value would
+	// then be sent.
+	creds.ClientID = strings.TrimSpace(creds.ClientID)
+	creds.ClientSecret = strings.TrimSpace(creds.ClientSecret)
+	creds.DeveloperToken = strings.TrimSpace(creds.DeveloperToken)
+	creds.RefreshToken = strings.TrimSpace(creds.RefreshToken)
+	if creds.ClientID == "" || creds.ClientSecret == "" || creds.DeveloperToken == "" || creds.RefreshToken == "" {
+		return creds, fmt.Errorf("%w: google ads credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)",
+			domain.ErrCredentialsIncomplete)
+	}
+	return creds, nil
 }
 
 // resolveGoogleAdsClient resolves + validates the project's connection and builds a client
@@ -271,6 +328,65 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsClient(ctx context.Context, projec
 	), nil
 }
 
+// resolveGoogleAdsDiscoveryClient builds a client for the ACCOUNT-DISCOVERY path: same
+// credential resolution and the same connection checks as resolveGoogleAdsClient, minus the
+// account-id requirement (see validateGoogleAdsCredentials for which lifecycle that serves
+// today — re-pointing, not first-time bootstrap, since GoogleAdsConnectionConfig still
+// declares Required("account_id")).
+//
+// CustomerID is left empty regardless of whether the connection stores one, because the
+// upstream operation is account-AGNOSTIC: it asks which customer ids the credential itself
+// reaches, so scoping it to one of them would narrow the answer to a subset of the question.
+// The manager id, when present, is what lets discovery expand an MCC hierarchy rather than
+// returning only the manager itself.
+func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, error) {
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	// Everything from here to NewClient inspects STORED state, before any request exists.
+	// A failure means the connection needs editing, not retrying, so each one is wrapped
+	// with domain.ErrConnectionNotUsable — otherwise the discovery handler's default arm
+	// reports 503 and tells the operator to wait for a condition that will never change on
+	// its own. Errors from creds.resolve above are deliberately NOT wrapped: that layer
+	// distinguishes ErrNotFound (no connection — a 404) from a real storage failure (which
+	// IS transient and IS a 503), and flattening both into "not usable" would lose it.
+	creds, err := validateGoogleAdsCredentials(projectID, res)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, err)
+	}
+	// login_customer_id is checked HERE, not only inside the client. The client validates
+	// it too (client.go validateLoginCustomerID, kept as the backstop for every other
+	// caller), but by then the failure is indistinguishable at this boundary from an
+	// upstream one — same call, same error type — and would be classified as retryable.
+	// Checking the stored value where it is read is what makes it classifiable.
+	loginCustomerID := strings.TrimSpace(res.providerConfig["login_customer_id"])
+	if loginCustomerID != "" && !storedCustomerIDRE.MatchString(loginCustomerID) {
+		// The offending VALUE is deliberately not echoed. A manager id is
+		// account-identifying configuration, this error reaches the discovery
+		// endpoint's log, and the rest of this path keeps error text to a fixed
+		// sentinel vocabulary with no payload attached (see the unusable-reason
+		// vocabulary log fragment). Naming the field and the rule is everything an
+		// operator needs to go fix the row; the value adds nothing they do not
+		// already have and puts account data in a log line.
+		return nil, fmt.Errorf("%w: %w: stored login_customer_id is invalid (must be digits only, no dashes or spaces)",
+			domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid)
+	}
+	return googleads.NewClient(
+		googleads.Credentials{
+			ClientID:       creds.ClientID,
+			ClientSecret:   creds.ClientSecret,
+			DeveloperToken: creds.DeveloperToken,
+			RefreshToken:   creds.RefreshToken,
+		},
+		googleads.AccountConfig{
+			LoginCustomerID: loginCustomerID,
+			Label:           res.label,
+		},
+		d.opts...,
+	), nil
+}
+
 // googleAdsRunStatus maps the service's run-state vocabulary to Google's campaign status.
 // Note Google spells the serving state ENABLED, not ACTIVE.
 func googleAdsRunStatus(status string) (string, error) {
@@ -282,6 +398,45 @@ func googleAdsRunStatus(status string) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported campaign run status %q (want %q or %q)", status, model.CampaignRunActive, model.CampaignRunPaused)
 	}
+}
+
+// ListAccounts discovers the ad accounts reachable via the project's stored,
+// encrypted Google Ads connection credential, returning minimal identifying
+// information (customer ID and optionally a display label).
+//
+// It satisfies the service-side AccountLister interface, which Orchestrator.ReadAccounts
+// type-asserts on the dispatcher for the requested platform; a platform whose dispatcher
+// does not implement it gets domain.ErrAccountsUnsupported and the ad platform is never
+// contacted. The error contract below is what ReadAccounts and the endpoint's status
+// mapping rely on.
+func (d *GoogleAdsDispatcher) ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error) {
+	client, err := d.resolveGoogleAdsDiscoveryClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	customers, lerr := client.ListAccessibleCustomers(ctx)
+	if lerr != nil {
+		return nil, lerr
+	}
+	// Convert Google Ads customers to the common AccessibleAccount shape.
+	// Each customer's descriptive_name is used as the label; the resource_name
+	// (customers/DIGITS) is parsed to extract the numeric customer_id.
+	//
+	// make(..., 0, n) rather than a nil var: a credential that legitimately reaches
+	// zero accounts is an empty list, not an error, and the two must stay
+	// distinguishable at the service boundary — a nil slice invites the caller that
+	// lands next to read it as "no answer" and report the platform as down for a
+	// perfectly valid empty one.
+	accounts := make([]model.AccessibleAccount, 0, len(customers))
+	for _, cust := range customers {
+		// Parse "customers/1234567890" → "1234567890"
+		id := strings.TrimPrefix(cust.ResourceName, "customers/")
+		accounts = append(accounts, model.AccessibleAccount{
+			ID:    id,
+			Label: cust.DescriptiveName,
+		})
+	}
+	return accounts, nil
 }
 
 // ToggleStatus implements service.StatusToggler for Google Ads.
