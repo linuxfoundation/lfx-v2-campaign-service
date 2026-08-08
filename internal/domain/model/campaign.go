@@ -50,9 +50,10 @@ type Campaign struct {
 	// which is the person who authorized the spend — not to whoever happened to be
 	// authenticated when some later goroutine got around to writing the row.
 	//
-	// One nil cause is specific to this table and is entirely ordinary: the recovery
-	// sweeper re-persists campaigns with no originating request at all. A NULL
-	// created_by on a swept row is correct, not a lost attribution.
+	// The nil case is ordinary rather than exceptional: Orchestrator.Start captures
+	// the actor with attributedActor, which returns nil — after logging it — whenever
+	// the request carried no authenticated principal. A NULL on such a row is correct,
+	// and it means "not recorded", never "nobody".
 	CreatedBy *Actor
 	UpdatedBy *Actor
 	CreatedAt time.Time

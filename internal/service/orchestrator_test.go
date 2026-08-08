@@ -240,7 +240,7 @@ func (r *fakeCampaignRepo) ReleaseCampaignLockAfterCooldown(domain.CampaignLockT
 // missing/already-deleted → ErrNotFound, mid-dispatch 'pending' → ErrConflict, then
 // the version check, and finally a status flip to 'deleted' that leaves the row in
 // place (so a re-dispatch to the same pair can claim the freed slot).
-func (r *fakeCampaignRepo) DeleteCampaign(_ context.Context, _, _, campaignID string, expectedVersion int64, _ domain.CampaignIndexPayloadFunc) error {
+func (r *fakeCampaignRepo) DeleteCampaign(_ context.Context, _, _, campaignID string, expectedVersion int64, _ *model.Actor, _ domain.CampaignIndexPayloadFunc) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c, ok := r.byID[campaignID]
