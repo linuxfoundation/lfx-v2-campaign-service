@@ -61,6 +61,11 @@ func TestIsForbiddenIP(t *testing.T) {
 		"2002:7f00:1::", "2002:a9fe:a9fe::", "2002:0a00:0001::",
 		// The 4-in-6 spellings of two of the above: same host, different notation.
 		"::ffff:127.0.0.1", "::ffff:169.254.169.254",
+		// The two embeddings To4 does NOT normalise, decoded and re-tested instead of
+		// denied wholesale (see ipv4EmbeddingNets). 64:ff9b::a9fe:a9fe is the cloud
+		// metadata address on any NAT64 network; ::ffff:0:7f00:1 is 127.0.0.1.
+		"64:ff9b::a9fe:a9fe", "64:ff9b::7f00:1", "64:ff9b::a00:1",
+		"::ffff:0:a9fe:a9fe", "::ffff:0:7f00:1",
 	}
 	for _, s := range forbidden {
 		ip := net.ParseIP(s)
@@ -74,7 +79,11 @@ func TestIsForbiddenIP(t *testing.T) {
 	// Over-rejection costs a reachable page: Fetch fails with ErrEventURLForbidden, which
 	// the endpoint answers 400, so a legitimate public event URL is refused outright rather
 	// than degrading to "no metadata found".
-	for _, s := range []string{"93.184.216.34", "8.8.8.8", "1.1.1.1", "2606:2800:220:1::1"} {
+	// The last two are the reason the embedding prefixes are DECODED rather than denied:
+	// on a NAT64 network they are how a v6-only host reaches an ordinary public IPv4 host,
+	// so denying 64:ff9b::/96 outright would refuse every legitimate IPv4 event host.
+	for _, s := range []string{"93.184.216.34", "8.8.8.8", "1.1.1.1", "2606:2800:220:1::1",
+		"64:ff9b::5db8:d822", "::ffff:0:808:808"} {
 		if isForbiddenIP(net.ParseIP(s)) {
 			t.Errorf("isForbiddenIP(%s) = true, want false", s)
 		}

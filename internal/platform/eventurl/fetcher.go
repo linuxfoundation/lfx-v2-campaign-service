@@ -60,6 +60,21 @@ var forbiddenNets = []net.IPNet{
 	{IP: net.ParseIP("64:ff9b:1::"), Mask: net.CIDRMask(48, 128)}, // RFC 8215 local NAT64
 }
 
+// ipv4EmbeddingNets are prefixes whose LOW 32 BITS are a literal IPv4 destination, to be
+// decoded and re-tested rather than denied wholesale.
+//
+// They differ from 6to4 above in what a blanket deny would cost. 2002::/16 is deprecated, so
+// refusing all of it loses nothing reachable. These two are not: on a NAT64/SIIT network
+// 64:ff9b::/96 is how a v6-only host reaches the ORDINARY IPv4 internet, so denying the prefix
+// would refuse every legitimate IPv4 event host at once. Decoding is therefore the only option
+// that is both safe and correct — and it is needed, because net.IP.To4 normalises exactly one
+// embedding (::ffff:0:0/96, IPv4-mapped) and neither of these. 64:ff9b::a9fe:a9fe survives
+// every predicate and every IPv4-shaped range test above while naming 169.254.169.254.
+var ipv4EmbeddingNets = []net.IPNet{
+	{IP: net.ParseIP("64:ff9b::"), Mask: net.CIDRMask(96, 128)},    // RFC 6052 well-known NAT64 prefix
+	{IP: net.ParseIP("::ffff:0:0:0"), Mask: net.CIDRMask(96, 128)}, // RFC 2765 IPv4-translated
+}
+
 // isForbiddenIP reports whether ip is an address this service must not connect to.
 //
 // This is a DENYLIST, and calling it default-deny would be a comfortable lie: a
@@ -71,6 +86,7 @@ var forbiddenNets = []net.IPNet{
 //
 // The 4-in-6 form is normalized first, because a mapped address like ::ffff:169.254.169.254
 // is the same host as its IPv4 spelling and must not slip past an IPv4-shaped range test.
+// To4 covers only that one embedding; ipv4EmbeddingNets handles the two it does not.
 func isForbiddenIP(ip net.IP) bool {
 	if v4 := ip.To4(); v4 != nil {
 		ip = v4
@@ -79,6 +95,15 @@ func isForbiddenIP(ip net.IP) bool {
 		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
 		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() {
 		return true
+	}
+	// An IPv4-embedding address is judged by the IPv4 it names. The recursion terminates:
+	// the value handed back is 4 bytes after To4, so it cannot match a /96 v6 prefix.
+	if len(ip) == net.IPv6len {
+		for i := range ipv4EmbeddingNets {
+			if ipv4EmbeddingNets[i].Contains(ip) {
+				return isForbiddenIP(net.IPv4(ip[12], ip[13], ip[14], ip[15]))
+			}
+		}
 	}
 	for i := range forbiddenNets {
 		if forbiddenNets[i].Contains(ip) {
