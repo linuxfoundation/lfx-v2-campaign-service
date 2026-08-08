@@ -1028,10 +1028,14 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// contacted for the last group.
 	//
 	// The classification of that last group is NO LONGER uniform across dispatchers, and this
-	// comment used to say it was. Google Ads tags its three with domain.ErrConnectionNotUsable
-	// (validateGoogleAdsCredentials, internal/dispatch/googleads.go), which the caller maps to
-	// 409 — correct, because none of them improves with time. Reddit, Meta, LinkedIn and X
-	// still return bare errors that fall through to the caller's default 503 arm. Tagging
+	// comment used to say it was. Google Ads tags every one of its preflight failures with
+	// domain.ErrConnectionNotUsable (internal/dispatch/googleads.go): the three in
+	// validateGoogleAdsCredentials, the missing-account guard in validateGoogleAdsConnection,
+	// and the provider-config check. The caller maps them to 409 — correct, because none of
+	// them improves with time. Reddit, Meta, LinkedIn, X AND Microsoft still return bare
+	// errors that fall through to the caller's default 503 arm; Microsoft is wired for
+	// toggles and runs the same active/incomplete preflight, so leaving it out of this list
+	// would hide a provider that is actually reachable here. Tagging
 	// theirs is the outstanding half of that work, tracked with the adapters. Bound the
 	// whole (possibly multi-PATCH, each with its own retry budget) cascade with a total
 	// deadline UNDER the HTTP write timeout, so a slow toggle is cancelled and returned to the

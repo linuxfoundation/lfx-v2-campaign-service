@@ -124,7 +124,12 @@ func (s *ConnectionService) SetCredentialGoogleAds(ctx context.Context, p *conn.
 }
 
 // unusableConnectionReason maps an ErrConnectionNotUsable chain onto the fixed vocabulary
-// the discovery handler logs. It exists because the errors themselves cannot be logged: one
+// logged by the handlers that surface such a chain: account discovery, and the synchronous
+// campaign handlers (metrics and status toggle). Discovery is not the only consumer, and one
+// case below — account_not_selected — is unreachable from discovery, which skips the
+// account-ID check by design.
+//
+// It exists because the errors themselves cannot be logged: one
 // of these conditions is detected by decoding the decrypted credential blob, and an
 // encoding/json error quotes its input. The dispatch layer therefore wraps a reason sentinel
 // alongside the status sentinel (internal/domain/errors.go), and this reads it.

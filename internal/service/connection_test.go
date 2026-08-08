@@ -21,7 +21,7 @@ type fakeRepo struct {
 	createErr error
 	getErr    error
 	updateErr error
-	// gotUpdateVersion and gotUpdateArg record the last Update call. The real repository
+	// gotUpdateVersion and gotUpdateCreds record the last Update call. The real repository
 	// enforces the version check in SQL and leaves the credential column alone, so a fake
 	// cannot reproduce either — but a test CAN observe what the handler PASSED, which is
 	// the half that lives in the service layer.
