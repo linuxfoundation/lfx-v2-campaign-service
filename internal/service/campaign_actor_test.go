@@ -189,8 +189,13 @@ func TestCampaignActor_ToggleStampsUpdatedByOnly(t *testing.T) {
 
 // TestCampaignActor_SystemToggleRecordsNoActor pins the legitimate nil: a system-initiated
 // toggle with no authenticated principal must still succeed and must record NULL rather than
-// inventing an actor. This case is less common than system-initiated dispatch (which is the
-// recovery sweeper), but a scheduled toggle or an automated remediation might do this in future.
+// inventing an actor.
+//
+// This is a NEGATIVE pin and is deliberately not binding on the attribution code: with that
+// code removed UpdatedBy is nil anyway, so the test still passes. What it guards is the
+// opposite regression — a future change that stamps a placeholder actor ("system", the
+// campaign's creator) onto an unauthenticated toggle, which would make the audit trail claim
+// a principal that never acted. TestCampaignActor_ToggleStampsUpdatedByOnly is the binding half.
 func TestCampaignActor_SystemToggleRecordsNoActor(t *testing.T) {
 	camp := &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
