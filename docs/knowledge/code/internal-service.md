@@ -183,9 +183,11 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   value such as a dashed `login_customer_id`. The platform is never contacted. This arm is what
   keeps the 503 below honest: a 503 promises that waiting might help, and none of these conditions
   change until a human edits the connection. The distinction cannot be made here — a setup failure
-  and an upstream one arrive as the same type — so `internal/dispatch/googleads.go`
-  (`resolveGoogleAdsDiscoveryClient`) wraps every pre-send failure with the sentinel, and this arm
-  reads it. Neither the cause NOR its text leaves this function — not in the response and not in
+  and an upstream one arrive as the same type — so `internal/dispatch/googleads.go` wraps the
+  pre-send failures with the sentinel and this arm reads it. The wrap has two owners:
+  `validateGoogleAdsCredentials` tags the credential-state three (inactive, undecodable,
+  incomplete), which is why they are also 409 on the campaign dispatch and metrics paths rather
+  than discovery alone, and `resolveGoogleAdsDiscoveryClient` tags the dashed `login_customer_id`. Neither the cause NOR its text leaves this function — not in the response and not in
   the log line. One of the wrapped errors is computed over the decrypted credential blob, and
   `encoding/json` quotes its input, so logging the cause would put credential-derived bytes into
   centralized logs for exactly the connection whose credentials are malformed. What the log line

@@ -285,10 +285,18 @@ exactly one default arm for an unrecognized error, and it answers 503 — "the p
 retry later". Three conditions would land there wrongly: an inactive connection, a credential blob
 that is incomplete or structurally malformed, and a `login_customer_id` stored with dashes. (A blob
 that fails AUTHENTICATION is not one of them — see the decrypt split below.) None of them
-improve with time; all of them need a human to edit the connection. So
-`resolveGoogleAdsDiscoveryClient` wraps each with `domain.ErrConnectionNotUsable`. The 400 mapping
-for that sentinel lands with the endpoint in the follow-up PR; the wrap has to exist here, in the
-layer that knows the failure was pre-send, because nothing downstream can recover the distinction.
+improve with time; all of them need a human to edit the connection. So each is wrapped with
+`domain.ErrConnectionNotUsable`, in the layer that knows the failure was pre-send, because nothing
+downstream can recover the distinction.
+
+Ownership of that wrap is SPLIT, and the split follows which function is in a position to know.
+`validateGoogleAdsCredentials` tags the three CREDENTIAL-STATE failures — a non-`active` status,
+a blob that is not valid JSON, a blob missing a required field — and it is used by every Google
+Ads path, so campaign dispatch and the metrics read get the classification too, not just
+discovery. `resolveGoogleAdsDiscoveryClient` tags the one that is not about the credential at
+all: a `login_customer_id` stored with dashes. Reading either as "the resolver wraps every
+pre-send failure" would suggest the campaign paths are unclassified, which is the opposite of
+what happens.
 
 The manager-id check is duplicated on purpose. `Client.validateLoginCustomerID` still validates it
 (the backstop for every other caller), but it does so inside the same call that talks to Google, so
