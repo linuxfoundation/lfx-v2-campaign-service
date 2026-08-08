@@ -330,10 +330,13 @@ func TestRedactNATSURL_Shapes(t *testing.T) {
 	}
 }
 
-// TestResolveDatabaseURL: the subcommand path must compose the same DSN the server does from the
-// PG* the chart injects, not read DATABASE_URL alone — which is unset in-cluster.
+// TestResolveDatabaseURL: the subcommand must compose the DSN the server does from the PG* the
+// chart injects, not read DATABASE_URL, unset in-cluster. PGPORT/PGENGINE are pinned rather than
+// omitted: ambient values would change the expected DSN or fail validation before the assertion.
 func TestResolveDatabaseURL(t *testing.T) {
 	t.Setenv("PGHOST", "db.internal")
+	t.Setenv("PGPORT", "5432")
+	t.Setenv("PGENGINE", "postgres")
 	t.Setenv("PGUSER", "svc")
 	t.Setenv("PGPASSWORD", "p@ss word")
 	t.Setenv("PGDATABASE", "campaigns")

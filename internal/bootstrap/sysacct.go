@@ -36,10 +36,10 @@ var requiredCredentialKeys = map[model.Provider][]string{
 	model.ProviderHubSpot:      {"private_app_token"},
 }
 
-// credentialKey folds a field name to the form the READERS match on. Stored blobs and
-// dispatch structs are both untagged, so encoding/json falls back to a case-insensitive
-// match: `clientId` works, `client_id` cannot. snake_case is what the API documents, so such
-// a body encrypted cleanly, decoded to an all-zero struct and failed at dispatch, exit 0.
+// credentialKey folds a field name to the form the READERS match on. Stored blobs and dispatch
+// structs are both untagged, so encoding/json falls back to a case-insensitive match: `clientId`
+// works, `client_id` cannot — and snake_case is what the API documents, so such a body encrypted
+// cleanly, decoded to an all-zero struct and failed at dispatch, exit 0.
 func credentialKey(k string) string {
 	return strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(k))
 }
@@ -77,8 +77,7 @@ func canonicalCredentials(provider model.Provider, credsJSON []byte) ([]byte, er
 }
 
 // requiredConfigKeys are the non-secret ProviderConfig columns a dispatch adapter REFUSES to
-// create a campaign without — the row is otherwise installable and dead. Omitted providers
-// have only optional config.
+// create a campaign without — the row is otherwise installable and dead. Others are optional.
 var requiredConfigKeys = map[model.Provider][]string{
 	model.ProviderLinkedInAds: {"org_id"},
 	model.ProviderMetaAds:     {"page_id"},
@@ -96,9 +95,9 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 	return nil
 }
 
-// mergeConfig overlays the supplied flags on what the row already holds. Update rewrites
-// EVERY config column from the map, so replacing would NULL siblings a flag did not mention
-// — Meta stores page_id AND app_id, HubSpot four. nil means "write no config at all".
+// mergeConfig overlays the supplied flags on what the row already holds. Update rewrites EVERY
+// config column, so replacing would NULL siblings a flag did not mention (Meta stores page_id and
+// app_id, HubSpot four). nil means "write no config at all".
 func mergeConfig(existing, supplied map[string]string) map[string]string {
 	if len(supplied) == 0 {
 		return nil
