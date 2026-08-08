@@ -40,5 +40,8 @@ and `IsLinkLocalUnicast` is `fe80::/10` alone, so deprecated site-local `fec0::/
 every predicate. Both are enumerated in `forbiddenNets` and pinned by `TestIsForbiddenIP`, so
 the next range is added by editing a table. A true default-deny needs a destination allowlist,
 which becomes possible once the legitimate event hosts are known. **Over-rejection is a bug
-too**: a public page refused here is reported as a page with no event metadata, which is a
-different and wrong answer — hence the public-address cases in the same test.
+too**, and its cost is worth stating precisely: `Fetch` fails with `ErrEventURLForbidden`,
+which the endpoint answers **400** — so a legitimate public event page is refused outright,
+and the message tells the operator the address is off limits. That is not a soft degradation
+to "no metadata found"; it is a hard refusal blaming the caller for a URL that was fine.
+Hence the public-address cases in the same test.

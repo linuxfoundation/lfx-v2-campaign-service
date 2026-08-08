@@ -52,6 +52,13 @@ func TestIsForbiddenIP(t *testing.T) {
 		"3fff::1",      // RFC 9637 documentation
 		"5f00::1",      // RFC 9602 SRv6 SIDs
 		"64:ff9b:1::1", // RFC 8215 local-use NAT64
+		// 6to4 (RFC 7526). The relay anycast address is ordinary IPv4, but the 2002::/16
+		// entries are the sharp ones: bits 16-47 ARE an IPv4 address, so each of these is
+		// a spelling of a host every IPv4-shaped test above already refuses, in a notation
+		// none of them inspects. 2002:7f00:1:: is 127.0.0.1; 2002:a9fe:a9fe:: is the cloud
+		// metadata address; 2002:0a00:0001:: is 10.0.0.1.
+		"192.88.99.1",
+		"2002:7f00:1::", "2002:a9fe:a9fe::", "2002:0a00:0001::",
 		// The 4-in-6 spellings of two of the above: same host, different notation.
 		"::ffff:127.0.0.1", "::ffff:169.254.169.254",
 	}
@@ -64,8 +71,9 @@ func TestIsForbiddenIP(t *testing.T) {
 			t.Errorf("isForbiddenIP(%s) = false, want true", s)
 		}
 	}
-	// Over-rejection is a false absence too: a public page refused here is reported to the
-	// caller as a page with no event metadata, which is a different and wrong answer.
+	// Over-rejection costs a reachable page: Fetch fails with ErrEventURLForbidden, which
+	// the endpoint answers 400, so a legitimate public event URL is refused outright rather
+	// than degrading to "no metadata found".
 	for _, s := range []string{"93.184.216.34", "8.8.8.8", "1.1.1.1", "2606:2800:220:1::1"} {
 		if isForbiddenIP(net.ParseIP(s)) {
 			t.Errorf("isForbiddenIP(%s) = true, want false", s)
@@ -188,5 +196,61 @@ func TestFetchPreservesContextCancellation(t *testing.T) {
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("Fetch err = %v, want it to unwrap to context.Canceled", err)
+	}
+}
+
+// TestFetchErrorsDoNotLeakTheURL pins the redaction. The URL a caller hands this service
+// is not a public identifier: it can carry userinfo and query values that are the whole
+// credential (a signed preview link, a one-time token). The transport's own error text
+// repeats it verbatim — *url.Error's Error() is "Get \"<the URL>\": <cause>" — and this
+// error is rendered into the API response and the logs.
+//
+// The assertion is by SUBSTRING on the secrets rather than by equality on the message,
+// because the leak can appear at any layer: what must hold is that no part of the input
+// survives. Reverting either fmt.Errorf back to formatting the cause makes this fail.
+func TestFetchErrorsDoNotLeakTheURL(t *testing.T) {
+	const (
+		user   = "s3cr3t-user"
+		pass   = "s3cr3t-pass"
+		token  = "s3cr3t-token"
+		secret = "s3cr3t"
+	)
+	// Port 9 (discard) with nothing listening: Do fails at connect, so the *url.Error
+	// carrying the URL is produced without a server and without DNS.
+	target := "http://" + user + ":" + pass + "@127.0.0.1:9/e?token=" + token
+
+	// Through the unguarded client the failure is a transport error; through NewFetcher
+	// the same URL is refused at dial. Both paths render an error, so both are checked.
+	for name, f := range map[string]*Fetcher{"transport": newUnguardedFetcher(), "guarded": NewFetcher()} {
+		_, err := f.Fetch(context.Background(), target)
+		if err == nil {
+			t.Fatalf("%s: Fetch(unreachable) error = nil, want an error", name)
+		}
+		if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "127.0.0.1") {
+			t.Errorf("%s: error leaked the caller's URL: %v", name, err)
+		}
+	}
+
+	// A malformed URL takes the url.Parse branch, whose *url.Error also repeats the input.
+	if _, err := NewFetcher().Fetch(context.Background(), "http://exa mple.com/?token="+token); err == nil {
+		t.Error("Fetch(malformed) error = nil, want an error")
+	} else if strings.Contains(err.Error(), secret) {
+		t.Errorf("parse error leaked the caller's URL: %v", err)
+	}
+}
+
+// TestSafeCauseNeverEchoesUnknownText is the default-deny half of the redaction: the set
+// of error types net/http can return is open, so an unrecognized cause must collapse to a
+// fixed string rather than have its text rendered. A mapping that fell back to err.Error()
+// would pass every case above (none of those causes quote the URL) and still leak here.
+func TestSafeCauseNeverEchoesUnknownText(t *testing.T) {
+	if got := safeCause(errors.New("Bearer s3cr3t: dial https://host/?token=s3cr3t")); got != "transport failure" {
+		t.Errorf("safeCause(unknown) = %q, want %q", got, "transport failure")
+	}
+	// A DNS failure is named, but rebuilt from the boolean bits — net.DNSError.Name is
+	// the caller's hostname and must not be echoed either.
+	got := safeCause(&net.DNSError{Err: "no such host", Name: "secret-preview.example.com", IsNotFound: true})
+	if got != "host not found" {
+		t.Errorf("safeCause(DNSError) = %q, want %q", got, "host not found")
 	}
 }

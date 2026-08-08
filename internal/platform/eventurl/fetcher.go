@@ -34,11 +34,18 @@ const (
 // rest of 0/8 — which a Linux host treats as "this network" and routes locally — and
 // IsLinkLocalUnicast is fe80::/10 alone, so deprecated site-local fec0::/10 passes every
 // check. Both are the addresses an SSRF probe reaches for once the obvious ones are shut.
+//
+// The 6to4 pair (2002::/16 and its relay anycast 192.88.99.0/24, both deprecated by
+// RFC 7526) is here for a sharper reason: a 6to4 address EMBEDS its IPv4 destination in
+// bits 16-47, so 2002:7f00:1:: is a spelling of 127.0.0.1 that no IPv4-shaped range test
+// and no net.IP predicate looks at. Decoding the embedded address and re-testing it would
+// work too; refusing the whole deprecated range is simpler and loses nothing reachable.
 var forbiddenNets = []net.IPNet{
 	{IP: net.IPv4(0, 0, 0, 0), Mask: net.CIDRMask(8, 32)},         // RFC 1122 "this network"
 	{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)},     // RFC 6598 CGNAT
 	{IP: net.IPv4(192, 0, 0, 0), Mask: net.CIDRMask(24, 32)},      // RFC 6890 IETF protocol assignments
 	{IP: net.IPv4(192, 0, 2, 0), Mask: net.CIDRMask(24, 32)},      // RFC 5737 TEST-NET-1
+	{IP: net.IPv4(192, 88, 99, 0), Mask: net.CIDRMask(24, 32)},    // RFC 7526 deprecated 6to4 relay anycast
 	{IP: net.IPv4(198, 18, 0, 0), Mask: net.CIDRMask(15, 32)},     // RFC 2544 benchmarking
 	{IP: net.IPv4(198, 51, 100, 0), Mask: net.CIDRMask(24, 32)},   // RFC 5737 TEST-NET-2
 	{IP: net.IPv4(203, 0, 113, 0), Mask: net.CIDRMask(24, 32)},    // RFC 5737 TEST-NET-3
@@ -47,6 +54,7 @@ var forbiddenNets = []net.IPNet{
 	{IP: net.ParseIP("100::"), Mask: net.CIDRMask(64, 128)},       // RFC 6666 discard-only
 	{IP: net.ParseIP("2001::"), Mask: net.CIDRMask(23, 128)},      // RFC 2928 IETF protocol assignments
 	{IP: net.ParseIP("2001:db8::"), Mask: net.CIDRMask(32, 128)},  // RFC 3849 documentation
+	{IP: net.ParseIP("2002::"), Mask: net.CIDRMask(16, 128)},      // RFC 7526 deprecated 6to4
 	{IP: net.ParseIP("3fff::"), Mask: net.CIDRMask(20, 128)},      // RFC 9637 documentation
 	{IP: net.ParseIP("5f00::"), Mask: net.CIDRMask(16, 128)},      // RFC 9602 SRv6 SIDs
 	{IP: net.ParseIP("64:ff9b:1::"), Mask: net.CIDRMask(48, 128)}, // RFC 8215 local NAT64
@@ -78,6 +86,56 @@ func isForbiddenIP(ip net.IP) bool {
 		}
 	}
 	return false
+}
+
+// fetchError renders a URL-FREE message while keeping its cause reachable, so a caller
+// can still ask errors.Is(err, context.Canceled) after the text has been stripped.
+//
+// Unwrap returns both the sentinel and the cause (Go 1.20 multi-unwrap), which is what
+// lets one value answer to ErrEventURLFetchFailed and to context.Canceled at once. The
+// cause is UNEXPORTED on purpose: a *url.Error carries the full request URL — userinfo
+// and every query value the caller supplied — in an EXPORTED field, so reflection-based
+// logging or a JSON marshal of the error would print what Error() withheld.
+type fetchError struct {
+	sentinel error
+	detail   string
+	cause    error
+}
+
+func (e *fetchError) Error() string { return fmt.Sprintf("%v: %s", e.sentinel, e.detail) }
+
+func (e *fetchError) Unwrap() []error { return []error{e.sentinel, e.cause} }
+
+// safeCause maps a transport error onto a fixed vocabulary of URL-free descriptions.
+//
+// Peeling the *url.Error wrapper would NOT be enough. The URL appears in the wrapper's
+// %v, but nothing stops a nested error from embedding it too, and the set of error types
+// net/http can hand back is open. So this never echoes the cause's text: recognized
+// outcomes get a string this package owns, and everything else collapses to a generic
+// one. That default-deny is the whole point — an unrecognized error is the case where
+// its text is least vouched for.
+func safeCause(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline exceeded"
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "connection closed"
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "timeout"
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		// Rebuilt from the boolean bits alone — dnsErr.Name is the caller's hostname.
+		if dnsErr.IsNotFound {
+			return "host not found"
+		}
+		return "dns failure"
+	}
+	return "transport failure"
 }
 
 // noFollow keeps the client from following redirects. Following one would re-run the
@@ -134,6 +192,15 @@ func NewFetcher() *Fetcher {
 				// ever see the PROXY's address. The guard above would pass while the
 				// proxy fetched 169.254.169.254 on our behalf. Keep this direct.
 				Proxy: nil,
+				// The idle pool is bounded because the hostnames are CALLER-chosen.
+				// http.Transport's zero values here are "unlimited" and "never expire",
+				// so a stream of distinct event URLs would accumulate one permanent idle
+				// connection per origin — a file-descriptor leak driven by request input.
+				// These are http.DefaultTransport's numbers; the point is stating them,
+				// not the values. MaxIdleConnsPerHost stays at its default of 2, which
+				// already bounds a single origin.
+				MaxIdleConns:    100,
+				IdleConnTimeout: 90 * time.Second,
 			},
 		},
 	}
@@ -151,7 +218,11 @@ func NewFetcher() *Fetcher {
 func (f *Fetcher) Fetch(ctx context.Context, eventURL string) ([]byte, error) {
 	parsed, err := url.Parse(eventURL)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrEventURLInvalid, err)
+		// The cause is dropped, not formatted: url.Parse fails with a *url.Error whose
+		// text repeats the whole input URL, and this error is rendered to the caller
+		// and to logs. The same reasoning applies to every error below that could
+		// carry the URL — see safeCause.
+		return nil, fmt.Errorf("%w: malformed URL", ErrEventURLInvalid)
 	}
 	// url.Parse lower-cases the scheme (RFC 3986 §3.1), so this comparison already
 	// covers "HTTPS://". Host and path are deliberately left alone.
@@ -167,7 +238,7 @@ func (f *Fetcher) Fetch(ctx context.Context, eventURL string) ([]byte, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, eventURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: invalid request: %v", ErrEventURLInvalid, err)
+		return nil, fmt.Errorf("%w: invalid request", ErrEventURLInvalid)
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; LFX-CampaignService/1.0)")
 
@@ -181,10 +252,13 @@ func (f *Fetcher) Fetch(ctx context.Context, eventURL string) ([]byte, error) {
 		if errors.Is(err, ErrEventURLForbidden) {
 			return nil, fmt.Errorf("%w", ErrEventURLForbidden)
 		}
-		// %w on the cause, not %v: a cancelled or timed-out request must stay
-		// errors.Is-able as context.Canceled/DeadlineExceeded, or a caller that
-		// distinguishes "we gave up" from "the page did not answer" cannot.
-		return nil, fmt.Errorf("%w: fetch failed: %w", ErrEventURLFetchFailed, err)
+		// The cause is CARRIED but not RENDERED. Keeping it reachable is required: a
+		// cancelled or timed-out request must stay errors.Is-able as
+		// context.Canceled/DeadlineExceeded, or a caller that distinguishes "we gave
+		// up" from "the page did not answer" cannot. Rendering it is not — client.Do
+		// fails with a *url.Error whose text is the caller's URL, userinfo and query
+		// values included, and this error reaches logs.
+		return nil, &fetchError{sentinel: ErrEventURLFetchFailed, detail: safeCause(err), cause: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -199,7 +273,9 @@ func (f *Fetcher) Fetch(ctx context.Context, eventURL string) ([]byte, error) {
 	// silently truncated into a parse of half a page.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to read response: %w", ErrEventURLFetchFailed, err)
+		// Same treatment as the Do error above: a body read fails with whatever the
+		// transport hands back, and http2 stream errors do quote the request.
+		return nil, &fetchError{sentinel: ErrEventURLFetchFailed, detail: safeCause(err), cause: err}
 	}
 	if len(body) > maxResponseBytes {
 		return nil, fmt.Errorf("%w: response exceeds size limit", ErrEventURLFetchFailed)
