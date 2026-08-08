@@ -52,6 +52,13 @@ func newLookupServer(t *testing.T, rows []json.RawMessage) (*httptest.Server, fu
 		mu.Unlock()
 
 		w.Header().Set("Content-Type", "application/json")
+		// Never `{"results":null}`: encoding a nil slice would emit exactly the shape the
+		// client now rejects, and the absence test would then assert on a page Google does
+		// not send — passing while the real empty page (`[]` or an omitted key) went
+		// unexercised.
+		if rows == nil {
+			rows = []json.RawMessage{}
+		}
 		_ = json.NewEncoder(w).Encode(searchResponse{Results: rows})
 	}))
 	t.Cleanup(srv.Close)
@@ -103,8 +110,14 @@ func TestFindCampaignByName_AbsentIsNotAnError(t *testing.T) {
 }
 
 // TestFindCampaignByName_DuplicateNamesAreAmbiguous motivates erroring instead of taking
-// the first hit: Google Ads permits duplicate names in one account, so an arbitrary pick
-// binds a brief to the wrong paid campaign.
+// the first hit. Two live campaigns sharing a name is ANOMALOUS, not routine — v23 rejects a
+// mutate whose name another ENABLED/PAUSED campaign already holds (DUPLICATE_CAMPAIGN_NAME),
+// so this response should not be possible.
+//
+// Which is precisely why the branch matters. A response that contradicts the API's own
+// constraint is a response nothing about is trustworthy, and picking one of its rows would
+// bind a brief to the wrong PAID campaign on no evidence at all. Fail-closing is least costly
+// exactly where guessing is least defensible.
 func TestFindCampaignByName_DuplicateNamesAreAmbiguous(t *testing.T) {
 	srv, _ := newLookupServer(t, []json.RawMessage{
 		lookupRow("111", "dupe", StatusEnabled),
@@ -208,31 +221,22 @@ func TestGAQLStringLiteral(t *testing.T) {
 	}
 }
 
-// TestGAQLStringLiteral_RejectsOnlyWhatGoogleForbids pins the exact width of the
-// rejected set. Only NUL, LF and CR are prohibited in Campaign.name, so only those
-// three cannot belong to a real campaign; rejecting them costs no reachable lookup.
-func TestGAQLStringLiteral_RejectsOnlyWhatGoogleForbids(t *testing.T) {
+// TestGAQLStringLiteral_RejectsExactlyWhatGoogleForbids pins the exact width of the rejected
+// set in both directions. Only NUL, LF and CR are prohibited in Campaign.name, so only those
+// three cannot belong to a real campaign and rejecting them costs no reachable lookup.
+// Rejecting anything MORE is the more important error: adoption targets never passed through
+// sanitizeNamePart, so campaigns named with a TAB (Cc, but legal — what a blanket
+// unicode.IsControl rule gets wrong), U+2028/U+2029 (Zl/Zp) or a zero-width joiner (Cf,
+// ordinary in emoji sequences) really exist, and refusing one answers "no such campaign"
+// about a campaign sitting right there — the false absence that licenses a duplicate PAID
+// campaign.
+func TestGAQLStringLiteral_RejectsExactlyWhatGoogleForbids(t *testing.T) {
 	for _, in := range []string{"a\x00b", "a\nb", "a\rb"} {
 		if _, err := gaqlStringLiteral(in); err == nil {
 			t.Errorf("gaqlStringLiteral(%q) must reject a character Google Ads forbids", in)
 		}
 	}
-}
-
-// TestGAQLStringLiteral_AllowsEverythingGoogleAccepts is the other, more important half:
-// adoption targets never passed through sanitizeNamePart, so campaigns named this way
-// really exist, and refusing one answers "no such campaign" about a campaign sitting
-// right there — the false absence that licenses a duplicate PAID campaign. TAB is what a
-// blanket unicode.IsControl rule gets wrong (Cc, but legal); U+2028/U+2029 are Zl/Zp and
-// legal; the zero-width joiner is Cf and appears in ordinary emoji sequences.
-func TestGAQLStringLiteral_AllowsEverythingGoogleAccepts(t *testing.T) {
-	for _, in := range []string{
-		"a\tb",
-		"a\u2028b",
-		"a\u2029b",
-		"team \u200d rocket",
-		"plain name",
-	} {
+	for _, in := range []string{"a\tb", "a\u2028b", "a\u2029b", "team \u200d rocket", "plain name"} {
 		got, err := gaqlStringLiteral(in)
 		if err != nil {
 			t.Errorf("gaqlStringLiteral(%q) must not reject a name Google Ads accepts: %v", in, err)
@@ -320,12 +324,43 @@ func TestFindCampaignByName_RejectsUnusableNames(t *testing.T) {
 		{"whitespace only", "   "},
 		{"over the character limit", strings.Repeat("a", maxCampaignNameRunes+1)},
 		{"control character", "bad\x00name"},
+		{"invalid utf-8", "bad\xffname"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if id, err := client.FindCampaignByName(context.Background(), tc.in); err == nil {
 				t.Fatalf("expected rejection, got id %q", id)
 			}
 		})
+	}
+}
+
+// TestFindCampaignByName_InvalidUTF8IsNotQueried pins the one rejection in gaqlStringLiteral
+// that is NOT about what Google Ads forbids.
+//
+// A malformed byte survives every guard ahead of it: the length check counts it as one rune,
+// and ranging the string yields utf8.RuneError, which is none of NUL, LF or CR. It does not
+// survive encoding/json, which substitutes U+FFFD for it and returns NO error — so without
+// this guard the query on the wire asks about a name the caller never passed. Its miss then
+// comes back as ("", nil), the licence to create, and the row-level name re-check cannot
+// catch it because a query that matches nothing returns no row to re-check.
+//
+// The assertion that no query was sent is the point: an error alone would also be produced
+// by a guard placed after the request, which would have already asked the wrong question.
+func TestFindCampaignByName_InvalidUTF8IsNotQueried(t *testing.T) {
+	// The server holds a campaign under the SUBSTITUTED name. If the malformed byte ever
+	// reached the wire, this row would match and the lookup would return an id for a
+	// campaign whose name is not the one requested.
+	srv, gotQuery := newLookupServer(t, []json.RawMessage{
+		lookupRow("55", "bad\ufffdname", StatusEnabled),
+	})
+	client := newAccountsTestClient(t, srv)
+
+	id, err := client.FindCampaignByName(context.Background(), "bad\xffname")
+	if err == nil {
+		t.Fatalf("invalid UTF-8 must be rejected, got id %q", id)
+	}
+	if q := gotQuery(); q != "" {
+		t.Errorf("a name that json.Marshal would rewrite was sent to the server: %s", q)
 	}
 }
 
@@ -426,24 +461,69 @@ func TestFindCampaignByName_ResourceNameFallbackValidatesShape(t *testing.T) {
 	}
 }
 
-// TestFindCampaignByName_NonNumericIDIsRejected drives the guard on the id field itself
-// (as opposed to the resource-name fallback above). The id is interpolated into resource
-// paths by every later call, so a non-numeric one must never leave this function.
-func TestFindCampaignByName_NonNumericIDIsRejected(t *testing.T) {
-	// The resource name is OMITTED so the row's only identity evidence is the id
-	// field; with one present it would be rejected by the resource-name guard first
-	// and this test would pass without ever reaching the numeric check.
-	srv, _ := newLookupServer(t, []json.RawMessage{
-		json.RawMessage(`{"campaign":{"id":"not-a-number","name":"bad id","status":"ENABLED"}}`),
-	})
-	client := newAccountsTestClient(t, srv)
+// TestFindCampaignByName_NonCanonicalIDIsRejected drives the guard on the id field itself
+// (as opposed to the resource-name fallback above), and pins that "all digits" is NOT the
+// test. Google exposes campaign ids as int64, so a digits-only value can still name no
+// campaign: "0" is not an id, a value past math.MaxInt64 cannot be one, and "007" is the
+// same campaign as "7" to the server but a different string to the identity comparison —
+// the spelling difference is precisely what makes it dangerous rather than merely untidy.
+// A padded value is a malformed row, and trimming it would answer with campaign 4242 for
+// a response that never came from this API.
+func TestFindCampaignByName_NonCanonicalIDIsRejected(t *testing.T) {
+	// The resource name is OMITTED in each case so the row's only identity evidence is
+	// the id field; with one present the row would be rejected by the resource-name
+	// guard first and these cases would pass without reaching the canonical check.
+	for _, id := range []string{
+		"not-a-number",
+		"0",                   // a valid int64, not a campaign
+		"-1",                  // digits-only fails to match this one; ParseInt does not
+		"9223372036854775808", // math.MaxInt64 + 1
+		"007",                 // non-canonical spelling of 7
+		" 4242 ",              // padded — malformed, not campaign 4242
+		"4242\n",              // trailing newline, same reasoning
+		"+4242",               // signed canonical form is still not the canonical form
+	} {
+		srv, _ := newLookupServer(t, []json.RawMessage{
+			json.RawMessage(`{"campaign":{"id":` + jsonQuote(id) + `,"name":"bad id","status":"ENABLED"}}`),
+		})
+		client := newAccountsTestClient(t, srv)
 
-	id, err := client.FindCampaignByName(context.Background(), "bad id")
-	if err == nil {
-		t.Fatalf("a non-numeric id must be rejected, got %q", id)
+		got, err := client.FindCampaignByName(context.Background(), "bad id")
+		if err == nil {
+			t.Fatalf("id %q must be rejected, got %q", id, got)
+		}
+		if !strings.Contains(err.Error(), "canonical spelling") {
+			t.Errorf("id %q: error does not say why it was refused: %v", id, err)
+		}
 	}
-	if !strings.Contains(err.Error(), "non-numeric id") {
-		t.Errorf("error does not name the non-numeric id: %v", err)
+}
+
+// TestFindCampaignByName_PresentButUnusableResourceNameIsRejected separates "the field is
+// absent" from "the field is present and garbage". Only the first may fall back to the id.
+//
+// The whitespace-only case is the one that matters: an earlier revision tested the TRIMMED
+// resource name for emptiness, which folded "   " into "absent" and adopted the row on its id
+// alone — a row whose two identity fields do not agree, accepted as though only one had been
+// selected.
+func TestFindCampaignByName_PresentButUnusableResourceNameIsRejected(t *testing.T) {
+	for _, rn := range []string{
+		"   ",                             // whitespace-only: present, and not a resource name
+		"garbage/4242",                    // the shape a lenient trailing-segment parser accepts
+		"customers/999/campaigns/42",      // another customer's campaign
+		"customers/1234567890/campaigns/", // this client's customer, no campaign segment
+	} {
+		srv, _ := newLookupServer(t, []json.RawMessage{
+			json.RawMessage(`{"campaign":{"id":"4242","name":"bad rn","status":"ENABLED","resourceName":` + jsonQuote(rn) + `}}`),
+		})
+		client := newAccountsTestClient(t, srv)
+
+		got, err := client.FindCampaignByName(context.Background(), "bad rn")
+		if err == nil {
+			t.Fatalf("resource name %q must be rejected, got %q", rn, got)
+		}
+		if !strings.Contains(err.Error(), "resource name") {
+			t.Errorf("resource name %q: error does not say why it was refused: %v", rn, err)
+		}
 	}
 }
 
@@ -527,24 +607,40 @@ func TestFindCampaignByName_IdentityFieldsMustAgree(t *testing.T) {
 	}
 }
 
-// TestFindCampaignByName_RejectsBareNullResponse pins the null guard in gaqlSearch: a
-// top-level null unmarshals WITHOUT error into a zero-valued response, which before the
-// guard read as the clean ("", nil) absence — licence to create a duplicate paid campaign.
-func TestFindCampaignByName_RejectsBareNullResponse(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "token") {
-			_, _ = w.Write([]byte(`{"access_token":"t","expires_in":3600}`))
-			return
-		}
-		_, _ = w.Write([]byte("null"))
-	}))
-	defer srv.Close()
+// TestFindCampaignByName_NullIsNeverAnAbsence pins the null guard at all THREE levels. A
+// top-level null, an explicit `"results":null` one level in, and an explicit
+// `"nextPageToken":null` each unmarshal WITHOUT error into a zero-valued field — byte for
+// byte what a genuine empty page or a genuine final page produces. Before the guards that
+// reads as the clean ("", nil) absence: licence to create a duplicate paid campaign.
+//
+// The third case is the subtle one, and it fails DIFFERENTLY from the first two. `results`
+// is legitimately empty there; it is the CURSOR that is null, and a null cursor decodes to
+// "" — the value this loop reads as "that was the last page". So the response is not read as
+// an empty result set, it is read as a COMPLETE one, and pagination stops at page 1. A
+// campaign sitting on page 2 is then reported absent. Same false absence, reached by
+// truncation rather than by an empty page.
+//
+// TestFindCampaignByName_AbsentIsNotAnError is the companion — `[]`, the shape Google really
+// sends, must still license a create.
+func TestFindCampaignByName_NullIsNeverAnAbsence(t *testing.T) {
+	for _, body := range []string{"null", `{"results":null,"nextPageToken":""}`, `{"results":[],"nextPageToken":null}`} {
+		t.Run(body, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "token") {
+					_, _ = w.Write([]byte(`{"access_token":"t","expires_in":3600}`))
+					return
+				}
+				_, _ = w.Write([]byte(body))
+			}))
+			defer srv.Close()
 
-	id, err := newAccountsTestClient(t, srv).FindCampaignByName(context.Background(), "anything")
-	if err == nil {
-		t.Fatalf("a bare null response must not report a clean absence, got %q", id)
-	}
-	if !strings.Contains(err.Error(), "bare JSON null") {
-		t.Errorf("error = %v, want it to name the bare null response", err)
+			id, err := newAccountsTestClient(t, srv).FindCampaignByName(context.Background(), "anything")
+			if err == nil {
+				t.Fatalf("a null result set must not report a clean absence, got %q", id)
+			}
+			if id != "" {
+				t.Errorf("id = %q, want empty alongside the error", id)
+			}
+		})
 	}
 }
