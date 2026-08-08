@@ -243,7 +243,23 @@ func validateGoogleAdsConnection(projectID string, res *resolved) (googleAdsCred
 	}
 	accountID := strings.TrimSpace(res.accountID)
 	if accountID == "" {
-		return creds, "", fmt.Errorf("google ads connection for project %s has no account id (customer id)", projectID)
+		// BOTH sentinels, for the same reason every other branch on this path wraps two:
+		// ErrConnectionNotUsable decides the HTTP status, ErrAccountNotSelected names the
+		// reason for the log line's fixed vocabulary (unusableConnectionReason).
+		//
+		// This guard used to return a bare error. That was NOT harmless, and calling it
+		// unreachable would be wrong: Goa's Required("account_id") was a presence check on
+		// the JSON KEY — the generated validator was `if body.AccountID == nil` — and the
+		// Go field is a plain string, so `"account_id": ""` (or whitespace) satisfied it and
+		// was stored. An account-less row was reachable all along; it was just an unintended,
+		// undocumented state nobody had reasoned about. What changed is that credentials-first
+		// bootstrap makes it a SUPPORTED, omission-based lifecycle state and the NORMAL state
+		// of a freshly created connection — which is what makes the bare error's cost
+		// unavoidable rather than merely latent: it falls to each handler's default arm and
+		// answers 503, "the platform did not respond", for a project that simply has not
+		// finished setting up, with a remedy (wait) that can never work.
+		return creds, "", fmt.Errorf("google ads connection for project %s has no account id (customer id): %w: %w",
+			projectID, domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected)
 	}
 	return creds, accountID, nil
 }
@@ -251,25 +267,35 @@ func validateGoogleAdsConnection(projectID string, res *resolved) (googleAdsCred
 // validateGoogleAdsCredentials is validateGoogleAdsConnection WITHOUT the account-id
 // requirement, for the one operation that cannot have one yet: account discovery.
 //
-// Be precise about which lifecycle this serves TODAY. `design/connection.go:333` still
-// declares `Required("account_id")` on GoogleAdsConnectionConfig, so a connection cannot
-// currently be created without one: the credentials-first, account-chosen-afterwards
-// bootstrap is NOT yet reachable. What IS reachable, and what this relaxation exists for,
-// is RE-POINTING — an operator with a working connection asking "which other customer ids
-// does this credential reach?" before switching account_id. Demanding a non-empty account
-// id would still not block that (one is stored), but the check would be answering a
-// question discovery does not ask, and it would have to be removed anyway the moment the
-// design drops the requirement. Keeping the relaxation here means only the design changes
-// when bootstrap lands, not this path.
+// It serves BOTH lifecycles now that GoogleAdsConnectionConfig no longer declares
+// Required("account_id"): re-pointing an existing connection ("which other customer ids
+// does this credential reach?") and first-time bootstrap, where the connection is created
+// with credentials only and the account is chosen from this endpoint's answer. The
+// relaxation was written for the endpoint's own semantics rather than for whatever the row
+// happens to hold, which is why enabling bootstrap needed only the design change.
+//
+// The ACTIVE-status check below is what makes bootstrap possible at all rather than being
+// merely compatible with it: a credentials-only connection is stored as active, so if this
+// demanded some other status the caller could never reach the endpoint that tells them
+// which account to pick. See domain.ErrAccountNotSelected for how the paths that DO need
+// an account id report its absence.
 //
 // Every other check — active status, decodable blob, all four OAuth fields present — still
 // applies, because a discovery call against a stale or half-configured connection should
 // fail as a connection problem rather than as an opaque error from Google.
+//
+// Each of those failures is tagged with domain.ErrConnectionNotUsable HERE, alongside the
+// sentinel naming the specific defect, because every caller needs it and none of them can
+// add it later: the handlers classify on that sentinel, and an untagged inactive-or-
+// incomplete connection falls to their default arm and answers 503 — "the platform did not
+// respond" for a connection the platform was never asked about, with a remedy (retry) that
+// no amount of waiting can satisfy. Tagging at the point of detection is also what keeps
+// the two resolve paths below from having to agree about it.
 func validateGoogleAdsCredentials(projectID string, res *resolved) (googleAdsCreds, error) {
 	var creds googleAdsCreds
 	if res.status != model.StatusActive {
-		return creds, fmt.Errorf("%w: google ads connection for project %s is %s, not active",
-			domain.ErrConnectionInactive, projectID, res.status)
+		return creds, fmt.Errorf("%w: %w: google ads connection for project %s is %s, not active",
+			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
 	}
 	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
 		// The unmarshal error is DROPPED, not wrapped. It is the one error on this path
@@ -280,8 +306,8 @@ func validateGoogleAdsCredentials(projectID string, res *resolved) (googleAdsCre
 		// credentials are malformed. Nothing is lost that a reader could act on — the
 		// remedy is "re-save the credential", not "fix byte 41" — and the sentinel keeps
 		// the condition distinguishable without carrying a payload.
-		return creds, fmt.Errorf("%w: google ads credentials for project %s are not valid JSON",
-			domain.ErrCredentialsUndecodable, projectID)
+		return creds, fmt.Errorf("%w: %w: google ads credentials for project %s are not valid JSON",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, projectID)
 	}
 	// Trim ONCE, in place, so the emptiness check and the values handed to NewClient are
 	// the same strings. Checking the untrimmed value lets a whitespace-only field — the
@@ -295,8 +321,8 @@ func validateGoogleAdsCredentials(projectID string, res *resolved) (googleAdsCre
 	creds.DeveloperToken = strings.TrimSpace(creds.DeveloperToken)
 	creds.RefreshToken = strings.TrimSpace(creds.RefreshToken)
 	if creds.ClientID == "" || creds.ClientSecret == "" || creds.DeveloperToken == "" || creds.RefreshToken == "" {
-		return creds, fmt.Errorf("%w: google ads credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)",
-			domain.ErrCredentialsIncomplete)
+		return creds, fmt.Errorf("%w: %w: google ads credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
 	}
 	return creds, nil
 }
@@ -330,9 +356,9 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsClient(ctx context.Context, projec
 
 // resolveGoogleAdsDiscoveryClient builds a client for the ACCOUNT-DISCOVERY path: same
 // credential resolution and the same connection checks as resolveGoogleAdsClient, minus the
-// account-id requirement (see validateGoogleAdsCredentials for which lifecycle that serves
-// today — re-pointing, not first-time bootstrap, since GoogleAdsConnectionConfig still
-// declares Required("account_id")).
+// account-id requirement (see validateGoogleAdsCredentials for the two lifecycles that
+// serves: re-pointing an existing connection, and first-time bootstrap of one created with
+// credentials only).
 //
 // CustomerID is left empty regardless of whether the connection stores one, because the
 // upstream operation is account-AGNOSTIC: it asks which customer ids the credential itself
@@ -345,12 +371,12 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 		return nil, err
 	}
 	// Everything from here to NewClient inspects STORED state, before any request exists.
-	// A failure means the connection needs editing, not retrying, so each one is wrapped
-	// with domain.ErrConnectionNotUsable — otherwise the discovery handler's default arm
-	// reports 503 and tells the operator to wait for a condition that will never change on
-	// its own. Errors from creds.resolve above are deliberately NOT wrapped: that layer
-	// distinguishes ErrNotFound (no connection — a 404) from a real storage failure (which
-	// IS transient and IS a 503), and flattening both into "not usable" would lose it.
+	// A failure means the connection needs editing, not retrying, so each one carries
+	// domain.ErrConnectionNotUsable — the validator tags its own, this function tags the
+	// login_customer_id check below. Errors from creds.resolve above are deliberately NOT
+	// tagged: that layer distinguishes ErrNotFound (no connection — a 404) from a real
+	// storage failure (which IS transient and IS a 503), and flattening both into "not
+	// usable" would lose it.
 	creds, err := validateGoogleAdsCredentials(projectID, res)
 	if err != nil {
 		// systemScoped: the same defect in the LF fallback row is an operator's page,

@@ -179,14 +179,16 @@ var (
 	// mistaking an outage for user error is the expensive direction of this call.
 	ErrCredentialDecryptionFailed = errors.New("stored credentials could not be decrypted")
 
-	// The five sentinels below name WHICH stored-connection defect made a connection
+	// The sentinels below name WHICH stored-connection defect made a connection
 	// unusable. Each is wrapped ALONGSIDE ErrConnectionNotUsable at the point the defect
 	// is detected, so the HTTP status is decided by that one sentinel while the reason
 	// stays machine-readable.
 	//
 	// They exist for the log line, and the log line is the reason they must be sentinels
-	// rather than message text. An operator debugging a 400 needs to know which of these
-	// five it was, but the errors themselves cannot be logged: one of them is produced by
+	// rather than message text. The status they accompany is not fixed — discovery answers
+	// 400 and the synchronous campaign handlers answer 409 — so what an operator needs from
+	// these is WHICH defect was rejected, independent of how it was reported. The errors
+	// themselves cannot be logged: one of them is produced by
 	// decoding the DECRYPTED credential blob, and an error derived from plaintext must
 	// never reach centralized logs. `errors.Is` over a fixed vocabulary carries the
 	// diagnosis with no payload attached to carry secrets in.
@@ -224,4 +226,37 @@ var (
 	// platform will not accept (a dashed login_customer_id, say). Distinct from the
 	// credential cases because the fix is a different form field.
 	ErrProviderConfigInvalid = errors.New("a stored provider config value is invalid")
+
+	// ErrAccountNotSelected — the connection is complete except that no ad account has
+	// been chosen. Every other sentinel here describes something WRONG with stored state;
+	// this one describes state that is merely UNFINISHED, and it is the only one a caller
+	// reaches by doing exactly what the API told them to do.
+	//
+	// It became a SUPPORTED state when GoogleAdsConnectionConfig dropped
+	// Required("account_id") to allow credentials-first bootstrap (design/connection.go).
+	// It was not, however, previously impossible: Required checked only that the JSON key
+	// was present (the generated validator was `if body.AccountID == nil`) and the Go field
+	// is a plain string, so `"account_id": ""` was accepted and stored. The guard that
+	// produces this sentinel was therefore reachable before — via an unintended, unnamed
+	// state — and it returned a bare error carrying no sentinel at all. That is precisely
+	// the shape of defect this vocabulary exists to prevent: with no sentinel the condition
+	// fell to the default arm and reported 503, telling an operator to wait for a state that
+	// changes only when a human picks an account. Bootstrap did not create the defect; it
+	// made it the common path and gave the state a name.
+	//
+	// It is wrapped ALONGSIDE ErrConnectionNotUsable, and the two have distinct jobs:
+	// ErrConnectionNotUsable selects the HTTP status, this one supplies the reason token
+	// (unusableConnectionReason -> "account_not_selected") and the specific message.
+	//
+	// It reaches exactly two handlers, the campaign status toggle and the per-campaign
+	// metrics read, both of which answer 409: the campaign is the resource there, and an
+	// unfinished connection is a precondition conflict, matching how those handlers already
+	// classify ErrCampaignNotProvisioned. Non-retryable is the property that actually
+	// matters and the one 503 got wrong.
+	//
+	// Account discovery does NOT map this sentinel. It calls validateGoogleAdsCredentials,
+	// which deliberately omits the account-id check — accepting an account-less connection
+	// is precisely what makes the bootstrap possible, since discovery is how the operator
+	// finds the account to select. Discovery's own 400 covers its other unusable states.
+	ErrAccountNotSelected = errors.New("no ad account has been selected for the stored connection")
 )

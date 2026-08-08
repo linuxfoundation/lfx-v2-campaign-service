@@ -5115,7 +5115,7 @@ func EncodeListGoogleAdsAccountsError(encoder func(context.Context, http.Respons
 func unmarshalGoogleAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsGoogleAdsConnectionConfig(v *GoogleAdsConnectionConfigRequestBody) *lfxv2campaignserviceconnections.GoogleAdsConnectionConfig {
 	res := &lfxv2campaignserviceconnections.GoogleAdsConnectionConfig{
 		Label:           v.Label,
-		AccountID:       *v.AccountID,
+		AccountID:       v.AccountID,
 		LoginCustomerID: v.LoginCustomerID,
 	}
 

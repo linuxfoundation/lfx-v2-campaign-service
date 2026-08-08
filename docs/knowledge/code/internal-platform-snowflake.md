@@ -30,9 +30,17 @@ caller terms bind as `ILIKE ? ESCAPE '\\'` parameters (never interpolated into t
 SQL text). Each bind pattern escapes the ILIKE metacharacters (`\`, `%`, `_`) so a
 literal `%`/`_` in a term matches literally instead of acting as a wildcard — the
 ESCAPE literal is `'\\'` (two backslashes) because Snowflake parses it by
-single-quoted-string rules where `\\` is one backslash. `currentYear` is REQUIRED as
-a 4-digit year (it's the "past editions only" guarantee, so a blank/malformed value
-is rejected rather than silently dropping the exclusion). Year filtering is done in
+single-quoted-string rules where `\\` is one backslash. `currentYear` is REQUIRED and
+must be a 4-digit **19xx or 20xx** year — not merely four digits. It is the "past
+editions only" guarantee, so a blank or malformed value is rejected rather than
+silently dropping the exclusion, and the range is narrowed to what the extractor can
+produce: `yearInName` can only ever EXTRACT a 19xx/20xx year, so a four-digit
+`currentYear` outside that range makes the `extractedYear >= currentYear` comparison
+degenerate rather than fail. Above the range (`"9999"`) every extracted year is
+strictly below it, so the exclusion NEVER fires and future editions are returned as
+"past" ones; below it (`"0202"`) every row is excluded and the caller gets a silently
+empty result. Both are wrong answers with no error attached, which is why the
+constraint is a rejection at the boundary and not a comment. Year filtering is done in
 Go, not SQL (`ORDER BY EVENT_NAME` is alphabetical, not chronological, so it can't be
 pushed into a `LIMIT`); a row whose name carries no 4-digit year is ambiguous and is
 excluded (fail closed). The query fetches `(maxEventRows+1)*2` raw rows so truncation
