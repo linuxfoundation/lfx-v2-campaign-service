@@ -353,7 +353,9 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 	// IS transient and IS a 503), and flattening both into "not usable" would lose it.
 	creds, err := validateGoogleAdsCredentials(projectID, res)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, err)
+		// systemScoped: the same defect in the LF fallback row is an operator's page,
+		// not a 400 aimed at a project that owns no connection to fix.
+		return nil, res.systemScoped(fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, err))
 	}
 	// login_customer_id is checked HERE, not only inside the client. The client validates
 	// it too (client.go validateLoginCustomerID, kept as the backstop for every other
@@ -369,8 +371,13 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 		// vocabulary log fragment). Naming the field and the rule is everything an
 		// operator needs to go fix the row; the value adds nothing they do not
 		// already have and puts account data in a log line.
-		return nil, fmt.Errorf("%w: %w: stored login_customer_id is invalid (must be digits only, no dashes or spaces)",
-			domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid)
+		//
+		// systemScoped for the same reason as the credential defect above: on the LF
+		// fallback row there is no project-owned connection to edit, so a bare 400 aims
+		// the remedy at someone who cannot apply it. EVERY stored-state defect on this
+		// path has to carry it, not just the first one.
+		return nil, res.systemScoped(fmt.Errorf("%w: %w: stored login_customer_id is invalid (must be digits only, no dashes or spaces)",
+			domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid))
 	}
 	return googleads.NewClient(
 		googleads.Credentials{

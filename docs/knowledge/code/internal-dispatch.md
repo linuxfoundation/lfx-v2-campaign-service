@@ -39,7 +39,8 @@ revoked or deleted.
    non-secret fields (`AccountID`, `ProviderConfig`, `Status`). It does NOT interpret
    the plaintext — credential shapes differ per platform (OAuth2 refresh tokens,
    OAuth1 4-tuples, static bearer tokens), so each adapter unmarshals the blob into
-   its own credential struct.
+   its own credential struct. When the project has NO connection, resolution falls
+   back to the reserved `model.SystemProjectID` scope (see below).
 2. **Map inputs** (per-platform) — the adapter reads the brief's event destination
    from its top-level `URL` field (with a nested `registrationUrl` in the opaque JSON
    only as a fallback) and `eventName` from the opaque JSON blobs, plus the
@@ -415,3 +416,51 @@ Two places this shows up today:
   DESIGN, while an ad platform's toggle may simply not be wired yet.
 
 See [internal/dispatch](../../../internal/dispatch).
+
+## The system account is a connection row, not a second mechanism
+
+A project that has connected no ad account of its own dispatches through the LF-owned system
+account: an ordinary connection row at the reserved scope `model.SystemProjectID`
+(`system:linuxfoundation`), not an `LFX_SYS_*` env block, because a system account needs exactly
+what a project account needs — encryption at rest, an account id, provider config, a status, an
+`If-Match` version, an `updated_by` trail.
+
+**Only a genuine absence falls back, and that asymmetry is the whole safety argument.** A repo
+error, an empty blob, a decrypt failure each mean the project HAS a connection needing attention,
+and running its campaign on the LF account spends LF money on a request the project believed was
+billed to itself. `resolveConn` is shared, so a failed FALLBACK lookup is not an absence either.
+
+**Origin and classification are two questions, and one sentinel cannot answer both.**
+`ErrSystemConnectionNotUsable` answers "who must fix this" and only rides along with
+`ErrConnectionNotUsable`, so a failure it does not classify — a blob that fails authenticated
+decryption — reached the service layer indistinguishable from the same failure on the caller's own
+row. That arm logs a project id at ERROR and asks whether one row or every connection is broken;
+naming the caller sent whoever was paged to inspect a row that project does not have, and N
+projects failing over ONE corrupt system row read as N failing rows, which is the deployment-wide
+conclusion the arm is written not to assert. `ErrSystemConnectionOrigin` is wrapped onto every
+error the fallback produces, at the single site that knows the fallback was taken.
+
+No create endpoint can plant a row at the reserved scope (`projectSlugProblem` rejects it), and
+`rejectSystemScope` closes get/update/delete/test/set-credential — which stay permissive on
+`project_id` for historical UUID rows — at the shared helpers in `connection_handler.go`,
+answering 404 not 403. **A choke point only covers what passes through it**: account discovery is
+a SEVENTH endpoint taking a caller-supplied `project_id` and carries the guard inline; left open,
+a `GET` there enumerates the LF's own accounts.
+
+Nothing can install that scope over HTTP, so the installer is a REQUIRED part of the feature: the
+`bootstrap-system-account` subcommand (`cmd/campaign-service/sysacct.go` → `internal/bootstrap`),
+not a second binary, since ko publishes only `cmd/campaign-service`, resolving its DSN through
+`config.ResolveDatabaseURL` because the chart injects `PG*` and leaves `DATABASE_URL` unset. It
+reads the credential from stdin (a flag lands in shell history and every `ps`), and only
+`ErrNotFound` may create. A rotation is ONE write — `UpdateWithCredential`, gated on the row's
+version — because account id, config and credential must not be separately observable by
+dispatch. As two writes there was no safe order: a crash between them left either the new account
+carrying the old credential or the new credential on the old account, and two concurrent runs
+could commit one run's account beside the other's because `SetCredential` is not version-gated. A
+losing writer now gets `ErrPreconditionFailed` and is told nothing was written; the command stays
+idempotent, so rerunning it converges.
+Keys are folded because stored blobs and dispatch structs are both untagged, so `encoding/json`
+falls back to a case-insensitive match that cannot bridge the underscore in the documented
+snake_case wire form. The config an adapter refuses to create without (LinkedIn `org_id`, Meta
+`page_id`, X `funding_instrument_id`) is required of the map about to be WRITTEN — on rotation the
+existing columns MERGED with the flags, since `Update` rewrites every config column.

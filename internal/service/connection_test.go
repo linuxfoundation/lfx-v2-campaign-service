@@ -80,6 +80,15 @@ func (r *fakeRepo) SetCredential(_ context.Context, projectID string, p model.Pr
 	return c, nil
 }
 
+func (r *fakeRepo) UpdateWithCredential(ctx context.Context, c *model.Connection, ct []byte, expectedVersion int64) (*model.Connection, error) {
+	upd, err := r.Update(ctx, c, expectedVersion)
+	if err != nil {
+		return nil, err
+	}
+	upd.EncryptedCredentials = ct
+	return upd, nil
+}
+
 func (r *fakeRepo) Delete(_ context.Context, projectID string, p model.Provider, _ *model.Actor) error {
 	if _, ok := r.store[repoKey(projectID, p)]; !ok {
 		return domain.ErrNotFound
@@ -297,5 +306,101 @@ func TestJWTAuth_EmptyTokenRejected(t *testing.T) {
 	s := newTestService(t, newFakeRepo())
 	if _, err := s.JWTAuth(context.Background(), "", nil); err == nil {
 		t.Fatal("expected error for empty token")
+	}
+}
+
+// TestSystemScopeIsUnreachableThroughTheAPI: no API caller may read, rewrite, re-credential,
+// test, delete the reserved scope, or enumerate the accounts it reaches. The cases cover EVERY
+// endpoint taking a caller-supplied project_id — seven, not six: account discovery bypasses
+// connection_handler.go, which is why it was missed; an eighth belongs here too. The row EXISTS
+// for each case, or the repo's own "not found" would make a guarded service look unguarded.
+func TestSystemScopeIsUnreachableThroughTheAPI(t *testing.T) {
+	newRepoWithSystemRow := func() *fakeRepo {
+		r := newFakeRepo()
+		r.store[model.SystemProjectID+"|"+string(model.ProviderGoogleAds)] = &model.Connection{
+			ProjectID: model.SystemProjectID, Provider: model.ProviderGoogleAds,
+			AccountID: "8666746580", EncryptedCredentials: []byte("ct"),
+			Status: model.StatusActive, Version: 1,
+		}
+		return r
+	}
+	etag := "1"
+	cases := map[string]func(*ConnectionService) error{
+		"get": func(s *ConnectionService) error {
+			_, err := s.GetGoogleAds(context.Background(), &conn.GetGoogleAdsPayload{ProjectID: model.SystemProjectID})
+			return err
+		},
+		"update": func(s *ConnectionService) error {
+			_, err := s.UpdateGoogleAds(context.Background(), &conn.UpdateGoogleAdsPayload{
+				ProjectID: model.SystemProjectID, IfMatch: &etag,
+				Config: &conn.GoogleAdsConnectionConfig{AccountID: "1"},
+			})
+			return err
+		},
+		"set-credential": func(s *ConnectionService) error {
+			return s.SetCredentialGoogleAds(context.Background(), &conn.SetCredentialGoogleAdsPayload{
+				ProjectID: model.SystemProjectID,
+				Credentials: &conn.GoogleAdsCredentials{
+					RefreshToken: "rt", ClientID: "ci", ClientSecret: "cs", DeveloperToken: "dt",
+				},
+			})
+		},
+		"delete": func(s *ConnectionService) error {
+			return s.DeleteGoogleAds(context.Background(), &conn.DeleteGoogleAdsPayload{ProjectID: model.SystemProjectID})
+		},
+		"test": func(s *ConnectionService) error {
+			_, err := s.TestGoogleAds(context.Background(), &conn.TestGoogleAdsPayload{ProjectID: model.SystemProjectID})
+			return err
+		},
+		// The SEVENTH endpoint. Given a WORKING orchestrator on purpose: without one the call
+		// 503s before the guard matters and this would pass against an unguarded service.
+		"list-accounts": func(s *ConnectionService) error {
+			s.SetOrchestrator(&Orchestrator{
+				dispatchers: map[model.Provider]PlatformDispatcher{
+					model.ProviderGoogleAds: &mockAccountListerDispatcher{
+						accounts: []model.AccessibleAccount{{ID: "customers/8666746580", Label: "Linux Foundation"}},
+					},
+				},
+			})
+			_, err := s.ListGoogleAdsAccounts(context.Background(), &conn.ListGoogleAdsAccountsPayload{
+				ProjectID: model.SystemProjectID,
+			})
+			return err
+		},
+		"create": func(s *ConnectionService) error {
+			_, err := s.CreateGoogleAds(context.Background(), &conn.CreateGoogleAdsPayload{
+				ProjectID: model.SystemProjectID,
+				Config:    &conn.GoogleAdsConnectionConfig{AccountID: "1"},
+				Credentials: &conn.GoogleAdsCredentials{
+					RefreshToken: "rt", ClientID: "ci", ClientSecret: "cs", DeveloperToken: "dt",
+				},
+			})
+			return err
+		},
+	}
+	for name, call := range cases {
+		t.Run(name, func(t *testing.T) {
+			repo := newRepoWithSystemRow()
+			err := call(newTestService(t, repo))
+			if err == nil {
+				t.Fatalf("%s at the reserved scope succeeded; it must be refused", name)
+			}
+			// Asserted PER ROUTE rather than as "either refusal", because which refusal
+			// is the contract here. Create is rejected by the slug pattern before any
+			// lookup, and a pattern violation is a 400. Every other route reaches its own
+			// guard and must answer 404 specifically: 403 — or a 400 that says the id is
+			// malformed — tells an unauthorized caller that something is at this scope,
+			// which is the disclosure the guard exists to prevent. Accepting either status
+			// would let a guard drift onto the wrong one and still pass.
+			if name == "create" {
+				if _, ok := err.(*conn.BadRequestError); !ok {
+					t.Fatalf("create err = %T (%v), want BadRequestError", err, err)
+				}
+				return
+			}
+			if _, ok := err.(*conn.NotFoundError); !ok {
+				t.Fatalf("%s err = %T (%v), want NotFoundError", name, err, err)
+			}
+		})
 	}
 }

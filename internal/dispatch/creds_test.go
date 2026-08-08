@@ -5,8 +5,12 @@ package dispatch
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
@@ -142,4 +146,240 @@ func TestApplyCampaignConfig(t *testing.T) {
 			t.Errorf("a malformed end date must be nil, got %v", c.EndDate)
 		}
 	})
+}
+
+// scopedConnReader answers per PROJECT SCOPE, unlike fakeConnReader: the fallback is entirely
+// about WHICH scope was asked, so a fake that cannot tell them apart passes against an
+// implementation that never consults the system scope at all.
+type scopedConnReader struct {
+	rows map[string]*model.Connection
+	errs map[string]error
+	gets []string // every project id asked for, in order
+}
+
+func (f *scopedConnReader) Get(_ context.Context, projectID string, _ model.Provider) (*model.Connection, error) {
+	f.gets = append(f.gets, projectID)
+	if err, ok := f.errs[projectID]; ok {
+		return nil, err
+	}
+	if c, ok := f.rows[projectID]; ok {
+		return c, nil
+	}
+	return nil, domain.ErrNotFound
+}
+
+func usableConn(creds, accountID string) *model.Connection {
+	return &model.Connection{
+		Provider:             model.ProviderGoogleAds,
+		AccountID:            accountID,
+		EncryptedCredentials: []byte(creds),
+		Status:               model.StatusActive,
+	}
+}
+
+// TestResolveFallsBackToSystemAccount: a project with no connection of its own runs on the LF
+// system account rather than failing.
+func TestResolveFallsBackToSystemAccount(t *testing.T) {
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		model.SystemProjectID: usableConn(`{"sys":true}`, "sys-account"),
+	}}
+	got, err := newCredsSource(repo, identityEncryptor{}).
+		resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got.accountID != "sys-account" || string(got.plaintext) != `{"sys":true}` {
+		t.Errorf("resolved %q/%q, want the system account's credentials", got.accountID, got.plaintext)
+	}
+	if len(repo.gets) != 2 || repo.gets[0] != "cncf" || repo.gets[1] != model.SystemProjectID {
+		t.Errorf("scopes asked = %v, want the project first then the system scope", repo.gets)
+	}
+}
+
+// TestResolveDoesNotFallBackFromABrokenProjectConnection: a project that HAS a connection
+// recorded an intent to bill its own. This asymmetry is what makes the fallback safe.
+func TestResolveDoesNotFallBackFromABrokenProjectConnection(t *testing.T) {
+	cases := map[string]*model.Connection{
+		// One refused by resolve, one by the adapter after it. Both must stop at the
+		// project's row, never the system account's.
+		"no stored credentials": {Provider: model.ProviderGoogleAds, Status: model.StatusActive},
+		"inactive":              {Provider: model.ProviderGoogleAds, AccountID: "1", EncryptedCredentials: []byte(`{}`), Status: model.StatusInactive},
+	}
+	for name, projectConn := range cases {
+		t.Run(name, func(t *testing.T) {
+			repo := &scopedConnReader{rows: map[string]*model.Connection{
+				"cncf":                projectConn,
+				model.SystemProjectID: usableConn(`{"sys":true}`, "sys-account"),
+			}}
+			got, err := newCredsSource(repo, identityEncryptor{}).
+				resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+			if err == nil && string(got.plaintext) == `{"sys":true}` {
+				t.Error("resolved the system account's credentials for a project that has its own connection")
+			}
+			for _, scope := range repo.gets {
+				if scope == model.SystemProjectID {
+					t.Error("the system account was consulted for a project that has its own connection")
+				}
+			}
+		})
+	}
+}
+
+// TestFallbackOutcomes covers what the system-scope lookup may yield beyond a usable row: an
+// absence (the error must name the CALLER's project, not the reserved scope), an unusable system
+// row (refused, not trusted because it is ours), and a lookup FAILURE (a 503, never a 404).
+func TestFallbackOutcomes(t *testing.T) {
+	usable := &model.Connection{Provider: model.ProviderGoogleAds, Status: model.StatusActive}
+	for name, tc := range map[string]struct {
+		repo *scopedConnReader
+		want error
+	}{
+		"no system account": {&scopedConnReader{}, domain.ErrNotFound},
+		"unusable system row": {&scopedConnReader{rows: map[string]*model.Connection{
+			model.SystemProjectID: usable,
+		}}, domain.ErrConnectionNotUsable},
+		"system lookup fails": {&scopedConnReader{errs: map[string]error{
+			model.SystemProjectID: errors.New("connection refused"),
+		}}, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := newCredsSource(tc.repo, identityEncryptor{}).
+				resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+			switch {
+			case tc.want == nil && (err == nil || errors.Is(err, domain.ErrNotFound)):
+				t.Fatalf("err = %v, want a non-absence error", err)
+			case tc.want != nil && !errors.Is(err, tc.want):
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+			if tc.want == domain.ErrNotFound && (!strings.Contains(err.Error(), "cncf") ||
+				strings.Contains(err.Error(), model.SystemProjectID)) {
+				t.Errorf("err = %q, want it to name the project and not the reserved scope", err)
+			}
+		})
+	}
+}
+
+// TestResolveAtTheSystemScopeDoesNotRecurse: a brief already at the reserved scope asks once.
+func TestResolveAtTheSystemScopeDoesNotRecurse(t *testing.T) {
+	repo := &scopedConnReader{}
+	if _, err := newCredsSource(repo, identityEncryptor{}).
+		resolve(context.Background(), model.SystemProjectID, model.ProviderGoogleAds); err == nil {
+		t.Fatal("want ErrNotFound, got nil")
+	}
+	if len(repo.gets) != 1 {
+		t.Errorf("scopes asked = %v, want exactly one lookup", repo.gets)
+	}
+}
+
+// TestUnusableSystemConnectionKeepsItsOrigin: whose connection is broken decides who can fix
+// it. A defect in the project's own row is its owner's to edit and answers 400; the same
+// defect in the LF system row reaches a project that has no connection and cannot address the
+// system scope, so it must arrive carrying ErrSystemConnectionNotUsable and be paged instead.
+func TestUnusableSystemConnectionKeepsItsOrigin(t *testing.T) {
+	broken := func() *model.Connection {
+		c := usableConn(`{"sys":true}`, "sys-account")
+		c.EncryptedCredentials = nil
+		return c
+	}
+
+	_, err := newCredsSource(&scopedConnReader{
+		rows: map[string]*model.Connection{model.SystemProjectID: broken()},
+	}, identityEncryptor{}).resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+	if !errors.Is(err, domain.ErrConnectionNotUsable) {
+		t.Fatalf("system fallback err = %v, want ErrConnectionNotUsable", err)
+	}
+	if !errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+		t.Errorf("system fallback err = %v, want it to name the SYSTEM connection", err)
+	}
+
+	// The project's own broken row must NOT pick up the system marker, or every 400 that
+	// tells an owner to fix their connection becomes a 500 that tells nobody anything.
+	_, err = newCredsSource(&scopedConnReader{
+		rows: map[string]*model.Connection{"cncf": broken()},
+	}, identityEncryptor{}).resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+	if !errors.Is(err, domain.ErrConnectionNotUsable) {
+		t.Fatalf("project connection err = %v, want ErrConnectionNotUsable", err)
+	}
+	if errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+		t.Errorf("project connection err = %v, must not be attributed to the system account", err)
+	}
+}
+
+// TestSystemScopedCoversEveryStoredStateDefectOnDiscovery: systemScoped is not a property of one
+// error site. resolveGoogleAdsDiscoveryClient rejects TWO classes of stored state — the
+// credentials themselves, and login_customer_id — and a defect in the LF fallback row is the
+// operator's page in both cases. Tagging only the first left a project running on the fallback a
+// 400 telling it to edit a connection it does not own and cannot reach.
+func TestSystemScopedCoversEveryStoredStateDefectOnDiscovery(t *testing.T) {
+	sysConn := usableConn(goodGoogleAdsCreds, "8666746580")
+	sysConn.ProviderConfig = map[string]string{"login_customer_id": "974-698-3954"}
+
+	d := NewGoogleAdsDispatcher(&scopedConnReader{
+		rows: map[string]*model.Connection{model.SystemProjectID: sysConn},
+	}, identityEncryptor{})
+
+	_, err := d.resolveGoogleAdsDiscoveryClient(context.Background(), "cncf", model.ProviderGoogleAds)
+	if !errors.Is(err, domain.ErrProviderConfigInvalid) {
+		t.Fatalf("err = %v, want the login_customer_id defect", err)
+	}
+	if !errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+		t.Errorf("err = %v, want it attributed to the SYSTEM connection", err)
+	}
+
+	// The same defect on the project's own row stays the project's to fix.
+	ownConn := usableConn(goodGoogleAdsCreds, "8666746580")
+	ownConn.ProviderConfig = map[string]string{"login_customer_id": "974-698-3954"}
+	d = NewGoogleAdsDispatcher(&scopedConnReader{
+		rows: map[string]*model.Connection{"cncf": ownConn},
+	}, identityEncryptor{})
+	_, err = d.resolveGoogleAdsDiscoveryClient(context.Background(), "cncf", model.ProviderGoogleAds)
+	if !errors.Is(err, domain.ErrConnectionNotUsable) {
+		t.Fatalf("err = %v, want ErrConnectionNotUsable", err)
+	}
+	if errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+		t.Errorf("err = %v, must not be attributed to the system account", err)
+	}
+}
+
+// failingDecryptor stands in for a rotated application key or a corrupted blob: authenticated
+// decryption fails, which is neither a usability defect nor anything the caller can edit.
+type failingDecryptor struct{}
+
+func (failingDecryptor) Encrypt(p []byte) ([]byte, error) { return p, nil }
+func (failingDecryptor) Decrypt([]byte) ([]byte, error) {
+	return nil, fmt.Errorf("%w: decryption authentication failed", domain.ErrCredentialDecryptionFailed)
+}
+
+// TestSystemFallbackMarksOriginOnErrorsItDoesNotClassify: systemScoped only fires on
+// ErrConnectionNotUsable, so before ErrSystemConnectionOrigin a decryption failure from the
+// fallback arrived indistinguishable from one on the caller's own row — and the operator log
+// for that arm names a row by project id.
+func TestSystemFallbackMarksOriginOnErrorsItDoesNotClassify(t *testing.T) {
+	sysRow := usableConn(goodGoogleAdsCreds, "8666746580")
+
+	_, err := newCredsSource(&scopedConnReader{
+		rows: map[string]*model.Connection{model.SystemProjectID: sysRow},
+	}, failingDecryptor{}).resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+	if !errors.Is(err, domain.ErrCredentialDecryptionFailed) {
+		t.Fatalf("err = %v, want the decryption failure", err)
+	}
+	if errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+		t.Errorf("err = %v: a decryption failure is not a usability defect and must not be "+
+			"classified as one — origin and classification are separate questions", err)
+	}
+	if !errors.Is(err, domain.ErrSystemConnectionOrigin) {
+		t.Errorf("err = %v, want it to record that the SYSTEM row was the one read", err)
+	}
+
+	// The caller's own row must not pick up the marker, or every decryption failure is
+	// attributed to the system account and the single-row cause becomes uninvestigable.
+	_, err = newCredsSource(&scopedConnReader{
+		rows: map[string]*model.Connection{"cncf": usableConn(goodGoogleAdsCreds, "8666746580")},
+	}, failingDecryptor{}).resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+	if !errors.Is(err, domain.ErrCredentialDecryptionFailed) {
+		t.Fatalf("err = %v, want the decryption failure", err)
+	}
+	if errors.Is(err, domain.ErrSystemConnectionOrigin) {
+		t.Errorf("err = %v, must not be attributed to the system row", err)
+	}
 }

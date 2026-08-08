@@ -329,3 +329,18 @@ func TestRedactNATSURL_Shapes(t *testing.T) {
 		assert.Equal(t, want, redactNATSURL(in), "input %q", in)
 	}
 }
+
+// TestResolveDatabaseURL: the subcommand must compose the DSN the server does from the PG* the
+// chart injects, not read DATABASE_URL, unset in-cluster. PGPORT/PGENGINE are pinned rather than
+// omitted: ambient values would change the expected DSN or fail validation before the assertion.
+func TestResolveDatabaseURL(t *testing.T) {
+	t.Setenv("PGHOST", "db.internal")
+	t.Setenv("PGPORT", "5432")
+	t.Setenv("PGENGINE", "postgres")
+	t.Setenv("PGUSER", "svc")
+	t.Setenv("PGPASSWORD", "p@ss word")
+	t.Setenv("PGDATABASE", "campaigns")
+	dsn, err := ResolveDatabaseURL()
+	assert.NoError(t, err)
+	assert.Equal(t, "postgres://svc:p%40ss%20word@db.internal:5432/campaigns", dsn) // secretlint-disable-line -- intentional fake DSN
+}

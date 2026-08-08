@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -31,6 +32,16 @@ func init() {
 }
 
 func main() {
+	// The installer runs as a subcommand of this binary (see sysacct.go) and must be
+	// dispatched before any serving setup: it needs no OTel exporter and no signal handler.
+	if len(os.Args) > 1 && os.Args[1] == bootstrapSystemAccountCmd {
+		if err := runSysacctBootstrap(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	cfg := config.LoadConfig()
 
 	ctx := context.Background()
