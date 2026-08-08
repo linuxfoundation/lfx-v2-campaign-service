@@ -6,64 +6,62 @@ path: this endpoint only extracts, and generating copy/keywords/targeting from w
 returns is a follow-up. No migration — `event_details` already exists.
 
 This is the first place the service fetches a URL **the caller chooses**. Every other HTTP
-client in the repo talks to a hardcoded platform host, so nothing here was reusable and the
+client in the repo talks to a hardcoded platform host, so nothing was reusable and the
 whole address-safety question is new.
 
 ## The check has to run at connect time, not before it
 
-The first cut resolved the hostname with `LookupIPAddr`, rejected the result if it was
-loopback/private/link-local/multicast, and then handed the original URL to `http.Client`.
-Its comment claimed "an attacker can't redirect after the DNS resolution, so checking the
-resolved IP is sufficient." That is exactly backwards. `http.Transport` resolves the
-hostname **again** when it dials, so the check and the connection consult two separate DNS
-answers. A record with a short TTL answers a public address for the check and `127.0.0.1`
-for the connection, and the guard passes while the request lands on the loopback interface.
+The first cut resolved the hostname with `LookupIPAddr`, rejected a loopback/private/
+link-local/multicast result, then handed the original URL to `http.Client`. Its comment
+claimed "an attacker can't redirect after the DNS resolution." That is backwards:
+`http.Transport` resolves the hostname **again** when it dials, so check and connection
+consult two separate DNS answers. A short-TTL record answers a public address for the
+check and `127.0.0.1` for the connection, and the guard passes while the request lands on
+the loopback interface.
 
 The fix is `net.Dialer.Control`, which runs after resolution and immediately before the
-connect syscall, on the address the kernel is about to use. That answer **is** the one
-inspected, and it fires for every address a multi-address host offers rather than only the
-first. **General form: a check on a value that will be re-derived before use is not a
-check.** Validate at the point of use, or hold the validated value and use that one.
+connect syscall, on the address the kernel is about to use — and fires for every address a
+multi-address host offers, not only the first. **General form: a check on a value that
+will be re-derived before use is not a check.**
+
+`Transport.Proxy` is left explicitly `nil` for the same reason. Substituting
+`http.DefaultTransport.Clone()` would set `ProxyFromEnvironment`, and the dialer would
+then only ever see the PROXY's address while the proxy fetched `169.254.169.254` for us.
 
 ## Rejecting the address and failing to reach it are different answers
 
-`ErrEventURLForbidden` maps to 400 and `ErrEventURLFetchFailed` to 503. Keeping them apart
-matters because the dial hook's refusal surfaces from `client.Do` looking like any other
-transport error — so the forbidden sentinel has to be re-checked **before** the generic
-branch. Flatten it and a request that must never succeed is reported as retryable, and the
-caller is invited to retry it.
-
-The deny list default-denies and covers what the `net.IP` predicates miss: CGNAT
-(100.64.0.0/10), IETF protocol assignments (192.0.0.0/24), benchmarking (198.18.0.0/15) and
-reserved (240.0.0.0/4, which carries the broadcast address). 4-in-6 spellings are
-normalized first — `::ffff:169.254.169.254` is the metadata address wearing a different
-notation, and an IPv4-shaped range test does not see through it on its own.
+`ErrEventURLForbidden` maps to 400 and `ErrEventURLFetchFailed` to 503. The dial hook's
+refusal surfaces from `client.Do` looking like any other transport error, so the forbidden
+sentinel is re-checked **before** the generic branch. Flatten them and a request that must
+never succeed is reported as retryable. The deny list default-denies and covers what the
+`net.IP` predicates miss: CGNAT, IETF protocol assignments, benchmarking, and reserved
+(which carries the broadcast address). 4-in-6 spellings are normalized first —
+`::ffff:169.254.169.254` is the metadata address in different notation.
 
 ## The guard makes the obvious test unrunnable
 
-`httptest` servers bind to `127.0.0.1`, which is precisely what the fetcher refuses, so no
-end-to-end test of redirects, status handling or the size bound can run through the
-production constructor. Hence `newFetcher(allowPrivate bool)`: `NewFetcher` always passes
-false, and tests that need a live server pass true. The address decision itself is a pure
-function (`isForbiddenIP`) tested by table, which covers ranges no live test could reach.
+`httptest` binds to `127.0.0.1`, precisely what the fetcher refuses, so no end-to-end test
+of redirects, status handling or the size bound can run through `NewFetcher`. The
+unguarded constructor lives in the **test file**, not as a parameter on the production
+one, so no production path can build a fetcher without the guard. `isForbiddenIP` is a
+pure function covered by table; only the `http://127.0.0.1:9/` case proves it is *wired*,
+and reverting the hook fails that one with the wrong disposition rather than no error.
 
-Both halves are needed. The table alone proves the predicate is right; only the
-`http://127.0.0.1:9/` case proves it is **wired**. Reverting the hook leaves the table
-green and fails that one with `connect: connection refused` — the wrong-disposition
-outcome, not merely a missing error.
+## Parsing is the other half of the untrusted-input surface
 
-## Redirects are refused, not followed
+Three strategies (JSON-LD, OpenGraph, `<title>`) share **one** `html.Parse` — the tree is
+read-only, and parsing per strategy paid the most expensive step three times on a body
+that may be 10MiB. Every extracted field is clamped on a rune boundary: without a bound a
+hostile `<title>` puts megabytes into Postgres and into every brief built from it, and a
+mid-rune cut turns that into a failed insert rather than a short field.
 
-`CheckRedirect` returns `http.ErrUseLastResponse`, so the 3xx is returned and rejected by
-the non-2xx check. Following it would re-run the whole address decision against a location
-the caller never supplied. The test asserts the redirect target was never contacted, with
-`allowPrivate` on so that the assertion is about the redirect policy rather than the
-address guard incidentally blocking the second hop.
+schema.org lets the same property be a string, a node object, or an array of either. A
+top-level JSON-LD **array** is the common real shape — a page emits Organization,
+BreadcrumbList and Event as one list — so unmarshalling into a `map` dropped the entire
+block, and `location` as a Place array or `image` as an ImageObject came back empty with
+nothing saying why. The failure mode is silent, which is what makes it worth naming here.
 
-## Extraction records its own provenance
-
-The parser tries JSON-LD (`schema.org/Event`), then OpenGraph, then `<title>` plus
-`meta[name=description]`, and stores which one won in `extracted_from`. A brief built from
-a `<title>` deserves more human scrutiny than one built from JSON-LD, and that is only
-visible if the source is carried forward. A page yielding no usable name is a 400, not an
-empty `EventDetails` — an empty success would flow silently into brief generation.
+`extracted_from` records which strategy won: a brief built from a `<title>` deserves more
+human scrutiny than one built from JSON-LD, and that is only visible if carried forward. A
+page yielding no name is a 400 routed through the `ErrEventDetailsEmpty` sentinel — an
+unreachable arm in a mapping table is indistinguishable from one that was never wired.

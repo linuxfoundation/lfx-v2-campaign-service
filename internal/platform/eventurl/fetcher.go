@@ -70,47 +70,49 @@ type Fetcher struct {
 	client *http.Client
 }
 
-// NewFetcher constructs a Fetcher with the standard SSRF-safe defaults.
-func NewFetcher() *Fetcher { return newFetcher(false) }
-
-// newFetcher builds a Fetcher, optionally permitting private and loopback addresses.
-// allowPrivate exists for tests, which must reach an httptest server on 127.0.0.1 —
-// the exact address the guard is built to refuse. NewFetcher is the only production
-// constructor and always passes false.
-func newFetcher(allowPrivate bool) *Fetcher {
-	dialer := &net.Dialer{
-		Timeout: connectTimeout,
-		// The address check lives HERE, and not next to a prior LookupIPAddr, because
-		// Control runs after resolution and immediately before connect on the very
-		// address the kernel is about to use. Resolving separately and checking the
-		// result is a TOCTOU: http.Transport resolves the hostname again, so a DNS
-		// record with a short TTL can answer a public address for the check and
-		// 127.0.0.1 for the connection. Checking here, that second answer IS the one
-		// inspected, and every address the dialer tries is inspected, not just the
-		// first of a multi-address host.
-		Control: func(_, address string, _ syscall.RawConn) error {
-			if allowPrivate {
-				return nil
-			}
-			host, _, err := net.SplitHostPort(address)
-			if err != nil {
-				return fmt.Errorf("%w: unparsable dial address %q", ErrEventURLForbidden, address)
-			}
-			ip := net.ParseIP(host)
-			if ip == nil {
-				return fmt.Errorf("%w: unparsable dial address %q", ErrEventURLForbidden, address)
-			}
-			if isForbiddenIP(ip) {
-				return fmt.Errorf("%w: %s", ErrEventURLForbidden, ip)
-			}
-			return nil
-		},
+// guardDialAddress is the net.Dialer.Control hook that refuses a non-public address.
+//
+// The check lives HERE, and not next to a prior LookupIPAddr, because Control runs after
+// resolution and immediately before connect, on the very address the kernel is about to
+// use. Resolving separately and checking the result is a TOCTOU: http.Transport resolves
+// the hostname again, so a DNS record with a short TTL can answer a public address for
+// the check and 127.0.0.1 for the connection. Checking here, that second answer IS the
+// one inspected — and every address a multi-address host offers is inspected, not just
+// the first.
+func guardDialAddress(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("%w: unparsable dial address %q", ErrEventURLForbidden, address)
 	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return fmt.Errorf("%w: unparsable dial address %q", ErrEventURLForbidden, address)
+	}
+	if isForbiddenIP(ip) {
+		return fmt.Errorf("%w: %s", ErrEventURLForbidden, ip)
+	}
+	return nil
+}
+
+// NewFetcher constructs a Fetcher with the standard SSRF-safe defaults. It is the only
+// constructor in non-test code, so no production path can obtain an unguarded fetcher.
+func NewFetcher() *Fetcher {
+	dialer := &net.Dialer{Timeout: connectTimeout, Control: guardDialAddress}
 	return &Fetcher{
 		client: &http.Client{
 			Timeout:       fetchTimeout,
 			CheckRedirect: noFollow,
-			Transport:     &http.Transport{DialContext: dialer.DialContext},
+			Transport: &http.Transport{
+				DialContext: dialer.DialContext,
+				// Proxy is nil ON PURPOSE, and the zero value is not enough of a
+				// statement to leave implicit. net/http uses no proxy when Proxy is
+				// nil, but http.DefaultTransport sets ProxyFromEnvironment — so
+				// "simplifying" this to DefaultTransport.Clone() would route every
+				// fetch through a cluster HTTP_PROXY, and the dialer would then only
+				// ever see the PROXY's address. The guard above would pass while the
+				// proxy fetched 169.254.169.254 on our behalf. Keep this direct.
+				Proxy: nil,
+			},
 		},
 	}
 }

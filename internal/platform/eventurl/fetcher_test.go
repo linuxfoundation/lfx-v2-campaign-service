@@ -13,6 +13,18 @@ import (
 	"testing"
 )
 
+// newUnguardedFetcher builds a Fetcher WITHOUT the dial address guard, because httptest
+// servers bind to 127.0.0.1 — precisely the address production refuses — so no end-to-end
+// test of redirects, status handling or the size bound can run through NewFetcher.
+//
+// It lives in the test file rather than as a parameter on the production constructor so
+// that no production code path can construct an unguarded fetcher, even by mistake. The
+// address decision itself is covered separately by TestIsForbiddenIP and
+// TestFetchRejectsForbiddenAddressAtDial, which DO use NewFetcher.
+func newUnguardedFetcher() *Fetcher {
+	return &Fetcher{client: &http.Client{Timeout: fetchTimeout, CheckRedirect: noFollow}}
+}
+
 // TestIsForbiddenIP pins the address decision itself. It is a pure function, so every
 // range is covered without a network — including the ones no live test could reach.
 func TestIsForbiddenIP(t *testing.T) {
@@ -79,7 +91,7 @@ func TestFetchAcceptsUppercaseScheme(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	body, err := newFetcher(true).Fetch(context.Background(), strings.Replace(srv.URL, "http://", "HTTP://", 1))
+	body, err := newUnguardedFetcher().Fetch(context.Background(), strings.Replace(srv.URL, "http://", "HTTP://", 1))
 	if err != nil || string(body) != "ok" {
 		t.Fatalf("Fetch(uppercase scheme) = %q, %v; want \"ok\", nil", body, err)
 	}
@@ -97,10 +109,10 @@ func TestFetchDoesNotFollowRedirects(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// allowPrivate is on, so the redirect would succeed if it were followed. That is
-	// the point: the assertion is about the redirect policy, not about the address
-	// guard incidentally blocking the second hop.
-	_, err := newFetcher(true).Fetch(context.Background(), srv.URL)
+	// The guard is off, so the redirect WOULD succeed if it were followed. That is the
+	// point: the assertion is about the redirect policy, not about the address guard
+	// incidentally blocking the second hop.
+	_, err := newUnguardedFetcher().Fetch(context.Background(), srv.URL)
 	if !errors.Is(err, ErrEventURLFetchFailed) {
 		t.Errorf("Fetch(redirect) error = %v, want ErrEventURLFetchFailed", err)
 	}
@@ -115,7 +127,7 @@ func TestFetchRejectsNon2xx(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := newFetcher(true).Fetch(context.Background(), srv.URL)
+	_, err := newUnguardedFetcher().Fetch(context.Background(), srv.URL)
 	if !errors.Is(err, ErrEventURLFetchFailed) {
 		t.Errorf("Fetch(500) error = %v, want ErrEventURLFetchFailed", err)
 	}
@@ -132,7 +144,7 @@ func TestFetchRejectsOversizedBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := newFetcher(true).Fetch(context.Background(), srv.URL)
+	_, err := newUnguardedFetcher().Fetch(context.Background(), srv.URL)
 	if !errors.Is(err, ErrEventURLFetchFailed) || !strings.Contains(err.Error(), "size limit") {
 		t.Errorf("Fetch(oversized) error = %v, want a size-limit ErrEventURLFetchFailed", err)
 	}

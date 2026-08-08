@@ -2489,6 +2489,11 @@ func ValidateFetchEventURLRequestBody(body *FetchEventURLRequestBody) (err error
 	if body.URL != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.url", *body.URL, goa.FormatURI))
 	}
+	if body.URL != nil {
+		if utf8.RuneCountInString(*body.URL) > 2048 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.url", *body.URL, utf8.RuneCountInString(*body.URL), 2048, false))
+		}
+	}
 	return
 }
 

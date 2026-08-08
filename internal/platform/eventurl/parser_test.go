@@ -4,191 +4,105 @@
 package eventurl
 
 import (
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
-func TestParserJSONLD(t *testing.T) {
-	html := `<html><head>
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "Event",
-  "name": "KubeCon EU 2026",
-  "description": "Cloud Native Conference",
-  "startDate": "2026-04-13",
-  "endDate": "2026-04-16",
-  "location": {"name": "Amsterdam"},
-  "image": "https://example.com/image.jpg",
-  "url": "https://example.com/kubecon"
-}
-</script>
-</head></html>`
+// TestParse covers the three strategies, their precedence, and the shapes schema.org
+// permits for the SAME property that a plain type assertion drops silently: a top-level
+// array (a page emits its Organization and its Event as one list), an @graph wrapper, an
+// ImageObject instead of a URL string, and an array of Place for location. Each of those
+// is common enough that dropping it returns an empty field for a real event page.
+func TestParse(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       EventDetails
+	}{
+		{"jsonld", `<html><head><script type="application/ld+json">
+		 {"@context":"https://schema.org","@type":"Event","name":"KubeCon EU 2026",
+		  "description":"Cloud Native Conference","startDate":"2026-04-13",
+		  "endDate":"2026-04-16","location":{"name":"Amsterdam"},
+		  "image":"https://e.com/i.jpg","url":"https://e.com/kubecon"}
+		 </script></head></html>`,
+			EventDetails{Name: "KubeCon EU 2026", Description: "Cloud Native Conference",
+				Location: "Amsterdam", StartDate: "2026-04-13", EndDate: "2026-04-16",
+				Image: "https://e.com/i.jpg", URL: "https://e.com/kubecon", ExtractedFrom: "jsonld"}},
 
-	p := NewParser()
-	details := p.Parse([]byte(html))
+		{"opengraph", `<html><head><meta property="og:title" content="Amazing Event">
+		 <meta property="og:description" content="Join us"><meta property="og:image" content="https://e.com/i.jpg">
+		 <meta property="og:url" content="https://e.com/e"></head></html>`,
+			EventDetails{Name: "Amazing Event", Description: "Join us", Image: "https://e.com/i.jpg",
+				URL: "https://e.com/e", ExtractedFrom: "opengraph"}},
 
-	if details.Name != "KubeCon EU 2026" {
-		t.Errorf("Name mismatch: got %q", details.Name)
-	}
-	if details.Description != "Cloud Native Conference" {
-		t.Errorf("Description mismatch: got %q", details.Description)
-	}
-	if details.Location != "Amsterdam" {
-		t.Errorf("Location mismatch: got %q", details.Location)
-	}
-	if details.StartDate != "2026-04-13" {
-		t.Errorf("StartDate mismatch: got %q", details.StartDate)
-	}
-	if details.ExtractedFrom != "jsonld" {
-		t.Errorf("ExtractedFrom should be jsonld, got %q", details.ExtractedFrom)
-	}
-}
+		// x/net/html lowercases attribute NAMES but not values, and the OpenGraph
+		// property is a value — "OG:TITLE" is not rare.
+		{"opengraph uppercase property", `<html><head><meta property="OG:TITLE" content="Cased"></head></html>`,
+			EventDetails{Name: "Cased", ExtractedFrom: "opengraph"}},
 
-func TestParserOpenGraph(t *testing.T) {
-	html := `<html><head>
-<meta property="og:title" content="Amazing Event 2026">
-<meta property="og:description" content="Join us for an amazing event">
-<meta property="og:image" content="https://example.com/og-image.jpg">
-<meta property="og:url" content="https://example.com/event">
-</head></html>`
+		{"fallback title", `<html><head><title>Simple Event</title>
+		 <meta name="description" content="A simple page"></head></html>`,
+			EventDetails{Name: "Simple Event", Description: "A simple page", ExtractedFrom: "fallback"}},
 
-	p := NewParser()
-	details := p.Parse([]byte(html))
+		{"nothing extractable", `<html><head></head><body></body></html>`, EventDetails{}},
 
-	if details.Name != "Amazing Event 2026" {
-		t.Errorf("Name mismatch: got %q", details.Name)
-	}
-	if details.Description != "Join us for an amazing event" {
-		t.Errorf("Description mismatch: got %q", details.Description)
-	}
-	if details.Image != "https://example.com/og-image.jpg" {
-		t.Errorf("Image mismatch: got %q", details.Image)
-	}
-	if details.ExtractedFrom != "opengraph" {
-		t.Errorf("ExtractedFrom should be opengraph, got %q", details.ExtractedFrom)
-	}
-}
+		{"jsonld outranks opengraph", `<html><head><script type="application/ld+json">
+		 {"@type":"Event","name":"JSON-LD Event"}</script>
+		 <meta property="og:title" content="OpenGraph Event"></head></html>`,
+			EventDetails{Name: "JSON-LD Event", ExtractedFrom: "jsonld"}},
 
-func TestParserFallback(t *testing.T) {
-	html := `<html><head>
-<title>Simple Event Title</title>
-<meta name="description" content="This is a simple event page">
-</head></html>`
+		// Invalid JSON must not abort extraction — the page still has a usable title.
+		{"invalid json falls through", `<html><head><script type="application/ld+json">{ nope }
+		 </script><title>Fallback Title</title></head></html>`,
+			EventDetails{Name: "Fallback Title", ExtractedFrom: "fallback"}},
 
-	p := NewParser()
-	details := p.Parse([]byte(html))
+		{"top-level array, ImageObject, location array", `<html><head>
+		 <script type="application/LD+JSON">[{"@type":"Organization","name":"Org"},
+		 {"@type":"Event","name":"Shaped Event",
+		  "image":{"@type":"ImageObject","url":"https://e.com/i.jpg"},
+		  "location":[{"@type":"Place","name":"Seoul"}]}]</script></head></html>`,
+			EventDetails{Name: "Shaped Event", Location: "Seoul",
+				Image: "https://e.com/i.jpg", ExtractedFrom: "jsonld"}},
 
-	if details.Name != "Simple Event Title" {
-		t.Errorf("Name mismatch: got %q", details.Name)
-	}
-	if details.Description != "This is a simple event page" {
-		t.Errorf("Description mismatch: got %q", details.Description)
-	}
-	if details.ExtractedFrom != "fallback" {
-		t.Errorf("ExtractedFrom should be fallback, got %q", details.ExtractedFrom)
+		{"@graph wrapper, contentUrl, image array", `<html><head>
+		 <script type="application/ld+json">{"@context":"https://schema.org","@graph":[
+		 {"@type":"WebPage"},{"@type":"BusinessEvent","name":"Shaped Event",
+		  "image":[{"@type":"ImageObject","contentUrl":"https://e.com/i.jpg"}],
+		  "location":{"@type":"Place","name":"Seoul"}}]}</script></head></html>`,
+			EventDetails{Name: "Shaped Event", Location: "Seoul",
+				Image: "https://e.com/i.jpg", ExtractedFrom: "jsonld"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := NewParser().Parse([]byte(tc.body)); got != tc.want {
+				t.Errorf("Parse() = %+v\nwant %+v", got, tc.want)
+			}
+		})
 	}
 }
 
-func TestParserEmptyHTML(t *testing.T) {
-	html := `<html><head></head><body></body></html>`
+// TestParseClampsFields pins the field bound. The body limit is 10MiB and every field
+// is attacker-controlled, so without it one <title> lands megabytes in Postgres.
+func TestParseClampsFields(t *testing.T) {
+	// Multi-byte runes straddling the cut prove the truncation lands on a rune
+	// boundary: an invalid UTF-8 tail is rejected on insert, turning an oversized
+	// field into a FAILED request rather than a short one.
+	d := NewParser().Parse([]byte(`<html><head><title>` + strings.Repeat("é", maxFieldBytes) +
+		`</title><meta name="description" content="` +
+		strings.Repeat("x", maxDescriptionBytes+10) + `"></head></html>`))
 
-	p := NewParser()
-	details := p.Parse([]byte(html))
-
-	if details.Name != "" {
-		t.Errorf("Should extract nothing, got name: %q", details.Name)
+	if len(d.Name) > maxFieldBytes {
+		t.Errorf("Name is %d bytes, want <= %d", len(d.Name), maxFieldBytes)
 	}
-	if details.ExtractedFrom != "" {
-		t.Errorf("ExtractedFrom should be empty for no data")
+	if !utf8.ValidString(d.Name) {
+		t.Error("Name was cut mid-rune and is not valid UTF-8")
 	}
-}
-
-func TestParserJSONLDPriority(t *testing.T) {
-	// JSON-LD should take priority over OpenGraph.
-	html := `<html><head>
-<script type="application/ld+json">
-{
-  "@type": "Event",
-  "name": "JSON-LD Event"
-}
-</script>
-<meta property="og:title" content="OpenGraph Event">
-</head></html>`
-
-	p := NewParser()
-	details := p.Parse([]byte(html))
-
-	if details.Name != "JSON-LD Event" {
-		t.Errorf("JSON-LD should take priority, got %q", details.Name)
-	}
-	if details.ExtractedFrom != "jsonld" {
-		t.Errorf("Should be extracted from jsonld, got %q", details.ExtractedFrom)
+	if len(d.Description) != maxDescriptionBytes {
+		t.Errorf("Description is %d bytes, want %d", len(d.Description), maxDescriptionBytes)
 	}
 }
 
-func TestParserInvalidJSON(t *testing.T) {
-	html := `<html><head>
-<script type="application/ld+json">
-{ invalid json }
-</script>
-<title>Fallback Title</title>
-</head></html>`
-
-	p := NewParser()
-	details := p.Parse([]byte(html))
-
-	// Should fall back to title when JSON-LD is invalid.
-	if details.Name != "Fallback Title" {
-		t.Errorf("Should fall back to title, got %q", details.Name)
-	}
-}
-
-func TestParserImageArray(t *testing.T) {
-	html := `<html><head>
-<script type="application/ld+json">
-{
-  "@type": "Event",
-  "name": "Event with Images",
-  "image": ["https://example.com/img1.jpg", "https://example.com/img2.jpg"]
-}
-</script>
-</head></html>`
-
-	p := NewParser()
-	details := p.Parse([]byte(html))
-
-	if details.Image != "https://example.com/img1.jpg" {
-		t.Errorf("Should extract first image from array, got %q", details.Image)
-	}
-}
-
-func TestParserLocationObject(t *testing.T) {
-	html := `<html><head>
-<script type="application/ld+json">
-{
-  "@type": "Event",
-  "name": "Event in Paris",
-  "location": {
-    "@type": "Place",
-    "name": "Paris, France"
-  }
-}
-</script>
-</head></html>`
-
-	p := NewParser()
-	details := p.Parse([]byte(html))
-
-	if details.Location != "Paris, France" {
-		t.Errorf("Should extract location name from object, got %q", details.Location)
-	}
-}
-
-func TestParserMalformedHTML(t *testing.T) {
-	html := `not valid html at all <><title>Title</title>stuff`
-
-	p := NewParser()
-	// Should not crash, might extract title if possible.
-	details := p.Parse([]byte(html))
-	_ = details // Just verify no panic.
+func TestParseMalformedHTML(t *testing.T) {
+	// Not an assertion about the result — only that hostile markup cannot panic the
+	// walk, since every input here is a page somebody else controls.
+	_ = NewParser().Parse([]byte(`not valid html at all <><title>Title</title>stuff`))
 }

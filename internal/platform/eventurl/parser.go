@@ -4,10 +4,21 @@
 package eventurl
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/net/html"
+)
+
+// Every extracted field comes from attacker-controlled markup and the body limit is
+// 10MiB, so without these one <title> puts megabytes into a Postgres column and into
+// every brief built from it. The description gets more room: it is legitimately longer
+// and is the one field a human reads in full.
+const (
+	maxFieldBytes       = 1 << 10 // 1 KiB
+	maxDescriptionBytes = 8 << 10 // 8 KiB
 )
 
 // EventDetails holds parsed event metadata extracted from an event page.
@@ -22,6 +33,31 @@ type EventDetails struct {
 	ExtractedFrom string `json:"extracted_from,omitempty"` // "jsonld", "opengraph", or "fallback"
 }
 
+// clamp truncates s to at most maxBytes, cutting on a RUNE boundary: a byte slice of
+// UTF-8 can end mid-sequence, and Postgres rejects the invalid string on insert —
+// turning an oversized field into a failed request rather than a short one.
+func clamp(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	for maxBytes > 0 && !utf8.RuneStart(s[maxBytes]) {
+		maxBytes--
+	}
+	return s[:maxBytes]
+}
+
+// clampFields bounds every field in one place, so a new extraction strategy cannot
+// introduce an unbounded one by forgetting to call it.
+func (d *EventDetails) clampFields() {
+	d.Name = clamp(d.Name, maxFieldBytes)
+	d.Description = clamp(d.Description, maxDescriptionBytes)
+	d.Location = clamp(d.Location, maxFieldBytes)
+	d.StartDate = clamp(d.StartDate, maxFieldBytes)
+	d.EndDate = clamp(d.EndDate, maxFieldBytes)
+	d.Image = clamp(d.Image, maxFieldBytes)
+	d.URL = clamp(d.URL, maxFieldBytes)
+}
+
 // Parser extracts event details from HTML using structured metadata.
 type Parser struct{}
 
@@ -30,90 +66,133 @@ func NewParser() *Parser {
 	return &Parser{}
 }
 
-// Parse extracts event details from HTML body. It tries, in order:
-// 1. JSON-LD schema.org/Event
-// 2. OpenGraph meta tags (og:title, og:description, og:image)
-// 3. HTML title + meta description
+// Parse extracts event details from an HTML body. It tries, in order:
+//  1. JSON-LD schema.org/Event
+//  2. OpenGraph meta tags
+//  3. <title> plus meta[name=description]
 //
-// Returns an empty EventDetails if no usable metadata is found (the caller
-// checks and returns ErrEventDetailsEmpty if name is empty after all attempts).
+// Returns an empty EventDetails if no usable metadata is found; the caller checks Name
+// and answers ErrEventDetailsEmpty rather than letting an empty success through.
 func (p *Parser) Parse(body []byte) EventDetails {
 	details := EventDetails{}
 
-	// Try JSON-LD first (most structured).
-	if p.parseJSONLD(body, &details) {
+	// One parse, three passes. The tree is only read, so parsing per strategy paid
+	// html.Parse — the most expensive step — three times per fetch on a body that may
+	// be 10MiB. bytes.NewReader also avoids copying the body to a string.
+	doc, err := html.Parse(bytes.NewReader(body))
+	if err != nil {
+		return details
+	}
+
+	if p.parseJSONLD(doc, &details) && details.Name != "" {
 		details.ExtractedFrom = "jsonld"
-		if details.Name != "" {
-			return details
-		}
+		details.clampFields()
+		return details
 	}
 
-	// Fall back to OpenGraph.
-	if p.parseOpenGraph(body, &details) {
+	if p.parseOpenGraph(doc, &details) && details.Name != "" {
 		details.ExtractedFrom = "opengraph"
-		if details.Name != "" {
-			return details
-		}
+		details.clampFields()
+		return details
 	}
 
-	// Final fallback to HTML title/description.
-	p.parseFallback(body, &details)
+	p.parseFallback(doc, &details)
 	if details.Name != "" {
 		details.ExtractedFrom = "fallback"
 	}
-
+	details.clampFields()
 	return details
 }
 
-// parseJSONLD extracts event data from JSON-LD <script type="application/ld+json"> tags.
-// It looks for schema.org/Event types and extracts name, description, location, dates, and image.
-func (p *Parser) parseJSONLD(body []byte, details *EventDetails) bool {
-	// Find all <script type="application/ld+json"> tags.
-	doc, err := html.Parse(strings.NewReader(string(body)))
-	if err != nil {
-		return false
+// jsonLDNodes flattens one JSON-LD document into the node objects worth inspecting.
+// A top-level ARRAY is the common real-world shape — a page emits its Organization,
+// BreadcrumbList and Event as one list — and unmarshalling into a map drops the whole
+// block; `@graph` is the other standard wrapper. Recursion is bounded by the decoded
+// value, and encoding/json refuses to decode past 10000 levels of nesting.
+func jsonLDNodes(v interface{}) []map[string]interface{} {
+	switch t := v.(type) {
+	case map[string]interface{}:
+		out := []map[string]interface{}{t}
+		if g, ok := t["@graph"]; ok {
+			out = append(out, jsonLDNodes(g)...)
+		}
+		return out
+	case []interface{}:
+		var out []map[string]interface{}
+		for _, e := range t {
+			out = append(out, jsonLDNodes(e)...)
+		}
+		return out
 	}
+	return nil
+}
 
-	found := false
-	var parseNode func(*html.Node) bool
-	parseNode = func(n *html.Node) bool {
-		if n.Type == html.ElementNode && n.Data == "script" {
-			isJSONLD := false
-			for _, attr := range n.Attr {
-				if attr.Key == "type" && attr.Val == "application/ld+json" {
-					isJSONLD = true
-					break
-				}
+// jsonLDText resolves a JSON-LD property to a single string. schema.org lets the SAME
+// property be a bare string, a node object, or an array of either — `location` is
+// normally a Place and `image` an ImageObject — so a plain assertion to string drops
+// the majority shape silently, and the field just comes back empty with nothing saying
+// why. keys names the sub-properties to try on a node object, in preference order.
+func jsonLDText(v interface{}, keys ...string) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case map[string]interface{}:
+		for _, k := range keys {
+			if s, ok := t[k].(string); ok && s != "" {
+				return s
 			}
-			if isJSONLD && n.FirstChild != nil && n.FirstChild.Type == html.TextNode {
-				// Parse the JSON content.
-				var ld map[string]interface{}
-				if err := json.Unmarshal([]byte(n.FirstChild.Data), &ld); err == nil {
-					// Look for Event type (could be wrapped in @context).
-					if p.extractFromJSONLD(ld, details) {
+		}
+	case []interface{}:
+		for _, e := range t {
+			if s := jsonLDText(e, keys...); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+// parseJSONLD extracts event data from <script type="application/ld+json"> blocks.
+func (p *Parser) parseJSONLD(doc *html.Node, details *EventDetails) bool {
+	found := false
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "script" && isJSONLDScript(n) &&
+			n.FirstChild != nil && n.FirstChild.Type == html.TextNode {
+			var doc interface{}
+			if err := json.Unmarshal([]byte(n.FirstChild.Data), &doc); err == nil {
+				for _, node := range jsonLDNodes(doc) {
+					if p.extractFromJSONLD(node, details) {
 						found = true
 					}
 				}
 			}
 		}
-		// Continue searching even after finding one (multiple JSON-LD blocks possible).
+		// Keep walking: a page carries several blocks and the Event is rarely first.
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			if parseNode(c) {
-				found = true
-			}
+			walk(c)
 		}
-		return false
 	}
-	parseNode(doc)
+	walk(doc)
 	return found
 }
 
-// extractFromJSONLD extracts event fields from a parsed JSON-LD object.
+func isJSONLDScript(n *html.Node) bool {
+	for _, attr := range n.Attr {
+		// The media type is case-insensitive (RFC 9110 §8.3.1).
+		if attr.Key == "type" && strings.EqualFold(strings.TrimSpace(attr.Val), "application/ld+json") {
+			return true
+		}
+	}
+	return false
+}
+
+// extractFromJSONLD extracts event fields from one JSON-LD node object.
 func (p *Parser) extractFromJSONLD(ld map[string]interface{}, details *EventDetails) bool {
-	// Check if this is an Event.
-	typeVal := ld["@type"]
+	// @type may be a string or an array of them; "event" matches the subtypes too
+	// (BusinessEvent, EducationEvent, …), which is what most conference pages emit.
 	var isEvent bool
-	switch t := typeVal.(type) {
+	switch t := ld["@type"].(type) {
 	case string:
 		isEvent = strings.Contains(strings.ToLower(t), "event")
 	case []interface{}:
@@ -128,69 +207,45 @@ func (p *Parser) extractFromJSONLD(ld map[string]interface{}, details *EventDeta
 		return false
 	}
 
-	// Extract known fields.
-	if name, ok := ld["name"].(string); ok && name != "" {
-		details.Name = name
-	}
-	if desc, ok := ld["description"].(string); ok && desc != "" {
-		details.Description = desc
-	}
-	if url, ok := ld["url"].(string); ok && url != "" {
-		details.URL = url
-	}
-
-	// Extract location (can be a string or an object).
-	if locStr, ok := ld["location"].(string); ok && locStr != "" {
-		details.Location = locStr
-	} else if locObj, ok := ld["location"].(map[string]interface{}); ok {
-		if name, ok := locObj["name"].(string); ok && name != "" {
-			details.Location = name
-		}
-	}
-
-	// Extract image (can be a string or an array).
-	if imgStr, ok := ld["image"].(string); ok && imgStr != "" {
-		details.Image = imgStr
-	} else if imgs, ok := ld["image"].([]interface{}); ok && len(imgs) > 0 {
-		if imgStr, ok := imgs[0].(string); ok && imgStr != "" {
-			details.Image = imgStr
-		}
-	}
-
-	// Extract start/end dates.
-	if startDate, ok := ld["startDate"].(string); ok && startDate != "" {
-		details.StartDate = startDate
-	}
-	if endDate, ok := ld["endDate"].(string); ok && endDate != "" {
-		details.EndDate = endDate
-	}
+	setIfEmpty(&details.Name, jsonLDText(ld["name"]))
+	setIfEmpty(&details.Description, jsonLDText(ld["description"]))
+	setIfEmpty(&details.URL, jsonLDText(ld["url"]))
+	setIfEmpty(&details.StartDate, jsonLDText(ld["startDate"]))
+	setIfEmpty(&details.EndDate, jsonLDText(ld["endDate"]))
+	// A Place carries the venue in name, with address (itself often a PostalAddress
+	// node) as fallback; an ImageObject uses url, or contentUrl for a distribution.
+	setIfEmpty(&details.Location, jsonLDText(ld["location"], "name", "address"))
+	setIfEmpty(&details.Image, jsonLDText(ld["image"], "url", "contentUrl"))
 
 	return details.Name != ""
 }
 
-// parseOpenGraph extracts data from og: meta tags.
-func (p *Parser) parseOpenGraph(body []byte, details *EventDetails) bool {
-	doc, err := html.Parse(strings.NewReader(string(body)))
-	if err != nil {
-		return false
+// setIfEmpty fills dst only when still empty, so the FIRST node to supply a field wins
+// and a later Organization block cannot overwrite the Event's own name.
+func setIfEmpty(dst *string, v string) {
+	if *dst == "" && v != "" {
+		*dst = v
 	}
+}
 
+// parseOpenGraph extracts data from og: meta tags.
+func (p *Parser) parseOpenGraph(doc *html.Node, details *EventDetails) bool {
 	found := false
-	var traverse func(*html.Node)
-	traverse = func(n *html.Node) {
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode && n.Data == "meta" {
 			var property, content string
 			for _, attr := range n.Attr {
 				switch attr.Key {
 				case "property":
-					property = attr.Val
+					// x/net/html lowercases attribute NAMES but not values, and the
+					// OpenGraph property is a value.
+					property = strings.ToLower(strings.TrimSpace(attr.Val))
 				case "content":
 					content = attr.Val
 				}
 			}
-
-			// Match og: tags.
-			if strings.HasPrefix(property, "og:") && content != "" {
+			if content != "" {
 				switch property {
 				case "og:title":
 					if details.Name == "" {
@@ -198,60 +253,50 @@ func (p *Parser) parseOpenGraph(body []byte, details *EventDetails) bool {
 						found = true
 					}
 				case "og:description":
-					if details.Description == "" {
-						details.Description = content
-					}
+					setIfEmpty(&details.Description, content)
 				case "og:image":
-					if details.Image == "" {
-						details.Image = content
-					}
+					setIfEmpty(&details.Image, content)
 				case "og:url":
-					if details.URL == "" {
-						details.URL = content
-					}
+					setIfEmpty(&details.URL, content)
 				}
 			}
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			traverse(c)
+			walk(c)
 		}
 	}
-	traverse(doc)
+	walk(doc)
 	return found
 }
 
-// parseFallback extracts title and meta description from HTML.
-func (p *Parser) parseFallback(body []byte, details *EventDetails) {
-	doc, err := html.Parse(strings.NewReader(string(body)))
-	if err != nil {
-		return
-	}
-
-	var traverse func(*html.Node)
-	traverse = func(n *html.Node) {
+// parseFallback extracts <title> and meta[name=description].
+func (p *Parser) parseFallback(doc *html.Node, details *EventDetails) {
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode {
-			if n.Data == "title" && n.FirstChild != nil && n.FirstChild.Type == html.TextNode {
-				if details.Name == "" {
-					details.Name = strings.TrimSpace(n.FirstChild.Data)
+			switch n.Data {
+			case "title":
+				if n.FirstChild != nil && n.FirstChild.Type == html.TextNode {
+					setIfEmpty(&details.Name, strings.TrimSpace(n.FirstChild.Data))
 				}
-			} else if n.Data == "meta" {
+			case "meta":
 				var name, content string
 				for _, attr := range n.Attr {
 					switch attr.Key {
 					case "name":
-						name = attr.Val
+						name = strings.ToLower(strings.TrimSpace(attr.Val))
 					case "content":
 						content = attr.Val
 					}
 				}
-				if name == "description" && content != "" && details.Description == "" {
-					details.Description = content
+				if name == "description" {
+					setIfEmpty(&details.Description, content)
 				}
 			}
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			traverse(c)
+			walk(c)
 		}
 	}
-	traverse(doc)
+	walk(doc)
 }

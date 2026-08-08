@@ -45,6 +45,18 @@ type BriefService struct {
 	// indexingDisabled is a CONFIGURATION fact (NATS_URL empty), not an observation of the
 	// publisher: a Noop also appears when the broker is merely unreachable. See DisableIndexing.
 	indexingDisabled bool
+	// eventFetcher fetches a caller-supplied event page. It is held rather than built per
+	// request because it owns an *http.Transport: a per-request client keeps no idle
+	// connections and starts a fresh TCP+TLS handshake for every fetch, and its
+	// connection pool is garbage rather than reused. Never nil after construction.
+	eventFetcher eventFetcher
+}
+
+// eventFetcher is the fetch half of the event-URL path, named as an interface here so a
+// test can supply a stub without a live server and without reaching for the unguarded
+// constructor. *eventurl.Fetcher is the only production implementation.
+type eventFetcher interface {
+	Fetch(ctx context.Context, eventURL string) ([]byte, error)
 }
 
 var (
@@ -145,7 +157,8 @@ func derefStr(s *string) string {
 // default to a Noop publisher.
 func NewBriefService(b domain.BriefRepository, c domain.CampaignRepository, j domain.JobRepository, orch *Orchestrator) *BriefService {
 	return &BriefService{briefs: b, campaigns: c, jobs: j, orch: orch,
-		indexer: indexer.Noop{},
+		indexer:      indexer.Noop{},
+		eventFetcher: eventurl.NewFetcher(),
 	}
 }
 
@@ -426,18 +439,25 @@ func (s *BriefService) FetchEventURL(ctx context.Context, p *briefs.FetchEventUR
 		return nil, &briefs.BadRequestError{Code: "400", Message: "url is required"}
 	}
 
-	fetcher := eventurl.NewFetcher()
+	// Snapshot under the lock like every other handler; the field is set at construction
+	// and never nil.
+	s.mu.RLock()
+	fetcher := s.eventFetcher
+	s.mu.RUnlock()
+
 	body, err := fetcher.Fetch(ctx, p.URL)
 	if err != nil {
 		return nil, mapEventURLErr(err)
 	}
 
-	parser := eventurl.NewParser()
-	details := parser.Parse(body)
+	details := eventurl.NewParser().Parse(body)
 
-	// Fail closed: if no event name was extracted, reject the result.
+	// Fail closed: a page that yields no name is a 400, not an empty success that flows
+	// silently into brief generation. Routed through mapEventURLErr rather than built
+	// inline so the sentinel is REACHABLE — an unreachable arm in the mapping table is
+	// indistinguishable from a mapping that was never wired.
 	if details.Name == "" {
-		return nil, &briefs.BadRequestError{Code: "400", Message: "no event details could be extracted from the URL"}
+		return nil, mapEventURLErr(eventurl.ErrEventDetailsEmpty)
 	}
 
 	// Return the parsed details as JSON (marshaled through any).

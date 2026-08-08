@@ -374,6 +374,10 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			projectIDAttr()
 			Attribute("url", String, "Event page URL to fetch and parse", func() {
 				Format(FormatURI)
+				// Bounded at the edge so a multi-megabyte "URL" is rejected by the
+				// generated validation rather than carried into url.Parse and a
+				// request. 2048 is the de-facto browser/CDN ceiling.
+				MaxLength(2048)
 			})
 			Required("project_id", "url")
 		})

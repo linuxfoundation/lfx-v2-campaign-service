@@ -202,20 +202,4 @@ var (
 	// platform will not accept (a dashed login_customer_id, say). Distinct from the
 	// credential cases because the fix is a different form field.
 	ErrProviderConfigInvalid = errors.New("a stored provider config value is invalid")
-
-	// ErrEventURLInvalid indicates the provided URL is malformed, missing, or uses
-	// an unsupported scheme (not http/https). Maps to 400.
-	ErrEventURLInvalid = errors.New("event URL is invalid or unsupported")
-
-	// ErrEventURLForbidden indicates the URL resolves to a forbidden address (loopback,
-	// link-local, private range, or multicast). Maps to 400.
-	ErrEventURLForbidden = errors.New("event URL resolves to a forbidden address")
-
-	// ErrEventURLFetchFailed indicates the URL fetch failed (timeout, connection error,
-	// non-2xx response, etc). Maps to 503.
-	ErrEventURLFetchFailed = errors.New("event URL could not be fetched")
-
-	// ErrEventDetailsEmpty indicates the URL was fetched but contains no usable event
-	// metadata (no JSON-LD, OpenGraph, or title tags). Maps to 400.
-	ErrEventDetailsEmpty = errors.New("no event details could be extracted from the URL")
 )
