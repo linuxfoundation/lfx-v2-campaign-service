@@ -212,62 +212,12 @@ func (c *Client) FindCampaignByName(ctx context.Context, name string) (string, e
 			return "", fmt.Errorf("google-ads campaign lookup: exact-match query for %q returned a campaign named %q; the name filter was not honoured, refusing to trust this response", lookup, row.Campaign.Name)
 		}
 
-		// Status, by contrast, IS a per-row skip when it is REMOVED — and only then. A
-		// tombstone is unambiguously not adoptable no matter why it arrived, so dropping
-		// it can only ever be correct, whereas a wrong NAME means the query itself failed.
-		//
-		// Every other status fails closed: Google can return UNSPECIFIED or UNKNOWN (an
-		// omitted field decodes to ""), and treating one as live would return the id of a
-		// campaign whose serving state we could not establish.
-		switch row.Campaign.Status {
-		case StatusRemoved:
+		id, live, err := c.campaignRowIdentity(row, fmt.Sprintf("campaign named %q", lookup))
+		if err != nil {
+			return "", err
+		}
+		if !live {
 			continue
-		case StatusEnabled, StatusPaused:
-			// Live: the only two states a real, adoptable campaign can be in.
-		default:
-			return "", fmt.Errorf("google-ads campaign lookup: campaign named %q has unrecognised status %q (want %s, %s or %s); refusing to treat it as live", lookup, row.Campaign.Status, StatusEnabled, StatusPaused, StatusRemoved)
-		}
-
-		// The resource name is validated WHENEVER it is present, not only as a fallback
-		// for a missing campaign.id: both fields were selected, so both are evidence of
-		// what this row IS. A malformed or cross-customer resource name beside a
-		// plausible id means the row identifies no single campaign in THIS account, and
-		// validating only in the fallback makes the check reachable exactly when the row
-		// is least suspicious.
-		// NOT trimmed — see canonicalCampaignID. The id is identity evidence, so a
-		// padded value is a malformed row, not a value to normalise into a match.
-		id := row.Campaign.ID
-		fromName := c.campaignIDFromResourceName(row.Campaign.ResourceName)
-		//
-		// Tested RAW, not trimmed. TrimSpace here would fold a whitespace-only resource
-		// name into "field absent" and let the row fall through to the id alone — so a
-		// row carrying id "4242" beside resourceName "   " would be adopted as campaign
-		// 4242 despite one of its two selected identity fields being malformed. Absent
-		// and present-but-garbage are exactly the distinction this guard exists to make.
-		if row.Campaign.ResourceName != "" && fromName == "" {
-			return "", fmt.Errorf("google-ads campaign lookup: campaign named %q has resource name %q, which is malformed or scoped to another customer; refusing to adopt it", lookup, row.Campaign.ResourceName)
-		}
-		switch {
-		case id == "":
-			// v23 returns campaign.id as a string, but an int64 field can arrive absent.
-			// The fallback validated the FULL shape above, not the trailing segment:
-			// bare resourceID would read "garbage/4242" as campaign 4242.
-			id = fromName
-		case fromName != "" && fromName != id:
-			return "", fmt.Errorf("google-ads campaign lookup: campaign named %q reports id %q but resource name %q; its two identity fields disagree, refusing to adopt it", lookup, id, row.Campaign.ResourceName)
-		}
-		// The fail-closed case linkedin's findMatch documents: the server says a campaign
-		// with this name exists, but we cannot name it. Not reportable as an absence.
-		if id == "" {
-			return "", fmt.Errorf("google-ads campaign lookup: campaign named %q has no usable id (resourceName %q); aborting rather than report it absent", lookup, row.Campaign.ResourceName)
-		}
-		if canonicalCampaignID(id) == "" {
-			// Two reasons, and both matter. The id is interpolated into resource paths
-			// by every later call, so a non-numeric one must never leave this function.
-			// And it is the answer to "which campaign is this", so "0", an out-of-range
-			// value and a non-canonical spelling are all unusable even though they are
-			// all digits.
-			return "", fmt.Errorf("google-ads campaign lookup: campaign named %q returned id %q, which is not the canonical spelling of a positive int64 campaign id", lookup, id)
 		}
 		matches = append(matches, id)
 	}
@@ -294,4 +244,167 @@ func (c *Client) FindCampaignByName(ctx context.Context, name string) (string, e
 	default:
 		return "", fmt.Errorf("google-ads campaign lookup: %d campaigns in this account are named %q (ids %s) — refusing to choose one; rename or specify the campaign id directly", len(unique), lookup, strings.Join(unique, ", "))
 	}
+}
+
+// campaignRowIdentity answers "which campaign is this row, and is it adoptable" for ONE
+// row of a campaign lookup, and is the single place that question is answered.
+//
+// It exists because there are now two ways to reach a campaign — by name and by id — and
+// they must agree about what counts as a trustworthy row. Duplicating the checks would let
+// the by-id path become the lenient one, which is the worse direction to drift: a caller
+// that hands over an id is binding a brief to a campaign it has already named, so a row
+// this function accepts is one about to have real spend attached to it. `describe` is the
+// caller's phrase for the campaign ("campaign named %q", "campaign id %s"), used only to
+// keep the error messages readable.
+//
+// live is false ONLY for a REMOVED campaign, the one state a caller may skip: a tombstone
+// is unambiguously not adoptable no matter why it arrived, so dropping it can only ever be
+// correct. Every other unrecognised status is an ERROR, not a skip — Google can return
+// UNSPECIFIED or UNKNOWN, and an omitted field decodes to "", so treating one as live
+// returns the id of a campaign whose serving state was never established, while treating it
+// as a skip reduces an unverifiable response to a clean absence and licenses a create.
+func (c *Client) campaignRowIdentity(row campaignLookupRow, describe string) (id string, live bool, err error) {
+	switch row.Campaign.Status {
+	case StatusRemoved:
+		return "", false, nil
+	case StatusEnabled, StatusPaused:
+		// Live: the only two states a real, adoptable campaign can be in.
+	default:
+		return "", false, fmt.Errorf("google-ads campaign lookup: %s has unrecognised status %q (want %s, %s or %s); refusing to treat it as live", describe, row.Campaign.Status, StatusEnabled, StatusPaused, StatusRemoved)
+	}
+
+	// The resource name is validated WHENEVER it is present, not only as a fallback for a
+	// missing campaign.id: both fields were selected, so both are evidence of what this row
+	// IS. A malformed or cross-customer resource name beside a plausible id means the row
+	// identifies no single campaign in THIS account, and validating only in the fallback
+	// makes the check reachable exactly when the row is least suspicious.
+	//
+	// NOT trimmed — see canonicalCampaignID. The id is identity evidence, so a padded value
+	// is a malformed row, not a value to normalise into a match. Same for the resource name:
+	// TrimSpace here would fold a whitespace-only one into "field absent" and let the row
+	// fall through to the id alone, so a row carrying id "4242" beside resourceName "   "
+	// would be adopted as campaign 4242 despite one of its two identity fields being
+	// malformed. Absent and present-but-garbage are exactly the distinction this makes.
+	id = row.Campaign.ID
+	fromName := c.campaignIDFromResourceName(row.Campaign.ResourceName)
+	if row.Campaign.ResourceName != "" && fromName == "" {
+		return "", false, fmt.Errorf("google-ads campaign lookup: %s has resource name %q, which is malformed or scoped to another customer; refusing to adopt it", describe, row.Campaign.ResourceName)
+	}
+	switch {
+	case id == "":
+		// v23 returns campaign.id as a string, but an int64 field can arrive absent. The
+		// fallback validated the FULL shape above, not the trailing segment: bare
+		// resourceID would read "garbage/4242" as campaign 4242.
+		id = fromName
+	case fromName != "" && fromName != id:
+		return "", false, fmt.Errorf("google-ads campaign lookup: %s reports id %q but resource name %q; its two identity fields disagree, refusing to adopt it", describe, id, row.Campaign.ResourceName)
+	}
+	// The fail-closed case linkedin's findMatch documents: the server says the campaign
+	// exists, but we cannot name it. Not reportable as an absence.
+	if id == "" {
+		return "", false, fmt.Errorf("google-ads campaign lookup: %s has no usable id (resourceName %q); aborting rather than report it absent", describe, row.Campaign.ResourceName)
+	}
+	if canonicalCampaignID(id) == "" {
+		// Two reasons, and both matter. The id is interpolated into resource paths by every
+		// later call, so a non-numeric one must never leave this function. And it is the
+		// answer to "which campaign is this", so "0", an out-of-range value and a
+		// non-canonical spelling are all unusable even though they are all digits.
+		return "", false, fmt.Errorf("google-ads campaign lookup: %s returned id %q, which is not the canonical spelling of a positive int64 campaign id", describe, id)
+	}
+	return id, true, nil
+}
+
+// CampaignRef is what a caller learns about a campaign it is considering binding a brief
+// to. The name and status are here because the decision is a human one: an operator who
+// supplied an id is shown the campaign that id resolves to, in this account, before any
+// binding is written — which is the whole point of verifying before binding rather than
+// storing the id and discovering at dispatch time that it names something else.
+type CampaignRef struct {
+	ID     string
+	Name   string
+	Status string // StatusEnabled or StatusPaused — a live campaign is never anything else here
+}
+
+// GetCampaign returns the live campaign with this id in this account, or (nil, nil) when
+// no such campaign exists.
+//
+// It is the by-id counterpart of FindCampaignByName and carries the SAME fail-closed
+// contract, because callers make the same decision from the result:
+//
+//   - one live campaign     -> (ref, nil)
+//   - no live campaign      -> (nil, nil)   — a clean, trustworthy absence
+//   - anything unverifiable -> (nil, error)
+//
+// A REMOVED campaign reads as an absence, exactly as it does by name: the id names a real
+// record, but not one a brief can be bound to, and "you cannot adopt this" is what the
+// caller needs to hear either way.
+//
+// Note what this does NOT do: it does not tell the caller whether the campaign is already
+// bound to some other brief. That is this service's own state, not Google's, and answering
+// it from here would be answering a database question with an ad-platform call.
+func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignRef, error) {
+	if err := c.validateAccountIDs(); err != nil {
+		return nil, err
+	}
+	// The id is validated before it is interpolated, and validated as an IDENTITY rather
+	// than merely as safe text. canonicalCampaignID rejects "0", a value past
+	// math.MaxInt64 and the leading-zero spelling "007" — all of which are digits, none of
+	// which names a campaign this client can adopt. Rejecting here rather than querying is
+	// not just an optimisation: "007" would match campaign 7 server-side and then fail the
+	// echo check below as a disagreement, reporting a confusing conflict for what is really
+	// a malformed request.
+	if canonicalCampaignID(campaignID) == "" {
+		return nil, fmt.Errorf("google-ads: %q is not a campaign id (want the canonical base-10 spelling of a positive int64)", campaignID)
+	}
+
+	// campaign.id is an int64 in GAQL, so it is compared UNQUOTED — quoting it would make
+	// this a string comparison against a numeric field. No escaping question arises: the
+	// value has already been proven to be nothing but digits.
+	query := "SELECT campaign.id, campaign.name, campaign.status, campaign.resource_name " +
+		"FROM campaign WHERE campaign.id = " + campaignID +
+		" AND campaign.status != '" + StatusRemoved + "'"
+
+	rows, err := c.gaqlSearch(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("google-ads campaign lookup: %w", err)
+	}
+
+	describe := fmt.Sprintf("campaign id %s", campaignID)
+	var found *CampaignRef
+	for _, raw := range rows {
+		var row campaignLookupRow
+		if err := json.Unmarshal(raw, &row); err != nil {
+			// A 2xx row we cannot decode is NOT a non-match; reporting it as one would
+			// tell the caller this campaign does not exist when it may.
+			return nil, fmt.Errorf("google-ads campaign lookup: decoding result row: %w", err)
+		}
+
+		// The id filter is re-checked client-side for the same reason the name filter is
+		// in FindCampaignByName: it makes a filter regression LOUD instead of silent. A row
+		// for a DIFFERENT campaign means the WHERE clause was not honoured, which
+		// invalidates the whole response — so this errors on the response rather than
+		// skipping the row, because skipping would reduce an unhonoured query to "no rows
+		// matched", i.e. the clean absence a caller is entitled to trust.
+		id, live, err := c.campaignRowIdentity(row, describe)
+		if err != nil {
+			return nil, err
+		}
+		if !live {
+			continue
+		}
+		if id != campaignID {
+			return nil, fmt.Errorf("google-ads campaign lookup: query for campaign id %s returned campaign %s; the id filter was not honoured, refusing to trust this response", campaignID, id)
+		}
+
+		// Duplicate rows for the same campaign are tolerated (GAQL can return one campaign
+		// on several rows when a query joins a repeated resource) as long as they agree —
+		// and they must agree on the NAME too, not only the id, since the name is what an
+		// operator will read before confirming the binding.
+		ref := &CampaignRef{ID: id, Name: row.Campaign.Name, Status: row.Campaign.Status}
+		if found != nil && *found != *ref {
+			return nil, fmt.Errorf("google-ads campaign lookup: campaign id %s was returned twice with different details (%+v vs %+v); refusing to trust this response", campaignID, *found, *ref)
+		}
+		found = ref
+	}
+	return found, nil
 }

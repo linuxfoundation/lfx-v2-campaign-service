@@ -165,6 +165,46 @@ false absence as the other two, reached by silent truncation rather than by an e
 proto3 JSON emits an unset string as `""` or omits it and never emits `null`, so refusing it
 costs nothing a conformant server would send.
 
+## Campaign lookup by id
+
+`GetCampaign` is the by-id counterpart of `FindCampaignByName`, and exists for **verify
+before bind**: an operator supplying a campaign id is shown what that id resolves to *in this
+account* before any binding is written, rather than having the id stored and the mismatch
+discovered at dispatch time. It returns a `CampaignRef{ID, Name, Status}` — the name and
+status are there because the decision is a human one; an id alone is not confirmable.
+
+| outcome | result |
+|---|---|
+| one live (`ENABLED`/`PAUSED`) campaign with that id | `(ref, nil)` |
+| no such campaign, or only a `REMOVED` one | `(nil, nil)` — a clean, trustworthy absence |
+| a row for a **different** campaign | `(nil, error)` — the id filter was not honoured |
+| the same id returned twice with different details | `(nil, error)` |
+| unverifiable (undecodable row, unrecognised status, bad identity fields) | `(nil, error)` |
+
+A `REMOVED` campaign reads as an absence here exactly as it does by name: the id names a real
+record, but not one a brief can be bound to, and "you cannot adopt this" is what the caller
+needs either way.
+
+**The row-level checks are shared, not duplicated.** `campaignRowIdentity` answers "which
+campaign is this row, and is it adoptable" for both entry points. Duplicating them would let
+the by-id path become the lenient one, which is the worse direction to drift — a caller
+handing over an id is about to attach real spend. `live == false` is returned for `REMOVED`
+alone, the one skippable state; every other unrecognised status is an error, per the
+enumerate-and-default-deny rule above.
+
+**The caller's id is validated as an identity, not merely as safe text.** `canonicalCampaignID`
+runs *before* interpolation, so `"0"`, a value past `math.MaxInt64` and the leading-zero
+spelling `"007"` are all refused despite being digits. `"007"` is why rejecting beats querying:
+it matches campaign 7 server-side and would then trip the filter-not-honoured check, reporting
+a confusing conflict for what is really a malformed request. `campaign.id` is an int64 in GAQL,
+so the value is compared **unquoted** — quoting it would make this a string comparison against
+a numeric field — and no escaping question arises, because the value has been proven to be
+nothing but digits.
+
+`GetCampaign` deliberately does **not** report whether the campaign is already bound to some
+other brief. That is this service's own state, not Google's, and answering it from here would
+be answering a database question with an ad-platform call.
+
 ## Campaign creation (GA-2)
 
 `CreateCampaign` (in `campaign.go`) creates a PAUSED search campaign as two
