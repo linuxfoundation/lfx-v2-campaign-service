@@ -280,19 +280,85 @@ func TestNew_MockPrincipalIsRefusedInCluster(t *testing.T) {
 // the write lock and fetches WITHOUT re-checking the cache, so N simultaneous first
 // requests each perform a full JWKS fetch, one after another. This wrapper must turn that
 // into one fetch shared by all N.
+// The count is EXACT, and getting there needed a different barrier than the obvious one.
+// Signalling from the caller goroutine just before it enters the wrapper cannot establish
+// that the caller is inside singleflight — every goroutine may be descheduled in that
+// window, and once the fetch is released each one can then run to completion before the
+// next enters, making the count exactly `callers` with the wrapper working perfectly. A
+// range (1 <= n < callers) narrows that flake without removing it.
+//
+// The barrier that does work runs on the other side. `fetching` is signalled from INSIDE
+// the fetch, so receiving it proves a flight is active, and it stays active because the
+// fetch is parked on `release`. Followers then join deterministically: coalesceKeyFunc
+// calls group.DoChan SYNCHRONOUSLY before its select, and DoChan on an in-flight key does
+// not invoke fn — so a follower whose context is ALREADY cancelled has provably joined the
+// leader's flight by the time it returns ctx.Err(), and its return is something the test
+// can wait for. Sixteen followers join, none fetches, and the assertion is `== 1`.
 func TestCoalesceKeyFunc_CollapsesConcurrentColdFetches(t *testing.T) {
-	const callers = 16
+	const followers = 16
 
 	var fetches int32
+	fetching := make(chan struct{})
 	release := make(chan struct{})
-	// Every caller has been STARTED before the single fetch is allowed to return, so the
-	// count below measures genuine concurrency rather than callers arriving one at a time
-	// and legitimately fetching in sequence.
-	arrived := make(chan struct{}, callers)
+
+	// Only the FIRST fetch parks. A second one is the defect this test exists to catch, and
+	// parking it too would turn the failure into a hang (or, with an unguarded close, a
+	// panic) instead of the count below.
+	kf := coalesceKeyFunc(func(context.Context) (any, error) {
+		if atomic.AddInt32(&fetches, 1) == 1 {
+			close(fetching)
+			<-release
+		}
+		return "keyset", nil
+	})
+
+	leader := make(chan any, 1)
+	go func() {
+		v, err := kf(context.Background())
+		if err != nil {
+			t.Errorf("leader: unexpected error %v", err)
+		}
+		leader <- v
+	}()
+	<-fetching // a flight is active, and parked on `release` until we say otherwise
+
+	// Cancelled up front, so each of these returns only after DoChan has joined the flight.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	followerErrs := make([]error, followers)
+	for i := range followers {
+		_, followerErrs[i] = kf(ctx)
+	}
+
+	close(release)
+
+	// The count first: a wrong follower error is usually the symptom of a missed join, and
+	// reporting the join failure is more use than reporting sixteen copies of its effect.
+	if n := atomic.LoadInt32(&fetches); n != 1 {
+		t.Errorf("JWKS was fetched %d times while one fetch was already in flight and %d "+
+			"further callers arrived, want exactly 1 — every one of them must join the "+
+			"flight rather than start its own", n, followers)
+	}
+	for i, err := range followerErrs {
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("follower %d: got %v, want context.Canceled — a caller must stop waiting "+
+				"on the shared fetch when its own context ends", i, err)
+		}
+	}
+	if v := <-leader; v != "keyset" {
+		t.Errorf("leader got %v, want the shared keyset", v)
+	}
+}
+
+// TestCoalesceKeyFunc_EveryCallerGetsTheSharedResult is the other half, and it is a
+// separate test because it is the half that CANNOT be made count-exact. Coalescing is
+// invisible from a caller's side by design: whether it joined a flight or started one, it
+// must come back with the keyset and no error. So this asserts only that — for every
+// caller, under real concurrency, with no barrier that could bias the interleaving.
+func TestCoalesceKeyFunc_EveryCallerGetsTheSharedResult(t *testing.T) {
+	const callers = 16
 
 	kf := coalesceKeyFunc(func(context.Context) (any, error) {
-		atomic.AddInt32(&fetches, 1)
-		<-release
 		return "keyset", nil
 	})
 
@@ -303,29 +369,11 @@ func TestCoalesceKeyFunc_CollapsesConcurrentColdFetches(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			arrived <- struct{}{}
 			results[i], errs[i] = kf(context.Background())
 		}()
 	}
-	for range callers {
-		<-arrived
-	}
-	// The leader is blocked in the fetch and the followers are blocked on its result;
-	// nothing can complete until this.
-	close(release)
 	wg.Wait()
 
-	// A RANGE, not exactly 1, and deliberately so: `arrived` is signalled just BEFORE the
-	// caller enters the wrapper, and no barrier can observe the moment a goroutine is
-	// actually inside singleflight. A caller descheduled in that window can miss the
-	// in-flight call and legitimately start a second one, so demanding exactly 1 makes the
-	// test flaky rather than strict. x/sync's own TestDoDupSuppress asserts the same shape
-	// for the same reason. The bound still binds: without the wrapper this is exactly
-	// `callers`, which is what the revert-check measured.
-	if n := atomic.LoadInt32(&fetches); n < 1 || n >= callers {
-		t.Errorf("JWKS was fetched %d times for %d concurrent cold callers, want at least one "+
-			"fetch shared by several callers (1 <= n < %d)", n, callers, callers)
-	}
 	for i := range callers {
 		if errs[i] != nil {
 			t.Errorf("caller %d: unexpected error %v", i, errs[i])

@@ -123,11 +123,27 @@ takes the write lock and fetches without re-checking the cache, so concurrent co
 serialize rather than share — the Nth caller waits N × fetch, on a path every request takes.
 `coalesceKeyFunc` collapses them with `singleflight.DoChan`; `context.WithoutCancel` inside
 the shared call keeps the first caller's cancellation from failing the rest, which
-`TestCoalesceKeyFunc_LeaderCancellationDoesNotFailFollowers` pins. The fan-in test asserts a
-range rather than exactly one fetch, following `x/sync`'s own `TestDoDupSuppress`: no barrier
-can observe the instant a goroutine is inside `singleflight`, so demanding exactly one is a
-flake, not a stricter test. It still binds — unwrapped, the revert-check measured 16 fetches
-for 16 callers.
+`TestCoalesceKeyFunc_LeaderCancellationDoesNotFailFollowers` pins.
+
+**The fan-in test first asserted a RANGE, and the range was still flaky.** The reasoning for
+it — that no barrier can observe the instant a goroutine is inside `singleflight`, following
+`x/sync`'s own `TestDoDupSuppress` — was correct about the barrier it used and wrong about
+the conclusion. Signalling from the caller goroutine just before it enters the wrapper leaves
+every goroutine free to be descheduled in that window; once the parked fetch is released,
+each can then run to completion before the next enters, and the count reaches exactly
+`callers` with the wrapper working perfectly. `n < callers` narrows that window without
+closing it.
+
+The barrier that closes it runs on the other side of the call. Signal from INSIDE the fetch
+and receiving the signal proves a flight is active; park the fetch and it stays active.
+Followers then join deterministically, because `coalesceKeyFunc` calls `group.DoChan`
+SYNCHRONOUSLY before its select and `DoChan` on an in-flight key does not invoke `fn`: a
+follower whose context is ALREADY cancelled has provably joined by the time it returns
+`ctx.Err()`, and its return is something the test can wait for. The assertion is now `== 1`,
+and 50 `-race` runs are clean. Only the first fetch parks — parking a second would turn the
+failure into a hang instead of a count. The half that genuinely cannot be made count-exact,
+"every caller comes back with the keyset", moved to its own test that asserts only that.
+Unwrapped, the revert-check reports 17 fetches where 1 is required.
 
 **Known follow-up.** Rejections surface as **400**, not 401 — the design declares no
 Unauthorized type and `commonBriefErrors` documents 400 as the JWTAuth rejection status;
