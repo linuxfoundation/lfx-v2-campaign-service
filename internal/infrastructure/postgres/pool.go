@@ -10,11 +10,15 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/exaring/otelpgx"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	// pgxv5 is aliased because golang-migrate's driver above already occupies the
+	// identifier `pgx` (see the pgx.Postgres reference at the foot of this file).
+	pgxv5 "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -109,6 +113,9 @@ func (p *Pool) checkReady(ctx context.Context, ping func(context.Context) error)
 // golang-migrate marks such a schema dirty (migrate.ErrDirty, surfaced by
 // IsPermanentMigrationErr) and refuses to proceed until an operator forces the
 // version, since partial migration SQL is not assumed idempotent.
+//
+// On success it verifies the schema carries no INVALID index (checkNoInvalidIndexes) —
+// the one failure a migration can leave behind that a re-run reports as success.
 func Migrate(dsn string) error {
 	src, err := iofs.New(migrations.FS, ".")
 	if err != nil {
@@ -145,20 +152,102 @@ func Migrate(dsn string) error {
 		}
 		return fmt.Errorf("apply migrations: %w", err)
 	}
+	// dsn, NOT migrateURL: pgxURL rewrites the scheme to golang-migrate's INTERNAL
+	// pgx5://, which pgx itself cannot parse.
+	return checkNoInvalidIndexes(dsn)
+}
+
+// invalidIndexCheckTimeout bounds the post-migration catalog read. It is a single
+// indexed lookup against a database the migrator has just finished using, so the budget
+// only needs to cover a connect plus one round trip.
+const invalidIndexCheckTimeout = 10 * time.Second
+
+// ErrInvalidIndex reports that the schema carries an index Postgres has marked INVALID.
+// It is PERMANENT: no amount of retrying rebuilds the index, and the service must not
+// serve while it stands, because an invalid index enforces NOTHING. For a UNIQUE index
+// that is a lost constraint, and the code above it goes on believing the database is
+// arbitrating something it has stopped arbitrating.
+var ErrInvalidIndex = errors.New("schema carries an INVALID index")
+
+// invalidIndexQuery lists indexes in the connection's schema that Postgres has marked
+// invalid. Only CREATE INDEX CONCURRENTLY produces one: a plain CREATE INDEX rolls its
+// failure back, while a CONCURRENTLY build that fails leaves the index PRESENT and
+// invalid. The planner then refuses to use it and a unique index stops enforcing
+// uniqueness — silently, since every catalog lookup by NAME still finds it.
+const invalidIndexQuery = `SELECT c.relname
+	FROM pg_index i
+	JOIN pg_class c ON c.oid = i.indexrelid
+	JOIN pg_namespace n ON n.oid = c.relnamespace
+	WHERE NOT i.indisvalid AND n.nspname = current_schema()
+	ORDER BY c.relname`
+
+// checkNoInvalidIndexes runs after a successful migration and refuses to report success
+// while the schema carries an invalid index.
+//
+// This exists because `CREATE INDEX CONCURRENTLY IF NOT EXISTS` cannot recover from its
+// own failure. A failed CONCURRENTLY build leaves the index present under the intended
+// name and marked invalid; golang-migrate marks the version dirty. The operator then
+// reconciles the data and forces the version back, and the re-run finds the NAME, does
+// nothing, and reports success — so the version goes clean over an index that enforces
+// nothing. Every test that looks the index up by name still passes.
+//
+// A test cannot cover that: it is production CATALOG state, and the migration tests run
+// on a fresh database where the debris does not exist. The check has to be in the runner,
+// on the path production takes. It is also deliberately not scoped to one index name —
+// an invalid index is never an intended state, and every future CONCURRENTLY migration
+// gets this for free rather than needing its own bespoke assertion.
+//
+// Running it on every boot, including the ErrNoChange path, is the point: a pod that
+// starts against a schema whose lease index is invalid must refuse rather than quietly
+// accept the duplicate builds the index was added to prevent.
+func checkNoInvalidIndexes(dsn string) error {
+	// Migrate takes no context (golang-migrate's Up() does not either). This is a
+	// single catalog read against a database the migration just finished using, so a
+	// short independent deadline is enough and keeps a hung read from wedging boot.
+	ctx, cancel := context.WithTimeout(context.Background(), invalidIndexCheckTimeout)
+	defer cancel()
+
+	conn, err := pgxv5.Connect(ctx, dsn)
+	if err != nil {
+		// Connectivity, not a schema verdict: leave it retryable rather than
+		// wrapping it in the permanent sentinel.
+		return fmt.Errorf("check for invalid indexes: %w", err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	rows, err := conn.Query(ctx, invalidIndexQuery)
+	if err != nil {
+		return fmt.Errorf("check for invalid indexes: %w", err)
+	}
+	names, err := pgxv5.CollectRows(rows, pgxv5.RowTo[string])
+	if err != nil {
+		return fmt.Errorf("check for invalid indexes: %w", err)
+	}
+	if len(names) > 0 {
+		return fmt.Errorf("%w: %s. Left by a failed CREATE INDEX CONCURRENTLY: it "+
+			"enforces nothing and the planner will not use it, yet a re-run of the "+
+			"migration that creates it finds the NAME and reports success. Drop each "+
+			"index listed and re-run that migration",
+			ErrInvalidIndex, strings.Join(names, ", "))
+	}
 	return nil
 }
 
 // IsPermanentMigrationErr reports whether a Migrate error is a PERMANENT state that
-// retrying can never clear on its own — today, a dirty schema (migrate.ErrDirty),
-// which golang-migrate sets when a prior migration failed partway and leaves the
-// schema_migrations row marked dirty. It requires an operator to inspect and `force`
+// retrying can never clear on its own: a dirty schema (migrate.ErrDirty), which
+// golang-migrate sets when a prior migration failed partway and leaves the
+// schema_migrations row marked dirty; or ErrInvalidIndex, the debris of a failed
+// CREATE INDEX CONCURRENTLY. It requires an operator to inspect and `force`
 // the version; a boot loop that just re-runs Migrate will hit ErrDirty forever. The
 // caller uses this to fail fast (surface the error) instead of 503-looping silently.
 // A connectivity/lock/deadline failure is NOT permanent and is deliberately excluded
 // so it still retries.
 func IsPermanentMigrationErr(err error) bool {
 	var dirty migrate.ErrDirty
-	return errors.As(err, &dirty)
+	// ErrInvalidIndex joins it: an invalid index is catalog debris no retry rebuilds.
+	// Retrying would boot-loop in 503 while the schema silently enforces nothing —
+	// which is worse than the dirty case, because the version reads CLEAN.
+	return errors.As(err, &dirty) || errors.Is(err, ErrInvalidIndex)
 }
 
 // ValidateMigrationDSN reports whether dsn is in the URL form migrations require,

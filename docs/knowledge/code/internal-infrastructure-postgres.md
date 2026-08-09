@@ -196,6 +196,28 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   rather than mere existence, because a failed concurrent build leaves the NAME in place
   and `IF NOT EXISTS` would then skip the rebuild while reporting success.
 
+### `Migrate` refuses to succeed over an INVALID index
+
+The hazard above cannot be closed by a test alone, because it is a SEQUENCE that ends in
+production catalog state: a `CREATE INDEX CONCURRENTLY` fails, leaving the index present
+and invalid while golang-migrate marks the version dirty; an operator reconciles the data
+and forces the version back; the re-run finds the NAME, does nothing, reports success. The
+version is then clean over an index that enforces nothing — and every assertion that looks
+the index up by name still passes. Migration tests run on a fresh database and can never
+see it.
+
+So `Migrate` ends with `checkNoInvalidIndexes`, a catalog read for
+`pg_index.indisvalid = false` in the current schema. Any hit returns `ErrInvalidIndex`,
+which `IsPermanentMigrationErr` reports as permanent: retrying rebuilds nothing, and a
+503 boot-loop is better than serving over a lost UNIQUE constraint. The check is
+schema-wide rather than scoped to one index name — an invalid index is never an intended
+state, and every future `CONCURRENTLY` migration inherits the guard instead of needing its
+own assertion. It also runs on the `ErrNoChange` path, so a pod booting against an already
+damaged schema refuses rather than quietly accepting what the index was added to prevent.
+A connect/query failure inside the check is NOT wrapped in the sentinel, so ordinary
+unreachability stays retryable. `TestMigrateRefusesAnInvalidIndex` provokes a genuine
+invalid index (a unique `CONCURRENTLY` build over duplicate rows) and asserts the refusal.
+
 ## Actor attribution
 
 Campaigns execute under **system accounts** — shared, LF-owned platform credentials —

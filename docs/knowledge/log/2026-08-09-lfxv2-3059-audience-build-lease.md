@@ -66,3 +66,63 @@ gives the exact message text for each, plus the operator procedure for a stuck l
 tree deploys first those two are skipped silently and permanently. **#95 and #93 must both land
 before this branch.** `TestMigrations_AllowedVersionGapsAreStillOpen` fails once they do, which
 is what forces the entries to be deleted rather than left to rot.
+
+## `IF NOT EXISTS` cannot recover from its own failure — so the runner checks
+
+Raised by Copilot on #106, and the mechanism holds. The migration's comment already said
+that a failed `CREATE INDEX CONCURRENTLY` leaves the index INVALID under the intended name
+and that a bare re-run would skip it while reporting success. What it then claimed as the
+defence was `TestAudienceBuildLeaseIndexIsValid` — and a test cannot be the defence here,
+because the state it would have to observe is production's:
+
+1. The concurrent build fails. Index present, `indisvalid = false`; golang-migrate marks
+   the version dirty.
+2. An operator reconciles the duplicate data and forces the version back to 17.
+3. The re-run reaches `IF NOT EXISTS`, finds the NAME, does nothing, and succeeds.
+4. Version 18 is now CLEAN over an index that enforces nothing. The planner will not use
+   it, and the unique constraint the lease depends on is gone — silently, since every
+   lookup by name still finds it.
+
+Migration tests run on a fresh database, where none of that debris exists. So the check
+moved onto the path production takes: `Migrate` now ends with `checkNoInvalidIndexes`,
+returning `ErrInvalidIndex` — permanent, via `IsPermanentMigrationErr` — while the schema
+carries any invalid index.
+
+Two deliberate choices. It is **schema-wide**, not scoped to this index's name: an invalid
+index is never an intended state, and every future `CONCURRENTLY` migration inherits the
+guard rather than writing its own assertion. And it runs on the **`ErrNoChange`** path too,
+so a pod booting against an already-damaged schema refuses rather than accepting the
+duplicate builds the index exists to prevent.
+
+The alternative Copilot offered first — dropping `IF NOT EXISTS` — was rejected: it makes
+the ordinary re-run fail on `42P07` while doing nothing about the invalid-index case, since
+a re-run over invalid debris still cannot rebuild. The problem was never the `IF NOT
+EXISTS`; it was that nothing production runs ever looked at `indisvalid`.
+
+One bug was written and caught while building this: the check was first handed
+`migrateURL`, which `pgxURL` has rewritten to golang-migrate's INTERNAL `pgx5://` scheme.
+pgx cannot parse it, so every boot would have reported a connect failure from the check —
+retryable, so not even loudly. It takes the original `dsn`.
+
+`TestMigrateRefusesAnInvalidIndex` produces a real invalid index rather than simulating
+one: a unique `CONCURRENTLY` build over duplicate rows is exactly how Postgres makes them.
+It also revealed that Postgres truncates identifiers at 63 bytes — the first version named
+its index after the test and asserted the error quoted that name, which failed on the
+truncated tail.
+
+## Two conflict-mapping branches had no live coverage
+
+Also Copilot, also real. `CreateAudienceForApprovedBrief` was the only path the live tests
+exercised, but the lease has three doors and each maps its own 23505:
+
+- `CreateAudience` — the plain `POST create-audience`. It defaults to `building`, so it
+  takes the same lease and can lose it.
+- `UpdateAudience` — a PATCH moving a `failed`/`built` row BACK to `building`. This is the
+  rarest way in and the reason it earns a branch: it is the retry an operator reaches for
+  after reconciling a stuck build. The completion test cannot reach it, because it moves
+  `building` → `built`, LEAVING the index predicate rather than entering it.
+
+Both are now covered by live tests that hold the lease with a real build first, so the
+path under test is genuinely second. Revert-verified: removing either mapping surfaces the
+raw `duplicate key value violates unique constraint ... (SQLSTATE 23505)` — which is a 500,
+reading as a broken service rather than an occupied slot.

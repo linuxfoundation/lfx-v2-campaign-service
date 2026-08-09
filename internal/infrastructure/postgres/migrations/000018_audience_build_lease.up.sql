@@ -55,8 +55,16 @@
 -- lists already exist and need a human, and a deploy that fails loudly is how they find
 -- out. IF NOT EXISTS covers the ordinary re-run, not a failed build — a failed
 -- CONCURRENTLY build leaves the index INVALID under this name, so a bare re-run would
--- skip it while reporting success. TestAudienceBuildLeaseIndexIsValid asserts
--- indisvalid, which is what turns that silent skip into a test failure.
+-- skip it while reporting success.
+--
+-- That silent skip is caught in the RUNNER, not only in a test. postgres.Migrate ends
+-- with checkNoInvalidIndexes, which fails (permanently, via ErrInvalidIndex) while the
+-- schema carries any invalid index. A test could not cover it: the sequence that
+-- produces the debris is a failed build, an operator forcing the version back, and a
+-- re-run — production CATALOG state, which the migration tests, running on a fresh
+-- database, never have. TestAudienceBuildLeaseIndexIsValid still asserts indisvalid for
+-- THIS index, and TestMigrateRefusesAnInvalidIndex provokes a real invalid index and
+-- checks the runner refuses it.
 CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_campaign_audiences_brief_platform_building
     ON campaign_audiences (brief_id, platform)
     WHERE status = 'building';

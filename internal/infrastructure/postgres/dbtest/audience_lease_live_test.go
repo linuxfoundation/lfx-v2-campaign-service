@@ -187,3 +187,87 @@ func insertApprovedBrief(ctx context.Context, t *testing.T, pool *pgxpool.Pool) 
 	}
 	return briefID, projectID
 }
+
+// TestAudienceBuildLeaseRefusesPlainCreate covers the OTHER way into the lease, and it is
+// the one the tests above missed: `POST create-audience` reaches CreateAudience, not
+// CreateAudienceForApprovedBrief. That path defaults status to 'building' too, so it takes
+// the same lease and can lose it — and its 23505 mapping is a separate branch of code from
+// the build path's. Untested, a regression there would answer a lost lease with a bare 500
+// while every build-path test stayed green.
+func TestAudienceBuildLeaseRefusesPlainCreate(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+	repo := postgres.NewAudienceRepo(&postgres.Pool{Pool: pool})
+
+	briefID, projectID := insertApprovedBrief(ctx, t, pool)
+	newRow := func() *model.CampaignAudience {
+		return &model.CampaignAudience{
+			ProjectID: projectID,
+			BriefID:   briefID,
+			Platform:  model.ProviderHubSpot,
+			Status:    model.AudienceBuilding,
+		}
+	}
+
+	// The BUILD path takes the lease first, so the plain create is genuinely second —
+	// which is the case the branch exists for. Doing it the other way round would test
+	// the same mapping from the wrong side.
+	if _, err := repo.CreateAudienceForApprovedBrief(ctx, newRow(), 1); err != nil {
+		t.Fatalf("hold the lease with a build: %v", err)
+	}
+
+	if _, err := repo.CreateAudience(ctx, newRow()); !errors.Is(err, domain.ErrAudienceBuildInFlight) {
+		t.Fatalf("CreateAudience while a build holds the lease: got %v, want "+
+			"ErrAudienceBuildInFlight — an unmapped 23505 surfaces as a 500, which reads "+
+			"as a broken service rather than an occupied slot", err)
+	}
+}
+
+// TestAudienceBuildLeaseRefusesUpdateBackToBuilding covers the third and rarest way in,
+// and the reason it is worth a branch at all: this is the retry an operator reaches for.
+// A build died holding the lease, they reconcile the portal, PATCH the stuck row to
+// 'failed', and PATCH an earlier failed row back to 'building' to try again. If someone
+// else has taken the slot in between, that PATCH hits the lease — on the UPDATE statement,
+// a different 23505 site from either create.
+//
+// The completion test cannot reach it: it moves 'building' to 'built', which LEAVES the
+// index predicate rather than entering it.
+func TestAudienceBuildLeaseRefusesUpdateBackToBuilding(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+	repo := postgres.NewAudienceRepo(&postgres.Pool{Pool: pool})
+
+	briefID, projectID := insertApprovedBrief(ctx, t, pool)
+	newRow := func() *model.CampaignAudience {
+		return &model.CampaignAudience{
+			ProjectID: projectID,
+			BriefID:   briefID,
+			Platform:  model.ProviderHubSpot,
+			Status:    model.AudienceBuilding,
+		}
+	}
+
+	// An earlier attempt that failed. It is outside the index predicate, so it does not
+	// hold the lease and a fresh build can start alongside it.
+	failed, err := repo.CreateAudienceForApprovedBrief(ctx, newRow(), 1)
+	if err != nil {
+		t.Fatalf("first build: %v", err)
+	}
+	failed.Status = model.AudienceFailed
+	failed, err = repo.UpdateAudience(ctx, failed, failed.Version)
+	if err != nil {
+		t.Fatalf("mark the first build failed: %v", err)
+	}
+
+	// Somebody else now holds the lease.
+	if _, err := repo.CreateAudienceForApprovedBrief(ctx, newRow(), 1); err != nil {
+		t.Fatalf("second build after the first failed: %v", err)
+	}
+
+	// The operator retries the failed row. The slot is taken.
+	failed.Status = model.AudienceBuilding
+	if _, err := repo.UpdateAudience(ctx, failed, failed.Version); !errors.Is(err, domain.ErrAudienceBuildInFlight) {
+		t.Fatalf("PATCH a failed row back to building while the lease is held: got %v, want "+
+			"ErrAudienceBuildInFlight", err)
+	}
+}
