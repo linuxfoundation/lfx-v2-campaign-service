@@ -49,8 +49,9 @@ type Service interface {
 	// the new status. Unlike update-campaign (which only writes the DB row), this
 	// dispatches the status change to the platform and updates the row only after
 	// the platform confirms. Support is per-platform: a campaign whose platform
-	// has no status-toggle dispatcher wired returns 400 (Reddit is wired in this
-	// change; other platforms follow). ONE EXCEPTION to the persist: pausing a
+	// has no status-toggle dispatcher wired returns 400. Reddit, LinkedIn, Meta,
+	// X, Google Ads and Microsoft Ads are wired; HubSpot is not, because an email
+	// send has no run state to pause. ONE EXCEPTION to the persist: pausing a
 	// campaign in 'created_degraded' pauses it upstream and returns 200 with the
 	// status and ETag UNCHANGED. 'created_degraded' records that the campaign's
 	// wiring was never verified, and this schema has one status column, so writing
