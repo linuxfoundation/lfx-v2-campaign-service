@@ -780,6 +780,16 @@ func TestBuildAudience_ConcurrentBuildIsRefusedWithItsOwnMessage(t *testing.T) {
 	assert.NotContains(t, conflict.Message, "refresh and rebuild",
 		"that is the STALE-APPROVAL remedy, and it is the exact opposite of what to do here — "+
 			"rebuilding is what duplicates the in-flight build's HubSpot lists")
+	// The remedy has to survive the case it is most likely to be READ in. A build that is
+	// genuinely stuck is the one least likely to have recorded its lists — the claim inserts
+	// with an empty inclusion_summary and ids land only after createPlanLists returns — so a
+	// message pointing only at the row lets an operator find nothing, conclude there is
+	// nothing to reconcile, fail the row, and let the next build duplicate lists that are
+	// sitting in the portal. The row-id prefix finds them either way.
+	assert.Contains(t, conflict.Message, "first 8 characters of the audience row id",
+		"the remedy must name the handle that works when the row recorded nothing")
+	assert.Contains(t, conflict.Message, "EMPTY inclusion_summary",
+		"and must say WHY, or the prefix reads as a redundant second option")
 
 	assert.Empty(t, arepo.rows(), "the loser must not record a row; the index rejected its insert")
 }

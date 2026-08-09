@@ -284,7 +284,7 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 	// on its own it no longer says anything about the brief at the moment lists are created. A
 	// ReplaceBrief landing during that round-trip would otherwise build real HubSpot lists from
 	// an approval the operator has since withdrawn, which is the case the gate exists for. The
-	// two guards are not redundant: the claim's serializes builds, this one dates the approval.
+	// two guards are not redundant: the claim's gate serializes builds, this one dates the approval.
 	if serr := confirmStillApproved(ctx, briefs, p.ProjectID, p.BriefID, approvedVersion); serr != nil {
 		releaseUnstartedClaim(ctx, repo, created, serr)
 		return nil, mapAudienceErr(serr)

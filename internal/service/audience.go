@@ -350,8 +350,18 @@ func mapAudienceErr(err error) error {
 		// interchangeable. Failing the row frees the lease immediately, so an operator who
 		// does that before reconciling has admitted the next build while the dead build's
 		// lists are still in the portal — which creates the duplicate set this lease exists
-		// to prevent. The row's inclusion_summary carries the list ids to reconcile.
-		return &audiences.ConflictError{Code: "409", Message: "an audience build for this brief is already in progress; wait for it to finish, or — if it is stuck — first reconcile the HubSpot lists recorded on its audience row, then PATCH that row to failed"}
+		// to prevent.
+		//
+		// The message must NOT send the operator to inclusion_summary alone. A row that is
+		// genuinely stuck is the one least likely to have recorded anything: the claim
+		// inserts with an empty summary, and ids are written only once createPlanLists
+		// returns, so the crash-mid-build case leaves real lists in the portal and an empty
+		// row. An operator who checks the summary, finds it empty and concludes there is
+		// nothing to reconcile will fail the row and let the next build duplicate them.
+		// Every list a build creates carries the first 8 characters of its audience row id
+		// (Plan.BuildRef, see internal/audience.listName), so that prefix finds them whether
+		// or not the row recorded anything, and the message names it as the primary handle.
+		return &audiences.ConflictError{Code: "409", Message: "an audience build for this brief is already in progress; wait for it to finish, or — if it is stuck — first reconcile its HubSpot lists, then PATCH its audience row to failed. Its lists are named with the first 8 characters of the audience row id in parentheses; search the portal for that, because a build that crashed before recording anything leaves lists behind with an EMPTY inclusion_summary"}
 	case errors.Is(err, domain.ErrConflict):
 		return &audiences.ConflictError{Code: "409", Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):

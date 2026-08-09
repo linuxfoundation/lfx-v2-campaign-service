@@ -342,3 +342,25 @@ opens a withdrawal, leaves it uncommitted, and requires the confirmation to stil
 dropping `FOR UPDATE` gives `ConfirmBriefApproved returned <nil> while a withdrawal was in
 flight`. The fake's `ConfirmBriefApproved` deliberately does NOT fire `onGet`, for the same
 reason its claim uses `snapshot()`: a hook there would model a window the lock removes.
+
+### Round 6b: the remedy pointed at the record least likely to exist
+
+From the same review's suppressed block, and it is a better finding than its placement suggests.
+The in-flight 409 told an operator to "reconcile the HubSpot lists recorded on its audience row"
+— but the row that is genuinely stuck is precisely the one that recorded nothing. The claim
+inserts with an empty `inclusion_summary`, and ids are written only after `createPlanLists`
+returns, so a crash mid-build leaves real lists upstream and an empty row. An operator reads the
+summary, finds it empty, concludes there is nothing to reconcile, fails the row — and the next
+build duplicates lists that are sitting in the portal. The duplicate set arrived at by following
+the remedy that exists to prevent it, which is the second time in this file that has happened.
+
+The durable handle was already there and unnamed: every list a build creates carries the first 8
+characters of its audience row id in parentheses, the same `Plan.BuildRef` suffix that stops a
+rebuild adopting an earlier build's lists. That is true of a list whether or not the row ever
+recorded its id. The 409 and the api-catalog remedy now name the prefix first and treat
+`inclusion_summary` as a supplement, and the message says WHY — a prefix offered without the
+reason reads as a redundant second option and gets skipped.
+
+The rule: **a recovery instruction has to name evidence that exists in the FAILURE it is written
+for, not in the success case.** Close kin to Round 3 and to #101's "a guard must run where the
+evidence still exists" — same mistake, pointed at an operator instead of a decoder.

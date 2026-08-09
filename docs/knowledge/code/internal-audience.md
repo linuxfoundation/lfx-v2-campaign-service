@@ -132,6 +132,17 @@ while the dead build's lists are still in the portal — the duplicate set the l
 prevent, arrived at by following the remedy for it. The 409's message states the reconciliation
 first for the same reason.
 
+**"Reconcile the portal" cannot mean "read `inclusion_summary`".** A row that is genuinely stuck
+is the one least likely to have recorded anything: the claim inserts with an empty summary and
+the ids are written only once `createPlanLists` returns, so the crash-mid-build case leaves real
+lists upstream and an empty row. An operator who reads the summary, finds it empty and concludes
+there is nothing to reconcile will fail the row and let the next build duplicate them — again
+by following the remedy. The durable handle is the NAME: every list a build creates carries the
+first 8 characters of its audience row id in parentheses (`Plan.BuildRef`, the same suffix that
+stops a rebuild adopting an earlier build's lists), and that is true whether or not the row ever
+recorded an id. The 409 and `docs/api-catalog.md` both name the prefix first and treat
+`inclusion_summary` as a supplement.
+
 ## The event NAME decides the edition year
 
 `eventFamily` takes the year from the event name when it has one, and only falls back to the
@@ -162,7 +173,7 @@ brief was approved BEFORE the slowest call in the build rather than after it —
 nothing at all about the brief at the moment lists are created, and that moment is what the
 gate exists for. `confirmStillApproved` runs as the last thing before the first HubSpot call
 and re-reads the brief, failing unless it is still approved at the version the claim locked.
-The two guards answer different questions: the claim's SERIALIZES builds, this one DATES the
+The two guards answer different questions: the claim's gate SERIALIZES builds, this one DATES the
 approval. A read failure here is reported as-is and never treated as "probably still fine" —
 the caller is about to create real lists, and the only safe reading of "could not check" is
 that the check did not pass.
