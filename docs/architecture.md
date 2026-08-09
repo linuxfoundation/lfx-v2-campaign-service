@@ -327,7 +327,13 @@ The Query Service maintains revision history on each (re)index, so listing and a
 ## What the Service Does NOT Own
 
 1. **AI brief generation** — stays in the UI Express layer (SSE streaming via LiteLLM). Eventually moves to this service.
-2. **Authentication** — Heimdall at the gateway
+2. **Issuing identity** — Heimdall at the gateway authenticates the caller and mints the
+   bearer token. The service does **not** own login, the identity provider, or token issuance.
+   It *does* own **verifying** that token: `internal/infrastructure/auth` checks the signature
+   against Heimdall's JWKS on every authenticated request and turns the claims into the domain
+   actor recorded on writes. Trusting an unverified header would make attribution forgeable by
+   anything that can reach the pod, and a gateway is a routing decision, not a security
+   boundary a service may assume.
 3. **Authorization** — OpenFGA (`campaign_manager` relation gates every endpoint)
 4. **Frontend** — Angular components in lfx-v2-ui
 5. **Snowflake marketing KPIs** — read from the data lake via query service, not from this service

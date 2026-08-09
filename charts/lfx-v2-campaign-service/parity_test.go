@@ -703,7 +703,6 @@ func TestDeploymentStillRendersWithOrdinaryOverrides(t *testing.T) {
 	out, err := exec.Command("helm", "template", chartDir,
 		"--show-only", "templates/deployment.yaml",
 		"--set", "app.environment.LOG_LEVEL.value=debug",
-		"--set", "app.environment.JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL.value= ",
 		"--set", "app.extraEnv[0].name=MY_EXTRA,app.extraEnv[0].value=x",
 		// valueFrom is refused only for the bypass key. An ordinary secret-sourced variable
 		// is the normal way to inject a credential, so rejecting the FORM rather than the
@@ -716,12 +715,6 @@ func TestDeploymentStillRendersWithOrdinaryOverrides(t *testing.T) {
 		// The empty default must keep rendering — it is declared so the key is discoverable.
 		"--set", "app.environment.JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL.value=",
 	).CombinedOutput()
-	// A whitespace-only bypass value is checked here rather than among the rejections,
-	// because it is NOT a bypass: config.LoadConfig applies strings.TrimSpace, so " "
-	// leaves MockLocalPrincipal empty and verification fully on. The guard trims for
-	// exactly that reason — it has to judge the value the same way the service will, and
-	// failing the render for a value the service treats as unset would block a deploy over
-	// nothing.
 	if err != nil {
 		t.Fatalf("helm template failed on ordinary overrides: %v\n%s", err, out)
 	}
@@ -729,5 +722,31 @@ func TestDeploymentStillRendersWithOrdinaryOverrides(t *testing.T) {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("rendered deployment is missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// TestWhitespaceOnlyBypassValueStillRenders is a SEPARATE render invocation on purpose.
+// Helm's --set is last-write-wins, so setting the same key twice in one command silently
+// discards the earlier value: folded into the test above, the whitespace case would never
+// have reached the guard and the trim would have gone untested while appearing covered.
+//
+// A whitespace-only bypass value belongs with the acceptances rather than the rejections,
+// because it is NOT a bypass: config.LoadConfig applies strings.TrimSpace, so " " leaves
+// MockLocalPrincipal empty and verification fully on. The guard trims for exactly that
+// reason — it has to judge the value the same way the service will, and failing the render
+// for a value the service treats as unset would block a deploy over nothing.
+func TestWhitespaceOnlyBypassValueStillRenders(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skipf("helm not on PATH; skipping chart guard test: %v", err)
+	}
+	out, err := exec.Command("helm", "template", chartDir,
+		"--show-only", "templates/deployment.yaml",
+		"--set", "app.environment.JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL.value= ",
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template failed on a whitespace-only bypass value: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "name: JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL") {
+		t.Errorf("rendered deployment is missing the bypass key entirely:\n%s", out)
 	}
 }
