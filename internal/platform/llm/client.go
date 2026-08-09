@@ -250,6 +250,12 @@ func (c *Client) do(ctx context.Context, body []byte) ([]byte, error) {
 		if retryAfter < 0 {
 			return nil, err // not retryable
 		}
+		// No attempts left, so there is nothing to wait FOR. Sleeping here would delay a
+		// known-final error by the full backoff — up to maxRetryWait when the server sent a
+		// large Retry-After — while the caller's own deadline burns down.
+		if attempt == retryMax {
+			return nil, err
+		}
 		wait := c.backoff(attempt, retryAfter)
 		if wait > maxRetryWait {
 			return nil, err

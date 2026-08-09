@@ -26,8 +26,13 @@ unconfigured and audience building degrades to country-only rather than failing.
 `AI_PROXY_URL` / `AI_API_KEY` / `AI_MODEL` configure the LF LiteLLM proxy used to generate
 email copy. Optional as a GROUP on the same reasoning as `SNOWFLAKE_*` and likewise unvalidated
 here: `internal/platform/llm`'s `NewClient` returns `ErrNotConfigured` when url or key is
-missing, so the caller degrades to the cloned template's own body rather than the pod refusing
-to start. `AI_MODEL` is not a secret — empty selects `llm.DefaultModel`.
+missing, so a caller can degrade rather than the pod refusing to start. `AI_MODEL` is not a
+secret — empty selects `llm.DefaultModel`.
+
+**These three are loaded and chart-wired but not yet READ by anything (LFXV2-2775 part 1 of
+2).** Nothing constructs an `llm.Client` today; the consumer — the email-copy step in the
+HubSpot dispatch, which will fall back to the cloned template's own body when the group is
+unconfigured — lands in part 2. Setting them now is harmless and changes no behaviour.
 
 `splitCSV` parses the comma-separated `EVENT_URL_NAT64_PREFIXES` into its non-empty,
 space-trimmed entries, returning nil for an empty or all-blank value so a caller can tell

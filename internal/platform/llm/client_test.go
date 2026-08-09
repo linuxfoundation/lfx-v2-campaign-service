@@ -44,14 +44,36 @@ func completion(text string) string {
 	return `{"choices":[{"message":{"content":` + string(q) + `},"finish_reason":"stop"}]}`
 }
 
+// reqRecorder captures what a fake handler saw. The handler runs on the SERVER's
+// goroutine and the test goroutine reads the captures after Complete returns; that
+// pairing is ordered in practice but carries no happens-before edge, so -race reports
+// it as a data race. Guarding it here matches the mutex/atomic discipline the retry
+// tests in this file already use.
+type reqRecorder struct {
+	mu   sync.Mutex
+	req  chatRequest
+	auth string
+	path string
+}
+
+// capture records the request. It decodes the body, so a handler must call it before
+// writing its response.
+func (r *reqRecorder) capture(hr *http.Request) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.path = hr.URL.Path
+	r.auth = hr.Header.Get("Authorization")
+	_ = json.NewDecoder(hr.Body).Decode(&r.req)
+}
+
+func (r *reqRecorder) Req() chatRequest { r.mu.Lock(); defer r.mu.Unlock(); return r.req }
+func (r *reqRecorder) Auth() string     { r.mu.Lock(); defer r.mu.Unlock(); return r.auth }
+func (r *reqRecorder) Path() string     { r.mu.Lock(); defer r.mu.Unlock(); return r.path }
+
 func TestComplete_SendsOpenAIShapeAndReturnsContent(t *testing.T) {
-	var got chatRequest
-	var auth string
-	var path string
+	rec := &reqRecorder{}
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		path = r.URL.Path
-		auth = r.Header.Get("Authorization")
-		_ = json.NewDecoder(r.Body).Decode(&got)
+		rec.capture(r)
 		_, _ = io.WriteString(w, completion("hello"))
 	})
 
@@ -62,12 +84,13 @@ func TestComplete_SendsOpenAIShapeAndReturnsContent(t *testing.T) {
 	if out != "hello" {
 		t.Errorf("content = %q, want %q", out, "hello")
 	}
-	if path != "/chat/completions" {
-		t.Errorf("path = %q, want /chat/completions", path)
+	if got := rec.Path(); got != "/chat/completions" {
+		t.Errorf("path = %q, want /chat/completions", got)
 	}
-	if auth != "Bearer "+testKey {
-		t.Errorf("Authorization = %q", auth)
+	if got := rec.Auth(); got != "Bearer "+testKey {
+		t.Errorf("Authorization = %q", got)
 	}
+	got := rec.Req()
 	if got.Model != DefaultModel {
 		t.Errorf("model = %q, want %q", got.Model, DefaultModel)
 	}
@@ -83,9 +106,9 @@ func TestComplete_SendsOpenAIShapeAndReturnsContent(t *testing.T) {
 // A zero temperature is a meaningful request, which is why Config carries a
 // *float64: a plain float64 would send DefaultTemperature here.
 func TestComplete_ZeroTemperatureIsHonouredNotTreatedAsUnset(t *testing.T) {
-	var got chatRequest
+	rec := &reqRecorder{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&got)
+		rec.capture(r)
 		_, _ = io.WriteString(w, completion("ok"))
 	}))
 	defer srv.Close()
@@ -101,6 +124,7 @@ func TestComplete_ZeroTemperatureIsHonouredNotTreatedAsUnset(t *testing.T) {
 	if _, err := c.Complete(context.Background(), "s", "u"); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
+	got := rec.Req()
 	if got.Temperature != 0 {
 		t.Errorf("temperature = %v, want 0 (an explicit zero must not fall back to the default)", got.Temperature)
 	}
@@ -243,6 +267,38 @@ func TestComplete_GivesUpAfterRetryMax(t *testing.T) {
 	}
 }
 
+// The final 429 must not be followed by a backoff. There are no attempts left to wait
+// FOR, so sleeping only delays a known-final error — by up to maxRetryWait when the
+// server sent a large Retry-After — while the caller's own deadline burns down.
+//
+// Only the LAST response carries a Retry-After, so the two legitimate inter-attempt
+// waits stay on the cheap exponential schedule (1s + 2s) and the 10s is reachable ONLY
+// from the after-the-final-attempt sleep. That keeps the test fast and makes the
+// measurement unambiguous rather than a wall-clock guess.
+func TestComplete_DoesNotSleepAfterTheFinalAttempt(t *testing.T) {
+	var calls int32
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		if atomic.AddInt32(&calls, 1) == int32(retryMax+1) {
+			// Under maxRetryWait, so an unfixed client really sleeps it rather than
+			// aborting — which would pass this test for the wrong reason.
+			w.Header().Set("Retry-After", "10")
+		}
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+
+	start := time.Now()
+	if _, err := c.Complete(context.Background(), "s", "u"); err == nil {
+		t.Fatal("want an error after exhausting retries")
+	}
+	if n, want := atomic.LoadInt32(&calls), int32(retryMax+1); n != want {
+		t.Fatalf("calls = %d, want %d", n, want)
+	}
+	// ~3s of real backoff (1s + 2s) plus generous headroom; the bug adds 10s.
+	if elapsed := time.Since(start); elapsed > 8*time.Second {
+		t.Errorf("Complete took %v — it slept after the final attempt", elapsed)
+	}
+}
+
 func TestComplete_Non429ErrorIsNotRetried(t *testing.T) {
 	var calls int32
 	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
@@ -352,9 +408,9 @@ func TestComplete_ResponseBodyIsBounded(t *testing.T) {
 }
 
 func TestComplete_ProxyURLTrailingSlashDoesNotDoubleUp(t *testing.T) {
-	var path string
+	rec := &reqRecorder{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path = r.URL.Path
+		rec.capture(r)
 		_, _ = io.WriteString(w, completion("ok"))
 	}))
 	defer srv.Close()
@@ -366,8 +422,8 @@ func TestComplete_ProxyURLTrailingSlashDoesNotDoubleUp(t *testing.T) {
 	if _, err := c.Complete(context.Background(), "s", "u"); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	if path != "/chat/completions" {
-		t.Errorf("path = %q, want /chat/completions", path)
+	if got := rec.Path(); got != "/chat/completions" {
+		t.Errorf("path = %q, want /chat/completions", got)
 	}
 }
 

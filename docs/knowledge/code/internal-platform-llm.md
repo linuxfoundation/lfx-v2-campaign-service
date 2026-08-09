@@ -77,8 +77,13 @@ zero token budget are not meaningful requests.
 ## Configuration is optional as a group
 
 With `AI_PROXY_URL` or `AI_API_KEY` missing, `NewClient` returns `ErrNotConfigured` at
-**construction**, so the container logs it once and routes callers to their degraded path rather
-than failing per request. All three `AI_*` values are wired in the chart as optional secret refs
+**construction** rather than per request, so a composition root can decide once — log it and
+route callers to their degraded path — instead of every call site rediscovering it.
+
+**There is no such composition root yet.** This package has no non-test caller: nothing in
+`internal/container` imports it, so nothing currently logs `ErrNotConfigured` or degrades
+anything. That wiring is part 2 of LFXV2-2775, which adds the email-copy step to the HubSpot
+dispatch. This PR ships the client and its contract only. All three `AI_*` values are wired in the chart as optional secret refs
 on the same reasoning as `SNOWFLAKE_*` — see
 [internal/infrastructure/config](internal-infrastructure-config.md). The secret is the
 **proxy's** key, not a Bedrock or Anthropic credential, so it cannot be replayed against a model
