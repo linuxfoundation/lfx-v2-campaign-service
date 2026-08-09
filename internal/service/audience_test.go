@@ -41,6 +41,10 @@ func (r *fakeAudienceRepo) CreateAudience(_ context.Context, a *model.CampaignAu
 	r.seq++
 	a.ID = "aud-" + string(rune('a'+r.seq))
 	a.Version = 1
+	// The real INSERT binds updated_by to the SAME placeholder as created_by
+	// (createAudienceQuery), so a freshly created row already answers "who touched this
+	// last". A fake that left it nil would hide a regression in exactly that stamp.
+	a.UpdatedBy = a.CreatedBy
 	r.items[a.ID] = a
 	return a, nil
 }

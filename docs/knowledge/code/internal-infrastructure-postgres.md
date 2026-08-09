@@ -165,12 +165,20 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   write paths (dispatch claim, upsert, status toggle) are a distinct change with
   distinct failure modes.
 
+- `000017` — `updated_by` JSONB on `campaign_audiences`. Only the one column: that table
+  has carried `created_by` since `000005`, and `000015` recorded the missing half as a
+  known gap. Version `000016` is deliberately skipped here and reserved for the campaigns
+  columns; see *Migration numbering* below, because golang-migrate makes that ordering
+  irreversible rather than merely untidy.
+
 ## Actor attribution
 
 Campaigns execute under **system accounts** — shared, LF-owned platform credentials —
 so every ad platform reports one identity no matter who acted. The platform can
 therefore never answer "who did this", and if this service does not record it, the
 information exists nowhere. `campaign_briefs.created_by` / `updated_by` are that record.
+
+### Briefs
 
 Both are JSONB holding a `model.Actor` (`{name, email, username}`), marshalled by the
 same `marshalActor`/`unmarshalActor` pair the connection tables use (`connection_repo.go`),
@@ -218,6 +226,42 @@ claims could not be decoded, still writes. Losing the attribution is bad; refusi
 write over it would turn a token-decoding regression into a total outage of brief
 creation. Neither column is exposed on the Goa surface or in the index payload, matching
 the existing `approved_by` precedent.
+
+### Audiences
+
+`campaign_audiences` carries the same pair and the same three properties, pinned by the
+same shape of test in `audience_repo_test.go`. `createAudienceQuery`,
+`createAudienceForApprovedBriefQuery` and `updateAudienceQuery` are package constants for
+exactly that reason.
+
+Two things are specific to this table:
+
+- **Both inserts stamp an actor, including the BUILD path.** `BuildAudience` runs under a
+  human's HTTP request, so the person who started a build that creates real HubSpot lists
+  — and spends money — is recorded. Treating it as a system write because a *background*
+  step follows would lose the only record of who started it.
+- **The build's progress writes carry the actor FORWARD rather than restamping.**
+  `BuildAudience` passes the row returned by the insert straight back to `UpdateAudience`,
+  so `updated_by` keeps naming the initiator. That is correct here and would not be if the
+  build ever moved off the request goroutine: a scheduled retry has no principal, and the
+  column would then have to go NULL rather than keep asserting a person who was not there.
+
+The service handler stamps the editor onto the row it LOADED, not onto the incoming patch:
+the loaded row already carries the PREVIOUS editor, so writing it back unchanged would
+silently re-assert them as the author of somebody else's edit. That is the failure mode the
+second edit in `TestAudienceActor_UpdateStampsTheEditorNotTheCreator` exists to catch —
+a fill-only-if-empty stamp passes a single-edit test and is wrong from the second edit on.
+
+## Migration numbering
+
+golang-migrate records only the HIGHEST applied version and never applies a lower one, so a
+branch that claims `000017` while an unmerged branch holds `000016` makes that migration
+unapplicable forever if it merges second — silently, since the tool reports success. The
+numbering guards live in `outbox_repo_test.go` (`TestMigrations_NoVersionGaps`,
+`TestMigrations_UniqueNumbering`), with `allowedVersionGaps` as the documented escape hatch
+for a transitional gap and `TestMigrations_AllowedVersionGapsAreStillOpen` to stop an entry
+outliving the branch that justified it. Choosing a version means checking every OPEN branch,
+not just `main`.
 
 ## Live-database tests (`dbtest/`)
 

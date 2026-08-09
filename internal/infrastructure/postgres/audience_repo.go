@@ -27,7 +27,43 @@ var _ domain.AudienceRepository = (*AudienceRepo)(nil)
 // audienceCols is the column list every audience read scans, in scanAudience order.
 const audienceCols = `id::text, project_id::text, brief_id::text, platform,
 	platform_master_list_id, suppression_list_ids, inclusion_summary, status, version,
-	created_by, created_at, updated_at`
+	created_by, updated_by, created_at, updated_at`
+
+// Both inserts bind updated_by to the SAME placeholder as created_by, matching the brief
+// statements: leaving it NULL until the first edit makes "who touched this last"
+// unanswerable without also reading created_by, and the two diverge from the first edit
+// onwards — which is exactly when the question is asked.
+//
+// createAudienceQuery and updateAudienceQuery are package-level so a test can assert what
+// they WRITE without a live database — specifically that each binds its actor column to the
+// placeholder carrying the actor. Audiences are built through SHARED system accounts, so if
+// the statement does not capture the actor, the information exists nowhere else.
+const createAudienceQuery = `INSERT INTO campaign_audiences
+		(project_id, brief_id, platform, platform_master_list_id, suppression_list_ids,
+		 inclusion_summary, status, created_by, updated_by)
+		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$8
+		WHERE EXISTS (
+			SELECT 1 FROM campaign_briefs
+			WHERE id=$2 AND project_id=$1 AND status <> 'archived'
+		)
+		RETURNING ` + audienceCols
+
+// updated_by is stamped here and NOWHERE else: created_by must keep naming the original
+// author, so this UPDATE never assigns it.
+// createAudienceForApprovedBriefQuery is the BUILD path's insert. It carries an actor too:
+// BuildAudience runs under a human's request, so the person who started the build is the
+// person who created the row.
+const createAudienceForApprovedBriefQuery = `INSERT INTO campaign_audiences
+		(project_id, brief_id, platform, platform_master_list_id, suppression_list_ids,
+		 inclusion_summary, status, created_by, updated_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
+		RETURNING ` + audienceCols
+
+const updateAudienceQuery = `UPDATE campaign_audiences SET
+		platform_master_list_id=$1, suppression_list_ids=$2, inclusion_summary=$3,
+		status=$4, updated_by=$5, version=version+1, updated_at=now()
+		WHERE id=$6 AND brief_id=$7 AND project_id=$8 AND version=$9
+		RETURNING ` + audienceCols
 
 // CreateAudience inserts a new audience row and returns it.
 // CreateAudienceForApprovedBrief inserts the row only if the parent brief is still APPROVED at
@@ -68,12 +104,7 @@ func (r *AudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *mo
 		return nil, domain.ErrStaleApproval
 	}
 
-	insertQ := `INSERT INTO campaign_audiences
-		(project_id, brief_id, platform, platform_master_list_id, suppression_list_ids,
-		 inclusion_summary, status, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-		RETURNING ` + audienceCols
-	out, serr := scanAudience(tx.QueryRow(ctx, insertQ,
+	out, serr := scanAudience(tx.QueryRow(ctx, createAudienceForApprovedBriefQuery,
 		a.ProjectID, a.BriefID, string(a.Platform), nullStr(a.PlatformMasterListID),
 		a.SuppressionListIDs, nullStr(a.InclusionSummary), string(a.StatusOrDefault()),
 		a.CreatedBy))
@@ -92,16 +123,7 @@ func (r *AudienceRepo) CreateAudience(ctx context.Context, a *model.CampaignAudi
 	// brief id from project B (tenant/parent disagree), and would accept an archived
 	// brief. INSERT...SELECT...WHERE EXISTS inserts zero rows when the active,
 	// same-project parent is absent, which we map to ErrNotFound.
-	q := `INSERT INTO campaign_audiences
-		(project_id, brief_id, platform, platform_master_list_id, suppression_list_ids,
-		 inclusion_summary, status, created_by)
-		SELECT $1,$2,$3,$4,$5,$6,$7,$8
-		WHERE EXISTS (
-			SELECT 1 FROM campaign_briefs
-			WHERE id=$2 AND project_id=$1 AND status <> 'archived'
-		)
-		RETURNING ` + audienceCols
-	row := r.db.QueryRow(ctx, q,
+	row := r.db.QueryRow(ctx, createAudienceQuery,
 		a.ProjectID, a.BriefID, string(a.Platform), nullStr(a.PlatformMasterListID),
 		nullJSON(a.SuppressionListIDs), nullStr(a.InclusionSummary), string(a.StatusOrDefault()),
 		nullJSON(a.CreatedBy),
@@ -195,14 +217,10 @@ func (r *AudienceRepo) UpdateAudience(ctx context.Context, a *model.CampaignAudi
 	// caller always gets the state + ETag produced by its OWN write. A separate
 	// post-update re-read would race: a concurrent version N+1 could land between the
 	// UPDATE and the read, handing this caller the other writer's row and ETag.
-	q := `UPDATE campaign_audiences SET
-		platform_master_list_id=$1, suppression_list_ids=$2, inclusion_summary=$3,
-		status=$4, version=version+1, updated_at=now()
-		WHERE id=$5 AND brief_id=$6 AND project_id=$7 AND version=$8
-		RETURNING ` + audienceCols
-	updated, err := scanAudience(r.db.QueryRow(ctx, q,
+	updated, err := scanAudience(r.db.QueryRow(ctx, updateAudienceQuery,
 		nullStr(a.PlatformMasterListID), nullJSON(a.SuppressionListIDs), nullStr(a.InclusionSummary),
-		string(a.StatusOrDefault()), a.ID, a.BriefID, a.ProjectID, expectedVersion,
+		string(a.StatusOrDefault()), nullJSON(a.UpdatedBy),
+		a.ID, a.BriefID, a.ProjectID, expectedVersion,
 	))
 	if err == nil {
 		return updated, nil
@@ -236,11 +254,12 @@ func scanAudience(row pgx.Row) (*model.CampaignAudience, error) {
 		inclusion *string
 		status    string
 		createdBy []byte
+		updatedBy []byte
 	)
 	if err := row.Scan(
 		&a.ID, &a.ProjectID, &a.BriefID, &platform,
 		&masterID, &suppress, &inclusion, &status, &a.Version,
-		&createdBy, &a.CreatedAt, &a.UpdatedAt,
+		&createdBy, &updatedBy, &a.CreatedAt, &a.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -253,6 +272,7 @@ func scanAudience(row pgx.Row) (*model.CampaignAudience, error) {
 	}
 	a.SuppressionListIDs = suppress
 	a.CreatedBy = createdBy
+	a.UpdatedBy = updatedBy
 	a.Status = model.AudienceStatus(status)
 	return &a, nil
 }

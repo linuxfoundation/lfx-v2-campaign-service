@@ -179,6 +179,11 @@ func (s *AudienceService) UpdateAudience(ctx context.Context, p *audiences.Updat
 	if verr := cur.Validate(); verr != nil {
 		return nil, audienceValidationErr(verr)
 	}
+	// Stamp the editor onto the MERGED row rather than leaving the patch's own zero
+	// value: cur was loaded from the database, so it already carries the PREVIOUS
+	// editor, and writing it back unchanged would silently re-assert them as the
+	// author of this edit.
+	cur.UpdatedBy = marshalActor(attributedActor(ctx, "update audience"))
 	updated, uerr := repo.UpdateAudience(ctx, cur, version)
 	if uerr != nil {
 		return nil, mapAudienceErr(uerr)

@@ -262,7 +262,10 @@ func TestMigrations_UniqueNumbering(t *testing.T) {
 // sibling PR that has not merged yet. A gap listed here is a merge-ORDERING obligation, not a
 // numbering bug — this branch must not merge before the PR that fills it, or those migrations
 // are skipped forever. The list must shrink to empty as siblings land.
-var allowedVersionGaps = map[int]string{}
+var allowedVersionGaps = map[int]string{
+	16: "PR #95 (feat/LFXV2-3038-campaign-actor-attribution) claims 000016 for the campaigns " +
+		"actor columns. This branch MUST NOT merge before #95, or 000016 is skipped forever.",
+}
 
 // TestMigrations_NoVersionGaps guards against numbering a migration ABOVE versions that do not
 // exist yet in this tree.
