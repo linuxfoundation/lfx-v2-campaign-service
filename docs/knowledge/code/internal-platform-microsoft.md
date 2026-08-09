@@ -205,6 +205,66 @@ ad's `FinalUrls` is the registration URL with LFX `utm_*` params SET (`buildAdFi
 preserves every other query param). `AlreadyExisted` is true only when the campaign, ad
 group, AND ad ALL pre-existed (this run created nothing); creating any level makes it false.
 
+## Ad-account discovery
+
+`ListAdAccounts` (`accounts.go`) enumerates every Microsoft Advertising account these
+credentials can reach, so a connection that holds only credentials — or one being
+re-pointed at a different account — can ask which accounts are available.
+
+**A second service, on a second host.** Unlike every other call in this package,
+discovery is not a Campaign Management call. It is
+`POST clientcenter.api.bingads.microsoft.com/CustomerManagement/v13/AccountsInfo/Query`.
+Microsoft splits its API by service across DIFFERENT hosts, so `msCustomerBaseURL` and
+`WithCustomerBaseURL` sit alongside the campaign base rather than replacing it, and the
+tests point the two at different servers — a call routed to the wrong service would
+otherwise look correct. (This is still the synchronous REST/JSON surface; the SOAP,
+submit-and-poll Reporting API that tabled Microsoft metrics reads is a third service
+again.)
+
+**The request asks about the CREDENTIALS, not about an account.** `doCustomerRequest`
+deliberately does NOT call `validateAccountIDs` and does NOT send `CustomerAccountId`
+— it validates only `customer_id`, and only when one is set. Requiring a valid account
+id would make discovery unreachable exactly when it is needed, which is the state it
+exists to resolve. The header is OMITTED rather than sent empty: an empty
+`CustomerAccountId` is still a claim about an account, and the connections making this
+call have none. `CustomerId` is likewise omitted from the body unless the connection
+carries one, because Microsoft documents the credentials as determining the customer
+only when the element is absent — sending 0 would request customer zero. `attempt`
+takes an explicit `accountScoped` flag rather than inferring this, and a test pins that
+the campaign path still sends its account header.
+
+`OnlyParentAccounts` is sent **false** so accounts LINKED under other customers are
+included; sending true would silently narrow the picker to one customer's own accounts
+and answer "no accounts" for an agency-style setup. The call is marked idempotent — it
+creates nothing, so retrying a 429 cannot double-create, and without the retry a
+transient rate limit fails a user's first attempt to connect an account.
+
+**Two health axes, kept apart.** `AccountLifeCycleStatus` (Active, Draft, Inactive,
+Pause, Pending, Suspended) and `PauseReason` answer different questions and can
+disagree — Microsoft returns a pause reason alongside a status that is not itself
+"Pause", so an account can read as bindable and still not spend. `Usable()` is an
+ALLOW-LIST (status exactly "Active" AND no pause reason), so an absent or unrecognized
+status reads as "not confirmed usable" rather than as healthy. `StatusLabel()` is empty
+for Active and for anything this package does not recognize; an empty label is not a
+claim that the account is fine. `PauseLabel()` renders an undocumented flag value
+verbatim ("paused (unrecognized reason 9)") rather than flattening it to "paused" —
+that raw value is the only detail distinguishing a Microsoft-side change from a bug
+here. Draft, suspended and paused accounts are all RETURNED with their reason, not
+filtered: this feeds a picker, and dropping a user's only account answers "your
+credentials reach no ad accounts" about an account sitting right there.
+
+**Fail, do not truncate.** The endpoint is unpaginated, so there is no cursor walk to
+bound; the two remaining modes both fail the whole call. `AccountsInfo` is decoded as a
+POINTER to a slice so `{}` (no answer) stays distinguishable from `{"AccountsInfo": []}`
+(zero accounts) — collapsing them is the false-absence shape that sends a user looking
+for a permissions problem that does not exist. And an id that does not match
+`accountIDRE` — the SAME regexp `validateAccountIDs` checks a configured id against,
+reused so a discovered account cannot fail at bind time — errors rather than skipping
+the row, because a response shape that far from the documented one is not the response
+we think it is. `Id` is decoded as a `json.Number`, not through `any`: Microsoft types
+it as a `long`, and float64 silently loses precision above 2^53, producing a WRONG
+account id that still looks like one (a test pins 2^53+1 round-tripping exactly).
+
 ## Scope
 
 MS-1 is the scaffold (auth + request layer + error classification). MS-2 adds PAUSED
@@ -213,7 +273,9 @@ find-or-create campaign creation (`campaign.go`); MS-2.5 completes the ad group 
 `connection-microsoft-ads` credential into the orchestrator dispatcher
 (`internal/dispatch/microsoft.go`). The **status toggle** (LFXV2-2810) adds
 `UpdateCampaignAndChildrenStatus` on top: a three-level cascade whose ordering, child-id guard and
-outcome classification are described under Status toggle below.
+outcome classification are described under Status toggle below. **Ad-account discovery**
+(LFXV2-3064) adds `ListAdAccounts` against the separate Customer Management service, the
+one call in this package that is NOT account-scoped.
 
 ## Dispatch adapter (internal/dispatch)
 

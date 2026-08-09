@@ -60,6 +60,12 @@ const (
 	// request). The Campaign Management service is hosted under /CampaignManagement.
 	msAdsBaseURL = "https://campaign.api.bingads.microsoft.com"
 
+	// msCustomerBaseURL is the origin of the CUSTOMER MANAGEMENT service, which is a
+	// different host from campaign.api — hence a second field rather than a second path
+	// on msAdsBaseURL. Account discovery lives here (AccountsInfo/Query); the sandbox
+	// equivalent is clientcenter.api.sandbox.bingads.microsoft.com.
+	msCustomerBaseURL = "https://clientcenter.api.bingads.microsoft.com"
+
 	// msOAuthTokenURL is the Microsoft identity platform OAuth 2.0 token endpoint
 	// used to exchange a refresh token for a short-lived access token. The "common"
 	// tenant serves both work/school and personal Microsoft accounts, which is what
@@ -148,9 +154,13 @@ type Client struct {
 	creds   Credentials
 	account AccountConfig
 
-	baseURL    string
-	apiVersion string
-	tokenURL   string
+	baseURL string
+	// customerBaseURL is the Customer Management origin. Separate from baseURL because
+	// Microsoft splits its API across hosts by service; apiVersion is shared, since both
+	// services are versioned in lockstep at v13.
+	customerBaseURL string
+	apiVersion      string
+	tokenURL        string
 
 	httpClient *http.Client
 	now        func() time.Time
@@ -219,6 +229,18 @@ func WithBaseURL(u string) Option {
 	}
 }
 
+// WithCustomerBaseURL overrides the Customer Management base URL. Separate from
+// WithBaseURL because the two services live on different hosts, so a test pointing one
+// at an httptest.Server must be able to leave the other alone — and a deployment moving
+// to the sandbox has to move both, deliberately, rather than by one option's side effect.
+func WithCustomerBaseURL(u string) Option {
+	return func(c *Client) {
+		if u != "" {
+			c.customerBaseURL = strings.TrimRight(u, "/")
+		}
+	}
+}
+
 // WithTokenURL overrides the OAuth2 token endpoint. Primarily for tests.
 func WithTokenURL(u string) Option {
 	return func(c *Client) {
@@ -264,14 +286,15 @@ func withRetryBaseDelay(d time.Duration) Option {
 // caller's client is not mutated). Mirrors the google-ads/reddit clients.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
 	c := &Client{
-		creds:          creds,
-		account:        account,
-		baseURL:        msAdsBaseURL,
-		apiVersion:     msAdsAPIVersion,
-		tokenURL:       msOAuthTokenURL,
-		httpClient:     &http.Client{Timeout: msAdsRequestTimeout, CheckRedirect: noFollow},
-		now:            time.Now,
-		retryBaseDelay: retryBaseDelay,
+		creds:           creds,
+		account:         account,
+		baseURL:         msAdsBaseURL,
+		customerBaseURL: msCustomerBaseURL,
+		apiVersion:      msAdsAPIVersion,
+		tokenURL:        msOAuthTokenURL,
+		httpClient:      &http.Client{Timeout: msAdsRequestTimeout, CheckRedirect: noFollow},
+		now:             time.Now,
+		retryBaseDelay:  retryBaseDelay,
 	}
 	for _, o := range opts {
 		o(c)
@@ -605,7 +628,37 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 	if err := c.validateAccountIDs(); err != nil {
 		return nil, err
 	}
+	return c.do(ctx, method, c.baseURL+"/CampaignManagement/"+c.apiVersion+"/"+path, path, body, idempotent, true)
+}
 
+// doCustomerRequest performs one call against the CUSTOMER MANAGEMENT service —
+// {customerBaseURL}/CustomerManagement/{version}/{path} — reusing doRequest's token
+// refresh, 429 policy and outcome classification.
+//
+// It exists because Customer Management is a different service on a different host:
+// doRequest's URL is hardcoded to /CampaignManagement on c.baseURL, so pointing a
+// customer-management call at it would either hit the wrong host or require overriding
+// the base URL for every campaign call too.
+//
+// The account headers are NOT sent, and validateAccountIDs is NOT called, because this
+// service answers questions about the CREDENTIALS rather than about one account —
+// including for a connection that holds credentials and no account id at all, which is
+// precisely the state ad-account discovery exists to resolve. Requiring a valid account
+// id here would make discovery unreachable exactly when it is needed. CustomerID is
+// still validated when set, because it does reach a header.
+func (c *Client) doCustomerRequest(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, error) {
+	if c.account.CustomerID != "" && !accountIDRE.MatchString(c.account.CustomerID) {
+		return nil, fmt.Errorf("invalid Microsoft Advertising customer id %q: must be digits only", clipID(c.account.CustomerID))
+	}
+	return c.do(ctx, method, c.customerBaseURL+"/CustomerManagement/"+c.apiVersion+"/"+path, path, body, idempotent, false)
+}
+
+// do is the shared request loop behind doRequest and doCustomerRequest. fullURL is
+// built by the caller (the two services differ in host and path root); path is carried
+// separately because it is what error messages name, and a full URL in an error is both
+// noisier and a wider disclosure surface. accountScoped selects whether the per-account
+// headers are attached.
+func (c *Client) do(ctx context.Context, method, fullURL, path string, body any, idempotent, accountScoped bool) ([]byte, error) {
 	var payload []byte
 	if body != nil {
 		p, err := json.Marshal(body)
@@ -615,8 +668,6 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 		}
 		payload = p
 	}
-
-	fullURL := c.baseURL + "/CampaignManagement/" + c.apiVersion + "/" + path
 
 	for attempt := 0; ; attempt++ {
 		// Fetch the token INSIDE the loop: after a 429 backoff (up to maxRetryWait per
@@ -628,7 +679,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 			return nil, err
 		}
 
-		raw, retryAfter, retryable, aerr := c.attempt(ctx, method, fullURL, path, token, payload)
+		raw, retryAfter, retryable, aerr := c.attempt(ctx, method, fullURL, path, token, payload, accountScoped)
 		// retryable is set only for a 429. It is retried ONLY when the call is
 		// idempotent AND attempts remain — a non-idempotent 429 (a create that may
 		// have committed) is returned immediately so a blind retry can't double-create.
@@ -675,7 +726,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 //
 // Splitting the per-attempt work out keeps the retry loop readable and ensures the
 // response body is always closed via defer on every exit path.
-func (c *Client) attempt(ctx context.Context, method, fullURL, path, token string, payload []byte) (raw []byte, retryAfter time.Duration, retryable bool, err error) {
+func (c *Client) attempt(ctx context.Context, method, fullURL, path, token string, payload []byte, accountScoped bool) (raw []byte, retryAfter time.Duration, retryable bool, err error) {
 	var bodyReader io.Reader
 	if payload != nil {
 		bodyReader = bytes.NewReader(payload)
@@ -696,7 +747,12 @@ func (c *Client) attempt(ctx context.Context, method, fullURL, path, token strin
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("DeveloperToken", c.creds.DeveloperToken)
-	req.Header.Set("CustomerAccountId", c.account.AccountID)
+	// CustomerAccountId is omitted entirely on a non-account-scoped call rather than
+	// sent empty: an empty header is a claim about an account, and the calls that skip
+	// it are the ones made by a connection that has no account yet.
+	if accountScoped {
+		req.Header.Set("CustomerAccountId", c.account.AccountID)
+	}
 	if c.account.CustomerID != "" {
 		req.Header.Set("CustomerId", c.account.CustomerID)
 	}
