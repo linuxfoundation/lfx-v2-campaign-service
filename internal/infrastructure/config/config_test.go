@@ -365,6 +365,11 @@ func TestRedactAIProxyURL_Shapes(t *testing.T) {
 		"https://litellm.example.com/%zz": "[redacted]",
 		// Opaque/relative: the whole value sits in a field this does not render.
 		"mailto:u:p@x": "[redacted]", // secretlint-disable-line -- fixture
+		// A non-http(s) scheme with a HOST — the case the Host check alone misses. This
+		// parses cleanly, so without the scheme check the credential-shaped scheme would
+		// be rendered verbatim into the pod log. url.Parse decides where the delimiters
+		// fall, not what a component contains.
+		"sup3r-s3cret://litellm.example.com": "[redacted]", // secretlint-disable-line -- fixture
 	}
 	for in, want := range cases {
 		assert.Equal(t, want, redactAIProxyURL(in), "input %q", in)

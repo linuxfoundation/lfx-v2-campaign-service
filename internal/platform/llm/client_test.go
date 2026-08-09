@@ -220,10 +220,16 @@ func TestNewClient_RejectsAProxyURLCarryingUserinfoOrQuery(t *testing.T) {
 			if !strings.Contains(err.Error(), tc.component) {
 				t.Errorf("error names %q, want it to name the offending component %q", err.Error(), tc.component)
 			}
-			// The host is the one part that is safe AND useful: it is what tells an
-			// operator which value they got wrong without reproducing any of it.
-			if !strings.Contains(err.Error(), "litellm.internal") {
-				t.Errorf("error %q should name the host so the operator can locate the value", err.Error())
+			// The host is NOT named, and this assertion is the inverse of what it was.
+			// It used to require the host, on the reasoning that url.Parse had already
+			// split userinfo out of it so it was safe AND useful. That is wrong for the
+			// same reason the scheme is: url.Parse decides where the delimiters fall,
+			// not what a component holds — a pasted credential lands in the host just as
+			// readily (see the "secret mistaken for a host" case below). The operator
+			// locates the value from the variable name in the wrapped sentinel, which
+			// costs nothing and reproduces nothing.
+			if strings.Contains(err.Error(), "litellm.internal") {
+				t.Errorf("error %q names the host; no component of a rejected value may be quoted", err.Error())
 			}
 		})
 	}
@@ -249,11 +255,22 @@ func TestNewClient_RejectionNeverEchoesTheRawURL(t *testing.T) {
 		// must report the components it JUDGED rather than the value it read.
 		{"bad scheme with userinfo", "ftp://user:" + secret + "@litellm.internal"},
 		{"schemeless with userinfo", "user:" + secret + "@litellm.internal"},
+		// The credential IS the scheme, and the value parses cleanly with a host —
+		// so no parse-failure guard fires and the scheme branch is reached with the
+		// secret sitting in u.Scheme. This is the same lesson as the port case one
+		// layer out: url.Parse decides where the delimiters fall, not what a
+		// component contains, so no component of a rejected value can be quoted.
+		{"secret mistaken for a scheme", secret + "://litellm.internal"},
+		{"secret as an opaque scheme", secret + ":tok@litellm.internal"},
+		// The credential as the HOST, on the not-a-base branch, which quoted u.Host.
+		{"secret mistaken for a host", "https://" + secret + "/?k=v"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := NewClient(Config{ProxyURL: tc.url, APIKey: testKey})
-			if !errors.Is(err, ErrInvalidProxyURL) {
-				t.Fatalf("err = %v, want ErrInvalidProxyURL", err)
+			// Either rejection sentinel is acceptable; which branch fires is not the
+			// property under test. That the message stays silent about the value is.
+			if !errors.Is(err, ErrInvalidProxyURL) && !errors.Is(err, ErrProxyURLNotABase) {
+				t.Fatalf("err = %v, want a proxy-url rejection sentinel", err)
 			}
 			if strings.Contains(err.Error(), secret) {
 				t.Fatalf("rejection echoed the credential: %q", err.Error())

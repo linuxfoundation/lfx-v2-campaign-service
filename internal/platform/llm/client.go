@@ -202,8 +202,16 @@ func NewClient(cfg Config, opts ...Option) (*Client, error) {
 	// it can be invalid include "it has a token in its userinfo". Quoting it would put
 	// that token in the startup log and in every error string the failure propagates
 	// through, which is a worse outcome than the misconfiguration itself. Each branch
-	// instead names the components it judged — scheme and host, which url.Parse has
-	// already separated from userinfo and query and which therefore cannot carry one.
+	// instead names the COMPONENT it judged and quotes NOTHING.
+	//
+	// An earlier version of this comment claimed scheme and host were safe to quote,
+	// because url.Parse has already split userinfo and query into their own fields. That
+	// reasoning does not hold, and the parse-failure branch below is the proof of the
+	// general shape: url.Parse does not validate what a component CONTAINS, only where
+	// the delimiters fall. A pasted "sk-secret:tok@litellm.internal" parses as an OPAQUE
+	// url whose scheme is "sk-secret" — the credential, sitting in the field this switch
+	// was quoting. There is no component of a value we are rejecting that we know enough
+	// about to reproduce, so none is reproduced.
 	u, perr := url.Parse(cfg.ProxyURL)
 	switch {
 	case perr != nil:
@@ -219,10 +227,19 @@ func NewClient(cfg Config, opts ...Option) (*Client, error) {
 		// which variable is malformed, which is what they need to go and look at it.
 		return nil, fmt.Errorf("%w (it does not parse as a url; the value is not quoted "+
 			"here because it is unvalidated and may carry a credential)", ErrInvalidProxyURL)
-	case u.Scheme != "http" && u.Scheme != "https", u.Hostname() == "":
-		return nil, fmt.Errorf("%w, got scheme %q and host %q", ErrInvalidProxyURL, u.Scheme, u.Host)
+	case u.Scheme != "http" && u.Scheme != "https":
+		// Split from the host check so the operator learns WHICH of the two failed
+		// without the value being quoted to tell them. The scheme is named, not
+		// shown: "sk-secret:tok@host" puts the credential in exactly this field.
+		return nil, fmt.Errorf("%w (its scheme is neither http nor https; the value is "+
+			"not quoted here because it is unvalidated and may carry a credential)", ErrInvalidProxyURL)
+	case u.Hostname() == "":
+		return nil, fmt.Errorf("%w (it has no host; the value is not quoted here because "+
+			"it is unvalidated and may carry a credential)", ErrInvalidProxyURL)
 	case u.User != nil, u.RawQuery != "", u.ForceQuery, u.Fragment != "":
-		return nil, fmt.Errorf("%w (host %q carried: %s)", ErrProxyURLNotABase, u.Host, notBaseComponents(u))
+		// notBaseComponents names components, never their values. The host is no longer
+		// quoted alongside them: a hostname is as much unvalidated input as the rest.
+		return nil, fmt.Errorf("%w (it carried: %s)", ErrProxyURLNotABase, notBaseComponents(u))
 	}
 	c := &Client{
 		cfg: cfg,

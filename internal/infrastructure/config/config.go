@@ -342,6 +342,15 @@ func redactAIProxyURL(raw string) string {
 	if err != nil || u.Host == "" {
 		return "[redacted]"
 	}
+	// A non-http(s) scheme masks too, and the scheme is the reason: url.Parse decides
+	// where the delimiters fall, not what a component CONTAINS. "sk-secret://host" has
+	// a host and parses cleanly, and rendering it would print the credential-shaped
+	// scheme into the pod log — before llm.NewClient ever gets to reject it, which is
+	// what makes this reachable at all. A value with a scheme this function does not
+	// recognise is not one whose parts it can vouch for.
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "[redacted]"
+	}
 	safe := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}
 	return safe.String()
 }
