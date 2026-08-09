@@ -44,6 +44,10 @@ type BriefService struct {
 	// indexingDisabled is a CONFIGURATION fact (NATS_URL empty), not an observation of the
 	// publisher: a Noop also appears when the broker is merely unreachable. See DisableIndexing.
 	indexingDisabled bool
+	// eventFetcher and eventParser back FetchEventURL only. Nil in every construction that
+	// does not call SetEventURL, which is why that handler checks them rather than ready().
+	eventFetcher EventFetcher
+	eventParser  EventParser
 }
 
 var (

@@ -106,6 +106,10 @@ spec:
           # descendants (any number of segments incl. slashes). The bare base paths
           # (POST /briefs, GET /jobs) are kept as their own entries so they're
           # matched regardless of whether ** matches zero segments.
+          # Event-page pre-fill (LFXV2-3043). A campaign_manager read that creates
+          # nothing, but it is NOT under /briefs/** — it is a sibling of it, so the
+          # briefs rules above do not cover it and it needs its own entry.
+          - path: /projects/:projectId/fetch-event-url
           - path: /projects/:projectId/briefs
           - path: /projects/:projectId/briefs/**
           - path: /projects/:projectId/jobs

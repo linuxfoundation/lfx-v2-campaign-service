@@ -23,6 +23,30 @@ gated on `If-Match` (same strong-validator parsing as briefs); the ETag mirrors 
 row version. Like the other services it late-binds via `SetBackend` after a
 cold-start DB retry and returns a typed `503` (routes mounted) when no repo is wired.
 
+## Event URL metadata (LFXV2-3043)
+
+`FetchEventURL` (`event_url.go`) fetches an event page and returns the metadata extracted
+from it, for pre-filling a brief form. It bridges `internal/platform/eventurl`'s fetcher and
+parser to the API surface.
+
+**It creates and persists NOTHING.** The caller reviews what was extracted and submits it
+through the ordinary `create-brief`. There is no `EventDetails` → `CampaignBrief` mapper in
+this service, and the absence is deliberate: a page's metadata is a *suggestion* to a human
+authoring a brief, not a brief. Writing the mapper before a caller existed produced code that
+compiled, passed and linted while being reachable from nothing, so it was removed rather than
+shipped. Add it with the caller that needs it, not before.
+
+- The collaborators are injected by `SetEventURL`, separately from `NewBriefService`, for the
+  same reason as `SetIndexer` — the ~40 existing constructor call sites keep compiling, and a
+  `BriefService` without them still serves every other method.
+- Because it consults no repository, it stays available during the cold-start window before
+  the database binds. Its `503` covers only the case where the fetcher itself was never wired.
+- An absent field is a nil pointer, never a pointer to `""`: "the page did not say" and "the
+  page said nothing" are different answers to a UI deciding whether to leave a field free.
+- `mapEventURLErr` maps the `eventurl` sentinels onto the advertised errors. A forbidden
+  address is `400`, not `403` — nothing about the caller's permissions is at issue; the URL
+  they supplied names an address this service will not connect to.
+
 `BriefService` implements brief CRUD and campaign endpoints. `FindBrief` looks a brief up by
 `(project_id, event_slug)` rather than by id — the key a caller holds when re-visiting an event
 page — returning `ErrNotFound` when the event has no brief yet. That 404 is an ordinary
@@ -303,5 +327,29 @@ READ COMMITTED a plain guarded `UPDATE` cannot see a claim that commits just bef
 statement (and the claim INSERTs rather than updates, so there is no row conflict to
 serialize on) — deleting under an in-flight dispatch could let a concurrent claim
 double-create upstream.
+
+## FetchEventURL does not consult the repositories
+
+`event_url.go` holds the one brief-service handler that does not call `ready()`. It needs
+a fetcher and a parser, not a database, so it stays available through the cold-start
+window when the backend has not yet bound — and its own 503 therefore means only "the
+fetcher was never wired", which is a configuration fact rather than a transient one.
+
+The collaborators arrive through `SetEventURL` for the same reason `SetIndexer` exists:
+the ~40 `NewBriefService` call sites (nearly all tests) must keep compiling. The
+difference from the indexer is that there is no Noop stand-in — a fetcher that silently
+did nothing would report "no event details" for a page that is perfectly fine — so the
+handler checks for nil and reports unavailable instead.
+
+`EventFetcher` is narrow on purpose. `eventurl.NewFetcher` is the only constructor in
+non-test code, so nothing can reach this seam with an unguarded HTTP client; the interface
+exists so tests need no listening socket, not so the SSRF guard becomes swappable.
+
+`mapEventURLErr` matches with `errors.Is`, because `eventurl` returns a multi-unwrap error
+carrying both a sentinel and a redacted cause — a type switch sees only the wrapper. Its
+default branch returns a FIXED message rather than formatting the cause: `eventurl` builds
+URL-free messages because they are rendered to callers and to logs, and an unrecognized
+error is exactly the one whose text nothing vouched for. Forbidden maps to 400 and not
+403: nothing about the caller is at issue, so 403 would send an operator to look at tokens.
 
 See [internal/service](../../../internal/service).

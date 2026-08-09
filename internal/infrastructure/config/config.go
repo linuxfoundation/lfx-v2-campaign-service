@@ -53,6 +53,10 @@ type Config struct {
 	// CredentialEncryptionKey is the base64-encoded 32-byte AES-256 key for
 	// connection credential encryption.
 	CredentialEncryptionKey string
+	// EventURLNAT64Prefixes are the deployment's network-specific RFC 6052 NAT64
+	// prefixes, applied by the event-URL fetcher's SSRF guard in addition to the
+	// well-known 64:ff9b::/96. See constants.EnvEventURLNAT64Prefixes.
+	EventURLNAT64Prefixes []string
 
 	PGHost     string
 	PGPort     string
@@ -109,6 +113,7 @@ func LoadConfig() *Config {
 		IndexerServiceToken:     os.Getenv(constants.EnvIndexerServiceToken),
 		DatabaseURL:             os.Getenv(constants.EnvDatabaseURL),
 		CredentialEncryptionKey: os.Getenv(constants.EnvCredentialEncryptionKey),
+		EventURLNAT64Prefixes:   splitCSV(os.Getenv(constants.EnvEventURLNAT64Prefixes)),
 	}
 
 	if os.Getenv(constants.EnvDebug) == "true" {
@@ -282,6 +287,24 @@ func redactNATSURL(u string) string {
 		return u[:scheme+3] + "***@" + u[at+1:]
 	}
 	return "***@" + u[at+1:]
+}
+
+// splitCSV parses a comma-separated env var into its non-empty, space-trimmed entries.
+//
+// Returns nil for an empty value AND for an all-blank one — the two are deliberately NOT
+// distinguished. There is no configuration a caller could express with `","` that it cannot
+// express by leaving the variable unset, so treating them alike removes a state rather than
+// hiding one. Blank entries are dropped rather than passed through: a trailing comma or an
+// "a, ,b" typo would otherwise become an empty string that every consumer has to re-check,
+// and the one consumer here PANICS on a value it cannot parse.
+func splitCSV(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func redactSecret(v string) string {

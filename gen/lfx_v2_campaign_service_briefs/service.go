@@ -30,6 +30,9 @@ type Service interface {
 	ApproveBrief(context.Context, *ApproveBriefPayload) (res *Brief, err error)
 	// Archive a brief (soft delete).
 	DeleteBrief(context.Context, *DeleteBriefPayload) (err error)
+	// Fetch an event page and extract its details, for pre-filling a brief. Does
+	// not create anything.
+	FetchEventURL(context.Context, *FetchEventURLPayload) (res *EventDetails, err error)
 	// Create campaigns across the selected platforms (async -> job).
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Get one campaign under a brief; returns ETag.
@@ -81,7 +84,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [13]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "create-campaigns", "get-campaign", "get-campaign-metrics", "update-campaign", "toggle-campaign-status", "delete-campaign", "get-job"}
+var MethodNames = [14]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "create-campaigns", "get-campaign", "get-campaign-metrics", "update-campaign", "toggle-campaign-status", "delete-campaign", "get-job"}
 
 // ApproveBriefPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service approve-brief method.
@@ -254,6 +257,44 @@ type DeleteCampaignPayload struct {
 	CampaignID string
 	// If-Match header carrying the current ETag/version
 	IfMatch *string
+}
+
+// EventDetails is the result type of the lfx-v2-campaign-service-briefs
+// service fetch-event-url method.
+type EventDetails struct {
+	// Event name
+	EventName *string
+	// Event description
+	Description *string
+	// Event location as written on the page — free text, not a resolved place
+	Location *string
+	// Event start date exactly as the page states it; NOT normalised to RFC 3339,
+	// because the source rarely is
+	StartDate *string
+	// Event end date, same caveat as start_date
+	EndDate *string
+	// Event image URL
+	Image *string
+	// The event's own landing page, as the page declares it (JSON-LD url /
+	// og:url), falling back to the URL that was fetched when it declares none. NOT
+	// necessarily the fetched URL: a caller commonly pastes a link carrying
+	// tracking parameters, and the page's declared canonical is the better
+	// destination for an ad
+	URL *string
+	// Which strategy produced this record — the whole record came from exactly one
+	// of them
+	ExtractedFrom string
+}
+
+// FetchEventURLPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service fetch-event-url method.
+type FetchEventURLPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Canonical LFX project slug (NOT a UUID) that scopes the resource
+	ProjectID string
+	// Event page URL to fetch. Must be http or https.
+	URL string
 }
 
 // FindBriefPayload is the payload type of the lfx-v2-campaign-service-briefs

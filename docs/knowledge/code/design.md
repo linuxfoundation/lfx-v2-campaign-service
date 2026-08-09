@@ -57,4 +57,15 @@ boundary (`value ?? null`), since `undefined ?? null` is already `null` and the 
 is identical. Say which one the endpoint means in its own documentation; do not leave the first
 consumer to infer it from a missing key.
 
+`event-details` is a NAMED type rather than `Any`, and the reason generalises: `Any`
+renders as `{}` in the generated OpenAPI, so every generated client returns an untyped
+value and no consumer can discover or validate the shape. `extracted_from` is its only
+required attribute — a record that cannot say which strategy produced it is not worth
+returning — and the rest are optional so an absent field arrives as a nil pointer rather
+than `""`, which is the distinction a form being pre-filled actually needs.
+
+`fetch-event-url` is `POST` despite creating nothing. The URL is the reason: as a query
+parameter it lands verbatim in access logs, proxy logs and browser history at every hop;
+as a body parameter it does not. That outweighs the idempotency `GET` would advertise.
+
 See [design](../../../design).
