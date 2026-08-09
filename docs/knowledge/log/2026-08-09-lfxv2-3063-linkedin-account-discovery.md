@@ -72,3 +72,23 @@ here rather than in production, where a credentials-only connection has nothing 
 The request-URI recorder is mutex-guarded and hands the page index back from `add()` under the
 same lock: the handler runs on the server's goroutine while assertions run on the test
 goroutine, and a TCP socket is not a happens-before edge the race detector can see.
+
+## Round 2: the comment about the decoder was wrong about the decoder
+
+Copilot, on the `Elements *[]responseElement` comment: `encoding/json` does not leave a present
+`null` slice untouched — it explicitly SETS the slice (or pointer) to nil. The comment's whole
+job is to document that distinction, so being wrong about the mechanism there is worse than
+being wrong about it anywhere else in the file.
+
+Verified rather than assumed, because the two cases genuinely differ in the general case:
+decoding `{}` over a slice preset to `[]string{"x"}` leaves `["x"]` in place, while decoding
+`{"elements":null}` over the same value produces nil. Absent and null agree HERE only because
+the struct is declared fresh per response, so "untouched" is already nil — which is a property
+of the call sites, not of the decoder.
+
+The conclusion the comment reaches is unaffected: the pointer still is not what makes `{}`
+distinguishable from `[]`, and it is still there to stop a future `len(x) == 0` from merging
+them. Only the reason given for the absent/null pair changed.
+
+Worth stating generally: **"the outcome is the same" is not the same claim as "the decoder does
+the same thing", and a comment that exists to explain a decoder has to make the second one.**

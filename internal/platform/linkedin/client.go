@@ -186,9 +186,11 @@ type linkedInResponse struct {
 	// not found" and permit a DUPLICATE create. See doRequest's search-presence guard.
 	//
 	// The pointer is not what MAKES the distinction possible — `encoding/json` already
-	// draws it for a plain slice, since a present `[]` decodes to a non-nil empty slice
-	// while an absent or null field is left untouched. (Nor does the pointer add a
-	// re-use guarantee: json leaves a field ALONE when the key is absent, pointer or
+	// draws it for a plain slice, since a present `[]` decodes to a non-nil EMPTY slice
+	// while an absent field is left untouched and a present `null` is SET to nil. Those
+	// last two are different operations that happen to agree here: this struct is
+	// declared fresh per response, so "untouched" is already nil. (Which is also why the
+	// pointer adds no re-use guarantee — an absent key leaves the field alone, pointer or
 	// not, so a struct decoded into twice keeps the previous value either way. The
 	// protection there is declaring the value per response, which every call site does.)
 	// It is here so the distinction cannot be dropped by accident: a plain slice invites
