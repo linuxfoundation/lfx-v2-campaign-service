@@ -285,6 +285,32 @@ app:
     SNOWFLAKE_ROLE:
       value: ''
 
+    # AI_* configure the LF LiteLLM proxy used to GENERATE email copy (subject, preheader,
+    # body, CTA) when staging a marketing email. BOTH url and key are required; with either
+    # missing the model is unconfigured and the staged email keeps whatever body its cloned
+    # template carried. Optional refs for the same reason as SNOWFLAKE_* above: generated
+    # copy is an enrichment, and failing pod start over it would take down campaign dispatch
+    # for a feature that degrades cleanly.
+    #
+    # The credential is the PROXY's key, not a Bedrock or Anthropic key. Rollout
+    # prerequisite: secret sync must provision `ai-proxy-url` and `ai-api-key` on
+    # lfx-v2-campaign-service-secrets before copy generation will run.
+    AI_PROXY_URL:
+      valueFrom:
+        secretKeyRef:
+          name: lfx-v2-campaign-service-secrets
+          key: ai-proxy-url
+          optional: true
+    AI_API_KEY:
+      valueFrom:
+        secretKeyRef:
+          name: lfx-v2-campaign-service-secrets
+          key: ai-api-key
+          optional: true
+    # Not a secret: the model id the proxy routes on. Empty selects llm.DefaultModel.
+    AI_MODEL:
+      value: ''
+
     # INDEXER_SERVICE_TOKEN is the SERVICE credential the index relay stamps onto
     # messages it replays from the outbox. Outbox rows deliberately store no token
     # (the table is JSONB retained for audit with no pruning, so a per-request JWT

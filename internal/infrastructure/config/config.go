@@ -40,6 +40,13 @@ type Config struct {
 	SnowflakeWarehouse  string
 	SnowflakeRole       string
 
+	// LLM settings for email copy generation. Optional as a GROUP, on the same reasoning as
+	// Snowflake above: with proxy URL or key missing the model is unconfigured and email
+	// staging degrades to the cloned template's own body. Empty AIModel = llm.DefaultModel.
+	AIProxyURL string
+	AIAPIKey   string
+	AIModel    string
+
 	// IndexerServiceToken is the SERVICE credential the index relay stamps onto replayed
 	// messages. Outbox rows store no token — the table is retained for audit, so a per-request
 	// JWT written there would persist as a live credential — and the indexer requires a
@@ -109,6 +116,10 @@ func LoadConfig() *Config {
 		SnowflakePrivateKey: os.Getenv(constants.EnvSnowflakePrivateKey),
 		SnowflakeWarehouse:  os.Getenv(constants.EnvSnowflakeWarehouse),
 		SnowflakeRole:       os.Getenv(constants.EnvSnowflakeRole),
+
+		AIProxyURL: os.Getenv(constants.EnvAIProxyURL),
+		AIAPIKey:   os.Getenv(constants.EnvAIAPIKey),
+		AIModel:    os.Getenv(constants.EnvAIModel),
 
 		IndexerServiceToken:     os.Getenv(constants.EnvIndexerServiceToken),
 		DatabaseURL:             os.Getenv(constants.EnvDatabaseURL),

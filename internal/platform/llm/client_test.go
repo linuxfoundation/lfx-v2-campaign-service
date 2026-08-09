@@ -1,0 +1,453 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package llm
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"syscall"
+	"testing"
+	"time"
+)
+
+const testKey = "sk-super-secret-proxy-key"
+
+func newTestClient(t *testing.T, h http.HandlerFunc, opts ...Option) *Client {
+	t.Helper()
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	all := append([]Option{
+		WithHTTPClient(srv.Client()),
+		WithRetryBaseDelay(time.Millisecond),
+	}, opts...)
+	c, err := NewClient(Config{ProxyURL: srv.URL, APIKey: testKey}, all...)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	return c
+}
+
+// completion renders the proxy's success shape. Built by marshalling the text so a
+// value needing escaping cannot produce invalid JSON.
+func completion(text string) string {
+	q, _ := json.Marshal(text)
+	return `{"choices":[{"message":{"content":` + string(q) + `},"finish_reason":"stop"}]}`
+}
+
+func TestComplete_SendsOpenAIShapeAndReturnsContent(t *testing.T) {
+	var got chatRequest
+	var auth string
+	var path string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		auth = r.Header.Get("Authorization")
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = io.WriteString(w, completion("hello"))
+	})
+
+	out, err := c.Complete(context.Background(), "sys", "usr")
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if out != "hello" {
+		t.Errorf("content = %q, want %q", out, "hello")
+	}
+	if path != "/chat/completions" {
+		t.Errorf("path = %q, want /chat/completions", path)
+	}
+	if auth != "Bearer "+testKey {
+		t.Errorf("Authorization = %q", auth)
+	}
+	if got.Model != DefaultModel {
+		t.Errorf("model = %q, want %q", got.Model, DefaultModel)
+	}
+	if got.Temperature != DefaultTemperature || got.MaxTokens != DefaultMaxTokens {
+		t.Errorf("temperature/max_tokens = %v/%d", got.Temperature, got.MaxTokens)
+	}
+	want := []chatMessage{{Role: "system", Content: "sys"}, {Role: "user", Content: "usr"}}
+	if len(got.Messages) != 2 || got.Messages[0] != want[0] || got.Messages[1] != want[1] {
+		t.Errorf("messages = %+v, want %+v", got.Messages, want)
+	}
+}
+
+// A zero temperature is a meaningful request, which is why Config carries a
+// *float64: a plain float64 would send DefaultTemperature here.
+func TestComplete_ZeroTemperatureIsHonouredNotTreatedAsUnset(t *testing.T) {
+	var got chatRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = io.WriteString(w, completion("ok"))
+	}))
+	defer srv.Close()
+
+	zero := 0.0
+	c, err := NewClient(
+		Config{ProxyURL: srv.URL, APIKey: testKey, Temperature: &zero, Model: "custom-model", MaxTokens: 99},
+		WithHTTPClient(srv.Client()),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := c.Complete(context.Background(), "s", "u"); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if got.Temperature != 0 {
+		t.Errorf("temperature = %v, want 0 (an explicit zero must not fall back to the default)", got.Temperature)
+	}
+	if got.Model != "custom-model" || got.MaxTokens != 99 {
+		t.Errorf("model/max_tokens = %q/%d, want custom-model/99", got.Model, got.MaxTokens)
+	}
+}
+
+func TestNewClient_RequiresProxyURLAndKey(t *testing.T) {
+	for _, tc := range []struct{ name, url, key string }{
+		{"no url", "", "k"},
+		{"no key", "http://x", ""},
+		{"blank url", "   ", "k"},
+		{"neither", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := NewClient(Config{ProxyURL: tc.url, APIKey: tc.key}); !errors.Is(err, ErrNotConfigured) {
+				t.Errorf("err = %v, want ErrNotConfigured", err)
+			}
+		})
+	}
+}
+
+func TestComplete_EmptyChoicesIsDistinctFromTransportFailure(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"no choices", `{"choices":[]}`},
+		{"blank content", `{"choices":[{"message":{"content":"   "}}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, tc.body)
+			})
+			_, err := c.Complete(context.Background(), "s", "u")
+			if !errors.Is(err, ErrEmptyCompletion) {
+				t.Errorf("err = %v, want ErrEmptyCompletion", err)
+			}
+		})
+	}
+}
+
+func TestComplete_RetriesOn429ThenSucceeds(t *testing.T) {
+	var calls int32
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, "slow down")
+			return
+		}
+		_, _ = io.WriteString(w, completion("second try"))
+	})
+
+	out, err := c.Complete(context.Background(), "s", "u")
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if out != "second try" {
+		t.Errorf("content = %q", out)
+	}
+	if n := atomic.LoadInt32(&calls); n != 2 {
+		t.Errorf("calls = %d, want 2", n)
+	}
+}
+
+// A 429 body must be DRAINED before Close or net/http will not pool the connection
+// and the retry reopens TCP+TLS. Counting distinct remote addresses is what proves
+// reuse; asserting an io.Discard call would restate the implementation.
+func TestComplete_RetryReusesTheConnection(t *testing.T) {
+	var mu sync.Mutex
+	addrs := map[string]bool{}
+	var calls int32
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		addrs[r.RemoteAddr] = true
+		mu.Unlock()
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			// A body long enough that an undrained close would abandon the connection.
+			_, _ = io.WriteString(w, strings.Repeat("rate limited. ", 200))
+			return
+		}
+		_, _ = io.WriteString(w, completion("ok"))
+	})
+
+	if _, err := c.Complete(context.Background(), "s", "u"); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	mu.Lock()
+	n := len(addrs)
+	mu.Unlock()
+	if n != 1 {
+		t.Errorf("server saw %d client connections, want 1: the 429 body was not drained "+
+			"before Close, so the retry could not reuse the pooled connection", n)
+	}
+}
+
+func TestComplete_RetryAfterSecondsIsHonoured(t *testing.T) {
+	var calls int32
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.Header().Set("Retry-After", "1000") // seconds -> above maxRetryWait
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, _ = io.WriteString(w, completion("never reached"))
+	})
+
+	_, err := c.Complete(context.Background(), "s", "u")
+	if err == nil {
+		t.Fatal("want an error: a Retry-After beyond maxRetryWait must abort, not sleep")
+	}
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Errorf("calls = %d, want 1 (no retry after an over-long Retry-After)", n)
+	}
+}
+
+func TestComplete_RetryAfterHTTPDateIsParsed(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	got := (&Client{now: func() time.Time { return base }}).retryAfter(base.Add(3 * time.Second).Format(http.TimeFormat))
+	// http.TimeFormat has second granularity, so allow the truncation slack.
+	if got < 2*time.Second || got > 3*time.Second {
+		t.Errorf("retryAfter = %v, want ~3s", got)
+	}
+	if d := (&Client{now: func() time.Time { return base }}).retryAfter("not a date"); d != 0 {
+		t.Errorf("unparseable Retry-After = %v, want 0 (back off on our own schedule, not refuse)", d)
+	}
+}
+
+func TestComplete_GivesUpAfterRetryMax(t *testing.T) {
+	var calls int32
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+
+	if _, err := c.Complete(context.Background(), "s", "u"); err == nil {
+		t.Fatal("want an error after exhausting retries")
+	}
+	if n, want := atomic.LoadInt32(&calls), int32(retryMax+1); n != want {
+		t.Errorf("calls = %d, want %d", n, want)
+	}
+}
+
+func TestComplete_Non429ErrorIsNotRetried(t *testing.T) {
+	var calls int32
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, "prompt echoed back: SECRET-CONTEXT")
+	})
+
+	_, err := c.Complete(context.Background(), "s", "u")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Errorf("calls = %d, want 1", n)
+	}
+	if strings.Contains(err.Error(), "SECRET-CONTEXT") {
+		t.Errorf("error quotes the proxy's body, which can carry the prompt: %v", err)
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("error should name the status: %v", err)
+	}
+}
+
+func TestComplete_RedirectIsNotFollowed(t *testing.T) {
+	var elsewhereHit int32
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&elsewhereHit, 1)
+		if r.Header.Get("Authorization") != "" {
+			t.Error("the bearer credential was resent to the redirect target")
+		}
+		_, _ = io.WriteString(w, completion("attacker"))
+	}))
+	defer elsewhere.Close()
+
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, elsewhere.URL+"/chat/completions", http.StatusTemporaryRedirect)
+	})
+
+	if _, err := c.Complete(context.Background(), "s", "u"); err == nil {
+		t.Fatal("want an error: a 3xx from the proxy must not be followed")
+	}
+	if n := atomic.LoadInt32(&elsewhereHit); n != 0 {
+		t.Errorf("redirect target was contacted %d times, want 0", n)
+	}
+}
+
+// The per-attempt deadline must come from a context, not only http.Client.Timeout:
+// an injected client with no Timeout (as here) would otherwise hang for as long as
+// the caller's context allows.
+func TestComplete_PerAttemptTimeoutIsEnforcedWithoutClientTimeout(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		<-release
+	}, WithRequestTimeout(30*time.Millisecond))
+	if c.httpClient.Timeout != 0 {
+		t.Fatalf("precondition: test client should have no Timeout, got %v", c.httpClient.Timeout)
+	}
+
+	done := make(chan error, 1)
+	go func() { _, err := c.Complete(context.Background(), "s", "u"); done <- err }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("want a timeout error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Complete did not honour its per-attempt timeout")
+	}
+}
+
+// ctx.Err() must be consulted before an attempt starts: a context cancelled WITHOUT
+// a deadline still reports a full budget.
+func TestComplete_CancelledContextIsCheckedBeforeAnyRequest(t *testing.T) {
+	var calls int32
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		_, _ = io.WriteString(w, completion("ok"))
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := c.Complete(ctx, "s", "u"); !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+	if n := atomic.LoadInt32(&calls); n != 0 {
+		t.Errorf("calls = %d, want 0", n)
+	}
+}
+
+func TestComplete_ResponseBodyIsBounded(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		// Valid JSON prefix then far more than maxResponseBody of filler.
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"`)
+		chunk := strings.Repeat("A", 1<<20)
+		for i := 0; i < 12; i++ {
+			if _, err := io.WriteString(w, chunk); err != nil {
+				return
+			}
+		}
+		_, _ = io.WriteString(w, `"}}]}`)
+	})
+
+	if _, err := c.Complete(context.Background(), "s", "u"); err == nil {
+		t.Error("want a decode error from the truncated (bounded) read")
+	}
+}
+
+func TestComplete_ProxyURLTrailingSlashDoesNotDoubleUp(t *testing.T) {
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		_, _ = io.WriteString(w, completion("ok"))
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(Config{ProxyURL: srv.URL + "/", APIKey: testKey}, WithHTTPClient(srv.Client()))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := c.Complete(context.Background(), "s", "u"); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if path != "/chat/completions" {
+		t.Errorf("path = %q, want /chat/completions", path)
+	}
+}
+
+// credentialLeakingTransport reproduces the shape the redaction exists for: a
+// RoundTripper that renders the request (headers included) into its error. The
+// credential-bearing layer here is a *fmt.wrapError, NOT a *url.Error, so peeling
+// url.Error layers would leave it reachable.
+type credentialLeakingTransport struct{ cause error }
+
+func (t credentialLeakingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return nil, fmt.Errorf("dialing with %s: %w", r.Header.Get("Authorization"), t.cause)
+}
+
+func TestComplete_TransportErrorLeaksNothingAtAnyLayer(t *testing.T) {
+	causes := map[string]error{
+		"dns":      &net.DNSError{Err: "no such host", Name: "proxy.internal", IsNotFound: true},
+		"refused":  syscall.ECONNREFUSED,
+		"reset":    syscall.ECONNRESET,
+		"timeout":  syscall.ETIMEDOUT,
+		"unknown":  errors.New("something bespoke"),
+		"deadline": context.DeadlineExceeded,
+	}
+	for name, cause := range causes {
+		t.Run(name, func(t *testing.T) {
+			c, err := NewClient(
+				Config{ProxyURL: "https://proxy.internal", APIKey: testKey},
+				WithHTTPClient(&http.Client{Transport: credentialLeakingTransport{cause: cause}}),
+				WithRetryBaseDelay(time.Millisecond),
+			)
+			if err != nil {
+				t.Fatalf("NewClient: %v", err)
+			}
+			_, err = c.Complete(context.Background(), "s", "u")
+			if err == nil {
+				t.Fatal("want an error")
+			}
+			// EVERY layer, not just the outermost Error(): an errors.As walk
+			// can reach an inner layer the top-level string hides.
+			for e := err; e != nil; e = errors.Unwrap(e) {
+				if strings.Contains(e.Error(), testKey) {
+					t.Fatalf("layer %T leaks the API key: %v", e, e)
+				}
+			}
+		})
+	}
+}
+
+func TestRedactTransport_PreservesTheSentinelsCallersMatchOn(t *testing.T) {
+	for name, cause := range map[string]error{
+		"refused":  syscall.ECONNREFUSED,
+		"deadline": context.DeadlineExceeded,
+		"canceled": context.Canceled,
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := redactTransport(fmt.Errorf("Bearer %s: %w", testKey, cause))
+			if !errors.Is(got, cause) {
+				t.Errorf("errors.Is(redacted, %v) = false; redaction must keep the sentinel matchable", cause)
+			}
+			if strings.Contains(got.Error(), testKey) {
+				t.Errorf("redacted error still carries the key: %v", got)
+			}
+		})
+	}
+
+	// A DNS error keeps its boolean bits (callers branch on IsNotFound) but is
+	// rebuilt, so nothing the resolver attached survives.
+	got := redactTransport(fmt.Errorf("Bearer %s: %w", testKey,
+		&net.DNSError{Err: "leaky " + testKey, Name: "h", IsNotFound: true}))
+	var dnsErr *net.DNSError
+	if !errors.As(got, &dnsErr) {
+		t.Fatalf("want a *net.DNSError, got %T", got)
+	}
+	if !dnsErr.IsNotFound {
+		t.Error("IsNotFound was dropped by the rebuild")
+	}
+	if strings.Contains(dnsErr.Error(), testKey) {
+		t.Errorf("rebuilt DNS error carries the key: %v", dnsErr)
+	}
+
+	if redactTransport(nil) != nil {
+		t.Error("redactTransport(nil) must be nil")
+	}
+}

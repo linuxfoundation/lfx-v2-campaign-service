@@ -23,6 +23,12 @@ GROUP and unvalidated at config-load time: when account/user/key are not all
 present, `internal/container`'s `newAudienceBuilder` treats the warehouse as
 unconfigured and audience building degrades to country-only rather than failing.
 
+`AI_PROXY_URL` / `AI_API_KEY` / `AI_MODEL` configure the LF LiteLLM proxy used to generate
+email copy. Optional as a GROUP on the same reasoning as `SNOWFLAKE_*` and likewise unvalidated
+here: `internal/platform/llm`'s `NewClient` returns `ErrNotConfigured` when url or key is
+missing, so the caller degrades to the cloned template's own body rather than the pod refusing
+to start. `AI_MODEL` is not a secret — empty selects `llm.DefaultModel`.
+
 `splitCSV` parses the comma-separated `EVENT_URL_NAT64_PREFIXES` into its non-empty,
 space-trimmed entries, returning nil for an empty or all-blank value so a caller can tell
 "not configured" from "configured with nothing" without inspecting elements. Blank entries
