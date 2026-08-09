@@ -385,15 +385,51 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 		// invalidates the whole response — so this errors on the response rather than
 		// skipping the row, because skipping would reduce an unhonoured query to "no rows
 		// matched", i.e. the clean absence a caller is entitled to trust.
+		//
+		// It sits ABOVE campaignRowIdentity, exactly where FindCampaignByName's name check
+		// sits, and the position is the whole point: campaignRowIdentity reports a REMOVED
+		// row as not-live, and a `continue` on that verdict never reaches a check placed
+		// below it. A REMOVED row for a DIFFERENT campaign would then leave through the
+		// skip, and a response containing only such rows would return (nil, nil) — a
+		// response that honoured NEITHER the id nor the status predicate, reported as the
+		// trustworthy absence a caller acts on by creating a second paid campaign.
+		//
+		// The raw fields are read in campaignRowIdentity's own precedence — campaign.id
+		// when present, the resource name only as its fallback — so that the two agree
+		// about which field names the row. Reading both independently would report a row
+		// carrying id 555 beside resource name .../777 as an unhonoured FILTER, when the
+		// filter was honoured and it is the ROW whose identity fields disagree; that
+		// judgement stays in campaignRowIdentity, the single place it is made. Everything
+		// merely unusable — absent, malformed, or mutually disagreeing — is left to it too.
+		claimed := row.Campaign.ID
+		if claimed == "" {
+			claimed = c.campaignIDFromResourceName(row.Campaign.ResourceName)
+		}
+		if claimed != "" && claimed != campaignID {
+			return nil, fmt.Errorf("google-ads campaign lookup: query for campaign id %s returned campaign %s; the id filter was not honoured, refusing to trust this response", campaignID, claimed)
+		}
+
 		id, live, err := c.campaignRowIdentity(row, describe)
 		if err != nil {
 			return nil, err
 		}
+		// A REMOVED row that survived the filter check above is a tombstone for the campaign
+		// actually asked about, which is the one case a skip can only be right: the id names
+		// a real record, but not one a brief can be bound to. That is the same verdict
+		// FindCampaignByName reaches for the same row, and it reads as an absence here for
+		// the same reason.
 		if !live {
 			continue
 		}
-		if id != campaignID {
-			return nil, fmt.Errorf("google-ads campaign lookup: query for campaign id %s returned campaign %s; the id filter was not honoured, refusing to trust this response", campaignID, id)
+
+		// The name is not decoration. An operator confirms a binding by reading the name
+		// this call returns, so a row that cannot supply one cannot be confirmed, and
+		// Campaign.name is a required field Google populates for every campaign — an empty
+		// one in a response that SELECTed it is a truncated answer, not a nameless campaign.
+		// Failing here costs a retry; returning it would bind real spend to a campaign
+		// nobody could identify.
+		if strings.TrimSpace(row.Campaign.Name) == "" {
+			return nil, fmt.Errorf("google-ads campaign lookup: campaign id %s was returned with no usable name (%q); refusing to offer a campaign an operator cannot confirm", campaignID, row.Campaign.Name)
 		}
 
 		// Duplicate rows for the same campaign are tolerated (GAQL can return one campaign

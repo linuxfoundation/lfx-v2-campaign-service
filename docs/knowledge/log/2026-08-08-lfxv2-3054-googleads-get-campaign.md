@@ -30,6 +30,31 @@ must error. Treating one as live returns a campaign whose serving state was neve
 treating one as a skip reduces an unverifiable response to a clean absence, which is the
 licence-to-create value.
 
+The helper's one sharp edge is that it decides `live` WITHOUT deciding which campaign the row
+is, so "skip a tombstone" and "check the filter" must be ordered by the caller — and the first
+version of the by-id path ordered them wrong. Both review bots caught it independently. With
+the id check below the skip, a `REMOVED` row for a DIFFERENT campaign left through the
+`continue` untested, and a response made only of such rows returned `(nil, nil)`: a response
+that honoured NEITHER predicate (the query names one id *and* excludes `REMOVED`) reported as
+the trustworthy absence a caller acts on by creating a second campaign against the same budget.
+The by-name path never had the hole because it checks its name filter on the raw row before
+calling the helper; that is now what the by-id path does too, reading `campaign.id` first and
+the resource name only as its fallback, matching the helper's own precedence so a row carrying
+id `555` beside resource name `.../777` is still reported as identity fields that disagree
+rather than as an unhonoured filter. Position, not presence, was the whole defect — a guard
+placed under a `continue` is not a guard.
+
+## A campaign nobody can name cannot be confirmed
+
+The same review pass found the name unchecked: a live row with an omitted or whitespace-only
+`campaign.name` was returned as a successful `CampaignRef`. The name is not decoration here —
+verify-before-bind means an operator reads it to confirm the id resolves to the campaign they
+meant, so a ref without one asks for a confirmation that cannot be given. `Campaign.name` is
+required and populated for every campaign, so an empty one in a response that `SELECT`ed it is
+a truncated answer rather than a nameless campaign, and it now errors. This is the cheap side
+of the asymmetry: the error costs a retry, whereas returning the ref binds real spend to a
+campaign nobody could identify.
+
 ## The two by-id-specific guards
 
 **The caller's id is validated before interpolation, as an identity.** `canonicalCampaignID`

@@ -316,3 +316,82 @@ func TestCampaignRowIdentity_IsSharedByBothLookups(t *testing.T) {
 		t.Error("GetCampaign accepted a row whose identity fields disagree")
 	}
 }
+
+// TestGetCampaign_RemovedRowForAnotherCampaignIsNotAnAbsence pins the ORDER of the two
+// row checks, which is the whole substance of the guard.
+//
+// A tombstone skip and an id-filter check are both correct; placing the skip first is
+// not. campaignRowIdentity reports a REMOVED row as not-live without establishing which
+// campaign it is, so an id check below that skip never runs on one — and a REMOVED row
+// for a DIFFERENT campaign then leaves through the skip silently. A response containing
+// only such rows honoured NEITHER predicate (the query asks for one id AND excludes
+// REMOVED) yet would return (nil, nil): the trustworthy absence a caller acts on by
+// creating a second campaign against the same budget.
+func TestGetCampaign_RemovedRowForAnotherCampaignIsNotAnAbsence(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rows []json.RawMessage
+	}{
+		{
+			// The id field names another campaign, and the row is a tombstone.
+			"removed row names another campaign",
+			[]json.RawMessage{lookupRow("999", "someone else's campaign", StatusRemoved)},
+		},
+		{
+			// campaign.id absent, so the resource name is the only identity evidence —
+			// the fallback path, which must police the filter just as the id field does.
+			"removed row's resource name names another campaign",
+			[]json.RawMessage{rawLookupRow("customers/1234567890/campaigns/999", "", "gone", StatusRemoved)},
+		},
+		{
+			// The live match is FIRST, so a response cannot buy trust by leading with a
+			// good row: one row proving the filter was ignored condemns the whole
+			// response, exactly as a name mismatch does in FindCampaignByName.
+			"a live match does not redeem the rest of the response",
+			[]json.RawMessage{
+				lookupRow("555", "the campaign", StatusEnabled),
+				lookupRow("999", "someone else's campaign", StatusRemoved),
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _ := newLookupServer(t, tc.rows)
+			client := newAccountsTestClient(t, srv)
+
+			ref, err := client.GetCampaign(context.Background(), "555")
+			if err == nil {
+				t.Fatalf("GetCampaign = %+v, want an error: a REMOVED row for campaign 999 proves the id filter was not honoured, and must never be skipped into an absence", ref)
+			}
+			if !strings.Contains(err.Error(), "not honoured") {
+				t.Errorf("error = %v, want it to name the unhonoured filter", err)
+			}
+		})
+	}
+}
+
+// TestGetCampaign_NamelessRowIsNotConfirmable: the name is the field an operator reads to
+// confirm the binding, so a row that cannot supply one cannot be confirmed. Campaign.name
+// is required and always populated, so an empty one in a response that SELECTed it is a
+// truncated answer — an error (costing a retry), never a ref (binding real spend to a
+// campaign nobody can identify) and never an absence.
+func TestGetCampaign_NamelessRowIsNotConfirmable(t *testing.T) {
+	for _, tc := range []struct{ name, campaignName string }{
+		{"omitted name", ""},
+		{"whitespace-only name", "   "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _ := newLookupServer(t, []json.RawMessage{
+				lookupRow("555", tc.campaignName, StatusEnabled),
+			})
+			client := newAccountsTestClient(t, srv)
+
+			ref, err := client.GetCampaign(context.Background(), "555")
+			if err == nil {
+				t.Fatalf("GetCampaign = %+v, want an error: an unnamed campaign cannot be confirmed by the operator binding to it", ref)
+			}
+			if !strings.Contains(err.Error(), "no usable name") {
+				t.Errorf("error = %v, want it to name the missing name", err)
+			}
+		})
+	}
+}
