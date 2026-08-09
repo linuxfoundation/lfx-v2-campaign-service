@@ -52,3 +52,35 @@ NULL actors decode to nil; wrong-shaped actor JSON fails the scan with the colum
 `main` after `000015`; merged first, `000015` would never be applied at all.
 
 Still open: `campaign_audiences` carries `created_by` only, so an audience edit records no actor.
+
+## Follow-on (review round 3)
+
+**The migration's own comment still named a recovery sweeper.** The prose correction above
+landed in the knowledge bundle; the SQL file it was describing did not get the same edit, so
+`000016_campaign_actor_columns.up.sql` was still telling the next reader that a sweeper
+re-persists campaign rows with a nil actor. A comment inside the migration is the version
+someone reads when they are deciding what the columns mean, so it is the version that had to
+be right. It now names the single live nil source — `attributedActor` on a request with no
+decodable principal — and says explicitly that `StartRecoverySweeper` writes no campaign row,
+so the `COALESCE` on `updated_by` is not there to accommodate one.
+
+**000016 had no migration test.** `TestMigration000016_AddsCampaignActorColumns` mirrors
+000015's, plus two assertions the sibling did not need: that the file does NOT say
+`ALTER TABLE campaign_briefs` (000015 and 000016 are near-identical files against different
+tables — a copy-paste that keeps the wrong target applies cleanly as a no-op and leaves
+campaigns without the columns the repository writes to), and that neither column is declared
+`NOT NULL` (which is unrunnable, not merely strict: existing rows have no actor to backfill).
+
+`TestLiveCampaignActorColumnsExistAndAreNullable` covers what source text cannot: it asks
+`information_schema` whether the columns are actually present as `jsonb` and nullable in the
+MIGRATED schema, and then inserts a campaign with both actors NULL to show the table as a
+whole — triggers and constraints included — still accepts an unattributed dispatch.
+
+**The toggle stamp had no test.** `existing.UpdatedBy = attributedActor(ctx, "toggle campaign
+status")` was real and reachable, but every test in the toggle suite passed
+`context.Background()`, where the actor is nil either way — delete the line and all of them
+stay green while the only record of who paused or resumed a spending campaign disappears.
+`TestCampaignActor_ToggleAttributesToTheRequestingActor` seeds the row with a DIFFERENT actor
+first, so it shows the toggler REPLACING the previous editor rather than merely that some
+actor is present; the negative half pins that an unauthenticated toggle stamps nil rather
+than inheriting the creator or inventing a "system" principal.

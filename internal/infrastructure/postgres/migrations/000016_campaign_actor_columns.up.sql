@@ -26,10 +26,22 @@
 -- work runs and there is no retry; a decoded value has no expiry and is the exact
 -- thing being recorded.
 --
--- Nullable by necessity, not by preference: every row that already exists predates
--- this migration and has no actor to backfill, and some writes are legitimately
--- system-initiated with no human behind them — notably the recovery sweeper, which
--- has no originating request at all. NULL means "not recorded", never "nobody".
+-- Nullable by necessity, not by preference. Every row that already exists predates this
+-- migration and has no actor to backfill. Beyond that, NULL arises from exactly one
+-- live source: attributedActor returns nil (and logs a warning) whenever the request
+-- context carries no decodable principal — no bearer token, a token that is not three
+-- dot-separated segments, or claims with no name/email/username/sub. That covers a
+-- machine-to-machine caller and any request that reaches the service without the
+-- gateway's token.
+--
+-- It does NOT include a recovery sweeper: StartRecoverySweeper only calls FailStuckJobs
+-- and writes no campaign row, so there is no background re-persist path here. (An
+-- earlier draft of this comment said there was; the COALESCE on updated_by in the upsert
+-- and update statements is still correct, but its job is narrower than that claim made
+-- it sound — it keeps a nil-actor write from erasing a recorded one, rather than
+-- accommodating a sweeper that does not exist.)
+--
+-- NULL means "not recorded", never "nobody".
 --
 -- These columns hold personal data (name, email). Nothing prunes them: the record
 -- lives as long as the campaign, because an audit trail that expires answers "who

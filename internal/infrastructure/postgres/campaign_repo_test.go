@@ -484,3 +484,49 @@ func TestScanCampaign_MalformedActorJSONIsAnError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "updated_by")
 }
+
+// TestMigration000016_AddsCampaignActorColumns is the campaigns-side counterpart of
+// TestMigration000015_AddsBriefActorColumns, and it exists for the same reason: every
+// statement above that names created_by or updated_by on campaigns compiles against
+// columns this migration is the ONLY thing that creates. A migration edited to add just
+// one of the pair leaves the scan and the upsert failing at runtime on the other, with
+// nothing in this package objecting first.
+//
+// It also pins the table. 000015 and 000016 are near-identical files touching different
+// tables; a copy-paste that leaves ALTER TABLE campaign_briefs here would apply cleanly,
+// be a no-op (000015 already added those columns IF NOT EXISTS), and leave campaigns
+// without the columns the repository writes to.
+func TestMigration000016_AddsCampaignActorColumns(t *testing.T) {
+	up, err := fs.ReadFile(migrations.FS, "000016_campaign_actor_columns.up.sql")
+	require.NoError(t, err)
+	upSQL := normalizeWS(string(up))
+
+	require.Contains(t, upSQL, "ALTER TABLE campaigns",
+		"migration 000016 must alter campaigns; campaign_briefs got its columns in 000015")
+	require.NotContains(t, upSQL, "ALTER TABLE campaign_briefs",
+		"000016 alters campaign_briefs, which is 000015's table — a copy-paste that keeps the "+
+			"sibling's target applies cleanly as a no-op and leaves campaigns without the columns")
+	for _, col := range []string{"created_by", "updated_by"} {
+		require.Regexp(t, regexp.MustCompile(`(?i)ADD COLUMN IF NOT EXISTS `+col+` JSONB`), upSQL,
+			"000016 does not add %s as JSONB. marshalActor writes a JSONB document, matching "+
+				"connections/campaign_audiences/campaign_briefs; a text column would round-trip "+
+				"but lose the ability to query into the actor.", col)
+	}
+	// NOT NULL would be unrunnable, not merely strict: every campaign row that predates
+	// this migration has no actor to backfill, so the ALTER would fail outright on any
+	// deployed database. Nullability is load-bearing, and nothing else asserts it.
+	require.NotRegexp(t, regexp.MustCompile(`(?i)(created_by|updated_by) JSONB[^,]*NOT NULL`), upSQL,
+		"000016 declares an actor column NOT NULL; pre-existing campaign rows have no actor "+
+			"to backfill, so the migration cannot run on a deployed database")
+
+	down, err := fs.ReadFile(migrations.FS, "000016_campaign_actor_columns.down.sql")
+	require.NoError(t, err)
+	downSQL := normalizeWS(string(down))
+	require.Contains(t, downSQL, "ALTER TABLE campaigns",
+		"the down migration must drop from campaigns, the table the up migration altered")
+	for _, col := range []string{"created_by", "updated_by"} {
+		require.Regexp(t, regexp.MustCompile(`(?i)DROP COLUMN IF EXISTS `+col), downSQL,
+			"down migration leaves %s behind, so a down-then-up cycle hits an already-present "+
+				"column and the pair drift apart", col)
+	}
+}
