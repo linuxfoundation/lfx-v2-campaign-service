@@ -288,6 +288,11 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/twitter-ads/metrics", true},
 		{"/projects/p1/google-ads/keywords", true},
 		{"/projects/p1/google-ads/audience", true},
+		// --- accepted: event-page pre-fill (LFXV2-3043) ---
+		// A SIBLING of /briefs, not a descendant, so unlike /status and /metrics above it
+		// inherits nothing: it needs its own alternation branch in the HTTPRoute regex AND
+		// its own RuleSet entry. This row is what fails if a future edit adds only one.
+		{"/projects/p1/fetch-event-url", true},
 
 		// --- rejected: another service's project subpaths (project-service owns these) ---
 		{"/projects/p1", false},
@@ -301,6 +306,8 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/meta-ads/keywords", false},
 		{"/projects/p1/linkedin-ads/audience", false},
 		{"/projects/p1/hubspot-ads/metrics", false},
+		// The branch is an exact alternative, not a prefix: nothing hangs off it.
+		{"/projects/p1/fetch-event-url/anything", false},
 		// --- rejected: missing projectId segment / not project-nested ---
 		{"/projects//briefs", false},
 		{"/briefs/b-1", false},

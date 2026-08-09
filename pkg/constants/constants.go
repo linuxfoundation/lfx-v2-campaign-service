@@ -28,6 +28,17 @@ const (
 	// to encrypt connection credentials. Sourced from a Kubernetes secret.
 	EnvCredentialEncryptionKey = "CREDENTIAL_ENCRYPTION_KEY"
 
+	// EnvEventURLNAT64Prefixes is a comma-separated list of the deployment's
+	// NETWORK-SPECIFIC RFC 6052 NAT64 translation prefixes (e.g. "2001:db8:64::/96").
+	//
+	// It exists because a network-specific prefix cannot be discovered in-process: it is
+	// carved from the operator's own global unicast space and is indistinguishable from
+	// any other public prefix by inspection. On a cluster that uses one, the translator —
+	// not this service — makes the IPv4 connection, so an address encoding 169.254.169.254
+	// passes every SSRF check here unless the prefix is declared. Unset is correct for a
+	// cluster with no NAT64; the well-known 64:ff9b::/96 is always decoded regardless.
+	EnvEventURLNAT64Prefixes = "EVENT_URL_NAT64_PREFIXES"
+
 	// EnvRedditMetricsEnabled opts a deployment IN to Reddit metrics reads. Unset or any
 	// value other than "true" leaves them off, and the metrics endpoint answers 400
 	// "not supported for this campaign's platform" for Reddit campaigns.

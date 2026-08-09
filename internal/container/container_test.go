@@ -23,6 +23,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 	"github.com/stretchr/testify/assert"
@@ -1204,4 +1205,63 @@ func TestContainer_BothStartupPathsInjectTheOrchestrator(t *testing.T) {
 	assert.Contains(t, body("func (c *Container) retryDatabaseInit("), "SetOrchestrator(orch)",
 		"the cold-start retry must inject the orchestrator too; otherwise a pod that booted "+
 			"before the database was reachable serves 503s for account discovery for its whole life")
+}
+
+// TestEventFetcherNAT64PrefixesReachTheDialer closes the END of the config chain.
+//
+// eventurl's own tests prove WithNAT64Prefixes reaches the dial hook, and config's tests
+// prove EVENT_URL_NAT64_PREFIXES parses into Config.EventURLNAT64Prefixes. Neither says
+// anything about the join in between, and that join is exactly one line
+// (`eventFetcher` passing the slice on). Drop it — return a bare `eventurl.NewFetcher()`
+// unconditionally — and every other test in both packages still passes while the only
+// control an operator has over this SSRF class is silently dead.
+//
+// The failure that would hide behind that is not a degradation. On a cluster with a
+// network-specific NAT64 prefix, an undeclared prefix means the TRANSLATOR makes the IPv4
+// connection, so an address encoding 169.254.169.254 satisfies every check inside this
+// process and the fetch reaches the cloud metadata endpoint.
+//
+// No socket is involved on the passing path: the address is refused inside the dialer's
+// Control hook, before connect. The context deadline bounds the FAILING path, where the
+// address is (correctly, for an unconfigured fetcher) allowed through to a real dial.
+func TestEventFetcherNAT64PrefixesReachTheDialer(t *testing.T) {
+	t.Setenv(constants.EnvEventURLNAT64Prefixes, "2a01:4f8:1::/48")
+
+	cfg := config.LoadConfig()
+	require.Equal(t, []string{"2a01:4f8:1::/48"}, cfg.EventURLNAT64Prefixes,
+		"the env var did not parse; the rest of this test would prove nothing")
+
+	c := &Container{Config: cfg}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 2a01:4f8:1:a9fe:a9:fe00:: embeds 169.254.169.254 at the /48 layout (RFC 6052 splits
+	// the address around the reserved octet at bits 64-71 for every prefix shorter than /96).
+	_, err := c.eventFetcher().Fetch(ctx, "http://[2a01:4f8:1:a9fe:a9:fe00::]/event")
+	require.ErrorIs(t, err, eventurl.ErrEventURLForbidden,
+		"the configured prefix never reached the dial guard: an encoded metadata address "+
+			"was allowed out of the process")
+
+	// The well-known prefix is unconditional and must survive alongside the configured one.
+	_, err = c.eventFetcher().Fetch(ctx, "http://[64:ff9b::a9fe:a9fe]/event")
+	require.ErrorIs(t, err, eventurl.ErrEventURLForbidden,
+		"configuring a prefix dropped the unconditional 64:ff9b::/96 decoding")
+}
+
+// TestEventFetcherWithoutConfigStillGuards pins that the unconfigured path is a real
+// Fetcher and not a nil one — eventFetcher has two returns, and only one is exercised
+// above.
+func TestEventFetcherWithoutConfigStillGuards(t *testing.T) {
+	for name, c := range map[string]*Container{
+		"nil config":   {},
+		"empty config": {Config: &config.Config{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := c.eventFetcher()
+			require.NotNil(t, f)
+			// The well-known prefix is decoded with no configuration at all.
+			_, err := f.Fetch(context.Background(), "http://[64:ff9b::a9fe:a9fe]/event")
+			require.ErrorIs(t, err, eventurl.ErrEventURLForbidden)
+		})
+	}
 }

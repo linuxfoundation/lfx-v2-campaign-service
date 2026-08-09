@@ -14,4 +14,7 @@ var (
 
 	// ErrEventURLFetchFailed indicates the fetch operation failed.
 	ErrEventURLFetchFailed = errors.New("event URL fetch failed")
+
+	// ErrEventDetailsEmpty indicates no event metadata could be extracted.
+	ErrEventDetailsEmpty = errors.New("no event details found in URL")
 )
