@@ -63,7 +63,11 @@ func (a AdAccount) StatusLabel() string { return inactiveAccountStatusLabels[a.S
 //
 // A walk that cannot be completed is an ERROR, never a short list. Every failure mode
 // below — a 2xx body with no `data` field, a `next` link with no cursor, a repeated
-// cursor, the page cap — returns nil rather than what was collected so far. A truncated
+// cursor, an entry whose id is not `act_<digits>`, the page cap — returns nil rather
+// than what was collected so far. The unusable-id case belongs on that list even though
+// it is a per-ROW defect: a response shape that far from the documented one means the
+// response is not what we think it is, so the walk fails whole rather than dropping the
+// row and reporting the remainder as complete. A truncated
 // account list is indistinguishable from a complete one at the boundary, and the caller
 // acts on an absence: the account they wanted is simply not offered, and they conclude
 // their token cannot reach it.
