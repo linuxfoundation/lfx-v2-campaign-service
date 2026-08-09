@@ -102,6 +102,17 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err != nil {
 		return nil, notCreated(err)
 	}
+	// The THIRD reader of the same stored login_customer_id, and the one that matters most:
+	// it is the path that spends money. Left to the client's own validateLoginCustomerID
+	// this defect arrived at the orchestrator as a bare create failure — a 503 telling the
+	// caller to retry a stored value no retry repairs — and the client's error embeds the
+	// raw id with %q, which then reaches the dispatch-failure log line. Both are the exact
+	// regressions the toggle and discovery paths were fixed for. notCreated because nothing
+	// upstream has been attempted: the claim is safe to release.
+	loginCustomerID, err := validatedLoginCustomerID(res)
+	if err != nil {
+		return nil, notCreated(err)
+	}
 
 	var cfg googleAdsConfig
 	if err := unmarshalPlatformConfig(config, "googleAdsConfig", &cfg); err != nil {
@@ -135,7 +146,8 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	}
 
 	// login_customer_id is the OPTIONAL manager (MCC) account the ad account is accessed
-	// through; it lives in the connection's ProviderConfig (not the credential blob).
+	// through; it lives in the connection's ProviderConfig (not the credential blob) and
+	// has been shape-checked above.
 	client := googleads.NewClient(
 		googleads.Credentials{
 			ClientID:       creds.ClientID,
@@ -145,7 +157,7 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		},
 		googleads.AccountConfig{
 			CustomerID:      accountID,
-			LoginCustomerID: strings.TrimSpace(res.providerConfig["login_customer_id"]),
+			LoginCustomerID: loginCustomerID,
 			Label:           res.label,
 		},
 		d.opts...,

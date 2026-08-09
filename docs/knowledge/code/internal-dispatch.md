@@ -294,15 +294,29 @@ Ownership of that wrap is SPLIT, and the split follows which function is in a po
 a blob that is not valid JSON, a blob missing a required field. `validatedLoginCustomerID` tags
 the one that is not about the credential at all: a `login_customer_id` stored with dashes.
 
-**Both are called by BOTH resolvers, and that is the whole point of the second one being a
-function.** The manager-id check used to sit INLINE in `resolveGoogleAdsDiscoveryClient`, which
-meant only the discovery endpoint got it. The toggle path read the same stored column, handed it
-to the same client, and classified the same defect differently: the value reached the client
-uninspected, failed there at `validateLoginCustomerID`, and arrived at the orchestrator
-indistinguishable from an upstream failure — same call, same error type. The default arm answered
-`503`, promising a retry would help, for a stored value only a human can repair. LFXV2-3052
-hoisted it into a helper both resolvers call. A check that lives on one of two paths through the
-same column is not a check; it is a coin flip on which endpoint the caller happened to use.
+**Both are called by EVERY path that reads the column, and that is the whole point of the second
+one being a function.** The manager-id check used to sit INLINE in
+`resolveGoogleAdsDiscoveryClient`, which meant only the discovery endpoint got it. The other paths
+read the same stored column, handed it to the same client, and classified the same defect
+differently: the value reached the client uninspected, failed there at `validateLoginCustomerID`,
+and arrived at the orchestrator indistinguishable from an upstream failure — same call, same error
+type. The default arm answered `503`, promising a retry would help, for a stored value only a
+human can repair. LFXV2-3052 hoisted it into a helper.
+
+There are **three** readers, not two, and the third is easy to miss: `resolveGoogleAdsClient`
+(toggle, metrics), `resolveGoogleAdsDiscoveryClient` (account discovery), and `Dispatch` — which
+builds its own client INLINE rather than through a resolver, because it predates both of them.
+Enumerating callers by the abstraction ("which resolvers call this?") does not find it;
+enumerating by the FIELD (`grep providerConfig["login_customer_id"]`) does. `Dispatch` is also the
+path where the consequences are worst: it is the one that spends money, and the client's own
+validator renders the offending value with `%q`, which the orchestrator then writes to its
+dispatch-failure log line — so leaving it uninspected leaked account-identifying configuration
+into logs on top of misclassifying the failure. Its wrap is `notCreated`, preserving create-only
+claim semantics: nothing was sent, so the claim must be released rather than retained for
+reconciliation.
+
+A check that lives on one of several paths through the same column is not a check; it is a coin
+flip on which endpoint the caller happened to use.
 
 An empty `login_customer_id` is legal and means "no manager", so only a non-empty malformed value
 fails. The error names the field and the rule but never echoes the VALUE: a manager id is

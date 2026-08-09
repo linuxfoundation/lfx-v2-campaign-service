@@ -1,21 +1,29 @@
-# 2026-08-08 — A validity check that only ran on one of the two paths that needed it
+# 2026-08-08 — A validity check that ran on only one of the three paths that needed it
 
-**Fix** — `login_customer_id`'s stored-shape check moved out of
-`resolveGoogleAdsDiscoveryClient` and into `validatedLoginCustomerID`, which BOTH Google Ads
-resolvers now call. A malformed manager id on the toggle path used to answer `503`; it now
-answers `409`.
+**Update** — `login_customer_id`'s stored-shape check moved out of
+`resolveGoogleAdsDiscoveryClient` and into `validatedLoginCustomerID`, which every path that
+reads that column now calls. A malformed manager id on the toggle and metrics paths used to
+answer `503`; it now answers `409`, and campaign create no longer leaks the raw id into the
+dispatch-failure log.
 
 ## The defect
 
-`internal/dispatch/googleads.go` has two resolvers over the same connection row:
+`internal/dispatch/googleads.go` has THREE readers of the same connection column:
 
-| resolver | called by |
+| reader | serves |
 |---|---|
-| `resolveGoogleAdsClient` | campaign dispatch, status toggle, metrics reads |
+| `resolveGoogleAdsClient` | status toggle, metrics reads |
 | `resolveGoogleAdsDiscoveryClient` | the account-discovery endpoint |
+| `Dispatch` | campaign create — builds its own client inline, rather than through a resolver |
 
-Both read `providerConfig["login_customer_id"]` and hand it to the same
+All three read `providerConfig["login_customer_id"]` and hand it to the same
 `googleads.NewClient`. Only the discovery one inspected it first.
+
+The third is the one this fix's own first round missed, and the miss is instructive: the two
+RESOLVERS are what a reader of this file sees as "the callers", so wiring the check into both
+of them looks complete. `Dispatch` does not go through either. It was found by asking which
+call sites read the COLUMN, not which call sites use a resolver — and there was no test on the
+create path to fail, which is why a review caught it rather than CI.
 
 So the same stored value, with the same defect, produced two different answers depending on
 which endpoint the caller reached:
@@ -23,11 +31,20 @@ which endpoint the caller reached:
 - **Discovery** — caught at the dispatch boundary, tagged
   `ErrConnectionNotUsable` + `ErrProviderConfigInvalid`, mapped to **409**. Correct: a stored
   id with dashes in it needs a human to edit the connection.
-- **Toggle** — passed through uninspected. It failed later, inside the client, at
-  `validateLoginCustomerID` — by which point the error is indistinguishable at the
+- **Toggle, metrics, and create** — passed through uninspected. They failed later, inside the
+  client, at `validateLoginCustomerID` — by which point the error is indistinguishable at the
   orchestrator's boundary from a genuine upstream failure. It fell to the service layer's
   default arm: **503, "the provider call failed, retry later"**, for a value that no amount
   of retrying will repair.
+
+Create carried a second defect the read-only paths did not. The client's own validator renders
+the offending value with `%q`, and a create failure is logged by the orchestrator on both the
+released- and retained-claim arms — so the raw manager id, which is account-identifying
+configuration, reached application logs. Everything else on this path deliberately keeps error
+text to a fixed sentinel vocabulary with no payload attached, precisely so it can be logged;
+create was the one hole in that. `TestGoogleAds_Dispatch_MalformedManagerIDIsClassified`
+asserts the absence of the value as well as the presence of the sentinels, and revert-checking
+it reproduces both regressions at once.
 
 ## Why the check has to be where the value is READ
 
@@ -47,9 +64,16 @@ test. It was in the wrong PLACE — inside one caller of a shared resource, rath
 the read of that resource. That is invisible to every gate: it builds, it lints, its test
 passes, and the endpoint it does cover behaves perfectly.
 
-The tell is structural, not behavioural: **two functions reading the same stored field, and
-only one of them validating it.** Worth grepping for whenever a helper acquires a second
+The tell is structural, not behavioural: **several functions reading the same stored field,
+and only some of them validating it.** Worth grepping for whenever a helper acquires a second
 caller — the second caller inherits the reads but not the guards.
+
+The follow-on round sharpened it. Enumerate readers by the FIELD, not by the abstraction:
+`grep -n 'providerConfig\["login_customer_id"\]'` finds `Dispatch`; "which resolvers call
+this?" does not, because `Dispatch` is not a resolver. An abstraction that most callers share
+makes the one caller that bypasses it harder to see, not easier — and that caller is
+disproportionately likely to be the oldest and most important one, since it predates the
+abstraction.
 
 ## Note
 
