@@ -121,7 +121,12 @@ create's 2xx-with-no-id is UNCONFIRMED. List/get responses are decoded from BOTH
 `statistics.go` adds `GetEmailMetrics`, the read that backs the email channel's metrics:
 `GET /marketing/v3/emails/statistics/list?startTimestamp&endTimestamp&emailIds`, an
 idempotent read (so a 429 IS retried). It returns the same `model.CampaignMetrics`
-every ad platform returns, plus an `Email` sub-object of counters no ad platform has.
+every ad platform returns, plus an `Email` sub-object of six email-specific counters. Two
+of the six deliberately overlap the shared fields: `Opens` also populates `Impressions`
+(an open IS the recipient rendering the creative) and `Clicks` is the same event in both
+channels, so a consumer reading the sub-object never has to know which ad-shaped field the
+email channel was mapped onto. The other four — `Sent`, `Delivered`, `Bounces`,
+`Unsubscribes` — have no ad-platform analogue.
 
 The v3 contract was verified against HubSpot's own generated client rather than the
 docs (which are auth-gated): the response is

@@ -2,7 +2,9 @@
 
 **Update** — `GetEmailMetrics` in `internal/platform/hubspot/statistics.go` reads HubSpot's
 marketing-email statistics list and returns the shared `model.CampaignMetrics`, plus a new
-`model.EmailMetrics` sub-object carrying the six counters no ad platform has. This is part 1 of
+`model.EmailMetrics` sub-object carrying six email-specific counters — four with no ad-platform
+analogue, plus `Opens` and `Clicks`, which deliberately duplicate the shared `Impressions` and
+`Clicks` so a consumer need not know which ad-shaped field email was mapped onto. This is part 1 of
 2: the client and its contract. Part 2 wires it to `HubSpotDispatcher.ReadMetrics` and adds the
 optional `email` object to the Goa result, making HubSpot the first non-ad-platform on
 `GET .../campaigns/{id}/metrics`.
@@ -221,3 +223,34 @@ The general form, and it is the second time this file has hit it from a differen
 **an error's name is a claim, and it must be the weakest claim the evidence supports.** The
 whole-vocabulary guard was widened for the same reason — because `len(counters) > 0` asserted
 something the nil map did not license.
+
+## Round N: "every element matches" is not "exactly one element"
+
+`isExactlyID` looped over the response's `emails` list rejecting any element that was not the
+requested id, then returned `len(ids) > 0`. That accepts `[4242, 4242]` — every element matches,
+the list is non-empty — and a duplicated id is not the response to a request carrying exactly one
+`emailIds` value. Nothing in the body says whether `aggregate` sums one email's counters or two,
+so the doubled reading is available and would be reported as this campaign's. The guard now asks
+for the singleton (`len(ids) == 1 && ids[0] == want`), which is both stricter and shorter than
+the loop it replaces. `TestGetEmailMetrics_RejectsADuplicatedEmailID` pins it.
+
+The general shape: **a per-element predicate answers a question about elements, and the guard
+needed one about the SET.** "No stranger appears" and "exactly what I asked for came back" differ
+on exactly the responses where the filter misbehaved without inventing an id — which is the case
+a filter guard exists for.
+
+Two smaller corrections in the same push:
+
+- The malformed-JSON diagnostic is built from constants plus a length so it can be logged
+  (`BriefService.GetCampaignMetrics` logs `safeErrSummary(err)`, which truncates but does not
+  redact). Nothing enforced that. `TestGetEmailMetrics_MalformedJSONIsRedacted` now does, using a
+  numeric overflow marker — `json.UnmarshalTypeError` copies a numeric literal into its own
+  message but reduces a string to the word "string", so a quoted marker could not fail the
+  assertion even against a verbatim wrap. Same invariant, same technique, as
+  `internal/platform/linkedin/metrics_test.go`.
+- `fixedClock`'s comment claimed its 2026-03-15 instant catches an `AddDate(0, -1, 0)` bug. It
+  does not — subtracting a month from the 15th is always valid, which is precisely why
+  `TestGetEmailMetrics_MonthWindowsOnAMonthEndDate` pins its own clock to March 31. The comment
+  now says the fixture is deliberately unremarkable, and the knowledge doc no longer describes
+  all six email counters as having no ad-platform analogue: `Opens` and `Clicks` deliberately
+  overlap the shared fields.

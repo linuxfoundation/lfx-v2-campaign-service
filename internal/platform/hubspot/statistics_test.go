@@ -6,6 +6,7 @@ package hubspot
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -17,9 +18,11 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// fixedClock pins now() so window boundaries are assertable. 2026-03-15T12:00:00Z sits
-// mid-month in a 31-day month whose predecessor (February 2026) has 28 days — the shape
-// that catches an AddDate(0,-1,0) month-arithmetic bug.
+// fixedClock pins now() so window boundaries are assertable. 2026-03-15T12:00:00Z is
+// deliberately UNREMARKABLE: mid-month, so every window it exercises has an in-range
+// answer. It does NOT catch an AddDate(0, -1, 0) month-arithmetic bug — subtracting a
+// month from the 15th is always valid — which is exactly why
+// TestGetEmailMetrics_MonthWindowsOnAMonthEndDate pins its own clock to March 31.
 func fixedClock(t *testing.T, c *Client) *Client {
 	t.Helper()
 	return clockAt(t, c, time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC))
@@ -148,12 +151,54 @@ func TestGetEmailMetrics_RejectsAResponseListingTheEmailAmongOthers(t *testing.T
 	}
 }
 
+// A REPEATED id is a filter failure the "every element matches" reading waves through.
+// The request carries exactly one `emailIds` value, so [4242, 4242] is not an answer to
+// it: nothing says the aggregate below sums one email's counters rather than two, and a
+// response that mishandled the filter this way is no more trustworthy than one naming a
+// stranger. The guard therefore asks for the singleton, not for agreement.
+func TestGetEmailMetrics_RejectsADuplicatedEmailID(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, statsBody(t, `[4242,4242]`, fullCounters))
+	})
+	_, err := fixedClock(t, c).GetEmailMetrics(context.Background(), "4242", model.MetricsWindowToday)
+	if !errors.Is(err, ErrStatisticsFilterNotHonored) {
+		t.Fatalf("err = %v, want ErrStatisticsFilterNotHonored", err)
+	}
+}
+
+// The decode error is built from constants plus a length precisely so it can be logged,
+// and nothing enforced that until now. json.UnmarshalTypeError copies an overflowing
+// numeric literal into its own message, and BriefService.GetCampaignMetrics's default
+// branch logs safeErrSummary(err), which truncates but does not redact — so a wrapped
+// cause would put unvalidated upstream bytes in the server log. This is the same invariant
+// internal/platform/linkedin/metrics_test.go pins for the sibling read.
+func TestGetEmailMetrics_MalformedJSONIsRedacted(t *testing.T) {
+	// The marker MUST be a numeric literal. For a string where an int64 was expected,
+	// UnmarshalTypeError.Value is only the word "string" — the offending bytes never reach
+	// it, so a quoted marker could not fail this assertion even against a verbatim wrap.
+	const marker = "918273645509182736455091827364550"
+
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, `{"emails":[%s],"aggregate":{"counters":%s}}`, marker, fullCounters)
+	})
+	_, err := fixedClock(t, c).GetEmailMetrics(context.Background(), "4242", model.MetricsWindowToday)
+	if err == nil {
+		t.Fatal("want an error: the emails list does not decode into []int64")
+	}
+	if strings.Contains(err.Error(), marker) {
+		t.Errorf("err = %v, want the upstream literal absent — this string reaches the server log", err)
+	}
+	if !strings.Contains(err.Error(), "malformed JSON") {
+		t.Errorf("err = %v, want the fixed diagnostic", err)
+	}
+}
+
 // The absent-field half of the vocabulary guard. A renamed or dropped `counters` field
 // decodes to a nil map, so `len(counters) > 0` never fires and every lookup returns 0 —
 // an email HubSpot has just told us it covers reports as having sent nothing. The empty
 // object and the missing key are the same break and both must be caught. Nothing licenses
 // zeros here: an empty `emails` list is its own error, which
-// TestGetEmailMetrics_EmptyEmailsListMeansTheWindowMissedTheSend pins from the other side.
+// TestGetEmailMetrics_EmptyEmailsListIsNotAZero pins from the other side.
 func TestGetEmailMetrics_MissingCountersForACoveredEmailIsAnErrorNotZeros(t *testing.T) {
 	for _, body := range []string{
 		`{"emails":[4242],"aggregate":{"counters":{}}}`,

@@ -380,15 +380,18 @@ func parseEmailID(emailID string) (int64, error) {
 	return id, nil
 }
 
-// isExactlyID reports whether ids names want and nothing else. An extra id is a widened
-// filter, not extra information: the aggregate then covers emails we did not ask about.
+// isExactlyID reports whether ids is the ONE id we asked for and nothing else. An extra id
+// is a widened filter, not extra information: the aggregate then covers emails we did not
+// ask about.
+//
+// The length check is `== 1`, not `> 0`. The request carries exactly one `emailIds` value,
+// so [4242, 4242] is not the response to it — every element matching `want` says nothing
+// about how many emails the aggregate sums, and a duplicated id is as good a sign that the
+// filter was mishandled as a foreign one. Accepting it would let a doubled aggregate be
+// reported as this campaign's counters. Either the response is the singleton we asked for
+// or none of it is trustworthy.
 func isExactlyID(ids []int64, want int64) bool {
-	for _, id := range ids {
-		if id != want {
-			return false
-		}
-	}
-	return len(ids) > 0
+	return len(ids) == 1 && ids[0] == want
 }
 
 // hasKnownCounter reports whether at least one key belongs to HubSpot's counter
