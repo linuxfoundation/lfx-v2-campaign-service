@@ -62,6 +62,16 @@ func (r *fakeAudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a
 	if r.leaseHeld {
 		return nil, domain.ErrAudienceBuildInFlight
 	}
+	// Model the partial unique index itself, not just the flag: an existing BUILDING row for
+	// the same (brief, platform) rejects the insert. The flag alone cannot express WHEN the
+	// lease is taken, so a fake that only honoured it would pass whether the service claimed
+	// before or after its slow pre-build work — which is the ordering under test.
+	for _, existing := range r.items {
+		if existing.BriefID == a.BriefID && existing.Platform == a.Platform &&
+			existing.Status == model.AudienceBuilding {
+			return nil, domain.ErrAudienceBuildInFlight
+		}
+	}
 	return r.CreateAudience(ctx, a)
 }
 

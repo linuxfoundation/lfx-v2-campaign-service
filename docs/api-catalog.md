@@ -79,7 +79,7 @@ matters — a client that keys on the status code alone will do the wrong thing 
 | Message contains | Cause | Remedy |
 |---|---|---|
 | "the brief changed while its audience was being built; refresh and rebuild" | The brief was re-edited or re-approved between the build's approval check and the insert. | Re-read the brief and rebuild. |
-| "an audience build for this brief is already in progress" | Another build for this `(brief, platform)` holds the build lease — migration `000018`'s partial unique index over `status = 'building'`. | **Wait**, then re-read the audience list. Do NOT rebuild: the in-flight build is creating real HubSpot lists, and a second one creates a complete duplicate set that nothing downstream can tell apart. |
+| "an audience build for this brief is already in progress" | Another build for this `(brief, platform)` holds the build lease — migration `000018`'s partial unique index over `status = 'building'`. | **Wait**, then re-read the audience list. Do NOT rebuild: the in-flight build is creating real HubSpot lists, and a second one creates a complete duplicate set that nothing downstream can tell apart. If the holding build is genuinely dead, reconcile the lists named in its row's `inclusion_summary` FIRST and only then `PATCH` that row to `failed` — failing it frees the lease at once, so doing it first admits the next build while the dead build's lists are still in the portal. |
 
 A build that dies mid-flight leaves its row at `building` and keeps holding the lease. That is
 intentional — its lists exist upstream, so building again is exactly the duplication being

@@ -27,6 +27,15 @@ type fakeBuilder struct {
 
 	editions    []string
 	editionsErr error
+	// entered/release, when non-nil, let a test hold a build inside the warehouse call: the
+	// FIRST arrival closes `entered` and blocks until `release` is closed. This is the only
+	// way to observe WHEN the build lease is taken relative to the slow pre-build work.
+	// Only the first arrival is held, deliberately: a second one getting this far means the
+	// lease was NOT taken first, and it has to be allowed to run on so the test fails on the
+	// duplicate lists it creates rather than on the harness.
+	entered   chan struct{}
+	release   chan struct{}
+	enterOnce sync.Once
 
 	created   []string          // list names, in creation order
 	filters   map[string][]byte // name -> filter, so a test can assert the master's union
@@ -39,6 +48,14 @@ type fakeBuilder struct {
 }
 
 func (f *fakeBuilder) ResolvePastEditions(context.Context, string, string, string) ([]string, error) {
+	if f.entered != nil {
+		held := false
+		f.enterOnce.Do(func() { held = true })
+		if held {
+			close(f.entered)
+			<-f.release
+		}
+	}
 	if f.editionsErr != nil {
 		return nil, f.editionsErr
 	}
@@ -686,4 +703,45 @@ func TestBuildAudience_ConcurrentBuildIsRefusedWithItsOwnMessage(t *testing.T) {
 			"rebuilding is what duplicates the in-flight build's HubSpot lists")
 
 	assert.Empty(t, arepo.rows(), "the loser must not record a row; the index rejected its insert")
+}
+
+// TestBuildAudience_SecondRequestIsRejectedWhileTheFirstResolvesEditions pins the ORDERING the
+// build lease depends on. The partial unique index only serializes builds whose rows overlap, so
+// the claim has to be inserted before the slow pre-build work, not after it: with the warehouse
+// round-trip in front, a double-click's second request can be delayed past the first request's
+// entire build, insert cleanly against its now-`built` row, and create a second complete set of
+// HubSpot lists. Concurrent repository inserts cannot catch that — the two requests never reach
+// the repository at the same time. This test holds request A inside ResolvePastEditions and runs
+// B to completion against it.
+func TestBuildAudience_SecondRequestIsRejectedWhileTheFirstResolvesEditions(t *testing.T) {
+	b := &fakeBuilder{
+		editions: []string{"KubeCon Korea 2025"},
+		entered:  make(chan struct{}),
+		release:  make(chan struct{}),
+	}
+	s, _, _ := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea","location":"Korea","year":"2026"}`)
+
+	firstErr := make(chan error, 1)
+	go func() {
+		_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+			ProjectID: "cncf", BriefID: "brief-1",
+		})
+		firstErr <- err
+	}()
+	<-b.entered // A is in the warehouse call, before any HubSpot create.
+
+	_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	var conflict *audiences.ConflictError
+	require.ErrorAs(t, err, &conflict,
+		"the second request must be refused while the first holds the lease, got %v", err)
+	assert.Contains(t, conflict.Message, "already in progress")
+
+	close(b.release)
+	require.NoError(t, <-firstErr, "the holding request must still complete normally")
+
+	// Four lists: three inclusion groups plus the master. A second set would double this.
+	assert.Len(t, b.names(), 4,
+		"the refused request must not have created any HubSpot list; created %v", b.names())
 }

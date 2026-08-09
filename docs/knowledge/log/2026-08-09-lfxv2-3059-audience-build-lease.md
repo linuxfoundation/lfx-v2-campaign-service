@@ -196,3 +196,43 @@ index passes a name lookup. A dropped index passes an invalid-index scan. An imp
 name-and-validity check. A cleanup that asks the code under test whether it worked passes when
 the code under test is broken. Each time the fix is the same shape — assert the property you
 actually need, against a source that does not depend on the thing you are testing.
+
+## Round 4: the claim was taken after the slowest thing in the function
+
+Copilot, in a suppressed comment: the index is acquired too late to cover all concurrent
+`BuildAudience` requests, because `ResolvePastEditions` runs before the `building` insert.
+
+Right, and the reasoning generalises past this function: **a uniqueness constraint serializes
+only the interval in which the rows overlap.** Every step ahead of the insert is outside the
+lease. Here that step was a warehouse round-trip, so the uncovered interval was the longest one
+in the request — long enough for a double-click's second request to be admitted after the first
+had finished and to build a second complete set of billable HubSpot lists. The row-level test
+that shipped in round 1 could never see it: in the broken ordering the two requests do not reach
+the repository at the same time, which is the whole defect.
+
+The reorder was cheaper than it looked because the plan validation that had to stay in front of
+the claim does not need the editions. `BuildPlan`'s error set is the country, the event name and
+the country-only group-4 filter; the editions-dependent filter's two error branches (no
+editions, a blank name) are unreachable from the only point that calls it, since `nonBlank` has
+already dropped blanks and the branch is guarded on a non-empty result. So validating with an
+empty `PlanInput.PastEditions` is exactly as strong as validating with the real ones. The
+post-claim `BuildPlan` keeps an error path anyway — `releaseUnstartedClaim` marks the row failed
+— because "unreachable given the check above" is a property of today's code and a held lease is
+a stuck brief.
+
+The fake repository now models the partial index itself (an existing `building` row for the same
+brief and platform rejects the insert) rather than only honouring a `leaseHeld` flag. The flag
+cannot express WHEN the lease is taken, so a fake that only had it would pass under either
+ordering. Reverting the reorder makes the new test report `got <nil>` where it required a 409.
+
+Second suppressed comment, same review: the 409's message told an operator to fail a stuck row
+without naming the prerequisite documented in `internal-audience.md` — reconcile its HubSpot
+lists first. Also right, and worse than a wording slip: failing the row frees the lease at once,
+so following the message literally admits the next build while the dead build's lists are still
+in the portal. The message, the concept doc and `docs/api-catalog.md`'s remedy column now all
+state the reconciliation first.
+
+A third item — that `internal-infrastructure-postgres.md` calls a migration error "permanent"
+while the container keeps retrying — was already fixed in `7010eea5`, which added exactly that
+distinction ("permanent here means the container stops trying, not that it keeps trying"). No
+change.

@@ -187,9 +187,48 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		return nil, audienceValidationErr(derr)
 	}
 
-	// Resolve past editions BEFORE creating anything. A warehouse failure here must not leave
-	// half-built lists in the portal, and the names it returns are the only acceptable source
-	// for the group-5/7 filters.
+	// Validate the plan BEFORE claiming, and do it WITHOUT the past editions. That is exactly
+	// as strong as validating with them: every error BuildPlan can return comes from the
+	// country, the event name, or the country-only group-4 filter. The editions-dependent
+	// filter is reached only once at least one NON-BLANK edition survives `nonBlank`, which is
+	// precisely when its own two error branches (no editions, a blank name) cannot fire. So
+	// nothing is deferred by checking early — and a brief that cannot be planned still leaves
+	// no building row behind.
+	if _, perr := audience.BuildPlan(audience.PlanInput{
+		EventName: details.EventName,
+		Country:   details.Country,
+	}); perr != nil {
+		return nil, audienceValidationErr(perr)
+	}
+
+	// CLAIM FIRST, and note what that ordering is for. The partial unique index from migration
+	// 000018 only serializes builds whose rows OVERLAP, so every slow step running BEFORE the
+	// insert is a window in which a second request finds nothing to conflict with. Resolving
+	// past editions first — a Snowflake round-trip, the slowest thing in this function — left a
+	// window wide enough that a double-click's second request could be delayed past the first
+	// request's entire build, insert cleanly against its now-`built` row, and go on to create a
+	// whole second set of HubSpot lists. Recording the intent first also does what the original
+	// ordering was written for: an interrupted build is a visible `building` row rather than a
+	// silent gap.
+	//
+	// Gate the insert on the brief STILL being approved at the version read above — the plain
+	// create only checks `status <> 'archived'`, so a concurrent ReplaceBrief that reset the
+	// brief to draft would otherwise let the build create REAL HubSpot lists from a stale
+	// approved snapshot. Mirrors CreateJobForApprovedBrief.
+	row := &model.CampaignAudience{
+		ProjectID: p.ProjectID,
+		BriefID:   p.BriefID,
+		Platform:  model.ProviderHubSpot,
+		Status:    model.AudienceBuilding,
+		CreatedBy: marshalActor(actorFromCtx(ctx)),
+	}
+	created, cerr := repo.CreateAudienceForApprovedBrief(ctx, row, approvedVersion)
+	if cerr != nil {
+		return nil, mapAudienceErr(cerr)
+	}
+
+	// Past editions are resolved under the claim. Nothing has been created upstream yet, so a
+	// warehouse failure here still cannot leave half-built lists in the portal.
 	// Pass the year-FREE family term. The event name normally carries its year, and the
 	// warehouse both matches the term and excludes the year — so sending the full name asks for
 	// rows containing 2026 that do not contain 2026, which matches nothing and degrades every
@@ -231,37 +270,18 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		PastEditions:       editions,
 		EditionsUnnarrowed: unnarrowed,
 	}
-	// Validate the plan BEFORE creating the row: a brief that cannot be planned must not leave
-	// a building row behind. The plan is rebuilt below with the row id as its BuildRef.
-	if _, perr := audience.BuildPlan(planInput); perr != nil {
-		return nil, audienceValidationErr(perr)
-	}
-
-	// Record the intent first (status defaults to building), so an interrupted build is
-	// visible and reconcilable instead of silently absent.
-	row := &model.CampaignAudience{
-		ProjectID: p.ProjectID,
-		BriefID:   p.BriefID,
-		Platform:  model.ProviderHubSpot,
-		Status:    model.AudienceBuilding,
-		CreatedBy: marshalActor(actorFromCtx(ctx)),
-	}
-	// Gate the insert on the brief STILL being approved at the version read above. Between
-	// that check and here we resolved past editions (a warehouse round-trip), so a concurrent
-	// ReplaceBrief can have reset the brief to draft and bumped its version — and the plain
-	// create only checks `status <> 'archived'`, so the build would go on to create REAL
-	// HubSpot lists from a stale approved snapshot. Mirrors CreateJobForApprovedBrief.
-	created, cerr := repo.CreateAudienceForApprovedBrief(ctx, row, approvedVersion)
-	if cerr != nil {
-		return nil, mapAudienceErr(cerr)
-	}
-
 	// Rebuild the plan with the row id as BuildRef so THIS build's list names cannot collide
 	// with a previous build's for the same brief — HubSpot list names are portal-global, and a
 	// collision would silently adopt the older build's lists.
 	planInput.BuildRef = created.ID
 	plan, perr := audience.BuildPlan(planInput)
 	if perr != nil {
+		// Unreachable given the pre-claim validation above, which sees the same error set. The
+		// claim is held now, though, and a stuck `building` row blocks every later build of this
+		// brief — so release it rather than trusting that reasoning to stay true. Nothing was
+		// created upstream, which is exactly the condition under which the buildErr path below
+		// also marks the row FAILED.
+		releaseUnstartedClaim(ctx, repo, created, perr)
 		return nil, audienceValidationErr(perr)
 	}
 
@@ -345,6 +365,24 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		return nil, audiencePersistErr(unrecordedListsErr(uerr, created.ID, reported, false))
 	}
 	return audienceResult(updated), nil
+}
+
+// releaseUnstartedClaim marks a just-inserted `building` row FAILED when the build never
+// reached HubSpot. The row is the audience-build lease: holding it after the request has given
+// up blocks every later build of the same brief behind a 409 until an operator intervenes, and
+// unlike the partial-build paths there is nothing upstream to reconcile first. Detached and
+// bounded for the same reason the other persists are — a client disconnect must not be the
+// reason a lease stays held.
+func releaseUnstartedClaim(ctx context.Context, repo domain.AudienceRepository, row *model.CampaignAudience, cause error) {
+	row.Status = model.AudienceFailed
+	relCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), audiencePersistTimeout)
+	defer cancel()
+	if _, uerr := repo.UpdateAudience(relCtx, row, row.Version); uerr != nil {
+		// Best effort by construction: the caller is already returning an error, so there is
+		// nothing better to do than name the row an operator will have to fail by hand.
+		slog.ErrorContext(ctx, "failed to release an audience build claim that never started",
+			"audience_id", row.ID, "cause", audience.SafeErrorCause(cause), "error", uerr)
+	}
 }
 
 // reconciliationDetail carries the facts about a build outcome that must reach the caller — which

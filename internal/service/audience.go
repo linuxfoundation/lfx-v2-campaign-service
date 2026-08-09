@@ -345,7 +345,13 @@ func mapAudienceErr(err error) error {
 		// the wrong instruction: nothing the caller asked for exists yet. The remedy is to
 		// wait for the build that holds the lease — or, if it died, to reconcile the
 		// HubSpot lists it left and PATCH its row to failed, which frees the slot.
-		return &audiences.ConflictError{Code: "409", Message: "an audience build for this brief is already in progress; wait for it to finish, or fail its audience row if it is stuck"}
+		//
+		// The message states the reconciliation FIRST because the two steps are not
+		// interchangeable. Failing the row frees the lease immediately, so an operator who
+		// does that before reconciling has admitted the next build while the dead build's
+		// lists are still in the portal — which creates the duplicate set this lease exists
+		// to prevent. The row's inclusion_summary carries the list ids to reconcile.
+		return &audiences.ConflictError{Code: "409", Message: "an audience build for this brief is already in progress; wait for it to finish, or — if it is stuck — first reconcile the HubSpot lists recorded on its audience row, then PATCH that row to failed"}
 	case errors.Is(err, domain.ErrConflict):
 		return &audiences.ConflictError{Code: "409", Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):

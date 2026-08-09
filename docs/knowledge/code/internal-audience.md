@@ -90,9 +90,28 @@ It must equally not be confused with the stale-approval 409, whose remedy is the
 that one says refresh and rebuild, and rebuilding is precisely what duplicates the in-flight
 build's lists.
 
+**An index only serializes builds whose rows overlap, so WHEN the row is inserted is part of
+the lease.** `BuildAudience` originally resolved past editions — a Snowflake round-trip, by far
+the slowest thing it does — before inserting, and everything ahead of that insert is a window in
+which a second request finds no row to conflict with. A double-click whose second request was
+delayed there long enough for the first to finish would insert cleanly against a now-`built`
+row and create a whole second set. The claim is therefore taken FIRST and the warehouse read
+happens under it. Plan validation still runs before the claim, and can: every error `BuildPlan`
+returns comes from the country, the event name, or the country-only group-4 filter, so
+validating with no editions sees the same error set as validating with them. The post-claim
+`BuildPlan` (the one carrying `BuildRef`) still releases the row on failure rather than
+trusting that argument to survive the next edit. `TestBuildAudience_SecondRequestIsRejectedWhileTheFirstResolvesEditions`
+holds one build inside the warehouse call and runs another to completion against it —
+concurrent repository inserts cannot catch this, because in the broken ordering the two
+requests never reach the repository at the same time.
+
 A build that dies holding the lease keeps blocking rebuilds. That is intended: its lists exist
 upstream, so the old answer of building again is what duplicated them. An operator reconciles
-the portal and then `PATCH update-audience`es the row to `failed`, which frees the slot.
+the portal FIRST and only then `PATCH update-audience`es the row to `failed`. That order is not
+stylistic: failing the row frees the slot immediately, so doing it first admits the next build
+while the dead build's lists are still in the portal — the duplicate set the lease exists to
+prevent, arrived at by following the remedy for it. The 409's message states the reconciliation
+first for the same reason.
 
 ## The event NAME decides the edition year
 
