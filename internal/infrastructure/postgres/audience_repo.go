@@ -48,8 +48,6 @@ const createAudienceQuery = `INSERT INTO campaign_audiences
 		)
 		RETURNING ` + audienceCols
 
-// updated_by is stamped here and NOWHERE else: created_by must keep naming the original
-// author, so this UPDATE never assigns it.
 // createAudienceForApprovedBriefQuery is the BUILD path's insert. It carries an actor too:
 // BuildAudience runs under a human's request, so the person who started the build is the
 // person who created the row.
@@ -59,13 +57,19 @@ const createAudienceForApprovedBriefQuery = `INSERT INTO campaign_audiences
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
 		RETURNING ` + audienceCols
 
+// updateAudienceQuery is the ONLY statement that changes updated_by after the row exists —
+// each edit replaces it, so the column names the LAST person to touch the row. The inserts
+// above set it once, at insert; nothing else writes it.
+//
+// It never assigns created_by, and that omission is the invariant: created_by must keep
+// naming the original author, so an UPDATE that touched it would make every edit look like
+// authorship. TestAudienceUpdate_NeverTouchesCreatedBy pins the absence.
 const updateAudienceQuery = `UPDATE campaign_audiences SET
 		platform_master_list_id=$1, suppression_list_ids=$2, inclusion_summary=$3,
 		status=$4, updated_by=$5, version=version+1, updated_at=now()
 		WHERE id=$6 AND brief_id=$7 AND project_id=$8 AND version=$9
 		RETURNING ` + audienceCols
 
-// CreateAudience inserts a new audience row and returns it.
 // CreateAudienceForApprovedBrief inserts the row only if the parent brief is still APPROVED at
 // expectedVersion. See the port for why the plain create is not sufficient here.
 //
@@ -117,6 +121,9 @@ func (r *AudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *mo
 	return out, nil
 }
 
+// CreateAudience inserts a new audience row and returns it. Its godoc used to sit above
+// CreateAudienceForApprovedBrief, where Go attached it to that function instead and this one
+// had none.
 func (r *AudienceRepo) CreateAudience(ctx context.Context, a *model.CampaignAudience) (*model.CampaignAudience, error) {
 	// Gate the insert on an ACTIVE parent brief scoped by BOTH (project_id, brief_id).
 	// A bare brief_id FK check would let a caller authorized for project A supply a
