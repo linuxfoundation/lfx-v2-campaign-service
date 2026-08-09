@@ -8,6 +8,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,7 +21,13 @@ import (
 // that catches an AddDate(0,-1,0) month-arithmetic bug.
 func fixedClock(t *testing.T, c *Client) *Client {
 	t.Helper()
-	withClock(func() time.Time { return time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC) })(c)
+	return clockAt(t, c, time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC))
+}
+
+// clockAt pins now() to an arbitrary instant, for the cases whose whole point is the date.
+func clockAt(t *testing.T, c *Client, at time.Time) *Client {
+	t.Helper()
+	withClock(func() time.Time { return at })(c)
 	return c
 }
 
@@ -68,28 +76,36 @@ func TestGetEmailMetrics_SendsTheWindowAsAnInclusiveUTCRange(t *testing.T) {
 	// that happens to be exercised elsewhere. end is always the final millisecond of the
 	// last day — see timeRangeForWindow on why not next-midnight.
 	cases := []struct{ window, start, end string }{
-		{"today", "2026-03-15T00:00:00Z", "2026-03-15T23:59:59Z"},
-		{"yesterday", "2026-03-14T00:00:00Z", "2026-03-14T23:59:59Z"},
-		{"last_7_days", "2026-03-09T00:00:00Z", "2026-03-15T23:59:59Z"},
-		{"last_14_days", "2026-03-02T00:00:00Z", "2026-03-15T23:59:59Z"},
-		{"last_30_days", "2026-02-14T00:00:00Z", "2026-03-15T23:59:59Z"},
-		{"this_month", "2026-03-01T00:00:00Z", "2026-03-15T23:59:59Z"},
+		{"today", "2026-03-15T00:00:00Z", "2026-03-15T23:59:59.999Z"},
+		{"yesterday", "2026-03-14T00:00:00Z", "2026-03-14T23:59:59.999Z"},
+		{"last_7_days", "2026-03-09T00:00:00Z", "2026-03-15T23:59:59.999Z"},
+		{"last_14_days", "2026-03-02T00:00:00Z", "2026-03-15T23:59:59.999Z"},
+		{"last_30_days", "2026-02-14T00:00:00Z", "2026-03-15T23:59:59.999Z"},
+		{"this_month", "2026-03-01T00:00:00Z", "2026-03-15T23:59:59.999Z"},
 		// February 2026 has 28 days. A month computed by subtracting one month from the
 		// 15th would still land here, so the assertion that matters is the 28th end date.
-		{"last_month", "2026-02-01T00:00:00Z", "2026-02-28T23:59:59Z"},
+		{"last_month", "2026-02-01T00:00:00Z", "2026-02-28T23:59:59.999Z"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.window, func(t *testing.T) {
+			// Guarded: httptest runs the handler on its own goroutine, so these writes and
+			// the reads below are a data race even though the request has returned by then
+			// — a happens-before the race detector cannot see.
+			var mu sync.Mutex
 			var gotStart, gotEnd, gotIDs, gotPath string
 			c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
 				gotPath = r.URL.Path
 				q := r.URL.Query()
 				gotStart, gotEnd, gotIDs = q.Get("startTimestamp"), q.Get("endTimestamp"), q.Get("emailIds")
+				mu.Unlock()
 				_, _ = io.WriteString(w, statsBody(t, `[4242]`, fullCounters))
 			})
 			if _, err := fixedClock(t, c).GetEmailMetrics(context.Background(), "4242", model.MetricsWindow(tc.window)); err != nil {
 				t.Fatalf("GetEmailMetrics: %v", err)
 			}
+			mu.Lock()
+			defer mu.Unlock()
 			if gotPath != statisticsPath {
 				t.Errorf("path = %q, want %q", gotPath, statisticsPath)
 			}
@@ -198,15 +214,17 @@ func TestCounterKeysAreTheDocumentedVocabulary(t *testing.T) {
 func TestGetEmailMetrics_RejectsAMalformedEmailIDBeforeAnyRequest(t *testing.T) {
 	for _, id := range []string{"", "abc", "0", "-5", "+42", "042", " 42", "42 ", "42.0", "4242abc"} {
 		t.Run(id, func(t *testing.T) {
-			var called bool
+			// atomic for the same reason as the range assertions: the handler runs on the
+			// server's goroutine, and the assertion below is on the test's.
+			var called atomic.Bool
 			c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
-				called = true
+				called.Store(true)
 				_, _ = io.WriteString(w, statsBody(t, `[4242]`, fullCounters))
 			})
 			if _, err := fixedClock(t, c).GetEmailMetrics(context.Background(), id, model.MetricsWindowToday); err == nil {
 				t.Fatalf("id %q was accepted", id)
 			}
-			if called {
+			if called.Load() {
 				t.Error("a request was sent for a malformed id")
 			}
 		})
@@ -255,10 +273,12 @@ func TestEveryMetricsWindowIsSupported(t *testing.T) {
 // clone path. Asserted through the public method so a future change to the idempotent flag
 // at the call site is caught.
 func TestGetEmailMetrics_RetriesA429(t *testing.T) {
-	var attempts int
+	// atomic, and not merely because of the assertion at the end: the two retry attempts
+	// are separate handler invocations that the server may run on different goroutines, so
+	// the read-modify-write itself is the race.
+	var attempts atomic.Int64
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
-		attempts++
-		if attempts == 1 {
+		if attempts.Add(1) == 1 {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
@@ -267,7 +287,46 @@ func TestGetEmailMetrics_RetriesA429(t *testing.T) {
 	if _, err := fixedClock(t, c).GetEmailMetrics(context.Background(), "4242", model.MetricsWindowToday); err != nil {
 		t.Fatalf("GetEmailMetrics: %v", err)
 	}
-	if attempts != 2 {
-		t.Errorf("attempts = %d, want 2", attempts)
+	if n := attempts.Load(); n != 2 {
+		t.Errorf("attempts = %d, want 2", n)
+	}
+}
+
+// TestGetEmailMetrics_MonthWindowsOnAMonthEndDate is the case the 2026-03-15 fixture
+// cannot make: subtracting a month from the 15th is always valid, so a naive
+// AddDate(0, -1, 0) would pass every assertion above.
+//
+// On the 31st it does not. AddDate NORMALIZES an out-of-range day — 2026-03-31 minus one
+// month is 2026-02-31, which becomes 2026-03-03 — so the naive form would report last_month
+// as a few days of MARCH, and this_month's start would follow it out of the month entirely.
+// timeRangeForWindow avoids that by computing both from the first of the month; this pins
+// that it still does.
+func TestGetEmailMetrics_MonthWindowsOnAMonthEndDate(t *testing.T) {
+	cases := []struct{ window, start, end string }{
+		{"this_month", "2026-03-01T00:00:00Z", "2026-03-31T23:59:59.999Z"},
+		{"last_month", "2026-02-01T00:00:00Z", "2026-02-28T23:59:59.999Z"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.window, func(t *testing.T) {
+			var mu sync.Mutex
+			var gotStart, gotEnd string
+			c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				q := r.URL.Query()
+				gotStart, gotEnd = q.Get("startTimestamp"), q.Get("endTimestamp")
+				mu.Unlock()
+				_, _ = io.WriteString(w, statsBody(t, `[4242]`, fullCounters))
+			})
+			onTheLastOfMarch := time.Date(2026, 3, 31, 12, 0, 0, 0, time.UTC)
+			if _, err := clockAt(t, c, onTheLastOfMarch).GetEmailMetrics(
+				context.Background(), "4242", model.MetricsWindow(tc.window)); err != nil {
+				t.Fatalf("GetEmailMetrics: %v", err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if gotStart != tc.start || gotEnd != tc.end {
+				t.Errorf("range = %s..%s, want %s..%s", gotStart, gotEnd, tc.start, tc.end)
+			}
+		})
 	}
 }

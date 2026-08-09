@@ -128,8 +128,14 @@ func (c *Client) GetEmailMetrics(ctx context.Context, emailID string, window mod
 
 	q := url.Values{}
 	// RFC3339 in UTC. The API documents these as ISO-8601 and the two agree for this shape.
-	q.Set("startTimestamp", start.Format(time.RFC3339))
-	q.Set("endTimestamp", end.Format(time.RFC3339))
+	//
+	// Nano, not plain RFC3339, because plain RFC3339 TRUNCATES the fraction: `end` is the
+	// final millisecond of the day and would go out as 23:59:59Z, silently dropping 999ms
+	// of it. Under an inclusive bound that is a real hole at the end of every window, and
+	// it contradicts the last-millisecond contract timeRangeForWindow documents. Nano emits
+	// only the digits present, so `start` (exactly midnight) is unchanged.
+	q.Set("startTimestamp", start.Format(time.RFC3339Nano))
+	q.Set("endTimestamp", end.Format(time.RFC3339Nano))
 	q.Set("emailIds", strconv.FormatInt(id, 10))
 
 	raw, err := c.doRequest(ctx, http.MethodGet, statisticsPath+"?"+q.Encode(), nil, true)

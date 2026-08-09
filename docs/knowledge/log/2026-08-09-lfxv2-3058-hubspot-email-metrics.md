@@ -47,8 +47,10 @@ aggregate.
 of CTR holds across every channel in a report). `cost_micros` is 0 — and that 0 means "this
 platform bills no per-send cost", not "this campaign was free". Email spend sits in the HubSpot
 subscription, invisible to this API. A consumer that blends it into a cross-channel
-cost-per-acquisition understates the real cost, so it is stated in the model doc, the Goa
-description, and the package doc. The field's shape gives no hint of it.
+cost-per-acquisition understates the real cost, so it is stated in the model doc and the
+package doc. The field's shape gives no hint of it. The Goa description is NOT one of those
+places yet — it still carries the generic per-platform cost wording; saying so there belongs
+with part 2, where the email window reaches the API surface.
 
 **Window validation runs before credentials are resolved.** An unsupported window is a
 permanent 400 whatever the connection looks like; resolving first would report a connection
@@ -61,9 +63,21 @@ the first of the month — `AddDate(0, -1, 0)` on the 31st normalizes into the f
 would shift `this_month`/`last_month` for three days of every long month. And `end` is the last
 millisecond of the final day, not next-midnight: HubSpot does not document whether
 `endTimestamp` is inclusive, and under either reading this range is off by at most a
-millisecond, where next-midnight would gain an entire extra day if the bound is inclusive. The
-test clock is pinned to 2026-03-15 — mid-month, in a 31-day month whose predecessor has 28 days
-— so both bugs are reachable from the fixture.
+millisecond, where next-midnight would gain an entire extra day if the bound is inclusive.
+
+That second one was only half designed out. `end` was BUILT as the final millisecond and then
+formatted with `time.RFC3339`, which truncates the fraction — so what actually went on the wire
+was `23:59:59Z`, giving away 999ms of every window and contradicting the contract the comment
+stated. `time.RFC3339Nano` fixes it and leaves `start` (exactly midnight, no fraction) alone.
+Worth naming as a class: the invariant was established in the value and then lost in the
+SERIALIZATION, where no test of `timeRangeForWindow` would ever see it. What caught it was
+asserting on the query string the handler received rather than on the returned `time.Time`.
+
+The main test clock is pinned to 2026-03-15 — mid-month, in a 31-day month whose predecessor has
+28 days. That reaches the next-midnight bug but NOT the month-arithmetic one: subtracting a month
+from the 15th is always valid, so `AddDate(0, -1, 0)` would have passed every assertion.
+`TestGetEmailMetrics_MonthWindowsOnAMonthEndDate` pins the 31st separately, where the naive form
+normalizes 2026-02-31 into 2026-03-03 and reports `last_month` as a few days of March.
 
 **Every guard was revert-checked.** Removing the filter-not-honored guard returns `nil` where
 the sentinel is expected; removing the counter-vocabulary guard does the same; relaxing id

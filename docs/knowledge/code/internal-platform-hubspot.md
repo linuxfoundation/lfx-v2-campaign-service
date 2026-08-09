@@ -190,8 +190,14 @@ and invite the caller to retry a request that can never succeed.
 HubSpot bills no per-send cost, so there is nothing to read and the field is 0. The
 meaning is "this platform bills no per-send cost", NOT "this campaign was free" — email
 spend lives in the subscription. A consumer blending this 0 into a cross-channel
-cost-per-acquisition understates the real cost. This is stated in three places (the
-model doc, the Goa description, and here) because the field's shape gives no hint of it.
+cost-per-acquisition understates the real cost, and the field's shape gives no hint of it,
+so it is stated wherever a consumer might meet the field: the model doc and here.
+
+The Goa description at `design/brief.go` is **not** one of those places yet — it still
+carries the generic per-platform cost wording, which says nothing about an email channel
+that reports zero. Saying so there is part of the endpoint work in part 2, where the email
+window reaches the API surface; recorded here so the gap is a known one rather than an
+oversight.
 
 ## Scope
 
