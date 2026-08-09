@@ -171,6 +171,15 @@ func (r *resolved) systemScoped(err error) error {
 	if r == nil || !r.fromSystem || err == nil || !errors.Is(err, domain.ErrConnectionNotUsable) {
 		return err
 	}
+	// Idempotent, so "callers can apply it unconditionally" holds even where two layers
+	// each apply it — a validator that tags its own returns, and a caller that tags
+	// everything it gets back. Without this the chain carries the sentinel twice and
+	// renders the prefix twice, which is what pushed the tagging up to one caller per
+	// path in the first place; that arrangement is exactly what let the toggle, metrics
+	// and create paths silently omit it while discovery had it.
+	if errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+		return err
+	}
 	return fmt.Errorf("%w: %w", domain.ErrSystemConnectionNotUsable, err)
 }
 

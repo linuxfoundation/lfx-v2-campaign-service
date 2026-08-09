@@ -5,6 +5,7 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -424,5 +425,92 @@ func TestSystemFallbackMarksOriginOnErrorsItDoesNotClassify(t *testing.T) {
 	}
 	if errors.Is(err, domain.ErrSystemConnectionOrigin) {
 		t.Errorf("err = %v, must not be attributed to the system row", err)
+	}
+}
+
+// TestSystemScopedCoversEveryCallerNotJustDiscovery: systemScoped was applied by ONE caller —
+// resolveGoogleAdsDiscoveryClient — so the three paths that resolve the same connection through
+// validateGoogleAdsConnection (Dispatch, and the toggle/metrics resolveGoogleAdsClient) returned
+// the identical LF-system-row defect untagged. A project running on the fallback then got a 400
+// telling it to go edit a connection it does not own and cannot reach, while the operator who
+// installed the LF credential was never paged.
+//
+// The defect used here is deliberately one only the VALIDATOR can see: resolve() itself already
+// tagged everything it classified (TestUnusableSystemConnectionKeepsItsOrigin covers that), so a
+// resolve-level defect would pass even with the tagging removed. An account-less system row
+// resolves cleanly and fails later, in validateGoogleAdsConnection — which is precisely the
+// window the caller-side arrangement left open.
+func TestSystemScopedCoversEveryCallerNotJustDiscovery(t *testing.T) {
+	// Two defect classes, one per defer this fix installs. The account-less row is
+	// validateGoogleAdsConnection's OWN branch and does not apply to discovery, which exists
+	// precisely to run without an account selected; the inactive row is
+	// validateGoogleAdsCredentials' and applies to all three.
+	defects := map[string]struct {
+		conn         func() *model.Connection
+		skipDiscover bool
+	}{
+		"no account selected": {
+			conn:         func() *model.Connection { return usableConn(goodGoogleAdsCreds, "") },
+			skipDiscover: true,
+		},
+		"connection not active": {
+			conn: func() *model.Connection {
+				c := usableConn(goodGoogleAdsCreds, "8666746580")
+				c.Status = model.StatusInactive
+				return c
+			},
+		},
+	}
+
+	callers := map[string]func(*GoogleAdsDispatcher) error{
+		"create/Dispatch": func(d *GoogleAdsDispatcher) error {
+			_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds,
+				json.RawMessage(`{"googleAdsConfig":{"budget":50}}`))
+			return err
+		},
+		"toggle+metrics/resolveGoogleAdsClient": func(d *GoogleAdsDispatcher) error {
+			_, err := d.resolveGoogleAdsClient(context.Background(), "cncf", model.ProviderGoogleAds)
+			return err
+		},
+		"discovery/resolveGoogleAdsDiscoveryClient": func(d *GoogleAdsDispatcher) error {
+			// Kept alongside the other two so the path that always had the tagging cannot
+			// regress while attention is on the two that did not.
+			_, err := d.resolveGoogleAdsDiscoveryClient(context.Background(), "cncf", model.ProviderGoogleAds)
+			return err
+		},
+	}
+
+	for defectName, defect := range defects {
+		for callerName, call := range callers {
+			if defect.skipDiscover && strings.HasPrefix(callerName, "discovery/") {
+				continue
+			}
+			t.Run(defectName+"/"+callerName, func(t *testing.T) {
+				dispatcherFor := func(scope string) *GoogleAdsDispatcher {
+					return NewGoogleAdsDispatcher(&scopedConnReader{
+						rows: map[string]*model.Connection{scope: defect.conn()},
+					}, identityEncryptor{})
+				}
+
+				err := call(dispatcherFor(model.SystemProjectID))
+				if !errors.Is(err, domain.ErrConnectionNotUsable) {
+					t.Fatalf("err = %v, want ErrConnectionNotUsable", err)
+				}
+				if !errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+					t.Errorf("err = %v, want it attributed to the SYSTEM connection — this caller "+
+						"sends the project to fix a row it does not own", err)
+				}
+
+				// And the mirror: the project's OWN broken row must not pick up the marker,
+				// or every 400 that names a fixable connection becomes an operator page.
+				err = call(dispatcherFor("cncf"))
+				if !errors.Is(err, domain.ErrConnectionNotUsable) {
+					t.Fatalf("own-row err = %v, want ErrConnectionNotUsable", err)
+				}
+				if errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+					t.Errorf("own-row err = %v, must not be attributed to the system account", err)
+				}
+			})
+		}
 	}
 }

@@ -107,3 +107,49 @@ whatever `DATABASE_URL` happens to hold, and everything would start while the da
 else. The server and `bootstrap-system-account` resolve the DSN through this same function; were
 they ever to disagree, the subcommand would install the LF credential in one database and the
 server would read from another, and the symptom would be a connection that is simply not there.
+
+
+## Follow-on (review round 2) — the audience tag had one caller, not four
+
+`systemScoped` re-attributes an unusable-connection defect to the LF system row so an operator
+is paged instead of a project being told to go edit a connection it does not own. It was applied
+at ONE call site — `resolveGoogleAdsDiscoveryClient` — on the reasoning that tagging at the
+caller avoids wrapping the sentinel twice.
+
+That reasoning held for the site it was written at and silently failed for every other one.
+`Dispatch` (create) and `resolveGoogleAdsClient` (toggle, metrics) resolve the same connection
+through the same validators and returned the identical LF-row defect **untagged**: a project
+running on the fallback got a 400 naming a connection it cannot reach, and nobody was paged.
+
+`resolve` itself was fine — it tags what it classifies, and `TestUnusableSystemConnectionKeepsItsOrigin`
+covers that. The gap was strictly the defects found AFTER resolve succeeds: inactive status,
+undecodable or incomplete credentials, and no account selected. An account-less system row
+resolves cleanly and fails in `validateGoogleAdsConnection`, which is exactly the window the
+caller-side arrangement left open.
+
+The fix moves the tagging from the callers into the two validators, as a named return plus
+`defer func() { err = res.systemScoped(err) }()`, so a return site added later cannot forget it.
+`systemScoped` gained an idempotence guard (it returns early when the error already carries
+`ErrSystemConnectionNotUsable`), which is what makes "callers can apply it unconditionally" —
+what its doc comment always claimed — actually true, and removes the duplicate-prefix objection
+that pushed the tagging up to the callers in the first place.
+
+`TestSystemScopedCoversEveryCallerNotJustDiscovery` runs both defect classes across all three
+callers, asserting the system row IS tagged and a project's own row is NOT. Reverting either
+`defer` fails it in five subtests.
+
+## Follow-on (review round 2) — a deleted connection does fall back
+
+Asked on review: does a soft-deleted project connection now silently run on the LF system
+account? It does, and it is intended. `Get` filters `status <> 'deleted'`, producing the same
+`domain.ErrNotFound` the fallback keys on, so a delete returns the project to the
+never-connected state — the state the fallback exists to serve. The alternative would make
+deleting a connection a way to break campaigns rather than a way to disconnect an ad account,
+and would make two projects in the same observable state behave differently on history the API
+does not expose.
+
+Pinned live, not with a fake: `TestSoftDeletedConnectionIsIndistinguishableFromNoConnection`
+creates a connection, deletes it, and asserts `Get` returns `ErrNotFound` while the row survives
+with `status = 'deleted'`. An in-memory fake returns `ErrNotFound` by construction and would
+pass against a `Get` that had lost its filter. If the product later decides a delete must STOP
+dispatch, that test is the one that changes — which makes it a decision rather than a drift.

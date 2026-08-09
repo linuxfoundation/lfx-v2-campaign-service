@@ -185,3 +185,58 @@ func TestConnectionUpdateWithCredentialWritesBothInOneStatement(t *testing.T) {
 			"the SAME rotation", blob, "ciphertext-v2")
 	}
 }
+
+// TestSoftDeletedConnectionIsIndistinguishableFromNoConnection pins the semantics behind a
+// review question on the system-account fallback: a project that DELETES its connection
+// afterwards dispatches on the LF system account.
+//
+// That is intended, not incidental. credsSource.resolve falls back only on domain.ErrNotFound
+// — every other failure means the project HAS a connection needing attention — and Get filters
+// status <> 'deleted', so a soft-deleted row produces exactly that sentinel. A delete therefore
+// returns the project to the never-connected state, which is the state the fallback exists to
+// serve. The alternative (dispatch fails once a connection has ever existed and been removed)
+// would make deleting a connection a way to break campaigns rather than a way to disconnect an
+// ad account, and it would make two projects in the same observable state behave differently
+// based on history the API does not expose.
+//
+// It is pinned HERE, against a real delete, because the whole behaviour rests on the repository
+// returning ErrNotFound rather than a deleted row: an in-memory fake returns ErrNotFound by
+// construction and would pass against a Get that had lost its filter. Should the product decide
+// a delete must instead STOP dispatch, this test is the one that has to change, which is the
+// point — it makes that a decision rather than a drift.
+func TestSoftDeletedConnectionIsIndistinguishableFromNoConnection(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+	repo := connectionRepo(pool)
+
+	projectID := dbtest.UniqueID(t, "project")
+	if _, err := repo.Create(ctx, newGoogleAdsConn(projectID, "8666746580")); err != nil {
+		t.Fatalf("create connection: %v", err)
+	}
+	if _, err := repo.Get(ctx, projectID, model.ProviderGoogleAds); err != nil {
+		t.Fatalf("get before delete: %v", err)
+	}
+
+	if err := repo.Delete(ctx, projectID, model.ProviderGoogleAds, nil); err != nil {
+		t.Fatalf("delete connection: %v", err)
+	}
+
+	_, err := repo.Get(ctx, projectID, model.ProviderGoogleAds)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("get after soft delete = %v, want domain.ErrNotFound — the credential resolver "+
+			"falls back to the LF system account on ErrNotFound and ONLY on ErrNotFound, so any "+
+			"other error here silently changes which account a disconnected project spends on", err)
+	}
+
+	// And the row is still there: a soft delete retains it for audit and undelete. If this
+	// ever reads 0 the delete became a hard one, and the "soft" in every comment above is a lie.
+	var remaining int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM google_ads_connections WHERE project_id = $1 AND status = 'deleted'`,
+		projectID).Scan(&remaining); err != nil {
+		t.Fatalf("count deleted rows: %v", err)
+	}
+	if remaining != 1 {
+		t.Errorf("deleted rows for %s = %d, want 1 — the delete must be soft", projectID, remaining)
+	}
+}
