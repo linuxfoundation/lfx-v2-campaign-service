@@ -39,12 +39,19 @@ The unusable-id case fails the WHOLE walk rather than skipping the row. A respon
 far from the documented one means it is not the response we think it is, and the rest of it
 is not trustworthy either.
 
-## `Data *[]struct`, and `make(..., 0, n)`
+## Nil vs. empty, and `make(..., 0, n)`
 
-`data` decodes into a POINTER slice so an absent or null `data` stays distinguishable from a
-present-but-empty `{"data":[]}`. Decoding both into a plain nil slice would let a malformed
-`{}` body read as "fully enumerated, zero accounts" — which is exactly the false absence the
-section above exists to prevent.
+The `data` guard leans on a property of `encoding/json` worth stating precisely, because it
+is easy to get backwards: a PRESENT empty array (`{"data":[]}`) is decoded into a **non-nil**
+empty slice, while an absent or null field leaves the slice **nil**. A plain slice therefore
+already separates the two, provided it starts nil — which is why the response struct is
+declared inside the page loop rather than reused across iterations. `Data == nil` then means
+"this body did not contain a result set", and a malformed `{}` cannot read as "fully
+enumerated, zero accounts".
+
+(An earlier version of this code used a `*[]struct` for that distinction and said a plain
+slice could not make it. That was simply wrong about the decoder, and the pointer bought
+nothing over the nil check.)
 
 The returned slice is `make([]AdAccount, 0, adAccountPageSize)` rather than a nil slice, for
 the same reason one layer up: a token that legitimately reaches zero ad accounts is an EMPTY

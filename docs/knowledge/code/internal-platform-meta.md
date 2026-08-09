@@ -296,9 +296,12 @@ one, and the caller acts on the absence: the account they wanted is simply not o
 they conclude their token cannot reach it. That is the same false-absence discipline the
 find-by-name lookups follow.
 
-`data` is decoded into a POINTER slice (`Data *[]struct`) so an ABSENT or null field is
-distinguishable from a present-but-empty `{"data":[]}`. Both decode to a nil plain slice,
-which would let a malformed `{}` success read as "fully enumerated, zero accounts". The
+The `data` guard rests on a property of `encoding/json` that is easy to state backwards: a
+PRESENT empty array decodes into a **non-nil** empty slice, while an absent or null field
+leaves the slice **nil**. A plain slice therefore already separates `{"data":[]}` from `{}`,
+as long as it starts nil — which is why the response struct is declared inside the page loop
+rather than reused. `Data == nil` then means "this body carried no result set", so a
+malformed `{}` cannot read as "fully enumerated, zero accounts". The
 accumulator is `make([]AdAccount, 0, n)` for the mirror-image reason: a token that
 legitimately reaches zero accounts is an ANSWER, and it has to stay distinguishable from
 "no answer" all the way up to the HTTP body, where nil serializes as `null` instead of `[]`.

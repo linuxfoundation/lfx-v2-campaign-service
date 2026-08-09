@@ -85,12 +85,14 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 			path += "&after=" + url.QueryEscape(after)
 		}
 		var resp struct {
-			// Data is a POINTER slice so an ABSENT/null `data` is distinguishable from a
-			// present-but-empty `{"data":[]}`. A malformed 2xx body like `{}` decodes with
-			// Data == nil and cannot prove the token reaches no accounts; an intentionally
-			// empty page is `{"data":[]}`. Decoding both to a plain nil slice would let a
-			// `{}` body read as "fully enumerated, zero accounts".
-			Data *[]struct {
+			// `resp` is declared INSIDE the loop, so Data starts nil on every page and its
+			// nil-ness is decided by this page's body alone. encoding/json replaces the
+			// slice with a non-nil empty one for a present `[]` and leaves it nil for an
+			// absent or null field, which is exactly the distinction the guard below needs:
+			// an intentionally empty page (`{"data":[]}`) proves the token reaches no
+			// accounts, while a malformed `{}` proves nothing and must not read as
+			// "fully enumerated, zero accounts".
+			Data []struct {
 				ID            string `json:"id"`
 				Name          string `json:"name"`
 				AccountStatus int    `json:"account_status"`
@@ -108,7 +110,7 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 		if resp.Data == nil {
 			return nil, fmt.Errorf("meta ad-account discovery returned a 2xx response with no data field; cannot confirm the token's accounts were enumerated")
 		}
-		for _, a := range *resp.Data {
+		for _, a := range resp.Data {
 			id := strings.TrimSpace(a.ID)
 			// accountIDRE is the SAME regexp AccountConfig.AccountID is validated against
 			// (client.go). Discovery deliberately reuses it rather than restating the

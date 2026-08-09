@@ -189,9 +189,12 @@ func TestListAdAccounts_FailsRatherThanTruncating(t *testing.T) {
 		wantErr string
 	}{{
 		name: "2xx with no data field cannot prove emptiness",
-		// `{}` is not `{"data":[]}`. Decoding both to a nil slice would let a malformed
-		// success read as "fully enumerated, zero accounts" — the exact false absence
-		// that sends a user hunting a permissions problem that does not exist.
+		// `{}` is not `{"data":[]}`: encoding/json leaves the slice nil for an absent
+		// field and makes it non-nil for a present empty array, and the walk keys off
+		// exactly that. Accepting `{}` would let a malformed success read as "fully
+		// enumerated, zero accounts" — the false absence that sends a user hunting a
+		// permissions problem that does not exist. The `{"data":[]}` case is pinned
+		// separately, by TestListAdAccounts_EmptyPageIsAnEmptyListNotNil.
 		pages:   []string{`{}`},
 		wantErr: "no data field",
 	}, {
