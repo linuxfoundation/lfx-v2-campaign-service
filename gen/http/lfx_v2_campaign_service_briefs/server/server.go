@@ -26,6 +26,7 @@ type Server struct {
 	UpdateBrief          http.Handler
 	ApproveBrief         http.Handler
 	DeleteBrief          http.Handler
+	FetchEventURL        http.Handler
 	CreateCampaigns      http.Handler
 	GetCampaign          http.Handler
 	GetCampaignMetrics   http.Handler
@@ -68,6 +69,7 @@ func New(
 			{"UpdateBrief", "PUT", "/projects/{project_id}/briefs/{brief_id}"},
 			{"ApproveBrief", "POST", "/projects/{project_id}/briefs/{brief_id}/approve"},
 			{"DeleteBrief", "DELETE", "/projects/{project_id}/briefs/{brief_id}"},
+			{"FetchEventURL", "POST", "/projects/{project_id}/fetch-event-url"},
 			{"CreateCampaigns", "POST", "/projects/{project_id}/briefs/{brief_id}/campaigns"},
 			{"GetCampaign", "GET", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}"},
 			{"GetCampaignMetrics", "GET", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/metrics"},
@@ -82,6 +84,7 @@ func New(
 		UpdateBrief:          NewUpdateBriefHandler(e.UpdateBrief, mux, decoder, encoder, errhandler, formatter),
 		ApproveBrief:         NewApproveBriefHandler(e.ApproveBrief, mux, decoder, encoder, errhandler, formatter),
 		DeleteBrief:          NewDeleteBriefHandler(e.DeleteBrief, mux, decoder, encoder, errhandler, formatter),
+		FetchEventURL:        NewFetchEventURLHandler(e.FetchEventURL, mux, decoder, encoder, errhandler, formatter),
 		CreateCampaigns:      NewCreateCampaignsHandler(e.CreateCampaigns, mux, decoder, encoder, errhandler, formatter),
 		GetCampaign:          NewGetCampaignHandler(e.GetCampaign, mux, decoder, encoder, errhandler, formatter),
 		GetCampaignMetrics:   NewGetCampaignMetricsHandler(e.GetCampaignMetrics, mux, decoder, encoder, errhandler, formatter),
@@ -103,6 +106,7 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.UpdateBrief = m(s.UpdateBrief)
 	s.ApproveBrief = m(s.ApproveBrief)
 	s.DeleteBrief = m(s.DeleteBrief)
+	s.FetchEventURL = m(s.FetchEventURL)
 	s.CreateCampaigns = m(s.CreateCampaigns)
 	s.GetCampaign = m(s.GetCampaign)
 	s.GetCampaignMetrics = m(s.GetCampaignMetrics)
@@ -124,6 +128,7 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountUpdateBriefHandler(mux, h.UpdateBrief)
 	MountApproveBriefHandler(mux, h.ApproveBrief)
 	MountDeleteBriefHandler(mux, h.DeleteBrief)
+	MountFetchEventURLHandler(mux, h.FetchEventURL)
 	MountCreateCampaignsHandler(mux, h.CreateCampaigns)
 	MountGetCampaignHandler(mux, h.GetCampaign)
 	MountGetCampaignMetricsHandler(mux, h.GetCampaignMetrics)
@@ -438,6 +443,60 @@ func NewDeleteBriefHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "delete-brief")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountFetchEventURLHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "fetch-event-url" endpoint.
+func MountFetchEventURLHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/fetch-event-url", f)
+}
+
+// NewFetchEventURLHandler creates a HTTP handler which loads the HTTP request
+// and calls the "lfx-v2-campaign-service-briefs" service "fetch-event-url"
+// endpoint.
+func NewFetchEventURLHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeFetchEventURLRequest(mux, decoder)
+		encodeResponse = EncodeFetchEventURLResponse(encoder)
+		encodeError    = EncodeFetchEventURLError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "fetch-event-url")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
 		payload, err := decodeRequest(r)
 		if err != nil {

@@ -41,6 +41,11 @@ func DeleteBriefLfxV2CampaignServiceBriefsPath(projectID string, briefID string)
 	return fmt.Sprintf("/projects/%v/briefs/%v", projectID, briefID)
 }
 
+// FetchEventURLLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service fetch-event-url HTTP endpoint.
+func FetchEventURLLfxV2CampaignServiceBriefsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/fetch-event-url", projectID)
+}
+
 // CreateCampaignsLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service create-campaigns HTTP endpoint.
 func CreateCampaignsLfxV2CampaignServiceBriefsPath(projectID string, briefID string) string {
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns", projectID, briefID)

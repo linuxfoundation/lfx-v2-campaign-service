@@ -207,6 +207,41 @@ var CampaignMetrics = Type("campaign-metrics", func() {
 	Required("campaign_id", "platform_campaign_id", "window", "impressions", "clicks", "cost_micros", "ctr")
 })
 
+// EventDetailsResult is what fetch-event-url returns: the metadata extracted from an
+// event page, plus where in the page it came from.
+//
+// Deliberately a NAMED type rather than Any. Any renders as `{}` in the generated
+// OpenAPI, so every generated client returns an untyped value and no consumer can
+// discover or validate the shape — the fields would exist only in prose. The cost of
+// naming it is that the shape becomes a contract, which is the point.
+//
+// Every attribute is OPTIONAL except extracted_from. A page that yields a name and
+// nothing else is a normal, useful result — the endpoint's own contract is that a
+// missing NAME is the only emptiness worth refusing (400), because a brief with no
+// event name is not a draft of anything. Marking the rest Required would turn each
+// ordinary omission into a server-side validation failure on a response, which is the
+// worst possible place to discover it.
+//
+// url is the page's own DECLARED landing page (JSON-LD `url` / `og:url`), falling back to
+// the URL that was fetched only when the page declares none — see the attribute's own
+// description. It is not called registration_url on purpose: the dispatchers treat that as
+// the link an ad sends a human to, and an event's landing page is frequently not its
+// registration form. A caller that wants them to be the same says so when it creates the
+// brief.
+var EventDetailsResult = Type("event-details", func() {
+	Attribute("event_name", String, "Event name", func() { Example("KubeCon + CloudNativeCon Europe 2026") })
+	Attribute("description", String, "Event description")
+	Attribute("location", String, "Event location as written on the page — free text, not a resolved place")
+	Attribute("start_date", String, "Event start date exactly as the page states it; NOT normalised to RFC 3339, because the source rarely is")
+	Attribute("end_date", String, "Event end date, same caveat as start_date")
+	Attribute("image", String, "Event image URL")
+	Attribute("url", String, "The event's own landing page, as the page declares it (JSON-LD url / og:url), falling back to the URL that was fetched when it declares none. NOT necessarily the fetched URL: a caller commonly pastes a link carrying tracking parameters, and the page's declared canonical is the better destination for an ad")
+	Attribute("extracted_from", String, "Which strategy produced this record — the whole record came from exactly one of them", func() {
+		Enum("jsonld", "opengraph", "fallback")
+	})
+	Required("extracted_from")
+})
+
 // CampaignUpdateInput is the mutable campaign payload (replace).
 var CampaignUpdateInput = Type("campaign-update-input", func() {
 	Attribute("campaign_name", String, "Campaign name")
@@ -364,6 +399,36 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Header("bearer_token:Authorization")
 			Response(StatusNoContent)
 			briefErrorResponses(false)
+		})
+	})
+
+	Method("fetch-event-url", func() {
+		Description("Fetch an event page and extract its details, for pre-filling a brief. Does not create anything.")
+		Payload(func() {
+			bearerToken()
+			// Slug-only, matching create-brief: the details returned here go straight
+			// into a brief, whose project_id is the campaign-name attribution key, so
+			// accepting a UUID here would let a caller fetch under one identifier and
+			// create under another.
+			projectSlugAttr()
+			Attribute("url", String, "Event page URL to fetch. Must be http or https.", func() {
+				Example("https://events.linuxfoundation.org/kubecon-cloudnativecon-europe/")
+			})
+			Required("project_id", "url")
+		})
+		Result(EventDetailsResult)
+		commonBriefErrors(true)
+		HTTP(func() {
+			// POST, not GET, though it creates nothing: the URL is a request BODY
+			// parameter. As a query parameter it would be written verbatim into access
+			// logs, proxy logs and browser history at every hop, and this endpoint makes
+			// the service fetch it — so the parameter is the interesting part of the
+			// request, not incidental. It is also unbounded in length, which query
+			// strings handle badly.
+			POST("/projects/{project_id}/fetch-event-url")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses(true)
 		})
 	})
 

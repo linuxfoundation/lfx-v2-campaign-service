@@ -42,6 +42,10 @@ type Client struct {
 	// delete-brief endpoint.
 	DeleteBriefDoer goahttp.Doer
 
+	// FetchEventURL Doer is the HTTP client used to make requests to the
+	// fetch-event-url endpoint.
+	FetchEventURLDoer goahttp.Doer
+
 	// CreateCampaigns Doer is the HTTP client used to make requests to the
 	// create-campaigns endpoint.
 	CreateCampaignsDoer goahttp.Doer
@@ -96,6 +100,7 @@ func NewClient(
 		UpdateBriefDoer:          doer,
 		ApproveBriefDoer:         doer,
 		DeleteBriefDoer:          doer,
+		FetchEventURLDoer:        doer,
 		CreateCampaignsDoer:      doer,
 		GetCampaignDoer:          doer,
 		GetCampaignMetricsDoer:   doer,
@@ -250,6 +255,30 @@ func (c *Client) DeleteBrief() goa.Endpoint {
 		resp, err := c.DeleteBriefDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "delete-brief", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// FetchEventURL returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service fetch-event-url server.
+func (c *Client) FetchEventURL() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeFetchEventURLRequest(c.encoder)
+		decodeResponse = DecodeFetchEventURLResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildFetchEventURLRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.FetchEventURLDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "fetch-event-url", err)
 		}
 		return decodeResponse(resp)
 	}

@@ -111,4 +111,18 @@ than left checked out. Without that hand-off the release would run on under its 
 `lockReleaseTimeout` (5s) while `Close` had already moved on, and `pool.Close` would absorb
 the difference outside `ContainerCloseTimeout`.
 
+## The event fetcher is built from config, not constructed inline
+
+`Container.eventFetcher` exists solely so `EVENT_URL_NAT64_PREFIXES` reaches
+`eventurl.WithNAT64Prefixes`. The well-known `64:ff9b::/96` is decoded unconditionally
+inside `eventurl`; RFC 6052 §2.2 network-specific prefixes are the operator's own global
+unicast space, undiscoverable in-process and indistinguishable from any other public
+prefix, so config is the only place that fact can come from. On a cluster that uses one,
+an unlisted prefix is a live SSRF hole — the translator, not this process, makes the IPv4
+connection.
+
+`WithNAT64Prefixes` panics on a malformed or non-RFC-6052 length, which is the wanted
+behaviour at this call site specifically: composition runs at startup, so a prefix typed
+wrong stops the pod instead of silently decoding at the wrong offset for its lifetime.
+
 See [internal/container](../../../internal/container).
