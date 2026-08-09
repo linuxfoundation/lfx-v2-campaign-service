@@ -188,6 +188,74 @@ func TestNewClient_RejectsAProxyURLThatIsNotAbsoluteHTTP(t *testing.T) {
 	}
 }
 
+// TestNewClient_RejectsAProxyURLCarryingUserinfoOrQuery pins the second reason a present
+// value can be unusable: it is a whole URL where a BASE url was required. The endpoint is
+// built by appending "/chat/completions", so a value ending in "?x=1" or "#f" yields a path
+// nobody wrote, and userinfo is a second credential channel this client neither asked for
+// nor manages. Both are also exactly where a token hides inside a URL, which is why the
+// message may not quote the value — the assertions below pin that too.
+func TestNewClient_RejectsAProxyURLCarryingUserinfoOrQuery(t *testing.T) {
+	const secret = "sup3r-s3cret" // secretlint-disable-line -- fixture asserting it is not echoed
+	for _, tc := range []struct{ name, url, component string }{
+		{"userinfo password", "https://user:" + secret + "@litellm.internal/v1", "userinfo"},
+		{"userinfo user only", "https://" + secret + "@litellm.internal/v1", "userinfo"},
+		{"query api key", "https://litellm.internal/v1?api-key=" + secret, "query"},
+		{"empty forced query", "https://litellm.internal/v1?", "query"},
+		{"fragment", "https://litellm.internal/v1#" + secret, "fragment"},
+		{"userinfo and query", "https://u:" + secret + "@litellm.internal/v1?k=" + secret, "userinfo, query"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewClient(Config{ProxyURL: tc.url, APIKey: testKey})
+			if !errors.Is(err, ErrProxyURLNotABase) {
+				t.Fatalf("NewClient(%q) err = %v, want ErrProxyURLNotABase", tc.name, err)
+			}
+			// Degrading callers match the two outer sentinels, so the new one must
+			// remain reachable through both or an unusable proxy stops degrading.
+			if !errors.Is(err, ErrInvalidProxyURL) || !errors.Is(err, ErrNotConfigured) {
+				t.Errorf("err does not satisfy ErrInvalidProxyURL/ErrNotConfigured: %v", err)
+			}
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("error message echoes the rejected value's secret component: %q", err.Error())
+			}
+			if !strings.Contains(err.Error(), tc.component) {
+				t.Errorf("error names %q, want it to name the offending component %q", err.Error(), tc.component)
+			}
+			// The host is the one part that is safe AND useful: it is what tells an
+			// operator which value they got wrong without reproducing any of it.
+			if !strings.Contains(err.Error(), "litellm.internal") {
+				t.Errorf("error %q should name the host so the operator can locate the value", err.Error())
+			}
+		})
+	}
+}
+
+// TestNewClient_RejectionNeverEchoesTheRawURL covers the OTHER rejection paths for the same
+// property. The parse-failure branch is the subtle one: url.Parse returns a *url.Error whose
+// Error() embeds the raw url verbatim, so simply wrapping it re-publishes a value that may
+// carry a token — and the wrapping looked entirely idiomatic.
+func TestNewClient_RejectionNeverEchoesTheRawURL(t *testing.T) {
+	const secret = "sup3r-s3cret" // secretlint-disable-line -- fixture asserting it is not echoed
+	for _, tc := range []struct{ name, url string }{
+		// Unparseable: "%zz" is an invalid escape, so url.Parse fails with the raw
+		// value — secret included — inside the *url.Error it returns.
+		{"parse failure", "https://user:" + secret + "@litellm.internal/%zz"},
+		// Wrong scheme, but userinfo still present: takes the scheme branch, which
+		// must report the components it JUDGED rather than the value it read.
+		{"bad scheme with userinfo", "ftp://user:" + secret + "@litellm.internal"},
+		{"schemeless with userinfo", "user:" + secret + "@litellm.internal"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewClient(Config{ProxyURL: tc.url, APIKey: testKey})
+			if !errors.Is(err, ErrInvalidProxyURL) {
+				t.Fatalf("err = %v, want ErrInvalidProxyURL", err)
+			}
+			if strings.Contains(err.Error(), secret) {
+				t.Fatalf("rejection echoed the credential: %q", err.Error())
+			}
+		})
+	}
+}
+
 // TestNewClient_AcceptsAUsableProxyURL is the other side, and it exists so the guard above
 // cannot be satisfied by rejecting everything. A path prefix is the real deployment shape
 // (the proxy is mounted at /v1), and a trailing slash must not produce a doubled separator.

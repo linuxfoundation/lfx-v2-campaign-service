@@ -265,8 +265,9 @@ func (c *Config) String() string {
 		// than dropped. Omission is safe but says nothing: "copy generation is not
 		// running" is diagnosed by knowing WHETHER a proxy and key are configured, and
 		// redactSecret answers exactly that — "" for unset, "xxxxx" for present — without
-		// putting the credential in a log. The URL and model are not secrets.
-		c.AIProxyURL,
+		// putting the credential in a log. The model is not a secret; the URL is reduced
+		// to its non-secret components rather than printed raw (see redactAIProxyURL).
+		redactAIProxyURL(c.AIProxyURL),
 		c.AIModel,
 		redactSecret(c.AIAPIKey),
 		c.PGHost,
@@ -308,6 +309,41 @@ func redactNATSURL(u string) string {
 		return u[:scheme+3] + "***@" + u[at+1:]
 	}
 	return "***@" + u[at+1:]
+}
+
+// redactAIProxyURL reduces AI_PROXY_URL to the components that cannot carry a credential:
+// scheme, host and path. Everything else is dropped.
+//
+// The value LOOKS secret-free — it is a service endpoint, and the key that authenticates
+// to it lives in its own field — but "looks secret-free" is not a property of the field,
+// it is a property of whatever an operator typed into it. A URL has two places a secret
+// rides for free: userinfo (`https://user:token@proxy/`, which Go's transport turns into
+// a Basic credential) and the query (`?api-key=…`, the shape several LiteLLM deployments
+// document). Both survive `%q` intact, and String() is the form every config log line
+// uses, so printing raw makes the pod log the disclosure channel.
+//
+// This does NOT mask wholesale the way redactDatabaseURL does, for the same reason
+// redactNATSURL does not: the one question this string exists to answer is "is copy
+// generation pointed at a proxy, and which one", and "[redacted]" answers neither.
+// Scheme, host and path answer both and are structurally incapable of carrying userinfo
+// or a query — url.Parse has already split those into their own fields by the time this
+// rebuilds the value. An unparseable value is the exception: there are no components to
+// trust, so it masks. Note this is redaction for DISPLAY only; llm.NewClient REJECTS a
+// proxy URL carrying either component, so a value reaching production has neither.
+func redactAIProxyURL(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(strings.TrimSpace(raw))
+	// A missing Host is the tell for an OPAQUE url ("mailto:u:p@host"), whose entire
+	// content lands in a field this function does not render and therefore cannot
+	// vouch for — url.Parse only splits out userinfo for an authority-form url. Both
+	// that and an unparseable value mask, for the same reason: nothing is known safe.
+	if err != nil || u.Host == "" {
+		return "[redacted]"
+	}
+	safe := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}
+	return safe.String()
 }
 
 // splitCSV parses a comma-separated env var into its non-empty, space-trimmed entries.

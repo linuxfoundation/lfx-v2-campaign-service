@@ -77,6 +77,22 @@ var (
 	// It exists only so the message names the defect instead of saying "missing".
 	ErrInvalidProxyURL = fmt.Errorf("%w: proxy url must be an absolute http(s) url", ErrNotConfigured)
 
+	// ErrProxyURLNotABase means the proxy URL carries userinfo, a query or a fragment —
+	// components a BASE url has no use for and that this client must refuse rather than
+	// tolerate. It wraps ErrInvalidProxyURL, so callers still degrade.
+	//
+	// Rejecting is the correct behaviour on two independent grounds, and either alone
+	// would justify it. The first is mechanical: the endpoint is built by appending
+	// "/chat/completions" to this value, and appending a path to a URL that already ended
+	// in "?x=1" or "#frag" produces a string whose path is not the one anybody wrote.
+	// That value would be accepted at startup and fail — or worse, silently mis-route —
+	// on every generation, which is the exact class of late failure this constructor
+	// exists to eliminate. The second is disclosure: userinfo and query are where a
+	// credential rides inside a URL, and a rejected value can never be logged, stored, or
+	// echoed by anything downstream. Tolerating them and stripping at print time would
+	// leave the raw value live in Config, in flight, and in whatever else formats it.
+	ErrProxyURLNotABase = fmt.Errorf("%w: proxy url must be a base url with no userinfo, query or fragment", ErrInvalidProxyURL)
+
 	// ErrEmptyCompletion means a 200 carried no usable content — distinct from a
 	// transport error, since the request did reach the model.
 	ErrEmptyCompletion = errors.New("llm: proxy returned no completion content")
@@ -180,12 +196,26 @@ func NewClient(cfg Config, opts ...Option) (*Client, error) {
 	// once per generation at Do() time, which is exactly the outcome this constructor
 	// exists to prevent. Hostname() strips the port and is empty for that value. The
 	// LinkedIn and Reddit clients guard the same way, for the same reason.
+	//
+	// No branch below echoes cfg.ProxyURL. A value this constructor is REJECTING is the
+	// one least entitled to be quoted: it is unvalidated operator input, and the reasons
+	// it can be invalid include "it has a token in its userinfo". Quoting it would put
+	// that token in the startup log and in every error string the failure propagates
+	// through, which is a worse outcome than the misconfiguration itself. Each branch
+	// instead names the components it judged — scheme and host, which url.Parse has
+	// already separated from userinfo and query and which therefore cannot carry one.
 	u, perr := url.Parse(cfg.ProxyURL)
 	switch {
 	case perr != nil:
-		return nil, fmt.Errorf("%w: %w", ErrInvalidProxyURL, perr)
+		// url.Error.Error() embeds the raw URL verbatim, so the wrapped error is
+		// unwrapped to its bare cause. errors.Is/As still reach nothing useful here —
+		// the cause is an unexported *url.EscapeError or a parse message — and the
+		// sentinel above is what callers actually match on.
+		return nil, fmt.Errorf("%w: %w", ErrInvalidProxyURL, parseCause(perr))
 	case u.Scheme != "http" && u.Scheme != "https", u.Hostname() == "":
-		return nil, fmt.Errorf("%w, got %q", ErrInvalidProxyURL, cfg.ProxyURL)
+		return nil, fmt.Errorf("%w, got scheme %q and host %q", ErrInvalidProxyURL, u.Scheme, u.Host)
+	case u.User != nil, u.RawQuery != "", u.ForceQuery, u.Fragment != "":
+		return nil, fmt.Errorf("%w (host %q carried: %s)", ErrProxyURLNotABase, u.Host, notBaseComponents(u))
 	}
 	c := &Client{
 		cfg: cfg,
@@ -201,6 +231,35 @@ func NewClient(cfg Config, opts ...Option) (*Client, error) {
 		o(c)
 	}
 	return c, nil
+}
+
+// parseCause returns the failure INSIDE a url.Parse error, discarding the *url.Error
+// wrapper whose Error() prints the raw url. Anything that is not a *url.Error is
+// returned as-is: url.Parse documents *url.Error as its only error type, so the
+// fallback is unreachable today and exists so a future change cannot silently make
+// this function drop an error instead of an url.
+func parseCause(err error) error {
+	var uerr *url.Error
+	if errors.As(err, &uerr) && uerr.Err != nil {
+		return uerr.Err
+	}
+	return err
+}
+
+// notBaseComponents names which disallowed components a proxy URL carried, so the
+// operator can fix it without the message reproducing any of their VALUES.
+func notBaseComponents(u *url.URL) string {
+	var found []string
+	if u.User != nil {
+		found = append(found, "userinfo")
+	}
+	if u.RawQuery != "" || u.ForceQuery {
+		found = append(found, "query")
+	}
+	if u.Fragment != "" {
+		found = append(found, "fragment")
+	}
+	return strings.Join(found, ", ")
 }
 
 // noFollow refuses redirects; following one resends the bearer credential.

@@ -328,6 +328,49 @@ func TestConfigString_RedactsNATSCredentials(t *testing.T) {
 	}
 }
 
+// TestConfigString_RedactsAIProxyCredentials pins that String() does not leak a credential
+// carried INSIDE the proxy URL. The field looks secret-free — the key has its own field —
+// but a URL has two places a token rides for free, userinfo and the query, and both survive
+// %q intact into every log line that formats the config.
+func TestConfigString_RedactsAIProxyCredentials(t *testing.T) {
+	for name, raw := range map[string]string{
+		"userinfo": "https://svcuser:sup3r-s3cret@litellm.example.com/v1",          // secretlint-disable-line -- fixture
+		"query":    "https://litellm.example.com/v1?api-key=sup3r-s3cret",          // secretlint-disable-line -- fixture
+		"both":     "https://u:sup3r-s3cret@litellm.example.com/v1?k=sup3r-s3cret", // secretlint-disable-line -- fixture
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := &Config{AIProxyURL: raw}
+			for _, formatted := range []string{cfg.String(), cfg.GoString(), fmt.Sprintf("%v", cfg), fmt.Sprintf("%+v", cfg)} {
+				assert.NotContains(t, formatted, "sup3r-s3cret", "a credential inside AI_PROXY_URL must never reach a log line")
+				assert.NotContains(t, formatted, "svcuser", "the username is part of the credential")
+				// Wholesale masking would cost the only question this field answers.
+				assert.Contains(t, formatted, "https://litellm.example.com/v1")
+			}
+		})
+	}
+}
+
+// TestRedactAIProxyURL_Shapes covers the forms the value takes, including the ordinary one
+// where there is nothing to redact and masking would needlessly hide the endpoint.
+func TestRedactAIProxyURL_Shapes(t *testing.T) {
+	cases := map[string]string{
+		"":                                  "",
+		"https://litellm.example.com":       "https://litellm.example.com",
+		"https://litellm.example.com/v1/":   "https://litellm.example.com/v1/",
+		"http://litellm:4000/v1":            "http://litellm:4000/v1",
+		"https://u:p@litellm.example.com/v": "https://litellm.example.com/v", // secretlint-disable-line -- fixture
+		"https://litellm.example.com?k=v":   "https://litellm.example.com",
+		"https://litellm.example.com/v#f":   "https://litellm.example.com/v",
+		// Unparseable: no component this function can vouch for, so it masks.
+		"https://litellm.example.com/%zz": "[redacted]",
+		// Opaque/relative: the whole value sits in a field this does not render.
+		"mailto:u:p@x": "[redacted]", // secretlint-disable-line -- fixture
+	}
+	for in, want := range cases {
+		assert.Equal(t, want, redactAIProxyURL(in), "input %q", in)
+	}
+}
+
 // TestRedactNATSURL_Shapes covers the forms a NATS URL actually takes, including the ones with
 // nothing to redact (where masking would needlessly hide the host).
 func TestRedactNATSURL_Shapes(t *testing.T) {

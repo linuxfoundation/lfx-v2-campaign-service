@@ -93,6 +93,29 @@ only so the message names the defect. The validated value is used to build the
 `/chat/completions` endpoint once, stored on the client, so requests cannot use a form
 construction never checked.
 
+### A base url, and nothing more — `ErrProxyURLNotABase`
+
+Construction also rejects a proxy URL carrying **userinfo, a query or a fragment**, with
+`ErrProxyURLNotABase` (which wraps `ErrInvalidProxyURL`, so callers still degrade). Two
+independent reasons, either sufficient on its own. Mechanically, the endpoint is built by
+appending `/chat/completions` to this value: append a path to something ending in `?x=1` or
+`#frag` and the result's path is not the one anybody wrote — a value accepted at startup that
+then fails, or silently mis-routes, on every generation, which is the very class of late
+failure the eager constructor exists to remove. And for disclosure: userinfo and the query are
+the two places a credential rides for free inside a URL (`https://user:token@proxy/`, which
+Go's transport turns into a Basic credential; `?api-key=…`, a shape several LiteLLM
+deployments document). Rejecting is stronger than stripping at print time, because a rejected
+value never reaches `Config`, a log, or anything downstream that formats it.
+
+**No rejection path echoes the value.** A URL this constructor is refusing is the one least
+entitled to be quoted — it is unvalidated operator input, and one reason it can be invalid is
+"there is a token in its userinfo". Each branch names the components it JUDGED instead:
+scheme and host, which `url.Parse` has already separated from userinfo and query and which
+therefore cannot carry either. The parse-failure branch is the subtle one and the one that
+looked most idiomatic before the fix: `url.Parse` returns a `*url.Error` whose `Error()`
+embeds the raw url verbatim, so `fmt.Errorf("%w: %w", sentinel, perr)` re-publishes the whole
+credential-bearing string. `parseCause` unwraps to the bare cause first.
+
 **There is no such composition root yet.** This package has no non-test caller: nothing in
 `internal/container` imports it, so nothing currently logs `ErrNotConfigured` or degrades
 anything. That wiring is part 2 of LFXV2-2775, which adds the email-copy step to the HubSpot
