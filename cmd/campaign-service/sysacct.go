@@ -58,7 +58,7 @@ func parseProviderConfig(s string) (map[string]string, error) {
 func runSysacctBootstrap(args []string) error {
 	fs := flag.NewFlagSet(bootstrapSystemAccountCmd, flag.ContinueOnError)
 	provider := fs.String("provider", "", "provider to install (e.g. google-ads)")
-	accountID := fs.String("account-id", "", "optional ad account id; omit to install credentials first and discover the account afterwards")
+	accountID := fs.String("account-id", "", "ad account id; omittable for google-ads only, to install credentials first and discover the account afterwards (every other provider is refused without it: no discovery endpoint exists to finish the row later)")
 	configKV := fs.String("config", "", "non-secret provider config as key=value pairs, e.g. org_id=123")
 	if err := fs.Parse(args); err != nil {
 		return err
