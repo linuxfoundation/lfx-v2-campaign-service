@@ -219,6 +219,43 @@ write over it would turn a token-decoding regression into a total outage of brie
 creation. Neither column is exposed on the Goa surface or in the index payload, matching
 the existing `approved_by` precedent.
 
+## Live-database tests (`dbtest/`)
+
+Almost every test in this package asserts over SQL **source text** — `campaign_repo_test.go`
+regexes the `ON CONFLICT` clauses, `campaign_repo_test.go` regexes the claim query. Those
+assertions are worth having, but they can only check that a string still looks the way
+someone decided it should look. They cannot check whether PostgreSQL accepts the statement,
+whether an index the statement depends on still exists, or whether a fix changed anything
+observable. The cost is on the record: the `UPDATE ... RETURNING` fix on the connection repo
+could not be revert-checked, because reverting it produced source text no assertion here
+disagreed with, and a test that cannot fail when the fix is removed is not evidence.
+
+`dbtest` closes that gap. `dbtest.Pool(t)` returns a pool against `TEST_DATABASE_URL` with
+the migrations applied; with the variable unset every helper calls `t.Skip`, so `go test
+./...` still works on a laptop with no database. CI supplies a `postgres:16-alpine` service
+container, and `Pool` **fails** rather than skips when the variable is empty while `CI` is
+set — otherwise deleting the service block from the workflow would make the live suite skip
+forever while CI kept reporting green. That decision lives in `verdict`, which takes both
+values as arguments so it can be tested from a laptop: the case that matters most, "on CI
+with no database", is by definition one no live test could ever run.
+
+Two properties are worth knowing before adding a test here.
+
+**The schema is migrated once per package run, and rows are never cleaned up.** Migrating is
+the slow part. Isolation therefore comes from unique keys, not from a fresh schema — which is
+also what production does, since one schema serves every project. Use `dbtest.UniqueID` for
+every identifier a test writes. It appends random bytes for exactly this reason: a purely
+name-derived id collides with the row the PREVIOUS run inserted against
+`uq_campaign_briefs_project_event`, which breaks `go test -count=2` and, worse, turns a
+failure at setup into a test that never reaches its own assertion.
+
+**What belongs here is a claim about the SERVER, not about the code.** The two tests present
+both pin migration 000013/000014: that the bare `ON CONFLICT (brief_id, platform)` raises
+SQLSTATE `42P10` now that the full unique constraint is gone, and that a `'deleted'` row stops
+occupying its `(brief_id, platform)` slot. Restore the dropped constraint and both fail — that
+is the check the regex test cannot perform, and it is the reason to reach for this package
+rather than another source-text assertion.
+
 ## DeleteCampaign's guards
 
 `DeleteCampaign` takes a `SELECT status, version … FOR UPDATE` lock inside one
