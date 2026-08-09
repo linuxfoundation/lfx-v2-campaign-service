@@ -35,7 +35,16 @@ and `lfx-v2-meeting-service` (both at `internal/infrastructure/auth/jwt.go`).
 the provider cannot derive the key-set address by OIDC discovery. The fetch gets an
 explicit client timeout: the provider's default `http.Client` has none, and the cold fetch
 runs while holding the provider's write lock, so a stalled Heimdall would block every
-authentication on the pod for as long as the connection hangs. Every refusal returns
+authentication on the pod for as long as the connection hangs.
+
+That write lock is also why the key fetch is **coalesced**. `jwks.CachingProvider` does not
+do it itself: on a miss, `refreshKey` takes the lock and fetches *without re-checking the
+cache*, so N simultaneous first requests become N serialized fetches and the Nth caller
+waits roughly N × fetch. Authentication runs on every request, so the queue is the whole
+request load — reachable on the startup burst and on a TTL expiry that coincides with a slow
+JWKS endpoint. `coalesceKeyFunc` wraps the provider's `KeyFunc` in a `singleflight` group,
+using `DoChan` so each caller keeps its own deadline, and `context.WithoutCancel` inside the
+shared call so the first caller's cancellation cannot fail everyone waiting on its result. Every refusal returns
 one sentinel, `ErrUnauthenticated`, mapped to one message — a specific one only tells the
 sender which part of the token to fix next. The reason is wrapped so the service can
 **log** it, never return it.

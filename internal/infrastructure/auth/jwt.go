@@ -23,6 +23,7 @@ import (
 
 	"github.com/auth0/go-jwt-middleware/v2/jwks"
 	"github.com/auth0/go-jwt-middleware/v2/validator"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
@@ -99,10 +100,12 @@ func New(cfg Config) (*Verifier, error) {
 		// check, on the endpoints that spend money. The empty default and the parity test
 		// keep the chart honest about its own value; neither can stop an override.
 		//
-		// KUBERNETES_SERVICE_HOST is the discriminator because the kubelet injects it into
-		// every pod and the chart cannot unset it: the same override that would enable the
-		// bypass cannot also hide the cluster. A laptop, `go run`, a plain container and
-		// CI do not have it, so the developer workflow this exists for is untouched.
+		// InCluster is the discriminator, and it deliberately does NOT rest on
+		// KUBERNETES_SERVICE_HOST alone — deployment.yaml renders arbitrary env names, so
+		// the same override that enables this bypass could have cleared that variable too.
+		// See config.runningInCluster for the two signals and the chart-side guard. A
+		// laptop, `go run`, a plain container and CI trip neither, so the developer
+		// workflow this exists for is untouched.
 		//
 		// The refusal is an error, not a silent downgrade to real verification: a deploy
 		// that asked for no authentication has a broken intent, and starting anyway —
@@ -140,7 +143,7 @@ func New(cfg Config) (*Verifier, error) {
 		jwks.WithCustomClient(&http.Client{Timeout: jwksFetchTimeout}))
 
 	v, err := validator.New(
-		provider.KeyFunc,
+		coalesceKeyFunc(provider.KeyFunc),
 		signatureAlgorithm,
 		issuer.String(),
 		[]string{audience},
@@ -151,6 +154,42 @@ func New(cfg Config) (*Verifier, error) {
 		return nil, fmt.Errorf("build JWT validator: %w", err)
 	}
 	return &Verifier{validator: v}, nil
+}
+
+// coalesceKeyFunc collapses concurrent COLD-cache JWKS fetches into one.
+//
+// jwks.CachingProvider does not do this itself. On a miss its KeyFunc calls refreshKey,
+// which takes the write lock and then fetches WITHOUT re-checking the cache — so N
+// callers that all miss produce N serialized HTTP fetches rather than one, each bounded
+// by jwksFetchTimeout, and each holding the write lock for its full duration. The Nth
+// caller therefore waits roughly N × fetch, not one fetch. That is reachable twice: the
+// startup burst before anything is cached, and a TTL expiry that coincides with the JWKS
+// endpoint being slow or down. Authentication is on every request, so the queue is the
+// whole request load.
+//
+// DoChan rather than Do so each caller keeps its OWN deadline. Do returns only when the
+// shared call returns, which would let one caller's slow fetch outlive a later caller's
+// context; here a caller whose ctx expires stops waiting while the in-flight fetch
+// continues for whoever is still listening.
+//
+// The key is constant: this verifier has exactly one issuer, fixed at construction.
+func coalesceKeyFunc(inner func(context.Context) (any, error)) func(context.Context) (any, error) {
+	var group singleflight.Group
+	return func(ctx context.Context) (any, error) {
+		ch := group.DoChan("jwks", func() (any, error) {
+			// NOT the caller's ctx. The result is shared, so binding the fetch to whichever
+			// caller happened to arrive first would let that one's cancellation fail every
+			// other caller waiting on it. The provider's own http.Client timeout
+			// (jwksFetchTimeout) is what bounds this.
+			return inner(context.WithoutCancel(ctx))
+		})
+		select {
+		case res := <-ch:
+			return res.Val, res.Err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 }
 
 // orDefault trims v and substitutes def when the result is empty.

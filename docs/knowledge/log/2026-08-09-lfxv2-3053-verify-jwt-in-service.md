@@ -109,6 +109,18 @@ the one case it did not serve. The check is gone; who may authenticate is the ve
 question, and `TestAuthenticate_EmptyTokenIsTheVerifiersCallNotTheGuards` pins that a
 verifier accepting `""` is honoured while the existing half keeps the ordinary rejection.
 
+**One more library default that does not hold.** The bounded client stops a stalled fetch
+from hanging forever; it does not stop N of them queueing. `CachingProvider.refreshKey`
+takes the write lock and fetches without re-checking the cache, so concurrent cold misses
+serialize rather than share — the Nth caller waits N × fetch, on a path every request takes.
+`coalesceKeyFunc` collapses them with `singleflight.DoChan`; `context.WithoutCancel` inside
+the shared call keeps the first caller's cancellation from failing the rest, which
+`TestCoalesceKeyFunc_LeaderCancellationDoesNotFailFollowers` pins. The fan-in test asserts a
+range rather than exactly one fetch, following `x/sync`'s own `TestDoDupSuppress`: no barrier
+can observe the instant a goroutine is inside `singleflight`, so demanding exactly one is a
+flake, not a stricter test. It still binds — unwrapped, the revert-check measured 16 fetches
+for 16 callers.
+
 **Known follow-up.** Rejections surface as **400**, not 401 — the design declares no
 Unauthorized type and `commonBriefErrors` documents 400 as the JWTAuth rejection status;
 adding 401 is a design change with generated-code blast radius, filed separately.

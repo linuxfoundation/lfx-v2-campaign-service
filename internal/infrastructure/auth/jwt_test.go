@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -269,5 +271,134 @@ func TestNew_MockPrincipalIsRefusedInCluster(t *testing.T) {
 	// silently disabling local development.
 	if _, oerr := New(Config{MockLocalPrincipal: "local-dev"}); oerr != nil {
 		t.Fatalf("New outside a cluster: %v — the local-development bypass must still work", oerr)
+	}
+}
+
+// TestCoalesceKeyFunc_CollapsesConcurrentColdFetches pins the fan-in.
+//
+// jwks.CachingProvider serializes cold misses without coalescing them: refreshKey takes
+// the write lock and fetches WITHOUT re-checking the cache, so N simultaneous first
+// requests each perform a full JWKS fetch, one after another. This wrapper must turn that
+// into one fetch shared by all N.
+func TestCoalesceKeyFunc_CollapsesConcurrentColdFetches(t *testing.T) {
+	const callers = 16
+
+	var fetches int32
+	release := make(chan struct{})
+	// Every caller has been STARTED before the single fetch is allowed to return, so the
+	// count below measures genuine concurrency rather than callers arriving one at a time
+	// and legitimately fetching in sequence.
+	arrived := make(chan struct{}, callers)
+
+	kf := coalesceKeyFunc(func(context.Context) (any, error) {
+		atomic.AddInt32(&fetches, 1)
+		<-release
+		return "keyset", nil
+	})
+
+	var wg sync.WaitGroup
+	results := make([]any, callers)
+	errs := make([]error, callers)
+	for i := range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			arrived <- struct{}{}
+			results[i], errs[i] = kf(context.Background())
+		}()
+	}
+	for range callers {
+		<-arrived
+	}
+	// The leader is blocked in the fetch and the followers are blocked on its result;
+	// nothing can complete until this.
+	close(release)
+	wg.Wait()
+
+	// A RANGE, not exactly 1, and deliberately so: `arrived` is signalled just BEFORE the
+	// caller enters the wrapper, and no barrier can observe the moment a goroutine is
+	// actually inside singleflight. A caller descheduled in that window can miss the
+	// in-flight call and legitimately start a second one, so demanding exactly 1 makes the
+	// test flaky rather than strict. x/sync's own TestDoDupSuppress asserts the same shape
+	// for the same reason. The bound still binds: without the wrapper this is exactly
+	// `callers`, which is what the revert-check measured.
+	if n := atomic.LoadInt32(&fetches); n < 1 || n >= callers {
+		t.Errorf("JWKS was fetched %d times for %d concurrent cold callers, want at least one "+
+			"fetch shared by several callers (1 <= n < %d)", n, callers, callers)
+	}
+	for i := range callers {
+		if errs[i] != nil {
+			t.Errorf("caller %d: unexpected error %v", i, errs[i])
+		}
+		if results[i] != "keyset" {
+			t.Errorf("caller %d: got %v, want the shared keyset", i, results[i])
+		}
+	}
+}
+
+// TestCoalesceKeyFunc_CallerKeepsItsOwnDeadline is why this uses DoChan rather than Do.
+// Do returns only when the shared call does, so one slow fetch would outlive a later
+// caller's context. Each caller must stop waiting when ITS context ends.
+func TestCoalesceKeyFunc_CallerKeepsItsOwnDeadline(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release) // let the in-flight fetch finish when the test ends
+
+	kf := coalesceKeyFunc(func(context.Context) (any, error) {
+		<-release
+		return "keyset", nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { _, err := kf(ctx); done <- err }()
+
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("got %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("kf did not return after its context was cancelled; it is waiting on the shared fetch")
+	}
+}
+
+// TestCoalesceKeyFunc_LeaderCancellationDoesNotFailFollowers covers the other half of
+// that choice: the shared fetch must NOT be bound to whichever caller happened to arrive
+// first, or that caller's cancellation would fail everyone waiting on it.
+func TestCoalesceKeyFunc_LeaderCancellationDoesNotFailFollowers(t *testing.T) {
+	fetching := make(chan struct{})
+	release := make(chan struct{})
+	// once, because the fn can legitimately run TWICE: if the follower arrives after the
+	// leader's flight has already completed it starts a second one, and an unguarded close
+	// would panic on the second entry — a flake in the test, not a defect in the wrapper.
+	var started sync.Once
+	kf := coalesceKeyFunc(func(ctx context.Context) (any, error) {
+		started.Do(func() { close(fetching) })
+		<-release
+		// The wrapper must have stripped cancellation from the context it passed down.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return "keyset", nil
+	})
+
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	go func() { _, _ = kf(leaderCtx) }() //nolint:errcheck // the leader's result is not under test
+	<-fetching
+
+	follower := make(chan error, 1)
+	go func() { _, err := kf(context.Background()); follower <- err }()
+
+	cancelLeader()
+	close(release)
+
+	select {
+	case err := <-follower:
+		if err != nil {
+			t.Errorf("follower failed because the LEADER was cancelled: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("follower never returned")
 	}
 }
