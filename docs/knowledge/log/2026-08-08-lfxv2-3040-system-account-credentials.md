@@ -141,18 +141,25 @@ callers, asserting the system row IS tagged and a project's own row is NOT. Reve
 ## Follow-on (review round 2) — a deleted connection does fall back
 
 Asked on review: does a soft-deleted project connection now silently run on the LF system
-account? It does, and it is intended. `Get` filters `status <> 'deleted'`, producing the same
-`domain.ErrNotFound` the fallback keys on, so a delete returns the project to the
-never-connected state — the state the fallback exists to serve. The alternative would make
-deleting a connection a way to break campaigns rather than a way to disconnect an ad account,
-and would make two projects in the same observable state behave differently on history the API
-does not expose.
+account? At this point in the branch it did, and the answer given here was that it was intended.
+`Get` filters `status <> 'deleted'`, producing the same `domain.ErrNotFound` the fallback keys
+on, so a delete returned the project to the never-connected state — the state the fallback
+exists to serve. The reasoning was that the alternative would make deleting a connection a way
+to break campaigns rather than a way to disconnect an ad account.
 
-Pinned live, not with a fake: `TestSoftDeletedConnectionIsIndistinguishableFromNoConnection`
-creates a connection, deletes it, and asserts `Get` returns `ErrNotFound` while the row survives
-with `status = 'deleted'`. An in-memory fake returns `ErrNotFound` by construction and would
-pass against a `Get` that had lost its filter. If the product later decides a delete must STOP
-dispatch, that test is the one that changes — which makes it a decision rather than a drift.
+**That answer was wrong, and a later round reversed it — see "An explicit no, read as silence"
+below.** What it missed is that the two states are not equivalent to the person whose money is
+being spent: an owner who removes their ad account has said no, and only "never connected" is
+silence. The paragraph is kept rather than rewritten because the reasoning that produced it is
+the interesting part — the sentinel really is the same in both cases, and it took asking who the
+outcome happens TO, rather than what the code returns, to see that the sameness was the defect.
+
+The live pin remains, renamed to say what it now shows rather than what it was taken to justify:
+`TestSoftDeletedConnectionIsIndistinguishableFromGetsNotFound` creates a connection, deletes it,
+and asserts `Get` returns `ErrNotFound` while the row survives with `status = 'deleted'`. An
+in-memory fake returns `ErrNotFound` by construction and would pass against a `Get` that had
+lost its filter — which is exactly why the ambiguity had to be established against a real row
+before anything could be built on top of it.
 
 
 ## Follow-on (review round 3) — the tag had one inspector, not three

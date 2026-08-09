@@ -186,25 +186,23 @@ func TestConnectionUpdateWithCredentialWritesBothInOneStatement(t *testing.T) {
 	}
 }
 
-// TestSoftDeletedConnectionIsIndistinguishableFromNoConnection pins the semantics behind a
-// review question on the system-account fallback: a project that DELETES its connection
-// afterwards dispatches on the LF system account.
+// TestSoftDeletedConnectionIsIndistinguishableFromGetsNotFound pins the fact the
+// system-account fallback had to be built around: after a DELETE, `Get` cannot tell an
+// operator's deliberate disconnect apart from a project that never connected at all.
 //
-// That is intended, not incidental. credsSource.resolve falls back only on domain.ErrNotFound
-// — every other failure means the project HAS a connection needing attention — and Get filters
-// status <> 'deleted', so a soft-deleted row produces exactly that sentinel. A delete therefore
-// returns the project to the never-connected state, which is the state the fallback exists to
-// serve. The alternative (dispatch fails once a connection has ever existed and been removed)
-// would make deleting a connection a way to break campaigns rather than a way to disconnect an
-// ad account, and it would make two projects in the same observable state behave differently
-// based on history the API does not expose.
+// Delete soft-deletes (status = 'deleted') and Get filters those rows out, so both states
+// arrive at credsSource.resolve as the same domain.ErrNotFound. That sentinel is the fallback's
+// trigger — and only that sentinel; every other failure means the project HAS a connection
+// needing attention. So a delete used to return the project to the never-connected state and
+// silently move its spend onto the Linux Foundation's ad account, which is not what an owner
+// who removed their credentials asked for.
 //
-// It is pinned HERE, against a real delete, because the whole behaviour rests on the repository
-// returning ErrNotFound rather than a deleted row: an in-memory fake returns ErrNotFound by
-// construction and would pass against a Get that had lost its filter. Should the product decide
-// a delete must instead STOP dispatch, this test is the one that has to change, which is the
-// point — it makes that a decision rather than a drift.
-func TestSoftDeletedConnectionIsIndistinguishableFromNoConnection(t *testing.T) {
+// It is pinned HERE, against a real delete, because the ambiguity is a property of the SQL: an
+// in-memory fake returns ErrNotFound by construction and would pass against a Get that had lost
+// its filter entirely. The resolution is NOT to make Get behave differently — a deleted
+// connection genuinely is not a usable connection — but to ask a second, explicit question, which
+// TestDisconnectedTellsADeliberateDisconnectApartFromNeverConnected below covers.
+func TestSoftDeletedConnectionIsIndistinguishableFromGetsNotFound(t *testing.T) {
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
 	repo := connectionRepo(pool)
@@ -238,5 +236,75 @@ func TestSoftDeletedConnectionIsIndistinguishableFromNoConnection(t *testing.T) 
 	}
 	if remaining != 1 {
 		t.Errorf("deleted rows for %s = %d, want 1 — the delete must be soft", projectID, remaining)
+	}
+}
+
+// TestDisconnectedTellsADeliberateDisconnectApartFromNeverConnected binds the query the
+// system-account fallback consults before it hands a project the LF-owned credential.
+//
+// The distinction Get cannot make (see the test above) is the whole point: "never connected" may
+// fall back, "connected and then deliberately disconnected" must not. An owner who removes their
+// ad account has said no, and reading that no as silence moves their spend onto the Linux
+// Foundation's account without anyone deciding to. Disconnected answers it from the tombstone the
+// soft delete leaves behind.
+//
+// This has to be a live test. The dispatch-level tests bind the BEHAVIOUR against a fake reader,
+// so they stay green no matter what the SQL says — including if the predicate lost its
+// status = 'deleted' clause and started reporting every connected project as disconnected, which
+// would refuse the fallback to exactly the projects entitled to it. Only a real row can tell.
+func TestDisconnectedTellsADeliberateDisconnectApartFromNeverConnected(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+	repo := connectionRepo(pool)
+
+	never := dbtest.UniqueID(t, "never")
+	disconnected := dbtest.UniqueID(t, "disconnected")
+	connected := dbtest.UniqueID(t, "connected")
+
+	for _, p := range []string{disconnected, connected} {
+		if _, err := repo.Create(ctx, newGoogleAdsConn(p, "8666746580")); err != nil {
+			t.Fatalf("create connection for %s: %v", p, err)
+		}
+	}
+	if err := repo.Delete(ctx, disconnected, model.ProviderGoogleAds, nil); err != nil {
+		t.Fatalf("delete connection: %v", err)
+	}
+
+	for name, tc := range map[string]struct {
+		projectID string
+		want      bool
+		because   string
+	}{
+		"a project that never connected": {
+			projectID: never, want: false,
+			because: "it has said nothing, so the LF system account is the intended fallback",
+		},
+		"a project that disconnected": {
+			projectID: disconnected, want: true,
+			because: "the tombstone is an explicit no, and the fallback must withhold the LF account",
+		},
+		"a project with a live connection": {
+			projectID: connected, want: false,
+			because: "it never removed anything; reporting it disconnected would refuse a fallback " +
+				"to a project whose own credential resolves fine",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := repo.Disconnected(ctx, tc.projectID, model.ProviderGoogleAds)
+			if err != nil {
+				t.Fatalf("Disconnected(%s): %v", tc.projectID, err)
+			}
+			if got != tc.want {
+				t.Errorf("Disconnected(%s) = %v, want %v — %s", tc.projectID, got, tc.want, tc.because)
+			}
+		})
+	}
+
+	// A provider this repository does not know must ERROR rather than answer false. False is the
+	// value that licenses the fallback, so a typo'd provider would quietly hand out the LF
+	// credential; and the provider name reaches Table(), which composes the SQL.
+	if _, err := repo.Disconnected(ctx, disconnected, model.Provider("google-adz")); err == nil {
+		t.Error("Disconnected with an unknown provider returned no error; false is the value that " +
+			"licenses the system-account fallback, so an unrecognised provider must never reach it")
 	}
 }

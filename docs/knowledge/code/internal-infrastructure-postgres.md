@@ -249,12 +249,23 @@ name-derived id collides with the row the PREVIOUS run inserted against
 `uq_campaign_briefs_project_event`, which breaks `go test -count=2` and, worse, turns a
 failure at setup into a test that never reaches its own assertion.
 
-**What belongs here is a claim about the SERVER, not about the code.** The two tests present
-both pin migration 000013/000014: that the bare `ON CONFLICT (brief_id, platform)` raises
-SQLSTATE `42P10` now that the full unique constraint is gone, and that a `'deleted'` row stops
+**What belongs here is a claim about the SERVER, not about the code.** Two of the tests pin
+migration 000013/000014: that the bare `ON CONFLICT (brief_id, platform)` raises SQLSTATE
+`42P10` now that the full unique constraint is gone, and that a `'deleted'` row stops
 occupying its `(brief_id, platform)` slot. Restore the dropped constraint and both fail — that
 is the check the regex test cannot perform, and it is the reason to reach for this package
 rather than another source-text assertion.
+
+`ConnectionRepo.Disconnected` is here for a sharper version of the same reason. Its whole job
+is to tell a deliberate disconnect apart from never having connected, and the two are
+distinguished by ONE clause — `status = 'deleted'` — in one statement. Every other test of
+that distinction runs against a fake reader that answers the question by construction, so all
+of them stay green against a predicate that lost the clause and started reporting every
+project as disconnected. `TestDisconnectedTellsADeliberateDisconnectApartFromNeverConnected`
+writes the three real rows (never connected, tombstoned, live) and asserts the answer for
+each, so the clause has to survive in the SQL and not merely in the fake. It also asserts an
+unknown provider ERRORS rather than answering `false`: `false` here means "no deliberate
+disconnect", which would hand a typo'd provider the system-account fallback.
 
 ## DeleteCampaign's guards
 
