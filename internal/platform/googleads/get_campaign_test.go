@@ -514,6 +514,29 @@ func TestGetCampaign_DisagreeingTombstonesAreNotAnAbsence(t *testing.T) {
 		t.Errorf("error = %v, want it to name the disagreement", err)
 	}
 
+	// The tombstone name is the one upstream value in this function that reaches an error
+	// UNVALIDATED — a tombstone deliberately skips returnedCampaignName, so a row may carry
+	// anything Google will store. This error is rendered into a log by the service's failure
+	// branch, so it must be quoted, exactly as metrics.go treats upstream metric values.
+	t.Run("a tombstone name cannot control the error text", func(t *testing.T) {
+		srv, _ := newLookupServer(t, []json.RawMessage{
+			lookupRow("555", "the campaign", StatusRemoved),
+			lookupRow("555", "evil\tname", StatusRemoved),
+		})
+		_, err := newAccountsTestClient(t, srv).GetCampaign(context.Background(), "555")
+		if err == nil {
+			t.Fatal("want an error: one id answered with two different campaigns")
+		}
+		if strings.ContainsRune(err.Error(), '\t') {
+			t.Errorf("error = %v, want the upstream name quoted — a raw TAB here is a name "+
+				"steering the log line, and NUL/LF/CR are only forbidden in Campaign.name for "+
+				"LIVE rows, which this is not", err)
+		}
+		if !strings.Contains(err.Error(), `"evil\tname"`) {
+			t.Errorf("error = %v, want the disagreeing name reported, quoted", err)
+		}
+	})
+
 	// An empty name on a tombstone is NOT a defect — it is never surfaced, so the live-row
 	// name guard deliberately does not apply here. Only a genuine disagreement fails.
 	t.Run("an unnamed tombstone is still an absence", func(t *testing.T) {

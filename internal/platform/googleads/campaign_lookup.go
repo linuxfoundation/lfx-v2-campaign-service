@@ -486,7 +486,14 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 			// TWO names for one id still is.
 			ref := &CampaignRef{ID: id, Name: row.Campaign.Name, Status: row.Campaign.Status}
 			if removedRef != nil && *removedRef != *ref {
-				return nil, fmt.Errorf("google-ads campaign lookup: campaign id %s was returned as %s twice with different details (%+v vs %+v); refusing to trust this response", campaignID, StatusRemoved, *removedRef, *ref)
+				// Quoted field by field rather than %+v'd as a struct, matching how
+				// metrics.go renders upstream values. Both refs carry the id already
+				// checked against campaignID, so only the name and status can differ —
+				// and the name here is the one value in this function that reaches an
+				// error UNVALIDATED, since a tombstone deliberately skips
+				// returnedCampaignName. A raw one could carry newlines or terminal
+				// controls straight into a log line.
+				return nil, fmt.Errorf("google-ads campaign lookup: campaign id %s was returned as %s twice with different details (name %q status %q vs name %q status %q); refusing to trust this response", campaignID, StatusRemoved, removedRef.Name, removedRef.Status, ref.Name, ref.Status)
 			}
 			removedRef = ref
 			continue
@@ -508,7 +515,12 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 		// operator will read before confirming the binding.
 		ref := &CampaignRef{ID: id, Name: row.Campaign.Name, Status: row.Campaign.Status}
 		if found != nil && *found != *ref {
-			return nil, fmt.Errorf("google-ads campaign lookup: campaign id %s was returned twice with different details (%+v vs %+v); refusing to trust this response", campaignID, *found, *ref)
+			// Quoted for the same reason as the tombstone case above. These names DID pass
+			// returnedCampaignName, which rejects what Campaign.name forbids — NUL, LF and
+			// CR — and deliberately permits everything else, TAB and the Cf category
+			// included. Permitted is not printable: quoting is what keeps a legal name from
+			// controlling the rendered error.
+			return nil, fmt.Errorf("google-ads campaign lookup: campaign id %s was returned twice with different details (name %q status %q vs name %q status %q); refusing to trust this response", campaignID, found.Name, found.Status, ref.Name, ref.Status)
 		}
 		found = ref
 	}

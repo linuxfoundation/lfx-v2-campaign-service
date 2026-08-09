@@ -221,3 +221,28 @@ to the page because the row had already been discarded, and another from the byt
 the decoder's own fold because the decoder had already merged the two keys. Each time, the
 guard's reasoning was correct and its vantage point was downstream of the thing it was looking
 for.
+
+## Round N+2: the disagreement errors let the name write the log line
+
+Copilot, twice on the same PR: the two "returned twice with different details" errors in
+`campaign_lookup.go` render their `*CampaignRef` operands with `%+v`, so an upstream campaign
+name reaches a log line verbatim. Both are real, and the tombstone one is the sharper of the
+two — a tombstone deliberately skips `returnedCampaignName`, so its name is the ONE upstream
+value in this function that reaches an error with no validation behind it at all. The live case
+is milder but not safe: `returnedCampaignName` rejects exactly what `Campaign.name` forbids —
+NUL, LF and CR — and, per 25e, deliberately permits everything else, TAB and category Cf
+included. **Permitted is not printable.** A name that passed validation can still carry a TAB,
+a ZWJ, or a variation selector into a diagnostic.
+
+Both sites now quote the compared fields individually rather than `%+v`-ing the struct, which is
+what `metrics.go:187-200` already does for upstream metric values. Quoting field by field also
+drops the `ID`, which is noise here: both refs carry the id that was already matched against
+`campaignID`, so only the name and the status can actually differ.
+
+Revert-verified: restoring `%+v` makes the new subtest report the error text with a raw TAB in
+it — `... (&{ID:555 Name:evil<TAB>name Status:REMOVED})` — against `want the upstream name
+quoted`.
+
+The rule is narrower than "escape everything" and worth stating that way: **validation decides
+whether a value may be STORED; quoting decides whether it may be RENDERED.** They are different
+questions, and passing the first is not an answer to the second.
