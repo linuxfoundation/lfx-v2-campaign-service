@@ -150,9 +150,9 @@ func TestGetEmailMetrics_RejectsAResponseListingTheEmailAmongOthers(t *testing.T
 // The absent-field half of the vocabulary guard. A renamed or dropped `counters` field
 // decodes to a nil map, so `len(counters) > 0` never fires and every lookup returns 0 —
 // an email HubSpot has just told us it covers reports as having sent nothing. The empty
-// object and the missing key are the same break and both must be caught; only an empty
-// `emails` list licenses zeros, which TestGetEmailMetrics_EmptyEmailsListIsZerosNotAnError
-// pins from the other side.
+// object and the missing key are the same break and both must be caught. Nothing licenses
+// zeros here: an empty `emails` list is its own error, which
+// TestGetEmailMetrics_EmptyEmailsListMeansTheWindowMissedTheSend pins from the other side.
 func TestGetEmailMetrics_MissingCountersForACoveredEmailIsAnErrorNotZeros(t *testing.T) {
 	for _, body := range []string{
 		`{"emails":[4242],"aggregate":{"counters":{}}}`,
@@ -191,6 +191,87 @@ func TestGetEmailMetrics_EmptyEmailsListMeansTheWindowMissedTheSend(t *testing.T
 	}
 	if m != nil {
 		t.Errorf("metrics = %+v, want nil: a partial result here would be read as real zeros", m)
+	}
+}
+
+// The other half of that boundary. A response with NO `emails` field at all decodes to the
+// same nil as `[]` if the field is a value slice, and the empty-list branch would then
+// report a schema break as "wrong window" — sending the caller off to retry other windows
+// against a response that can never carry what it needs. The field is the only evidence
+// the filter was honoured, so its absence belongs with the filter guard.
+func TestGetEmailMetrics_AbsentEmailsFieldIsNotAnEmptyList(t *testing.T) {
+	for name, body := range map[string]string{
+		"omitted": `{"aggregate":{"counters":{"sent":1000}}}`,
+		"null":    `{"emails":null,"aggregate":{"counters":{"sent":1000}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, body)
+			})
+			_, err := fixedClock(t, c).GetEmailMetrics(context.Background(), "4242", model.MetricsWindowToday)
+			if !errors.Is(err, ErrStatisticsFilterNotHonored) {
+				t.Fatalf("err = %v, want ErrStatisticsFilterNotHonored", err)
+			}
+			if errors.Is(err, ErrEmailNotSentInWindow) {
+				t.Errorf("err = %v, must not read as a window miss: the field is absent, not empty", err)
+			}
+		})
+	}
+}
+
+// The PARTIAL rename, which the whole-vocabulary guard below cannot see: `sent` survives,
+// so at least one known key is present and that guard passes, while `open` has become
+// `emailsOpened` and the mapped lookup returns an authoritative 0 for an email with 400
+// opens. Both halves of the signature are required, and the two subtests that must NOT
+// error are as much the point as the one that must — an omitted zero counter and an
+// additive upstream key are ordinary, and rejecting either would break the client on a
+// release that took nothing away.
+func TestGetEmailMetrics_PartiallyRenamedCounterVocabularyIsAnError(t *testing.T) {
+	tests := map[string]struct {
+		counters string
+		wantErr  bool
+	}{
+		"renamed open, sent intact":     {`{"sent":1000,"emailsOpened":400}`, true},
+		"mapped key merely absent":      {`{"sent":1000,"open":400}`, false},
+		"unknown key merely added":      {`{"sent":1,"delivered":1,"open":1,"click":1,"bounce":1,"unsubscribed":1,"engagements":9}`, false},
+		"all mapped absent, only known": {`{"notsent":1}`, false},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, statsBody(t, `[4242]`, tc.counters))
+			})
+			_, err := fixedClock(t, c).GetEmailMetrics(context.Background(), "4242", model.MetricsWindowToday)
+			if got := errors.Is(err, ErrRenamedCounter); got != tc.wantErr {
+				t.Fatalf("ErrRenamedCounter = %v, want %v (err = %v)", got, tc.wantErr, err)
+			}
+		})
+	}
+}
+
+// Counters are event counts, so a negative is malformed upstream data. Left unchecked it
+// becomes a negative Impressions and a negative Ctr in the public response, both of which
+// read as authoritative. LinkedIn, Meta and Reddit all reject negatives; this closes the
+// same hole on HubSpot. The unmapped-key case is included deliberately: a negative
+// anywhere is evidence the payload is wrong, and the keys we DO read are no more
+// trustworthy for having stayed positive.
+func TestGetEmailMetrics_NegativeCounterIsAnError(t *testing.T) {
+	for _, counters := range []string{
+		`{"sent":1000,"delivered":900,"open":-1,"click":10,"bounce":0,"unsubscribed":0}`,
+		`{"sent":1000,"delivered":900,"open":5,"click":10,"bounce":0,"unsubscribed":0,"spamreport":-3}`,
+	} {
+		t.Run(counters, func(t *testing.T) {
+			c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, statsBody(t, `[4242]`, counters))
+			})
+			m, err := fixedClock(t, c).GetEmailMetrics(context.Background(), "4242", model.MetricsWindowToday)
+			if !errors.Is(err, ErrNegativeCounter) {
+				t.Fatalf("err = %v, want ErrNegativeCounter", err)
+			}
+			if m != nil {
+				t.Errorf("metrics = %+v, want nil", m)
+			}
+		})
 	}
 }
 

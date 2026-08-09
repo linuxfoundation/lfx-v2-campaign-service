@@ -152,7 +152,7 @@ counters are scoped to. Presenting these as "opens in the last 7 days" would be 
 Genuine event-time windowing needs a different HubSpot source — the email-events API,
 which timestamps each open and click — and is deliberately not attempted here.
 
-### The three fail-closed guards, and why zeros were the wrong answer
+### The five fail-closed guards, and why zeros were the wrong answer
 
 A metrics read has a caller that acts on an absence: zeros read as "this campaign is
 not performing", which is a decision-grade statement. So an answer this client cannot
@@ -187,7 +187,32 @@ VERIFY must be an error, never a clean zero.
   attributing them to this campaign is exactly what the guard exists to prevent. Either
   the filter was honoured, in which case the list is what we asked for, or it was not,
   in which case none of the response is trustworthy. An EMPTY list is a different
-  failure and is handled by the guard above, not by this one.
+  failure and is handled by the guard above, not by this one. An ABSENT `emails` field
+  is a third case and belongs here rather than with the empty one: the field is the only
+  evidence the filter was applied, so its disappearance means the aggregate describes an
+  unknown set. `emails` is therefore decoded as a POINTER — a value slice would decode
+  both `null` and `[]` to nil and collapse "the schema broke" into "wrong window",
+  sending the caller off to retry other windows against a shape that can never answer.
+- **`ErrRenamedCounter`** — the PARTIAL rename the vocabulary guard cannot see. A map
+  like `{"sent":1000,"emailsOpened":400}` keeps a recognized key, so
+  `ErrUnrecognizedCounters` passes, while the `open` lookup returns an authoritative 0
+  for an email with 400 opens. The guard fires only when a MAPPED key is absent AND an
+  unrecognized key is present, and requiring both is the design rather than a
+  convenience. A missing mapped key alone proves nothing — HubSpot may omit a
+  zero-valued counter, and the spec that would settle it is auth-gated, so rejecting
+  absence would fail ordinary quiet emails. An unknown key alone proves nothing either:
+  ADDING a counter is the likeliest way this vocabulary evolves, and rejecting additive
+  change would break the client on a release that removed nothing. Only the conjunction
+  carries the signature of a rename, because a renamed key does not vanish — it
+  reappears under another name. What still slips through is a rename with no new key
+  visible in the same response; the widened `ErrUnrecognizedCounters` catches the whole-
+  vocabulary version of that, and nothing catches a silent single-key drop.
+- **`ErrNegativeCounter`** — any counter below zero. These are event counts, so a
+  negative is malformed upstream data; passed through it becomes negative impressions
+  and a negative CTR that reads as authoritative. Checked across the WHOLE map rather
+  than the six mapped keys: a negative anywhere is evidence the payload is wrong, and
+  the keys we read are no more trustworthy for having stayed positive. The LinkedIn,
+  Meta and Reddit readers reject negatives for the same reason.
 
 `campaignAggregations` is deliberately NOT decoded: it is keyed by email-CAMPAIGN id,
 not by email id, so indexing it with the id we filtered on would silently miss and fall

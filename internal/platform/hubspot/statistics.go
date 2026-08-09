@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"time"
 
@@ -61,6 +62,28 @@ var (
 	// decodes cleanly to zeros, so an email that really sent would report as having sent
 	// nothing: a dead campaign rather than a broken integration.
 	ErrUnrecognizedCounters = errors.New("hubspot: statistics response carried no recognized counter")
+
+	// ErrRenamedCounter reports the PARTIAL rename ErrUnrecognizedCounters cannot see: a
+	// map that still carries recognized keys, so the guard above passes, while one of the
+	// six keys this client MAPS has gone missing and an unrecognized key has appeared in
+	// the same response. `{"sent":1000,"emailsOpened":400}` is the shape — `sent` keeps the
+	// vocabulary guard happy and the `open` lookup returns an authoritative 0.
+	//
+	// The two conditions are required TOGETHER, and that conjunction is the whole design.
+	// A missing mapped key on its own is not evidence of anything: HubSpot may simply omit
+	// a counter that is zero, and the client cannot verify either way from an auth-gated
+	// spec — erroring on absence alone would reject ordinary quiet emails. An unknown key
+	// on its own is not evidence either: adding a counter is the likeliest way this
+	// vocabulary evolves, and rejecting additive change would break the client on an
+	// upstream release that took nothing away. Only the two together carry the signature
+	// of a rename, because a renamed key does not vanish — it reappears under a new name.
+	ErrRenamedCounter = errors.New("hubspot: a mapped counter is absent while an unrecognized counter is present")
+
+	// ErrNegativeCounter reports a counter below zero. These are event counts, so a
+	// negative is malformed upstream data, and passing it through yields negative
+	// impressions and a nonsensical CTR that reads as authoritative to every consumer.
+	// The LinkedIn, Meta and Reddit readers reject negatives for the same reason.
+	ErrNegativeCounter = errors.New("hubspot: statistics response carried a negative counter")
 )
 
 // The counters this client maps onto its result. HubSpot's v3 schema types `counters` as
@@ -105,8 +128,14 @@ type statisticsData struct {
 // id, so indexing it with the id we filtered on would silently miss and fall through to a
 // zero value. Because the request filters to exactly one email, `aggregate` already IS
 // that email's aggregate, and `emails` is what proves the filter was applied.
+//
+// `Emails` is a POINTER so that an absent or null field stays distinguishable from `[]`.
+// A value slice makes both decode to nil, and the two mean opposite things: an explicit
+// empty list is HubSpot answering that the span held no send, while a MISSING field is
+// the disappearance of the only evidence that the filter was honoured at all. Reporting
+// the second as the first would tell a caller "wrong window" about a schema break.
 type aggregateStatistics struct {
-	Emails    []int64        `json:"emails"`
+	Emails    *[]int64       `json:"emails"`
 	Aggregate statisticsData `json:"aggregate"`
 }
 
@@ -184,13 +213,25 @@ func (c *Client) GetEmailMetrics(ctx context.Context, emailID string, window mod
 		return nil, fmt.Errorf("decode hubspot email statistics response: %w", err)
 	}
 
+	// An ABSENT `emails` field is a schema break, not an answer. It is the only evidence
+	// the filter was honoured, and without it the aggregate below describes an unknown set
+	// of emails. It must NOT reach the empty-list branch: "the field HubSpot uses to prove
+	// the filter is gone" is not the same claim as "the span held no send", and the second
+	// invites a caller to retry with a different window against a response shape that will
+	// never carry what it needs.
+	if resp.Emails == nil {
+		return nil, fmt.Errorf("%w: response omitted the emails field entirely",
+			ErrStatisticsFilterNotHonored)
+	}
+	emails := *resp.Emails
+
 	// An EMPTY `emails` means HubSpot did not include this email in the span at all — per
 	// the contract, because the span selects by SEND time and does not contain its send
 	// date. It does NOT mean the email earned no engagement, and the two must not collapse:
 	// an email that WAS sent in the window with no opens comes back present, with a `sent`
 	// counter. Returning zeros here would make "you picked the wrong window" and "nobody
 	// opened it" the same answer.
-	if len(resp.Emails) == 0 {
+	if len(emails) == 0 {
 		return nil, ErrEmailNotSentInWindow
 	}
 
@@ -201,9 +242,9 @@ func (c *Client) GetEmailMetrics(ctx context.Context, emailID string, window mod
 	// campaign's is precisely the misattribution this guard exists to prevent. Either the
 	// filter was honoured, in which case the list is exactly what we asked for, or it was
 	// not, in which case none of the response is trustworthy. There is no middle reading.
-	if !isExactlyID(resp.Emails, id) {
+	if !isExactlyID(emails, id) {
 		return nil, fmt.Errorf("%w: asked for %d, response covers %d email(s)",
-			ErrStatisticsFilterNotHonored, id, len(resp.Emails))
+			ErrStatisticsFilterNotHonored, id, len(emails))
 	}
 
 	// The vocabulary guard, and the reason it is not `len(counters) > 0`: a MISSING or
@@ -219,6 +260,22 @@ func (c *Client) GetEmailMetrics(ctx context.Context, emailID string, window mod
 	counters := resp.Aggregate.Counters
 	if !hasKnownCounter(counters) {
 		return nil, ErrUnrecognizedCounters
+	}
+	// The guard above answers "is the vocabulary recognizable AT ALL"; this one answers
+	// "is the part of it we READ still here". A rename that leaves any one known key
+	// standing satisfies the first and is invisible to it.
+	if missing, unknown, ok := renamedCounter(counters); ok {
+		return nil, fmt.Errorf("%w: %q is absent while %q is present",
+			ErrRenamedCounter, missing, unknown)
+	}
+	// Counts, so a negative is malformed upstream data rather than a small number. Checked
+	// across the WHOLE map, not just the six mapped keys: a negative anywhere in the
+	// counter set is evidence the payload is wrong, and the five keys read below would be
+	// no more trustworthy for having stayed positive.
+	for _, k := range sortedKeys(counters) {
+		if counters[k] < 0 {
+			return nil, fmt.Errorf("%w: %q = %d", ErrNegativeCounter, k, counters[k])
+		}
 	}
 
 	opens := counters[counterOpen]
@@ -278,6 +335,48 @@ func hasKnownCounter(counters map[string]int64) bool {
 		}
 	}
 	return false
+}
+
+// mappedCounters are the six keys this client actually reads. renamedCounter watches
+// exactly these: a key the client never looks up can disappear without changing any
+// number it reports.
+var mappedCounters = []string{
+	counterSent, counterDelivered, counterOpen, counterClick, counterBounce, counterUnsubscribed,
+}
+
+// renamedCounter reports a mapped key that is absent while some unrecognized key is
+// present, returning the pair so the error can name both. See ErrRenamedCounter for why
+// NEITHER condition is sufficient alone.
+//
+// Iteration is over sorted keys so a map with several candidates always names the same
+// pair — an error message that varies run to run is one nobody can grep for.
+func renamedCounter(counters map[string]int64) (missing, unknown string, ok bool) {
+	for _, k := range mappedCounters {
+		if _, present := counters[k]; !present {
+			missing = k
+			break
+		}
+	}
+	if missing == "" {
+		return "", "", false
+	}
+	for _, k := range sortedKeys(counters) {
+		if _, known := knownCounterVocabulary[k]; !known {
+			return missing, k, true
+		}
+	}
+	return "", "", false
+}
+
+// sortedKeys returns counters' keys in a stable order, so every message built by walking
+// the map names the same key for the same input.
+func sortedKeys(counters map[string]int64) []string {
+	keys := make([]string, 0, len(counters))
+	for k := range counters {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // ratio returns num/den, and 0 when den is 0 — matching CampaignMetrics.Ctr's documented

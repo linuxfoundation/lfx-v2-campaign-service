@@ -33,6 +33,45 @@ A third joined them once the span's real semantics were read (see below):
 - `ErrEmailNotSentInWindow` — an empty `emails` list, meaning the span did not contain this
   email's send date.
 
+And two more once the guards were re-read against what they actually admit:
+
+- `ErrRenamedCounter` — a MAPPED key absent while an unrecognized key is present.
+- `ErrNegativeCounter` — any counter below zero.
+
+**Both of the last two are holes the first three left open in the same shape as each
+other.** `ErrUnrecognizedCounters` asks whether the vocabulary is recognizable AT ALL, and
+`{"sent":1000,"emailsOpened":400}` answers yes — one known key is enough, and the `open`
+lookup then returns an authoritative 0 for an email with 400 opens. The guard was written
+against the TOTAL rename because that was the fixture; the partial one is the neighbouring
+value again, which is now three times this file has produced that class.
+
+The obvious remedy — reject any map containing an unknown key — is worse than the bug. The
+likeliest way this vocabulary changes is HubSpot ADDING a counter, and that remedy turns a
+purely additive upstream release into a hard outage. The opposite remedy, requiring all six
+mapped keys, guesses that HubSpot emits zero-valued counters rather than omitting them, and
+the spec that would settle it is auth-gated — guessing wrong there rejects ordinary quiet
+emails. What is true regardless of both unknowns is that a renamed key does not vanish: it
+reappears under a new name in the same response. So the guard requires the CONJUNCTION —
+a mapped key absent AND an unrecognized key present — and the two must-not-error subtests
+of `TestGetEmailMetrics_PartiallyRenamedCounterVocabularyIsAnError` (an omitted counter, an
+added counter) are as much the point as the one that must.
+
+The negative-counter hole was simpler and is a straight consistency gap: LinkedIn, Meta and
+Reddit all reject negative counts, HubSpot did not, and a negative `open` becomes a negative
+`Impressions` and a negative `Ctr` in the public response. It is checked across the whole
+map rather than the six mapped keys, because a negative anywhere says the payload is wrong.
+
+**And `emails` had the nil-versus-empty bug the counters map was explicitly designed around.**
+`Emails []int64` decodes a MISSING field and an explicit `[]` to the same nil, so the new
+empty-list branch reported a vanished field as "wrong window" — inviting a caller to retry
+other windows against a response shape that can never carry what it needs. The field is the
+only evidence the filter was honoured, so its absence belongs with
+`ErrStatisticsFilterNotHonored`. A pointer keeps the two distinguishable. Worth naming
+because the identical distinction had already been reasoned about one struct field away: the
+counters guard deliberately CONFLATES nil and empty, on the argument that both are the same
+schema break. That argument is right for `counters` and wrong for `emails`, and the tell is
+that `emails` has a third meaningful state the map does not.
+
 **Both guards were first written one qualifier too narrow, and the same mistake produced
 both.** Each began as a check on the shape it had a fixture for, rather than on the property
 it was defending — and the gap that leaves is not a corner case, it is the neighbouring
