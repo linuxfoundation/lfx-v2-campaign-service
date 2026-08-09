@@ -208,6 +208,12 @@ func TestNewClient_RejectsAProxyURLCarryingUserinfoOrQuery(t *testing.T) {
 		{"query api key", "https://litellm.internal/v1?api-key=" + secret, "query"},
 		{"empty forced query", "https://litellm.internal/v1?", "query"},
 		{"fragment", "https://litellm.internal/v1#" + secret, "fragment"},
+		// The empty case is the one that matters, and `u.Fragment != ""` cannot see it.
+		// It parses to an empty Fragment, so the value looks like a clean base — and the
+		// endpoint concatenation then produces `…/v1#/chat/completions`, whose path is
+		// `/v1` with the rest a fragment the transport never sends. Every generation
+		// would post to the wrong endpoint.
+		{"empty fragment delimiter", "https://litellm.internal/v1#", "fragment"},
 		{"userinfo and query", "https://u:" + secret + "@litellm.internal/v1?k=" + secret, "userinfo, query"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

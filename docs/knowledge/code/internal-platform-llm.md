@@ -112,6 +112,17 @@ Go's transport turns into a Basic credential; `?api-key=…`, a shape several Li
 deployments document). Rejecting is stronger than stripping at print time, because a rejected
 value never reaches `Config`, a log, or anything downstream that formats it.
 
+The fragment is detected as a DELIMITER, not as a value. `u.Fragment != ""` asks whether the
+fragment has content, and content is not what breaks the endpoint: `https://proxy/v1#` parses
+to an empty `Fragment`, passes such a check, and then concatenates to
+`https://proxy/v1#/chat/completions` — path `/v1`, with everything after the `#` a fragment the
+transport never sends. So every generation posts to the wrong endpoint, silently, which is the
+same late-failure disguise `localhost:4000` and `:99999` wore. `net/url` records the analogous
+empty QUERY in `ForceQuery` and has no `ForceFragment`, so `hasFragment` looks for the
+delimiter in the raw value. That is exact rather than approximate: `#` is the fragment
+delimiter wherever it appears unescaped, everything after the first one is the fragment, and a
+literal `#` would be `%23`.
+
 **No rejection path echoes the value.** A URL this constructor is refusing is the one least
 entitled to be quoted — it is unvalidated operator input, and one reason it can be invalid is
 "there is a token in its userinfo". Each branch NAMES the component it judged —

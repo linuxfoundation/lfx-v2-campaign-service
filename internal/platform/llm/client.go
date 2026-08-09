@@ -265,10 +265,10 @@ func NewClient(cfg Config, opts ...Option) (*Client, error) {
 		return nil, fmt.Errorf("%w (its port is not in the usable range 1-65535; the value "+
 			"is not quoted here because it is unvalidated and may carry a credential)",
 			ErrInvalidProxyURL)
-	case u.User != nil, u.RawQuery != "", u.ForceQuery, u.Fragment != "":
+	case u.User != nil, u.RawQuery != "", u.ForceQuery, hasFragment(cfg.ProxyURL):
 		// notBaseComponents names components, never their values. The host is no longer
 		// quoted alongside them: a hostname is as much unvalidated input as the rest.
-		return nil, fmt.Errorf("%w (it carried: %s)", ErrProxyURLNotABase, notBaseComponents(u))
+		return nil, fmt.Errorf("%w (it carried: %s)", ErrProxyURLNotABase, notBaseComponents(u, cfg.ProxyURL))
 	}
 	c := &Client{
 		cfg: cfg,
@@ -303,7 +303,7 @@ func usablePort(port string) bool {
 
 // notBaseComponents names which disallowed components a proxy URL carried, so the
 // operator can fix it without the message reproducing any of their VALUES.
-func notBaseComponents(u *url.URL) string {
+func notBaseComponents(u *url.URL, raw string) string {
 	var found []string
 	if u.User != nil {
 		found = append(found, "userinfo")
@@ -311,10 +311,27 @@ func notBaseComponents(u *url.URL) string {
 	if u.RawQuery != "" || u.ForceQuery {
 		found = append(found, "query")
 	}
-	if u.Fragment != "" {
+	if hasFragment(raw) {
 		found = append(found, "fragment")
 	}
 	return strings.Join(found, ", ")
+}
+
+// hasFragment reports whether raw carries a fragment DELIMITER, empty value included.
+//
+// `u.Fragment != ""` asks whether the fragment has content, and content is not what breaks
+// the endpoint. `https://proxy/v1#` parses to an empty Fragment, so that test passes, and
+// then `endpoint` is built by concatenation: `https://proxy/v1#/chat/completions`, whose
+// path is `/v1` with everything after the `#` a fragment the transport never sends. Every
+// generation would post to the wrong endpoint — the recurring shape on this constructor,
+// a value url.Parse accepts and the transport cannot use.
+//
+// net/url records the analogous empty QUERY in ForceQuery and has no ForceFragment, so the
+// delimiter is looked for in the raw value. That is exact rather than approximate: `#` is
+// the fragment delimiter wherever it appears unescaped, everything after the first one is
+// the fragment, and a `#` meant literally would be `%23`.
+func hasFragment(raw string) bool {
+	return strings.Contains(raw, "#")
 }
 
 // noFollow refuses redirects; following one resends the bearer credential.
