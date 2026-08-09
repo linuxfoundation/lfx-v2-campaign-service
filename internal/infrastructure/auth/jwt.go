@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -35,6 +36,11 @@ const (
 	jwksCacheTTL       = 5 * time.Minute
 	clockSkew          = 5 * time.Second // exp/nbf drift, as the sibling services allow
 	bearerPrefix       = "bearer "       // stripped case-insensitively
+	// jwksFetchTimeout bounds the key fetch. The provider defaults to a client with NO
+	// timeout, and the cold fetch runs while holding the provider's write lock — a stalled
+	// Heimdall would block every authentication on this pod for as long as the TCP
+	// connection hangs, which no HTTP server timeout cancels.
+	jwksFetchTimeout = 10 * time.Second
 )
 
 // ErrUnauthenticated is returned for every token this package refuses — one sentinel on
@@ -91,8 +97,10 @@ func New(cfg Config) (*Verifier, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse JWKS URL: %w", err)
 	}
-	if jwksURL.Scheme == "" || jwksURL.Host == "" {
-		return nil, fmt.Errorf("JWKS URL %q is not an absolute URL", rawJWKS)
+	// Scheme, not just absoluteness: http.Client cannot fetch ftp:// or file://, so
+	// accepting one would satisfy the fail-fast check and then refuse every request.
+	if (jwksURL.Scheme != "http" && jwksURL.Scheme != "https") || jwksURL.Host == "" {
+		return nil, fmt.Errorf("JWKS URL %q is not an absolute http(s) URL", rawJWKS)
 	}
 	issuer, err := url.Parse(orDefault(cfg.Issuer, constants.DefaultIssuer))
 	if err != nil {
@@ -104,7 +112,8 @@ func New(cfg Config) (*Verifier, error) {
 	audience := orDefault(cfg.Audience, constants.DefaultAudience)
 
 	// WithCustomJWKSURI is required: "heimdall" is a bare name, not an OIDC discovery URL.
-	provider := jwks.NewCachingProvider(issuer, jwksCacheTTL, jwks.WithCustomJWKSURI(jwksURL))
+	provider := jwks.NewCachingProvider(issuer, jwksCacheTTL, jwks.WithCustomJWKSURI(jwksURL),
+		jwks.WithCustomClient(&http.Client{Timeout: jwksFetchTimeout}))
 
 	v, err := validator.New(
 		provider.KeyFunc,
@@ -159,6 +168,13 @@ func (v *Verifier) VerifyActor(ctx context.Context, token string) (*model.Actor,
 	custom, ok := claims.CustomClaims.(*heimdallClaims)
 	if !ok {
 		return nil, fmt.Errorf("%w: unexpected custom claims type %T", ErrUnauthenticated, claims.CustomClaims)
+	}
+
+	// The library validates exp only when the claim is PRESENT (validator.go:167), so a
+	// correctly signed token that simply omits it would never stop working. A credential
+	// with no lifetime is the one this service must not honour.
+	if claims.RegisteredClaims.Expiry == 0 {
+		return nil, fmt.Errorf("%w: token has no expiry", ErrUnauthenticated)
 	}
 
 	return &model.Actor{

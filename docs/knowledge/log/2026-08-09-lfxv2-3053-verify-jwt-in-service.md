@@ -1,5 +1,8 @@
 # 2026-08-09 — The bearer token is verified, not decoded (LFXV2-3053)
 
+**Update** — the bearer token is now verified against Heimdall's JWKS instead of being
+base64-decoded and trusted.
+
 **The gap.** `JWTAuth` split the token on `.`, base64-decoded the middle segment and
 believed it — no signature, issuer, audience or expiry check. The config for doing better
 was wired end to end (the chart injects `JWKS_URL` and `JWT_AUDIENCE`, `LoadConfig` reads
@@ -28,9 +31,21 @@ would hide a misconfiguration.
 
 **Stale comments were the real hazard.** Two survived asserting the old model: the parity
 test's `JWT_ISSUER` exemption ("empty means no issuer verification" — the check is now
-unconditional and empty selects the default) and `attributedActor`'s doc. The 2026-08-07
-attribution entry, which priced "a missing actor does not fail the write" against a
-*decoding* bug, is marked superseded rather than rewritten.
+unconditional and empty selects the default) and `attributedActor`'s doc.
+
+**What this supersedes.** The 2026-08-07 entry (LFXV2-3038) accepted that *a missing actor
+does not fail the write*, because rejecting would escalate a token-**decoding** regression
+into a total outage of brief creation. That premise is gone: the token is now verified, so
+what a NULL-attributed row records is an unauthenticated request. `JWTAuth` refuses before
+any handler runs, making the nil branch unreachable through the served routes; the warning
+it emits is kept as a tripwire for a future entry point wired without the security scheme.
+That entry's own file is left untouched — one file per entry.
+
+**Two library defaults that do not hold on their own.** `validator` checks `exp` only when
+the claim is PRESENT, so a signed token omitting it would never expire — `VerifyActor`
+rejects a zero expiry itself. And `jwks.NewCachingProvider` defaults to an `http.Client`
+with no timeout while the cold fetch holds the provider's write lock, so the key fetch is
+given a bounded client.
 
 **Known follow-up.** Rejections surface as **400**, not 401 — the design declares no
 Unauthorized type and `commonBriefErrors` documents 400 as the JWTAuth rejection status;

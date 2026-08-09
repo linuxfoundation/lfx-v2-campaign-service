@@ -136,18 +136,19 @@ func TestVerifyActor_Rejects(t *testing.T) {
 	}
 
 	cases := map[string]string{
-		"empty":               "",
-		"garbage":             "not-a-jwt",
-		"wrong audience":      s.sign(t, map[string]any{"aud": "lfx-v2-meeting-service"}),
-		"wrong issuer":        s.sign(t, map[string]any{"iss": "https://evil.example"}),
-		"expired":             s.sign(t, map[string]any{"iat": time.Now().Add(-2 * time.Hour).Unix(), "exp": time.Now().Add(-time.Hour).Unix()}),
-		"not yet valid":       s.sign(t, map[string]any{"nbf": time.Now().Add(time.Hour).Unix()}),
-		"foreign signature":   signedWith(jwt.SigningMethodPS256, other),
-		"alg none":            signedWith(jwt.SigningMethodNone, jwt.UnsafeAllowNoneSignatureType),
-		"alg confusion HS256": signedWith(jwt.SigningMethodHS256, []byte("secret")),
-		"missing principal":   s.sign(t, map[string]any{"principal": nil}),
-		"blank principal":     s.sign(t, map[string]any{"principal": "   "}),
-		"unknown signing kid": s.sign(t, map[string]any{"aud": []string{"a", "b"}}),
+		"empty":                      "",
+		"garbage":                    "not-a-jwt",
+		"wrong audience":             s.sign(t, map[string]any{"aud": "lfx-v2-meeting-service"}),
+		"wrong issuer":               s.sign(t, map[string]any{"iss": "https://evil.example"}),
+		"expired":                    s.sign(t, map[string]any{"iat": time.Now().Add(-2 * time.Hour).Unix(), "exp": time.Now().Add(-time.Hour).Unix()}),
+		"not yet valid":              s.sign(t, map[string]any{"nbf": time.Now().Add(time.Hour).Unix()}),
+		"foreign signature":          signedWith(jwt.SigningMethodPS256, other),
+		"alg none":                   signedWith(jwt.SigningMethodNone, jwt.UnsafeAllowNoneSignatureType),
+		"alg confusion HS256":        signedWith(jwt.SigningMethodHS256, []byte("secret")),
+		"missing principal":          s.sign(t, map[string]any{"principal": nil}),
+		"blank principal":            s.sign(t, map[string]any{"principal": "   "}),
+		"audience list without ours": s.sign(t, map[string]any{"aud": []string{"a", "b"}}),
+		"no expiry":                  s.sign(t, map[string]any{"exp": nil}),
 	}
 
 	v := s.verifier(t)
@@ -227,7 +228,7 @@ func TestNew_ConfigHandling(t *testing.T) {
 	if _, err := New(Config{}); err != nil {
 		t.Fatalf("New with an empty config: %v", err)
 	}
-	for _, bad := range []string{"lfx-platform-heimdall:4457/jwks", "/.well-known/jwks", "://nope"} {
+	for _, bad := range []string{"lfx-platform-heimdall:4457/jwks", "/.well-known/jwks", "://nope", "ftp://h/jwks", "file:///jwks"} {
 		if _, err := New(Config{JWKSURL: bad, Audience: testAudience, Issuer: testIssuer}); err == nil {
 			t.Errorf("New accepted an unusable JWKS URL %q", bad)
 		} else if !strings.Contains(err.Error(), "JWKS URL") {
