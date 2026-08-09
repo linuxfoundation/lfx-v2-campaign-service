@@ -118,11 +118,19 @@ const (
 // empty result into an error. The guard's job is to distinguish "HubSpot's vocabulary is
 // intact and these numbers are zero" from "HubSpot's vocabulary changed and we are reading
 // nothing at all", so it must recognize the whole vocabulary while mapping only part of it.
+//
+// `contactslost`, `hardbounced` and `softbounced` appear in HubSpot's v3 response examples
+// and were missing from the first version of this set. Omitting a real key is not a
+// harmless gap: an unrecognized key is half of the ErrRenamedCounter conjunction, so a
+// perfectly ordinary response carrying `hardbounced` alongside an omitted zero-valued
+// mapped counter was rejected as a rename. Widening the PROBE set can only ever reduce
+// false errors — it never widens what this client READS, which is `mappedCounters` below.
 var knownCounterVocabulary = map[string]struct{}{
 	counterSent: {}, counterDelivered: {}, counterOpen: {}, counterClick: {},
 	counterBounce: {}, counterUnsubscribed: {},
-	"deferred": {}, "dropped": {}, "notsent": {}, "pending": {},
-	"reply": {}, "selected": {}, "spamreport": {}, "suppressed": {},
+	"contactslost": {}, "deferred": {}, "dropped": {}, "hardbounced": {},
+	"notsent": {}, "pending": {}, "reply": {}, "selected": {},
+	"softbounced": {}, "spamreport": {}, "suppressed": {},
 }
 
 // statisticsData mirrors HubSpot's EmailStatisticsData. Only `counters` is decoded:
@@ -150,11 +158,33 @@ type aggregateStatistics struct {
 	Aggregate statisticsData `json:"aggregate"`
 }
 
+// supportedMetricsWindows is exactly the set timeRangeForWindow maps to a timestamp range.
+//
+// It enumerates HubSpot's OWN set rather than deferring to model.IsValidMetricsWindow, and
+// that distinction is the point: the shared vocabulary is where a new window is ADDED, and
+// a validator that accepts everything the model knows would accept a window this client
+// has not mapped. The dispatcher's whole reason for calling the validator first is to fail
+// a permanent 400 before resolving credentials; deferring to the model would let the new
+// window pass validation, resolve credentials, and only then fail — reporting a permanent
+// defect through whatever status the connection state produced. Enumerating here makes an
+// unmapped addition fail CLOSED at the earliest point, and
+// TestValidateMetricsWindowMatchesTimeRangeForWindow keeps the two in step. Same shape as
+// internal/platform/linkedin/metrics.go.
+var supportedMetricsWindows = map[model.MetricsWindow]struct{}{
+	model.MetricsWindowToday:      {},
+	model.MetricsWindowYesterday:  {},
+	model.MetricsWindowLast7Days:  {},
+	model.MetricsWindowLast14Days: {},
+	model.MetricsWindowLast30Days: {},
+	model.MetricsWindowThisMonth:  {},
+	model.MetricsWindowLastMonth:  {},
+}
+
 // ValidateMetricsWindow reports whether this client can express window as a timestamp
 // range. Callers use it to fail an unsupported window BEFORE resolving credentials, so a
 // permanent 400 is not reported as a retryable connection error.
 func ValidateMetricsWindow(window model.MetricsWindow) error {
-	if !model.IsValidMetricsWindow(window) {
+	if _, ok := supportedMetricsWindows[window]; !ok {
 		return fmt.Errorf("%w: %q", ErrUnsupportedWindow, window)
 	}
 	return nil
@@ -219,9 +249,15 @@ func (c *Client) GetEmailMetrics(ctx context.Context, emailID string, window mod
 
 	var resp aggregateStatistics
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		// The body is not quoted: it is portal data, and the URL-free error contract in
-		// doRequest exists precisely so responses never reach a log line.
-		return nil, fmt.Errorf("decode hubspot email statistics response: %w", err)
+		// The CAUSE is discarded, not just the body. Not quoting the body is not enough:
+		// json.SyntaxError and json.UnmarshalTypeError carry fragments of the input in
+		// their own messages — an overflowing numeric literal is reproduced verbatim — and
+		// BriefService.GetCampaignMetrics's default branch logs safeErrSummary(err), which
+		// truncates but does not redact. So the diagnostic is built from constants plus a
+		// length, which is what actually distinguishes "empty response" from "10 MiB of
+		// something". Matches internal/platform/linkedin/metrics.go. Nothing is lost to
+		// callers: encoding/json's errors are concrete types nobody here matches on.
+		return nil, fmt.Errorf("hubspot: decode email statistics response: malformed JSON (%d bytes)", len(raw))
 	}
 
 	// An ABSENT `emails` field is a schema break, not an answer. It is the only evidence
@@ -275,17 +311,29 @@ func (c *Client) GetEmailMetrics(ctx context.Context, emailID string, window mod
 	// The guard above answers "is the vocabulary recognizable AT ALL"; this one answers
 	// "is the part of it we READ still here". A rename that leaves any one known key
 	// standing satisfies the first and is invisible to it.
-	if missing, unknown, ok := renamedCounter(counters); ok {
-		return nil, fmt.Errorf("%w: %q is absent while %q is present",
-			ErrRenamedCounter, missing, unknown)
+	// `missing` comes from the static mappedCounters list, so naming it is safe and it is
+	// the half of the diagnosis that tells an operator what to go look at. The unrecognized
+	// key does NOT get named: it is arbitrary text from an open response map, and it would
+	// travel into the service's logged error summary. Its COUNT carries the part of the
+	// signal that matters — that the conjunction fired — without the payload.
+	if missing, unknownCount, ok := renamedCounter(counters); ok {
+		return nil, fmt.Errorf("%w: %q is absent while %d unrecognized counter(s) are present",
+			ErrRenamedCounter, missing, unknownCount)
 	}
 	// Counts, so a negative is malformed upstream data rather than a small number. Checked
 	// across the WHOLE map, not just the six mapped keys: a negative anywhere in the
 	// counter set is evidence the payload is wrong, and the five keys read below would be
 	// no more trustworthy for having stayed positive.
+	// Neither the key nor the value is interpolated when the key is not one this client
+	// knows: both are arbitrary response content, and this error reaches a log line. A key
+	// from the static vocabulary is safe to name and is the useful case, so that one IS
+	// named; anything else is reported by shape alone.
 	for _, k := range sortedKeys(counters) {
 		if counters[k] < 0 {
-			return nil, fmt.Errorf("%w: %q = %d", ErrNegativeCounter, k, counters[k])
+			if _, known := knownCounterVocabulary[k]; known {
+				return nil, fmt.Errorf("%w: %q is negative", ErrNegativeCounter, k)
+			}
+			return nil, fmt.Errorf("%w: an unrecognized counter is negative", ErrNegativeCounter)
 		}
 	}
 
@@ -355,13 +403,15 @@ var mappedCounters = []string{
 	counterSent, counterDelivered, counterOpen, counterClick, counterBounce, counterUnsubscribed,
 }
 
-// renamedCounter reports a mapped key that is absent while some unrecognized key is
-// present, returning the pair so the error can name both. See ErrRenamedCounter for why
-// NEITHER condition is sufficient alone.
+// renamedCounter reports a mapped key that is absent while at least one unrecognized key
+// is present, returning the absent key and HOW MANY unrecognized keys there were. See
+// ErrRenamedCounter for why NEITHER condition is sufficient alone.
 //
-// Iteration is over sorted keys so a map with several candidates always names the same
-// pair — an error message that varies run to run is one nobody can grep for.
-func renamedCounter(counters map[string]int64) (missing, unknown string, ok bool) {
+// The unrecognized keys are COUNTED rather than returned: they are untrusted response
+// content and the caller renders this into a logged error. Iteration over mapped keys is
+// in declaration order and the count is order-independent, so the message is stable for a
+// given input — one that varies run to run is one nobody can grep for.
+func renamedCounter(counters map[string]int64) (missing string, unknownCount int, ok bool) {
 	for _, k := range mappedCounters {
 		if _, present := counters[k]; !present {
 			missing = k
@@ -369,14 +419,17 @@ func renamedCounter(counters map[string]int64) (missing, unknown string, ok bool
 		}
 	}
 	if missing == "" {
-		return "", "", false
+		return "", 0, false
 	}
-	for _, k := range sortedKeys(counters) {
+	for k := range counters {
 		if _, known := knownCounterVocabulary[k]; !known {
-			return missing, k, true
+			unknownCount++
 		}
 	}
-	return "", "", false
+	if unknownCount == 0 {
+		return "", 0, false
+	}
+	return missing, unknownCount, true
 }
 
 // sortedKeys returns counters' keys in a stable order, so every message built by walking

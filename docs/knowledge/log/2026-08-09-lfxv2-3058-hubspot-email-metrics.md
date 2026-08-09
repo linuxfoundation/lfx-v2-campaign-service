@@ -158,3 +158,39 @@ legitimately-quiet window error. The two widened guards were revert-checked in t
 restoring the presence check accepts `[1, 4242, 9999]`, and restoring `len(counters) > 0`
 returns all-zero metrics for all three absent-counter shapes (`{}`, a missing `aggregate`, and
 a missing `counters`).
+
+## Round 2: the probe set was wider than the mapped set, and still not wide enough
+
+"Six counters are mapped; fourteen are recognized" above is now **seventeen**, and the three
+that were missing — `contactslost`, `hardbounced`, `softbounced` — are in HubSpot's own v3
+response examples. That is not a cosmetic gap. An unrecognized key is one half of the
+`ErrRenamedCounter` conjunction, so an entirely ordinary response carrying a bounce breakdown
+alongside a zero-valued mapped counter HubSpot chose to omit was rejected as a rename.
+
+The lesson is the one the section above already states, arriving from the other direction: the
+asymmetry between the PROBE set and the MAPPED set only protects against over-rejection if the
+probe set is genuinely complete. Getting it from memory of "the vocabulary HubSpot's email APIs
+have used since v1" produced fourteen of seventeen, and the three missed were exactly the ones
+that appear on emails with real bounce activity. Widening the probe set can never do harm — it
+does not change what the client READS — so there was no reason to be conservative about it.
+
+Three more corrections landed in the same round, all of the same family:
+
+- **`ValidateMetricsWindow` deferred to `model.IsValidMetricsWindow`.** The two sets are equal
+  today, so nothing failed; but the shared vocabulary is where a window gets ADDED, and the
+  validator exists precisely so a permanent 400 is reported before credentials are resolved.
+  Inheriting the model's set means the first unmapped addition validates, resolves, and fails
+  late. It now enumerates HubSpot's own set, as the LinkedIn adapter does.
+- **Two error paths interpolated untrusted response content** — the unrecognized counter key in
+  `ErrRenamedCounter`, and the key and value in `ErrNegativeCounter`. Both reach a log line
+  through `safeErrSummary`, which truncates but does not redact. The half of each diagnosis
+  that comes from a static list is still named; the rest is reported by shape (a count, or "an
+  unrecognized counter").
+- **The JSON decode error forwarded its cause.** Not quoting the body is not sufficient:
+  `json.SyntaxError` and `json.UnmarshalTypeError` reproduce fragments of the input, including
+  an overflowing numeric literal verbatim. Same fix as the redaction rounds on LFXV2-2775 —
+  discard the cause, build the message from constants plus a length.
+
+And one test defect: the non-error cases of the rename table asserted only that the error was
+not `ErrRenamedCounter`, so any OTHER failure passed while the subtest names claimed those
+shapes read successfully. They now require `err == nil`.

@@ -244,6 +244,13 @@ func TestGetEmailMetrics_PartiallyRenamedCounterVocabularyIsAnError(t *testing.T
 		// The quiet path stays working however many mapped keys are absent: `pending` and
 		// `notsent` are KNOWN, so there is no unknown key and the guard cannot fire.
 		"quiet email, several known unmapped": {`{"notsent":1,"pending":2}`, false},
+		// The sparse-but-legitimate shape the first probe set got wrong: a bounce
+		// breakdown key from HubSpot's own v3 examples alongside an omitted zero-valued
+		// mapped counter. Recognized now, so it is an ordinary success rather than a
+		// rename. One subtest per newly-added key, because each was missing separately.
+		"sparse with hardbounced":  {`{"sent":1,"delivered":1,"open":1,"click":1,"unsubscribed":1,"hardbounced":2}`, false},
+		"sparse with softbounced":  {`{"sent":1,"delivered":1,"open":1,"click":1,"unsubscribed":1,"softbounced":2}`, false},
+		"sparse with contactslost": {`{"sent":1,"delivered":1,"open":1,"click":1,"unsubscribed":1,"contactslost":2}`, false},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -253,6 +260,13 @@ func TestGetEmailMetrics_PartiallyRenamedCounterVocabularyIsAnError(t *testing.T
 			_, err := fixedClock(t, c).GetEmailMetrics(context.Background(), "4242", model.MetricsWindowToday)
 			if got := errors.Is(err, ErrRenamedCounter); got != tc.wantErr {
 				t.Fatalf("ErrRenamedCounter = %v, want %v (err = %v)", got, tc.wantErr, err)
+			}
+			// A non-error case has to be a SUCCESS, not merely a different failure. These
+			// cases exist to prove an omitted zero counter and an additive upstream key
+			// stay readable; a guard added elsewhere that rejected them would leave the
+			// assertion above satisfied and the claim false.
+			if !tc.wantErr && err != nil {
+				t.Fatalf("err = %v, want nil: this shape must read successfully", err)
 			}
 		})
 	}
@@ -367,6 +381,29 @@ func TestValidateMetricsWindowMatchesTimeRangeForWindow(t *testing.T) {
 		_, _, rangeErr := c.timeRangeForWindow(w)
 		if (validErr == nil) != (rangeErr == nil) {
 			t.Errorf("window %q: ValidateMetricsWindow=%v but timeRangeForWindow=%v", w, validErr, rangeErr)
+		}
+	}
+}
+
+// supportedMetricsWindows is HubSpot's OWN enumeration, not a view of the shared model's.
+// The two happen to be equal today, which is exactly why the distinction needs pinning
+// somewhere: with equal sets, re-delegating to model.IsValidMetricsWindow would pass every
+// other test in this file while reintroducing the fail-open behaviour — a window added to
+// the shared vocabulary and not mapped here would validate, resolve credentials, and only
+// then fail. This test asserts membership exactly, so an addition to the model that is
+// mirrored here has to be a deliberate edit to this list rather than a silent inheritance.
+func TestSupportedMetricsWindowsIsHubspotsOwnEnumeration(t *testing.T) {
+	want := []model.MetricsWindow{
+		model.MetricsWindowToday, model.MetricsWindowYesterday, model.MetricsWindowLast7Days,
+		model.MetricsWindowLast14Days, model.MetricsWindowLast30Days, model.MetricsWindowThisMonth,
+		model.MetricsWindowLastMonth,
+	}
+	if len(supportedMetricsWindows) != len(want) {
+		t.Fatalf("supportedMetricsWindows has %d entries, want %d", len(supportedMetricsWindows), len(want))
+	}
+	for _, w := range want {
+		if _, ok := supportedMetricsWindows[w]; !ok {
+			t.Errorf("window %q is mapped by timeRangeForWindow but missing from supportedMetricsWindows", w)
 		}
 	}
 }
