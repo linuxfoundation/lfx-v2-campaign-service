@@ -563,7 +563,8 @@ func returnedCampaignName(name, campaignID string) error {
 	return nil
 }
 
-// hasDuplicateKeys reports whether any JSON object in b declares the same key twice.
+// hasDuplicateKeys reports whether any JSON object in b declares the same key twice, or
+// twice in two spellings encoding/json resolves to the SAME struct field.
 //
 // encoding/json does not treat a repeated key as an error: it decodes both and the LAST
 // one wins. For an ordinary payload that is a harmless quirk of RFC 8259, which leaves
@@ -579,6 +580,16 @@ func returnedCampaignName(name, campaignID string) error {
 // evidence the producer or an intermediary is not emitting what we think it is, and the
 // selected-field set changes over time — a guard scoped to today's fields would quietly
 // stop covering tomorrow's.
+//
+// Keys are compared under the decoder's own notion of sameness, not byte equality, because
+// byte equality is not what decides which value lands in the struct. encoding/json prefers
+// an exact tag match and otherwise falls back to a CASE-INSENSITIVE one, so
+// `{"id":"999","ID":"555"}` assigns the field twice and leaves 555 — two contradictory ids,
+// no repeated key, and a row that agrees with resource name 555 while also saying 999. A
+// guard comparing spellings would miss exactly the collision the decoder acts on. foldKey
+// reproduces that fold, including the two non-ASCII cases the decoder special-cases. Folding
+// cannot over-reject here: Google's JSON is lowerCamelCase throughout, so no legitimate
+// object carries two keys that differ only in case.
 //
 // Malformed JSON returns false: this runs BEFORE Unmarshal, whose error is the better
 // diagnostic for that case, and reporting a parse failure as a duplicate key would send
@@ -615,10 +626,11 @@ func hasDuplicateKeys(b []byte) bool {
 		case string:
 			if expectKey {
 				seen := stack[len(stack)-1]
-				if _, dup := seen[t]; dup {
+				k := foldKey(t)
+				if _, dup := seen[k]; dup {
 					return true
 				}
-				seen[t] = struct{}{}
+				seen[k] = struct{}{}
 				expectKey = false
 				continue
 			}
@@ -627,6 +639,28 @@ func hasDuplicateKeys(b []byte) bool {
 			expectKey = len(stack) > 0 && stack[len(stack)-1] != nil
 		}
 	}
+}
+
+// foldKey maps a JSON object key onto the form encoding/json compares field names by, so two
+// spellings the decoder would resolve to one field also collide here.
+//
+// The decoder's fallback match is a case-insensitive comparison, and its fold is not plain
+// lower-casing: it also equates KELVIN SIGN (U+212A) with 'k' and LATIN SMALL LETTER LONG S
+// (U+017F) with 's', because both simple-fold to the ASCII letter. `{"id":…,"Kid":…}` is
+// not a collision and `{"key":…,"Key":…}` is; leaving the two runes out would let a
+// producer spell a second copy of a field in a way the decoder honours and this guard does
+// not. Everything else is ordinary Unicode lower-casing, which is a superset of what the
+// decoder folds — stricter, and safe here for the reason given at hasDuplicateKeys.
+func foldKey(k string) string {
+	return strings.ToLower(strings.Map(func(r rune) rune {
+		switch r {
+		case 'K': // KELVIN SIGN
+			return 'k'
+		case 'ſ': // LATIN SMALL LETTER LONG S
+			return 's'
+		}
+		return r
+	}, k))
 }
 
 // hasUnpairedSurrogateEscape reports whether b contains a \uD800-\uDFFF JSON escape that is not

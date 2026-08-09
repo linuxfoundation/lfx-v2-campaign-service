@@ -178,3 +178,46 @@ to the adopt endpoint that consumes this.
 
 As with `FindCampaignByName`, no production caller exists yet. The Goa `adopt-campaign`
 endpoint that binds a verified `platform_campaign_id` to a brief is the follow-up.
+
+## Round N+1: the guards were right and in the wrong place
+
+Two Copilot findings on `campaign_lookup.go`, both confirmed, and both of the same shape: the
+guard reasons correctly about a contradiction and then checks for it somewhere the contradiction
+can already have been resolved.
+
+**The envelope.** The row guards receive rows `gaqlSearch` has already produced by unmarshalling
+the page. `{"results":[<campaign 555>],"results":[]}` therefore never reaches them: last-wins
+takes the empty array, the page decodes to zero rows, and the loop the guards live in does not
+execute once. The output is a clean absence — and on these paths an absence is not a neutral
+answer, it is the licence to create a real paid campaign. So the corruption that erases a row is
+strictly worse than the one that mangles it, and it was the only one unguarded. `utf8.Valid`,
+`hasUnpairedSurrogateEscape` and `hasDuplicateKeys` now run on the raw page inside
+`gaqlSearchForCustomer`, before `Unmarshal`. That is one level lower than the finding asked for
+and covers every GAQL reader in the package, not the two lookup paths. Neither of the first two
+can over-reject a page — invalid UTF-8 is malformed JSON by RFC 8259 §8.1, and Google Ads cannot
+store an unpaired surrogate in any field — so the usual over-rejection cost does not apply. The
+per-row checks stay: they name the campaign in their diagnostics, which the envelope check
+cannot.
+
+**The fold.** `hasDuplicateKeys` compared key spellings, and spellings are not what decides
+which value lands in the struct. `encoding/json` prefers an exact tag match and falls back to a
+case-insensitive one, so `{"id":"999","ID":"555"}` assigns the field twice and keeps 555: a row
+carrying two ids, agreeing with resource name 555, with no repeated key anywhere in it. Keys are
+now folded before comparison, and the fold includes the two runes the decoder special-cases —
+KELVIN SIGN (U+212A) and LATIN SMALL LETTER LONG S (U+017F), which simple-fold onto `k` and `s`.
+Leaving those out would leave a producer a spelling the decoder honours and the guard does not,
+which is the whole defect again in miniature. Folding is safe here for a reason worth stating
+rather than assuming: Google's JSON is lowerCamelCase throughout, so no legitimate object has
+two keys differing only in case.
+
+Both revert-verified. Removing the envelope guard makes the new page-level tests report
+`GetCampaign = <nil>, want an error: the envelope declares a key twice`; replacing `foldKey(t)`
+with `t` makes four `TestHasDuplicateKeys` rows report `= false, want true`.
+
+The general form, and it is the third time this file has arrived at a version of it: **a guard
+must run where the evidence still exists.** Round 3 moved a check from the decoded value to the
+raw bytes because U+FFFD substitution had already happened. This round moves one from the rows
+to the page because the row had already been discarded, and another from the byte comparison to
+the decoder's own fold because the decoder had already merged the two keys. Each time, the
+guard's reasoning was correct and its vantage point was downstream of the thing it was looking
+for.

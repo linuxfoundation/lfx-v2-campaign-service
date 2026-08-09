@@ -102,6 +102,28 @@ set changes over time, so a guard scoped to today's fields would quietly stop co
 tomorrow's. Malformed JSON reports false and defers to `Unmarshal`, whose error is the better
 diagnostic.
 
+**Sameness is the decoder's, not the bytes'.** `encoding/json` prefers an exact tag match and
+falls back to a CASE-INSENSITIVE one, so `{"id":"999","ID":"555"}` assigns the same field twice
+and leaves 555 — two contradictory ids and no repeated key for a byte-comparing guard to see.
+Keys are therefore folded (`foldKey`) before comparison, including the two runes the decoder
+special-cases, KELVIN SIGN and LATIN SMALL LETTER LONG S, which simple-fold onto `k` and `s`.
+Folding cannot over-reject here: Google's JSON is lowerCamelCase throughout, so no legitimate
+object carries two keys differing only in case.
+
+**The guards also run on the ENVELOPE, and there the reason is stronger.** The row checks run
+on rows the envelope has already produced, so no row guard can see a corruption that destroys a
+row on the way out. `{"results":[<campaign 555>],"results":[]}` is that corruption: last-wins
+leaves zero rows, the guard loop never executes, and what reaches the caller is a clean,
+trustworthy absence — the one answer a fail-closed lookup must never manufacture, because its
+callers read an absence as a licence to create a real paid campaign. A duplicated
+`nextPageToken` silently truncates or redirects pagination the same way. `gaqlSearchForCustomer`
+therefore runs `utf8.Valid`, the surrogate scan and `hasDuplicateKeys` on the raw page before
+decoding it, which covers every GAQL reader in the package rather than the two lookup paths.
+Neither of the first two can over-reject a page: invalid UTF-8 bytes make the document malformed
+per RFC 8259 §8.1, and Google Ads cannot store an unpaired surrogate in any field. The per-row
+checks stay where they are — they name the campaign in their diagnostics, which the envelope
+check cannot.
+
 The name is queried **verbatim**, no `TrimSpace`: trimming is a no-op for the create path
 (`composeName` already trims), so it only ever alters adoption, answering `"  foo  "` with the
 campaign named `"foo"`. `TrimSpace` only *detects* whitespace-only input. Anything new

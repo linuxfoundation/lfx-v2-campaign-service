@@ -6,6 +6,7 @@ package googleads
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -771,6 +772,17 @@ func TestHasDuplicateKeys(t *testing.T) {
 		{"an array of equal strings", `{"a":["x","x"]}`, false},
 		{"malformed json defers to Unmarshal", `{"a":`, false},
 		{"a bare scalar", `"x"`, false},
+		// The decoder matches a field name EXACTLY first and case-insensitively second,
+		// so two spellings that differ only in case both land in one field and the last
+		// wins — a contradiction with no repeated key in sight.
+		{"two spellings of one key", `{"id":"999","ID":"555"}`, true},
+		{"a case-fold collision nested down", `{"campaign":{"name":"a","Name":"b"}}`, true},
+		// The decoder folds these two runes onto ASCII letters; a guard that only
+		// lower-cased would let a producer spell a second copy of a field it honours.
+		{"the kelvin sign folded onto k", "{\"key\":1,\"\u212aey\":2}", true},
+		{"long s folded onto s", "{\"status\":1,\"\u017ftatus\":2}", true},
+		// Not a collision: differing in more than case is a different field.
+		{"keys differing by more than case", `{"id":1,"Kid":2}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := hasDuplicateKeys([]byte(tc.in)); got != tc.want {
@@ -778,4 +790,74 @@ func TestHasDuplicateKeys(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestGetCampaign_DuplicateEnvelopeKeyIsNotAnAbsence covers the corruption the ROW guards
+// structurally cannot: one that destroys the row before any row guard is handed anything.
+//
+// `{"results":[<campaign 555>],"results":[]}` decodes to the LAST value, so the page yields
+// zero rows and the loop the guards live in never runs. The caller is then told, in the
+// most trustworthy form the contract has, that no such campaign exists — the one answer a
+// fail-closed lookup must never manufacture, since its callers read an absence as a licence
+// to create a real paid campaign.
+func TestGetCampaign_DuplicateEnvelopeKeyIsNotAnAbsence(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{
+			"results declared twice, the live campaign discarded",
+			`{"results":[{"campaign":{"resourceName":"customers/1234567890/campaigns/555",` +
+				`"id":"555","name":"c","status":"` + StatusEnabled + `"}}],"results":[]}`,
+		},
+		{
+			"nextPageToken declared twice",
+			`{"results":[],"nextPageToken":"a","nextPageToken":""}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newRawSearchServer(t, tc.body)
+			ref, err := newAccountsTestClient(t, srv).GetCampaign(context.Background(), "555")
+			if err == nil {
+				t.Fatalf("GetCampaign = %+v, want an error: the envelope declares a key twice", ref)
+			}
+			if ref != nil {
+				t.Errorf("ref = %+v, want nil alongside the error", ref)
+			}
+			if !strings.Contains(err.Error(), "same JSON key twice") {
+				t.Errorf("error = %v, want it to name the duplicate key", err)
+			}
+		})
+	}
+}
+
+// TestFindCampaignByName_MangledEnvelopeIsNotAnAbsence is the same guard on the by-name
+// path, whose absence is the licence to create. A surrogate escape anywhere in the page is
+// enough: Google Ads cannot store one, so a page carrying it has already gone wrong
+// upstream and nothing in it can be read as an answer.
+func TestFindCampaignByName_MangledEnvelopeIsNotAnAbsence(t *testing.T) {
+	srv := newRawSearchServer(t, `{"results":[],"unexpected":"bad\uD800name"}`)
+	id, err := newAccountsTestClient(t, srv).FindCampaignByName(context.Background(), "c")
+	if err == nil {
+		t.Fatalf("FindCampaignByName = %q, want an error: the page carries an unpaired surrogate", id)
+	}
+	if id != "" {
+		t.Errorf("id = %q, want empty alongside the error", id)
+	}
+	if !strings.Contains(err.Error(), "unpaired surrogate") {
+		t.Errorf("error = %v, want it to name the surrogate escape", err)
+	}
+}
+
+// newRawSearchServer serves body VERBATIM for every search request, so a test can send a
+// page that no Go encoder would produce — a duplicated key, a surrogate escape. Marshalling
+// a struct cannot express either, which is precisely why the envelope went unguarded.
+func newRawSearchServer(t *testing.T, body string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if writeAccountsToken(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
 }
