@@ -148,6 +148,72 @@ func TestNewClient_RequiresProxyURLAndKey(t *testing.T) {
 	}
 }
 
+// TestNewClient_NormalizesPaddedConfigOnTheWire is the other half of the guard above.
+// TrimSpace used only for the emptiness CHECK admits every padded value that is not
+// entirely whitespace, and each field then fails somewhere less legible than construction:
+// a key with a trailing newline builds an Authorization header Go's transport rejects as
+// an invalid header value, and a padded URL stops parsing as the URL it looks like. Both
+// surface at generation time as a request failure rather than as the misconfiguration they
+// are — and a trailing newline is the single most common way a Kubernetes secret arrives
+// malformed, so this is the reachable case, not the exotic one.
+//
+// Asserted on the WIRE rather than on the struct: the fields are unexported, and what
+// matters is the header and path the proxy actually receives.
+func TestNewClient_NormalizesPaddedConfigOnTheWire(t *testing.T) {
+	rec := &reqRecorder{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec.capture(r)
+		_, _ = io.WriteString(w, completion("ok"))
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(
+		Config{ProxyURL: "  " + srv.URL + "\n", APIKey: "  " + testKey + "\n", Model: " some-model \n"},
+		WithHTTPClient(srv.Client()), WithRetryBaseDelay(time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("NewClient with padded config: %v — padding is a misconfiguration to "+
+			"normalize, not one to reject: the operator supplied the right values", err)
+	}
+	if _, err := c.Complete(context.Background(), "sys", "user"); err != nil {
+		t.Fatalf("Complete: %v — a padded key or URL must not reach the transport", err)
+	}
+
+	if got, want := rec.Auth(), "Bearer "+testKey; got != want {
+		t.Errorf("Authorization = %q, want %q — an untrimmed key builds a header the "+
+			"transport rejects, and the failure reads as an outage rather than a config error",
+			got, want)
+	}
+	if got := rec.Req().Model; got != "some-model" {
+		t.Errorf("model = %q, want %q — a padded model id routes to nothing on the proxy "+
+			"while looking correct in a log", got, "some-model")
+	}
+}
+
+// A model that is ONLY whitespace must fall back to DefaultModel rather than being sent as
+// an empty string, which the proxy would reject. Normalizing at construction is what makes
+// the two cases one case.
+func TestNewClient_WhitespaceOnlyModelFallsBackToTheDefault(t *testing.T) {
+	rec := &reqRecorder{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec.capture(r)
+		_, _ = io.WriteString(w, completion("ok"))
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(Config{ProxyURL: srv.URL, APIKey: testKey, Model: "   "},
+		WithHTTPClient(srv.Client()), WithRetryBaseDelay(time.Millisecond))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := c.Complete(context.Background(), "sys", "user"); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if got := rec.Req().Model; got != DefaultModel {
+		t.Errorf("model = %q, want DefaultModel %q", got, DefaultModel)
+	}
+}
+
 func TestComplete_EmptyChoicesIsDistinctFromTransportFailure(t *testing.T) {
 	for _, tc := range []struct{ name, body string }{
 		{"no choices", `{"choices":[]}`},

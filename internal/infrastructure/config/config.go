@@ -249,7 +249,9 @@ func (c *Config) String() string {
 		return "<nil>"
 	}
 	return fmt.Sprintf(
-		"&{Debug:%v Host:%q Port:%q JWKSUrl:%q Audience:%q Issuer:%q NATSUrl:%q DatabaseURL:%q CredentialEncryptionKey:%q PGHost:%q PGPort:%q PGUser:%q PGDatabase:%q PGEngine:%q}",
+		"&{Debug:%v Host:%q Port:%q JWKSUrl:%q Audience:%q Issuer:%q NATSUrl:%q DatabaseURL:%q "+
+			"CredentialEncryptionKey:%q AIProxyURL:%q AIModel:%q AIAPIKey:%q "+
+			"PGHost:%q PGPort:%q PGUser:%q PGDatabase:%q PGEngine:%q}",
 		c.Debug,
 		c.Host,
 		c.Port,
@@ -259,6 +261,14 @@ func (c *Config) String() string {
 		redactNATSURL(c.NATSUrl),
 		redactDatabaseURL(c.DatabaseURL),
 		redactSecret(c.CredentialEncryptionKey),
+		// The AI settings are printed rather than omitted, and the key is masked rather
+		// than dropped. Omission is safe but says nothing: "copy generation is not
+		// running" is diagnosed by knowing WHETHER a proxy and key are configured, and
+		// redactSecret answers exactly that — "" for unset, "xxxxx" for present — without
+		// putting the credential in a log. The URL and model are not secrets.
+		c.AIProxyURL,
+		c.AIModel,
+		redactSecret(c.AIAPIKey),
 		c.PGHost,
 		c.PGPort,
 		c.PGUser,

@@ -235,10 +235,19 @@ func TestConfigString_RedactsSecrets(t *testing.T) {
 		Port:                    "8080",
 		DatabaseURL:             "postgres://campaign:s3cret-value@db.example.com:5432/campaign", // secretlint-disable-line -- intentional fake DSN
 		CredentialEncryptionKey: "TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE=",
-		PGHost:                  "db.example.com",
-		PGUser:                  "campaign",
-		PGDatabase:              "campaign",
-		passwordPresent:         true,
+		// Every secret-bearing field belongs in this fixture, not just the ones that
+		// existed when it was written: the contract this test pins is "no configured
+		// secret reaches a log", and a field added without a line here is a contract
+		// nobody is checking. AIProxyURL/AIModel are populated too, so the assertions
+		// below can show they are deliberately NOT masked — a masked URL would make
+		// "is the proxy wired?" undiagnosable from a log.
+		AIProxyURL:      "https://litellm.example.com",
+		AIAPIKey:        "sk-ai-s3cret-value", // secretlint-disable-line -- intentional fake key
+		AIModel:         "us.anthropic.claude-sonnet-4-20250514-v1:0",
+		PGHost:          "db.example.com",
+		PGUser:          "campaign",
+		PGDatabase:      "campaign",
+		passwordPresent: true,
 	}
 
 	for _, formatted := range []string{
@@ -253,6 +262,10 @@ func TestConfigString_RedactsSecrets(t *testing.T) {
 		assert.Contains(t, formatted, "[redacted]")
 		assert.Contains(t, formatted, "xxxxx")
 		assert.Contains(t, formatted, "db.example.com")
+		// The non-secret AI settings must survive. Masking them would cost the one thing
+		// this string is for: telling an operator whether copy generation is configured.
+		assert.Contains(t, formatted, "https://litellm.example.com")
+		assert.Contains(t, formatted, "us.anthropic.claude-sonnet-4-20250514-v1:0")
 	}
 }
 

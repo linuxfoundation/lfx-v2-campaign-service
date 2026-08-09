@@ -137,7 +137,21 @@ func WithRequestTimeout(d time.Duration) Option {
 // rather than at call time, so a deployment without a model wired is discovered
 // once at construction and callers are routed to their degraded path.
 func NewClient(cfg Config, opts ...Option) (*Client, error) {
-	if strings.TrimSpace(cfg.ProxyURL) == "" || strings.TrimSpace(cfg.APIKey) == "" {
+	// Normalize before validating, and STORE the normalized form — mirroring the
+	// hubspot/meta/twitter clients. Trimming only for the emptiness check would let a
+	// padded value pass construction and fail much later, somewhere less legible: these
+	// arrive from Kubernetes secrets, where a trailing newline is the single most common
+	// way a value is malformed, and each field carries it differently. A key ending in
+	// "\n" builds an Authorization header Go's transport rejects outright as an invalid
+	// header value; a proxy URL with surrounding space no longer parses as the URL it
+	// looks like. Both then report as a request failure at generation time rather than as
+	// the misconfiguration they are, which is exactly what constructing eagerly was meant
+	// to avoid. The model id is trimmed on the same grounds — padded, it selects no route
+	// on the proxy while looking correct in a log.
+	cfg.ProxyURL = strings.TrimSpace(cfg.ProxyURL)
+	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
+	cfg.Model = strings.TrimSpace(cfg.Model)
+	if cfg.ProxyURL == "" || cfg.APIKey == "" {
 		return nil, ErrNotConfigured
 	}
 	c := &Client{
@@ -188,8 +202,11 @@ func (c *Client) Complete(ctx context.Context, systemPrompt, userPrompt string) 
 	if c.cfg.Temperature != nil {
 		temp = *c.cfg.Temperature
 	}
+	// No TrimSpace here: NewClient is the only writer of cfg and normalizes it, so a
+	// whitespace-only model has already become "". Re-trimming would imply the field
+	// might arrive padded, which is the invariant this package now holds.
 	model := c.cfg.Model
-	if strings.TrimSpace(model) == "" {
+	if model == "" {
 		model = DefaultModel
 	}
 	maxTokens := c.cfg.MaxTokens

@@ -1,7 +1,7 @@
 ---
 type: "Kubernetes Resource"
 title: "Deployment"
-description: "Helm Deployment for the campaign service, including PG*, CREDENTIAL_ENCRYPTION_KEY, and SNOWFLAKE_* from lfx-v2-campaign-service-secrets."
+description: "Helm Deployment for the campaign service, including PG*, CREDENTIAL_ENCRYPTION_KEY, SNOWFLAKE_* and AI_* from lfx-v2-campaign-service-secrets."
 resource: "charts/lfx-v2-campaign-service/templates/deployment.yaml"
 ---
 
@@ -25,6 +25,18 @@ past-editions audience lookup (`internal/platform/snowflake`), and its absence
 just narrows a built audience to country-only rather than failing the pod.
 `SNOWFLAKE_WAREHOUSE` / `SNOWFLAKE_ROLE` are plain (non-secret) values, empty by
 default so a cluster with no override uses the account's default.
+
+`AI_PROXY_URL` / `AI_API_KEY` follow the Snowflake pattern exactly: `secretKeyRef`
+to `lfx-v2-campaign-service-secrets` (keys `ai-proxy-url`, `ai-api-key`), both
+`optional: true`. Generated email copy is an enrichment on the same terms — a
+cluster with no LiteLLM provisioning must still start, and `llm.NewClient` reports
+`ErrNotConfigured` at construction so the composition root decides once instead of
+each call site rediscovering it. The secret is the **proxy's** key, not a Bedrock or
+Anthropic credential. `AI_MODEL` is a plain (non-secret) value, empty by default:
+a model id is not a credential, and empty selects `llm.DefaultModel`. All three are
+printed by `Config.String()` — the URL and model verbatim, the key through
+`redactSecret` — because "copy generation did not run" is diagnosed by knowing
+whether a proxy and key are configured at all.
 
 `REDDIT_METRICS_ENABLED` is likewise a plain (non-secret) value, defaulting to
 `"false"`. It is a feature gate rather than a credential: the Reddit reporting

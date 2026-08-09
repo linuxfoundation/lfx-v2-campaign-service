@@ -83,11 +83,19 @@ route callers to their degraded path — instead of every call site rediscoverin
 **There is no such composition root yet.** This package has no non-test caller: nothing in
 `internal/container` imports it, so nothing currently logs `ErrNotConfigured` or degrades
 anything. That wiring is part 2 of LFXV2-2775, which adds the email-copy step to the HubSpot
-dispatch. This PR ships the client and its contract only. All three `AI_*` values are wired in the chart as optional secret refs
-on the same reasoning as `SNOWFLAKE_*` — see
+dispatch. This PR ships the client and its contract only. Two of the three `AI_*` values — `AI_PROXY_URL`
+and `AI_API_KEY` — are wired in the chart as OPTIONAL secret refs, on the same reasoning as
+`SNOWFLAKE_*`: generated copy is an enrichment, so an unprovisioned secret must not stop the pod.
+`AI_MODEL` is a plain `value: ''`, because a model id is not a credential and empty is a
+meaningful default (it selects `llm.DefaultModel`). See
 [internal/infrastructure/config](internal-infrastructure-config.md). The secret is the
 **proxy's** key, not a Bedrock or Anthropic credential, so it cannot be replayed against a model
 provider directly.
+
+`Config.String()` prints `AIProxyURL` and `AIModel` verbatim and masks `AIAPIKey` through
+`redactSecret`, which renders `""` for unset and `xxxxx` for present. That asymmetry is
+deliberate: "copy generation did not run" is diagnosed by knowing whether a proxy and a key are
+configured at all, and omitting the fields entirely would be log-safe while answering nothing.
 
 It is **non-streaming, deliberately**: the lfx-one implementation this ports from streams
 because its caller is an SSE endpoint rendering tokens into a browser, and this service has no
