@@ -257,9 +257,12 @@ func (c *Client) FindCampaignByName(ctx context.Context, name string) (string, e
 // caller's phrase for the campaign ("campaign named %q", "campaign id %s"), used only to
 // keep the error messages readable.
 //
-// live is false ONLY for a REMOVED campaign, the one state a caller may skip: a tombstone
-// is unambiguously not adoptable no matter why it arrived, so dropping it can only ever be
-// correct. Every other unrecognised status is an ERROR, not a skip — Google can return
+// live is false ONLY for a REMOVED campaign, the one state a caller may skip — but the
+// verdict is safe to act on only BECAUSE identity is established first. "A tombstone is
+// unadoptable however it arrived" is a claim about a campaign, so it means nothing until
+// the row has said which campaign it is; a malformed, cross-customer or self-disagreeing
+// row is rejected before its status is ever read. Every other unrecognised status is an
+// ERROR, not a skip — Google can return
 // UNSPECIFIED or UNKNOWN, and an omitted field decodes to "", so treating one as live
 // returns the id of a campaign whose serving state was never established, while treating it
 // as a skip reduces an unverifiable response to a clean absence and licenses a create.
@@ -386,7 +389,7 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 
 	describe := fmt.Sprintf("campaign id %s", campaignID)
 	var found *CampaignRef
-	var removed bool
+	var removedRef *CampaignRef
 	for _, raw := range rows {
 		var row campaignLookupRow
 		if err := json.Unmarshal(raw, &row); err != nil {
@@ -402,22 +405,16 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 		// skipping the row, because skipping would reduce an unhonoured query to "no rows
 		// matched", i.e. the clean absence a caller is entitled to trust.
 		//
-		// It sits ABOVE campaignRowIdentity, exactly where FindCampaignByName's name check
-		// sits, and the position is the whole point: campaignRowIdentity reports a REMOVED
-		// row as not-live, and a `continue` on that verdict never reaches a check placed
-		// below it. A REMOVED row for a DIFFERENT campaign would then leave through the
-		// skip, and a response containing only such rows would return (nil, nil) — a
-		// response that honoured NEITHER the id nor the status predicate, reported as the
-		// trustworthy absence a caller acts on by creating a second paid campaign.
-		//
-		// campaignRowIdentity establishes identity BEFORE status, so `id` is populated for a
-		// tombstone too and the filter can be checked on every row rather than only the live
-		// ones. That is what closes the hole: a check placed after a `continue` on the
-		// not-live verdict never runs on a REMOVED row, so a REMOVED row for a DIFFERENT
-		// campaign would leave through the skip untested, and a response made only of such
-		// rows would return (nil, nil) — a response honouring NEITHER predicate, since the
-		// query names one id AND excludes REMOVED, reported as the trustworthy absence a
-		// caller acts on by creating a second campaign against the same budget.
+		// It runs below campaignRowIdentity — which supplies the id — but ABOVE the
+		// tombstone skip, and that second position is the load-bearing one. A check placed
+		// after a `continue` on the not-live verdict never runs on a REMOVED row, so a
+		// REMOVED row for a DIFFERENT campaign would leave through the skip untested and a
+		// response made only of such rows would return (nil, nil): a response honouring
+		// NEITHER predicate, since the query names one id AND excludes REMOVED, reported as
+		// the trustworthy absence a caller acts on by creating a second campaign against the
+		// same budget. campaignRowIdentity establishing identity before status is what makes
+		// this placement possible — `id` is populated for a tombstone too, so the filter can
+		// be checked on every row rather than only the live ones.
 		id, live, err := c.campaignRowIdentity(row, describe)
 		if err != nil {
 			return nil, err
@@ -431,7 +428,19 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 		// the verdict FindCampaignByName reaches for the same row, and it reads as an absence
 		// here for the same reason.
 		if !live {
-			removed = true
+			// Tombstones are held to the same agreement rule as live rows, for the same
+			// reason: a response that answers one id with two different campaigns has
+			// contradicted itself, and an absence derived from a self-contradicting
+			// response is not the trustworthy absence a caller may act on by creating.
+			// Identical duplicates stay tolerated — GAQL can return one campaign on
+			// several rows — and the name is compared unvalidated here on purpose: a
+			// tombstone's name is never surfaced, so an empty one is not a defect, but
+			// TWO names for one id still is.
+			ref := &CampaignRef{ID: id, Name: row.Campaign.Name, Status: row.Campaign.Status}
+			if removedRef != nil && *removedRef != *ref {
+				return nil, fmt.Errorf("google-ads campaign lookup: campaign id %s was returned as %s twice with different details (%+v vs %+v); refusing to trust this response", campaignID, StatusRemoved, *removedRef, *ref)
+			}
+			removedRef = ref
 			continue
 		}
 
@@ -465,7 +474,7 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 	//
 	// A response of tombstones ALONE is a different thing and stays an absence: that is the
 	// campaign asked about, reported as unadoptable, which is what a caller needs to hear.
-	if removed && found != nil {
+	if removedRef != nil && found != nil {
 		return nil, fmt.Errorf("google-ads campaign lookup: campaign id %s was returned both live and %s in one response; refusing to trust this response", campaignID, StatusRemoved)
 	}
 	return found, nil

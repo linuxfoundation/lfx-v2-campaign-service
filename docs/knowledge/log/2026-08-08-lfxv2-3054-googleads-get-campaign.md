@@ -30,9 +30,9 @@ must error. Treating one as live returns a campaign whose serving state was neve
 treating one as a skip reduces an unverifiable response to a clean absence, which is the
 licence-to-create value.
 
-The helper's one sharp edge is that it decides `live` WITHOUT deciding which campaign the row
-is, so "skip a tombstone" and "check the filter" must be ordered by the caller — and the first
-version of the by-id path ordered them wrong. Both review bots caught it independently. With
+The helper's one sharp edge, in its first version, was that it decided `live` WITHOUT deciding
+which campaign the row was, leaving "skip a tombstone" and "check the filter" to be ordered by
+the caller — and the by-id path ordered them wrong. Both review bots caught it independently. With
 the id check below the skip, a `REMOVED` row for a DIFFERENT campaign left through the
 `continue` untested, and a response made only of such rows returned `(nil, nil)`: a response
 that honoured NEITHER predicate (the query names one id *and* excludes `REMOVED`) reported as
@@ -60,6 +60,17 @@ would bind real spend to. It is checked after the loop, not on sight, because th
 in no guaranteed order and a leading live row must not buy trust for what follows it. Tombstones
 ALONE stay an absence: that is the campaign asked about, reported unadoptable, which is what a
 caller needs to hear.
+
+A later pass found the same reasoning stopping one row short. The duplicate-details check sits
+below the tombstone skip, so it only ever compared LIVE rows: two `REMOVED` rows naming campaign
+555 with two different names both left through the `continue` and the call returned `(nil, nil)`.
+But a response that answers one id with two campaigns has contradicted itself just as surely as
+one answering both live and removed, and the absence read out of it is not the trustworthy
+absence a caller may act on by creating. Tombstones are now held to the same agreement rule.
+Identical duplicates stay tolerated, since GAQL really does return one campaign on several rows,
+and the name is compared without being validated — a tombstone's name is never surfaced, so an
+empty one is not a defect, but two names for one id still is. The narrow shape matters: the rule
+is "this response disagrees with itself", not "this tombstone is unsatisfactory".
 
 ## A campaign nobody can name cannot be confirmed
 

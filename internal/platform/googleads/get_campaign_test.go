@@ -321,12 +321,12 @@ func TestCampaignRowIdentity_IsSharedByBothLookups(t *testing.T) {
 // row checks, which is the whole substance of the guard.
 //
 // A tombstone skip and an id-filter check are both correct; placing the skip first is
-// not. campaignRowIdentity reports a REMOVED row as not-live without establishing which
-// campaign it is, so an id check below that skip never runs on one — and a REMOVED row
-// for a DIFFERENT campaign then leaves through the skip silently. A response containing
-// only such rows honoured NEITHER predicate (the query asks for one id AND excludes
-// REMOVED) yet would return (nil, nil): the trustworthy absence a caller acts on by
-// creating a second campaign against the same budget.
+// not. A `continue` on the not-live verdict never reaches a check below it, so a REMOVED
+// row for a DIFFERENT campaign would leave through the skip untested. A response
+// containing only such rows honoured NEITHER predicate (the query asks for one id AND
+// excludes REMOVED) yet would return (nil, nil): the trustworthy absence a caller acts on
+// by creating a second campaign against the same budget. campaignRowIdentity now
+// establishes identity before status precisely so the id check can sit above the skip.
 func TestGetCampaign_RemovedRowForAnotherCampaignIsNotAnAbsence(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -480,6 +480,49 @@ func TestGetCampaign_LiveAndRemovedInOneResponseIsUntrustworthy(t *testing.T) {
 		ref, err := newAccountsTestClient(t, srv).GetCampaign(context.Background(), "555")
 		if err != nil {
 			t.Fatalf("a removed campaign is an absence, not an error: %v", err)
+		}
+		if ref != nil {
+			t.Fatalf("ref = %+v, want nil", *ref)
+		}
+	})
+}
+
+// TestGetCampaign_DisagreeingTombstonesAreNotAnAbsence extends the agreement rule to the
+// rows that never reach the live-row comparison.
+//
+// A tombstone skip means its row leaves the loop early, so before this the duplicate-details
+// check applied to live rows only: two REMOVED rows naming campaign 555 with two different
+// names both set the removed flag and the call returned (nil, nil). But a response that
+// answers ONE id with TWO campaigns has contradicted itself, and the absence derived from it
+// is not the trustworthy absence a caller may act on by creating a second paid campaign — it
+// is a broken response whose most convenient reading was taken at face value. The narrowing
+// contrast lives in the sibling test above: IDENTICAL tombstone duplicates stay an absence,
+// because GAQL genuinely can return one campaign on several rows.
+func TestGetCampaign_DisagreeingTombstonesAreNotAnAbsence(t *testing.T) {
+	rows := []json.RawMessage{
+		lookupRow("555", "the campaign", StatusRemoved),
+		lookupRow("555", "a different campaign", StatusRemoved),
+	}
+	srv, _ := newLookupServer(t, rows)
+
+	ref, err := newAccountsTestClient(t, srv).GetCampaign(context.Background(), "555")
+	if err == nil {
+		t.Fatalf("GetCampaign = %+v, want an error: one id answered with two different campaigns", ref)
+	}
+	if !strings.Contains(err.Error(), "different details") {
+		t.Errorf("error = %v, want it to name the disagreement", err)
+	}
+
+	// An empty name on a tombstone is NOT a defect — it is never surfaced, so the live-row
+	// name guard deliberately does not apply here. Only a genuine disagreement fails.
+	t.Run("an unnamed tombstone is still an absence", func(t *testing.T) {
+		srv, _ := newLookupServer(t, []json.RawMessage{
+			lookupRow("555", "", StatusRemoved),
+			lookupRow("555", "", StatusRemoved),
+		})
+		ref, err := newAccountsTestClient(t, srv).GetCampaign(context.Background(), "555")
+		if err != nil {
+			t.Fatalf("an unnamed tombstone is an absence, not an error: %v", err)
 		}
 		if ref != nil {
 			t.Fatalf("ref = %+v, want nil", *ref)
