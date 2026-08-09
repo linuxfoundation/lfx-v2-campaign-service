@@ -101,3 +101,19 @@ not the decoder. A plain slice invites `len(x) == 0`, which merges precisely the
 this code must keep apart; a nil pointer has to be dereferenced, so the compiler forces
 whoever touches it to decide which case they mean. The concept doc now says so, and says not
 to simplify the pointer away without replacing the nil guard.
+
+## Round 3: the correction was still wrong about `null`
+
+Round 2 corrected the pointer rationale — a plain slice does preserve `{}` vs `[]` — but did
+so with a clause that is itself inaccurate: "encoding/json leaves an absent or null field
+UNCHANGED". It does not. An ABSENT key leaves the field untouched; a present `null` is
+explicitly SET to nil. Verified rather than reasoned about, because the two differ whenever the
+destination is not already zero: decoding `{}` over a slice preset to `["x"]` keeps `["x"]`,
+while decoding `{"AccountsInfo":null}` over the same value yields nil.
+
+They agree in this package only because the envelope is declared fresh on every response —
+which is a property of the call sites, not of the decoder. Both the field comment and the
+concept now say so in those terms. The same clause was corrected in the LinkedIn client in the
+same sweep; it had been copied from there.
+
+Nothing about the pointer changes: it is still legibility rather than mechanism.

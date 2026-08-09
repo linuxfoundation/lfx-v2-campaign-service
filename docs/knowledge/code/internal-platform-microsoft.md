@@ -267,8 +267,9 @@ bound; the two remaining modes both fail the whole call. `{}` (no answer) must s
 distinguishable from `{"AccountsInfo": []}` (zero accounts) — collapsing them is the
 false-absence shape that sends a user looking for a permissions problem that does not
 exist. The DECODER already preserves that distinction on its own: `encoding/json` leaves
-a field whose key is absent (or null) UNCHANGED, so it stays nil, while a present `[]`
-decodes to a non-nil empty slice. `AccountsInfo` is a POINTER to a slice for a reason
+a field whose key is ABSENT untouched and SETS a present `null` to nil — two different
+operations, agreeing here only because the envelope is declared fresh per response — while
+a present `[]` decodes to a non-nil empty slice. `AccountsInfo` is a POINTER to a slice for a reason
 that is about the next reader rather than the mechanism: a plain slice invites a
 `len(x) == 0` check that silently merges the two cases, while a nil pointer must be
 dereferenced and the compiler makes that choice explicit. Do not "simplify" it away

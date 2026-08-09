@@ -100,9 +100,10 @@ func (a AdAccount) PauseLabel() string {
 // The distinction that matters is `{}` (the response did not answer the question) versus
 // `{"AccountsInfo": []}` (the credentials reach no accounts): collapsing them reports the
 // first as the second, and a user goes looking for a permissions problem that does not
-// exist. A plain slice would in fact preserve it — encoding/json leaves an absent or null
-// field UNCHANGED, so the field stays nil, while a present `[]` decodes to a non-nil empty
-// slice. AccountsInfo is nonetheless a POINTER, and the reason is legibility rather than
+// exist. A plain slice would in fact preserve it — encoding/json leaves an ABSENT field
+// untouched and SETS a present `null` to nil, so either way the field is nil here, while a
+// present `[]` decodes to a non-nil empty slice. (Those two are different operations and
+// agree only because this envelope is declared fresh per response.) AccountsInfo is nonetheless a POINTER, and the reason is legibility rather than
 // mechanism: a plain slice invites the next reader to write `len(x) == 0`, which merges
 // exactly the two cases this code must keep apart, whereas a nil pointer has to be
 // dereferenced and the compiler makes that decision explicit at the call site.
