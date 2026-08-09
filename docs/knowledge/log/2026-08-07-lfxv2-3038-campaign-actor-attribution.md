@@ -76,11 +76,14 @@ campaigns without the columns the repository writes to), and that neither column
 MIGRATED schema, and then inserts a campaign with both actors NULL to show the table as a
 whole — triggers and constraints included — still accepts an unattributed dispatch.
 
-**The toggle stamp had no test.** `existing.UpdatedBy = attributedActor(ctx, "toggle campaign
-status")` was real and reachable, but every test in the toggle suite passed
-`context.Background()`, where the actor is nil either way — delete the line and all of them
-stay green while the only record of who paused or resumed a spending campaign disappears.
-`TestCampaignActor_ToggleAttributesToTheRequestingActor` seeds the row with a DIFFERENT actor
-first, so it shows the toggler REPLACING the previous editor rather than merely that some
-actor is present; the negative half pins that an unauthenticated toggle stamps nil rather
-than inheriting the creator or inventing a "system" principal.
+**The toggle stamp's coverage arrived from #96.** Round 3 flagged that every test in the
+toggle suite passed `context.Background()`, so deleting
+`existing.UpdatedBy = attributedActor(ctx, "toggle campaign status")` left them all green
+while the only record of who paused or resumed a spending campaign disappeared. That is
+accurate against the commit the review read; LFXV2-3044 (#96) landed
+`TestCampaignActor_ToggleStampsUpdatedByOnly` and `TestCampaignActor_SystemToggleRecordsNoActor`
+on `main` shortly after, and merging `main` here brings them in. They seed the row with a
+prior mover so a toggle that merely carries the previous actor forward is distinguishable
+from one that reads the request actor, and they pin that an unauthenticated toggle stamps
+nil rather than inventing a principal. No further test was added here — a second pair
+asserting the same property would only be one more thing to keep in step.
