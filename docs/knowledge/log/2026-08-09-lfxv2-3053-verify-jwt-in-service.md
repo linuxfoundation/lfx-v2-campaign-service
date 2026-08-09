@@ -171,3 +171,30 @@ failure into a hang, which is the trap the fan-in fix already ran into. With
 The pattern worth carrying: when a test's subject is a property of a SHARED call, asserting
 it through one participant's observable outcome inherits every scheduling race between
 them. Assert inside the shared call, at a point the test controls.
+
+## Round N: the new failure path leaked the publisher
+
+Copilot: the `auth.New` error return lands after `newIndexPublisher` has already built a live
+NATS publisher, and returns a nil container, so nothing can close it.
+
+Correct, and the shape is worth stating precisely: this is not "the JWT branch leaks". THREE
+earlier returns below it — the credential encryptor, the database configuration, and the
+permanent migration failure — leak in exactly the same way and predate this PR. The JWT check
+is simply the fourth, which is what makes a per-return `indexPub.Close()` the wrong fix: it
+would close this one and leave the other three, and the fifth failure path added next month
+would arrive leaking again.
+
+`NewContainer` now names its results and defers a close keyed on the error. That covers all
+four, and makes the correct behaviour the DEFAULT for whatever is added below rather than a
+rule the next author has to know.
+
+Not unit-tested, and deliberately said out loud rather than quietly skipped: the publisher's
+connection state is not observable from outside `internal/infrastructure/indexer` — the
+`*nats.Conn` is an unexported field — and the only ways to assert it are adding a production
+accessor purely for the test or counting goroutines, which is flaky. The alternative Copilot
+offered (construct the resource-free verifier before the publisher) is testable but fixes only
+the one path.
+
+The general form: **when a reviewer names one instance of a leak, check whether the function
+has a class of it. If it does, fix the class — a point fix on a growing list of returns is a
+defect scheduled for later.**

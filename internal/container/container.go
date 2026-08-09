@@ -241,7 +241,7 @@ type Container struct {
 // repo so its routes stay mounted and return the typed 503 ServiceUnavailable
 // from the OpenAPI contract instead of a bare 404; the health endpoints report
 // ready in that mode.
-func NewContainer(cfg *config.Config) (*Container, error) {
+func NewContainer(cfg *config.Config) (container *Container, err error) {
 	slog.Info("initializing dependency container")
 
 	if err := cfg.ValidateDatabaseSettings(); err != nil {
@@ -261,6 +261,17 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 		return nil, iperr
 	}
 	c.indexPublisher = indexPub
+	// newIndexPublisher can return a LIVE NATS connection with a reconnect goroutine
+	// behind it, and every failure below returns a NIL container — which leaves the
+	// caller no handle to Close, and nothing else stops that goroutine. A long-lived
+	// caller (a test binary, most visibly) then leaks a connection and its background
+	// work per failed construction. Closing here on the error path, rather than at each
+	// return, is what keeps the next failure added below from reintroducing this.
+	defer func() {
+		if err != nil {
+			indexPub.Close()
+		}
+	}()
 
 	// Build the token verifier before any wiring branch, for the same reason and with
 	// one extra: an unusable JWKS configuration must stop the pod here. A verifier that
