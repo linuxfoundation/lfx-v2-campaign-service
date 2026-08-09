@@ -142,8 +142,11 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		AudienceSegments: cfg.AudienceSegments,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: the
 		// GA client composes the budget/campaign/ad-group names from these, and a retry
-		// with the same suffix hits Google's DUPLICATE_NAME (reported
-		// UNCONFIRMED-already-exists) rather than creating a second paid campaign — a
+		// with the same suffix is rejected by whichever family it reaches first —
+		// CampaignBudgetError DUPLICATE_NAME for the budget, CampaignError
+		// DUPLICATE_CAMPAIGN_NAME for the campaign (two different codes; see
+		// errCodeDuplicateBudgetName / errCodeDuplicateCampaignName). Either is reported
+		// UNCONFIRMED-already-exists rather than creating a second paid campaign — a
 		// poor-man's idempotency key until LFXV2-2665 lands provider idempotency keys.
 		NameSuffix: brief.ID,
 	}

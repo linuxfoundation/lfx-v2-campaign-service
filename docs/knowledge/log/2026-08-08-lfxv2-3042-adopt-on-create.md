@@ -63,8 +63,17 @@ practice was the one where it was wrong.
 
 `googleAdsConfig.adoptExisting` (default `false`) is the fix. Adoption is now a deliberate
 act — which is what binding an already-existing campaign to a brief always was — and with the
-flag off a post-delete re-dispatch goes down the create path, where Google's `DUPLICATE_NAME`
+flag off a post-delete re-dispatch goes down the create path, where the name collision
 surfaces as a retained partial requiring reconciliation. Visible beats silent.
+
+Naming the code precisely, because the two are easy to confuse and the client carries the same
+warning: the budget mutate is rejected with `CampaignBudgetError.DUPLICATE_NAME` and the
+campaign mutate with `CampaignError.DUPLICATE_CAMPAIGN_NAME`. Both exist in v23 and both are
+already handled and tested on `main` (`isDuplicateBudgetNameErr` / `isDuplicateCampaignNameErr`,
+`campaign.go`). Google enforces uniqueness among non-removed campaigns only, which is the same
+fact the by-id lookup relies on when it says a name is not unique across `REMOVED` campaigns —
+so a re-dispatch after an UPSTREAM delete legitimately creates, while one after a LOCAL-only
+soft delete collides, which is exactly the case that must not silently rebind.
 
 `TestGoogleAds_Adoption_IsOptInAndOffByDefault` binds it: the fake API `t.Errorf`s if the
 search endpoint is touched at all, and still answers with the live campaign, so a regression
