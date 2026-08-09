@@ -81,7 +81,12 @@ discriminator meant to catch it. Exactly the combination the guard exists to pre
 It is closed at both layers, because each covers what the other cannot:
 
 - **Template time** — a guard at the top of `deployment.yaml` `fail`s the render if either
-  env input declares any `KUBERNETES_*` name, or gives the bypass key a non-empty value.
+  env input declares any `KUBERNETES_*` name, or gives the bypass key a non-empty value —
+  **or a `valueFrom`.** Both env inputs support secret and field references, whose contents
+  the template cannot read, so the whole form is refused for this one key rather than
+  inspected: "cannot see it" must not read as "it is empty" for the variable that turns
+  authentication off. `valueFrom` stays available for every other key, which is how
+  credentials are normally injected.
   A deploy carrying the hole cannot be produced, so there is no window in which a cluster
   is running it. This does nothing for deploys that never pass through the chart.
 - **Runtime** — `config.runningInCluster` ORs in a signal the environment cannot express:

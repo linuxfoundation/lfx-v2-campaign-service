@@ -79,7 +79,13 @@ The replacement does not rest on one layer:
 
 - **Template time** — a guard at the top of `deployment.yaml` `fail`s the render when
   either env input declares a `KUBERNETES_*` name or gives the bypass key a non-empty
-  value. The deploy cannot be produced, so no cluster ever runs it.
+  value. The deploy cannot be produced, so no cluster ever runs it. The first version of
+  this guard read `.value` only, which left the same hole open through `valueFrom`: both
+  env inputs support secret and field references, and a Secret's contents are invisible to
+  the template, so an empty-looking check would have rendered a Deployment whose principal
+  arrives at runtime. The form is now refused outright for this key — inspecting what the
+  template cannot see is not an option, and rejecting `valueFrom` for one local-development
+  variable costs nothing.
 - **Runtime** — `config.runningInCluster` ORs the variable with the presence of the
   projected service-account directory, a signal the environment cannot express. This
   covers what the chart guard structurally cannot: manifests applied outside Helm.

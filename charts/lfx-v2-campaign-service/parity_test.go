@@ -630,6 +630,25 @@ func TestDeploymentRejectsReservedAndBypassEnv(t *testing.T) {
 			set:  "app.extraEnv[0].name=" + bypassKey + ",app.extraEnv[0].value=someone@example.com",
 			want: "may not set",
 		},
+		{
+			// valueFrom is the same hole through a different door. Both env inputs support
+			// it (see the `else if $config.valueFrom` branch in the container env loop), and
+			// the value lives in a Secret the template cannot read -- so a guard that only
+			// inspects `.value` sees nothing and renders a Deployment whose principal is
+			// sourced at runtime. The whole form is refused for this key rather than
+			// inspected, because "the template cannot see it" must not read as "it is empty".
+			name: "environment sources the auth bypass from a secret",
+			set: "app.environment." + bypassKey + ".valueFrom.secretKeyRef.name=creds," +
+				"app.environment." + bypassKey + ".valueFrom.secretKeyRef.key=principal",
+			want: "may not use valueFrom",
+		},
+		{
+			name: "extraEnv sources the auth bypass from a secret",
+			set: "app.extraEnv[0].name=" + bypassKey + "," +
+				"app.extraEnv[0].valueFrom.secretKeyRef.name=creds," +
+				"app.extraEnv[0].valueFrom.secretKeyRef.key=principal",
+			want: "may not set",
+		},
 	}
 
 	for _, tc := range cases {
@@ -659,6 +678,14 @@ func TestDeploymentStillRendersWithOrdinaryOverrides(t *testing.T) {
 		"--set", "app.environment.LOG_LEVEL.value=debug",
 		"--set", "app.environment.JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL.value= ",
 		"--set", "app.extraEnv[0].name=MY_EXTRA,app.extraEnv[0].value=x",
+		// valueFrom is refused only for the bypass key. An ordinary secret-sourced variable
+		// is the normal way to inject a credential, so rejecting the FORM rather than the
+		// key would break every real deploy — the failure mode a one-sided guard invites.
+		"--set", "app.environment.DB_PASSWORD.valueFrom.secretKeyRef.name=creds",
+		"--set", "app.environment.DB_PASSWORD.valueFrom.secretKeyRef.key=password",
+		"--set", "app.extraEnv[1].name=MY_SECRET",
+		"--set", "app.extraEnv[1].valueFrom.secretKeyRef.name=creds",
+		"--set", "app.extraEnv[1].valueFrom.secretKeyRef.key=other",
 		// The empty default must keep rendering — it is declared so the key is discoverable.
 		"--set", "app.environment.JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL.value=",
 	).CombinedOutput()
@@ -671,7 +698,7 @@ func TestDeploymentStillRendersWithOrdinaryOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("helm template failed on ordinary overrides: %v\n%s", err, out)
 	}
-	for _, want := range []string{"name: LOG_LEVEL", "name: MY_EXTRA"} {
+	for _, want := range []string{"name: LOG_LEVEL", "name: MY_EXTRA", "name: DB_PASSWORD", "name: MY_SECRET"} {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("rendered deployment is missing %q:\n%s", want, out)
 		}

@@ -24,8 +24,15 @@
   {{- end }}
 {{- end }}
 {{- with (get .Values.app.environment $bypassKey) }}
-  {{- if trim (toString (default "" .value)) }}
-    {{- fail (printf "app.environment.%s must stay empty. It DISABLES JWT verification and attributes every request to the named principal; it exists for local development only. A pod that starts with it set refuses to boot, so setting it here cannot deploy the bypass — it can only break the deploy." $bypassKey) }}
+  {{- /*
+      valueFrom is rejected outright rather than inspected. Its value lives in a Secret or
+      a field reference resolved by the kubelet, so the template cannot see whether it is
+      empty — and "cannot see" must not read as "is empty" for the one key that turns
+      authentication off. There is no legitimate reason to source a LOCAL-DEVELOPMENT
+      principal from a cluster Secret, so refusing the whole form costs nothing.
+  */}}
+  {{- if or (trim (toString (default "" .value))) .valueFrom }}
+    {{- fail (printf "app.environment.%s must stay empty, and may not use valueFrom. It DISABLES JWT verification and attributes every request to the named principal; it exists for local development only. A pod that starts with it set refuses to boot, so setting it here cannot deploy the bypass — it can only break the deploy." $bypassKey) }}
   {{- end }}
 {{- end }}
 {{- range $entry := .Values.app.extraEnv }}
@@ -33,8 +40,9 @@
   {{- if hasPrefix $reservedPrefix $n }}
     {{- fail (printf "app.extraEnv entry %q is reserved: see the app.environment guard. Declaring a KUBERNETES_* variable overrides the kubelet's, which would conceal the cluster from the %s guard." $n $bypassKey) }}
   {{- end }}
-  {{- if and (eq $n $bypassKey) (trim (toString (default "" $entry.value))) }}
-    {{- fail (printf "app.extraEnv may not set %s to a non-empty value: it disables JWT verification. See the app.environment guard." $bypassKey) }}
+  {{- /* valueFrom rejected for the same reason as in the app.environment guard above. */}}
+  {{- if and (eq $n $bypassKey) (or (trim (toString (default "" $entry.value))) $entry.valueFrom) }}
+    {{- fail (printf "app.extraEnv may not set %s to a non-empty value or source it with valueFrom: it disables JWT verification. See the app.environment guard." $bypassKey) }}
   {{- end }}
 {{- end }}
 ---
