@@ -620,3 +620,70 @@ func TestGetCampaign_NamesCampaignNameCannotHoldAreRefused(t *testing.T) {
 		})
 	}
 }
+
+// TestGetCampaign_UnpairedSurrogateEscapeIsNotACampaign covers the second way a name can be
+// rewritten in transit — the one utf8.Valid cannot see.
+//
+// `"bad\uD800name"` is six ASCII bytes for the escape, so the document is perfectly valid UTF-8
+// and the raw-bytes check above passes it. The substitution happens later, when encoding/json
+// RESOLVES the escape: an unpaired surrogate is not a Unicode scalar value, so it decodes to
+// U+FFFD, and — as with a malformed byte — returns no error. That lands in exactly the value
+// TestGetCampaign_NamesCampaignNameCannotHoldAreRefused deliberately admits, since U+FFFD is a
+// legal campaign name character, so nothing downstream could tell the two apart.
+//
+// The narrowing half matters as much as the refusing half. A well-formed PAIR is how every
+// non-BMP character reaches Go through JSON, so rejecting escapes wholesale would refuse every
+// campaign with an emoji in its name — a false absence dressed as caution (a campaign that is
+// really there, reported as unadoptable). A DOUBLED backslash is likewise ordinary data: it is a
+// literal backslash followed by the text uD800, not an escape at all.
+func TestGetCampaign_UnpairedSurrogateEscapeIsNotACampaign(t *testing.T) {
+	// Built by hand rather than through lookupRow: jsonQuote emits UTF-8 directly, and the
+	// escape sequence IS what is under test.
+	row := func(rawName string) json.RawMessage {
+		return json.RawMessage(`{"campaign":{"resourceName":"customers/1234567890/campaigns/555",` +
+			`"id":"555","name":"` + rawName + `","status":"` + StatusEnabled + `"}}`)
+	}
+
+	for name, rawName := range map[string]string{
+		"a lone high surrogate":            `bad\uD800name`,
+		"a lone low surrogate":             `bad\uDC00name`,
+		"a high surrogate paired with BMP": `bad\uD800Aname`,
+		"a high surrogate at the end":      `badname\uDBFF`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv, _ := newLookupServer(t, []json.RawMessage{row(rawName)})
+			ref, err := newAccountsTestClient(t, srv).GetCampaign(context.Background(), "555")
+			if err == nil {
+				t.Fatalf("GetCampaign = %+v, want an error: json.Unmarshal resolves this escape "+
+					"to U+FFFD without complaint, offering a name this campaign does not have", ref)
+			}
+			if !strings.Contains(err.Error(), "surrogate") {
+				t.Errorf("error = %v, want it to name the escape an operator has to go looking for", err)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name     string
+		rawName  string
+		wantName string
+	}{
+		{"a well-formed surrogate pair", `the \uD83D\uDE00 campaign`, "the \U0001F600 campaign"},
+		{"two pairs in a row", `\uD83D\uDE00\uD83D\uDE01`, "\U0001F600\U0001F601"},
+		{"a pair with a BMP escape between other text", `a\u00e9b\uD83D\uDE00c`, "a\u00e9b\U0001F600c"},
+		{"a doubled backslash before uD800", `a\\uD800b`, `a\uD800b`},
+		{"an escape that is not \\u at all", `a\"quoted\" name`, `a"quoted" name`},
+	} {
+		t.Run(tc.name+" is adoptable", func(t *testing.T) {
+			srv, _ := newLookupServer(t, []json.RawMessage{row(tc.rawName)})
+			ref, err := newAccountsTestClient(t, srv).GetCampaign(context.Background(), "555")
+			if err != nil {
+				t.Fatalf("GetCampaign: %v — this escape decodes to a name Google Ads stores, so "+
+					"refusing it answers \"cannot trust this\" about a campaign that is really there", err)
+			}
+			if ref == nil || ref.Name != tc.wantName {
+				t.Fatalf("ref = %+v, want the name %q", ref, tc.wantName)
+			}
+		})
+	}
+}

@@ -96,6 +96,25 @@ binding against. The check is on the RAW row bytes rather than on hunting U+FFFD
 string, because U+FFFD is a legal character in a campaign name and a campaign that genuinely
 contains one is not a defect.
 
+That raw-bytes check turned out to be only half the story, and review caught the half that was
+missing. `utf8.Valid` answers a question about BYTES, and there are two ways a name can be
+rewritten in transit — it sees only the first. `"bad\uD800name"` is six ASCII bytes for the
+escape, so the document is perfectly valid UTF-8 and the check passes it; the substitution
+happens LATER, when `encoding/json` resolves the escape. An unpaired surrogate is not a Unicode
+scalar value, so it decodes to U+FFFD, again with no error, and lands in exactly the value the
+name guard below deliberately admits. Verified rather than reasoned about: a scratch program
+printed `utf8.Valid(raw): true` and then `err=<nil> name="bad\ufffdname"`. So the guard now also
+scans the raw bytes for unpaired UTF-16 surrogate escapes (`hasUnpairedSurrogateEscape`).
+
+Its narrowing is the part worth reading. A well-formed PAIR is how every non-BMP character
+reaches Go through JSON, so rejecting `\u` escapes wholesale would refuse every campaign with an
+emoji in its name — the same false-absence-as-caution mistake in a new place. A DOUBLED backslash
+is ordinary data too: `\\uD800` is a literal backslash followed by the text `uD800`, not an
+escape at all, and reading it as one would refuse a legal name. Malformed hex is deliberately NOT
+this function's finding — `json.Unmarshal` errors on it, and the caller turns that into a refusal
+of its own. Nine sub-tests carry it: four escapes that must be refused, five that must stay
+adoptable.
+
 Second, the name is now held to the bounds of the field it came out of: at most
 `maxCampaignNameRunes` CHARACTERS, and none of NUL, LF or CR. A value outside those did not come
 from a campaign, because Google would not have stored it — so the response carrying it has already

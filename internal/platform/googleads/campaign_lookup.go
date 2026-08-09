@@ -400,8 +400,16 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 		// returned as a successful CampaignRef under a name the campaign does not have.
 		// Checked on the RAW bytes rather than by hunting U+FFFD in the decoded value,
 		// because U+FFFD is itself a legal character in a campaign name.
-		if !utf8.Valid(raw) {
-			return nil, fmt.Errorf("google-ads campaign lookup: campaign id %s was returned in a row that is not valid UTF-8; decoding it would substitute U+FFFD and offer a name this campaign does not have", campaignID)
+		//
+		// Two ways in, and byte validity catches only the first. `"bad\xffname"` is a
+		// malformed BYTE, which utf8.Valid sees. `"bad\uD800name"` is not: every byte of
+		// that document is ASCII, so the bytes are perfectly valid UTF-8, and the escape
+		// only becomes a problem when encoding/json resolves it — an unpaired surrogate is
+		// not a Unicode scalar, so it is substituted with U+FFFD, again with no error. That
+		// route lands in exactly the value the guard below deliberately admits, and would
+		// have produced the silently rewritten name this check exists to prevent.
+		if !utf8.Valid(raw) || hasUnpairedSurrogateEscape(raw) {
+			return nil, fmt.Errorf("google-ads campaign lookup: campaign id %s was returned in a row whose name cannot survive JSON decoding intact (malformed UTF-8 bytes, or an unpaired surrogate escape); decoding it would substitute U+FFFD and offer a name this campaign does not have", campaignID)
 		}
 		var row campaignLookupRow
 		if err := json.Unmarshal(raw, &row); err != nil {
@@ -525,4 +533,80 @@ func returnedCampaignName(name, campaignID string) error {
 		return fmt.Errorf("google-ads campaign lookup: campaign id %s was returned with a name containing NUL, LF or CR, which Campaign.name cannot hold; refusing to trust this response", campaignID)
 	}
 	return nil
+}
+
+// hasUnpairedSurrogateEscape reports whether b contains a \uD800-\uDFFF JSON escape that is not
+// part of a valid high+low pair.
+//
+// utf8.Valid answers a question about BYTES, and a `\uD800` escape is six ASCII bytes — valid
+// UTF-8 by every measure, and still not a name any campaign can have. encoding/json resolves it
+// to U+FFFD, silently and without error, because an unpaired surrogate is not a Unicode scalar
+// value. On a path whose whole purpose is to hand an operator a name to confirm a binding
+// against, that substitution is the failure: the name offered is not the campaign's.
+//
+// Scanning the raw row rather than the decoded string is what makes the two cases separable. A
+// campaign whose name genuinely contains U+FFFD arrives as the encoded bytes EF BF BD or as a
+// `\ufffd` escape, neither of which this matches; a substituted one arrives as a surrogate
+// escape, which nothing else can produce. Rejecting costs no reachable lookup — Google Ads
+// cannot store an unpaired surrogate, so a row carrying one has already gone wrong upstream.
+func hasUnpairedSurrogateEscape(b []byte) bool {
+	for i := 0; i < len(b); i++ {
+		if b[i] != '\\' {
+			continue
+		}
+		// A doubled backslash is literal data: it consumes the next byte, and neither of the
+		// two begins an escape. Without this, `\\uD800` — a backslash followed by the TEXT
+		// uD800 — would be read as a surrogate escape it is not.
+		if i+1 < len(b) && b[i+1] == '\\' {
+			i++
+			continue
+		}
+		if i+5 >= len(b) || b[i+1] != 'u' {
+			continue
+		}
+		r, ok := hex4(b[i+2 : i+6])
+		if !ok {
+			// Malformed hex is not this function's finding: json.Unmarshal errors on it,
+			// and the caller turns that into a refusal of its own.
+			continue
+		}
+		switch {
+		case r >= 0xD800 && r <= 0xDBFF:
+			// A high surrogate is legal only when a low one follows IMMEDIATELY.
+			if i+11 >= len(b) || b[i+6] != '\\' || b[i+7] != 'u' {
+				return true
+			}
+			lo, ok := hex4(b[i+8 : i+12])
+			if !ok || lo < 0xDC00 || lo > 0xDFFF {
+				return true
+			}
+			i += 11
+		case r >= 0xDC00 && r <= 0xDFFF:
+			return true // a low surrogate with no high one before it
+		default:
+			i += 5
+		}
+	}
+	return false
+}
+
+// hex4 parses exactly four hex digits, the fixed width of a JSON \u escape.
+func hex4(b []byte) (uint32, bool) {
+	if len(b) != 4 {
+		return 0, false
+	}
+	var v uint32
+	for _, c := range b {
+		switch {
+		case c >= '0' && c <= '9':
+			v = v<<4 | uint32(c-'0')
+		case c >= 'a' && c <= 'f':
+			v = v<<4 | uint32(c-'a'+10)
+		case c >= 'A' && c <= 'F':
+			v = v<<4 | uint32(c-'A'+10)
+		default:
+			return 0, false
+		}
+	}
+	return v, true
 }
