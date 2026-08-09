@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/hubspot"
-description: "HubSpot API client (email channel): bearer auth, request layer with 429 retry, marketing-email + CRM-list + event-def operations."
+description: "HubSpot API client (email channel): bearer auth, request layer with 429 retry, marketing-email + CRM-list + event-def operations, and marketing-email statistics reads."
 resource: "internal/platform/hubspot"
 tags:
   - platform-client
@@ -116,9 +116,86 @@ branches) belong to the audience-builder (LFXV2-2774), not this transport client
 create's 2xx-with-no-id is UNCONFIRMED. List/get responses are decoded from BOTH the
 `{"list":{…}}` wrapper and the bare top-level shape HubSpot variously returns.
 
+## Marketing-email statistics (LFXV2-3058)
+
+`statistics.go` adds `GetEmailMetrics`, the read that backs the email channel's metrics:
+`GET /marketing/v3/emails/statistics/list?startTimestamp&endTimestamp&emailIds`, an
+idempotent read (so a 429 IS retried). It returns the same `model.CampaignMetrics`
+every ad platform returns, plus an `Email` sub-object of counters no ad platform has.
+
+The v3 contract was verified against HubSpot's own generated client rather than the
+docs (which are auth-gated): the response is
+`{"emails": [int], "campaignAggregations": {...}, "aggregate": {"counters": {...},
+"ratios": {...}, "deviceBreakdown": {...}, "qualifierStats": {...}}}`.
+
+**`counters` is an OPEN map** — the v3 schema types it `map[string]int` and enumerates
+no keys. That is the whole reason for the guards below.
+
+### The two fail-closed guards, and why zeros were the wrong answer
+
+A metrics read has a caller that acts on an absence: zeros read as "this campaign is
+not performing", which is a decision-grade statement. So an answer this client cannot
+VERIFY must be an error, never a clean zero.
+
+- **`ErrUnrecognizedCounters`** — a non-empty `counters` map in which not one key
+  belongs to HubSpot's counter vocabulary. Because the map is open, a renamed key set
+  decodes cleanly to zeros: an email that really sent would report as having sent
+  nothing. The probe set (`knownCounterVocabulary`) is deliberately WIDER than the six
+  keys this client maps. An email created but never sent in the window can legitimately
+  return only `notsent`/`pending`, and treating that as a vocabulary change would turn
+  an ordinary empty result into an error. The guard distinguishes "the vocabulary is
+  intact and these numbers are zero" from "the vocabulary changed and we are reading
+  nothing" — so it must recognize the whole vocabulary while mapping only part of it.
+- **`ErrStatisticsFilterNotHonored`** — the response's `emails` list is non-empty and
+  does not contain the id we filtered on, meaning the filter was not applied and the
+  counters describe some other email. Reporting them would attribute a stranger's sends
+  to this campaign. An EMPTY `emails` list is the opposite case: no activity in the
+  window, which correctly reads as zeros.
+
+`campaignAggregations` is deliberately NOT decoded: it is keyed by email-CAMPAIGN id,
+not by email id, so indexing it with the id we filtered on would silently miss and fall
+through to a zero value. Since the request filters to exactly one email, `aggregate`
+already IS that email's aggregate.
+
+The `emailID` (the campaign's `PlatformCampaignID`) is validated as a CANONICAL
+positive decimal integer — the round-trip compare rejects `+42`, `042` and padded forms
+that `ParseInt` otherwise accepts. HubSpot types `emailIds` as an integer list, so a
+value that is not one would either be rejected upstream or, worse, ignored — widening
+the filter to the whole portal.
+
+### Windows
+
+`timeRangeForWindow` maps all seven `model.MetricsWindow` values; HubSpot takes
+arbitrary ISO-8601 instants, so there is no platform vocabulary to translate. Windows
+are anchored to the UTC calendar date, matching the LinkedIn adapter, even though
+HubSpot's own UI reports in the PORTAL's timezone — a portal on America/Los_Angeles and
+a `today` read here can legitimately disagree at the day boundary. UTC is chosen because
+a cross-channel report needs one answer across every platform, and matching each
+portal's zone is not achievable anyway (the ad platforms have their own). `end` is the
+last millisecond of the final day rather than next-midnight: HubSpot does not document
+whether `endTimestamp` is inclusive, and under either reading this range is wrong by at
+most a millisecond, where next-midnight would gain a whole extra day if the bound is
+inclusive. Month boundaries are computed from the first of the month, never
+`AddDate(0, -1, 0)` on today's day-of-month — `AddDate` normalizes an invalid
+day-of-month into the following month, which would shift `this_month`/`last_month` on
+the 29th–31st.
+
+`ValidateMetricsWindow` is exported so a caller can reject an unsupported window BEFORE
+resolving credentials: an unsupported window is a permanent 400 whatever the
+connection looks like, and resolving first would surface a connection problem instead
+and invite the caller to retry a request that can never succeed.
+
+### `cost_micros` is 0, and that is not "free"
+
+HubSpot bills no per-send cost, so there is nothing to read and the field is 0. The
+meaning is "this platform bills no per-send cost", NOT "this campaign was free" — email
+spend lives in the subscription. A consumer blending this 0 into a cross-channel
+cost-per-acquisition understates the real cost. This is stated in three places (the
+model doc, the Goa description, and here) because the field's shape gives no hint of it.
+
 ## Scope
 
-Auth + request layer + the email/list/event-def operations above. Consumers: the
+Auth + request layer + the email/list/event-def operations above, plus marketing-email statistics reads. Consumers: the
 audience-building logic (LFXV2-2774, uses lists + event-defs) and the email staging
 dispatcher (LFXV2-2777, uses the marketing-email ops), the latter blocked on PR #11.
 

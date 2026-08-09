@@ -1,0 +1,282 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package hubspot
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+)
+
+// ---------------------------------------------------------------------------
+// Marketing-email statistics (LFXV2-3058)
+//
+// GET /marketing/v3/emails/statistics/list?startTimestamp&endTimestamp&emailIds
+// is a pure read, so it passes idempotent=true and a 429 is retried.
+//
+// The reasoning behind the two fail-closed guards below — why an unrecognized
+// counter vocabulary is an error rather than a zero, and why the returned email
+// list is checked against the id we asked for — is in
+// docs/knowledge/code/internal-platform-hubspot.md.
+// ---------------------------------------------------------------------------
+
+const statisticsPath = "/marketing/v3/emails/statistics/list"
+
+var (
+	// ErrUnsupportedWindow reports a model.MetricsWindow this client cannot express as a
+	// timestamp range. HubSpot takes arbitrary ISO-8601 instants, so today every window is
+	// supported and this is unreachable from the switch — it exists so that adding a window
+	// to the shared vocabulary without mapping it here fails loudly instead of silently
+	// querying the zero time.
+	ErrUnsupportedWindow = errors.New("hubspot: unsupported metrics window")
+
+	// ErrStatisticsFilterNotHonored reports that the response's `emails` list does not
+	// contain the id we filtered on. The counters in that response describe some OTHER
+	// email, so none of the response is trustworthy — reporting its numbers as this
+	// campaign's would attribute a stranger's sends to it.
+	ErrStatisticsFilterNotHonored = errors.New("hubspot: statistics response does not cover the requested email")
+
+	// ErrUnrecognizedCounters reports a non-empty `counters` map in which not one key
+	// belongs to HubSpot's counter vocabulary. Since `counters` is an OPEN map in the v3
+	// schema, a renamed key set would otherwise decode cleanly to zeros — an email that
+	// really sent would report as having sent nothing, which reads as a dead campaign
+	// rather than as a broken integration.
+	ErrUnrecognizedCounters = errors.New("hubspot: statistics response carried no recognized counter")
+)
+
+// The counters this client maps onto its result. HubSpot's v3 schema types `counters` as
+// map[string]int with no enumerated keys, so these names come from the counter vocabulary
+// HubSpot's email APIs have used since v1. They are named constants (not literals at the
+// call site) so TestCounterKeysAreTheDocumentedVocabulary can pin the exact strings: a
+// rename upstream should break a test here, not quietly zero a dashboard.
+const (
+	counterSent         = "sent"
+	counterDelivered    = "delivered"
+	counterOpen         = "open"
+	counterClick        = "click"
+	counterBounce       = "bounce"
+	counterUnsubscribed = "unsubscribed"
+)
+
+// knownCounterVocabulary is the PROBE set for the ErrUnrecognizedCounters guard, and is
+// deliberately WIDER than the six keys above. A window in which an email was created but
+// never sent can legitimately come back carrying only counters this client does not map
+// (`notsent`, `pending`), and treating that as a vocabulary change would turn an ordinary
+// empty result into an error. The guard's job is to distinguish "HubSpot's vocabulary is
+// intact and these numbers are zero" from "HubSpot's vocabulary changed and we are reading
+// nothing at all", so it must recognize the whole vocabulary while mapping only part of it.
+var knownCounterVocabulary = map[string]struct{}{
+	counterSent: {}, counterDelivered: {}, counterOpen: {}, counterClick: {},
+	counterBounce: {}, counterUnsubscribed: {},
+	"deferred": {}, "dropped": {}, "notsent": {}, "pending": {},
+	"reply": {}, "selected": {}, "spamreport": {}, "suppressed": {},
+}
+
+// statisticsData mirrors HubSpot's EmailStatisticsData. Only `counters` is decoded:
+// `ratios` is discarded because Ctr is COMPUTED here from clicks and opens, keeping one
+// definition of the ratio across every platform rather than adopting each platform's own;
+// `deviceBreakdown` and `qualifierStats` have no consumer.
+type statisticsData struct {
+	Counters map[string]int64 `json:"counters"`
+}
+
+// aggregateStatistics mirrors HubSpot's AggregateEmailStatistics.
+//
+// `campaignAggregations` is NOT decoded. It is keyed by email-campaign id, not by email
+// id, so indexing it with the id we filtered on would silently miss and fall through to a
+// zero value. Because the request filters to exactly one email, `aggregate` already IS
+// that email's aggregate, and `emails` is what proves the filter was applied.
+type aggregateStatistics struct {
+	Emails    []int64        `json:"emails"`
+	Aggregate statisticsData `json:"aggregate"`
+}
+
+// ValidateMetricsWindow reports whether this client can express window as a timestamp
+// range. Callers use it to fail an unsupported window BEFORE resolving credentials, so a
+// permanent 400 is not reported as a retryable connection error.
+func ValidateMetricsWindow(window model.MetricsWindow) error {
+	if !model.IsValidMetricsWindow(window) {
+		return fmt.Errorf("%w: %q", ErrUnsupportedWindow, window)
+	}
+	return nil
+}
+
+// GetEmailMetrics reads live statistics for one marketing email over one window.
+//
+// emailID is the HubSpot marketing-email id stored as the campaign's PlatformCampaignID.
+// It is validated as a canonical positive decimal integer before use: it is interpolated
+// into a query the API filters on, and HubSpot types emailIds as an integer list, so a
+// value that is not one would either be rejected upstream or — worse — ignored, widening
+// the filter to the whole portal.
+func (c *Client) GetEmailMetrics(ctx context.Context, emailID string, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+	id, err := parseEmailID(emailID)
+	if err != nil {
+		return nil, err
+	}
+	start, end, err := c.timeRangeForWindow(window)
+	if err != nil {
+		return nil, err
+	}
+
+	q := url.Values{}
+	// RFC3339 in UTC. The API documents these as ISO-8601 and the two agree for this shape.
+	q.Set("startTimestamp", start.Format(time.RFC3339))
+	q.Set("endTimestamp", end.Format(time.RFC3339))
+	q.Set("emailIds", strconv.FormatInt(id, 10))
+
+	raw, err := c.doRequest(ctx, http.MethodGet, statisticsPath+"?"+q.Encode(), nil, true)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp aggregateStatistics
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		// The body is not quoted: it is portal data, and the URL-free error contract in
+		// doRequest exists precisely so responses never reach a log line.
+		return nil, fmt.Errorf("decode hubspot email statistics response: %w", err)
+	}
+
+	// An EMPTY `emails` means the email had no activity in the window — a normal result
+	// that must read as zeros. A NON-empty list that omits our id means the filter was not
+	// applied, so the counters belong to something else.
+	if len(resp.Emails) > 0 && !containsID(resp.Emails, id) {
+		return nil, fmt.Errorf("%w: asked for %d", ErrStatisticsFilterNotHonored, id)
+	}
+
+	counters := resp.Aggregate.Counters
+	if len(counters) > 0 && !hasKnownCounter(counters) {
+		return nil, ErrUnrecognizedCounters
+	}
+
+	opens := counters[counterOpen]
+	clicks := counters[counterClick]
+	return &model.CampaignMetrics{
+		CampaignID:  emailID,
+		Window:      window,
+		Impressions: opens,
+		Clicks:      clicks,
+		// Zero, always. HubSpot charges nothing per send, so there is no platform-reported
+		// cost to read — see the concept doc on why this must not be blended into a
+		// cross-channel cost-per-acquisition.
+		CostMicros: 0,
+		Ctr:        ratio(clicks, opens),
+		Email: &model.EmailMetrics{
+			Sent:         counters[counterSent],
+			Delivered:    counters[counterDelivered],
+			Opens:        opens,
+			Clicks:       clicks,
+			Bounces:      counters[counterBounce],
+			Unsubscribes: counters[counterUnsubscribed],
+		},
+	}, nil
+}
+
+// parseEmailID accepts only a canonical positive decimal integer. The round-trip compare
+// rejects the non-canonical forms ParseInt accepts — `+123`, `0123`, and (with surrounding
+// whitespace) values that would need trimming — so the string we interpolate is exactly
+// the number we validated. Whitespace is not trimmed away: a padded id means the stored
+// value is malformed, and answering "no metrics" for it would hide that.
+func parseEmailID(emailID string) (int64, error) {
+	id, err := strconv.ParseInt(emailID, 10, 64)
+	if err != nil || id <= 0 || strconv.FormatInt(id, 10) != emailID {
+		return 0, fmt.Errorf("hubspot: malformed marketing-email id")
+	}
+	return id, nil
+}
+
+// containsID reports whether ids contains want.
+func containsID(ids []int64, want int64) bool {
+	for _, id := range ids {
+		if id == want {
+			return true
+		}
+	}
+	return false
+}
+
+// hasKnownCounter reports whether at least one key belongs to HubSpot's counter vocabulary.
+func hasKnownCounter(counters map[string]int64) bool {
+	for k := range counters {
+		if _, ok := knownCounterVocabulary[k]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// ratio returns num/den, and 0 when den is 0 — matching CampaignMetrics.Ctr's documented
+// contract that it never divides by zero.
+func ratio(num, den int64) float64 {
+	if den == 0 {
+		return 0
+	}
+	return float64(num) / float64(den)
+}
+
+// timeRangeForWindow converts a platform-agnostic window into the inclusive instant range
+// HubSpot's statistics endpoint takes.
+//
+// Windows are anchored to the UTC calendar date — now() is converted with .UTC() before
+// the date is extracted — so every caller gets the same range regardless of the process
+// clock's zone. This matches the LinkedIn adapter's contract and is worth naming because
+// HubSpot's own UI reports in the PORTAL's timezone: a portal set to America/Los_Angeles
+// and a "today" read here can legitimately disagree at the day boundary. Choosing UTC
+// keeps the answer identical across every platform in one dashboard, which is the property
+// a cross-channel report needs; matching each portal's zone is not achievable anyway, since
+// the ad platforms have their own.
+//
+// `end` is the last millisecond of the final day rather than midnight of the next. HubSpot
+// does not document whether endTimestamp is inclusive; under either reading this range is
+// wrong by at most one millisecond, whereas next-midnight would gain a whole extra day if
+// the bound is inclusive.
+//
+// Month boundaries are computed from the first of the month (never AddDate(0,-1,0) on
+// today's day-of-month), because AddDate normalizes an invalid day-of-month into the
+// following month — which would shift this_month and last_month on the 29th-31st.
+func (c *Client) timeRangeForWindow(window model.MetricsWindow) (start, end time.Time, err error) {
+	// Checked first so this method and ValidateMetricsWindow can never disagree about which
+	// windows are supported; TestValidateMetricsWindowMatchesTimeRangeForWindow pins that.
+	if err := ValidateMetricsWindow(window); err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+
+	now := c.now().UTC()
+	year, month, day := now.Date()
+	today := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+	firstOfThisMonth := time.Date(year, month, 1, 0, 0, 0, 0, time.UTC)
+
+	var first, last time.Time
+	switch window {
+	case model.MetricsWindowToday:
+		first, last = today, today
+	case model.MetricsWindowYesterday:
+		yesterday := today.AddDate(0, 0, -1)
+		first, last = yesterday, yesterday
+	case model.MetricsWindowLast7Days:
+		first, last = today.AddDate(0, 0, -6), today // 6 days before today = 7 inclusive
+	case model.MetricsWindowLast14Days:
+		first, last = today.AddDate(0, 0, -13), today
+	case model.MetricsWindowLast30Days:
+		first, last = today.AddDate(0, 0, -29), today
+	case model.MetricsWindowThisMonth:
+		first, last = firstOfThisMonth, today
+	case model.MetricsWindowLastMonth:
+		// One day before the first of this month is always the last day of the previous
+		// month, whatever its length.
+		lastDayOfLastMonth := firstOfThisMonth.AddDate(0, 0, -1)
+		first = time.Date(lastDayOfLastMonth.Year(), lastDayOfLastMonth.Month(), 1, 0, 0, 0, 0, time.UTC)
+		last = lastDayOfLastMonth
+	default:
+		return time.Time{}, time.Time{}, fmt.Errorf("%w: %q", ErrUnsupportedWindow, window)
+	}
+
+	return first, last.Add(24*time.Hour - time.Millisecond), nil
+}
