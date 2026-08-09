@@ -45,6 +45,16 @@ var (
 	// reporting its numbers as this campaign's would attribute strangers' sends to it.
 	ErrStatisticsFilterNotHonored = errors.New("hubspot: statistics response does not cover exactly the requested email")
 
+	// ErrEmailNotSentInWindow reports an empty `emails` list: HubSpot did not include this
+	// email in the requested span. The documented reason is that the span selects emails by
+	// SEND time, so a window that does not contain the send date returns nothing.
+	//
+	// This is an error rather than a zeroed result because zeros here are indistinguishable
+	// from the other zero — an email that WAS sent in the window and simply earned no opens.
+	// Collapsing the two answers "this campaign got no engagement" about a campaign that may
+	// be getting plenty, which is the worse of the two lies a metrics read can tell.
+	ErrEmailNotSentInWindow = errors.New("hubspot: the requested window does not contain this email's send date")
+
 	// ErrUnrecognizedCounters reports a `counters` map carrying not one key from HubSpot's
 	// counter vocabulary — whether because the keys were renamed or because the field was
 	// absent entirely. Since `counters` is an OPEN map in the v3 schema, either shape
@@ -112,6 +122,29 @@ func ValidateMetricsWindow(window model.MetricsWindow) error {
 
 // GetEmailMetrics reads live statistics for one marketing email over one window.
 //
+// # What the window actually does, and what it does not
+//
+// HubSpot's span is NOT an event-time filter, and this is the single most important thing
+// to know before reading a number out of the result. The generated contract describes the
+// operation as returning "aggregated statistics of emails SENT in a specified time span",
+// and the response's `emails` field as the list of emails sent during it. So the span
+// selects WHICH EMAILS are in scope, by send date; the counters that come back are that
+// email's totals to date, not the opens and clicks that occurred inside the window.
+//
+// Two consequences follow, and callers must not paper over either:
+//
+//   - A window containing the send date returns the email's aggregate counters. Asking for
+//     `today` and `last_30_days` on an email sent this morning returns the SAME numbers.
+//     The window does not narrow them.
+//   - A window not containing the send date returns nothing at all, which this function
+//     reports as ErrEmailNotSentInWindow rather than as zeros. See that sentinel for why
+//     zeros would be the wrong answer.
+//
+// model.CampaignMetrics.Window therefore records what was ASKED, not a period the counters
+// are scoped to. Presenting these as "opens in the last 7 days" would be false. Getting
+// genuine event-time windowing needs a different HubSpot source (the email-events API,
+// which timestamps each open and click) and is deliberately not attempted here.
+//
 // emailID is the HubSpot marketing-email id stored as the campaign's PlatformCampaignID.
 // It is validated as a canonical positive decimal integer before use: it is interpolated
 // into a query the API filters on, and HubSpot types emailIds as an integer list, so a
@@ -151,9 +184,16 @@ func (c *Client) GetEmailMetrics(ctx context.Context, emailID string, window mod
 		return nil, fmt.Errorf("decode hubspot email statistics response: %w", err)
 	}
 
-	// An EMPTY `emails` means the email had no activity in the window — a normal result
-	// that must read as zeros.
-	//
+	// An EMPTY `emails` means HubSpot did not include this email in the span at all — per
+	// the contract, because the span selects by SEND time and does not contain its send
+	// date. It does NOT mean the email earned no engagement, and the two must not collapse:
+	// an email that WAS sent in the window with no opens comes back present, with a `sent`
+	// counter. Returning zeros here would make "you picked the wrong window" and "nobody
+	// opened it" the same answer.
+	if len(resp.Emails) == 0 {
+		return nil, ErrEmailNotSentInWindow
+	}
+
 	// A NON-empty list must name our id and NOTHING ELSE. Presence alone is not enough:
 	// the request supplies exactly one `emailIds` value and `aggregate` is the aggregation
 	// over the emails the response covers, so a list of [1, 4242, 9999] proves the filter
@@ -161,7 +201,7 @@ func (c *Client) GetEmailMetrics(ctx context.Context, emailID string, window mod
 	// campaign's is precisely the misattribution this guard exists to prevent. Either the
 	// filter was honoured, in which case the list is exactly what we asked for, or it was
 	// not, in which case none of the response is trustworthy. There is no middle reading.
-	if len(resp.Emails) > 0 && !isExactlyID(resp.Emails, id) {
+	if !isExactlyID(resp.Emails, id) {
 		return nil, fmt.Errorf("%w: asked for %d, response covers %d email(s)",
 			ErrStatisticsFilterNotHonored, id, len(resp.Emails))
 	}
@@ -170,10 +210,14 @@ func (c *Client) GetEmailMetrics(ctx context.Context, emailID string, window mod
 	// renamed `counters` field decodes to a nil map, which that form waves through — every
 	// lookup returns 0 and an email HubSpot has just told us it covers reports as having
 	// sent nothing. The absent map is the same schema break as a renamed key set, and it is
-	// the one the narrower check could not see. Zeros survive only where they are a real
-	// answer: an empty `emails` list, the API's way of saying there was no activity.
+	// the one the narrower check could not see.
+	//
+	// The guard is unconditional now that an empty `emails` list returns above. It used to
+	// carry a `|| len(resp.Emails) > 0` term to let zeros through for that case, on the
+	// mistaken reading that an empty list meant "no activity". There is no longer any path
+	// here on which an all-zero counter map is a legitimate answer.
 	counters := resp.Aggregate.Counters
-	if !hasKnownCounter(counters) && (len(counters) > 0 || len(resp.Emails) > 0) {
+	if !hasKnownCounter(counters) {
 		return nil, ErrUnrecognizedCounters
 	}
 

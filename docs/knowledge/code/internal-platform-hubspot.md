@@ -131,7 +131,28 @@ docs (which are auth-gated): the response is
 **`counters` is an OPEN map** — the v3 schema types it `map[string]int` and enumerates
 no keys. That is the whole reason for the guards below.
 
-### The two fail-closed guards, and why zeros were the wrong answer
+### The span selects emails by SEND date; it does not window the counters
+
+This is the single most important thing to know before reading a number out of the
+result, and it is easy to get backwards. The generated contract describes the operation
+as returning "aggregated statistics of emails SENT in a specified time span", and
+`emails` as the list of emails sent during it. So `startTimestamp`/`endTimestamp` choose
+WHICH EMAILS are in scope, by send date. The counters that come back are that email's
+totals to date — not the opens and clicks that occurred inside the span.
+
+Two consequences, and neither may be papered over:
+
+- A span containing the send date returns the email's aggregate counters. `today` and
+  `last_30_days` on an email sent this morning return the SAME numbers.
+- A span not containing the send date returns nothing at all, reported as
+  `ErrEmailNotSentInWindow` (below) rather than as zeros.
+
+`model.CampaignMetrics.Window` therefore records what was ASKED, not a period the
+counters are scoped to. Presenting these as "opens in the last 7 days" would be false.
+Genuine event-time windowing needs a different HubSpot source — the email-events API,
+which timestamps each open and click — and is deliberately not attempted here.
+
+### The three fail-closed guards, and why zeros were the wrong answer
 
 A metrics read has a caller that acts on an absence: zeros read as "this campaign is
 not performing", which is a decision-grade statement. So an answer this client cannot
@@ -149,7 +170,15 @@ VERIFY must be an error, never a clean zero.
   The guard is **not** conditioned on the map being non-empty. A renamed or dropped
   `counters` FIELD decodes to a nil map, which a `len(counters) > 0` test waves through
   — and that is the same schema break, arriving in the one shape the narrower check
-  cannot see. What licenses zeros is an empty `emails` list, not an empty counter map.
+  cannot see. Nothing licenses zeros here: an empty `emails` list returns
+  `ErrEmailNotSentInWindow` before this guard is reached, so there is no path on which
+  an all-zero counter map is a legitimate answer.
+- **`ErrEmailNotSentInWindow`** — an EMPTY `emails` list. Per the contract above, the
+  span did not contain this email's send date. This is NOT "the email earned no
+  engagement": the email that really had no engagement comes back PRESENT, carrying a
+  `sent` (or `notsent`) counter. Zeroing the empty case would make "you picked the wrong
+  window" and "nobody opened it" the same answer, which is the one where a live campaign
+  reads as a dead one.
 - **`ErrStatisticsFilterNotHonored`** — the response's `emails` list is non-empty and is
   not EXACTLY the id we filtered on. Omitting it is the obvious case; naming it
   alongside others is the same failure and the one a presence check admits. The request
@@ -157,8 +186,8 @@ VERIFY must be an error, never a clean zero.
   the response covers, so a wider list means the aggregate carries strangers' sends —
   attributing them to this campaign is exactly what the guard exists to prevent. Either
   the filter was honoured, in which case the list is what we asked for, or it was not,
-  in which case none of the response is trustworthy. An EMPTY `emails` list is the
-  separate, legitimate case: no activity in the window, which correctly reads as zeros.
+  in which case none of the response is trustworthy. An EMPTY list is a different
+  failure and is handled by the guard above, not by this one.
 
 `campaignAggregations` is deliberately NOT decoded: it is keyed by email-CAMPAIGN id,
 not by email id, so indexing it with the id we filtered on would silently miss and fall

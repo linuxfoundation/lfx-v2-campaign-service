@@ -28,6 +28,11 @@ So both are errors rather than values:
 - `ErrStatisticsFilterNotHonored` — a non-empty `emails` list that is not exactly the id we
   asked for.
 
+A third joined them once the span's real semantics were read (see below):
+
+- `ErrEmailNotSentInWindow` — an empty `emails` list, meaning the span did not contain this
+  email's send date.
+
 **Both guards were first written one qualifier too narrow, and the same mistake produced
 both.** Each began as a check on the shape it had a fixture for, rather than on the property
 it was defending — and the gap that leaves is not a corner case, it is the neighbouring
@@ -46,8 +51,9 @@ response is trustworthy. There is no middle reading.
 The vocabulary guard was conditioned on `len(counters) > 0`, so it never fired on the case it
 most needed to: a renamed or dropped `counters` FIELD decodes to a nil map, and every lookup
 then returns 0 for an email HubSpot has just told us it covers. The empty map and the missing
-key are the same schema break; only the second is invisible to a non-empty test. Zeros now
-survive exactly one path — an empty `emails` list, the API's way of reporting no activity.
+key are the same schema break; only the second is invisible to a non-empty test. Zeros briefly
+survived exactly one path — an empty `emails` list, which was read as the API's way of
+reporting no activity. That reading was wrong, and the next section is why.
 
 Worth naming as a class: **a fail-closed guard qualified by the shape of its fixture.** Both
 qualifiers looked like defensive narrowing and were in fact holes, and neither would have been

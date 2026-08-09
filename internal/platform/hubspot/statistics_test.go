@@ -171,22 +171,26 @@ func TestGetEmailMetrics_MissingCountersForACoveredEmailIsAnErrorNotZeros(t *tes
 	}
 }
 
-// An EMPTY emails list is the API's way of saying the email had no activity in the window.
-// That is an ordinary result and must read as zeros, not as a filter failure — the
-// difference between "this campaign did nothing" and "we could not tell".
-func TestGetEmailMetrics_EmptyEmailsListIsZerosNotAnError(t *testing.T) {
+// An EMPTY emails list means HubSpot did not include this email in the span, and the
+// contract says why: the span selects emails by SEND time, so a window that does not
+// contain the send date matches nothing.
+//
+// Zeros are the wrong answer, and this test exists because the obvious reading — "empty
+// means no activity" — gets it backwards. The email that really had no activity comes back
+// PRESENT (see TestGetEmailMetrics_UnmappedButKnownCountersAreARealZero, where `[4242]`
+// arrives carrying only `notsent`). So zeroing the empty case would make "you picked a
+// window that predates the send" and "nobody opened it" the same answer, which is exactly
+// the case where a live campaign reads as a dead one.
+func TestGetEmailMetrics_EmptyEmailsListMeansTheWindowMissedTheSend(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, statsBody(t, `[]`, `{}`))
 	})
 	m, err := fixedClock(t, c).GetEmailMetrics(context.Background(), "4242", model.MetricsWindowToday)
-	if err != nil {
-		t.Fatalf("GetEmailMetrics: %v", err)
+	if !errors.Is(err, ErrEmailNotSentInWindow) {
+		t.Fatalf("err = %v, want ErrEmailNotSentInWindow", err)
 	}
-	if m.Impressions != 0 || m.Clicks != 0 || m.Ctr != 0 {
-		t.Errorf("want all zeros, got %+v", m)
-	}
-	if m.Email == nil || *m.Email != (model.EmailMetrics{}) {
-		t.Errorf("email = %+v, want zero value", m.Email)
+	if m != nil {
+		t.Errorf("metrics = %+v, want nil: a partial result here would be read as real zeros", m)
 	}
 }
 
