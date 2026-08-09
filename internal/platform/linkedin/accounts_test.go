@@ -191,6 +191,49 @@ func TestListAdAccounts_AsksAboutTheTokenAndPaginatesByCursor(t *testing.T) {
 	}
 }
 
+// A cursor is an opaque server token and must be echoed back byte for byte. Trimming it
+// requests a different page than the one offered — and the whitespace-only case is worse
+// than wrong: it trims to "", reads as exhaustion, and returns page 1 alone as the
+// complete account list. That is a false absence reached through pagination, and the
+// caller acts on it by concluding their token reaches no such account.
+func TestListAdAccounts_CursorIsEchoedVerbatim(t *testing.T) {
+	t.Run("surrounding whitespace is preserved", func(t *testing.T) {
+		srv, uris := adAccountsServer(t,
+			`{"elements":[{"id":1}],"metadata":{"nextPageToken":"  tok  "}}`,
+			`{"elements":[{"id":2}],"metadata":{"nextPageToken":""}}`,
+		)
+		got, err := newAccountsClient(t, srv.URL).ListAdAccounts(context.Background())
+		if err != nil {
+			t.Fatalf("ListAdAccounts: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("got %d accounts, want 2", len(got))
+		}
+		seen := uris.all()
+		// Both encodings of a space are acceptable; a trimmed "pageToken=tok" is not.
+		if !strings.Contains(seen[1], "pageToken=++tok++") && !strings.Contains(seen[1], "pageToken=%20%20tok%20%20") {
+			t.Errorf("cursor was not echoed verbatim: %q", seen[1])
+		}
+	})
+
+	t.Run("whitespace-only cursor is not exhaustion", func(t *testing.T) {
+		srv, uris := adAccountsServer(t,
+			`{"elements":[{"id":1}],"metadata":{"nextPageToken":" "}}`,
+			`{"elements":[{"id":2}],"metadata":{"nextPageToken":""}}`,
+		)
+		got, err := newAccountsClient(t, srv.URL).ListAdAccounts(context.Background())
+		if err != nil {
+			t.Fatalf("ListAdAccounts: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("got %d accounts, want 2: a whitespace cursor was read as the end of the walk", len(got))
+		}
+		if n := len(uris.all()); n != 2 {
+			t.Fatalf("made %d requests, want 2: page 2 was never fetched", n)
+		}
+	})
+}
+
 func TestListAdAccounts_EmptyIsAnAnswer(t *testing.T) {
 	srv, _ := adAccountsServer(t, `{"elements":[]}`)
 	got, err := newAccountsClient(t, srv.URL).ListAdAccounts(context.Background())

@@ -181,7 +181,14 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 				ServingStatuses: el.ServingStatuses,
 			})
 		}
-		next := strings.TrimSpace(resp.Metadata.NextPageToken)
+		// NOT trimmed. A page cursor is an opaque server token echoed back verbatim, so
+		// trimming can request a DIFFERENT page than the one offered — and a token that is
+		// only whitespace would trim to "" and read as exhaustion, returning a partial
+		// account list as a complete one. That is the false-absence shape this file's other
+		// guards exist to prevent, arriving through the pagination door. The two existing
+		// cursor walks (client.go findCreatives, findByName) preserve the exact value;
+		// trimming belongs on human-entered fields, not on server-minted ones.
+		next := resp.Metadata.NextPageToken
 		if next == "" {
 			return accounts, nil // fully enumerated
 		}

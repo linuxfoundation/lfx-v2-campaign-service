@@ -157,6 +157,15 @@ find-by-name survives a server-side filter the API may ignore, and discovery has
 be ignored, so a walk that long means something is wrong rather than that the collection is
 large.
 
+**The cursor is echoed back byte for byte**, and is one of the few strings in this walk that
+is NOT trimmed. It is an opaque server token, so trimming can request a different page than
+the one offered; worse, a token consisting only of whitespace would trim to `""`, read as
+exhaustion, and return page one alone as the complete account list — the same false absence
+the guards above exist to prevent, arriving through the pagination door instead. The two
+older cursor walks in `client.go` (creative discovery, find-by-name) already preserve the
+exact value. Trimming belongs on human-entered fields such as the account NAME, not on
+anything the server minted.
+
 The id check reuses `accountIDRE` from `targeting.go` — the same regexp a configured account
 id is validated against — rather than restating `^[0-9]+$`. An account this walk offers must
 be one the client will later accept, and a second copy of that contract could drift into
