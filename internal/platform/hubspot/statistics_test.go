@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -181,16 +182,22 @@ func TestGetEmailMetrics_MissingCountersForACoveredEmailIsAnErrorNotZeros(t *tes
 // arrives carrying only `notsent`). So zeroing the empty case would make "you picked a
 // window that predates the send" and "nobody opened it" the same answer, which is exactly
 // the case where a live campaign reads as a dead one.
-func TestGetEmailMetrics_EmptyEmailsListMeansTheWindowMissedTheSend(t *testing.T) {
+func TestGetEmailMetrics_EmptyEmailsListIsNotAZero(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, statsBody(t, `[]`, `{}`))
 	})
 	m, err := fixedClock(t, c).GetEmailMetrics(context.Background(), "4242", model.MetricsWindowToday)
-	if !errors.Is(err, ErrEmailNotSentInWindow) {
-		t.Fatalf("err = %v, want ErrEmailNotSentInWindow", err)
+	if !errors.Is(err, ErrNoSentEmailInWindow) {
+		t.Fatalf("err = %v, want ErrNoSentEmailInWindow", err)
 	}
 	if m != nil {
 		t.Errorf("metrics = %+v, want nil: a partial result here would be read as real zeros", m)
+	}
+	// The sentinel must not narrow an empty list to "the send was outside the span". A
+	// staged draft and a nonexistent id arrive in exactly this shape too, and a message
+	// telling the caller to try another window is wrong for both of them.
+	if !strings.Contains(err.Error(), "never sent") || !strings.Contains(err.Error(), "not exist") {
+		t.Errorf("err = %v, want it to admit the other two states an empty list can mean", err)
 	}
 }
 
@@ -212,7 +219,7 @@ func TestGetEmailMetrics_AbsentEmailsFieldIsNotAnEmptyList(t *testing.T) {
 			if !errors.Is(err, ErrStatisticsFilterNotHonored) {
 				t.Fatalf("err = %v, want ErrStatisticsFilterNotHonored", err)
 			}
-			if errors.Is(err, ErrEmailNotSentInWindow) {
+			if errors.Is(err, ErrNoSentEmailInWindow) {
 				t.Errorf("err = %v, must not read as a window miss: the field is absent, not empty", err)
 			}
 		})

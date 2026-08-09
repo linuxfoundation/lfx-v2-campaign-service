@@ -30,7 +30,7 @@ So both are errors rather than values:
 
 A third joined them once the span's real semantics were read (see below):
 
-- `ErrEmailNotSentInWindow` — an empty `emails` list, meaning the span did not contain this
+- `ErrNoSentEmailInWindow` — an empty `emails` list, meaning the span did not contain this
   email's send date.
 
 And two more once the guards were re-read against what they actually admit:
@@ -194,3 +194,30 @@ Three more corrections landed in the same round, all of the same family:
 And one test defect: the non-error cases of the rename table asserted only that the error was
 not `ErrRenamedCounter`, so any OTHER failure passed while the subtest names claimed those
 shapes read successfully. They now require `err == nil`.
+
+## Round N: the sentinel claimed more than the response could support
+
+Copilot, on the empty-`emails` branch: an empty list only establishes that no SENT email
+matched the id and the span. It does not establish that an existing email was sent outside the
+window — a staged HubSpot draft that has never been sent, and a stale or nonexistent id, reach
+this branch identically.
+
+Real, and the cost is specific: the old message ("the requested window does not contain this
+email's send date") reads as an instruction to retry with a different window, which is wrong
+for two of the three states and wrong in the expensive direction — a user widens the window
+repeatedly looking for an email no window will ever find.
+
+The narrowing lived in the NAME as well as the message, so both changed:
+`ErrEmailNotSentInWindow` → `ErrNoSentEmailInWindow`, and the text now says "no email with this
+id was sent during the requested window (it may have been sent outside it, never sent, or not
+exist)". The other option offered — resolve the email's send state before classifying — needs a
+second HubSpot call on the failure path of a read, which is a lot of machinery to distinguish
+three states the caller acts on identically.
+
+Revert-verified: restoring the old message makes the empty-list test report `want it to admit
+the other two states an empty list can mean`.
+
+The general form, and it is the second time this file has hit it from a different direction:
+**an error's name is a claim, and it must be the weakest claim the evidence supports.** The
+whole-vocabulary guard was widened for the same reason — because `len(counters) > 0` asserted
+something the nil map did not license.

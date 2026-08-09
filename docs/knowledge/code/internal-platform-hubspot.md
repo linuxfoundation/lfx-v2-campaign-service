@@ -145,7 +145,7 @@ Two consequences, and neither may be papered over:
 - A span containing the send date returns the email's aggregate counters. `today` and
   `last_30_days` on an email sent this morning return the SAME numbers.
 - A span not containing the send date returns nothing at all, reported as
-  `ErrEmailNotSentInWindow` (below) rather than as zeros.
+  `ErrNoSentEmailInWindow` (below) rather than as zeros.
 
 `model.CampaignMetrics.Window` therefore records what was ASKED, not a period the
 counters are scoped to. Presenting these as "opens in the last 7 days" would be false.
@@ -171,14 +171,18 @@ VERIFY must be an error, never a clean zero.
   `counters` FIELD decodes to a nil map, which a `len(counters) > 0` test waves through
   — and that is the same schema break, arriving in the one shape the narrower check
   cannot see. Nothing licenses zeros here: an empty `emails` list returns
-  `ErrEmailNotSentInWindow` before this guard is reached, so there is no path on which
+  `ErrNoSentEmailInWindow` before this guard is reached, so there is no path on which
   an all-zero counter map is a legitimate answer.
-- **`ErrEmailNotSentInWindow`** — an EMPTY `emails` list. Per the contract above, the
-  span did not contain this email's send date. This is NOT "the email earned no
-  engagement": the email that really had no engagement comes back PRESENT, carrying a
-  `sent` (or `notsent`) counter. Zeroing the empty case would make "you picked the wrong
-  window" and "nobody opened it" the same answer, which is the one where a live campaign
-  reads as a dead one.
+- **`ErrNoSentEmailInWindow`** — an EMPTY `emails` list. Per the contract above, the span
+  selects by SEND time, so all this establishes is that no SENT email matched the id
+  within it. It is deliberately not narrowed to "the send was outside the window": three
+  states arrive in this identical shape — sent outside the span, a staged draft never
+  sent, and an id that does not exist — and the response separates none of them. Naming
+  it after the first would send a caller hunting for the right window for an email no
+  window will ever find. What it is NOT is "the email earned no engagement": the email
+  that really had no engagement comes back PRESENT, carrying a `sent` (or `notsent`)
+  counter. Zeroing the empty case would make those two the same answer, which is the one
+  where a live campaign reads as a dead one.
 - **`ErrStatisticsFilterNotHonored`** — the response's `emails` list is non-empty and is
   not EXACTLY the id we filtered on. Omitting it is the obvious case; naming it
   alongside others is the same failure and the one a presence check admits. The request

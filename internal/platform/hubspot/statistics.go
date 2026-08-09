@@ -46,15 +46,21 @@ var (
 	// reporting its numbers as this campaign's would attribute strangers' sends to it.
 	ErrStatisticsFilterNotHonored = errors.New("hubspot: statistics response does not cover exactly the requested email")
 
-	// ErrEmailNotSentInWindow reports an empty `emails` list: HubSpot did not include this
-	// email in the requested span. The documented reason is that the span selects emails by
-	// SEND time, so a window that does not contain the send date returns nothing.
+	// ErrNoSentEmailInWindow reports an empty `emails` list: HubSpot returned no SENT email
+	// matching this id within the requested span. The span selects by SEND time, so that is
+	// all an empty list establishes — and it is deliberately all this sentinel claims.
 	//
-	// This is an error rather than a zeroed result because zeros here are indistinguishable
+	// It is NOT specifically "the send happened outside the window". Three different states
+	// arrive in this one shape and the response cannot tell them apart: an email sent
+	// outside the span, an email that exists but has never been sent (a staged draft), and
+	// an id that does not exist at all. Naming it after the first would send a caller
+	// hunting for the right window for an email that no window will ever find.
+	//
+	// It is an error rather than a zeroed result because zeros here are indistinguishable
 	// from the other zero — an email that WAS sent in the window and simply earned no opens.
 	// Collapsing the two answers "this campaign got no engagement" about a campaign that may
 	// be getting plenty, which is the worse of the two lies a metrics read can tell.
-	ErrEmailNotSentInWindow = errors.New("hubspot: the requested window does not contain this email's send date")
+	ErrNoSentEmailInWindow = errors.New("hubspot: no email with this id was sent during the requested window (it may have been sent outside it, never sent, or not exist)")
 
 	// ErrUnrecognizedCounters reports a `counters` map carrying not one key from HubSpot's
 	// counter vocabulary — whether because the keys were renamed or because the field was
@@ -207,7 +213,7 @@ func ValidateMetricsWindow(window model.MetricsWindow) error {
 //     `today` and `last_30_days` on an email sent this morning returns the SAME numbers.
 //     The window does not narrow them.
 //   - A window not containing the send date returns nothing at all, which this function
-//     reports as ErrEmailNotSentInWindow rather than as zeros. See that sentinel for why
+//     reports as ErrNoSentEmailInWindow rather than as zeros. See that sentinel for why
 //     zeros would be the wrong answer.
 //
 // model.CampaignMetrics.Window therefore records what was ASKED, not a period the counters
@@ -272,14 +278,15 @@ func (c *Client) GetEmailMetrics(ctx context.Context, emailID string, window mod
 	}
 	emails := *resp.Emails
 
-	// An EMPTY `emails` means HubSpot did not include this email in the span at all — per
-	// the contract, because the span selects by SEND time and does not contain its send
-	// date. It does NOT mean the email earned no engagement, and the two must not collapse:
-	// an email that WAS sent in the window with no opens comes back present, with a `sent`
-	// counter. Returning zeros here would make "you picked the wrong window" and "nobody
-	// opened it" the same answer.
+	// An EMPTY `emails` means HubSpot matched no SENT email to this id within the span.
+	// That is the whole claim: the span selects by SEND time, so an email sent outside it,
+	// a staged draft that was never sent, and an id that does not exist all arrive here
+	// identically, and nothing in the response separates them. What it does NOT mean is
+	// that the email earned no engagement — one sent in the window with no opens comes back
+	// PRESENT, carrying a `sent` counter. Returning zeros here would make "no sent email
+	// matched" and "nobody opened it" the same answer.
 	if len(emails) == 0 {
-		return nil, ErrEmailNotSentInWindow
+		return nil, ErrNoSentEmailInWindow
 	}
 
 	// A NON-empty list must name our id and NOTHING ELSE. Presence alone is not enough:
