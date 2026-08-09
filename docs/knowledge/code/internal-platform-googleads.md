@@ -125,7 +125,12 @@ query still returns 2xx rows for OTHER campaigns. **The disposition matters as m
 check:** a name mismatch is an **error**, never a skip, because skipping every injected row
 leaves `("", nil)` — *a skip that reduces an unverifiable response to a clean absence is a
 false-absence bug.* Status is the deliberate asymmetry: `REMOVED` **is** a per-row skip,
-because a tombstone is unadoptable however it arrived.
+because a tombstone is unadoptable — but only once you know it IS a tombstone of some
+identifiable campaign. `campaignRowIdentity` validates the id and resource name BEFORE it
+reports `live == false`, so "however it arrived" describes the STATUS, not the row: a
+`REMOVED` row with a malformed, cross-customer or self-disagreeing identity is an error like
+any other, because such a row is not evidence that anything was removed. Skippability is a
+property of an identified tombstone.
 
 Identity is validated **whenever present**, not only as a fallback: both fields are selected,
 so both are evidence of what the row is, and a malformed or cross-customer resource name beside
@@ -190,7 +195,10 @@ campaign is this row, and is it adoptable" for both entry points. Duplicating th
 the by-id path become the lenient one, which is the worse direction to drift — a caller
 handing over an id is about to attach real spend. `live == false` is returned for `REMOVED`
 alone, the one skippable state; every other unrecognised status is an error, per the
-enumerate-and-default-deny rule above.
+enumerate-and-default-deny rule above. And it is returned only AFTER identity is
+established — status is read last, so a tombstone whose identity does not check out errors
+rather than skipping. Callers may rely on `live == false` meaning "this identified row is
+unadoptable", never "there was something here, unclear what".
 
 **The caller's id is validated as an identity, not merely as safe text.** `canonicalCampaignID`
 runs *before* interpolation, so `"0"`, a value past `math.MaxInt64` and the leading-zero
