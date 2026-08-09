@@ -132,14 +132,42 @@ func TestGetEmailMetrics_RejectsAResponseForADifferentEmail(t *testing.T) {
 	}
 }
 
-// An email present alongside others is still covered — the guard rejects ABSENCE from the
-// list, not the presence of company. Without this the guard would be an equality check.
-func TestGetEmailMetrics_AcceptsAResponseListingTheEmailAmongOthers(t *testing.T) {
+// Company is a filter failure too, and this is the case a presence check waves through.
+// The request names exactly one email and `aggregate` is the aggregation over the emails
+// the response covers, so a list of three means the counters include two strangers'
+// sends. Accepting it reports those sends as this campaign's — the same misattribution as
+// accepting a response for the wrong email outright, just harder to notice.
+func TestGetEmailMetrics_RejectsAResponseListingTheEmailAmongOthers(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, statsBody(t, `[1,4242,9999]`, fullCounters))
 	})
-	if _, err := fixedClock(t, c).GetEmailMetrics(context.Background(), "4242", model.MetricsWindowToday); err != nil {
-		t.Fatalf("GetEmailMetrics: %v", err)
+	_, err := fixedClock(t, c).GetEmailMetrics(context.Background(), "4242", model.MetricsWindowToday)
+	if !errors.Is(err, ErrStatisticsFilterNotHonored) {
+		t.Fatalf("err = %v, want ErrStatisticsFilterNotHonored", err)
+	}
+}
+
+// The absent-field half of the vocabulary guard. A renamed or dropped `counters` field
+// decodes to a nil map, so `len(counters) > 0` never fires and every lookup returns 0 —
+// an email HubSpot has just told us it covers reports as having sent nothing. The empty
+// object and the missing key are the same break and both must be caught; only an empty
+// `emails` list licenses zeros, which TestGetEmailMetrics_EmptyEmailsListIsZerosNotAnError
+// pins from the other side.
+func TestGetEmailMetrics_MissingCountersForACoveredEmailIsAnErrorNotZeros(t *testing.T) {
+	for _, body := range []string{
+		`{"emails":[4242],"aggregate":{"counters":{}}}`,
+		`{"emails":[4242],"aggregate":{}}`,
+		`{"emails":[4242]}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, body)
+			})
+			_, err := fixedClock(t, c).GetEmailMetrics(context.Background(), "4242", model.MetricsWindowToday)
+			if !errors.Is(err, ErrUnrecognizedCounters) {
+				t.Fatalf("err = %v, want ErrUnrecognizedCounters", err)
+			}
+		})
 	}
 }
 

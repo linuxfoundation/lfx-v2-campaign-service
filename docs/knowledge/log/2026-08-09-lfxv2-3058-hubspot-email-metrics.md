@@ -24,8 +24,34 @@ email and reporting them attributes their sends to this campaign.
 
 So both are errors rather than values:
 
-- `ErrUnrecognizedCounters` — a non-empty `counters` map with no key from HubSpot's vocabulary.
-- `ErrStatisticsFilterNotHonored` — a non-empty `emails` list that omits the id we asked for.
+- `ErrUnrecognizedCounters` — a `counters` map with no key from HubSpot's vocabulary.
+- `ErrStatisticsFilterNotHonored` — a non-empty `emails` list that is not exactly the id we
+  asked for.
+
+**Both guards were first written one qualifier too narrow, and the same mistake produced
+both.** Each began as a check on the shape it had a fixture for, rather than on the property
+it was defending — and the gap that leaves is not a corner case, it is the neighbouring
+value.
+
+The filter guard asked "is our id PRESENT?", which passes `[1, 4242, 9999]`. But the request
+supplies exactly one `emailIds` value and `aggregate` is the aggregation over the emails the
+response covers, so company in the list means the aggregate carries two strangers' sends —
+the very misattribution the guard was written to stop, waved through because the guard tested
+membership rather than the filter. Its accompanying test asserted the wrong thing for the
+right-sounding reason ("the guard rejects ABSENCE, not the presence of company"); the guard
+and the test had to be rewritten together, which is what a wrong invariant costs. Either the
+filter was honoured and the list is exactly what we asked for, or it was not and none of the
+response is trustworthy. There is no middle reading.
+
+The vocabulary guard was conditioned on `len(counters) > 0`, so it never fired on the case it
+most needed to: a renamed or dropped `counters` FIELD decodes to a nil map, and every lookup
+then returns 0 for an email HubSpot has just told us it covers. The empty map and the missing
+key are the same schema break; only the second is invisible to a non-empty test. Zeros now
+survive exactly one path — an empty `emails` list, the API's way of reporting no activity.
+
+Worth naming as a class: **a fail-closed guard qualified by the shape of its fixture.** Both
+qualifiers looked like defensive narrowing and were in fact holes, and neither would have been
+caught by a test written from the same fixture that motivated the guard.
 
 **The probe set is deliberately wider than the mapped set, and that asymmetry is the point.**
 Six counters are mapped; fourteen are recognized. An email created but never sent inside the
@@ -83,4 +109,7 @@ normalizes 2026-02-31 into 2026-03-03 and reports `last_month` as a few days of 
 the sentinel is expected; removing the counter-vocabulary guard does the same; relaxing id
 canonicality sends a request for a malformed id; next-midnight and `AddDate(0,-1,0)` each
 produce a visibly wrong range; and narrowing the probe set to only the six mapped keys makes a
-legitimately-quiet window error.
+legitimately-quiet window error. The two widened guards were revert-checked in the same way:
+restoring the presence check accepts `[1, 4242, 9999]`, and restoring `len(counters) > 0`
+returns all-zero metrics for all three absent-counter shapes (`{}`, a missing `aggregate`, and
+a missing `counters`).

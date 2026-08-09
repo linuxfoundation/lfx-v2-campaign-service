@@ -137,20 +137,28 @@ A metrics read has a caller that acts on an absence: zeros read as "this campaig
 not performing", which is a decision-grade statement. So an answer this client cannot
 VERIFY must be an error, never a clean zero.
 
-- **`ErrUnrecognizedCounters`** — a non-empty `counters` map in which not one key
-  belongs to HubSpot's counter vocabulary. Because the map is open, a renamed key set
-  decodes cleanly to zeros: an email that really sent would report as having sent
-  nothing. The probe set (`knownCounterVocabulary`) is deliberately WIDER than the six
-  keys this client maps. An email created but never sent in the window can legitimately
-  return only `notsent`/`pending`, and treating that as a vocabulary change would turn
-  an ordinary empty result into an error. The guard distinguishes "the vocabulary is
-  intact and these numbers are zero" from "the vocabulary changed and we are reading
-  nothing" — so it must recognize the whole vocabulary while mapping only part of it.
-- **`ErrStatisticsFilterNotHonored`** — the response's `emails` list is non-empty and
-  does not contain the id we filtered on, meaning the filter was not applied and the
-  counters describe some other email. Reporting them would attribute a stranger's sends
-  to this campaign. An EMPTY `emails` list is the opposite case: no activity in the
-  window, which correctly reads as zeros.
+- **`ErrUnrecognizedCounters`** — a `counters` map carrying not one key from HubSpot's
+  counter vocabulary. Because the map is open, a renamed key set decodes cleanly to
+  zeros: an email that really sent would report as having sent nothing. The probe set
+  (`knownCounterVocabulary`) is deliberately WIDER than the six keys this client maps.
+  An email created but never sent in the window can legitimately return only
+  `notsent`/`pending`, and treating that as a vocabulary change would turn an ordinary
+  empty result into an error. The guard distinguishes "the vocabulary is intact and
+  these numbers are zero" from "the vocabulary changed and we are reading nothing" — so
+  it must recognize the whole vocabulary while mapping only part of it.
+  The guard is **not** conditioned on the map being non-empty. A renamed or dropped
+  `counters` FIELD decodes to a nil map, which a `len(counters) > 0` test waves through
+  — and that is the same schema break, arriving in the one shape the narrower check
+  cannot see. What licenses zeros is an empty `emails` list, not an empty counter map.
+- **`ErrStatisticsFilterNotHonored`** — the response's `emails` list is non-empty and is
+  not EXACTLY the id we filtered on. Omitting it is the obvious case; naming it
+  alongside others is the same failure and the one a presence check admits. The request
+  supplies a single `emailIds` value and `aggregate` is the aggregation over the emails
+  the response covers, so a wider list means the aggregate carries strangers' sends —
+  attributing them to this campaign is exactly what the guard exists to prevent. Either
+  the filter was honoured, in which case the list is what we asked for, or it was not,
+  in which case none of the response is trustworthy. An EMPTY `emails` list is the
+  separate, legitimate case: no activity in the window, which correctly reads as zeros.
 
 `campaignAggregations` is deliberately NOT decoded: it is keyed by email-CAMPAIGN id,
 not by email id, so indexing it with the id we filtered on would silently miss and fall

@@ -38,17 +38,18 @@ var (
 	// querying the zero time.
 	ErrUnsupportedWindow = errors.New("hubspot: unsupported metrics window")
 
-	// ErrStatisticsFilterNotHonored reports that the response's `emails` list does not
-	// contain the id we filtered on. The counters in that response describe some OTHER
-	// email, so none of the response is trustworthy — reporting its numbers as this
-	// campaign's would attribute a stranger's sends to it.
-	ErrStatisticsFilterNotHonored = errors.New("hubspot: statistics response does not cover the requested email")
+	// ErrStatisticsFilterNotHonored reports that the response's `emails` list is not
+	// exactly the one id we filtered on — either it omits that id or it names others
+	// alongside it. Both mean the filter was not applied as issued, so the aggregate
+	// describes a set we did not ask for and none of the response is trustworthy;
+	// reporting its numbers as this campaign's would attribute strangers' sends to it.
+	ErrStatisticsFilterNotHonored = errors.New("hubspot: statistics response does not cover exactly the requested email")
 
-	// ErrUnrecognizedCounters reports a non-empty `counters` map in which not one key
-	// belongs to HubSpot's counter vocabulary. Since `counters` is an OPEN map in the v3
-	// schema, a renamed key set would otherwise decode cleanly to zeros — an email that
-	// really sent would report as having sent nothing, which reads as a dead campaign
-	// rather than as a broken integration.
+	// ErrUnrecognizedCounters reports a `counters` map carrying not one key from HubSpot's
+	// counter vocabulary — whether because the keys were renamed or because the field was
+	// absent entirely. Since `counters` is an OPEN map in the v3 schema, either shape
+	// decodes cleanly to zeros, so an email that really sent would report as having sent
+	// nothing: a dead campaign rather than a broken integration.
 	ErrUnrecognizedCounters = errors.New("hubspot: statistics response carried no recognized counter")
 )
 
@@ -151,14 +152,28 @@ func (c *Client) GetEmailMetrics(ctx context.Context, emailID string, window mod
 	}
 
 	// An EMPTY `emails` means the email had no activity in the window — a normal result
-	// that must read as zeros. A NON-empty list that omits our id means the filter was not
-	// applied, so the counters belong to something else.
-	if len(resp.Emails) > 0 && !containsID(resp.Emails, id) {
-		return nil, fmt.Errorf("%w: asked for %d", ErrStatisticsFilterNotHonored, id)
+	// that must read as zeros.
+	//
+	// A NON-empty list must name our id and NOTHING ELSE. Presence alone is not enough:
+	// the request supplies exactly one `emailIds` value and `aggregate` is the aggregation
+	// over the emails the response covers, so a list of [1, 4242, 9999] proves the filter
+	// widened — its counters include two strangers' sends, and reporting them as this
+	// campaign's is precisely the misattribution this guard exists to prevent. Either the
+	// filter was honoured, in which case the list is exactly what we asked for, or it was
+	// not, in which case none of the response is trustworthy. There is no middle reading.
+	if len(resp.Emails) > 0 && !isExactlyID(resp.Emails, id) {
+		return nil, fmt.Errorf("%w: asked for %d, response covers %d email(s)",
+			ErrStatisticsFilterNotHonored, id, len(resp.Emails))
 	}
 
+	// The vocabulary guard, and the reason it is not `len(counters) > 0`: a MISSING or
+	// renamed `counters` field decodes to a nil map, which that form waves through — every
+	// lookup returns 0 and an email HubSpot has just told us it covers reports as having
+	// sent nothing. The absent map is the same schema break as a renamed key set, and it is
+	// the one the narrower check could not see. Zeros survive only where they are a real
+	// answer: an empty `emails` list, the API's way of saying there was no activity.
 	counters := resp.Aggregate.Counters
-	if len(counters) > 0 && !hasKnownCounter(counters) {
+	if !hasKnownCounter(counters) && (len(counters) > 0 || len(resp.Emails) > 0) {
 		return nil, ErrUnrecognizedCounters
 	}
 
@@ -198,17 +213,20 @@ func parseEmailID(emailID string) (int64, error) {
 	return id, nil
 }
 
-// containsID reports whether ids contains want.
-func containsID(ids []int64, want int64) bool {
+// isExactlyID reports whether ids names want and nothing else. An extra id is a widened
+// filter, not extra information: the aggregate then covers emails we did not ask about.
+func isExactlyID(ids []int64, want int64) bool {
 	for _, id := range ids {
-		if id == want {
-			return true
+		if id != want {
+			return false
 		}
 	}
-	return false
+	return len(ids) > 0
 }
 
-// hasKnownCounter reports whether at least one key belongs to HubSpot's counter vocabulary.
+// hasKnownCounter reports whether at least one key belongs to HubSpot's counter
+// vocabulary. A nil or empty map has none, which is what makes an absent `counters` field
+// indistinguishable from a renamed one at the call site — deliberately.
 func hasKnownCounter(counters map[string]int64) bool {
 	for k := range counters {
 		if _, ok := knownCounterVocabulary[k]; ok {
