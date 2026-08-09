@@ -28,4 +28,12 @@ runnable as a Kubernetes Job on day one. It reads the same `PG*` configuration a
 the same reason: `DATABASE_URL` is not what the chart injects, so a command composing its DSN any
 other way is dead in-cluster.
 
+An UNRECOGNISED first argument is refused with exit 2 rather than ignored (`runCommand`). Matching
+only the exact subcommand name and falling through meant a typo started the HTTP server instead:
+`flag.Parse` stops at the first positional argument, so `bootstrap-system-acount` parsed cleanly and
+the Kubernetes Job meant to install credentials came up as a second, healthy, idle replica — nothing
+installed, nothing logged, and no exit code for the Job to fail on. Only the FIRST argument is
+classified, and only when it does not begin with `-`: a subcommand has to come first, and scanning
+further would mistake a flag VALUE (`-p 8080`) for a command and break ordinary startup.
+
 See [cmd/campaign-service](../../../cmd/campaign-service).

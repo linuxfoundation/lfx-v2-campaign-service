@@ -34,9 +34,53 @@ const (
 	bootstrapTimeout   = 30 * time.Second
 )
 
+// firstCommand reports the subcommand named by args (os.Args minus the program name), and
+// whether args names one at all.
+//
+// Only args[0] is considered. A subcommand has to come first, and scanning further would
+// mistake a FLAG VALUE for a command: `-p 8080` puts a bare `8080` in the argument list that
+// belongs to -p, and rejecting it would break ordinary server startup.
+func firstCommand(args []string) (string, bool) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return "", false
+	}
+	return args[0], true
+}
+
+// runCommand handles the subcommand named by args (os.Args minus the program name), if args
+// names one at all. handled reports whether main must stop rather than serve, and code is the
+// process exit status when it does.
+//
+// The decision is returned rather than exited on so it is testable without a process: the case
+// that matters is an UNRECOGNISED command, which used to fall through into server startup.
+func runCommand(args []string, stderr io.Writer) (handled bool, code int) {
+	name, isCmd := firstCommand(args)
+	if !isCmd {
+		return false, 0
+	}
+	if name != bootstrapSystemAccountCmd {
+		// Writing the diagnostic is best effort: the exit code is what a Job fails on.
+		_, _ = fmt.Fprintf(stderr, "unknown command %q; the only subcommand is %s (server flags begin with -)\n",
+			name, bootstrapSystemAccountCmd)
+		return true, 2
+	}
+	if err := runSysacctBootstrap(args[1:]); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return true, 1
+	}
+	return true, 0
+}
+
 // parseProviderConfig turns `k=v,k2=v2` into the connection's non-secret config columns — the
 // plumbing an adapter reads out of ProviderConfig (LinkedIn's org_id, Meta's page_id, X's
 // funding_instrument_id), without which a row fails at campaign create.
+//
+// `k=` with no value is an explicit CLEAR of that column, not a malformed entry. It has to be
+// expressible here because this installer is the only writer the system scope has — HTTP is
+// blocked by rejectSystemScope — and the merge in InstallSystemCredentials preserves any key a
+// run does not mention. Without a clear, an optional column that has become wrong (a
+// login_customer_id for a manager account no longer in the path) could never be removed by
+// anything, from anywhere.
 func parseProviderConfig(s string) (map[string]string, error) {
 	if strings.TrimSpace(s) == "" {
 		return nil, nil
@@ -44,8 +88,8 @@ func parseProviderConfig(s string) (map[string]string, error) {
 	cfg := map[string]string{}
 	for _, pair := range strings.Split(s, ",") {
 		k, v, ok := strings.Cut(pair, "=")
-		if k = strings.TrimSpace(k); !ok || k == "" || strings.TrimSpace(v) == "" {
-			return nil, fmt.Errorf("-config entry %q is not key=value", pair)
+		if k = strings.TrimSpace(k); !ok || k == "" {
+			return nil, fmt.Errorf("-config entry %q is not key=value (use %s= to clear a column)", pair, k)
 		}
 		cfg[k] = strings.TrimSpace(v)
 	}
@@ -58,8 +102,9 @@ func parseProviderConfig(s string) (map[string]string, error) {
 func runSysacctBootstrap(args []string) error {
 	fs := flag.NewFlagSet(bootstrapSystemAccountCmd, flag.ContinueOnError)
 	provider := fs.String("provider", "", "provider to install (e.g. google-ads)")
-	accountID := fs.String("account-id", "", "ad account id; omittable for google-ads only, to install credentials first and discover the account afterwards (every other provider is refused without it: no discovery endpoint exists to finish the row later)")
-	configKV := fs.String("config", "", "non-secret provider config as key=value pairs, e.g. org_id=123")
+	accountID := fs.String("account-id", "", "ad account id. On a FIRST install, omitting it is the credentials-first state, and google-ads alone allows it (its dispatcher can discover the account afterwards; every other provider is refused, since nothing could finish the row later). On a rotation it means KEEP the id already on the row — use -clear-account-id to remove one")
+	clearAccountID := fs.Bool("clear-account-id", false, "drop the account selection from an existing row, returning it to the credentials-first state; only for a provider with account discovery, and never combined with -account-id")
+	configKV := fs.String("config", "", "non-secret provider config as key=value pairs, e.g. org_id=123. Keys not mentioned keep their current value; `key=` with no value clears that column")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -107,7 +152,7 @@ func runSysacctBootstrap(args []string) error {
 	defer pool.Close()
 
 	if err := bootstrap.InstallSystemCredentials(ctx, postgres.NewConnectionRepo(pool), enc,
-		model.Provider(*provider), *accountID, cfg, credsJSON); err != nil {
+		model.Provider(*provider), *accountID, *clearAccountID, cfg, credsJSON); err != nil {
 		return err
 	}
 	// Never echo the credential: what needs confirming is which provider now has an account.

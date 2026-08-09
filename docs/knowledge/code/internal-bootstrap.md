@@ -40,6 +40,24 @@ enforced on the system row:
 - **Required non-secret config** (`requiredConfigKeys`) is checked against the map about to be
   WRITTEN, not the flags as typed, so a key already on the row satisfies a rotation.
 
+## Preserve, set, remove — an omission means different things at different times
+
+`accountID` and `providerConfig` are tri-state, and which state an omission stands for depends on
+whether the row already exists. On a FIRST install an omitted `-account-id` is the credentials-first
+state, legal only where a dispatcher can discover the account afterwards (`accountDiscoveryProviders`,
+Google Ads alone). On a ROTATION the same omission means KEEP, because a rotation should not have to
+restate the whole row.
+
+Preserve-by-default cannot express a removal, and this scope has no other writer that could —
+`rejectSystemScope` blocks HTTP — so without an explicit clear an optional column became permanent.
+`login_customer_id` is the real case: it names the manager account requests are issued through, and
+when that path changes the old value is not merely stale, it is sent as a header on every dispatch.
+`-clear-account-id` and `-config key=` (an empty value) are the removals; a clear is skipped by
+`requireShapes` (an instruction has no shape to match), lands in the value `requireConfig` and
+`requireAccountID` already check — so clearing a REQUIRED column is refused by the rules that were
+already there — and is refused outright before the row exists, where obeying it and ignoring it would
+produce the same row and success would be reported for an instruction that never ran.
+
 ## Rotation is idempotent, and it is ONE version-gated write
 
 A second run rotates onto the existing row rather than failing the singleton constraint, which is

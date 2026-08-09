@@ -121,10 +121,14 @@ const maxValueLen = 64
 
 // requireShapes validates the values as SUPPLIED, and only those: an omitted account id is
 // the legal credentials-first state, and a key not supplied on a rotation keeps whatever the
-// row already holds — which was validated when it was written.
+// row already holds — which was validated when it was written. An empty value is a CLEAR
+// (see mergeConfig) and is skipped for the same reason: there is no value to hold to a shape.
 func requireShapes(provider model.Provider, accountID string, cfg map[string]string) error {
 	supplied := make(map[string]string, len(cfg)+1)
 	for k, v := range cfg {
+		if v == "" {
+			continue
+		}
 		supplied[k] = v
 	}
 	if accountID != "" {
@@ -224,6 +228,13 @@ func requireAccountID(provider model.Provider, effective string) error {
 // mergeConfig overlays the supplied flags on what the row already holds. Update rewrites EVERY
 // config column, so replacing would NULL siblings a flag did not mention (Meta stores page_id and
 // app_id, HubSpot four). nil means "write no config at all".
+//
+// An empty supplied value is the explicit CLEAR, and it is why the merge needs three states
+// rather than two: not mentioned keeps, `k=v` sets, `k=` removes. Preserve-by-default is right —
+// a rotation should not have to restate every column — but on its own it makes an obsolete
+// optional column permanent, and this scope has no other writer to remove it (rejectSystemScope
+// blocks HTTP). A merge that clears the last remaining key returns an EMPTY, non-nil map, which
+// the caller writes: clearing the only column has to reach storage like any other change.
 func mergeConfig(existing, supplied map[string]string) map[string]string {
 	if len(supplied) == 0 {
 		return nil
@@ -233,29 +244,57 @@ func mergeConfig(existing, supplied map[string]string) map[string]string {
 		merged[k] = v
 	}
 	for k, v := range supplied {
+		if v == "" {
+			delete(merged, k)
+			continue
+		}
 		merged[k] = v
 	}
 	return merged
+}
+
+// clearedKeys lists the config keys a run asked to REMOVE, sorted so the message is stable.
+func clearedKeys(cfg map[string]string) []string {
+	cleared := make([]string, 0, len(cfg))
+	for k, v := range cfg {
+		if v == "" {
+			cleared = append(cleared, k)
+		}
+	}
+	sort.Strings(cleared)
+	return cleared
 }
 
 // InstallSystemCredentials installs or rotates the system account's credentials for one
 // provider. It is IDEMPOTENT — a second run rotates onto the existing row rather than failing
 // the singleton constraint — which makes it safe in a deployment job. credsJSON is the plaintext
 // document in the snake_case form set-credential documents; keys are folded before encryption
-// and never logged. An empty accountID is the credentials-first state, and it is accepted only
-// for a provider with account discovery (see accountDiscoveryProviders) — for the rest it would
-// install a row every dispatch refuses and nothing can complete.
+// and never logged.
+//
+// accountID and providerConfig are TRI-STATE, and which state an omission means depends on
+// whether a row is already there — the distinction this signature exists to make. On a first
+// install an omitted accountID is the credentials-first state, accepted only for a provider with
+// account discovery (see accountDiscoveryProviders); for the rest it would install a row every
+// dispatch refuses and nothing can complete. On a ROTATION an omission means keep, so a run that
+// rotates onto a credential for a DIFFERENT account and says nothing about -account-id would
+// otherwise dispatch the new credential at the old account — silently, and with both values
+// individually valid. clearAccountID and an empty config value are how a caller says remove
+// instead of keep; a clear is meaningless before the row exists and is refused there.
 func InstallSystemCredentials(
 	ctx context.Context,
 	repo domain.ConnectionRepository,
 	enc domain.Encryptor,
 	provider model.Provider,
 	accountID string,
+	clearAccountID bool,
 	providerConfig map[string]string,
 	credsJSON []byte,
 ) error {
 	if repo == nil || enc == nil {
 		return errors.New("bootstrap: repository and encryptor are required")
+	}
+	if clearAccountID && accountID != "" {
+		return fmt.Errorf("bootstrap: -clear-account-id and -account-id %q ask for opposite things; supply one", accountID)
 	}
 	if !provider.Valid() {
 		return fmt.Errorf("bootstrap: %q is not a supported provider", provider)
@@ -313,8 +352,11 @@ func InstallSystemCredentials(
 			}
 		}
 		upd := *existing
-		if accountID != "" {
+		switch {
+		case accountID != "":
 			upd.AccountID = accountID
+		case clearAccountID:
+			upd.AccountID = ""
 		}
 		if aerr := requireAccountID(provider, upd.AccountID); aerr != nil {
 			return aerr
@@ -333,6 +375,18 @@ func InstallSystemCredentials(
 	case errors.Is(gerr, domain.ErrNotFound):
 		// Not-found is the ONLY error that may create: on any other the row's state is
 		// unknown, and creating over it overwrites a credential nobody meant to replace.
+		//
+		// A clear is refused rather than treated as a no-op. There is nothing to remove, so
+		// obeying it and obeying its opposite produce the same row — which means accepting it
+		// would report success for an instruction that was not carried out, and the likely
+		// cause is that the operator believed they were rotating a row that is not there.
+		if clearAccountID {
+			return fmt.Errorf("bootstrap: -clear-account-id has nothing to clear: no system %s connection exists yet", provider)
+		}
+		if cleared := clearedKeys(providerConfig); len(cleared) > 0 {
+			return fmt.Errorf("bootstrap: -config %s asks to clear a column, but no system %s connection exists yet",
+				strings.Join(cleared, ", "), provider)
+		}
 		if verr := requireConfig(provider, providerConfig); verr != nil {
 			return verr
 		}

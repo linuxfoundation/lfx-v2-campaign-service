@@ -105,7 +105,7 @@ func TestStoredBlobDecodesIntoTheReader(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			repo := &stubRepo{}
 			if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-				model.ProviderGoogleAds, "8666746580", nil, []byte(in)); err != nil {
+				model.ProviderGoogleAds, "8666746580", false, nil, []byte(in)); err != nil {
 				t.Fatalf("install: %v", err)
 			}
 			if repo.created == nil {
@@ -151,7 +151,7 @@ func TestSecondInstallRotates(t *testing.T) {
 
 	repo := row("8666746580", map[string]string{"login_customer_id": "999"})
 	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderGoogleAds, "8666746580", nil, []byte(goodCreds)); err != nil {
+		model.ProviderGoogleAds, "8666746580", false, nil, []byte(goodCreds)); err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
 	// The credential goes in with the row, and an omitted flag must not blank a set column:
@@ -165,7 +165,7 @@ func TestSecondInstallRotates(t *testing.T) {
 
 	repo = row("8666746580", nil)
 	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderGoogleAds, "9746983954", nil, []byte(goodCreds)); err != nil {
+		model.ProviderGoogleAds, "9746983954", false, nil, []byte(goodCreds)); err != nil {
 		t.Fatalf("rotate with a new account id: %v", err)
 	}
 	// Version 4 is the row's own, and the write is gated on it: a concurrent rotation that
@@ -207,7 +207,7 @@ func TestInstallRejectsUnusableInput(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			repo := &stubRepo{}
 			if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-				tc.provider, "", nil, []byte(tc.creds)); err == nil {
+				tc.provider, "", false, nil, []byte(tc.creds)); err == nil {
 				t.Fatal("install accepted an unusable input")
 			}
 			if len(repo.calls) != 0 {
@@ -224,7 +224,7 @@ func TestInstallRequiresProviderConfigThatDispatchDemands(t *testing.T) {
 	linkedInCreds := []byte(`{"access_token":"tok"}`)
 	repo := &stubRepo{}
 	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderLinkedInAds, "1", nil, linkedInCreds); err == nil {
+		model.ProviderLinkedInAds, "1", false, nil, linkedInCreds); err == nil {
 		t.Fatal("installed a linkedin row with no org_id")
 	}
 	if repo.created != nil {
@@ -232,7 +232,7 @@ func TestInstallRequiresProviderConfigThatDispatchDemands(t *testing.T) {
 	}
 	cfg := map[string]string{"org_id": "987"}
 	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderLinkedInAds, "1", cfg, linkedInCreds); err != nil {
+		model.ProviderLinkedInAds, "1", false, cfg, linkedInCreds); err != nil {
 		t.Fatalf("install with org_id: %v", err)
 	}
 	if got := repo.created.ProviderConfig["org_id"]; got != "987" {
@@ -257,7 +257,7 @@ func TestRotationMergesConfigIntoTheRow(t *testing.T) {
 
 	repo := metaRow()
 	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderMetaAds, "", map[string]string{"page_id": "222"}, metaCreds); err != nil {
+		model.ProviderMetaAds, "", false, map[string]string{"page_id": "222"}, metaCreds); err != nil {
 		t.Fatalf("rotate with config: %v", err)
 	}
 	if repo.updated == nil {
@@ -269,7 +269,7 @@ func TestRotationMergesConfigIntoTheRow(t *testing.T) {
 
 	repo = metaRow()
 	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderMetaAds, "", nil, metaCreds); err != nil {
+		model.ProviderMetaAds, "", false, nil, metaCreds); err != nil {
 		t.Fatalf("rotate with no config: %v", err)
 	}
 	if repo.setCT == nil || repo.updated == nil {
@@ -293,7 +293,7 @@ func TestInstallWritesNothingWhenItCannotProceed(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := InstallSystemCredentials(context.Background(), tc.repo, tc.enc,
-				model.ProviderGoogleAds, "", nil, []byte(goodCreds)); err == nil {
+				model.ProviderGoogleAds, "", false, nil, []byte(goodCreds)); err == nil {
 				t.Fatal("install succeeded")
 			}
 			if tc.repo.created != nil || tc.repo.setCT != nil || tc.repo.updated != nil {
@@ -345,7 +345,7 @@ func TestInstallRejectsMisshapenValues(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			repo := &stubRepo{getErr: domain.ErrNotFound}
 			err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-				tc.provider, tc.accountID, tc.cfg, tc.creds)
+				tc.provider, tc.accountID, false, tc.cfg, tc.creds)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, wantErr = %v", err, tc.wantErr)
 			}
@@ -368,7 +368,7 @@ func TestCredentialValuesMustBeNonEmptyStrings(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			repo := &stubRepo{getErr: domain.ErrNotFound}
 			err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-				model.ProviderGoogleAds, "8666746580", nil, []byte(creds))
+				model.ProviderGoogleAds, "8666746580", false, nil, []byte(creds))
 			if err == nil || repo.created != nil {
 				t.Fatalf("err = %v, created = %+v; want a refusal naming client_id", err, repo.created)
 			}
@@ -405,7 +405,7 @@ func TestInstallRejectsConfigKeysTheProviderDoesNotStore(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			repo := &stubRepo{getErr: domain.ErrNotFound}
 			err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-				tc.provider, "", tc.cfg, tc.creds)
+				tc.provider, "", false, tc.cfg, tc.creds)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, wantErr = %v", err, tc.wantErr)
 			}
@@ -430,7 +430,7 @@ func TestRotationRefusesWhenTheRowMovedUnderIt(t *testing.T) {
 		updErr: domain.ErrPreconditionFailed,
 	}
 	err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderGoogleAds, "9746983954", nil, []byte(goodCreds))
+		model.ProviderGoogleAds, "9746983954", false, nil, []byte(goodCreds))
 	if !errors.Is(err, domain.ErrPreconditionFailed) {
 		t.Fatalf("err = %v, want ErrPreconditionFailed", err)
 	}
@@ -454,7 +454,7 @@ func TestInstallRequiresAnAccountIDWhereNothingCanSupplyOneLater(t *testing.T) {
 
 	repo := &stubRepo{}
 	err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderMetaAds, "", map[string]string{"page_id": "1"}, metaCreds)
+		model.ProviderMetaAds, "", false, map[string]string{"page_id": "1"}, metaCreds)
 	if err == nil || !strings.Contains(err.Error(), "requires -account-id") {
 		t.Fatalf("creating an account-less meta row = %v, want a refusal naming -account-id", err)
 	}
@@ -464,7 +464,7 @@ func TestInstallRequiresAnAccountIDWhereNothingCanSupplyOneLater(t *testing.T) {
 
 	repo = &stubRepo{}
 	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderGoogleAds, "", nil, []byte(goodCreds)); err != nil {
+		model.ProviderGoogleAds, "", false, nil, []byte(goodCreds)); err != nil {
 		t.Fatalf("google ads has account discovery, so credentials-first must still be legal: %v", err)
 	}
 
@@ -474,7 +474,7 @@ func TestInstallRequiresAnAccountIDWhereNothingCanSupplyOneLater(t *testing.T) {
 		Version: 4, Status: model.StatusActive,
 	}}
 	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderMetaAds, "", nil, metaCreds); err != nil {
+		model.ProviderMetaAds, "", false, nil, metaCreds); err != nil {
 		t.Fatalf("a rotation may omit -account-id when the row already holds one: %v", err)
 	}
 	if repo.updated == nil || repo.updated.AccountID != "act_1" {
@@ -496,7 +496,7 @@ func TestInstallRefusesProvidersTheFallbackCannotServe(t *testing.T) {
 
 	repo := &stubRepo{}
 	err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderHubSpot, "acct", nil, hubspotCreds)
+		model.ProviderHubSpot, "acct", false, nil, hubspotCreds)
 	if err == nil || !strings.Contains(err.Error(), "not a paid-ads provider") {
 		t.Fatalf("installing a hubspot system row = %v, want a refusal naming the classification", err)
 	}
@@ -506,10 +506,164 @@ func TestInstallRefusesProvidersTheFallbackCannotServe(t *testing.T) {
 
 	repo = &stubRepo{}
 	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderGoogleAds, "123", nil, []byte(goodCreds)); err != nil {
+		model.ProviderGoogleAds, "123", false, nil, []byte(goodCreds)); err != nil {
 		t.Fatalf("a paid-ads provider must still install: %v", err)
 	}
 	if repo.created == nil {
 		t.Fatalf("paid-ads install wrote nothing; calls = %v", repo.calls)
+	}
+}
+
+// gaRow is a system Google Ads row as installed: an account selected and one optional config
+// column set. Google Ads is the provider used throughout because it is the only one where
+// clearing the account id is a legal destination state (accountDiscoveryProviders).
+func gaRow(accountID string, cfg map[string]string) *stubRepo {
+	return &stubRepo{row: &model.Connection{
+		ProjectID: model.SystemProjectID, Provider: model.ProviderGoogleAds,
+		AccountID: accountID, ProviderConfig: cfg, Version: 4, Status: model.StatusActive,
+	}}
+}
+
+// TestRotationCanClearAnObsoleteConfigColumn covers the half of the merge that preserve-by-
+// default cannot express.
+//
+// Keeping every unmentioned column is right — a rotation should not have to restate the row —
+// but on its own it makes an optional column PERMANENT. login_customer_id is the real case: it
+// names the manager account a request is issued through, and when that path changes the old
+// value is not merely stale, it is sent as a header on every dispatch. Nothing else can remove
+// it, either: model.SystemProjectID is refused over HTTP (rejectSystemScope), so this installer
+// is the scope's only writer.
+func TestRotationCanClearAnObsoleteConfigColumn(t *testing.T) {
+	repo := gaRow("8666746580", map[string]string{"login_customer_id": "999"})
+	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderGoogleAds, "", false, map[string]string{"login_customer_id": ""}, []byte(goodCreds)); err != nil {
+		t.Fatalf("clear login_customer_id: %v", err)
+	}
+	if repo.updated == nil {
+		t.Fatalf("nothing was written; calls = %v", repo.calls)
+	}
+	if v, ok := repo.updated.ProviderConfig["login_customer_id"]; ok {
+		t.Fatalf("login_customer_id is still on the row as %q — a clear that leaves the column set is a no-op reported as success", v)
+	}
+	// The clear must not take the account with it: the two are independent instructions, and
+	// a rotation that quietly returned the row to credentials-first would stop every dispatch.
+	if repo.updated.AccountID != "8666746580" {
+		t.Fatalf("account id = %q, want it untouched by a -config clear", repo.updated.AccountID)
+	}
+}
+
+// TestClearingARequiredConfigColumnIsRefused: the clear is checked against the map about to be
+// WRITTEN, which is what lets requireConfig see it at all. A clear that emptied org_id would
+// leave a LinkedIn row that installs, reports success and refuses every campaign create — the
+// same installable-and-dead shape requiredConfigKeys exists to prevent, arrived at by removal
+// rather than by omission.
+func TestClearingARequiredConfigColumnIsRefused(t *testing.T) {
+	repo := &stubRepo{row: &model.Connection{
+		ProjectID: model.SystemProjectID, Provider: model.ProviderLinkedInAds,
+		AccountID: "12345", ProviderConfig: map[string]string{"org_id": "999"},
+		Version: 4, Status: model.StatusActive,
+	}}
+	err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderLinkedInAds, "", false, map[string]string{"org_id": ""}, []byte(`{"access_token":"tok"}`))
+	if err == nil || !strings.Contains(err.Error(), "requires -config org_id") {
+		t.Fatalf("clearing org_id = %v, want a refusal naming the required key", err)
+	}
+	if repo.updated != nil || repo.setCT != nil {
+		t.Fatalf("refused and wrote anyway; calls = %v", repo.calls)
+	}
+}
+
+// TestClearAccountIDReturnsTheRowToCredentialsFirst is the account-id half of the same gap.
+// Reaching credentials-first was expressible only at CREATE time, so a system account whose ad
+// account was retired had no way back to the state its own installer documents.
+func TestClearAccountIDReturnsTheRowToCredentialsFirst(t *testing.T) {
+	repo := gaRow("8666746580", nil)
+	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderGoogleAds, "", true, nil, []byte(goodCreds)); err != nil {
+		t.Fatalf("clear account id: %v", err)
+	}
+	if repo.updated == nil || repo.updated.AccountID != "" {
+		t.Fatalf("updated = %+v, want the account selection removed", repo.updated)
+	}
+
+	// Without the flag the same call means KEEP — the distinction the tri-state exists for.
+	repo = gaRow("8666746580", nil)
+	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderGoogleAds, "", false, nil, []byte(goodCreds)); err != nil {
+		t.Fatalf("rotate without -account-id: %v", err)
+	}
+	if repo.updated == nil || repo.updated.AccountID != "8666746580" {
+		t.Fatalf("updated = %+v, want the account id preserved when no clear was asked for", repo.updated)
+	}
+}
+
+// TestClearAccountIDIsRefusedWhereNothingCanSupplyOneLater: the clear lands in the value
+// requireAccountID already checks, so the rule that credentials-first is legal only where a
+// dispatcher can discover the account holds for the removal path too, and holds automatically.
+func TestClearAccountIDIsRefusedWhereNothingCanSupplyOneLater(t *testing.T) {
+	repo := &stubRepo{row: &model.Connection{
+		ProjectID: model.SystemProjectID, Provider: model.ProviderMetaAds,
+		AccountID: "act_123", ProviderConfig: map[string]string{"page_id": "1"},
+		Version: 4, Status: model.StatusActive,
+	}}
+	err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderMetaAds, "", true, nil, []byte(`{"access_token":"tok","app_secret":"sec"}`))
+	if err == nil || !strings.Contains(err.Error(), "requires -account-id") {
+		t.Fatalf("clearing meta's account id = %v, want a refusal naming -account-id", err)
+	}
+	if repo.updated != nil || repo.setCT != nil {
+		t.Fatalf("refused and wrote anyway; calls = %v", repo.calls)
+	}
+}
+
+// TestClearIsRefusedWhenThereIsNoRowToClearFrom: a clear on a first install is refused rather
+// than dropped. Nothing is there to remove, so obeying it and ignoring it produce the same row —
+// which means accepting it reports success for an instruction that never ran, and the likely
+// cause is an operator who believed they were rotating a row that is not there.
+func TestClearIsRefusedWhenThereIsNoRowToClearFrom(t *testing.T) {
+	for name, tc := range map[string]struct {
+		clearAccount bool
+		cfg          map[string]string
+		want         string
+	}{
+		"account id": {clearAccount: true, want: "nothing to clear"},
+		"config key": {cfg: map[string]string{"login_customer_id": ""}, want: "asks to clear a column"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := &stubRepo{}
+			err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+				model.ProviderGoogleAds, "", tc.clearAccount, tc.cfg, []byte(goodCreds))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("clear on a first install = %v, want a refusal containing %q", err, tc.want)
+			}
+			if repo.created != nil {
+				t.Fatalf("refused and created anyway: %+v", repo.created)
+			}
+		})
+	}
+}
+
+// TestClearAccountIDAndAccountIDTogetherIsRefused: the two flags ask for opposite things, and
+// silently letting either win would make the outcome depend on an ordering nobody wrote down.
+func TestClearAccountIDAndAccountIDTogetherIsRefused(t *testing.T) {
+	repo := gaRow("8666746580", nil)
+	err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderGoogleAds, "9746983954", true, nil, []byte(goodCreds))
+	if err == nil || !strings.Contains(err.Error(), "opposite things") {
+		t.Fatalf("both flags = %v, want a refusal", err)
+	}
+	if repo.calls != nil {
+		t.Fatalf("refused after touching the repository; calls = %v", repo.calls)
+	}
+}
+
+// TestClearedValueIsNotHeldToAValueShape: an empty value is an instruction, not a value, so it
+// must not be measured against the provider's numeric-id pattern. Without the skip in
+// requireShapes, every clear failed with a shape complaint about a value nobody supplied.
+func TestClearedValueIsNotHeldToAValueShape(t *testing.T) {
+	repo := gaRow("8666746580", map[string]string{"login_customer_id": "999"})
+	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderGoogleAds, "", false, map[string]string{"login_customer_id": ""}, []byte(goodCreds)); err != nil {
+		t.Fatalf("clear rejected as a malformed value: %v", err)
 	}
 }

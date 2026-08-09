@@ -206,3 +206,44 @@ the database is consulted at all. It asks `Kind()` rather than comparing against
 until someone classifies it, so it is denied the LF credential by default rather than
 inheriting it. `TestSystemFallbackIsGatedByClassificationNotByName` walks `AllProviders()` and
 asserts both directions, so the classification and the gate cannot drift apart.
+
+## Two ways this installer was quietly not doing what it said
+
+Both came from the same review pass, and both are failures of an OMISSION meaning the wrong
+thing.
+
+**An unknown subcommand started the server.** `main` matched the exact string
+`bootstrap-system-account` and fell through on anything else. Because `flag.Parse` stops at the
+first positional argument, `bootstrap-system-acount` — one character short — parsed without
+complaint and the process began serving HTTP. The deployment Job that exists to install the
+credential would then run as a second, healthy, idle replica: nothing installed, nothing logged,
+no non-zero exit for the Job to fail on, and a fallback that stays empty while everything reports
+green. `runCommand` now refuses an unrecognised command with exit 2. It classifies only the FIRST
+argument, and only when it does not begin with `-`, because a subcommand has to come first and
+scanning further would mistake a flag VALUE for one: `-p 8080` leaves a bare `8080` in the
+argument list, and rejecting that would break ordinary server startup — a worse failure than the
+one being fixed. The decision is returned rather than exited on so a test can make it without a
+process.
+
+**Nothing could be removed.** `-account-id`'s help text described the create-time meaning of an
+omission ("install credentials first, discover the account afterwards") while on a rotation the
+same omission meant KEEP. Both behaviours are right; the gap was that there was no third thing to
+say. Rotating onto a credential for a DIFFERENT ad account without restating `-account-id` left
+the old account id on the row, so the new credential dispatched at the old account — two
+individually valid values, one wrong pairing, no error. And an optional config column that had
+become wrong could not be removed by anything, from anywhere: `mergeConfig` preserves what a run
+does not mention, and `rejectSystemScope` means this installer is the system scope's only writer.
+`login_customer_id` is the case that matters — it names the manager account requests are issued
+through, and a stale one is sent as a header on every dispatch.
+
+The flags are now tri-state: unmentioned keeps, `-account-id X` / `-config k=v` sets,
+`-clear-account-id` / `-config k=` removes. The clears deliberately land in values the existing
+rules already check rather than getting rules of their own — `requireConfig` sees the merged map,
+so clearing `org_id` is refused by the guard that already refuses omitting it, and
+`requireAccountID` sees the cleared account id, so returning a Meta row to credentials-first is
+refused for the same reason creating one that way is. Two additions were needed: `requireShapes`
+skips an empty value (an instruction is not a value, and without the skip every clear failed with
+a shape complaint about a value nobody supplied), and a clear before the row exists is REFUSED
+rather than dropped — obeying it and ignoring it produce the same row, so accepting it would
+report success for an instruction that never ran, and the likely cause is an operator who thought
+they were rotating a row that is not there.
