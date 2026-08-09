@@ -83,6 +83,30 @@ a truncated answer rather than a nameless campaign, and it now errors. This is t
 of the asymmetry: the error costs a retry, whereas returning the ref binds real spend to a
 campaign nobody could identify.
 
+A third pass narrowed what "a name" means. Two things the by-name path gets for free had to be
+made explicit here, and both come from the same asymmetry: `FindCampaignByName` echo-checks the
+decoded name against the name it asked for, so a corrupted name surfaces as a filter-not-honoured
+error, whereas this path has no expected name — the name IS the answer.
+
+First, `encoding/json` does not enforce that its input is UTF-8. A JSON document must be
+(RFC 8259 s8.1), but malformed bytes inside a string are silently replaced with U+FFFD and no
+error is returned, so `"name":"bad\xffname"` decoded into a perfectly successful `CampaignRef`
+carrying a name the campaign does not have — offered to an operator as the thing to confirm the
+binding against. The check is on the RAW row bytes rather than on hunting U+FFFD in the decoded
+string, because U+FFFD is a legal character in a campaign name and a campaign that genuinely
+contains one is not a defect.
+
+Second, the name is now held to the bounds of the field it came out of: at most
+`maxCampaignNameRunes` CHARACTERS, and none of NUL, LF or CR. A value outside those did not come
+from a campaign, because Google would not have stored it — so the response carrying it has already
+gone wrong. The narrow shape matters more here than usual, because over-rejection is a false
+absence wearing conservative clothes: adoption targets records this service never created and
+never sanitized, so a TAB, a U+2028 line separator or a zero-width joiner really does occur
+upstream, and refusing one answers "cannot trust this" about a campaign sitting right there.
+That is why the guard is three explicit runes and not `unicode.IsControl`, which would reject TAB
+and miss U+2028/U+2029 anyway. The tests carry both halves — four refusals and five names that
+must stay adoptable, including one at exactly the ceiling.
+
 ## The two by-id-specific guards
 
 **The caller's id is validated before interpolation, as an identity.** `canonicalCampaignID`

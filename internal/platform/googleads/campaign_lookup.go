@@ -391,6 +391,18 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 	var found *CampaignRef
 	var removedRef *CampaignRef
 	for _, raw := range rows {
+		// A JSON document must be UTF-8 (RFC 8259 s8.1), and encoding/json does NOT enforce
+		// it: malformed bytes inside a string are silently replaced with U+FFFD and no error
+		// is returned. FindCampaignByName can survive that, because it echo-checks the
+		// decoded name against the name it asked for, so a substitution turns into a loud
+		// filter-not-honoured error. This path has no expected name to compare against — the
+		// name IS the answer the operator confirms against — so a substituted name would be
+		// returned as a successful CampaignRef under a name the campaign does not have.
+		// Checked on the RAW bytes rather than by hunting U+FFFD in the decoded value,
+		// because U+FFFD is itself a legal character in a campaign name.
+		if !utf8.Valid(raw) {
+			return nil, fmt.Errorf("google-ads campaign lookup: campaign id %s was returned in a row that is not valid UTF-8; decoding it would substitute U+FFFD and offer a name this campaign does not have", campaignID)
+		}
 		var row campaignLookupRow
 		if err := json.Unmarshal(raw, &row); err != nil {
 			// A 2xx row we cannot decode is NOT a non-match; reporting it as one would
@@ -450,8 +462,8 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 		// one in a response that SELECTed it is a truncated answer, not a nameless campaign.
 		// Failing here costs a retry; returning it would bind real spend to a campaign
 		// nobody could identify.
-		if strings.TrimSpace(row.Campaign.Name) == "" {
-			return nil, fmt.Errorf("google-ads campaign lookup: campaign id %s was returned with no usable name (%q); refusing to offer a campaign an operator cannot confirm", campaignID, row.Campaign.Name)
+		if err := returnedCampaignName(row.Campaign.Name, campaignID); err != nil {
+			return nil, err
 		}
 
 		// Duplicate rows for the same campaign are tolerated (GAQL can return one campaign
@@ -478,4 +490,39 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 		return nil, fmt.Errorf("google-ads campaign lookup: campaign id %s was returned both live and %s in one response; refusing to trust this response", campaignID, StatusRemoved)
 	}
 	return found, nil
+}
+
+// returnedCampaignName checks that a name Google returned is a name Campaign.name can
+// actually hold. It is the RESPONSE-side counterpart to the input validation the by-name
+// lookup does, and the disposition is deliberately different: an unusable name errors on
+// the whole response rather than being skipped, because a skip would reduce it to zero
+// matches — (nil, nil), the clean absence a caller acts on by CREATING a second campaign
+// against the same budget. Erroring costs a retry.
+//
+// What it rejects is exactly what the upstream field forbids, and nothing more. Over-
+// rejection here is not the conservative choice it looks like: adoption targets records
+// this service never created and never sanitized, so refusing a legal-but-unusual name
+// answers "cannot trust this" about a campaign sitting right there. Google Ads v23
+// prohibits NUL, LF and CR in Campaign.name and caps it at maxCampaignNameRunes
+// CHARACTERS; TAB, U+2028/U+2029 and format characters (ZWJ, variation selectors) are all
+// legal, which is why this is an explicit three-rune check and not unicode.IsControl.
+//
+// A value outside those bounds is not an unusual campaign name — it is data Google could
+// not have stored, so the response carrying it has already gone wrong somewhere.
+func returnedCampaignName(name, campaignID string) error {
+	// Blank first, and by TrimSpace: Campaign.name is required and populated for every
+	// campaign, so an empty (or whitespace-only) one in a response that SELECTed it is a
+	// truncated answer rather than a nameless campaign. The name is not decoration — an
+	// operator confirms a binding by reading it, so a ref without one asks for a
+	// confirmation that cannot be given.
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("google-ads campaign lookup: campaign id %s was returned with no usable name (%q); refusing to offer a campaign an operator cannot confirm", campaignID, name)
+	}
+	if n := utf8.RuneCountInString(name); n > maxCampaignNameRunes {
+		return fmt.Errorf("google-ads campaign lookup: campaign id %s was returned with a %d-character name, past the %d Campaign.name allows; refusing to trust this response", campaignID, n, maxCampaignNameRunes)
+	}
+	if strings.ContainsAny(name, "\x00\n\r") {
+		return fmt.Errorf("google-ads campaign lookup: campaign id %s was returned with a name containing NUL, LF or CR, which Campaign.name cannot hold; refusing to trust this response", campaignID)
+	}
+	return nil
 }

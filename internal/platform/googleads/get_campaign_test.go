@@ -529,3 +529,94 @@ func TestGetCampaign_DisagreeingTombstonesAreNotAnAbsence(t *testing.T) {
 		}
 	})
 }
+
+// TestGetCampaign_MalformedUTF8RowIsNotACampaign covers the substitution encoding/json makes
+// without telling anyone.
+//
+// A JSON document must be UTF-8 (RFC 8259 s8.1) and encoding/json does not enforce it: it
+// replaces each malformed byte with U+FFFD and returns no error. FindCampaignByName is immune
+// by accident — it compares the decoded name against the name it asked for, so a substitution
+// surfaces as a filter-not-honoured error. This path has no expected name to compare against.
+// The name IS the answer, the thing an operator reads to confirm the id resolves to the
+// campaign they meant, so a substituted name would be a successful CampaignRef naming a
+// campaign that does not go by that name.
+//
+// The check is on the RAW bytes, not on hunting U+FFFD in the decoded string, because U+FFFD
+// is a legal character in a campaign name and a name that genuinely contains one is not a
+// defect.
+func TestGetCampaign_MalformedUTF8RowIsNotACampaign(t *testing.T) {
+	// Built by hand rather than through lookupRow: jsonQuote would encode the bad byte as a
+	// valid � escape, which is precisely the substitution under test.
+	bad := json.RawMessage("{\"campaign\":{\"resourceName\":\"customers/1234567890/campaigns/555\"," +
+		"\"id\":\"555\",\"name\":\"bad\xffname\",\"status\":\"" + StatusEnabled + "\"}}")
+
+	srv, _ := newLookupServer(t, []json.RawMessage{bad})
+	ref, err := newAccountsTestClient(t, srv).GetCampaign(context.Background(), "555")
+	if err == nil {
+		t.Fatalf("GetCampaign = %+v, want an error: the row is not valid UTF-8 and its name "+
+			"would be silently rewritten", ref)
+	}
+	if !strings.Contains(err.Error(), "UTF-8") {
+		t.Errorf("error = %v, want it to name the encoding fault", err)
+	}
+}
+
+// TestGetCampaign_NamesCampaignNameCannotHoldAreRefused holds the returned name to the bounds
+// of the field it came out of.
+//
+// The sub-tests split into the two halves that matter, and the second half is the point. A
+// value Campaign.name cannot hold did not come from a campaign, so a response carrying one has
+// already gone wrong; but over-rejection here is NOT the conservative choice it resembles.
+// Adoption targets campaigns this service never created and never sanitized, so a legal-but-
+// unusual name — a TAB, a line separator, a zero-width joiner — really does exist upstream,
+// and refusing one reports "cannot trust this" about a campaign sitting right there. Google
+// Ads v23 prohibits NUL, LF and CR and caps the field at maxCampaignNameRunes CHARACTERS;
+// everything else is legal, which is why the guard is three explicit runes rather than
+// unicode.IsControl (which would reject TAB, and would MISS U+2028/U+2029 anyway).
+func TestGetCampaign_NamesCampaignNameCannotHoldAreRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		campaig string
+		wantErr string
+	}{
+		{"past the character ceiling", strings.Repeat("a", maxCampaignNameRunes+1), "past the"},
+		{"a NUL", "the\x00campaign", "NUL, LF or CR"},
+		{"a line feed", "the\ncampaign", "NUL, LF or CR"},
+		{"a carriage return", "the\rcampaign", "NUL, LF or CR"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _ := newLookupServer(t, []json.RawMessage{lookupRow("555", tc.campaig, StatusEnabled)})
+			ref, err := newAccountsTestClient(t, srv).GetCampaign(context.Background(), "555")
+			if err == nil {
+				t.Fatalf("GetCampaign = %+v, want an error: Campaign.name cannot hold this value", ref)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error = %v, want it to contain %q", err, tc.wantErr)
+			}
+		})
+	}
+
+	// The narrowing half. Each of these is a name Google will store, so each must adopt.
+	for _, tc := range []struct {
+		name    string
+		campaig string
+	}{
+		{"exactly at the ceiling", strings.Repeat("a", maxCampaignNameRunes)},
+		{"a tab", "the\tcampaign"},
+		{"a line separator", "the\u2028campaign"},
+		{"a zero-width joiner", "the\u200djoined campaign"},
+		{"a replacement character the campaign really has", "the\ufffdcampaign"},
+	} {
+		t.Run(tc.name+" is adoptable", func(t *testing.T) {
+			srv, _ := newLookupServer(t, []json.RawMessage{lookupRow("555", tc.campaig, StatusEnabled)})
+			ref, err := newAccountsTestClient(t, srv).GetCampaign(context.Background(), "555")
+			if err != nil {
+				t.Fatalf("GetCampaign: %v — this is a name Google Ads accepts, so refusing it "+
+					"answers \"cannot trust this\" about a campaign that is really there", err)
+			}
+			if ref == nil || ref.Name != tc.campaig {
+				t.Fatalf("ref = %+v, want the name returned verbatim", ref)
+			}
+		})
+	}
+}
