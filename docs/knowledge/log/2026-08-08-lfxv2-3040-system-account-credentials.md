@@ -187,3 +187,22 @@ converting the common, fixable case into an opaque 500.
 The general lesson is the one this PR has now paid for twice: a sentinel added for its
 AUDIENCE is only worth what its arm order buys. Tagging every producer and inspecting one
 consumer leaves the same hole as tagging one producer did.
+
+## The fallback is scoped to paid ads, not to every provider
+
+Copilot caught that `credsSource` has consumers beyond campaign dispatch: `AudienceBuilder`
+resolves `ProviderHubSpot` through the same `resolve`, so the fallback as first written also
+applied to `/audiences/build`. A project with no HubSpot connection would have had its contact
+lists created in the LF's own portal — real contact data landing in the wrong tenant, silently,
+and against the documented behaviour that the build fails.
+
+The two cases are not the same trade. Running a project's campaign on the LF ad account spends
+LF budget on an LF-run campaign, which is the deliberate point of this change. Writing one
+tenant's contacts into another's CRM portal is a different thing entirely, and nobody chose it.
+
+`systemConn` now returns "no system connection" for any provider that is not paid ads, before
+the database is consulted at all. It asks `Kind()` rather than comparing against
+`ProviderHubSpot`, following that type's own guidance: a provider added later is unclassified
+until someone classifies it, so it is denied the LF credential by default rather than
+inheriting it. `TestSystemFallbackIsGatedByClassificationNotByName` walks `AllProviders()` and
+asserts both directions, so the classification and the gate cannot drift apart.

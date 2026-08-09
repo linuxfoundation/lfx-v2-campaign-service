@@ -231,6 +231,21 @@ func (s *credsSource) systemConn(ctx context.Context, projectID string, provider
 		// Already the system scope: a second identical Get would return the same miss.
 		return nil, nil
 	}
+	// The fallback is an ad-ACCOUNT fallback, and credsSource is shared by more than the
+	// ad paths: AudienceBuilder resolves ProviderHubSpot through this same function. What
+	// falls back there is not a budget but a CRM portal, so a project with no HubSpot
+	// connection would have its contact lists written into the LF's own portal — real
+	// contact data landing in the wrong tenant, silently, and contradicting the documented
+	// behaviour that the build fails. Spending LF ad budget on an LF-run campaign is the
+	// deliberate trade this fallback makes; mixing tenants' contacts is not the same trade
+	// and was never the intent.
+	//
+	// Asked as a CLASSIFICATION rather than as `provider != ProviderHubSpot`, per Kind()'s
+	// own guidance: a provider added later returns "" from Kind() until someone classifies
+	// it, so it is denied the LF credential by default instead of inheriting it.
+	if !provider.IsPaidAds() {
+		return nil, nil
+	}
 	conn, err := s.repo.Get(ctx, model.SystemProjectID, provider)
 	if err == nil {
 		slog.InfoContext(ctx, "project has no connection; using the system account",

@@ -514,3 +514,62 @@ func TestSystemScopedCoversEveryCallerNotJustDiscovery(t *testing.T) {
 		}
 	}
 }
+
+// TestResolveDoesNotFallBackForNonAdProviders: the fallback is an ad-ACCOUNT fallback, and
+// credsSource is shared beyond the ad paths — AudienceBuilder resolves ProviderHubSpot
+// through the same function. What would fall back there is not a budget but a CRM portal, so
+// a project with no HubSpot connection would have its contact lists written into the LF's own
+// portal: real contact data in the wrong tenant, silently, and against the documented
+// behaviour that the build fails. Spending LF ad budget on an LF-run campaign is the trade
+// this fallback deliberately makes; mixing tenants' contacts is a different trade nobody made.
+//
+// The system row EXISTS here, so the test fails if the gate is removed rather than passing
+// vacuously on a missing row.
+func TestResolveDoesNotFallBackForNonAdProviders(t *testing.T) {
+	sysRow := usableConn(`{"sys":true}`, "lf-portal")
+	sysRow.Provider = model.ProviderHubSpot
+	repo := &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: sysRow}}
+
+	got, err := newCredsSource(repo, identityEncryptor{}).
+		resolve(context.Background(), "cncf", model.ProviderHubSpot)
+	if err == nil {
+		t.Fatalf("resolve = %+v, want an error: a project with no HubSpot connection must not write its contact lists into the LF portal", got)
+	}
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("error = %v, want it to stay a plain absence (the project has no connection), not a system-scoped failure", err)
+	}
+	// The system scope must not even be CONSULTED: the gate is a classification question,
+	// answerable without a database round-trip.
+	for _, scope := range repo.gets {
+		if scope == model.SystemProjectID {
+			t.Errorf("scopes asked = %v, want the system scope never consulted for a non-ad provider", repo.gets)
+		}
+	}
+}
+
+// TestSystemFallbackIsGatedByClassificationNotByName pins that the gate asks Kind() rather
+// than comparing against ProviderHubSpot. Every paid-ads provider must fall back, and every
+// provider that is not classified as paid ads must not — so a provider added later is denied
+// the LF credential by default until someone classifies it, instead of inheriting it.
+func TestSystemFallbackIsGatedByClassificationNotByName(t *testing.T) {
+	for _, p := range model.AllProviders() {
+		t.Run(string(p), func(t *testing.T) {
+			row := usableConn(`{"sys":true}`, "sys-account")
+			row.Provider = p
+			repo := &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: row}}
+
+			_, err := newCredsSource(repo, identityEncryptor{}).
+				resolve(context.Background(), "cncf", p)
+
+			if p.IsPaidAds() {
+				if err != nil {
+					t.Fatalf("resolve(%s): %v; every paid-ads provider falls back to the LF account", p, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("resolve(%s) succeeded; only paid-ads providers may use the LF system account", p)
+			}
+		})
+	}
+}
