@@ -414,19 +414,35 @@ func TestCoalesceKeyFunc_CallerKeepsItsOwnDeadline(t *testing.T) {
 // TestCoalesceKeyFunc_LeaderCancellationDoesNotFailFollowers covers the other half of
 // that choice: the shared fetch must NOT be bound to whichever caller happened to arrive
 // first, or that caller's cancellation would fail everyone waiting on it.
+//
+// The assertion that makes this binding is on the INNER context, not on the follower.
+// Reading the regression off the follower's error cannot be made deterministic: the
+// follower is a goroutine racing the leader's flight, and if it arrives after that flight
+// completes it starts its own — with a live context, which succeeds and reports nothing,
+// even with context.WithoutCancel removed. So the fetch records what its own ctx said at a
+// moment the test controls: it parks on `release`, which is closed only AFTER the leader is
+// cancelled, so by then a context carrying the leader's cancellation is definitely
+// cancelled and one stripped of it is definitely not. The follower assertion stays as the
+// behavioural half — it is what a user of this wrapper actually observes — but it is no
+// longer what the guarantee rests on.
 func TestCoalesceKeyFunc_LeaderCancellationDoesNotFailFollowers(t *testing.T) {
 	fetching := make(chan struct{})
 	release := make(chan struct{})
-	// once, because the fn can legitimately run TWICE: if the follower arrives after the
-	// leader's flight has already completed it starts a second one, and an unguarded close
-	// would panic on the second entry — a flake in the test, not a defect in the wrapper.
-	var started sync.Once
+	fetched := make(chan struct{})
+
+	// innerErr is written by the first fetch only and read after `fetched`, which that
+	// fetch closes on its way out — so the handoff is ordered without a mutex.
+	var innerErr error
+	// Only the FIRST invocation parks. fn can legitimately run twice (a follower arriving
+	// after the leader's flight completed starts its own), and parking the second would
+	// turn this into a hang rather than the assertion below.
+	var fetches int32
 	kf := coalesceKeyFunc(func(ctx context.Context) (any, error) {
-		started.Do(func() { close(fetching) })
-		<-release
-		// The wrapper must have stripped cancellation from the context it passed down.
-		if err := ctx.Err(); err != nil {
-			return nil, err
+		if atomic.AddInt32(&fetches, 1) == 1 {
+			close(fetching)
+			<-release
+			innerErr = ctx.Err()
+			close(fetched)
 		}
 		return "keyset", nil
 	})
@@ -440,6 +456,13 @@ func TestCoalesceKeyFunc_LeaderCancellationDoesNotFailFollowers(t *testing.T) {
 
 	cancelLeader()
 	close(release)
+	<-fetched
+
+	if innerErr != nil {
+		t.Errorf("the shared fetch saw %v on its own context after the LEADER was cancelled, "+
+			"want no error — the fetch is shared, so binding it to whichever caller happened "+
+			"to arrive first makes that caller's cancellation everyone's", innerErr)
+	}
 
 	select {
 	case err := <-follower:

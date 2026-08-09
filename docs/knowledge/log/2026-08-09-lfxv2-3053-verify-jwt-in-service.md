@@ -148,3 +148,26 @@ Unwrapped, the revert-check reports 17 fetches where 1 is required.
 **Known follow-up.** Rejections surface as **400**, not 401 — the design declares no
 Unauthorized type and `commonBriefErrors` documents 400 as the JWTAuth rejection status;
 adding 401 is a design change with generated-code blast radius, filed separately.
+
+## Review round: the leader-cancellation test was the same flake, one test over
+
+The fan-in test was made exact earlier in this branch. Its sibling —
+`TestCoalesceKeyFunc_LeaderCancellationDoesNotFailFollowers`, which pins
+`context.WithoutCancel` — had the identical defect and was missed because its assertion
+LOOKS like it is about the wrapper. It is not: it reads the regression off the FOLLOWER's
+error, and the follower is a goroutine racing the leader's flight. Arriving after that
+flight completes, it starts its own with a live context, succeeds, and reports nothing —
+so removing `WithoutCancel` could leave the test green.
+
+The assertion now sits on the INNER context, which the test can order deterministically.
+The fetch parks on `release`, closed only AFTER the leader is cancelled, and records
+`ctx.Err()` when it resumes: by then a context carrying the leader's cancellation is
+definitely cancelled, and one stripped of it definitely is not. The follower assertion
+stays, because it is what a user of the wrapper actually observes, but the guarantee no
+longer rests on it. Only the first invocation parks — parking a second would convert the
+failure into a hang, which is the trap the fan-in fix already ran into. With
+`WithoutCancel` removed the test now fails 20 runs out of 20.
+
+The pattern worth carrying: when a test's subject is a property of a SHARED call, asserting
+it through one participant's observable outcome inherits every scheduling race between
+them. Assert inside the shared call, at a point the test controls.
