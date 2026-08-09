@@ -168,53 +168,23 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		return nil, err
 	}
 
-	brief, berr := briefs.GetBrief(ctx, p.ProjectID, p.BriefID)
-	if berr != nil {
-		return nil, mapAudienceErr(berr)
-	}
-
-	// Same lifecycle guard the campaign-creation path applies (brief.go). Building creates
-	// REAL HubSpot lists and makes the brief sendable, so a draft must not reach it — the
-	// event details it would be built from are still being edited.
-	// Capture the version the approval was observed at; the insert below is gated on it.
-	approvedVersion := brief.Version
-	if brief.Status != model.BriefApproved {
-		return nil, audienceValidationErr(fmt.Errorf("brief must be approved before building its audience (it is %s)", brief.Status))
-	}
-
-	details, derr := decodeEventDetails(brief)
-	if derr != nil {
-		return nil, audienceValidationErr(derr)
-	}
-
-	// Validate the plan BEFORE claiming, and do it WITHOUT the past editions. That is exactly
-	// as strong as validating with them: every error BuildPlan can return comes from the
-	// country, the event name, or the country-only group-4 filter. The editions-dependent
-	// filter is reached only once at least one NON-BLANK edition survives `nonBlank`, which is
-	// precisely when its own two error branches (no editions, a blank name) cannot fire. So
-	// nothing is deferred by checking early — and a brief that cannot be planned still leaves
-	// no building row behind.
-	if _, perr := audience.BuildPlan(audience.PlanInput{
-		EventName: details.EventName,
-		Country:   details.Country,
-	}); perr != nil {
-		return nil, audienceValidationErr(perr)
-	}
-
-	// CLAIM FIRST, and note what that ordering is for. The partial unique index from migration
-	// 000018 only serializes builds whose rows OVERLAP, so every slow step running BEFORE the
-	// insert is a window in which a second request finds nothing to conflict with. Resolving
-	// past editions first — a Snowflake round-trip, the slowest thing in this function — left a
-	// window wide enough that a double-click's second request could be delayed past the first
-	// request's entire build, insert cleanly against its now-`built` row, and go on to create a
-	// whole second set of HubSpot lists. Recording the intent first also does what the original
-	// ordering was written for: an interrupted build is a visible `building` row rather than a
-	// silent gap.
+	// CLAIM FIRST — before the brief read, not merely before the warehouse read. The partial
+	// unique index from migration 000018 serializes only builds whose rows OVERLAP, so the
+	// lease covers exactly the interval between this insert and the row leaving `building`.
+	// EVERY blocking step ahead of the insert is therefore a window in which a second request
+	// for the same brief finds nothing to conflict with: if it is delayed there past the first
+	// request's entire build, it claims cleanly against a now-`built` row and goes on to create
+	// a whole second set of HubSpot lists. Resolving past editions first — a Snowflake
+	// round-trip — made that window seconds wide; reading the brief first makes it a database
+	// round-trip. Neither is a bound, only a size, so the claim goes first and the ordering
+	// stops depending on how fast the steps ahead of it happen to be.
 	//
-	// Gate the insert on the brief STILL being approved at the version read above — the plain
-	// create only checks `status <> 'archived'`, so a concurrent ReplaceBrief that reset the
-	// brief to draft would otherwise let the build create REAL HubSpot lists from a stale
-	// approved snapshot. Mirrors CreateJobForApprovedBrief.
+	// The claim gates itself on the brief being APPROVED (the plain create only checks
+	// `status <> 'archived'`) and reports the version it observed under its own row lock. That
+	// is why it needs no expected version from here: there is no earlier read to have pinned,
+	// which is the whole point of it running first. Recording the intent up front also does
+	// what the original ordering was written for — an interrupted build is a visible
+	// `building` row rather than a silent gap.
 	row := &model.CampaignAudience{
 		ProjectID: p.ProjectID,
 		BriefID:   p.BriefID,
@@ -222,9 +192,37 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		Status:    model.AudienceBuilding,
 		CreatedBy: marshalActor(actorFromCtx(ctx)),
 	}
-	created, cerr := repo.CreateAudienceForApprovedBrief(ctx, row, approvedVersion)
+	created, approvedVersion, cerr := repo.CreateAudienceForApprovedBrief(ctx, row)
 	if cerr != nil {
-		return nil, mapAudienceErr(cerr)
+		return nil, refusedClaimErr(ctx, briefs, p, cerr)
+	}
+
+	// From here every early return must RELEASE the claim. Nothing has been created upstream
+	// yet on any of these paths, so there is nothing to reconcile first — and a `building` row
+	// left behind by a request that has given up blocks every later build of this brief behind
+	// a 409 until an operator intervenes.
+	brief, berr := briefs.GetBrief(ctx, p.ProjectID, p.BriefID)
+	if berr != nil {
+		releaseUnstartedClaim(ctx, repo, created, berr)
+		return nil, mapAudienceErr(berr)
+	}
+
+	// Same lifecycle guard the campaign-creation path applies (brief.go). Building creates
+	// REAL HubSpot lists and makes the brief sendable, so a draft must not reach it — the
+	// event details it would be built from are still being edited. The claim already refused a
+	// brief that was not approved when it locked the row, so this can only fire if the brief
+	// was retracted in the moment since; it is kept because the alternative is a guard whose
+	// correctness depends on a second component's implementation.
+	if brief.Status != model.BriefApproved {
+		verr := fmt.Errorf("brief must be approved before building its audience (it is %s)", brief.Status)
+		releaseUnstartedClaim(ctx, repo, created, verr)
+		return nil, audienceValidationErr(verr)
+	}
+
+	details, derr := decodeEventDetails(brief)
+	if derr != nil {
+		releaseUnstartedClaim(ctx, repo, created, derr)
+		return nil, audienceValidationErr(derr)
 	}
 
 	// Past editions are resolved under the claim. Nothing has been created upstream yet, so a
@@ -276,13 +274,20 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 	planInput.BuildRef = created.ID
 	plan, perr := audience.BuildPlan(planInput)
 	if perr != nil {
-		// Unreachable given the pre-claim validation above, which sees the same error set. The
-		// claim is held now, though, and a stuck `building` row blocks every later build of this
-		// brief — so release it rather than trusting that reasoning to stay true. Nothing was
-		// created upstream, which is exactly the condition under which the buildErr path below
-		// also marks the row FAILED.
 		releaseUnstartedClaim(ctx, repo, created, perr)
 		return nil, audienceValidationErr(perr)
+	}
+
+	// LAST thing before the first upstream call: confirm the brief is STILL approved at the
+	// version the claim locked. The claim's own gate proves the brief was approved when the
+	// lease was taken, which is now BEFORE the warehouse round-trip rather than after it — so
+	// on its own it no longer says anything about the brief at the moment lists are created. A
+	// ReplaceBrief landing during that round-trip would otherwise build real HubSpot lists from
+	// an approval the operator has since withdrawn, which is the case the gate exists for. The
+	// two guards are not redundant: the claim's serializes builds, this one dates the approval.
+	if serr := confirmStillApproved(ctx, briefs, p.ProjectID, p.BriefID, approvedVersion); serr != nil {
+		releaseUnstartedClaim(ctx, repo, created, serr)
+		return nil, mapAudienceErr(serr)
 	}
 
 	// Scope the builder's client cache to THIS build (see dispatch.BeginBuild): all of a
@@ -365,6 +370,41 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 		return nil, audiencePersistErr(unrecordedListsErr(uerr, created.ID, reported, false))
 	}
 	return audienceResult(updated), nil
+}
+
+// refusedClaimErr renders a refused claim as the error the CALLER's situation warrants.
+//
+// The claim gates on approval itself, so a brief that was never approved and a brief that
+// moved mid-build both come back as domain.ErrStaleApproval — a 409 whose message is about
+// versions. That is right for the race and wrong for the ordinary case, which is someone
+// building a draft: they need a 400 naming the status and what to do about it, not a conflict
+// implying they collided with somebody. Since the claim runs first there is no earlier read to
+// tell the two apart, so this one is done here, on the failure path only.
+//
+// A brief that cannot be re-read falls through to the generic mapping. Guessing 400 there
+// would blame the caller for the service's own inability to look.
+func refusedClaimErr(ctx context.Context, briefs domain.BriefRepository, p *audiences.BuildAudiencePayload, cerr error) error {
+	if errors.Is(cerr, domain.ErrStaleApproval) {
+		if brief, berr := briefs.GetBrief(ctx, p.ProjectID, p.BriefID); berr == nil && brief.Status != model.BriefApproved {
+			return audienceValidationErr(fmt.Errorf("brief must be approved before building its audience (it is %s)", brief.Status))
+		}
+	}
+	return mapAudienceErr(cerr)
+}
+
+// confirmStillApproved re-reads the brief and reports domain.ErrStaleApproval unless it is
+// still approved at expectedVersion. A read failure is reported as-is and is NOT treated as
+// "probably still fine": the caller is about to create real HubSpot lists, and the only safe
+// reading of "could not check" is that the check did not pass.
+func confirmStillApproved(ctx context.Context, briefs domain.BriefRepository, projectID, briefID string, expectedVersion int64) error {
+	brief, err := briefs.GetBrief(ctx, projectID, briefID)
+	if err != nil {
+		return err
+	}
+	if brief.Status != model.BriefApproved || brief.Version != expectedVersion {
+		return domain.ErrStaleApproval
+	}
+	return nil
 }
 
 // releaseUnstartedClaim marks a just-inserted `building` row FAILED when the build never

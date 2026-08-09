@@ -55,9 +55,9 @@ func TestAudienceBuildLeaseAdmitsExactlyOneConcurrentBuild(t *testing.T) {
 				Platform:  model.ProviderHubSpot,
 				Status:    model.AudienceBuilding,
 			}
-			// Version 1 for every caller: the brief is untouched, so all eight pass the
-			// approval guard and the ONLY thing that can separate them is the lease.
-			created, err := repo.CreateAudienceForApprovedBrief(ctx, row, 1)
+			// The brief is untouched and approved, so all eight pass the approval guard
+			// and the ONLY thing that can separate them is the lease.
+			created, _, err := repo.CreateAudienceForApprovedBrief(ctx, row)
 			mu.Lock()
 			defer mu.Unlock()
 			switch {
@@ -107,13 +107,13 @@ func TestAudienceBuildLeaseFreesOnCompletion(t *testing.T) {
 		}
 	}
 
-	first, err := repo.CreateAudienceForApprovedBrief(ctx, newRow(), 1)
+	first, _, err := repo.CreateAudienceForApprovedBrief(ctx, newRow())
 	if err != nil {
 		t.Fatalf("first build: %v", err)
 	}
 
 	// While it holds the lease, a second build is refused.
-	if _, err := repo.CreateAudienceForApprovedBrief(ctx, newRow(), 1); !errors.Is(err, domain.ErrAudienceBuildInFlight) {
+	if _, _, err := repo.CreateAudienceForApprovedBrief(ctx, newRow()); !errors.Is(err, domain.ErrAudienceBuildInFlight) {
 		t.Fatalf("second build while the first is building: got %v, want ErrAudienceBuildInFlight", err)
 	}
 
@@ -125,7 +125,7 @@ func TestAudienceBuildLeaseFreesOnCompletion(t *testing.T) {
 		t.Fatalf("complete the first build: %v", err)
 	}
 
-	second, err := repo.CreateAudienceForApprovedBrief(ctx, newRow(), 1)
+	second, _, err := repo.CreateAudienceForApprovedBrief(ctx, newRow())
 	if err != nil {
 		t.Fatalf("rebuild after the first build completed: %v — the lease must cover "+
 			"concurrency only, not a brief's whole history", err)
@@ -212,7 +212,7 @@ func TestAudienceBuildLeaseRefusesPlainCreate(t *testing.T) {
 	// The BUILD path takes the lease first, so the plain create is genuinely second —
 	// which is the case the branch exists for. Doing it the other way round would test
 	// the same mapping from the wrong side.
-	if _, err := repo.CreateAudienceForApprovedBrief(ctx, newRow(), 1); err != nil {
+	if _, _, err := repo.CreateAudienceForApprovedBrief(ctx, newRow()); err != nil {
 		t.Fatalf("hold the lease with a build: %v", err)
 	}
 
@@ -249,7 +249,7 @@ func TestAudienceBuildLeaseRefusesUpdateBackToBuilding(t *testing.T) {
 
 	// An earlier attempt that failed. It is outside the index predicate, so it does not
 	// hold the lease and a fresh build can start alongside it.
-	failed, err := repo.CreateAudienceForApprovedBrief(ctx, newRow(), 1)
+	failed, _, err := repo.CreateAudienceForApprovedBrief(ctx, newRow())
 	if err != nil {
 		t.Fatalf("first build: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestAudienceBuildLeaseRefusesUpdateBackToBuilding(t *testing.T) {
 	}
 
 	// Somebody else now holds the lease.
-	if _, err := repo.CreateAudienceForApprovedBrief(ctx, newRow(), 1); err != nil {
+	if _, _, err := repo.CreateAudienceForApprovedBrief(ctx, newRow()); err != nil {
 		t.Fatalf("second build after the first failed: %v", err)
 	}
 

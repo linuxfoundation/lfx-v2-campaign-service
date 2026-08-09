@@ -16,15 +16,22 @@ type AudienceRepository interface {
 	// CreateAudience inserts a new audience row and returns it (with its generated
 	// id/version/timestamps).
 	CreateAudience(ctx context.Context, a *model.CampaignAudience) (*model.CampaignAudience, error)
-	// CreateAudienceForApprovedBrief inserts the row ONLY if the parent brief is still
-	// approved at expectedVersion, returning ErrStaleApproval otherwise.
+	// CreateAudienceForApprovedBrief inserts the row ONLY if the parent brief is approved,
+	// returning ErrStaleApproval otherwise, and reports the brief VERSION it observed under
+	// the lock.
 	//
-	// The build reads the brief, resolves past editions (a warehouse round-trip), then
-	// creates HubSpot lists — a long window in which a concurrent ReplaceBrief can reset the
-	// brief to draft and bump its version. A plain CreateAudience only checks
-	// `status <> 'archived'`, so the build would create REAL HubSpot lists from a stale
-	// approved snapshot. Mirrors JobRepo.CreateJobForApprovedBrief.
-	CreateAudienceForApprovedBrief(ctx context.Context, a *model.CampaignAudience, expectedVersion int64) (*model.CampaignAudience, error)
+	// It takes no expected version, and that is the point: this is the FIRST blocking call
+	// the build makes, so there is no earlier read for a caller to have pinned. Reading the
+	// brief before claiming would put a database round-trip ahead of the lease, and every
+	// step ahead of the lease is a window in which a second request for the same brief finds
+	// nothing to conflict with. The version comes back instead, and the caller re-checks it
+	// immediately before the first upstream call — which is where the guard has to be, since
+	// the build reads the brief and resolves past editions (a warehouse round-trip) after
+	// claiming and before creating any HubSpot list. A plain CreateAudience only checks
+	// `status <> 'archived'`, so without the approval gate the build could create REAL
+	// HubSpot lists from a brief that is no longer approved. Mirrors
+	// JobRepo.CreateJobForApprovedBrief in intent, not in signature.
+	CreateAudienceForApprovedBrief(ctx context.Context, a *model.CampaignAudience) (*model.CampaignAudience, int64, error)
 	// GetAudience returns one audience by id, scoped to (project, brief), or
 	// ErrNotFound.
 	GetAudience(ctx context.Context, projectID, briefID, id string) (*model.CampaignAudience, error)

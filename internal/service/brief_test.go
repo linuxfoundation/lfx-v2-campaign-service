@@ -51,6 +51,19 @@ func newFakeBriefRepo() *fakeBriefRepo {
 
 func briefKey(projectID, id string) string { return projectID + "|" + id }
 
+// snapshot reads a brief WITHOUT firing onGet. The audience fake's claim uses it because the
+// real claim reads the brief inside its own transaction, under a row lock — that read is not
+// a window a second request can be delayed in, so a test hook that pretends it is would model
+// a race the database does not have.
+func (r *fakeBriefRepo) snapshot(projectID, id string) (*model.CampaignBrief, bool) {
+	b, ok := r.briefs[briefKey(projectID, id)]
+	if !ok {
+		return nil, false
+	}
+	cp := *b
+	return &cp, true
+}
+
 // FindBriefByEventSlug scans for a non-archived brief matching the slug, mirroring the
 // repo's partial-unique-index semantics (archived rows free the slug).
 func (r *fakeBriefRepo) FindBriefByEventSlug(_ context.Context, projectID, eventSlug string) (*model.CampaignBrief, error) {

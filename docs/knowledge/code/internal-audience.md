@@ -95,15 +95,34 @@ the lease.** `BuildAudience` originally resolved past editions — a Snowflake r
 the slowest thing it does — before inserting, and everything ahead of that insert is a window in
 which a second request finds no row to conflict with. A double-click whose second request was
 delayed there long enough for the first to finish would insert cleanly against a now-`built`
-row and create a whole second set. The claim is therefore taken FIRST and the warehouse read
-happens under it. Plan validation still runs before the claim, and can: every error `BuildPlan`
-returns comes from the country, the event name, or the country-only group-4 filter, so
-validating with no editions sees the same error set as validating with them. The post-claim
-`BuildPlan` (the one carrying `BuildRef`) still releases the row on failure rather than
-trusting that argument to survive the next edit. `TestBuildAudience_SecondRequestIsRejectedWhileTheFirstResolvesEditions`
-holds one build inside the warehouse call and runs another to completion against it —
-concurrent repository inserts cannot catch this, because in the broken ordering the two
-requests never reach the repository at the same time.
+row and create a whole second set.
+
+Moving the claim ahead of the warehouse read fixed the biggest window and left the argument
+in the wrong shape: EVERY blocking call ahead of the insert is a window, and the next one
+along — `briefs.GetBrief` — is a database round-trip rather than a Snowflake one. That is a
+smaller window, not a bound, and "small enough" is a claim about latency that no test pins
+and the next edit can quietly falsify. So the claim is now the FIRST thing `BuildAudience`
+does after resolving its dependencies: the brief read, plan validation and the warehouse call
+all happen under it, and the ordering stops depending on how fast the steps ahead of it
+happen to be. `TestBuildAudience_SecondRequestIsRejectedWhileTheFirstReadsTheBrief` holds one
+build inside its `GetBrief` and runs another to completion against it; concurrent repository
+inserts cannot catch this, because in the broken ordering the two requests never reach the
+repository at the same time.
+
+Claiming before validating has a visible consequence, and it is accepted rather than worked
+around: a brief that cannot be planned at all now leaves a released `failed` row where it
+previously left nothing. Every early return between the claim and the first upstream call
+therefore goes through `releaseUnstartedClaim` — nothing exists upstream on those paths, so
+there is nothing to reconcile first, and a `building` row left behind by a request that gave
+up would block every later build of the brief behind a 409 until an operator intervened.
+
+One more thing had to move with it. The claim gates on approval itself, so a brief that was
+never approved and a brief that moved mid-build both come back as `ErrStaleApproval` — a 409
+about versions, which is right for the race and wrong for the ordinary case of someone
+building a draft. `refusedClaimErr` re-reads the brief on the FAILURE path only and renders
+that case as the 400 it was before, naming the status. A brief that cannot be re-read falls
+through to the generic mapping: guessing 400 there would blame the caller for the service's
+own inability to look.
 
 A build that dies holding the lease keeps blocking rebuilds. That is intended: its lists exist
 upstream, so the old answer of building again is what duplicated them. An operator reconciles
@@ -130,9 +149,23 @@ to draft and bump its version in that window. The plain `CreateAudience` only ga
 `status <> 'archived'`, so the build would then create REAL HubSpot lists from a stale approved
 snapshot.
 
-`CreateAudienceForApprovedBrief` gates the insert on the brief still being approved AT the
-version observed by the check, returning `ErrStaleApproval` (→ 409) otherwise. Same shape as
-`JobRepo.CreateJobForApprovedBrief`, which closed this race for campaign creation.
+`CreateAudienceForApprovedBrief` gates the insert on the brief being approved, locking the
+brief row inside its own transaction, and reports back the VERSION it observed under that
+lock. It takes no expected version, and that is the point: running first is what makes the
+lease a bound, and running first means there is no earlier read for a caller to have pinned.
+Same shape as `JobRepo.CreateJobForApprovedBrief`, which closed this race for campaign
+creation, though not the same signature.
+
+**The claim's gate and the pre-upstream re-check are not redundant.** Moving the claim ahead
+of the warehouse read moved its approval gate there too, so on its own the gate now says the
+brief was approved BEFORE the slowest call in the build rather than after it — which is
+nothing at all about the brief at the moment lists are created, and that moment is what the
+gate exists for. `confirmStillApproved` runs as the last thing before the first HubSpot call
+and re-reads the brief, failing unless it is still approved at the version the claim locked.
+The two guards answer different questions: the claim's SERIALIZES builds, this one DATES the
+approval. A read failure here is reported as-is and never treated as "probably still fine" —
+the caller is about to create real lists, and the only safe reading of "could not check" is
+that the check did not pass.
 
 ## Only approved briefs
 

@@ -25,9 +25,11 @@ type fakeAudienceRepo struct {
 	// broke, so the row cannot carry the created list ids and the caller's error is the only
 	// remaining channel for them.
 	updateE error
-	// staleAt, when it matches the expectedVersion passed to
-	// CreateAudienceForApprovedBrief, makes that call report ErrStaleApproval.
-	staleAt int64
+	// briefs is the SAME brief store the service reads. The real
+	// CreateAudienceForApprovedBrief locks the parent brief and gates on it, so a fake
+	// holding its own private notion of approval could not express the thing these tests
+	// exist for: a ReplaceBrief landing partway through a build.
+	briefs *fakeBriefRepo
 	// leaseHeld makes CreateAudienceForApprovedBrief report ErrAudienceBuildInFlight, which
 	// is what the real repo returns when the partial unique index from migration 000018
 	// rejects the insert because a concurrent build for this (brief, platform) already
@@ -50,17 +52,23 @@ func (r *fakeAudienceRepo) CreateAudience(_ context.Context, a *model.CampaignAu
 	return a, nil
 }
 
-// CreateAudienceForApprovedBrief models the version gate: briefVersion is what the fake's
-// parent brief is "at", and a mismatch is ErrStaleApproval — the same signal the real repo
-// gives when a concurrent ReplaceBrief moved the brief.
-func (r *fakeAudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *model.CampaignAudience, expectedVersion int64) (*model.CampaignAudience, error) {
-	if r.staleAt != 0 && r.staleAt == expectedVersion {
-		return nil, domain.ErrStaleApproval
+// CreateAudienceForApprovedBrief models the real repo's two gates in the real repo's order:
+// the parent brief is read under the claim and must be APPROVED, and the version it is at is
+// reported back; then the lease. Reading the shared brief store rather than a private flag is
+// what lets a test move the brief mid-build and see the same answer production would give.
+func (r *fakeAudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *model.CampaignAudience) (*model.CampaignAudience, int64, error) {
+	var version int64
+	if r.briefs != nil {
+		brief, ok := r.briefs.snapshot(a.ProjectID, a.BriefID)
+		if !ok || brief.Status != model.BriefApproved {
+			return nil, 0, domain.ErrStaleApproval
+		}
+		version = brief.Version
 	}
-	// Checked after staleAt because the real repo checks the approval FIRST — the lease is
-	// only consulted once the insert is attempted.
+	// Checked after the approval because the real repo checks the approval FIRST — the lease
+	// is only consulted once the insert is attempted.
 	if r.leaseHeld {
-		return nil, domain.ErrAudienceBuildInFlight
+		return nil, 0, domain.ErrAudienceBuildInFlight
 	}
 	// Model the partial unique index itself, not just the flag: an existing BUILDING row for
 	// the same (brief, platform) rejects the insert. The flag alone cannot express WHEN the
@@ -69,10 +77,14 @@ func (r *fakeAudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a
 	for _, existing := range r.items {
 		if existing.BriefID == a.BriefID && existing.Platform == a.Platform &&
 			existing.Status == model.AudienceBuilding {
-			return nil, domain.ErrAudienceBuildInFlight
+			return nil, 0, domain.ErrAudienceBuildInFlight
 		}
 	}
-	return r.CreateAudience(ctx, a)
+	out, cerr := r.CreateAudience(ctx, a)
+	if cerr != nil {
+		return nil, 0, cerr
+	}
+	return out, version, nil
 }
 
 func (r *fakeAudienceRepo) GetAudience(_ context.Context, _, _, id string) (*model.CampaignAudience, error) {

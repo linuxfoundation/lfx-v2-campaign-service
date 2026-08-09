@@ -30,14 +30,15 @@ const audienceCols = `id::text, project_id::text, brief_id::text, platform,
 	created_by, created_at, updated_at`
 
 // CreateAudience inserts a new audience row and returns it.
-// CreateAudienceForApprovedBrief inserts the row only if the parent brief is still APPROVED at
-// expectedVersion. See the port for why the plain create is not sufficient here.
+// CreateAudienceForApprovedBrief inserts the row only if the parent brief is APPROVED, and
+// returns the brief version it observed. See the port for why it takes no expected version
+// and why the plain create is not sufficient here.
 //
 // A guarded INSERT ... WHERE EXISTS is NOT sufficient here. Under READ COMMITTED the
 // statement's snapshot can still see the approved row while a concurrent ReplaceBrief
 // commits a draft/version change before this insert commits — so the build would create
 // REAL HubSpot lists from a brief that is no longer approved.
-func (r *AudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *model.CampaignAudience, expectedVersion int64) (*model.CampaignAudience, error) {
+func (r *AudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *model.CampaignAudience) (*model.CampaignAudience, int64, error) {
 	// SELECT ... FOR UPDATE takes a row-level exclusive lock and re-reads the row's CURRENT
 	// committed state, so this check cannot straddle a concurrent commit: whichever
 	// transaction takes the lock first runs to completion before the other observes the row.
@@ -47,7 +48,7 @@ func (r *AudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *mo
 	// Same shape as JobRepo.CreateJobForApprovedBrief.
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("create audience for approved brief: begin tx: %w", err)
+		return nil, 0, fmt.Errorf("create audience for approved brief: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -59,13 +60,13 @@ func (r *AudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *mo
 	if serr := tx.QueryRow(ctx, lockQ, a.BriefID, a.ProjectID).Scan(&status, &version); serr != nil {
 		if errors.Is(serr, pgx.ErrNoRows) {
 			// Absent, or the caller's project does not own it. Either way there is nothing
-			// approved at expectedVersion to build from.
-			return nil, domain.ErrStaleApproval
+			// approved to build from.
+			return nil, 0, domain.ErrStaleApproval
 		}
-		return nil, fmt.Errorf("create audience for approved brief: lock brief: %w", serr)
+		return nil, 0, fmt.Errorf("create audience for approved brief: lock brief: %w", serr)
 	}
-	if status != "approved" || version != expectedVersion {
-		return nil, domain.ErrStaleApproval
+	if status != "approved" {
+		return nil, 0, domain.ErrStaleApproval
 	}
 
 	insertQ := `INSERT INTO campaign_audiences
@@ -85,14 +86,16 @@ func (r *AudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *mo
 			// is already in flight and holds the lease. Reported as its own sentinel rather
 			// than ErrConflict: the caller has not created a duplicate of anything, it has
 			// arrived second.
-			return nil, domain.ErrAudienceBuildInFlight
+			return nil, 0, domain.ErrAudienceBuildInFlight
 		}
-		return nil, fmt.Errorf("create audience for approved brief: insert: %w", serr)
+		return nil, 0, fmt.Errorf("create audience for approved brief: insert: %w", serr)
 	}
 	if cerr := tx.Commit(ctx); cerr != nil {
-		return nil, fmt.Errorf("create audience for approved brief: commit: %w", cerr)
+		return nil, 0, fmt.Errorf("create audience for approved brief: commit: %w", cerr)
 	}
-	return out, nil
+	// The version is reported from INSIDE the transaction that locked the brief, so it is the
+	// version the approval was observed at rather than whatever a later read might see.
+	return out, version, nil
 }
 
 func (r *AudienceRepo) CreateAudience(ctx context.Context, a *model.CampaignAudience) (*model.CampaignAudience, error) {

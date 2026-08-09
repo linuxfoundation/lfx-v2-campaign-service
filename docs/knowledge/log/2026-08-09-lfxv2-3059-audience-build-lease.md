@@ -236,3 +236,66 @@ A third item — that `internal-infrastructure-postgres.md` calls a migration er
 while the container keeps retrying — was already fixed in `7010eea5`, which added exactly that
 distinction ("permanent here means the container stops trying, not that it keeps trying"). No
 change.
+
+## Round 5: the reorder was the right move made one step short
+
+Two findings on the same code from two different reviewers, and both are about Round 4's fix
+rather than about the original bug.
+
+Copilot: the lease is acquired after `briefs.GetBrief`, so a request delayed inside that read
+can still claim cleanly once the first build has finished. Round 4 conceded exactly this shape
+for the warehouse call and then stopped one call short of the principle. The tempting reply is
+that a database round-trip is a much smaller window than a Snowflake one, and it is — but that
+argument was already made once and lost, and it is a claim about latency that no test pins. So
+the claim now runs FIRST, immediately after `buildDeps()`: the brief read, plan validation and
+the warehouse call all happen under the lease.
+
+Cursor (High): the stale-approval window is reopened. This is the corollary nobody flagged in
+Round 4 and it is the more interesting of the two. Moving the claim ahead of the warehouse read
+also moves its APPROVAL GATE ahead of the warehouse read — and the gate exists to say something
+about the brief at the moment real HubSpot lists are created. Sitting before the slowest call in
+the build, it no longer does. A `ReplaceBrief` landing during those seconds builds lists from an
+approval the operator has withdrawn.
+
+The two are one fix. `CreateAudienceForApprovedBrief` drops its `expectedVersion` parameter —
+running first is precisely what means there is no earlier read to have pinned — and instead
+REPORTS the version it observed under its own row lock. `confirmStillApproved` then re-reads the
+brief as the last thing before the first upstream call. The two guards are not redundant and it
+is worth saying why plainly: the claim's gate serializes builds, and the re-check dates the
+approval. Removing either leaves a real hole.
+
+Three consequences, all accepted rather than engineered around:
+
+An unplannable brief now leaves a released `failed` row where it previously left nothing. The
+alternative was a delete path on the repository port, which is a larger surface for a row that
+is already correct as a record of a build that was attempted and did not start.
+`TestBuildAudience_RequiresEventDetails` asserts the row and its status rather than an empty
+table.
+
+Every early return between the claim and the first upstream call must release. Nothing exists
+upstream on any of those paths, so there is nothing to reconcile first — and a `building` row
+left by a request that gave up blocks every later build of that brief behind a 409 until an
+operator intervenes.
+
+A brief that was never approved would have regressed from 400 to 409, because the claim now
+answers `ErrStaleApproval` for "never approved" and "moved mid-build" alike. `refusedClaimErr`
+re-reads the brief on the failure path only and restores the 400. A brief that cannot be re-read
+falls through to the generic mapping: guessing 400 would blame the caller for the service's own
+inability to look.
+
+One test-harness note worth recording, because the first version of the new concurrency test
+failed for a reason that looked like a code bug. The audience fake's claim called
+`brepo.GetBrief`, which consumed the one-shot `onGet` hook, so request A blocked inside its own
+claim and never inserted. The fix is `fakeBriefRepo.snapshot()`, an unhooked read, and it is not
+a convenience: the real claim reads the brief inside its own transaction under `FOR UPDATE`, so
+that read is NOT a window a second request can be delayed in. A hook that pretended otherwise
+would model a race the database does not have.
+
+Third finding, `deployment.md`: the database-first rollback rule was written for `000018` and
+stated for the repo. Confirmed on the merits —
+`000005_create_campaign_audiences_table.down.sql` drops the audiences table and
+`000015_brief_actor_columns.down.sql` drops `created_by`/`updated_by`, both read and written by
+the current binary, and database-first is the ordering that MAXIMISES the window in which that
+binary is still serving. The rule is now stated as a property of the individual migration:
+safe exactly when the down is benign to the binary still serving, decided per migration, and
+for a multi-version `goto` per migration crossed.

@@ -55,12 +55,27 @@ is not harmless for one that adds a CONSTRAINT the old code has no error mapping
 old binary meets a 23505 it was never written to see and answers 500 where the new one
 answers 409. The audience build lease (`000018`) is the current example.
 
-So the order is **database first, then image**: run the migration's `.down.sql` (via
-`migrate ... goto <previous>`) while the new image is still serving, then roll the
-Deployment back. The reverse order leaves a window whose length is however long the
-rollback takes to notice. Every `.down.sql` in this repo is written to be run this way —
-the concurrent-index ones use `DROP INDEX CONCURRENTLY` precisely so the drop does not
+So for `000018` the order is **database first, then image**: run its `.down.sql` (via
+`migrate ... goto 17`) while the new image is still serving, then roll the Deployment
+back. The reverse order leaves a window whose length is however long the rollback takes
+to notice. `000018`'s down uses `DROP INDEX CONCURRENTLY` precisely so the drop does not
 block writes from the pod still serving during that window.
+
+**Database-first is a property of the individual down migration, not a rule for the
+repo.** It is safe exactly when the down is benign to the binary STILL SERVING during the
+window — and database-first is the ordering that maximises that window, so a down that is
+not benign is worst run first. `000018` qualifies: dropping the lease returns the new
+binary to the old behaviour (two concurrent builds for one brief each create a full set of
+HubSpot lists) without breaking any statement it issues. Others plainly do not.
+`000005_create_campaign_audiences_table.down.sql` does `DROP TABLE campaign_audiences`,
+and `000015_brief_actor_columns.down.sql` drops `created_by` / `updated_by` on
+`campaign_briefs` — both remove schema the current binary reads and writes, so running
+either ahead of the image rollback turns the whole window into 500s. (`000015`'s own
+header already says it exists for migration symmetry, not as a routine operation: the
+actor is recorded nowhere else, so its down destroys the audit trail outright.) Rollback
+ORDER has to be decided per migration, and for a multi-version `goto` per migration
+CROSSED — `goto 17` from 18 runs one down; `goto 4` runs fourteen, and the order is only
+as safe as the least benign of them.
 
 Two things this does not mean. It is not an argument for skipping the down migration and
 leaving the constraint in place, which trades a documented procedure for a silent

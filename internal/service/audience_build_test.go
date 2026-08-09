@@ -40,6 +40,10 @@ type fakeBuilder struct {
 	created   []string          // list names, in creation order
 	filters   map[string][]byte // name -> filter, so a test can assert the master's union
 	createErr error
+	// duringResolve, when set, runs inside the warehouse call — the window between the claim
+	// and the first HubSpot list. A test uses it to land a concurrent ReplaceBrief exactly
+	// where one can actually do damage.
+	duringResolve func()
 	// failOnNth makes the Nth CreateList call fail (1-based), modelling a partial build.
 	failOnNth int
 	// emptyIDOnNth returns a 2xx-with-no-id on the Nth call (1-based) — HubSpot's
@@ -48,6 +52,9 @@ type fakeBuilder struct {
 }
 
 func (f *fakeBuilder) ResolvePastEditions(context.Context, string, string, string) ([]string, error) {
+	if f.duringResolve != nil {
+		f.duringResolve()
+	}
 	if f.entered != nil {
 		held := false
 		f.enterOnce.Do(func() { held = true })
@@ -118,6 +125,9 @@ func newBuildService(t *testing.T, b *fakeBuilder, details string) (*AudienceSer
 		Status:       model.BriefApproved,
 	}
 	brepo.briefs[briefKey(brief.ProjectID, brief.ID)] = brief
+	// One brief store behind both fakes, because there is one campaign_briefs table behind
+	// both the claim's row lock and the service's read.
+	arepo.briefs = brepo
 
 	s := NewAudienceService(arepo)
 	s.SetBriefRepo(brepo)
@@ -483,7 +493,17 @@ func TestBuildAudience_RequiresEventDetails(t *testing.T) {
 			require.Error(t, err)
 			var badReq *audiences.BadRequestError
 			assert.ErrorAs(t, err, &badReq, "a malformed brief is a 400, not a 500")
-			assert.Empty(t, arepo.rows(), "nothing may be recorded when the brief cannot be planned")
+
+			// A row IS recorded, and released. The claim is taken before the brief is read,
+			// so by the time the details are found unusable the lease is already held — that
+			// ordering is deliberate (see BuildAudience) and it is what makes the lease a
+			// bound rather than a probability. What must not survive is the lease itself: a
+			// row left `building` after a 400 would block every later build of this brief.
+			rows := arepo.rows()
+			require.Len(t, rows, 1, "the claim precedes the brief read, so its row exists")
+			assert.Equal(t, model.AudienceFailed, rows[0].Status,
+				"a claim abandoned before any HubSpot call must be released, not left holding "+
+					"the lease")
 		})
 	}
 }
@@ -642,21 +662,25 @@ func (r *recordingBuilder) CreateList(_ context.Context, _, name string, _ json.
 
 func (r *recordingBuilder) BeginBuild(ctx context.Context) context.Context { return ctx }
 
-// TestBuildAudience_StaleApprovalIsRejected pins the TOCTOU guard. The approval check happens
-// BEFORE past-edition resolution (a warehouse round-trip), so a concurrent ReplaceBrief can
-// reset the brief to draft and bump its version in that window. The plain create only checks
-// `status <> 'archived'`, so without this gate the build would go on to create REAL HubSpot
-// lists from a stale approved snapshot.
+// TestBuildAudience_StaleApprovalIsRejected pins the TOCTOU guard where it actually has to
+// hold: INSIDE the warehouse round-trip. The claim now runs before that round-trip, so the
+// claim's own approval gate only dates the approval to the moment the lease was taken — a
+// ReplaceBrief committing while past editions resolve is invisible to it, and the build would
+// go on to create REAL HubSpot lists from a snapshot the operator has since withdrawn. The
+// re-check immediately before the first list creation is the thing under test, so the brief is
+// moved from inside ResolvePastEditions rather than before the call.
 func TestBuildAudience_StaleApprovalIsRejected(t *testing.T) {
 	b := &fakeBuilder{}
 	s, arepo, brepo := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
 
-	// Give the brief a real version, then mark that version stale: the insert is gated on the
-	// version observed at the approval check, so this models a ReplaceBrief committing in the
-	// window between that check and the insert.
 	brief := brepo.briefs[briefKey("cncf", "brief-1")]
 	brief.Version = 3
-	arepo.staleAt = brief.Version
+	b.duringResolve = func() {
+		// A concurrent ReplaceBrief: back to draft, version bumped. Either alone is
+		// disqualifying, and a real edit does both.
+		brief.Status = model.BriefDraft
+		brief.Version = 4
+	}
 
 	_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
 		ProjectID: "cncf", BriefID: "brief-1",
@@ -667,7 +691,36 @@ func TestBuildAudience_StaleApprovalIsRejected(t *testing.T) {
 	assert.ErrorAs(t, err, &conflict, "a moved brief is a 409, not a 404 or 500")
 
 	assert.Empty(t, b.names(), "no HubSpot list may be created from a stale approved snapshot")
-	assert.Empty(t, arepo.rows(), "and no audience row may be recorded")
+
+	// A row DOES exist now — the claim was taken before the brief moved, which is the whole
+	// reason the re-check is needed. What matters is that the lease was handed back: left
+	// `building`, it would block every later build of this brief behind a 409.
+	rows := arepo.rows()
+	require.Len(t, rows, 1, "the claim was taken before the brief moved, so its row exists")
+	assert.Equal(t, model.AudienceFailed, rows[0].Status,
+		"an abandoned claim must be released; nothing was created upstream, so there is "+
+			"nothing to reconcile before failing it")
+}
+
+// TestBuildAudience_ApprovalMovingBeforeTheClaimIsAPlain400 keeps the ordinary user error
+// ordinary. The claim gates on approval itself, so a draft brief is refused by the repository
+// with ErrStaleApproval — the sentinel whose message is about versions and whose status is 409.
+// That is the right answer for a brief that moved mid-build and the wrong one for a brief that
+// was simply never approved, which is a 400 telling the caller what to do about it.
+func TestBuildAudience_ApprovalMovingBeforeTheClaimIsAPlain400(t *testing.T) {
+	b := &fakeBuilder{}
+	s, arepo, brepo := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+	brepo.briefs[briefKey("cncf", "brief-1")].Status = model.BriefDraft
+
+	_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	require.Error(t, err)
+
+	var badReq *audiences.BadRequestError
+	assert.ErrorAs(t, err, &badReq,
+		"a brief that was never approved is a 400 about its status, not a 409 about versions")
+	assert.Empty(t, arepo.rows(), "a refused claim inserts nothing")
 }
 
 // TestBuildAudience_ConcurrentBuildIsRefusedWithItsOwnMessage is the service half of the build
@@ -744,4 +797,57 @@ func TestBuildAudience_SecondRequestIsRejectedWhileTheFirstResolvesEditions(t *t
 	// Four lists: three inclusion groups plus the master. A second set would double this.
 	assert.Len(t, b.names(), 4,
 		"the refused request must not have created any HubSpot list; created %v", b.names())
+}
+
+// TestBuildAudience_SecondRequestIsRejectedWhileTheFirstReadsTheBrief is the companion to the
+// warehouse-window test above, and it exists because that one cannot fail for this reason. The
+// lease covers only the interval its row is `building`, so EVERY blocking call ahead of the
+// claim is a window — and once the warehouse read moved behind the claim, the brief read
+// became the first one. It is a local database round-trip rather than a Snowflake one, which
+// makes the window smaller and not narrower: a request delayed there past the first request's
+// entire build still claims cleanly against a now-`built` row and creates a second full set of
+// HubSpot lists.
+//
+// So the claim goes before the brief read too, and this pins it. Request A is held INSIDE its
+// first GetBrief (one-shot, so B runs freely); if A has not already claimed by then, B sails
+// through and the duplicate lists show up in the assertion below.
+func TestBuildAudience_SecondRequestIsRejectedWhileTheFirstReadsTheBrief(t *testing.T) {
+	b := &fakeBuilder{editions: []string{"KubeCon Korea 2025"}}
+	s, _, brepo := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea","location":"Seoul"}`)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	brepo.onGet = func() {
+		close(entered)
+		<-release
+	}
+
+	var (
+		errA  error
+		doneA = make(chan struct{})
+	)
+	go func() {
+		defer close(doneA)
+		_, errA = s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+			ProjectID: "cncf", BriefID: "brief-1",
+		})
+	}()
+	<-entered
+
+	_, errB := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	require.Error(t, errB, "the second request must be refused while the first holds the lease")
+	var conflict *audiences.ConflictError
+	require.ErrorAs(t, errB, &conflict, "a held lease is a 409")
+	assert.Contains(t, conflict.Message, "already in progress",
+		"and it must say WAIT, not that the resource already exists")
+
+	close(release)
+	<-doneA
+	require.NoError(t, errA, "the request that holds the lease must still finish")
+
+	assert.Len(t, b.names(), 4,
+		"exactly one build's worth of HubSpot lists — a second set is portal garbage nobody "+
+			"knows to delete")
 }
