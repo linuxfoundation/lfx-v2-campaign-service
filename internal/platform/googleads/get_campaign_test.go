@@ -687,3 +687,95 @@ func TestGetCampaign_UnpairedSurrogateEscapeIsNotACampaign(t *testing.T) {
 		})
 	}
 }
+
+// TestGetCampaign_DuplicateKeyRowIsNotACampaign covers the one self-disagreement the
+// decoder resolves instead of reporting.
+//
+// Every other identity guard in this package catches a row that contradicts itself across
+// FIELDS. A repeated key contradicts itself inside ONE field, and RFC 8259 leaves the
+// outcome undefined: encoding/json keeps the last value, so the row below decodes as
+// campaign 555, agrees with its own resource name, and would be returned as a confirmed
+// binding — while a reader following the equally-permitted first-wins convention gets 999.
+// The row identifies two campaigns and the adoption it feeds spends real money on one of
+// them, so the only safe reading is that there is no reading.
+func TestGetCampaign_DuplicateKeyRowIsNotACampaign(t *testing.T) {
+	for _, tc := range []struct{ name, row string }{
+		{
+			"the id twice",
+			`{"campaign":{"resourceName":"customers/1234567890/campaigns/555",` +
+				`"id":"999","id":"555","name":"c","status":"` + StatusEnabled + `"}}`,
+		},
+		{
+			"a key this client does not read",
+			`{"campaign":{"resourceName":"customers/1234567890/campaigns/555",` +
+				`"id":"555","name":"c","status":"` + StatusEnabled + `","advertisingChannelType":"SEARCH","advertisingChannelType":"DISPLAY"}}`,
+		},
+		{
+			"the wrapper key twice",
+			`{"campaign":{"resourceName":"customers/1234567890/campaigns/555","id":"555",` +
+				`"name":"c","status":"` + StatusEnabled + `"},"campaign":{"resourceName":` +
+				`"customers/1234567890/campaigns/555","id":"555","name":"c","status":"` + StatusEnabled + `"}}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _ := newLookupServer(t, []json.RawMessage{json.RawMessage(tc.row)})
+			ref, err := newAccountsTestClient(t, srv).GetCampaign(context.Background(), "555")
+			if err == nil {
+				t.Fatalf("GetCampaign = %+v, want an error: the row declares a key twice", ref)
+			}
+			if !strings.Contains(err.Error(), "same JSON key twice") {
+				t.Errorf("error = %v, want it to name the duplicate key", err)
+			}
+		})
+	}
+}
+
+// TestFindCampaignByName_DuplicateKeyRowIsNotAnAbsence is the same guard on the other
+// lookup path, where the consequence is worse: FindCampaignByName's caller creates a new
+// PAID campaign when told nothing matched, so a row that decodes to one of two identities
+// must not be allowed to stand in for either.
+func TestFindCampaignByName_DuplicateKeyRowIsNotAnAbsence(t *testing.T) {
+	row := json.RawMessage(`{"campaign":{"resourceName":"customers/1234567890/campaigns/555",` +
+		`"id":"999","id":"555","name":"c","status":"` + StatusEnabled + `"}}`)
+
+	srv, _ := newLookupServer(t, []json.RawMessage{row})
+	id, err := newAccountsTestClient(t, srv).FindCampaignByName(context.Background(), "c")
+	if err == nil {
+		t.Fatalf("FindCampaignByName = %q, want an error: the row declares its id twice", id)
+	}
+	if id != "" {
+		t.Errorf("id = %q, want empty alongside the error", id)
+	}
+	if !strings.Contains(err.Error(), "same JSON key twice") {
+		t.Errorf("error = %v, want it to name the duplicate key", err)
+	}
+}
+
+// TestHasDuplicateKeys pins the two ways the walker can be wrong in the dangerous
+// direction — missing a duplicate — and the one way it can be wrong in the merely
+// annoying direction: reporting a duplicate for repeated keys in SIBLING objects, or for
+// repeated STRING VALUES, neither of which is a contradiction.
+func TestHasDuplicateKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"a plain object", `{"a":1,"b":2}`, false},
+		{"the same key twice", `{"a":1,"a":2}`, true},
+		{"a duplicate nested one level down", `{"a":{"b":1,"b":2}}`, true},
+		{"a duplicate inside an array element", `{"a":[{"b":1},{"c":1,"c":2}]}`, true},
+		{"the same key in sibling objects", `{"a":{"x":1},"b":{"x":1}}`, false},
+		{"a key repeated as a VALUE", `{"a":"b","b":"a"}`, false},
+		{"a string value equal to a later key", `{"a":"z","z":1}`, false},
+		{"an array of equal strings", `{"a":["x","x"]}`, false},
+		{"malformed json defers to Unmarshal", `{"a":`, false},
+		{"a bare scalar", `"x"`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hasDuplicateKeys([]byte(tc.in)); got != tc.want {
+				t.Errorf("hasDuplicateKeys(%s) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}

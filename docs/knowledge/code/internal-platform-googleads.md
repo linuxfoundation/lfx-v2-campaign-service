@@ -88,6 +88,20 @@ both require valid UTF-8, so no stored campaign name can contain a malformed byt
 form: *an encoder that lossily repairs its input is a silent query rewriter, and a fail-closed
 lookup must validate against what will actually be transmitted, not what it was handed.*
 
+**A repeated JSON key is a self-disagreement the decoder settles for you.** RFC 8259 leaves
+duplicate object keys undefined and `encoding/json` keeps the LAST one, so a row reading
+`{"id":"999","id":"555","resourceName":"customers/1/campaigns/555"}` decodes as campaign 555,
+agrees with its own resource name, passes every identity guard, and is returned as a confirmed
+lookup — while the same bytes also identify 999 to any reader following the equally-permitted
+first-wins convention. Every other guard on these two paths exists to refuse a row that
+contradicts itself; this is the one contradiction the decoder resolves silently rather than
+reporting. `hasDuplicateKeys` therefore walks the raw bytes before `Unmarshal` on **both**
+lookup paths, and it walks the WHOLE row, not just the fields this client reads: a duplicate
+anywhere is evidence the producer is not emitting what we think it is, and the selected-field
+set changes over time, so a guard scoped to today's fields would quietly stop covering
+tomorrow's. Malformed JSON reports false and defers to `Unmarshal`, whose error is the better
+diagnostic.
+
 The name is queried **verbatim**, no `TrimSpace`: trimming is a no-op for the create path
 (`composeName` already trims), so it only ever alters adoption, answering `"  foo  "` with the
 campaign named `"foo"`. `TrimSpace` only *detects* whitespace-only input. Anything new

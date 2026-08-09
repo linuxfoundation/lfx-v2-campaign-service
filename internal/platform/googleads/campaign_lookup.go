@@ -4,6 +4,7 @@
 package googleads
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -205,6 +206,11 @@ func (c *Client) FindCampaignByName(ctx context.Context, name string) (string, e
 		// validity alone is not enough.
 		if !utf8.Valid(raw) || hasUnpairedSurrogateEscape(raw) {
 			return "", fmt.Errorf("google-ads campaign lookup: exact-match query for %q returned a row whose name cannot survive JSON decoding intact (malformed UTF-8 bytes, or an unpaired surrogate escape); decoding it would substitute U+FFFD and could echo back the requested name from a value that never matched it", lookup)
+		}
+		// A duplicate key inside the row is a self-disagreement the decoder resolves
+		// silently in favour of the last value. See hasDuplicateKeys.
+		if hasDuplicateKeys(raw) {
+			return "", fmt.Errorf("google-ads campaign lookup: exact-match query for %q returned a row that declares the same JSON key twice; the row identifies more than one campaign and no reading of it can be trusted", lookup)
 		}
 		var row campaignLookupRow
 		if err := json.Unmarshal(raw, &row); err != nil {
@@ -428,6 +434,11 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 		if !utf8.Valid(raw) || hasUnpairedSurrogateEscape(raw) {
 			return nil, fmt.Errorf("google-ads campaign lookup: campaign id %s was returned in a row whose name cannot survive JSON decoding intact (malformed UTF-8 bytes, or an unpaired surrogate escape); decoding it would substitute U+FFFD and offer a name this campaign does not have", campaignID)
 		}
+		// A duplicate key inside the row is a self-disagreement the decoder resolves
+		// silently in favour of the last value. See hasDuplicateKeys.
+		if hasDuplicateKeys(raw) {
+			return nil, fmt.Errorf("google-ads campaign lookup: a result row declares the same JSON key twice; the row identifies more than one campaign and no reading of it can be trusted")
+		}
 		var row campaignLookupRow
 		if err := json.Unmarshal(raw, &row); err != nil {
 			// A 2xx row we cannot decode is NOT a non-match; reporting it as one would
@@ -550,6 +561,72 @@ func returnedCampaignName(name, campaignID string) error {
 		return fmt.Errorf("google-ads campaign lookup: campaign id %s was returned with a name containing NUL, LF or CR, which Campaign.name cannot hold; refusing to trust this response", campaignID)
 	}
 	return nil
+}
+
+// hasDuplicateKeys reports whether any JSON object in b declares the same key twice.
+//
+// encoding/json does not treat a repeated key as an error: it decodes both and the LAST
+// one wins. For an ordinary payload that is a harmless quirk of RFC 8259, which leaves
+// duplicate-key behaviour undefined. Here it is a false-identity hole. A row reading
+// `{"campaign":{"id":"999","id":"555","resourceName":"customers/1/campaigns/555"}}`
+// decodes as campaign 555, agrees with its own resource name, passes the id filter, and
+// is returned as a confirmed lookup — while the same bytes also identify campaign 999,
+// and a reader applying the first-wins convention gets the other answer. Every other
+// identity guard in this file exists to refuse a row that disagrees with itself; a
+// duplicate key is that disagreement expressed in a form the decoder silently resolves.
+//
+// The whole row is walked, not just the fields this client reads. A duplicate anywhere is
+// evidence the producer or an intermediary is not emitting what we think it is, and the
+// selected-field set changes over time — a guard scoped to today's fields would quietly
+// stop covering tomorrow's.
+//
+// Malformed JSON returns false: this runs BEFORE Unmarshal, whose error is the better
+// diagnostic for that case, and reporting a parse failure as a duplicate key would send
+// an operator looking for the wrong thing.
+func hasDuplicateKeys(b []byte) bool {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	// Each element is the set of keys seen so far in one still-open object; nil marks an
+	// open ARRAY, which has no keys of its own but must occupy a stack slot so the
+	// matching delimiter pops the right frame.
+	var stack []map[string]struct{}
+	expectKey := false
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return false // EOF or malformed; Unmarshal reports the latter properly.
+		}
+		switch t := tok.(type) {
+		case json.Delim:
+			switch t {
+			case '{':
+				stack = append(stack, map[string]struct{}{})
+				expectKey = true
+			case '[':
+				stack = append(stack, nil)
+				expectKey = false
+			case '}', ']':
+				if len(stack) == 0 {
+					return false
+				}
+				stack = stack[:len(stack)-1]
+				expectKey = len(stack) > 0 && stack[len(stack)-1] != nil
+			}
+		case string:
+			if expectKey {
+				seen := stack[len(stack)-1]
+				if _, dup := seen[t]; dup {
+					return true
+				}
+				seen[t] = struct{}{}
+				expectKey = false
+				continue
+			}
+			expectKey = len(stack) > 0 && stack[len(stack)-1] != nil
+		default:
+			expectKey = len(stack) > 0 && stack[len(stack)-1] != nil
+		}
+	}
 }
 
 // hasUnpairedSurrogateEscape reports whether b contains a \uD800-\uDFFF JSON escape that is not
