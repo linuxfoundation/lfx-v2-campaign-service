@@ -12,6 +12,11 @@ const (
 	EnvJWKSURL  = "JWKS_URL"
 	EnvAudience = "JWT_AUDIENCE"
 	EnvIssuer   = "JWT_ISSUER"
+	// EnvMockLocalPrincipal DISABLES JWT verification and treats every request as the
+	// named principal. Local development only. The chart declares it with no value and
+	// the chart parity test pins it as deliberately not deployable, so setting it is a
+	// choice someone has to make on a laptop, never something a deploy can do by default.
+	EnvMockLocalPrincipal = "JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL"
 	// EnvNATSURL is the NATS server URL used to publish Query Service index updates.
 	// Empty DISABLES indexing: every endpoint still serves and campaigns still dispatch;
 	// only the search index stops being fed (the Query Service rebuilds a resource's

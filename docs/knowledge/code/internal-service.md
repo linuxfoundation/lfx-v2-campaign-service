@@ -352,4 +352,27 @@ URL-free messages because they are rendered to callers and to logs, and an unrec
 error is exactly the one whose text nothing vouched for. Forbidden maps to 400 and not
 403: nothing about the caller is at issue, so 403 would send an operator to look at tokens.
 
+## Authentication is one guard, embedded three times (LFXV2-3053)
+
+`JWTAuth` used to base64-decode the token payload and believe it. It now calls
+[internal/infrastructure/auth](internal-infrastructure-auth.md) and refuses anything that
+does not verify. `authGuard` (`auth.go`) holds the verifier and is EMBEDDED in the three
+authenticated services — Goa wires a security handler per service, and three copies of a
+security check is three places to drift; each keeps a thin `JWTAuth` only because the
+error type is generated per package.
+
+Two details that look incidental and are not. The mutex is `authMu`, not `mu`: every
+embedding service already has a `mu`, and two same-named fields at different depths
+resolve **silently** to the outer one, so a lock taken in the wrong place would compile
+and protect nothing. And a nil verifier REJECTS, making missing wiring an outage rather
+than a silent return to trusting unverified claims —
+`TestNewContainer_AllPathsInjectTheTokenVerifier` pins that all three services get one on
+every boot path, the only place that bug is visible.
+
+Rejections are 400, not 401: the design declares no Unauthorized type and
+`commonBriefErrors` documents 400 as the JWTAuth rejection status (401 is a follow-up).
+`attributedActor` still warns on a nil actor although no served route can reach it with
+one — a tripwire for a future entry point wired without the security scheme, which would
+present only as NULL attribution.
+
 See [internal/service](../../../internal/service).

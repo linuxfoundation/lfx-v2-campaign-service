@@ -1,0 +1,37 @@
+# 2026-08-09 — The bearer token is verified, not decoded (LFXV2-3053)
+
+**The gap.** `JWTAuth` split the token on `.`, base64-decoded the middle segment and
+believed it — no signature, issuer, audience or expiry check. The config for doing better
+was wired end to end (the chart injects `JWKS_URL` and `JWT_AUDIENCE`, `LoadConfig` reads
+them into `JWKSUrl`/`Audience`/`Issuer`) and **nothing consumed them.** Heimdall validates
+every route, so closing this only earns its keep when something reaches the pod without
+passing the gateway — what settles it is not the probability of that but the consequence:
+the principal is written to `created_by`/`updated_by`, so an unverified claim was a
+forgeable audit trail for who authorized paid ad spend.
+
+**What was built.** `internal/infrastructure/auth`, following
+`lfx-v2-query-service`/`lfx-v2-meeting-service` rather than hand-rolling JWKS handling:
+PS256 pinned, issuer `heimdall`, audience `lfx-v2-campaign-service`, 5-minute key cache,
+5-second skew, non-empty `principal` required, one `ErrUnauthenticated` sentinel. In
+`internal/service` one embedded `authGuard` serves all three services, and
+`actorFromToken` — the decoder — is deleted.
+
+**Three decisions that could have gone the other way.** *One PR, not "package first, wire
+later"*: an unreferenced verification package passes every gate and secures nothing. *A
+nil verifier rejects rather than falls back*: decoding-as-before would put the old
+behaviour one wiring mistake away, so failing closed makes it an outage — and
+`TestNewContainer_AllPathsInjectTheTokenVerifier` makes it a test failure first, three
+services × every boot path, since the degraded paths construct theirs independently. *An
+empty JWKS URL defaults, a wrong one fails the pod*: erroring on empty turned every
+hand-built `config.Config` into a service refusing all traffic, while defaulting a *typo*
+would hide a misconfiguration.
+
+**Stale comments were the real hazard.** Two survived asserting the old model: the parity
+test's `JWT_ISSUER` exemption ("empty means no issuer verification" — the check is now
+unconditional and empty selects the default) and `attributedActor`'s doc. The 2026-08-07
+attribution entry, which priced "a missing actor does not fail the write" against a
+*decoding* bug, is marked superseded rather than rewritten.
+
+**Known follow-up.** Rejections surface as **400**, not 401 — the design declares no
+Unauthorized type and `commonBriefErrors` documents 400 as the JWTAuth rejection status;
+adding 401 is a design change with generated-code blast radius, filed separately.

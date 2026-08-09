@@ -324,9 +324,11 @@ func TestBriefActor_TokenToPersistedActor(t *testing.T) {
 	repo := newFakeBriefRepo()
 	s := newTestBriefService(repo)
 
-	// payload {"email":"ada@lf.dev","preferred_username":"ada"} base64url-encoded, unpadded.
-	const payload = "eyJlbWFpbCI6ImFkYUBsZi5kZXYiLCJwcmVmZXJyZWRfdXNlcm5hbWUiOiJhZGEifQ"
-	ctx, err := s.JWTAuth(context.Background(), "h."+payload+".s", nil)
+	// The token is opaque here on purpose: since JWTAuth began VERIFYING rather than
+	// decoding, "what a valid token looks like" belongs to internal/infrastructure/auth.
+	// What this test still owns is everything downstream of the verifier's answer.
+	s.SetTokenVerifier(verifierFor("ada-token", &model.Actor{Username: "ada", Email: "ada@lf.dev"}))
+	ctx, err := s.JWTAuth(context.Background(), "ada-token", nil)
 	if err != nil {
 		t.Fatalf("JWTAuth: %v", err)
 	}

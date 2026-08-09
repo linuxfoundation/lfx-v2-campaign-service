@@ -26,6 +26,10 @@ type Config struct {
 	JWKSUrl  string
 	Audience string
 	Issuer   string
+	// MockLocalPrincipal, when non-empty, disables in-app JWT verification and
+	// attributes every request to this principal. Local development only; see
+	// constants.EnvMockLocalPrincipal.
+	MockLocalPrincipal string
 
 	// NATSUrl is the NATS server URL. Used to publish Query Service index updates; empty
 	// disables indexing without affecting any other capability.
@@ -99,6 +103,9 @@ func LoadConfig() *Config {
 		JWKSUrl:  envOrDefault(constants.EnvJWKSURL, constants.DefaultJWKSURL),
 		Audience: envOrDefault(constants.EnvAudience, constants.DefaultAudience),
 		Issuer:   envOrDefault(constants.EnvIssuer, constants.DefaultIssuer),
+		// os.Getenv, not envOrDefault: there is no default for a verification
+		// bypass, and unset must stay unset.
+		MockLocalPrincipal: strings.TrimSpace(os.Getenv(constants.EnvMockLocalPrincipal)),
 		// NOT envOrDefault: an explicitly-empty NATS_URL is the documented switch
 		// that disables index publishing, and envOrDefault cannot express it (it
 		// collapses unset and empty into the default).

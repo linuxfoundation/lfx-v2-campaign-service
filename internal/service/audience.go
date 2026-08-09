@@ -22,6 +22,8 @@ import (
 // the audience repository. Built audiences are the "B2" resource: a pointer +
 // provenance to a platform-side audience (a HubSpot master list), never its contents.
 type AudienceService struct {
+	authGuard
+
 	mu   sync.RWMutex
 	repo domain.AudienceRepository
 	// briefs and builder are needed only by BuildAudience (see audience_build.go). They are
@@ -70,14 +72,12 @@ func (s *AudienceService) ready() (domain.AudienceRepository, error) {
 	return repo, nil
 }
 
-// JWTAuth records the authenticated actor (validated by Heimdall at the gateway) into
-// the context for attribution, mirroring the brief service.
+// JWTAuth verifies the bearer token and records the authenticated actor into the
+// context for attribution, mirroring the brief service.
 func (s *AudienceService) JWTAuth(ctx context.Context, token string, _ *security.JWTScheme) (context.Context, error) {
-	if token == "" {
-		return ctx, &audiences.BadRequestError{Code: "400", Message: "missing bearer token"}
-	}
-	if a := actorFromToken(token); a != nil {
-		ctx = context.WithValue(ctx, actorCtxKey{}, a)
+	ctx, msg := s.authenticate(ctx, token)
+	if msg != "" {
+		return ctx, &audiences.BadRequestError{Code: "400", Message: msg}
 	}
 	return ctx, nil
 }

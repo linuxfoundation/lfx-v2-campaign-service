@@ -24,7 +24,15 @@ connection actors. The handlers pass `actorFromCtx(ctx)` on create, update and d
    window in which the content had changed and the attribution had not.
 2. *A missing actor does not fail the write.* NULL means "not recorded", never
    "nobody". Rejecting the write would escalate a token-decoding regression into a
-   total outage of brief creation.
+   total outage of brief creation. **SUPERSEDED by LFXV2-3053 (2026-08-09), which
+   made the token VERIFIED rather than decoded.** The trade-off above was priced
+   against a decoding bug; once the token is verified, the thing being waved through
+   is an unauthenticated request, and a NULL-attributed row is the evidence of it.
+   `JWTAuth` now refuses before any handler runs, so the nil branch is unreachable
+   through the served routes — the warning it emits is kept as a tripwire for a
+   future entry point wired without the security scheme. The reasoning is left
+   standing rather than rewritten because what changed was the premise, not the
+   logic.
 3. *Nothing is exposed on the API surface.* `approved_by` set that precedent — it is
    persisted but absent from both the Goa result type and the index payload — so
    following it needed no Goa regeneration and kept the change small.

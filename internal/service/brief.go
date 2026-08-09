@@ -32,6 +32,8 @@ import (
 // place rather than swap the instance. Handlers snapshot the collaborators under the
 // lock (deps) and never dereference the fields directly.
 type BriefService struct {
+	authGuard
+
 	mu        sync.RWMutex
 	briefs    domain.BriefRepository
 	campaigns domain.CampaignRepository
@@ -192,14 +194,13 @@ func (s *BriefService) ready() (domain.BriefRepository, domain.CampaignRepositor
 	return b, c, j, orch, nil
 }
 
-// JWTAuth mirrors the connection service: it records the authenticated actor
-// (validated by Heimdall at the gateway) into the context for attribution.
+// JWTAuth mirrors the connection service: it verifies the bearer token against
+// Heimdall's JWKS and records the authenticated actor into the context for
+// attribution.
 func (s *BriefService) JWTAuth(ctx context.Context, token string, _ *security.JWTScheme) (context.Context, error) {
-	if token == "" {
-		return ctx, &briefs.BadRequestError{Code: "400", Message: "missing bearer token"}
-	}
-	if a := actorFromToken(token); a != nil {
-		ctx = context.WithValue(ctx, actorCtxKey{}, a)
+	ctx, msg := s.authenticate(ctx, token)
+	if msg != "" {
+		return ctx, &briefs.BadRequestError{Code: "400", Message: msg}
 	}
 	return ctx, nil
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/dispatch"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/auth"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/crypto"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
@@ -183,6 +184,13 @@ type Container struct {
 	// reports a typed 503 and the audience CRUD routes are unaffected.
 	audienceBuilder service.AudienceBuilder
 
+	// tokenVerifier verifies the bearer token on every authenticated request. Built ONCE
+	// before any wiring branch and injected on every path — same rationale as
+	// indexPublisher, with a sharper failure mode: a service constructed without it
+	// REJECTS every request, so a missed injection is an outage rather than a quiet
+	// return to trusting unverified claims.
+	tokenVerifier service.TokenVerifier
+
 	// indexPublisher is built ONCE in NewContainer, before the fast-path/503-mode
 	// branch, and injected into every BriefService constructed on either path.
 	// Holding it here (rather than building it per-path) is what guarantees the
@@ -254,13 +262,33 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	}
 	c.indexPublisher = indexPub
 
+	// Build the token verifier before any wiring branch, for the same reason and with
+	// one extra: an unusable JWKS configuration must stop the pod here. A verifier that
+	// cannot verify has only two possible behaviours and both are wrong — refusing
+	// everything is an outage with a confusing cause, allowing everything is the hole
+	// this closes — so the error surfaces as a failed start with the reason attached.
+	verifier, verr := auth.New(auth.Config{
+		JWKSURL:            cfg.JWKSUrl,
+		Audience:           cfg.Audience,
+		Issuer:             cfg.Issuer,
+		MockLocalPrincipal: cfg.MockLocalPrincipal,
+	})
+	if verr != nil {
+		return nil, fmt.Errorf("JWT verification configuration: %w", verr)
+	}
+	if cfg.MockLocalPrincipal != "" {
+		slog.Warn("JWT verification is DISABLED; every request is attributed to the mock principal",
+			"principal", cfg.MockLocalPrincipal, "env", constants.EnvMockLocalPrincipal)
+	}
+	c.tokenVerifier = verifier
+
 	if cfg.DatabaseURL == "" {
 		slog.Warn("database URL not set; connection and brief/campaign endpoints will return 503 Service Unavailable")
 		c.Service = service.NewCampaignService(nil)
 		// Wire the connection + brief services with nil repos so their routes are
 		// still mounted and return the typed 503 ServiceUnavailable advertised by
 		// the OpenAPI contract, rather than a bare 404 from unmounted routes.
-		c.Connections = service.NewConnectionService(nil, nil)
+		c.Connections = c.newConnectionService(nil, nil)
 		c.Briefs = c.newBriefService(nil, nil, nil, nil)
 		c.Audiences = c.newAudienceService(nil, nil)
 		slog.Info("dependency container initialized (no database)")
@@ -312,7 +340,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	// pool/repos into ALL THREE (connection, brief, health readiness) once it opens,
 	// so brief + job routes go live without a pod restart.
 	campaign := service.NewCampaignService(notReady{})
-	connections := service.NewConnectionService(nil, enc)
+	connections := c.newConnectionService(nil, enc)
 	briefs := c.newBriefService(nil, nil, nil, nil)
 	auds := c.newAudienceService(nil, nil)
 	c.Service = campaign
@@ -423,8 +451,19 @@ func newAudienceBuilder(repo *postgres.ConnectionRepo, enc domain.Encryptor, cfg
 //
 // A nil audienceBuilder is normal, not a failure: it means HubSpot/Snowflake are unconfigured,
 // and BuildAudience then returns the contract's typed 503 while the CRUD routes stay usable.
+// newConnectionService constructs a ConnectionService with the shared token verifier
+// injected. Same one-helper rule as newBriefService, for the reason given on
+// Container.tokenVerifier: three call sites construct this service, and one that skipped
+// the verifier would reject every request to the connection routes.
+func (c *Container) newConnectionService(repo domain.ConnectionRepository, enc domain.Encryptor) *service.ConnectionService {
+	s := service.NewConnectionService(repo, enc)
+	s.SetTokenVerifier(c.tokenVerifier)
+	return s
+}
+
 func (c *Container) newAudienceService(repo domain.AudienceRepository, briefs domain.BriefRepository) *service.AudienceService {
 	s := service.NewAudienceService(repo)
+	s.SetTokenVerifier(c.tokenVerifier)
 	if briefs != nil {
 		s.SetBriefRepo(briefs)
 	}
@@ -637,7 +676,7 @@ func logMissingDispatchers(dispatchers map[model.Provider]service.PlatformDispat
 
 func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, cfg *config.Config) {
 	repo := postgres.NewConnectionRepo(pool)
-	c.Connections = service.NewConnectionService(repo, enc)
+	c.Connections = c.newConnectionService(repo, enc)
 	briefRepo := postgres.NewBriefRepo(pool)
 	campaignRepo := postgres.NewCampaignRepo(pool)
 	jobRepo := postgres.NewJobRepo(pool)
@@ -990,6 +1029,7 @@ func (c *Container) Close(ctx context.Context) error {
 // failure impossible rather than merely unlikely.
 func (c *Container) newBriefService(briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator) *service.BriefService {
 	s := service.NewBriefService(briefs, campaigns, jobs, orch)
+	s.SetTokenVerifier(c.tokenVerifier)
 	s.SetIndexer(c.indexPublisher)
 	s.SetEventURL(c.eventFetcher(), eventurl.NewParser())
 	if c.indexingDisabled() {

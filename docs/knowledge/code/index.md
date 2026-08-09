@@ -6,6 +6,7 @@
 * [internal/infrastructure/indexer](internal-infrastructure-indexer.md) - Publishes brief and campaign snapshots to NATS for the platform Query Service.
 * [internal/utm](internal-utm.md) - Tags outbound email links with UTM parameters so email traffic is attributable.
 * [internal/dispatch](internal-dispatch.md) - Per-platform PlatformDispatcher adapters bridging the orchestrator to the channel API clients (six paid ad platforms plus the hubspot email channel), plus the HubSpot audience builder.
+* [internal/infrastructure/auth](internal-infrastructure-auth.md) - Verifies the Heimdall-issued bearer token against Heimdall's JWKS (PS256, issuer, audience, expiry, non-empty principal) and turns its claims into the domain actor recorded on writes.
 * [internal/infrastructure/config](internal-infrastructure-config.md) - Application configuration from CLI flags and env vars, including PG* composition into a PostgreSQL DSN.
 * [internal/infrastructure/postgres](internal-infrastructure-postgres.md) - PostgreSQL pool (otelpgx), migrations, repositories, and Ready() for readiness probes.
 * [internal/middleware](internal-middleware.md) - Package middleware provides HTTP middleware for the service.

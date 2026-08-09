@@ -550,9 +550,12 @@ func TestEveryConfiguredEnvVarIsWiredInTheChart(t *testing.T) {
 		// DATABASE_URL would defeat that.
 		"DATABASE_URL": "superseded by PGHOST/PGUSER/PGPASSWORD/PGDATABASE from the secret",
 
-		// Optional JWT claim check. Empty means "do not verify the issuer", which is the
-		// intended default for the platform's Heimdall-issued tokens.
-		"JWT_ISSUER": "optional claim check; empty means no issuer verification",
+		// Defaulted in code to the platform issuer ("heimdall"), which is the only issuer
+		// this service accepts. Empty does NOT mean "skip the issuer check" — the check is
+		// unconditional; leaving the var unset simply selects the default. Injecting it
+		// would create a second place to change one value, and a wrong value there would
+		// reject every real token.
+		"JWT_ISSUER": "defaulted in code to the platform issuer; the check is unconditional",
 	}
 
 	for _, m := range names {

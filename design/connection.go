@@ -26,8 +26,13 @@ import (
 )
 
 // JWTAuth is the JWT security scheme. Tokens are issued by Heimdall at the
-// gateway (audience = this service) and validated in-app. Authorization on the
-// campaign_manager relation is enforced at the gateway, not here.
+// gateway (audience = this service) and verified in-app against Heimdall's JWKS:
+// signature, issuer, audience and expiry, plus a non-empty principal claim. The
+// gateway checks the same token, so this is not the happy path working twice — the
+// gateway's guarantee stops at the cluster boundary, and these claims become the
+// created_by / updated_by of records that say who authorized paid ad spend. See
+// internal/infrastructure/auth. Authorization on the campaign_manager relation is
+// still enforced at the gateway, not here.
 var JWTAuth = JWTSecurity("jwt", func() {
 	Description("JWT issued by Heimdall; audience is this service.")
 })
