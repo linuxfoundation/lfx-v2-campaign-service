@@ -388,7 +388,18 @@ func TestResolveDatabaseURL_IncompletePGVarsAreRefusedNotIgnored(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://svc:pw@explicit:5432/campaigns") // secretlint-disable-line -- intentional fake DSN
 	t.Setenv("PGHOST", "db.internal")
 	t.Setenv("PGUSER", "svc")
-	// No PGPASSWORD, no PGDATABASE: the set is incomplete.
+	// PGPASSWORD and PGDATABASE are set EMPTY rather than left unset: every reader here
+	// tests for emptiness (loadDatabaseFromEnv: `password != ""`, and TrimSpace on the
+	// rest), so empty and absent are the same input — while "left unset" would inherit
+	// whatever the developer's shell or a CI job with a Postgres service exports. A test
+	// for a partial set must not depend on the ambient environment being empty; there it
+	// would silently become a COMPLETE set and stop exercising this branch at all.
+	// PGPORT and PGENGINE are cleared for the same reason: an ambient value would change
+	// which validation arm is reached.
+	t.Setenv("PGPASSWORD", "")
+	t.Setenv("PGDATABASE", "")
+	t.Setenv("PGPORT", "")
+	t.Setenv("PGENGINE", "")
 
 	dsn, err := ResolveDatabaseURL()
 	require.Error(t, err, "a partial PG* set must be refused rather than silently redirecting "+

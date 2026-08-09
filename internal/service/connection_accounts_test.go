@@ -370,7 +370,7 @@ func TestListGoogleAdsAccounts_UnusableConnectionLogsAReasonNotTheCause(t *testi
 	if !strings.Contains(line, "reason=credentials_undecodable") {
 		t.Errorf("log line does not carry the reason token, so the 400 is undiagnosable: %q", line)
 	}
-	if !strings.Contains(line, "project_id=p") {
+	if !strings.Contains(line, " project_id=p ") {
 		t.Errorf("log line does not carry project metadata: %q", line)
 	}
 	if strings.Contains(line, marker) {
@@ -566,7 +566,9 @@ func TestListGoogleAdsAccounts_DecryptionFailureNamesTheRowThatFailed(t *testing
 	}
 
 	line := buf.String()
-	if !strings.Contains(line, "project_id="+model.SystemProjectID) {
+	// Leading space, as below: `project_id=` is a suffix of `requested_by_project_id=`, so
+	// the bare substring cannot tell the two attributes apart.
+	if !strings.Contains(line, " project_id="+model.SystemProjectID) {
 		t.Errorf("log names the caller instead of the system row that failed: %q", line)
 	}
 	if !strings.Contains(line, "requested_by_project_id=cncf") {
@@ -587,7 +589,11 @@ func TestListGoogleAdsAccounts_DecryptionFailureNamesTheRowThatFailed(t *testing
 	if _, err := svc.ListGoogleAdsAccounts(context.Background(), &conn.ListGoogleAdsAccountsPayload{ProjectID: "cncf"}); err == nil {
 		t.Fatal("expected an error for an undecryptable blob, got nil")
 	}
-	if line := buf.String(); !strings.Contains(line, "project_id=cncf") {
+	// Matched with the leading space that slog puts before every attribute, because the
+	// bare substring is also contained in `requested_by_project_id=cncf` — so without the
+	// boundary this assertion would still pass if the primary project_id regressed to the
+	// system scope, which is the exact regression it exists to catch.
+	if line := buf.String(); !strings.Contains(line, " project_id=cncf") {
 		t.Errorf("project's own row was not named as its own: %q", line)
 	}
 }

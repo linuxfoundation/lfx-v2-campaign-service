@@ -481,3 +481,35 @@ func TestInstallRequiresAnAccountIDWhereNothingCanSupplyOneLater(t *testing.T) {
 		t.Fatalf("rotation lost the row's account id: %+v", repo.updated)
 	}
 }
+
+// TestInstallRefusesProvidersTheFallbackCannotServe pins the gate that keeps the installable
+// set and the USABLE set the same. model.Provider.Valid() admits HubSpot, but the reserved-scope
+// fallback (credsSource.systemConn) is classification-gated to paid ads, so a HubSpot system row
+// would be written, reported as installed, and then resolved by nothing. An operator has no way
+// to see that from the outside — the row is present and looks healthy — which is exactly why the
+// refusal has to happen at install time.
+//
+// The paid-ads half of the assertion is what keeps this from being a HubSpot blocklist: the gate
+// is a classification, so a provider added later is admitted only once it is classified.
+func TestInstallRefusesProvidersTheFallbackCannotServe(t *testing.T) {
+	hubspotCreds := []byte(`{"private_app_token":"tok"}`)
+
+	repo := &stubRepo{}
+	err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderHubSpot, "acct", nil, hubspotCreds)
+	if err == nil || !strings.Contains(err.Error(), "not a paid-ads provider") {
+		t.Fatalf("installing a hubspot system row = %v, want a refusal naming the classification", err)
+	}
+	if repo.created != nil || repo.updated != nil || repo.setCT != nil {
+		t.Fatalf("refused and wrote anyway; calls = %v", repo.calls)
+	}
+
+	repo = &stubRepo{}
+	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderGoogleAds, "123", nil, []byte(goodCreds)); err != nil {
+		t.Fatalf("a paid-ads provider must still install: %v", err)
+	}
+	if repo.created == nil {
+		t.Fatalf("paid-ads install wrote nothing; calls = %v", repo.calls)
+	}
+}

@@ -260,6 +260,21 @@ func InstallSystemCredentials(
 	if !provider.Valid() {
 		return fmt.Errorf("bootstrap: %q is not a supported provider", provider)
 	}
+	// Valid() is broader than what this row can ever be USED for. The reserved-scope
+	// fallback in credsSource.systemConn is gated on Kind() == paid ads, deliberately:
+	// the audience builder resolves HubSpot through the same function, and a fallback
+	// there would write one project's contact lists into the LF's own portal. So a
+	// HubSpot system row is installable, reports success, and is then reachable by
+	// nothing — the same install-a-dead-row failure requireAccountID and
+	// requireKnownConfigKeys exist to prevent, one level up. Refuse it here rather than
+	// leave an operator holding a row they cannot use and cannot tell is unused.
+	//
+	// Asked as a classification, not as a name comparison, so a provider added later is
+	// admitted only once it is classified — the same default-deny the fallback uses.
+	if !provider.IsPaidAds() {
+		return fmt.Errorf("bootstrap: %s is not a paid-ads provider, so a system-scope row for it "+
+			"could never be used: the reserved-scope fallback resolves paid-ads providers only", provider)
+	}
 	if err := requireKnownConfigKeys(provider, providerConfig); err != nil {
 		return err
 	}
