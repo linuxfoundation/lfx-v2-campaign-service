@@ -125,10 +125,10 @@ upstream (no budget, no ad group, no ad, and not this request's config), the sam
 | unrecognised status (`UNSPECIFIED`, `UNKNOWN`, empty) | `("", error)` |
 | unverifiable (undecodable row, no usable id, non-canonical id, malformed or cross-customer resource name, identity fields that disagree) | `("", error)` |
 
-**Why absence and ambiguity must differ.** Both callers act destructively on an absence:
-create takes `("", nil)` as licence to create, adoption as licence to report nothing to adopt.
-A false absence produces a **duplicate paid campaign**; an arbitrary pick binds a brief to the
-wrong one. Two live campaigns sharing a name is **anomalous, not routine** — v23 rejects a
+**Why absence and ambiguity must differ.** The one caller acts destructively on an absence.
+`("", nil)` is not reported upward as "nothing to adopt" — `Dispatch` **falls through to
+`CreateCampaign`** on it, so a verified absence is a licence to create and a false absence
+produces a **duplicate paid campaign**. An arbitrary pick binds a brief to the wrong one. Two live campaigns sharing a name is **anomalous, not routine** — v23 rejects a
 mutate whose name another `ENABLED`/`PAUSED` campaign holds (`DUPLICATE_CAMPAIGN_NAME`) — so
 this branch fail-closes on a response that should not be possible. Rows are deduplicated by id
 first, so one campaign on several rows is not ambiguous.

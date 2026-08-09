@@ -123,3 +123,43 @@ now asserts the method has a doc that names it and still carries the contract's 
 words. It is scoped to that one method deliberately: the package-wide version of the rule fires on
 struct-field comments and comments inside function bodies, and a test that fails on things nobody
 intends to change gets turned off rather than obeyed.
+
+## The campaign that most needed stopping was the one we could not stop
+
+A third finding was about behaviour, and it only exists because of this change.
+
+An adopted campaign is stamped `created_degraded`, deliberately: the campaign exists upstream,
+but no budget, ad group or ad was created and this request's config was never pushed to it, so
+`created` would assert a wiring this path never does. Separately, `ToggleCampaignStatus`
+refused every status toggle on a non-toggleable status, `created_degraded` among them, for two
+stated reasons — it would activate an incomplete campaign, and it would overwrite the
+reconciliation marker with the run state.
+
+Put together, they produce the wrong outcome for exactly one input. `FindCampaignByName` treats
+`ENABLED` and `PAUSED` alike as live, so the campaign this dispatch adopts may already be
+serving and spending. It is now bound to a brief, visible in the product, and permanently
+unpausable through the service — while `GoogleAdsDispatcher.ToggleStatus` explicitly supports
+pausing a campaign with no child ids, precisely so a shell can be stopped. The guard meant to
+protect an incomplete campaign was withholding the brake from a campaign that was running.
+
+The remedy is direction-aware, not status-aware. ACTIVATE stays refused for every provisioning
+status. PAUSE is allowed for `created_degraded` alone, because that status is the only one that
+means *the campaign definitely exists upstream* — `pending`, `group_created` and `unconfirmed`
+may have no campaign at all, so a pause would be a mutation against an id whose meaning is
+unknown, and they stay refused in both directions.
+
+The second stated reason survives intact rather than being traded away: pausing **reconciles
+nothing**, so writing `paused` over `created_degraded` would erase the only record that the
+wiring is unverified. The pause path therefore does not persist at all — no version bump, no
+index event — and returns the campaign at its unchanged status, which is what the row now says.
+The platform call is declarative, so a repeat pause is a no-op upstream and idempotence does not
+depend on a stored run state.
+
+`CampaignStatusToggleable` was left direction-blind and still returns false for
+`created_degraded`; the exception lives at the call site. A `toggleable(status, direction)`
+signature would have read better at this one call and invited every other caller — none of which
+asks a directional question — to pass a direction and silently acquire the exception.
+
+Four sub-tests bind it: activating a degraded campaign is still a 409 whose message names the
+pause that remains available, pausing one reaches the platform and leaves the row alone, and
+`pending`/`group_created`/`unconfirmed` are refused a pause as well.
