@@ -309,3 +309,45 @@ the project genuinely has no usable connection; what changed is which account do
 Three sub-tests, revert-checked: with the probe ignored, a disconnected project resolves with
 `fromSystem: true`.
 
+
+### The probe had an index that named the right column and covered the wrong rows
+
+A later review round found the query itself unindexed, and the way it was unindexed is the part
+worth keeping. Every connection table already carries a `project_id` index from migration 000001
+— but each is partial, `WHERE status <> 'deleted'`, because its real job is uniqueness among LIVE
+connections. That predicate is the exact complement of the probe's. So grepping for "is
+project_id indexed on this table" answers yes, and the answer is useless: the index covers every
+row except the ones this statement reads.
+
+The cost lands on the busiest path the fallback has. The probe runs after a project-connection
+MISS — that is, on every dispatch for a project relying on the system account — so the sequential
+scan is not an edge case, it is the normal case, and it grows with every project that ever
+connects.
+
+Migration 000017 adds the mirror-image partial index, `(project_id) WHERE status = 'deleted'`, on
+the six paid-ads tables. The two indexes then partition each table and neither pays for the
+other's rows; deleted rows are the small side and stay small, at one tombstone per project that
+has ever disconnected. `hubspot_connections` is deliberately excluded: `credsSource` gates the
+probe behind `provider.IsPaidAds()`, so an index there would be write cost for a query that is
+never issued. If that gate widens, the migration widens with it.
+
+**It is numbered 000017, not 000016, and that is a merge-ORDERING obligation.** `main` ends at
+000015 and PR #95 (LFXV2-3038) claims 000016 for its campaign actor columns. `golang-migrate`
+records only the HIGHEST version it has applied and never applies a lower one afterwards, so if
+this branch lands first, #95's migration is skipped silently and permanently — `Up()` reports
+success and the columns simply are not there. The gap is therefore recorded in
+`allowedVersionGaps`, whose own contract is that an entry there is a promise about merge order
+rather than a numbering excuse: **#93 must not merge before #95.**
+`TestMigrations_AllowedVersionGapsAreStillOpen` deletes the excuse for us by failing once 000016
+exists in this tree.
+
+`TestDisconnectedProbeIsIndexed` binds it, and it has to assert on the PLAN rather than on
+behaviour or timing. The query returns the same answer with or without an index, so no
+correctness test can distinguish the two, and the live tables hold a handful of rows, so timing
+would be noise. It runs `EXPLAIN` with `enable_seqscan = off` and fails on a surviving `Seq
+Scan`. That setting does not conjure an index into use — if none applies, Postgres still scans —
+it only removes the reason the planner would decline a usable one at this table size. All six
+paid-ads tables are checked, not google_ads alone, because an index omitted from one table is a
+full scan on that one provider's dispatches, which is exactly the failure a single-table test
+would miss. Revert-checked by dropping the six indexes: all six sub-tests fail with the plan
+printed.

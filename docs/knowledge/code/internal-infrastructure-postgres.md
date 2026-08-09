@@ -267,6 +267,24 @@ each, so the clause has to survive in the SQL and not merely in the fake. It als
 unknown provider ERRORS rather than answering `false`: `false` here means "no deliberate
 disconnect", which would hand a typo'd provider the system-account fallback.
 
+**That probe also needed an index of its own, and the reason it did not have one is worth
+recording.** Every connection table indexes `project_id` — but under
+`WHERE status <> 'deleted'` (migration 000001), the exact complement of the rows this query
+reads. The index was present, named for the column, and covered none of the rows in question.
+Migration 000017 adds the mirror-image partial index on the six paid-ads tables, so the two
+partition the table between them and neither pays for the other's rows.
+
+Only paid-ads tables are indexed, because `credsSource` gates the probe behind
+`provider.IsPaidAds()` — the system account is an ad-ACCOUNT fallback and HubSpot never
+reaches it, so an index on `hubspot_connections` would be write cost for a query never issued.
+
+`TestDisconnectedProbeIsIndexed` binds it, and it is a PLAN assertion rather than a timing
+one: the query returns the same answer indexed or not, so no correctness test can see the
+difference. It runs `EXPLAIN` with `enable_seqscan = off` and fails on a surviving `Seq Scan`.
+Turning seqscan off does not force an index to be used — it cannot be, if none applies — it
+only removes the reason a usable index would be passed over on a table this small. Dropping the
+six indexes turns all six sub-tests red with the plan printed, which is the revert-check.
+
 ## DeleteCampaign's guards
 
 `DeleteCampaign` takes a `SELECT status, version … FOR UPDATE` lock inside one

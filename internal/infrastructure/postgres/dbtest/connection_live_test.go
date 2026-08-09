@@ -6,6 +6,8 @@ package dbtest_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -306,5 +308,81 @@ func TestDisconnectedTellsADeliberateDisconnectApartFromNeverConnected(t *testin
 	if _, err := repo.Disconnected(ctx, disconnected, model.Provider("google-adz")); err == nil {
 		t.Error("Disconnected with an unknown provider returned no error; false is the value that " +
 			"licenses the system-account fallback, so an unrecognised provider must never reach it")
+	}
+}
+
+// TestDisconnectedProbeIsIndexed binds the index the probe needs to the probe's own predicate,
+// which is the part that went wrong the first time: every connection table indexes project_id,
+// but under `WHERE status <> 'deleted'` — the exact complement of what this query reads. The
+// index looked present and covered none of the rows.
+//
+// A predicate mismatch like that is invisible to a correctness test: the query returns the same
+// answer either way, just by scanning the table. So this asserts on the PLAN.
+//
+// `enable_seqscan = off` is what makes the assertion deterministic rather than a measurement.
+// The tables here hold a handful of rows, so the planner would choose a sequential scan even
+// with a perfect index available, and asserting on timing would be flaky. Turning seqscan off
+// does not force an index to be used — it cannot be, if none applies — it only removes the
+// reason a usable index would be passed over. A Seq Scan surviving this setting therefore means
+// no index applies, which is precisely the defect.
+//
+// Every paid-ads table is checked rather than google_ads alone, because the probe runs against
+// whichever table the provider names, and an index omitted from one table is a full scan on that
+// provider's dispatches only — the failure mode a single-table test is least likely to reveal.
+func TestDisconnectedProbeIsIndexed(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+
+	for _, p := range model.AllProviders() {
+		if !p.IsPaidAds() {
+			// HubSpot is deliberately not indexed: credsSource gates the probe behind
+			// IsPaidAds, so an index there would be write cost for a query never issued.
+			continue
+		}
+		t.Run(string(p), func(t *testing.T) {
+			conn, err := pool.Acquire(ctx)
+			if err != nil {
+				t.Fatalf("acquire: %v", err)
+			}
+			defer conn.Release()
+
+			// Session-scoped, and the connection is released rather than returned to the pool
+			// carrying the setting, so no other test inherits it.
+			if _, err := conn.Exec(ctx, "SET LOCAL enable_seqscan = off"); err != nil {
+				t.Fatalf("disable seqscan: %v", err)
+			}
+
+			//nolint:gosec // table name comes from the same fixed allowlist the repo uses.
+			q := fmt.Sprintf(
+				"EXPLAIN SELECT EXISTS(SELECT 1 FROM %s WHERE project_id = $1 AND status = 'deleted')",
+				p.Table())
+			rows, err := conn.Query(ctx, q, "any-project")
+			if err != nil {
+				t.Fatalf("explain: %v", err)
+			}
+			defer rows.Close()
+
+			var plan strings.Builder
+			for rows.Next() {
+				var line string
+				if err := rows.Scan(&line); err != nil {
+					t.Fatalf("scan plan: %v", err)
+				}
+				plan.WriteString(line)
+				plan.WriteString("\n")
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatalf("read plan: %v", err)
+			}
+
+			if strings.Contains(plan.String(), "Seq Scan") {
+				t.Errorf("the disconnect probe on %s falls back to a sequential scan with seqscan "+
+					"disabled, which means no index covers it. This runs on every dispatch for a "+
+					"project with no connection of its own — the system-account path — so it scans "+
+					"the whole table and degrades as connections accumulate. Migration 000017 must "+
+					"index (project_id) WHERE status = 'deleted' on this table.\nplan:\n%s",
+					p.Table(), plan.String())
+			}
+		})
 	}
 }
