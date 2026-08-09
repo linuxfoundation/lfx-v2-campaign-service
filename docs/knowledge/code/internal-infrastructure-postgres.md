@@ -208,8 +208,14 @@ see it.
 
 So `Migrate` ends with `checkNoInvalidIndexes`, a catalog read for
 `pg_index.indisvalid = false` in the current schema. Any hit returns `ErrInvalidIndex`,
-which `IsPermanentMigrationErr` reports as permanent: retrying rebuilds nothing, and a
-503 boot-loop is better than serving over a lost UNIQUE constraint. The check is
+which `IsPermanentMigrationErr` reports as permanent — and "permanent" here means the
+container stops trying, not that it keeps trying. Retrying rebuilds nothing, so both
+startup paths refuse rather than loop: `NewContainer` returns the error, which crashes the
+pod loudly on initial startup, and the background initializer that runs after a TRANSIENT
+failure logs at ERROR and RETURNS, leaving `/readyz` at 503 with no live pool and no
+further attempts. Either outcome is better than serving over a lost UNIQUE constraint, and
+both are better than a boot-loop: an operator has to force the migration version by hand,
+and a restart cycle would only bury that fact under repeated startup noise. The check is
 schema-wide rather than scoped to one index name — an invalid index is never an intended
 state, and every future `CONCURRENTLY` migration inherits the guard instead of needing its
 own assertion. It also runs on the `ErrNoChange` path, so a pod booting against an already
