@@ -165,6 +165,37 @@ func TestListAdAccounts_SendsAConfiguredCustomerID(t *testing.T) {
 	}
 }
 
+// TestListAdAccounts_OmitsTheAccountHeaderEvenWhenOneIsConfigured is the case the
+// no-account test cannot reach.
+//
+// Discovery exists partly to RE-POINT a connection that already has an account, so the
+// configured-account path is not a corner: it is half the traffic. A client that sent
+// CustomerAccountId "only when there is one to send" would look perfectly reasonable and
+// would pass the empty-config assertion, while scoping every re-point to the account the
+// user is trying to move away from — which returns that account and hides the rest.
+func TestListAdAccounts_OmitsTheAccountHeaderEvenWhenOneIsConfigured(t *testing.T) {
+	rec := &acctRecorder{}
+	c := newCustomerClient(t, AccountConfig{AccountID: "1234567", CustomerID: "9988776"},
+		func(w http.ResponseWriter, r *http.Request) {
+			rec.capture(r)
+			_, _ = io.WriteString(w, `{"AccountsInfo":[]}`)
+		})
+	if _, err := c.ListAdAccounts(context.Background()); err != nil {
+		t.Fatalf("ListAdAccounts: %v", err)
+	}
+	saw := rec.read(t)
+	if saw.hasAcct {
+		t.Errorf("CustomerAccountId was sent (value %q); discovery asks about the CREDENTIALS, "+
+			"and scoping it to the configured account would hide every other account the user "+
+			"might be re-pointing to", saw.acct)
+	}
+	// The customer id is a different thing and MUST still be sent — this test must not
+	// pass by way of a client that dropped both.
+	if saw.cust != "9988776" {
+		t.Errorf("CustomerId header = %q, want 9988776 still sent", saw.cust)
+	}
+}
+
 func TestListAdAccounts_RejectsAMalformedCustomerID(t *testing.T) {
 	c := newCustomerClient(t, AccountConfig{CustomerID: "99\r\nX-Injected: 1"}, func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("a malformed customer id must be rejected before any request is sent")

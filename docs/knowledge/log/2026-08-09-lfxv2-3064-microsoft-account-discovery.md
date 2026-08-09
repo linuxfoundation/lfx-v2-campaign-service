@@ -82,3 +82,22 @@ looks like one.
 contract: the difference between "no answer" and "the answer is none" has to survive
 unmarshalling, or every guard above it is checking a value that has already lost the
 distinction.
+
+## Round 2: the pointer rationale was wrong about what a plain slice does
+
+Copilot, on `accounts.go:104`, the concept doc and this log: `encoding/json` does not collapse
+`{}` and `{"AccountsInfo": []}` for a plain slice. An absent or null key leaves the field
+UNCHANGED — nil — and a present `[]` decodes to a non-nil empty slice, so the distinction
+survives either way. Correct, and the same mistake appears in the LinkedIn client's `Elements`
+field, corrected there in the same round.
+
+The earlier entry above is left as written, because this log is history and an entry edited to
+be right afterwards records nothing. What it claimed — that "the revert to a plain slice made
+both read as zero accounts" — is false. What actually happened is that the revert removed the
+nil check ALONGSIDE the pointer, and it was the check, not the type, doing the work.
+
+The pointer stays, on a rationale that is now stated honestly: it is about the next reader,
+not the decoder. A plain slice invites `len(x) == 0`, which merges precisely the two cases
+this code must keep apart; a nil pointer has to be dereferenced, so the compiler forces
+whoever touches it to decide which case they mean. The concept doc now says so, and says not
+to simplify the pointer away without replacing the nil guard.

@@ -97,11 +97,15 @@ func (a AdAccount) PauseLabel() string {
 
 // accountsInfoResponse is the AccountsInfo/Query envelope.
 //
-// AccountsInfo is a POINTER to a slice so an absent field is distinguishable from an
-// empty one. `{}` means the response did not answer the question; `{"AccountsInfo": []}`
-// means the credentials reach no accounts. Decoding both into a nil slice would report
-// the first as the second, which is the false-absence shape that makes a user go looking
-// for a permissions problem that does not exist.
+// The distinction that matters is `{}` (the response did not answer the question) versus
+// `{"AccountsInfo": []}` (the credentials reach no accounts): collapsing them reports the
+// first as the second, and a user goes looking for a permissions problem that does not
+// exist. A plain slice would in fact preserve it — encoding/json leaves an absent or null
+// field UNCHANGED, so the field stays nil, while a present `[]` decodes to a non-nil empty
+// slice. AccountsInfo is nonetheless a POINTER, and the reason is legibility rather than
+// mechanism: a plain slice invites the next reader to write `len(x) == 0`, which merges
+// exactly the two cases this code must keep apart, whereas a nil pointer has to be
+// dereferenced and the compiler makes that decision explicit at the call site.
 type accountsInfoResponse struct {
 	AccountsInfo *[]accountInfo `json:"AccountsInfo"`
 }

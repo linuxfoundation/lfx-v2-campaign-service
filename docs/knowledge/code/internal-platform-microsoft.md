@@ -263,10 +263,16 @@ filtered: this feeds a picker, and dropping a user's only account answers "your
 credentials reach no ad accounts" about an account sitting right there.
 
 **Fail, do not truncate.** The endpoint is unpaginated, so there is no cursor walk to
-bound; the two remaining modes both fail the whole call. `AccountsInfo` is decoded as a
-POINTER to a slice so `{}` (no answer) stays distinguishable from `{"AccountsInfo": []}`
-(zero accounts) — collapsing them is the false-absence shape that sends a user looking
-for a permissions problem that does not exist. And an id that does not match
+bound; the two remaining modes both fail the whole call. `{}` (no answer) must stay
+distinguishable from `{"AccountsInfo": []}` (zero accounts) — collapsing them is the
+false-absence shape that sends a user looking for a permissions problem that does not
+exist. The DECODER already preserves that distinction on its own: `encoding/json` leaves
+a field whose key is absent (or null) UNCHANGED, so it stays nil, while a present `[]`
+decodes to a non-nil empty slice. `AccountsInfo` is a POINTER to a slice for a reason
+that is about the next reader rather than the mechanism: a plain slice invites a
+`len(x) == 0` check that silently merges the two cases, while a nil pointer must be
+dereferenced and the compiler makes that choice explicit. Do not "simplify" it away
+without replacing the nil guard. And an id that does not match
 `accountIDRE` — the SAME regexp `validateAccountIDs` checks a configured id against,
 reused so a discovered account cannot fail at bind time — errors rather than skipping
 the row, because a response shape that far from the documented one is not the response
