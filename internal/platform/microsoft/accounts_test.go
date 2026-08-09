@@ -6,10 +6,13 @@ package microsoft
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -30,17 +33,67 @@ func newCustomerClient(t *testing.T, account AccountConfig, h http.HandlerFunc) 
 		WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
 }
 
-func accountsBody(t *testing.T, r *http.Request) map[string]any {
-	t.Helper()
+// acctRecorder captures what a fake handler saw. The handler runs on the SERVER's
+// goroutine while the test goroutine reads the captures after the call returns: that
+// pairing is ordered in practice but carries no happens-before edge, so -race is
+// entitled to report it. The mutex matches the atomic/mutex discipline the 429 tests in
+// client_test.go already use.
+//
+// It also decodes the body HERE and records any failure rather than calling t.Fatalf.
+// Fatalf is documented as callable only from the goroutine running the test; from a
+// handler it runtime.Goexit()s the wrong goroutine, so the test carries on against a
+// half-filled recorder and reports whatever assertion happens to fail next instead of
+// the decode error that actually went wrong.
+type acctRecorder struct {
+	mu      sync.Mutex
+	path    string
+	method  string
+	acct    string
+	hasAcct bool
+	cust    string
+	dev     string
+	body    map[string]any
+	bodyErr error
+}
+
+func (a *acctRecorder) capture(r *http.Request) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.path, a.method = r.URL.Path, r.Method
+	a.acct = r.Header.Get("CustomerAccountId")
+	// Go canonicalises header names in the map, so the presence probe uses that form.
+	_, a.hasAcct = r.Header["Customeraccountid"]
+	a.cust = r.Header.Get("CustomerId")
+	a.dev = r.Header.Get("DeveloperToken")
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
-		t.Fatalf("read body: %v", err)
+		a.bodyErr = fmt.Errorf("read body: %w", err)
+		return
 	}
-	var got map[string]any
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("body is not JSON: %v (%s)", err, raw)
+	// An EMPTY body is not a decode failure — the campaign-path guard below issues a
+	// GET with no body at all, and body stays nil for it. Only a non-empty body that
+	// will not parse is a problem worth failing on.
+	if len(raw) == 0 {
+		return
 	}
-	return got
+	if err := json.Unmarshal(raw, &a.body); err != nil {
+		a.bodyErr = fmt.Errorf("body is not JSON: %w (%s)", err, raw)
+	}
+}
+
+// read returns a snapshot under the lock and fails the test on the TEST goroutine if
+// the handler could not decode the body.
+func (a *acctRecorder) read(t *testing.T) acctRecorder {
+	t.Helper()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.bodyErr != nil {
+		t.Fatalf("handler could not decode the request: %v", a.bodyErr)
+	}
+	return acctRecorder{
+		path: a.path, method: a.method, acct: a.acct, hasAcct: a.hasAcct,
+		cust: a.cust, dev: a.dev, body: a.body,
+	}
 }
 
 // TestListAdAccounts_AsksAboutTheCredentialsNotAnAccount pins the property the whole
@@ -49,16 +102,9 @@ func accountsBody(t *testing.T, r *http.Request) map[string]any {
 // identity at all — not the header, not a CustomerId — and lands on the Customer
 // Management path rather than Campaign Management.
 func TestListAdAccounts_AsksAboutTheCredentialsNotAnAccount(t *testing.T) {
-	var gotPath, gotMethod, gotAcctHeader, gotCustHeader, gotDev string
-	var hasAcctHeader bool
-	var body map[string]any
+	rec := &acctRecorder{}
 	c := newCustomerClient(t, AccountConfig{}, func(w http.ResponseWriter, r *http.Request) {
-		gotPath, gotMethod = r.URL.Path, r.Method
-		gotAcctHeader = r.Header.Get("CustomerAccountId")
-		_, hasAcctHeader = r.Header["Customeraccountid"]
-		gotCustHeader = r.Header.Get("CustomerId")
-		gotDev = r.Header.Get("DeveloperToken")
-		body = accountsBody(t, r)
+		rec.capture(r)
 		_, _ = io.WriteString(w, `{"AccountsInfo":[]}`)
 	})
 
@@ -69,29 +115,30 @@ func TestListAdAccounts_AsksAboutTheCredentialsNotAnAccount(t *testing.T) {
 	if got == nil {
 		t.Error("zero accounts must be an empty slice, not nil: nil serializes as null, which reads as 'no answer' rather than 'no accounts'")
 	}
-	if want := "/CustomerManagement/v13/AccountsInfo/Query"; gotPath != want {
-		t.Errorf("path = %q, want %q", gotPath, want)
+	saw := rec.read(t)
+	if want := "/CustomerManagement/v13/AccountsInfo/Query"; saw.path != want {
+		t.Errorf("path = %q, want %q", saw.path, want)
 	}
-	if gotMethod != http.MethodPost {
-		t.Errorf("method = %q, want POST", gotMethod)
+	if saw.method != http.MethodPost {
+		t.Errorf("method = %q, want POST", saw.method)
 	}
 	// Presence, not value: an EMPTY CustomerAccountId is still a claim about an account,
 	// and the connection making this call has none. Asserting only on the value would pass
 	// against a client that always sets the header.
-	if hasAcctHeader {
-		t.Errorf("CustomerAccountId was sent (value %q); a discovery call must omit the header entirely", gotAcctHeader)
+	if saw.hasAcct {
+		t.Errorf("CustomerAccountId was sent (value %q); a discovery call must omit the header entirely", saw.acct)
 	}
-	if gotCustHeader != "" {
-		t.Errorf("CustomerId = %q, want it omitted when the connection has none", gotCustHeader)
+	if saw.cust != "" {
+		t.Errorf("CustomerId = %q, want it omitted when the connection has none", saw.cust)
 	}
-	if gotDev != "devtok" {
-		t.Errorf("DeveloperToken = %q, want it still sent", gotDev)
+	if saw.dev != "devtok" {
+		t.Errorf("DeveloperToken = %q, want it still sent", saw.dev)
 	}
-	if _, present := body["CustomerId"]; present {
+	if _, present := saw.body["CustomerId"]; present {
 		t.Error("CustomerId must be ABSENT from the body, not null or 0: Microsoft infers the customer from the credentials only when the element is omitted")
 	}
-	if v, ok := body["OnlyParentAccounts"].(bool); !ok || v {
-		t.Errorf("OnlyParentAccounts = %v, want false so linked accounts under other customers are included", body["OnlyParentAccounts"])
+	if v, ok := saw.body["OnlyParentAccounts"].(bool); !ok || v {
+		t.Errorf("OnlyParentAccounts = %v, want false so linked accounts under other customers are included", saw.body["OnlyParentAccounts"])
 	}
 }
 
@@ -99,23 +146,22 @@ func TestListAdAccounts_AsksAboutTheCredentialsNotAnAccount(t *testing.T) {
 // DOES carry a customer id, it must reach Microsoft, or an agency connection silently
 // enumerates the wrong customer's accounts.
 func TestListAdAccounts_SendsAConfiguredCustomerID(t *testing.T) {
-	var gotHeader string
-	var body map[string]any
+	rec := &acctRecorder{}
 	c := newCustomerClient(t, AccountConfig{CustomerID: "9988776"}, func(w http.ResponseWriter, r *http.Request) {
-		gotHeader = r.Header.Get("CustomerId")
-		body = accountsBody(t, r)
+		rec.capture(r)
 		_, _ = io.WriteString(w, `{"AccountsInfo":[]}`)
 	})
 	if _, err := c.ListAdAccounts(context.Background()); err != nil {
 		t.Fatalf("ListAdAccounts: %v", err)
 	}
-	if gotHeader != "9988776" {
-		t.Errorf("CustomerId header = %q, want 9988776", gotHeader)
+	saw := rec.read(t)
+	if saw.cust != "9988776" {
+		t.Errorf("CustomerId header = %q, want 9988776", saw.cust)
 	}
 	// json.Number must reach the wire as a NUMBER; Microsoft types CustomerId as long,
 	// and a quoted string is a different request.
-	if v, ok := body["CustomerId"].(float64); !ok || v != 9988776 {
-		t.Errorf("body CustomerId = %#v, want the number 9988776", body["CustomerId"])
+	if v, ok := saw.body["CustomerId"].(float64); !ok || v != 9988776 {
+		t.Errorf("body CustomerId = %#v, want the number 9988776", saw.body["CustomerId"])
 	}
 }
 
@@ -282,10 +328,9 @@ func TestListAdAccounts_NeverEchoesTheResponseBody(t *testing.T) {
 // creates nothing, so a retry cannot double-create — and without the retry a transient
 // rate limit fails a user's first attempt to connect an account.
 func TestListAdAccounts_RetriesA429(t *testing.T) {
-	var calls int
+	var calls int32
 	c := newCustomerClient(t, AccountConfig{}, func(w http.ResponseWriter, _ *http.Request) {
-		calls++
-		if calls == 1 {
+		if atomic.AddInt32(&calls, 1) == 1 {
 			w.Header().Set("Retry-After", "0")
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
@@ -296,8 +341,8 @@ func TestListAdAccounts_RetriesA429(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAdAccounts: %v", err)
 	}
-	if calls != 2 {
-		t.Errorf("calls = %d, want the 429 retried once", calls)
+	if n := atomic.LoadInt32(&calls); n != 2 {
+		t.Errorf("calls = %d, want the 429 retried once", n)
 	}
 	if len(got) != 1 {
 		t.Errorf("got %d accounts, want 1", len(got))
@@ -308,19 +353,19 @@ func TestListAdAccounts_RetriesA429(t *testing.T) {
 // doCustomerRequest: the campaign path must keep its per-account identity. Without this,
 // making the header conditional could silently drop it everywhere.
 func TestDoRequest_StillSendsTheAccountHeader(t *testing.T) {
-	var gotAcct, gotPath string
+	rec := &acctRecorder{}
 	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
-		gotAcct = r.Header.Get("CustomerAccountId")
-		gotPath = r.URL.Path
+		rec.capture(r)
 		_, _ = io.WriteString(w, `{"ok":true}`)
 	})
 	if _, err := c.doRequest(context.Background(), http.MethodGet, "Campaigns", nil, true); err != nil {
 		t.Fatalf("doRequest: %v", err)
 	}
-	if gotAcct != "1234567" {
-		t.Errorf("CustomerAccountId = %q, want the campaign path still account-scoped", gotAcct)
+	saw := rec.read(t)
+	if saw.acct != "1234567" {
+		t.Errorf("CustomerAccountId = %q, want the campaign path still account-scoped", saw.acct)
 	}
-	if !strings.HasPrefix(gotPath, "/CampaignManagement/") {
-		t.Errorf("path = %q, want the campaign service unchanged", gotPath)
+	if !strings.HasPrefix(saw.path, "/CampaignManagement/") {
+		t.Errorf("path = %q, want the campaign service unchanged", saw.path)
 	}
 }
