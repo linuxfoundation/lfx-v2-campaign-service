@@ -326,8 +326,10 @@ connects.
 
 Migration 000017 adds the mirror-image partial index, `(project_id) WHERE status = 'deleted'`, on
 the six paid-ads tables. The two indexes then partition each table and neither pays for the
-other's rows; deleted rows are the small side and stay small, at one tombstone per project that
-has ever disconnected. `hubspot_connections` is deliberately excluded: `credsSource` gates the
+other's rows; deleted rows are the small side and stay small. Not one-per-project, though —
+000001's uniqueness is partial (`WHERE status <> 'deleted'`), so it constrains live rows only
+and a project that connects and disconnects repeatedly leaves one tombstone per cycle. What
+bounds that side is the RATE: disconnecting is a deliberate operator action, not traffic. `hubspot_connections` is deliberately excluded: `credsSource` gates the
 probe behind `provider.IsPaidAds()`, so an index there would be write cost for a query that is
 never issued. If that gate widens, the migration widens with it.
 
