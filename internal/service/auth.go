@@ -53,10 +53,16 @@ func (g *authGuard) HasTokenVerifier() bool {
 // it to its own generated error type. A nil verifier REJECTS rather than bypasses: before
 // this, a request reaching the pod without passing Heimdall had its claims believed, so
 // missing wiring has to be an outage rather than a silent return to that behaviour.
+//
+// An EMPTY token is not short-circuited here, deliberately. Goa passes "" when the
+// Authorization header is absent, and the production verifier rejects that explicitly
+// (auth.VerifyActor: "token is empty"), so pre-empting it changes nothing for a deployed
+// pod — it only overrides the ONE verifier that is supposed to accept it. The local mock
+// principal's whole contract is "treat every request as this principal", and a developer
+// running without Auth0 has no header to send: rejecting them before the verifier is
+// consulted made the mock work only for callers who invented a dummy token, i.e. not for
+// the workflow it exists for. Who may authenticate is the verifier's question.
 func (g *authGuard) authenticate(ctx context.Context, token string) (context.Context, string) {
-	if token == "" {
-		return ctx, "missing bearer token"
-	}
 	g.authMu.RLock()
 	v := g.v
 	g.authMu.RUnlock()

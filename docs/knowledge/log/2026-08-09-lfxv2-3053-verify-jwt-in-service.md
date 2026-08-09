@@ -68,6 +68,16 @@ nothing having ever complained. Fail the pod and name the key to unset.
 `TestNew_MockPrincipalIsRefusedInCluster` pins both halves: refused inside a cluster,
 still honoured outside one.
 
+**And the guard was answering a question that was not its own.** `authenticate` refused an
+empty token before consulting the verifier. For a deployed pod that is a no-op — the real
+verifier rejects `""` explicitly — so the only verifier it ever overrode was the local mock,
+whose entire contract is that every request is that principal. Goa passes `""` for an absent
+`Authorization` header, and a developer running without Auth0 has no header to send, so the
+mock worked only for callers who had invented a dummy token: the workflow it exists for was
+the one case it did not serve. The check is gone; who may authenticate is the verifier's
+question, and `TestAuthenticate_EmptyTokenIsTheVerifiersCallNotTheGuards` pins that a
+verifier accepting `""` is honoured while the existing half keeps the ordinary rejection.
+
 **Known follow-up.** Rejections surface as **400**, not 401 — the design declares no
 Unauthorized type and `commonBriefErrors` documents 400 as the JWTAuth rejection status;
 adding 401 is a design change with generated-code blast radius, filed separately.

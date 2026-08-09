@@ -85,3 +85,23 @@ func TestAuthenticate_GoodAndEmptyTokens(t *testing.T) {
 		t.Fatal("an empty token must be rejected")
 	}
 }
+
+// TestAuthenticate_EmptyTokenIsTheVerifiersCallNotTheGuards pins the disposition of an
+// absent Authorization header: Goa passes "" for one, and the guard must ASK rather than
+// decide. The production verifier refuses it either way (the half above), so the only
+// behaviour this changes is the local mock principal's — whose contract is that every
+// request is that principal, header or not. A guard that answered first made the mock
+// usable only by callers who invented a dummy token.
+func TestAuthenticate_EmptyTokenIsTheVerifiersCallNotTheGuards(t *testing.T) {
+	mock := &model.Actor{Username: "local-dev", Name: "local-dev"}
+	g := authGuard{}
+	g.SetTokenVerifier(&stubVerifier{actors: map[string]*model.Actor{"": mock}})
+
+	ctx, msg := g.authenticate(context.Background(), "")
+	if msg != "" {
+		t.Fatalf("a verifier that accepts the empty token was overruled by the guard: %s", msg)
+	}
+	if got := actorFromCtx(ctx); got == nil || *got != *mock {
+		t.Fatalf("actor = %+v, want the principal the verifier named (%+v)", got, mock)
+	}
+}
