@@ -216,6 +216,23 @@ app:
     REDDIT_METRICS_ENABLED:
       value: "false"
 
+    # Comma-separated NETWORK-SPECIFIC RFC 6052 NAT64 prefixes for this cluster,
+    # e.g. "2001:db8:64::/96". Empty is correct for a cluster with no NAT64, and is
+    # the default because a wrong value is worse than none.
+    #
+    # It cannot be defaulted to anything useful: a network-specific prefix is carved
+    # from the operator's OWN global unicast space, so it is undiscoverable in-process
+    # and indistinguishable from any other public prefix. The event-URL fetcher always
+    # decodes the well-known 64:ff9b::/96; on a cluster that uses a network-specific
+    # prefix instead, leaving this empty is a live SSRF hole — the TRANSLATOR makes the
+    # IPv4 connection, so an address encoding 169.254.169.254 passes every check inside
+    # the service. Set it wherever NAT64 is in use.
+    #
+    # Only RFC 6052 lengths are accepted (/32, /40, /48, /56, /64, /96). Anything else
+    # PANICS at startup rather than decoding at the wrong offset for the pod's lifetime.
+    EVENT_URL_NAT64_PREFIXES:
+      value: ""
+
     # AES-256-GCM key for encrypting ad-platform connection credentials at rest.
     # Required whenever a database URL is configured (PG* / DATABASE_URL), because
     # NewContainer initializes the encryptor before opening the pool used by

@@ -90,6 +90,21 @@ openssl rand -base64 32
 - `JWT_ISSUER` (default `heimdall`) — expected JWT issuer
 - `NATS_URL` — NATS server URL (reserved for messaging; defaults to
   in-cluster NATS URL)
+- `EVENT_URL_NAT64_PREFIXES` (default unset) — comma-separated
+  RFC 6052 §2.2 **network-specific** NAT64 prefixes this cluster uses,
+  e.g. `2a01:4f8:1::/48`. Only `/32`, `/40`, `/48`, `/56`, `/64` and
+  `/96` are valid lengths; a malformed value or a wrong length
+  **panics at startup**, deliberately, so a typo stops the pod rather
+  than decoding at the wrong offset for its lifetime.
+
+  Unset is correct for a cluster with no NAT64, and the well-known
+  `64:ff9b::/96` is decoded regardless. It cannot be discovered
+  in-process: a network-specific prefix is carved from the operator's
+  own global unicast space and is indistinguishable from any other
+  public prefix. On a cluster that uses one, leaving it undeclared is a
+  live SSRF hole — the translator, not this service, makes the IPv4
+  connection, so an address encoding `169.254.169.254` passes every
+  check here and the fetch reaches the cloud metadata endpoint.
 - `REDDIT_METRICS_ENABLED` (default unset, i.e. OFF) — opts a
   deployment IN to Reddit Ads metrics reads. Only the exact value
   `true` enables them; unset or any other value (including `TRUE` or

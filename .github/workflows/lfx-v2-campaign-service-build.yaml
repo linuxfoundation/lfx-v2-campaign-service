@@ -15,6 +15,43 @@ jobs:
     name: Build and Test
     runs-on: ubuntu-latest
 
+    # The live-database suite (internal/infrastructure/postgres/dbtest) needs a real
+    # PostgreSQL to assert against: the rest of the postgres tests match regexes over SQL
+    # source text, which cannot tell you whether the server accepts a statement or whether
+    # an index it depends on still exists. Every test in that package skips when
+    # TEST_DATABASE_URL is unset, so this container is what makes them run at all --
+    # dbtest.Pool fails the build -- rather than skipping -- if this block is ever removed while CI
+    # still reports green.
+    #
+    # 16 is not an arbitrary choice: it is the version this repo already states its
+    # migration behaviour was verified against (charts/.../deployment.yaml, on the staged
+    # 000013/000014 index swap), and this suite exists to check exactly that class of
+    # claim. Testing on a different major than the one the claim was made on would let the
+    # suite agree with a statement nobody checked.
+    #
+    # Pinned to a MAJOR tag rather than a digest, unlike the actions above -- deliberately.
+    # Those actions are code this workflow executes; this container only serves SQL. A
+    # digest would need a hand bump on every upstream CVE rebuild, and a stale pin is the
+    # likelier failure. The major version is the part that can change what a migration
+    # means, and that part IS pinned: moving to 17 has to be an edit here.
+    #
+    # The health check is required -- without it the test step can start before the server
+    # accepts connections, and the suite fails on a race rather than on a defect.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: campaign_service_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
@@ -40,3 +77,13 @@ jobs:
 
       - name: Test
         run: make test
+        env:
+          # Points the dbtest package at the service container above. The migrations run
+          # from the test binary itself, so nothing needs to load schema here.
+          #
+          # The credentials below are the ones this same file gives the service container a
+          # few lines up: a throwaway database that exists for the length of one job and is
+          # reachable only from inside it. secretlint reports the shape, not a leak, so the
+          # directive is per-line -- a path exclusion would leave test files unscanned, and
+          # `.gitleaks.toml` already allowlists `*_test.go`.
+          TEST_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/campaign_service_test?sslmode=disable" # secretlint-disable-line
