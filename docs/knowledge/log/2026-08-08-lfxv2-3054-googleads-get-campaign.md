@@ -88,7 +88,7 @@ made explicit here, and both come from the same asymmetry: `FindCampaignByName` 
 decoded name against the name it asked for, so a corrupted name surfaces as a filter-not-honoured
 error, whereas this path has no expected name — the name IS the answer.
 
-First, `encoding/json` does not enforce that its input is UTF-8. A JSON document must be
+First, `encoding/json` does not enforce that its input is UTF-8. A JSON document must be UTF-8
 (RFC 8259 s8.1), but malformed bytes inside a string are silently replaced with U+FFFD and no
 error is returned, so `"name":"bad\xffname"` decoded into a perfectly successful `CampaignRef`
 carrying a name the campaign does not have — offered to an operator as the thing to confirm the
