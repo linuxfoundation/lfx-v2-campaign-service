@@ -29,8 +29,14 @@ So the same stored value, with the same defect, produced two different answers d
 which endpoint the caller reached:
 
 - **Discovery** — caught at the dispatch boundary, tagged
-  `ErrConnectionNotUsable` + `ErrProviderConfigInvalid`, mapped to **409**. Correct: a stored
-  id with dashes in it needs a human to edit the connection.
+  `ErrConnectionNotUsable` + `ErrProviderConfigInvalid`, mapped to **400**
+  (`internal/service/connection.go`, the `ErrConnectionNotUsable` arm). Correct: a stored id
+  with dashes in it needs a human to edit the connection, and discovery is the endpoint that
+  edit is made from — the caller is looking at the connection they must fix, so the fault is
+  in the request they just sent. The campaign-scoped paths answer **409** for the same defect
+  because there the connection is a precondition of the resource being addressed rather than
+  the thing being addressed; both say "non-retryable, a human must edit the connection", which
+  is the property that matters, and neither is a 503.
 - **Toggle, metrics, and create** — passed through uninspected. They failed later, inside the
   client, at `validateLoginCustomerID` — by which point the error is indistinguishable at the
   orchestrator's boundary from a genuine upstream failure. It fell to the service layer's
