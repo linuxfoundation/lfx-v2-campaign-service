@@ -2230,11 +2230,12 @@ func TestGoogleAds_ToggleStatus_MalformedManagerIDIsClassified(t *testing.T) {
 // path was missed when the shape check was hoisted into validatedLoginCustomerID: two of the
 // three readers of the stored login_customer_id had a test, and the third did not.
 //
-// Everything the toggle test asserts applies here with more force. An unclassified failure
-// falls to the orchestrator's default arm and is reported as an upstream problem — a retry
-// instruction for a stored value no retry repairs — and the client's own validator embeds the
-// raw manager id in its message with %q, which then lands in the dispatch-failure log line the
-// orchestrator writes on both the released- and retained-claim arms. A manager id is
+// What it asserts is NOT a status code, and the difference from the toggle test matters.
+// Create is queued work: dispatchOne collapses every dispatcher error into the same
+// "platform campaign creation failed" job result, so there is no 503 here to replace. An
+// unclassified failure costs claim semantics instead — and the client's own validator embeds
+// the raw manager id in its message with %q, which then lands in the dispatch-failure log
+// line the orchestrator writes on both the released- and retained-claim arms. A manager id is
 // account-identifying configuration; the rest of this path keeps error text to a fixed
 // sentinel vocabulary with no payload precisely so it can be logged.
 //

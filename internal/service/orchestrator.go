@@ -1031,10 +1031,10 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// comment used to say it was. Google Ads tags every one of its preflight failures with
 	// domain.ErrConnectionNotUsable (internal/dispatch/googleads.go): the three in
 	// validateGoogleAdsCredentials, the missing-account guard in validateGoogleAdsConnection,
-	// and the stored-login_customer_id check in validatedLoginCustomerID. All four run on this
+	// and the stored-login_customer_id check in validatedLoginCustomerID. All five run on this
 	// path. The caller maps them to 409 — correct, because none of them improves with time.
 	//
-	// The manager-id check is the newest of the four and was for a while NOT reachable here:
+	// The manager-id check is the newest of the five and was for a while NOT reachable here:
 	// it sat inline in the discovery resolver, so a malformed stored value reached this path
 	// unclassified and fell through to 503. LFXV2-3052 hoisted it into a helper both resolvers
 	// call, which is why the list above is once again the whole list rather than a subset.

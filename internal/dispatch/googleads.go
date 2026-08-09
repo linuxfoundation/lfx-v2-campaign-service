@@ -103,12 +103,17 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		return nil, notCreated(err)
 	}
 	// The THIRD reader of the same stored login_customer_id, and the one that matters most:
-	// it is the path that spends money. Left to the client's own validateLoginCustomerID
-	// this defect arrived at the orchestrator as a bare create failure — a 503 telling the
-	// caller to retry a stored value no retry repairs — and the client's error embeds the
-	// raw id with %q, which then reaches the dispatch-failure log line. Both are the exact
-	// regressions the toggle and discovery paths were fixed for. notCreated because nothing
-	// upstream has been attempted: the claim is safe to release.
+	// it is the path that spends money. Create differs from the toggle and discovery paths
+	// in what classification BUYS, and the difference is worth stating so this guard is not
+	// mistaken for a status-code fix. Create is queued work, not a request: dispatchOne
+	// reports every dispatcher error as the same "platform campaign creation failed"
+	// (internal/service/orchestrator.go), so there is no caller-facing 503 here to replace.
+	// What the check buys is claim semantics and log hygiene. notCreated marks that nothing
+	// upstream was attempted, so the orchestrator RELEASES the claim instead of retaining it
+	// for reconciliation — a retained claim over a campaign that was never attempted wedges
+	// the (brief, platform) slot against the very re-dispatch that repairing the row enables.
+	// And it keeps the client's own validator from running, whose error embeds the raw id
+	// with %q and would land it in the dispatch-failure log line.
 	loginCustomerID, err := validatedLoginCustomerID(res)
 	if err != nil {
 		return nil, notCreated(err)

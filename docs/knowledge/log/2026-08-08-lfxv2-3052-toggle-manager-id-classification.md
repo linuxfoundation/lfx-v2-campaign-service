@@ -37,11 +37,18 @@ which endpoint the caller reached:
   because there the connection is a precondition of the resource being addressed rather than
   the thing being addressed; both say "non-retryable, a human must edit the connection", which
   is the property that matters, and neither is a 503.
-- **Toggle, metrics, and create** — passed through uninspected. They failed later, inside the
-  client, at `validateLoginCustomerID` — by which point the error is indistinguishable at the
+- **Toggle and metrics** — passed through uninspected. They failed later, inside the client,
+  at `validateLoginCustomerID` — by which point the error is indistinguishable at the
   orchestrator's boundary from a genuine upstream failure. It fell to the service layer's
   default arm: **503, "the provider call failed, retry later"**, for a value that no amount
   of retrying will repair.
+- **Create** — passed through uninspected too, but what that COST is different, and saying
+  "create answered 503" would be wrong. Create is queued work rather than a request: every
+  dispatcher error becomes the same `platform campaign creation failed` job result, so there
+  is no status code to get right. What the missing classification cost is claim semantics —
+  an unclassified failure is not `notCreated`, so the orchestrator RETAINS the claim for
+  reconciliation of a campaign that was never attempted, wedging the (brief, platform) slot
+  against the re-dispatch that repairing the connection is supposed to enable.
 
 Create carried a second defect the read-only paths did not. The client's own validator renders
 the offending value with `%q`, and a create failure is logged by the orchestrator on both the
