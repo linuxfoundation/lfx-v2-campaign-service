@@ -28,6 +28,11 @@ type fakeAudienceRepo struct {
 	// staleAt, when it matches the expectedVersion passed to
 	// CreateAudienceForApprovedBrief, makes that call report ErrStaleApproval.
 	staleAt int64
+	// leaseHeld makes CreateAudienceForApprovedBrief report ErrAudienceBuildInFlight, which
+	// is what the real repo returns when the partial unique index from migration 000018
+	// rejects the insert because a concurrent build for this (brief, platform) already
+	// holds the lease.
+	leaseHeld bool
 }
 
 func newFakeAudienceRepo() *fakeAudienceRepo {
@@ -51,6 +56,11 @@ func (r *fakeAudienceRepo) CreateAudience(_ context.Context, a *model.CampaignAu
 func (r *fakeAudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *model.CampaignAudience, expectedVersion int64) (*model.CampaignAudience, error) {
 	if r.staleAt != 0 && r.staleAt == expectedVersion {
 		return nil, domain.ErrStaleApproval
+	}
+	// Checked after staleAt because the real repo checks the approval FIRST — the lease is
+	// only consulted once the insert is attempted.
+	if r.leaseHeld {
+		return nil, domain.ErrAudienceBuildInFlight
 	}
 	return r.CreateAudience(ctx, a)
 }

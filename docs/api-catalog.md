@@ -71,7 +71,21 @@ Because these paths nest under `/briefs/{briefId}/`, they inherit the gateway wi
 | GET | `/projects/{projectId}/briefs/{briefId}/audiences/{audienceId}` | `campaign_manager` | JSON | Get one audience; returns ETag. |
 | GET | `/projects/{projectId}/briefs/{briefId}/audiences` | `campaign_manager` | JSON | List a brief's audiences (newest first). |
 | PATCH | `/projects/{projectId}/briefs/{briefId}/audiences/{audienceId}` | `campaign_manager` | JSON | Partially update an audience (load-then-merge; requires `If-Match`). |
-| POST | `/projects/{projectId}/briefs/{briefId}/audiences/build` | `campaign_manager` | JSON | Build the brief's HubSpot audience: derive the regional-expansion inclusion lists, create them, and record the master list (`202`). `400` when the brief is not approved or its details lack an event name/country; `500` when the brief's HubSpot connection is missing; `503` when the audience-build dependencies (brief repository, HubSpot/Snowflake builder) are unconfigured. Snowflake enrichment is optional; builds proceed country-only if unavailable. Until an audience is `built`, the email channel cannot dispatch. |
+| POST | `/projects/{projectId}/briefs/{briefId}/audiences/build` | `campaign_manager` | JSON | Build the brief's HubSpot audience: derive the regional-expansion inclusion lists, create them, and record the master list (`202`). `400` when the brief is not approved or its details lack an event name/country; `500` when the brief's HubSpot connection is missing; `503` when the audience-build dependencies (brief repository, HubSpot/Snowflake builder) are unconfigured; `409` in two distinct forms, below. Snowflake enrichment is optional; builds proceed country-only if unavailable. Until an audience is `built`, the email channel cannot dispatch. |
+
+**The two 409s on build-audience carry OPPOSITE remedies, so the message is the part that
+matters — a client that keys on the status code alone will do the wrong thing for one of them.**
+
+| Message contains | Cause | Remedy |
+|---|---|---|
+| "the brief changed while its audience was being built; refresh and rebuild" | The brief was re-edited or re-approved between the build's approval check and the insert. | Re-read the brief and rebuild. |
+| "an audience build for this brief is already in progress" | Another build for this `(brief, platform)` holds the build lease — migration `000018`'s partial unique index over `status = 'building'`. | **Wait**, then re-read the audience list. Do NOT rebuild: the in-flight build is creating real HubSpot lists, and a second one creates a complete duplicate set that nothing downstream can tell apart. |
+
+A build that dies mid-flight leaves its row at `building` and keeps holding the lease. That is
+intentional — its lists exist upstream, so building again is exactly the duplication being
+prevented. There is no automatic takeover. An operator reconciles the portal, then frees the slot
+with `PATCH .../audiences/{audienceId}` setting `status` to `failed`; the next build proceeds as a
+new row.
 
 ### Monitoring (Insights Phase)
 

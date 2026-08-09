@@ -78,6 +78,15 @@ func (r *AudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *mo
 		a.SuppressionListIDs, nullStr(a.InclusionSummary), string(a.StatusOrDefault()),
 		a.CreatedBy))
 	if serr != nil {
+		if isUniqueViolation(serr) {
+			// The id is generated server-side, so the primary key cannot be the constraint
+			// that fired; the build lease (000018) is the only other unique index on this
+			// table. A 23505 here therefore means another build for this (brief, platform)
+			// is already in flight and holds the lease. Reported as its own sentinel rather
+			// than ErrConflict: the caller has not created a duplicate of anything, it has
+			// arrived second.
+			return nil, domain.ErrAudienceBuildInFlight
+		}
 		return nil, fmt.Errorf("create audience for approved brief: insert: %w", serr)
 	}
 	if cerr := tx.Commit(ctx); cerr != nil {
@@ -111,6 +120,12 @@ func (r *AudienceRepo) CreateAudience(ctx context.Context, a *model.CampaignAudi
 		// No active parent brief for (project, brief) → the parent is missing,
 		// archived, or belongs to another project.
 		return nil, domain.ErrNotFound
+	}
+	if isUniqueViolation(err) {
+		// The plain create defaults status to 'building' too, so it takes the same lease
+		// (000018) and can lose it to an in-flight BuildAudience. Same sentinel: this
+		// caller is second, not duplicating.
+		return nil, domain.ErrAudienceBuildInFlight
 	}
 	if err != nil {
 		return nil, fmt.Errorf("create audience: %w", err)
@@ -206,6 +221,13 @@ func (r *AudienceRepo) UpdateAudience(ctx context.Context, a *model.CampaignAudi
 	))
 	if err == nil {
 		return updated, nil
+	}
+	if isUniqueViolation(err) {
+		// A PATCH that moves a 'failed' or 'built' row BACK to 'building' takes the lease
+		// (000018) and can find it held. Worth the branch even though it is the rarest way
+		// in: this is the retry path an operator reaches for after reconciling a stuck
+		// build, and the unmapped form would surface as a bare 500.
+		return nil, domain.ErrAudienceBuildInFlight
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("update audience: %w", err)

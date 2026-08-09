@@ -73,6 +73,27 @@ orphaning a real master list while the row still reads `building` — a build th
 the platform and looks failed in the database. Same reasoning as the orchestrator's post-create
 persist, bounded so it cannot hang shutdown.
 
+## One build at a time per (brief, platform)
+
+Every list this package creates is a REAL, billable object in the HubSpot portal, and the
+build makes them before it could possibly learn a sibling build is doing the same. They cannot
+even collide by name: the plan's `BuildRef` is the audience row's own id, chosen so a later
+build never adopts an earlier one's lists — which means two concurrent builds leave two
+complete, indistinguishable sets and nothing downstream notices.
+
+The lease closing that window is migration `000018`, a partial unique index over
+`(brief_id, platform) WHERE status = 'building'`. The loser's insert is rejected by the
+database and surfaces as `domain.ErrAudienceBuildInFlight`, a 409 in its own right rather than
+the generic `ErrConflict`. The distinction is the instruction: "the resource already exists"
+tells a caller to stop asking for something that exists, when nothing it asked for exists yet.
+It must equally not be confused with the stale-approval 409, whose remedy is the opposite —
+that one says refresh and rebuild, and rebuilding is precisely what duplicates the in-flight
+build's lists.
+
+A build that dies holding the lease keeps blocking rebuilds. That is intended: its lists exist
+upstream, so the old answer of building again is what duplicated them. An operator reconciles
+the portal and then `PATCH update-audience`es the row to `failed`, which frees the slot.
+
 ## The event NAME decides the edition year
 
 `eventFamily` takes the year from the event name when it has one, and only falls back to the

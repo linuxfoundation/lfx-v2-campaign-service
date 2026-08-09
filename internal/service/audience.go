@@ -340,6 +340,12 @@ func mapAudienceErr(err error) error {
 		// insert. A 409 tells the caller to refresh and retry rather than implying the brief
 		// or audience is missing.
 		return &audiences.ConflictError{Code: "409", Message: "the brief changed while its audience was being built; refresh and rebuild"}
+	case errors.Is(err, domain.ErrAudienceBuildInFlight):
+		// Named separately from ErrConflict below because "the resource already exists" is
+		// the wrong instruction: nothing the caller asked for exists yet. The remedy is to
+		// wait for the build that holds the lease — or, if it died, to reconcile the
+		// HubSpot lists it left and PATCH its row to failed, which frees the slot.
+		return &audiences.ConflictError{Code: "409", Message: "an audience build for this brief is already in progress; wait for it to finish, or fail its audience row if it is stuck"}
 	case errors.Is(err, domain.ErrConflict):
 		return &audiences.ConflictError{Code: "409", Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):

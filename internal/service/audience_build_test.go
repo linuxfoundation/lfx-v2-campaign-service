@@ -652,3 +652,38 @@ func TestBuildAudience_StaleApprovalIsRejected(t *testing.T) {
 	assert.Empty(t, b.names(), "no HubSpot list may be created from a stale approved snapshot")
 	assert.Empty(t, arepo.rows(), "and no audience row may be recorded")
 }
+
+// TestBuildAudience_ConcurrentBuildIsRefusedWithItsOwnMessage is the service half of the build
+// lease (migration 000018). The index does the arbitration, but what the loser is TOLD is a
+// service decision, and getting it wrong is expensive here: the generic ErrConflict message,
+// "the resource already exists", instructs the caller to stop asking for something that exists —
+// when in fact nothing they asked for exists yet, and the right move is to wait.
+//
+// It also must not be confused with the stale-approval 409 above. Both are conflicts on the same
+// call, and their remedies are opposites: a moved brief says REFRESH AND REBUILD, while a held
+// lease says do NOT rebuild, because a rebuild is precisely what would duplicate the in-flight
+// build's HubSpot lists.
+func TestBuildAudience_ConcurrentBuildIsRefusedWithItsOwnMessage(t *testing.T) {
+	b := &fakeBuilder{editions: []string{"KubeCon Korea 2025"}}
+	s, arepo, _ := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+	arepo.leaseHeld = true
+
+	_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	require.Error(t, err)
+
+	var conflict *audiences.ConflictError
+	require.ErrorAs(t, err, &conflict, "a build that lost the lease is a 409")
+
+	assert.Contains(t, conflict.Message, "already in progress",
+		"the caller must be told a build is running, not that its own request duplicates something")
+	assert.NotContains(t, conflict.Message, "the resource already exists",
+		"the generic conflict message tells the caller to stop asking for something that exists; "+
+			"nothing they asked for exists yet")
+	assert.NotContains(t, conflict.Message, "refresh and rebuild",
+		"that is the STALE-APPROVAL remedy, and it is the exact opposite of what to do here — "+
+			"rebuilding is what duplicates the in-flight build's HubSpot lists")
+
+	assert.Empty(t, arepo.rows(), "the loser must not record a row; the index rejected its insert")
+}

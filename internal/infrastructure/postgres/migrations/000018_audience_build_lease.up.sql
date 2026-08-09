@@ -1,0 +1,62 @@
+-- Copyright The Linux Foundation and each contributor to LFX.
+-- SPDX-License-Identifier: MIT
+
+-- One audience build in flight per (brief, platform). LFXV2-3059.
+--
+-- The race. BuildAudience creates the audience row as 'building' BEFORE any HubSpot
+-- call, deliberately, so a crash mid-build leaves a visible row rather than invisible
+-- orphan lists. But nothing stopped two concurrent builds for the same brief from each
+-- inserting their own 'building' row and each going on to create a REAL master list plus
+-- every inclusion list in the portal. The two builds cannot even collide by name and be
+-- caught that way: the plan's BuildRef is the row ID, chosen precisely so a rebuild does
+-- not adopt an earlier build's lists, so concurrent builds produce two disjoint, complete,
+-- indistinguishable sets. The email dispatcher then picks whichever row it happens to
+-- read, and the other set is billable portal clutter nobody knows to delete. Double-click
+-- on a Build button is enough.
+--
+-- Why 'building' and NOT 'status <> failed' (the campaigns shape). campaigns took the
+-- latter because a brief has exactly one live campaign per platform. An audience is
+-- different: 000005 records that a brief may have MANY audiences over time, and the code
+-- agrees — BuildRef exists only because a later build for the same brief is expected. A
+-- constraint covering 'built' rows would make the first successful build permanent and
+-- every rebuild a 409. Scoping it to 'building' constrains only what must be constrained:
+-- CONCURRENCY. Sequential rebuilds are untouched.
+--
+-- The stuck-lease escape hatch is deliberate and manual. A build that dies after creating
+-- lists leaves a 'building' row that now blocks rebuilds for that (brief, platform) —
+-- and that is the correct outcome, not a regression: those lists EXIST upstream, and the
+-- old behaviour's "just build again" duplicated them. PATCH update-audience already sets
+-- status, so an operator who has reconciled the portal moves the row to 'failed' and the
+-- slot frees. What is deliberately NOT here is an automatic stale-lease takeover: the row
+-- may own real HubSpot lists, and taking it over on a timer would re-create exactly the
+-- duplicate-creation this migration closes, just later and less visibly.
+--
+-- Deploy shape, and why the code changes can ship in the same commit. The chart pins
+-- strategy: type: Recreate at replicaCount 1 (charts/.../deployment.yaml), so the old pod
+-- is gone before the new one starts and runs this migration. Nothing is serving requests
+-- against a table this constraint newly covers while the old binary — which does not map
+-- 23505 on campaign_audiences to anything — is still alive. That is what makes it safe to
+-- land this index together with the isUniqueViolation mappings in audience_repo.go rather
+-- than one release ahead of them. If the chart ever moves to RollingUpdate, or
+-- replicaCount rises above 1 with overlap, those mappings must ship in an EARLIER release
+-- than this migration; otherwise the surviving old pods answer a lost lease with a bare
+-- 500 for the length of the rollout.
+--
+-- CONCURRENTLY, for the same reason as 000013 — a plain CREATE INDEX takes a lock that
+-- blocks writes to campaign_audiences for the whole build, and /readyz gates traffic on
+-- migrations finishing, so a slow blocking build is startup latency the pod cannot serve
+-- through. This is safe with our runner: the pgx/v5 golang-migrate driver executes each
+-- migration with a bare ExecContext and does NOT wrap it in a transaction, which
+-- CONCURRENTLY forbids. Do NOT add a second statement to this file: a multi-statement
+-- migration is batched and reintroduces the implicit transaction.
+--
+-- A pre-existing duplicate makes this build FAIL rather than silently skip. That is
+-- intended: two live 'building' rows for one (brief, platform) means duplicate portal
+-- lists already exist and need a human, and a deploy that fails loudly is how they find
+-- out. IF NOT EXISTS covers the ordinary re-run, not a failed build — a failed
+-- CONCURRENTLY build leaves the index INVALID under this name, so a bare re-run would
+-- skip it while reporting success. TestAudienceBuildLeaseIndexIsValid asserts
+-- indisvalid, which is what turns that silent skip into a test failure.
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_campaign_audiences_brief_platform_building
+    ON campaign_audiences (brief_id, platform)
+    WHERE status = 'building';
