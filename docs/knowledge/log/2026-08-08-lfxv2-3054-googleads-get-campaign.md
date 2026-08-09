@@ -38,11 +38,28 @@ the id check below the skip, a `REMOVED` row for a DIFFERENT campaign left throu
 that honoured NEITHER predicate (the query names one id *and* excludes `REMOVED`) reported as
 the trustworthy absence a caller acts on by creating a second campaign against the same budget.
 The by-name path never had the hole because it checks its name filter on the raw row before
-calling the helper; that is now what the by-id path does too, reading `campaign.id` first and
-the resource name only as its fallback, matching the helper's own precedence so a row carrying
-id `555` beside resource name `.../777` is still reported as identity fields that disagree
-rather than as an unhonoured filter. Position, not presence, was the whole defect — a guard
-placed under a `continue` is not a guard.
+calling the helper. Rather than bolt a second raw-field check onto the by-id path, the fix went
+into the helper: identity is now established BEFORE status, so `campaignRowIdentity` returns an
+id for a tombstone too and the caller can check the filter on EVERY row instead of only the
+live ones. Position, not presence, was the whole defect — a guard placed under a `continue` is
+not a guard.
+
+Reordering also settled a second finding from the same review. The claim the tombstone skip
+rests on — "a tombstone is unadoptable however it arrived, so dropping it can only ever be
+correct" — is true only once we know WHICH campaign the tombstone is for. Deciding status first
+granted that premise without earning it: a `REMOVED` row with a cross-customer resource name,
+with identity fields that disagree, or with no usable id at all returned a clean not-live
+verdict, and the by-id caller reported a campaign it had never identified as absent. A row must
+now say who it is before its status is allowed to mean anything.
+
+The third finding is the mirror image: `GetCampaign` skipped tombstones before the
+duplicate-details check, so a response carrying campaign 555 once as `ENABLED` and once as
+`REMOVED` returned the live ref. One campaign cannot be both, so such a response has
+contradicted itself and none of it is trustworthy — least of all the live row, the one a caller
+would bind real spend to. It is checked after the loop, not on sight, because the rows arrive
+in no guaranteed order and a leading live row must not buy trust for what follows it. Tombstones
+ALONE stay an absence: that is the campaign asked about, reported unadoptable, which is what a
+caller needs to hear.
 
 ## A campaign nobody can name cannot be confirmed
 

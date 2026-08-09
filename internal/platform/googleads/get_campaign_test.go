@@ -395,3 +395,94 @@ func TestGetCampaign_NamelessRowIsNotConfirmable(t *testing.T) {
 		})
 	}
 }
+
+// TestGetCampaign_MalformedTombstoneIsNotAnAbsence: identity is established before status,
+// so a tombstone must still say who it is. Judging status first would grant the premise the
+// tombstone skip rests on — "this is unadoptable however it arrived" is only true once we
+// know WHICH campaign it is — and hand back a clean absence on evidence these checks exist
+// to reject.
+func TestGetCampaign_MalformedTombstoneIsNotAnAbsence(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		row  json.RawMessage
+		want string
+	}{
+		{
+			"cross-customer tombstone",
+			rawLookupRow("customers/9999999999/campaigns/555", "555", "gone", StatusRemoved),
+			"another customer",
+		},
+		{
+			"malformed resource name on a tombstone",
+			rawLookupRow("garbage/555", "555", "gone", StatusRemoved),
+			"malformed",
+		},
+		{
+			"tombstone whose identity fields disagree",
+			rawLookupRow("customers/1234567890/campaigns/777", "555", "gone", StatusRemoved),
+			"disagree",
+		},
+		{
+			"tombstone with no usable identity at all",
+			rawLookupRow("", "", "gone", StatusRemoved),
+			"no usable id",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _ := newLookupServer(t, []json.RawMessage{tc.row})
+			client := newAccountsTestClient(t, srv)
+
+			ref, err := client.GetCampaign(context.Background(), "555")
+			if err == nil {
+				t.Fatalf("GetCampaign = %+v, want an error: a tombstone this client cannot identify is not evidence that campaign 555 is absent", ref)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestGetCampaign_LiveAndRemovedInOneResponseIsUntrustworthy: one campaign cannot be both,
+// so a response asserting both has contradicted itself — and the row a caller would act on
+// is the live one, which is exactly the one that must not be trusted here. Both orders are
+// covered because the rows arrive in no guaranteed order and a leading live row must not buy
+// trust for what follows it.
+func TestGetCampaign_LiveAndRemovedInOneResponseIsUntrustworthy(t *testing.T) {
+	live := lookupRow("555", "the campaign", StatusEnabled)
+	gone := lookupRow("555", "the campaign", StatusRemoved)
+
+	for _, tc := range []struct {
+		name string
+		rows []json.RawMessage
+	}{
+		{"removed first", []json.RawMessage{gone, live}},
+		{"live first", []json.RawMessage{live, gone}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _ := newLookupServer(t, tc.rows)
+			client := newAccountsTestClient(t, srv)
+
+			ref, err := client.GetCampaign(context.Background(), "555")
+			if err == nil {
+				t.Fatalf("GetCampaign = %+v, want an error: campaign 555 cannot be live and removed at once", ref)
+			}
+			if !strings.Contains(err.Error(), "both live and") {
+				t.Errorf("error = %v, want it to name the contradiction", err)
+			}
+		})
+	}
+
+	// The contrast that keeps the rule narrow: tombstones ALONE remain a clean absence.
+	// That is the campaign asked about, reported unadoptable, which is what a caller needs.
+	t.Run("tombstones alone are still an absence", func(t *testing.T) {
+		srv, _ := newLookupServer(t, []json.RawMessage{gone, gone})
+		ref, err := newAccountsTestClient(t, srv).GetCampaign(context.Background(), "555")
+		if err != nil {
+			t.Fatalf("a removed campaign is an absence, not an error: %v", err)
+		}
+		if ref != nil {
+			t.Fatalf("ref = %+v, want nil", *ref)
+		}
+	})
+}
