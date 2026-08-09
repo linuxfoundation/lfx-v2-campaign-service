@@ -870,11 +870,17 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				campaign.BriefID = brief.ID
 				campaign.ProjectID = brief.ProjectID
 				campaign.Platform = p
-				// Both, not just UpdatedBy: this upsert takes the INSERT arm whenever the
-				// claim row is gone (a retry after DeleteDispatchClaim), and that arm is
-				// the only place created_by can be set. On the conflict arm the column is
-				// left alone by the query, so passing it costs nothing and passing it not
-				// at all would lose the attribution on exactly the retry path.
+				// Both, not just UpdatedBy. An ordinary retry does NOT reach the INSERT
+				// arm: every dispatch calls ClaimCampaignDispatch first, which recreates
+				// the pending row before this runs (and errors out rather than continuing
+				// if its read-after-claim fails), so the row is there and the conflict arm
+				// takes it. CreatedBy is set for the case that is not ordinary — a row
+				// soft-deleted or a claim concurrently removed between the claim and here,
+				// which puts the upsert outside the partial unique index and back on the
+				// INSERT arm, the only arm that can set created_by. On the conflict arm the
+				// query leaves the column alone, so passing it costs nothing; omitting it
+				// would leave a campaign with no recorded author on the one path that
+				// creates a row without a claim.
 				campaign.CreatedBy = by
 				campaign.UpdatedBy = by
 				// Decide the persisted status. Preserve a dispatcher-set status that

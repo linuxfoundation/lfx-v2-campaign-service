@@ -65,9 +65,9 @@ func TestCampaignActor_DispatchAttributesToTheRequestingActor(t *testing.T) {
 		t.Errorf("upserted UpdatedBy = %+v, want %+v", up.UpdatedBy, testActor)
 	}
 	if up.CreatedBy == nil || up.CreatedBy.Email != testActor.Email {
-		t.Errorf("upserted CreatedBy = %+v, want %+v — the INSERT arm is reachable on a retry "+
-			"whose claim row was rolled back, and it is the only arm that can set the column",
-			up.CreatedBy, testActor)
+		t.Errorf("upserted CreatedBy = %+v, want %+v — the INSERT arm is reachable when the "+
+			"row is not there to conflict with (soft-deleted, or a claim removed concurrently), "+
+			"and it is the only arm that can set the column", up.CreatedBy, testActor)
 	}
 }
 

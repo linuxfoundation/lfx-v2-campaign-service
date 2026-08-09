@@ -91,10 +91,12 @@ const claimCampaignDispatchQuery = `INSERT INTO campaigns
 // already has a campaign. No RETURNING is used because ON CONFLICT DO NOTHING returns no row
 // on conflict, so we detect the winner via RowsAffected and then read the current row.
 // The actor is stamped HERE, on the claim, because this is the row's FIRST insert — the
-// upsert that follows normally takes the conflict arm, which deliberately leaves created_by
-// alone. (The upsert's INSERT arm stamps it too, for the retry whose claim row was already
-// released; see orchestrator.dispatchPlatform. Both arms setting it is what keeps the column
-// populated on every path that can create the row.)
+// upsert that follows takes the conflict arm, which deliberately leaves created_by alone.
+// (The upsert's INSERT arm stamps it too, but not for an ordinary retry: a retry claims
+// again first, so the row is back and the conflict arm takes it. The INSERT arm is reached
+// only when the row is not there to conflict with — soft-deleted, and so outside the partial
+// unique index, or a claim removed concurrently. See orchestrator.dispatchPlatform. Both arms
+// setting it is what keeps the column populated on every path that can create the row.)
 //
 // Both actor columns are set from the same value, matching createBriefQuery: at creation the
 // author IS the last mover, and leaving updated_by NULL on a freshly claimed row would make

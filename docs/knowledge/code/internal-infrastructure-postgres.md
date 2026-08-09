@@ -234,9 +234,11 @@ Three consequences follow, and they are what the SQL encodes:
 - **The claim INSERT is the row's first INSERT.** `claimCampaignDispatchQuery` is where
   `created_by` is stamped. Every later write for that (brief, platform) pair — a retry, a
   re-dispatch after a brief edit, a reconcile — normally takes `upsertCampaignQuery`'s
-  conflict arm. (The upsert's INSERT arm stamps `created_by` too, for the retry whose claim
-  row was already released; both arms setting it is what keeps the column populated on every
-  path that can create the row.)
+  conflict arm — and normally does, since every dispatch claims before it upserts. (The
+  upsert's INSERT arm stamps `created_by` too, for the case where there is no row to conflict
+  with: a soft-deleted row falls outside the partial unique index, and a claim can be removed
+  concurrently. Both arms setting it is what keeps the column populated on every path that can
+  create the row.)
 - **The claim stamps BOTH actor columns from one placeholder** (`$5, $5`), matching
   `createBriefQuery`. At creation the author IS the last mover, and leaving `updated_by` NULL
   would make "untouched since it was made" indistinguishable from "we never recorded who" —
