@@ -311,8 +311,8 @@ func redactNATSURL(u string) string {
 	return "***@" + u[at+1:]
 }
 
-// redactAIProxyURL reduces AI_PROXY_URL to its scheme and host. Everything else —
-// userinfo, path, query, fragment — is dropped.
+// redactAIProxyURL reduces AI_PROXY_URL to its scheme, with the host masked. Everything
+// else — userinfo, host, path, query, fragment — is dropped or replaced.
 //
 // The value LOOKS secret-free — it is a service endpoint, and the key that authenticates
 // to it lives in its own field — but "looks secret-free" is not a property of the field,
@@ -322,25 +322,27 @@ func redactNATSURL(u string) string {
 // document). Both survive `%q` intact, and String() is the form every config log line
 // uses, so printing raw makes the pod log the disclosure channel.
 //
-// This does NOT mask wholesale the way redactDatabaseURL does, for the same reason
-// redactNATSURL does not: the one question this string exists to answer is "is copy
-// generation pointed at a proxy, and which one", and "[redacted]" answers neither.
-// Scheme and host answer both.
+// Four rounds of review narrowed this to one rule, and each round narrowed it the same
+// way: url.Parse decides where the DELIMITERS fall, never what a component CONTAINS. A
+// pasted credential lands in the scheme ("sk-secret://host" parses cleanly), in the path
+// ("https://proxy/sk-secret/v1"), and — the case that closed the last gap — in the HOST,
+// because `AI_PROXY_URL=https://sup3r-s3cret/` is a well-formed absolute URL whose entire
+// informative content is the token. Each round the surviving component was defended as
+// "structurally safe"; each time that meant "url.Parse put it in this field", which is
+// not the same claim. So the rule is: reproduce a component only when it is BOTH
+// structurally incapable of holding a secret AND load-bearing for the diagnosis.
 //
-// The PATH is dropped, and that is a correction rather than an original decision. An
-// earlier version kept it, on the reasoning that url.Parse had already split userinfo
-// and query into their own fields so what remained was structurally safe. That confuses
-// where the delimiters fall with what a component contains — the same error made twice
-// before, about the scheme and about the host. A path segment holds a pasted token as
-// readily as a query parameter does ("https://litellm.example.com/sk-secret/v1"), and
-// unlike scheme and host it answers nothing an operator asked: "which proxy" is the
-// host. The rule that survives all three rounds is that a component is reproduced only
-// when it is BOTH structurally incapable of holding a secret and load-bearing for the
-// diagnosis, and the path fails on both counts.
+// Exactly one component clears that bar. The scheme is reproduced only after it is
+// checked to be literally "http" or "https", so what is printed is one of two constants
+// this function chose — it cannot carry operator input at all. The host is masked to
+// `xxxxx`, the same marker redactSecret uses, which still answers the question this
+// string exists to answer: whether a proxy is configured, and whether it is being reached
+// over TLS. "Which proxy" is not worth a credential-shaped host in a pod log, and an
+// operator who needs it has the deployment manifest.
 //
 // Note this is redaction for DISPLAY only; llm.NewClient REJECTS a proxy URL carrying
 // userinfo, a query or a fragment, so a value reaching a live client has none of them —
-// but it accepts a path, and String() runs before it in any case.
+// but it accepts a path and any host, and String() runs before it in any case.
 func redactAIProxyURL(raw string) string {
 	if raw == "" {
 		return ""
@@ -353,17 +355,13 @@ func redactAIProxyURL(raw string) string {
 	if err != nil || u.Host == "" {
 		return "[redacted]"
 	}
-	// A non-http(s) scheme masks too, and the scheme is the reason: url.Parse decides
-	// where the delimiters fall, not what a component CONTAINS. "sk-secret://host" has
-	// a host and parses cleanly, and rendering it would print the credential-shaped
-	// scheme into the pod log — before llm.NewClient ever gets to reject it, which is
-	// what makes this reachable at all. A value with a scheme this function does not
-	// recognise is not one whose parts it can vouch for.
+	// A non-http(s) scheme masks wholesale rather than rendering as `scheme://xxxxx`,
+	// because the scheme is the only component this function still reproduces and an
+	// unrecognised one is exactly the case where it may be the secret.
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return "[redacted]"
 	}
-	safe := url.URL{Scheme: u.Scheme, Host: u.Host}
-	return safe.String()
+	return u.Scheme + "://xxxxx"
 }
 
 // splitCSV parses a comma-separated env var into its non-empty, space-trimmed entries.

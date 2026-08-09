@@ -142,9 +142,10 @@ provider directly.
 
 `Config.String()` prints `AIModel` verbatim, masks `AIAPIKey` through `redactSecret` (which
 renders `""` for unset and `xxxxx` for present), and reduces `AIProxyURL` through
-`redactAIProxyURL` to scheme and host — dropping userinfo, path, query and fragment, and
-masking the whole value when it fails to parse or carries a scheme that is neither `http` nor
-`https`. The URL is *not* verbatim, and that matters here rather than only in `llm.NewClient`:
+`redactAIProxyURL` to its scheme alone with the host rendered as `xxxxx` — dropping userinfo,
+path, query and fragment, masking the host because it can itself BE a pasted credential
+(`https://sup3r-s3cret/` is a well-formed absolute URL), and masking the whole value when it
+fails to parse or carries a scheme that is neither `http` nor `https`. The URL is *not* verbatim, and that matters here rather than only in `llm.NewClient`:
 `Config.String()` runs on the startup log path **before** the constructor gets to reject
 anything, so a pasted credential shaped like a URL reaches a pod log through this function or
 not at all. The graded treatment is deliberate: "copy generation did not run" is diagnosed by

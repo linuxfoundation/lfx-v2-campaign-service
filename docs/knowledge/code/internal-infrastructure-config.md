@@ -34,24 +34,29 @@ secret — empty selects `llm.DefaultModel`.
 HubSpot dispatch, which will fall back to the cloned template's own body when the group is
 unconfigured — lands in part 2. Setting them now is harmless and changes no behaviour.
 
-`String()` prints `AI_PROXY_URL` through `redactAIProxyURL`, which rebuilds it from scheme
-and host and drops everything else — userinfo, path, query, fragment. The field LOOKS
+`String()` prints `AI_PROXY_URL` through `redactAIProxyURL`, which keeps ONLY the scheme and
+renders the host as `xxxxx` — `https://xxxxx`. Everything else is dropped. The field LOOKS
 secret-free — the key has its own field — but that is a property of whatever an operator
 typed, not of the field: a URL has several places a credential rides for free, all of them
-survive `%q` intact, and `String()` is the form every config log line uses. It does not mask
-wholesale the way `redactDatabaseURL` does, on `redactNATSURL`'s reasoning: the only question
-the value answers is "is copy generation pointed at a proxy, and which one", `[redacted]`
-answers neither, and scheme and host answer both.
+survive `%q` intact, and `String()` is the form every config log line uses. It does not go
+all the way to `[redacted]` because the question the value answers — "is copy generation
+pointed at a proxy at all, and over TLS" — is still answered by `https://xxxxx`.
 
-**The path took three rounds to drop, and the reason is the interesting part.** Each earlier
+**It took four rounds to get here, and the reason is the interesting part.** Each earlier
 version reasoned that `url.Parse` had already split the dangerous components into their own
 fields, so whatever remained was structurally safe. That confuses where the DELIMITERS fall
 with what a component CONTAINS — the same mistake made about the scheme
-(`localhost:sk-secret` parses the secret as an opaque scheme), then about the host, and
-finally about the path (`https://litellm.example.com/sup3r-s3cret/v1` parses perfectly).
-The rule that survives all three is narrower than "not userinfo and not query": a component
+(`localhost:sk-secret` parses the secret as an opaque scheme), then about the path
+(`https://litellm.example.com/sup3r-s3cret/v1` parses perfectly), and finally about the
+HOST: `AI_PROXY_URL=https://sup3r-s3cret/` is a well-formed absolute https URL whose entire
+informative content is the token, and no parse-level property tells it apart from a real
+endpoint. The rule that survives all three is narrower than "not userinfo and not query": a component
 is reproduced only when it is BOTH structurally incapable of holding a secret AND load-bearing
-for the diagnosis. The path fails on both counts — "which proxy" is answered by the host.
+for the diagnosis. Exactly one component clears that bar: the scheme, and only because it is
+checked to equal literally `http` or `https` before it is printed, so what reaches the log is
+one of two constants this function chose rather than anything an operator supplied. "Which
+proxy" is not worth a credential-shaped host in a pod log; an operator who needs it has the
+deployment manifest.
 
 Two shapes mask anyway, because no component of them is known safe: an unparseable value, and
 an OPAQUE one (`mailto:u:p@host`) whose whole content sits in a field this does not render — a
