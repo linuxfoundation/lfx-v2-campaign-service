@@ -593,6 +593,46 @@ func TestNewContainer_AllPathsInjectTheTokenVerifier(t *testing.T) {
 	})
 }
 
+// stubTokenVerifier stands in for auth.Verifier. It is never called: these tests assert
+// only that a verifier REACHED the service, which is the wiring failure that would
+// otherwise refuse every request.
+type stubTokenVerifier struct{}
+
+func (stubTokenVerifier) VerifyActor(context.Context, string) (*model.Actor, error) {
+	return &model.Actor{Username: "stub"}, nil
+}
+
+// TestNewServices_LivePathInjectsTheTokenVerifier closes the one path the test above
+// cannot reach. NewContainer only runs wireLiveBackends with a REAL pool, so the
+// no-database and 503-mode subtests leave the live wiring — the path every deployment
+// actually takes — unasserted; a missed injection there would ship while both subtests
+// stayed green.
+//
+// Calling the three helpers directly proves the same guarantee without a database,
+// because wireLiveBackends constructs each service through exactly these helpers and
+// nothing else (container.go:680, :707, :708). That is what makes this equivalent rather
+// than merely adjacent: if a future edit inlines service.NewXService there instead, the
+// helper rule is broken and this test is no longer standing in for anything — which is
+// precisely what the godoc on each helper exists to prevent.
+func TestNewServices_LivePathInjectsTheTokenVerifier(t *testing.T) {
+	c := &Container{tokenVerifier: stubTokenVerifier{}, indexPublisher: indexer.Noop{}}
+	for name, s := range map[string]interface{ HasTokenVerifier() bool }{
+		"briefs":      c.newBriefService(nil, nil, nil, nil),
+		"connections": c.newConnectionService(nil, nil),
+		"audiences":   c.newAudienceService(nil, nil),
+	} {
+		assert.True(t, s.HasTokenVerifier(),
+			"%s: the live wiring path built it without a verifier; it would reject every request", name)
+	}
+
+	// The injection must PROPAGATE the container's field, not merely set something
+	// non-nil: a helper that built its own verifier would pass the check above and still
+	// leave a deployment verifying against the wrong JWKS.
+	c = &Container{indexPublisher: indexer.Noop{}}
+	assert.False(t, c.newBriefService(nil, nil, nil, nil).HasTokenVerifier(),
+		"a container with no verifier must not yield a service that claims one")
+}
+
 // TestNewBriefService_InjectsSharedPublisher covers the live fast path's constructor
 // directly. The fast path needs a real pool, so exercising NewContainer for it would
 // require a database; calling the helper proves the same guarantee — that the helper

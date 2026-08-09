@@ -47,6 +47,27 @@ rejects a zero expiry itself. And `jwks.NewCachingProvider` defaults to an `http
 with no timeout while the cold fetch holds the provider's write lock, so the key fetch is
 given a bounded client.
 
+**The bypass that survived the rewrite.** Verifying the token is worth nothing if the
+process can be told not to. `JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL` disables verification
+outright, and "local development only" was a comment, not a control: the chart declares the
+key under `app.environment` and `deployment.yaml` renders whatever it holds, so a `--set`
+or an edited values file could ship a running pod accepting ANY bearer token as that
+principal — on the endpoints that spend money. The empty default and the parity exemption
+keep the chart honest about *its own* value; neither can stop an override.
+
+`New` now refuses the mock principal when `KUBERNETES_SERVICE_HOST` is set. That variable
+is the discriminator for one reason: the kubelet injects it into every pod and the chart
+cannot unset it, so the same override that would enable the bypass cannot also conceal the
+cluster. A laptop, `go run`, a plain container and CI do not have it, so the workflow this
+switch exists for is untouched.
+
+The refusal is an **error, not a silent downgrade** to real verification. Starting anyway —
+verifying, serving, saying nothing — would leave the request path safe and the intent live
+in a values file, and the next deploy of a build without this guard would ship the hole with
+nothing having ever complained. Fail the pod and name the key to unset.
+`TestNew_MockPrincipalIsRefusedInCluster` pins both halves: refused inside a cluster,
+still honoured outside one.
+
 **Known follow-up.** Rejections surface as **400**, not 401 — the design declares no
 Unauthorized type and `commonBriefErrors` documents 400 as the JWTAuth rejection status;
 adding 401 is a design change with generated-code blast radius, filed separately.

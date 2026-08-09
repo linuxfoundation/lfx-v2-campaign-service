@@ -30,6 +30,10 @@ type Config struct {
 	// attributes every request to this principal. Local development only; see
 	// constants.EnvMockLocalPrincipal.
 	MockLocalPrincipal string
+	// InCluster reports whether this process is running as a Kubernetes pod. It exists
+	// so auth.New can REFUSE MockLocalPrincipal in a deployment rather than trust the
+	// chart's empty default; see the comment there.
+	InCluster bool
 
 	// NATSUrl is the NATS server URL. Used to publish Query Service index updates; empty
 	// disables indexing without affecting any other capability.
@@ -106,6 +110,10 @@ func LoadConfig() *Config {
 		// os.Getenv, not envOrDefault: there is no default for a verification
 		// bypass, and unset must stay unset.
 		MockLocalPrincipal: strings.TrimSpace(os.Getenv(constants.EnvMockLocalPrincipal)),
+		// Injected by the kubelet into every pod, and not settable from the chart — which
+		// is the point: the override that could enable the mock principal cannot also
+		// conceal that it is running in a cluster.
+		InCluster: os.Getenv(constants.EnvKubernetesServiceHost) != "",
 		// NOT envOrDefault: an explicitly-empty NATS_URL is the documented switch
 		// that disables index publishing, and envOrDefault cannot express it (it
 		// collapses unset and empty into the default).

@@ -53,3 +53,11 @@ outage, allowing everything is the hole this package closes.
 any token; the name is deliberately unpleasant, the container logs a `WARN` on every boot
 that sets it, and `VerifyActor` returns a **copy**, since a handler mutating the mock in
 place would otherwise rewrite the identity of every later request.
+
+That bypass is **refused, not warned about, inside Kubernetes.** The chart declares the key
+under `app.environment` and `deployment.yaml` renders any override, so an unpleasant name
+and a boot warning could not stop a deploy from switching authentication off; `Config.
+InCluster` — set from `KUBERNETES_SERVICE_HOST`, which the kubelet injects and the chart
+cannot unset — makes `New` return an error naming the key instead. Erroring rather than
+quietly verifying for real is the point: a values file asking for no authentication has to
+be fixed, not tolerated by whichever build happens to carry the guard.

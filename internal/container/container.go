@@ -272,6 +272,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 		Audience:           cfg.Audience,
 		Issuer:             cfg.Issuer,
 		MockLocalPrincipal: cfg.MockLocalPrincipal,
+		InCluster:          cfg.InCluster,
 	})
 	if verr != nil {
 		return nil, fmt.Errorf("JWT verification configuration: %w", verr)
@@ -444,13 +445,6 @@ func newAudienceBuilder(repo *postgres.ConnectionRepo, enc domain.Encryptor, cfg
 	return dispatch.NewAudienceBuilder(repo, enc, snow), client
 }
 
-// newAudienceService constructs an AudienceService with the audience-build dependencies
-// injected. EVERY construction in this file goes through it: the builder is opt-in via
-// SetBuilder, so a path that constructs the service directly still compiles and serves — the
-// build endpoint would just return 503 forever, silently.
-//
-// A nil audienceBuilder is normal, not a failure: it means HubSpot/Snowflake are unconfigured,
-// and BuildAudience then returns the contract's typed 503 while the CRUD routes stay usable.
 // newConnectionService constructs a ConnectionService with the shared token verifier
 // injected. Same one-helper rule as newBriefService, for the reason given on
 // Container.tokenVerifier: three call sites construct this service, and one that skipped
@@ -461,6 +455,13 @@ func (c *Container) newConnectionService(repo domain.ConnectionRepository, enc d
 	return s
 }
 
+// newAudienceService constructs an AudienceService with the audience-build dependencies
+// injected. EVERY construction in this file goes through it: the builder is opt-in via
+// SetBuilder, so a path that constructs the service directly still compiles and serves — the
+// build endpoint would just return 503 forever, silently.
+//
+// A nil audienceBuilder is normal, not a failure: it means HubSpot/Snowflake are unconfigured,
+// and BuildAudience then returns the contract's typed 503 while the CRUD routes stay usable.
 func (c *Container) newAudienceService(repo domain.AudienceRepository, briefs domain.BriefRepository) *service.AudienceService {
 	s := service.NewAudienceService(repo)
 	s.SetTokenVerifier(c.tokenVerifier)

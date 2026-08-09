@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 const (
@@ -234,5 +236,38 @@ func TestNew_ConfigHandling(t *testing.T) {
 		} else if !strings.Contains(err.Error(), "JWKS URL") {
 			t.Errorf("error for %q does not name the JWKS URL: %v", bad, err)
 		}
+	}
+}
+
+// TestNew_MockPrincipalIsRefusedInCluster pins the guard that turns "local development
+// only" from a comment into a control. The chart declares
+// JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL under app.environment and deployment.yaml renders
+// whatever it holds, so a `--set` on a real deploy would otherwise produce a pod that
+// accepts any bearer token as this principal on the endpoints that spend money.
+//
+// The refusal must be an ERROR. Quietly ignoring the value and verifying for real would
+// leave the request path safe and the values file still asking for no authentication —
+// the next deploy of a build without this guard would ship the hole with nothing having
+// ever complained.
+func TestNew_MockPrincipalIsRefusedInCluster(t *testing.T) {
+	v, err := New(Config{MockLocalPrincipal: "local-dev", InCluster: true})
+	if err == nil {
+		t.Fatal("New returned a verifier for a mock principal inside a cluster; a deployed " +
+			"pod would accept any token as \"local-dev\"")
+	}
+	if v != nil {
+		t.Errorf("New returned %v alongside the error; a caller ignoring err would still bypass", v)
+	}
+	// The operator has to find the values entry, so the message must name the key.
+	if !strings.Contains(err.Error(), constants.EnvMockLocalPrincipal) {
+		t.Errorf("error %q does not name %s, which is what an operator has to unset",
+			err, constants.EnvMockLocalPrincipal)
+	}
+
+	// The guard is scoped to the cluster: the laptop workflow this switch exists for is
+	// unchanged. Were InCluster ever inverted, this half fails rather than the guard
+	// silently disabling local development.
+	if _, oerr := New(Config{MockLocalPrincipal: "local-dev"}); oerr != nil {
+		t.Fatalf("New outside a cluster: %v — the local-development bypass must still work", oerr)
 	}
 }

@@ -187,8 +187,13 @@ app:
     JWT_AUDIENCE:
       value: lfx-v2-campaign-service
 
-    # JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL is used for local development to bypass JWT validation
-    # Optional, local dev only. Set to a principal name to enable mock authentication
+    # JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL disables JWT validation entirely and treats every
+    # request as the named principal. Local development only, and now ENFORCED as such: a pod
+    # that starts with this set REFUSES TO BOOT and logs which key to unset. The service
+    # detects the cluster via KUBERNETES_SERVICE_HOST, which the kubelet injects and this
+    # chart cannot unset — so setting a value here does not open a hole, it breaks the deploy.
+    # Leave it empty. It stays declared only so the key is discoverable; the empty default is
+    # pinned by the parity test's exempt list.
     JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL:
       value: ''
 

@@ -58,6 +58,9 @@ type Config struct {
 	// MockLocalPrincipal, when non-empty, DISABLES verification and treats every request
 	// as this principal. Local development only.
 	MockLocalPrincipal string
+	// InCluster reports that this process is running as a Kubernetes pod, in which case
+	// MockLocalPrincipal is refused rather than honoured. See New.
+	InCluster bool
 }
 
 // heimdallClaims are Heimdall's custom claims. Principal is the LFID username (the
@@ -89,6 +92,27 @@ type Verifier struct {
 // is a confusing outage, allowing everything is the hole this package closes.
 func New(cfg Config) (*Verifier, error) {
 	if p := strings.TrimSpace(cfg.MockLocalPrincipal); p != "" {
+		// "Local development only" was a convention, not a control. The chart declares
+		// JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL under app.environment and deployment.yaml
+		// renders whatever it holds, so `--set` (or an edited values file) could ship a
+		// running pod that accepts ANY bearer token as this principal — with no signature
+		// check, on the endpoints that spend money. The empty default and the parity test
+		// keep the chart honest about its own value; neither can stop an override.
+		//
+		// KUBERNETES_SERVICE_HOST is the discriminator because the kubelet injects it into
+		// every pod and the chart cannot unset it: the same override that would enable the
+		// bypass cannot also hide the cluster. A laptop, `go run`, a plain container and
+		// CI do not have it, so the developer workflow this exists for is untouched.
+		//
+		// The refusal is an error, not a silent downgrade to real verification: a deploy
+		// that asked for no authentication has a broken intent, and starting anyway —
+		// verifying, and serving as if nothing were wrong — leaves that intent live in a
+		// values file for the next person. Fail the pod and say why.
+		if cfg.InCluster {
+			return nil, fmt.Errorf("%s is set to %q, but this process is running in Kubernetes: "+
+				"it disables JWT verification entirely and is for local development only. Unset it "+
+				"in the chart values for this deployment", constants.EnvMockLocalPrincipal, p)
+		}
 		return &Verifier{mock: &model.Actor{Username: p, Name: p}}, nil
 	}
 

@@ -538,6 +538,13 @@ func TestEveryConfiguredEnvVarIsWiredInTheChart(t *testing.T) {
 		// one edit away.
 		"JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL": "local dev only; deliberately not deployable",
 
+		// Injecting this would DEFEAT it. It is the discriminator that lets auth.New refuse
+		// the mock principal in a deployment, and it works only because the kubelet sets it
+		// and the chart cannot: the same override that would enable the bypass must not also
+		// be able to conceal the cluster. A chart entry — even one rendering the right value —
+		// would put "unset it" back within reach of whoever set the bypass.
+		"KUBERNETES_SERVICE_HOST": "kubelet-injected; chart-settable would defeat the auth-bypass guard",
+
 		// Have working in-code defaults, and the chart's own values (service.port, the
 		// container's listen address) are the source of truth. Injecting them would create two
 		// places to change one setting.

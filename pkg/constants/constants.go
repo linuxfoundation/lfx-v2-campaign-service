@@ -17,6 +17,11 @@ const (
 	// the chart parity test pins it as deliberately not deployable, so setting it is a
 	// choice someone has to make on a laptop, never something a deploy can do by default.
 	EnvMockLocalPrincipal = "JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL"
+	// EnvKubernetesServiceHost is set by the kubelet in every pod. It is read ONLY to
+	// refuse EnvMockLocalPrincipal in a deployment: the chart declares that key under
+	// app.environment, so an override could otherwise ship a pod with authentication
+	// switched off. Nothing in the chart can set or clear this one.
+	EnvKubernetesServiceHost = "KUBERNETES_SERVICE_HOST"
 	// EnvNATSURL is the NATS server URL used to publish Query Service index updates.
 	// Empty DISABLES indexing: every endpoint still serves and campaigns still dispatch;
 	// only the search index stops being fed (the Query Service rebuilds a resource's
