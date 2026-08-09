@@ -149,6 +149,33 @@ not at all. The graded treatment is deliberate: "copy generation did not run" is
 knowing whether a proxy and a key are configured at all, and omitting the fields entirely would
 be log-safe while answering nothing.
 
+## Three places where a defence has to be exact rather than approximately right
+
+**The bounded read goes one byte PAST the cap.** `io.LimitReader` signals the limit with EOF,
+not an error, so `ReadAll(LimitReader(body, cap))` hands back a truncated prefix that is
+indistinguishable from a complete body — and the prefix can still parse. A completion object
+followed by padding, cut before whatever came after it, unmarshals cleanly and is accepted as
+the whole answer. Reading `cap+1` and rejecting when the result exceeds `cap` restores the
+distinction between "exactly at the cap" (complete, accepted) and "larger, truncated here"
+(rejected). This mirrors the LinkedIn/Meta/Reddit/Twitter clients.
+
+**An overflowing `Retry-After` is over the cap, not absent.** `retryAfter` returns zero for a
+header it cannot read, and zero means "back off on our own schedule" — the right answer for
+junk, the wrong one for an all-digit delta-seconds value too large for a `time.Duration`. That
+value says the proxy's reset is far beyond anything worth waiting for; reported as zero it
+sends the caller into ordinary exponential backoff and a retry the proxy has already refused.
+Digits are therefore parsed as an integer and compared **in seconds** before any conversion (the
+multiply by `time.Second` is itself what wraps), and an overflow is classified above
+`maxRetryWait` so `wait > maxRetryWait` aborts. Same shape as the Microsoft sibling. Digits-only
+is also the delta-seconds grammar; the previous `ParseDuration(v + "s")` additionally accepted
+shapes like `1h2m0` that the header never carries.
+
+**`Temperature` is copied at construction.** It is `Config`'s only pointer field — every other
+is a value — so storing `cfg` wholesale left one field aliasing memory the caller still owns.
+`Client` documents itself safe for concurrent use, and that claim requires the stored config to
+be immutable: a caller reusing its `Config` would otherwise change what later completions send,
+and doing so alongside an in-flight `Complete` is a plain data race.
+
 It is **non-streaming, deliberately**: the lfx-one implementation this ports from streams
 because its caller is an SSE endpoint rendering tokens into a browser, and this service has no
 such caller — generation happens inside a dispatch, one synchronous request with a bounded

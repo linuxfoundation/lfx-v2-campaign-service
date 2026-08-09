@@ -24,6 +24,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -179,6 +180,16 @@ func NewClient(cfg Config, opts ...Option) (*Client, error) {
 	cfg.ProxyURL = strings.TrimSpace(cfg.ProxyURL)
 	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
 	cfg.Model = strings.TrimSpace(cfg.Model)
+	// Temperature is COPIED, not aliased. Every other field of Config is a value, so
+	// storing cfg wholesale would otherwise leave one field pointing at memory the
+	// caller still owns: Client documents itself safe for concurrent use, and a caller
+	// that reuses or mutates its Config after construction would race Complete's read
+	// of *c.cfg.Temperature. Snapshotting here makes the whole stored config immutable,
+	// which is what that concurrency claim actually requires.
+	if cfg.Temperature != nil {
+		t := *cfg.Temperature
+		cfg.Temperature = &t
+	}
 	if cfg.ProxyURL == "" || cfg.APIKey == "" {
 		return nil, ErrNotConfigured
 	}
@@ -421,11 +432,21 @@ func (c *Client) attempt(ctx context.Context, endpoint string, body []byte) (dat
 		return nil, -1, fmt.Errorf("llm: proxy returned status %d", resp.StatusCode)
 	}
 
-	data, err = io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
-	if err != nil {
+	// Read ONE byte past the cap so a body of exactly maxResponseBody is
+	// distinguishable from a larger one truncated at it. io.LimitReader signals the
+	// limit with EOF, not an error, so a plain LimitReader(cap) hands back a truncated
+	// prefix indistinguishable from a complete body — and a prefix can still be valid
+	// JSON (a complete completion object followed by padding, cut before whatever came
+	// after) and would then be accepted as the whole answer. Mirrors the
+	// LinkedIn/Meta/Reddit/Twitter clients' maxResponseBody+1 boundary.
+	var buf bytes.Buffer
+	if _, err = buf.ReadFrom(io.LimitReader(resp.Body, maxResponseBody+1)); err != nil {
 		return nil, -1, fmt.Errorf("llm: read response: %w", redactTransport(err))
 	}
-	return data, -1, nil
+	if buf.Len() > maxResponseBody {
+		return nil, -1, fmt.Errorf("llm: proxy response exceeds the %d-byte cap", maxResponseBody)
+	}
+	return buf.Bytes(), -1, nil
 }
 
 // backoff is the server's Retry-After when it sent one, else exponential.
@@ -438,13 +459,34 @@ func (c *Client) backoff(attempt int, retryAfter time.Duration) time.Duration {
 
 // retryAfter parses both documented forms (delta-seconds and an HTTP date).
 // Absent or unparseable yields zero: "back off on our own schedule", not "do not retry".
+//
+// A delta-seconds value that OVERFLOWS is the one case where zero is the wrong
+// answer, and it is why this no longer leans on time.ParseDuration. An all-digit
+// header too large for a Duration ("99999999999999999999999999") means the proxy is
+// declaring a reset far beyond anything worth waiting for — but ParseDuration fails
+// on it, and a failure here reads as "no header", which sends the caller into
+// ordinary exponential backoff and a retry the server has already refused. Such a
+// value is classified as OVER the cap so `wait > maxRetryWait` aborts, matching the
+// Microsoft sibling. Digits-only is also the delta-seconds grammar (RFC 9110 §10.2.3);
+// ParseDuration additionally accepted shapes like "1h2m0" that the header never has.
 func (c *Client) retryAfter(v string) time.Duration {
 	v = strings.TrimSpace(v)
 	if v == "" {
 		return 0
 	}
-	if secs, err := time.ParseDuration(v + "s"); err == nil && secs > 0 {
-		return secs
+	if isAllDigits(v) {
+		// Compared in SECONDS before converting: secs * time.Second overflows and can
+		// wrap to a non-positive Duration for a large value, which would silently skip
+		// the abort the comparison exists to trigger.
+		secs, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || secs > int64(maxRetryWait/time.Second) {
+			// err here can only be a range error — the digits already parsed as digits.
+			return maxRetryWait + time.Second
+		}
+		if secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+		return 0
 	}
 	if t, err := http.ParseTime(v); err == nil {
 		if d := t.Sub(c.now()); d > 0 {
@@ -452,6 +494,21 @@ func (c *Client) retryAfter(v string) time.Duration {
 		}
 	}
 	return 0
+}
+
+// isAllDigits reports whether s is a non-empty ASCII digit string — the
+// delta-seconds grammar. Used to tell an overflowing delta-seconds value (abort)
+// from a header in some other shape (fall through to the HTTP-date form).
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // drain reads a bounded amount of an unwanted body so the connection can be reused.

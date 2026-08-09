@@ -719,3 +719,107 @@ func TestRedactTransport_PreservesTheSentinelsCallersMatchOn(t *testing.T) {
 		t.Error("redactTransport(nil) must be nil")
 	}
 }
+
+// An over-cap body whose first maxResponseBody bytes are VALID JSON is the case a
+// plain LimitReader(cap) cannot see. io.LimitReader signals the limit with EOF, so
+// the truncated prefix arrives looking exactly like a complete response — and here it
+// parses, so nothing downstream notices either. The read goes one byte past the cap
+// precisely so "exactly at the cap" and "larger, cut at the cap" stay distinguishable.
+func TestComplete_OverCapBodyIsRejectedEvenWhenTheTruncatedPrefixParses(t *testing.T) {
+	body := completion("ok")
+	// Pad with spaces to exactly the cap: json.Unmarshal accepts trailing whitespace,
+	// so the first maxResponseBody bytes are a complete, valid completion.
+	pad := strings.Repeat(" ", maxResponseBody-len(body))
+
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, body)
+		_, _ = io.WriteString(w, pad)
+		// Past the cap. A LimitReader(cap) never sees this and reports success.
+		_, _ = io.WriteString(w, "trailing garbage the client must not silently drop")
+	})
+
+	if _, err := c.Complete(context.Background(), "s", "u"); err == nil {
+		t.Error("want an error: a body larger than the cap was accepted because its truncated prefix happened to parse")
+	}
+}
+
+// A body of EXACTLY the cap is complete, not truncated, and must still succeed —
+// the +1 read is a boundary check, not a tightening of the limit by one byte.
+func TestComplete_BodyExactlyAtTheCapIsAccepted(t *testing.T) {
+	body := completion("ok")
+	pad := strings.Repeat(" ", maxResponseBody-len(body))
+
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, body)
+		_, _ = io.WriteString(w, pad)
+	})
+
+	got, err := c.Complete(context.Background(), "s", "u")
+	if err != nil {
+		t.Fatalf("Complete: %v (a body of exactly maxResponseBody is complete, not over-cap)", err)
+	}
+	if got != "ok" {
+		t.Errorf("content = %q, want %q", got, "ok")
+	}
+}
+
+// An all-digit Retry-After too large for a Duration must read as OVER the cap, not
+// as an absent header. Treating it as absent sends the caller into ordinary
+// exponential backoff and a retry the proxy has already refused.
+func TestRetryAfter_OverflowingDeltaSecondsAbortsRatherThanRetrying(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	c := &Client{now: func() time.Time { return base }}
+
+	for _, tc := range []struct {
+		name, header string
+		want         func(time.Duration) bool
+		wantDesc     string
+	}{
+		{"overflows int64", "99999999999999999999999999", func(d time.Duration) bool { return d > maxRetryWait }, "> maxRetryWait"},
+		// Just inside what a Duration can hold (~292 years in seconds), so this one is
+		// over-cap by the ordinary comparison rather than by the overflow branch. It is
+		// here to pin that the two paths agree at the boundary.
+		{"largest representable delta-seconds", "9223372036", func(d time.Duration) bool { return d > maxRetryWait }, "> maxRetryWait"},
+		{"ordinary over-cap", "1000", func(d time.Duration) bool { return d > maxRetryWait }, "> maxRetryWait"},
+		{"ordinary under-cap", "5", func(d time.Duration) bool { return d == 5*time.Second }, "5s"},
+		{"zero", "0", func(d time.Duration) bool { return d == 0 }, "0"},
+		{"not digits and not a date", "soon", func(d time.Duration) bool { return d == 0 }, "0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := c.retryAfter(tc.header); !tc.want(got) {
+				t.Errorf("retryAfter(%q) = %v, want %s", tc.header, got, tc.wantDesc)
+			}
+		})
+	}
+}
+
+// Client documents itself safe for concurrent use, so the stored config must not
+// alias memory the caller still owns. Temperature is the only pointer field.
+func TestNewClient_SnapshotsTemperatureRatherThanAliasingTheCaller(t *testing.T) {
+	rec := &reqRecorder{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec.capture(r)
+		_, _ = io.WriteString(w, completion("ok"))
+	}))
+	defer srv.Close()
+
+	temp := 0.2
+	c, err := NewClient(
+		Config{ProxyURL: srv.URL, APIKey: testKey, Temperature: &temp},
+		WithHTTPClient(srv.Client()),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	// The caller reuses its own variable after construction. With the pointer aliased,
+	// this silently changes what every subsequent Complete sends — and concurrently
+	// with one in flight, it is a data race.
+	temp = 0.9
+
+	if _, err := c.Complete(context.Background(), "s", "u"); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if got := rec.Req().Temperature; got != 0.2 {
+		t.Errorf("temperature = %v, want 0.2 (the value at construction; the client aliased the caller's variable)", got)
+	}
+}
