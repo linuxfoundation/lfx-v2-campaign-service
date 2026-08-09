@@ -153,3 +153,37 @@ creates a connection, deletes it, and asserts `Get` returns `ErrNotFound` while 
 with `status = 'deleted'`. An in-memory fake returns `ErrNotFound` by construction and would
 pass against a `Get` that had lost its filter. If the product later decides a delete must STOP
 dispatch, that test is the one that changes — which makes it a decision rather than a drift.
+
+
+## Follow-on (review round 3) — the tag had one inspector, not three
+
+Round 2 gave `systemScoped` every CALLER. It did not give the sentinel every INSPECTOR, which
+is the same defect one layer up.
+
+`ErrSystemConnectionNotUsable` was matched in exactly one place — the account-discovery
+handler. The metrics and toggle handlers matched `ErrAccountNotSelected` and
+`ErrConnectionNotUsable`, and both still matched, because `systemScoped` **wraps** rather than
+replaces:
+
+    fmt.Errorf("%w: %w", domain.ErrSystemConnectionNotUsable, err)
+
+`errors.Is` therefore continues to report the usability sentinels, so the broad arm won on arm
+order alone. A project with no connection of its own, falling back to an unusable LF system
+row, was handed a 409 reading *"this project's ad-platform connection is not ready — repair the
+connection"*. They have no connection, and the system scope is not addressable by them. Telling
+the wrong owner to fix the wrong thing is the ONLY reason the sentinel exists, so on two of its
+three consumers the tag was decorative.
+
+Both handlers now inspect it first and return a 500 with an operator-facing `ErrorContext` log,
+mirroring the discovery arm. Nothing specific reaches the caller, because there is nothing they
+can act on.
+
+Two things make the tests binding. Each asserts the STATUS TYPE, not merely that an error
+occurred — the broad arm errors too, so a presence check passes against the bug. And a contrast
+test pins that a project-owned connection still gets the actionable 409: without it, hoisting
+the system arm to match every unusable connection would satisfy every other assertion while
+converting the common, fixable case into an opaque 500.
+
+The general lesson is the one this PR has now paid for twice: a sentinel added for its
+AUDIENCE is only worth what its arm order buys. Tagging every producer and inspecting one
+consumer leaves the same hole as tagging one producer did.
