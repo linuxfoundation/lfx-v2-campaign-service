@@ -23,6 +23,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"syscall"
 	"time"
@@ -69,6 +70,13 @@ var (
 	// "this deployment has no model wired" and degrade.
 	ErrNotConfigured = errors.New("llm: proxy is not configured")
 
+	// ErrInvalidProxyURL means AI_PROXY_URL is present but is not an absolute
+	// http(s) URL. It WRAPS ErrNotConfigured deliberately: to every caller the
+	// operational fact is the same — this deployment has no usable model, degrade —
+	// and making it a separate sentinel would silently stop each of them degrading.
+	// It exists only so the message names the defect instead of saying "missing".
+	ErrInvalidProxyURL = fmt.Errorf("%w: proxy url must be an absolute http(s) url", ErrNotConfigured)
+
 	// ErrEmptyCompletion means a 200 carried no usable content — distinct from a
 	// transport error, since the request did reach the model.
 	ErrEmptyCompletion = errors.New("llm: proxy returned no completion content")
@@ -89,7 +97,11 @@ type Config struct {
 // Client calls the LiteLLM proxy. Safe for concurrent use. The last three fields
 // are injectable so tests avoid real sleeps and can compute Retry-After dates.
 type Client struct {
-	cfg            Config
+	cfg Config
+	// endpoint is the full /chat/completions URL, built and validated once in
+	// NewClient. Holding the built form is what lets construction reject a proxy URL
+	// that only LOOKS like one — see the validation there.
+	endpoint       string
 	httpClient     *http.Client
 	retryBaseDelay time.Duration
 	requestTimeout time.Duration
@@ -154,8 +166,25 @@ func NewClient(cfg Config, opts ...Option) (*Client, error) {
 	if cfg.ProxyURL == "" || cfg.APIKey == "" {
 		return nil, ErrNotConfigured
 	}
+	// Non-empty is not the same as usable, and the difference is not cosmetic. A value
+	// like "localhost:4000" parses happily — url.Parse reads "localhost" as the SCHEME —
+	// and http.NewRequest then rejects it on every single generation, so a one-line
+	// deployment mistake becomes a per-email failure with a transport-shaped message.
+	// This constructor's whole reason for existing is to move that discovery to startup,
+	// so it must check what the request will actually need: an absolute URL, an http(s)
+	// scheme, and a host.
+	u, perr := url.Parse(cfg.ProxyURL)
+	switch {
+	case perr != nil:
+		return nil, fmt.Errorf("%w: %w", ErrInvalidProxyURL, perr)
+	case u.Scheme != "http" && u.Scheme != "https", u.Host == "":
+		return nil, fmt.Errorf("%w, got %q", ErrInvalidProxyURL, cfg.ProxyURL)
+	}
 	c := &Client{
-		cfg:            cfg,
+		cfg: cfg,
+		// Built once here rather than per call, so the value the requests use is the
+		// value construction validated — a later edit cannot reintroduce an unchecked one.
+		endpoint:       strings.TrimRight(cfg.ProxyURL, "/") + "/chat/completions",
 		httpClient:     &http.Client{CheckRedirect: noFollow},
 		retryBaseDelay: retryBaseDelay,
 		requestTimeout: requestTimeout,
@@ -246,8 +275,6 @@ func (c *Client) Complete(ctx context.Context, systemPrompt, userPrompt string) 
 
 // do performs the POST with per-attempt deadlines and bounded 429 retry.
 func (c *Client) do(ctx context.Context, body []byte) ([]byte, error) {
-	endpoint := strings.TrimRight(c.cfg.ProxyURL, "/") + "/chat/completions"
-
 	var lastErr error
 	for attempt := 0; attempt <= retryMax; attempt++ {
 		// Checked BEFORE the attempt, and not inferred from the remaining budget: a
@@ -258,7 +285,7 @@ func (c *Client) do(ctx context.Context, body []byte) ([]byte, error) {
 		}
 
 		attemptCtx, cancel := context.WithTimeout(ctx, c.requestTimeout)
-		data, retryAfter, err := c.attempt(attemptCtx, endpoint, body)
+		data, retryAfter, err := c.attempt(attemptCtx, c.endpoint, body)
 		cancel()
 		if err == nil {
 			return data, nil

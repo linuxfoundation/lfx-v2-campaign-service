@@ -148,6 +148,55 @@ func TestNewClient_RequiresProxyURLAndKey(t *testing.T) {
 	}
 }
 
+// TestNewClient_RejectsAProxyURLThatIsNotAbsoluteHTTP covers the values that are present
+// but unusable — the class the emptiness check above cannot see. "localhost:4000" is the
+// one that matters: url.Parse accepts it, reading "localhost" as the SCHEME, so nothing
+// complains until http.NewRequest refuses it on every single generation. A one-line
+// deployment mistake then reads as a recurring transport failure rather than as
+// misconfiguration, which is precisely what constructing eagerly exists to prevent.
+//
+// Each must satisfy errors.Is(ErrNotConfigured) as well, because every caller degrades on
+// that sentinel and an unusable proxy is operationally identical to an absent one. A
+// separate sentinel here would silently stop them degrading.
+func TestNewClient_RejectsAProxyURLThatIsNotAbsoluteHTTP(t *testing.T) {
+	for _, tc := range []struct{ name, url string }{
+		{"host and port, no scheme", "localhost:4000"},
+		{"scheme only", "http://"},
+		{"schemeless absolute path", "/v1"},
+		{"relative", "proxy/v1"},
+		{"not http", "ftp://proxy.internal"},
+		{"control character", "http://proxy\x7f.internal"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewClient(Config{ProxyURL: tc.url, APIKey: testKey})
+			if !errors.Is(err, ErrInvalidProxyURL) {
+				t.Fatalf("NewClient(%q) err = %v, want ErrInvalidProxyURL — an unusable proxy "+
+					"url must fail at construction, not once per generated email", tc.url, err)
+			}
+			if !errors.Is(err, ErrNotConfigured) {
+				t.Errorf("NewClient(%q) err does not satisfy ErrNotConfigured; callers degrade "+
+					"on that sentinel, and an unusable proxy is the same operational fact as "+
+					"an absent one", tc.url)
+			}
+		})
+	}
+}
+
+// TestNewClient_AcceptsAUsableProxyURL is the other side, and it exists so the guard above
+// cannot be satisfied by rejecting everything. A path prefix is the real deployment shape
+// (the proxy is mounted at /v1), and a trailing slash must not produce a doubled separator.
+func TestNewClient_AcceptsAUsableProxyURL(t *testing.T) {
+	for _, u := range []string{
+		"http://litellm:4000",
+		"https://litellm.internal/v1",
+		"https://litellm.internal/v1/",
+	} {
+		if _, err := NewClient(Config{ProxyURL: u, APIKey: testKey}); err != nil {
+			t.Errorf("NewClient(%q) = %v, want a client", u, err)
+		}
+	}
+}
+
 // TestNewClient_NormalizesPaddedConfigOnTheWire is the other half of the guard above.
 // TrimSpace used only for the emptiness CHECK admits every padded value that is not
 // entirely whitespace, and each field then fails somewhere less legible than construction:

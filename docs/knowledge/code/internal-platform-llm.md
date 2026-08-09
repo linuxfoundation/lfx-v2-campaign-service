@@ -80,6 +80,19 @@ With `AI_PROXY_URL` or `AI_API_KEY` missing, `NewClient` returns `ErrNotConfigur
 **construction** rather than per request, so a composition root can decide once — log it and
 route callers to their degraded path — instead of every call site rediscovering it.
 
+Present is not the same as usable, so construction also checks that `AI_PROXY_URL` is an
+absolute URL with an `http`/`https` scheme and a host, and returns `ErrInvalidProxyURL`
+otherwise. `localhost:4000` is the case that makes this necessary rather than tidy: `url.Parse`
+accepts it, reading `localhost` as the SCHEME, so nothing objects until `http.NewRequest`
+refuses it — on every single generation. A one-line deployment mistake then reads as a
+recurring transport failure instead of as misconfiguration, which is the exact outcome
+constructing eagerly exists to prevent. `ErrInvalidProxyURL` WRAPS `ErrNotConfigured`
+deliberately: to a caller the operational fact is identical — this deployment has no usable
+model, degrade — and a separate sentinel would silently stop each of them degrading. It exists
+only so the message names the defect. The validated value is used to build the
+`/chat/completions` endpoint once, stored on the client, so requests cannot use a form
+construction never checked.
+
 **There is no such composition root yet.** This package has no non-test caller: nothing in
 `internal/container` imports it, so nothing currently logs `ErrNotConfigured` or degrades
 anything. That wiring is part 2 of LFXV2-2775, which adds the email-copy step to the HubSpot
