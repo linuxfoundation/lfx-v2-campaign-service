@@ -225,6 +225,49 @@ func TestResolveDoesNotFallBackFromABrokenProjectConnection(t *testing.T) {
 	}
 }
 
+// TestResolveDoesNotFallBackFromATransientProjectLookupFailure pins the one `if` that
+// separates "this project genuinely has no connection" from "something went wrong talking
+// to the project's own connection". The fallback is gated on errors.Is(err,
+// domain.ErrNotFound); every other repository error must fail closed.
+//
+// The distinction is consequential in one direction only. Falling back on a genuine
+// absence spends LF budget on behalf of a project that chose to have none — which is the
+// designed behaviour. Falling back on a DB timeout spends it on behalf of a project that
+// may have a perfectly good connection of its own, on the strength of a lookup that never
+// answered. The two are one keyword apart in the source and indistinguishable at the call
+// site, which is why the boundary is worth a test rather than a comment.
+func TestResolveDoesNotFallBackFromATransientProjectLookupFailure(t *testing.T) {
+	transient := errors.New("connection refused")
+	repo := &scopedConnReader{
+		errs: map[string]error{"cncf": transient},
+		// A perfectly usable system row, so a fallback here would SUCCEED. The test is
+		// only meaningful because the wrong behaviour is the silent, working one.
+		rows: map[string]*model.Connection{
+			model.SystemProjectID: usableConn(`{"sys":true}`, "sys-account"),
+		},
+	}
+	got, err := newCredsSource(repo, identityEncryptor{}).
+		resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+	if err == nil {
+		t.Fatalf("resolve returned %q for a project whose own lookup failed; a transient error "+
+			"must not be read as an absence", got.accountID)
+	}
+	if errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("err = %v, want the transient error rather than an absence — classifying it as "+
+			"ErrNotFound is what would let a later refactor route it into the fallback", err)
+	}
+	if !errors.Is(err, transient) {
+		t.Errorf("err = %v, want it to wrap the repository's own error", err)
+	}
+	for _, scope := range repo.gets {
+		if scope == model.SystemProjectID {
+			t.Error("the system scope was consulted after the project's own lookup FAILED; " +
+				"the project may well have a connection, and running its campaign on LF's " +
+				"account is not a recoverable mistake")
+		}
+	}
+}
+
 // TestFallbackOutcomes covers what the system-scope lookup may yield beyond a usable row: an
 // absence (the error must name the CALLER's project, not the reserved scope), an unusable system
 // row (refused, not trusted because it is ours), and a lookup FAILURE (a 503, never a 404).

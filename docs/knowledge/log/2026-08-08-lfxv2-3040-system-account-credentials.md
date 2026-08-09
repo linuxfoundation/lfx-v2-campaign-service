@@ -60,3 +60,50 @@ a row would install, report success and fail every dispatch forever. `requireAcc
 gates it, checking the value about to be WRITTEN so a rotation may still omit the flag.
 
 **A tool that bypasses the API inherits every validation the API was doing for it.**
+
+**Follow-on (review round 3).** One documentation defect and three tests for boundaries that
+had none.
+
+The merge of `origin/main` left live conflict markers in `docs/api-catalog.md`'s account-discovery
+row, and the two sides were not a formatting clash: HEAD described the system-account fallback
+(404 only when NEITHER the project nor the LF row has a connection; 500 for a fallback onto an
+unusable system row), while main described the credentials-first bootstrap that #91 shipped
+(`account_id` no longer required, POST-creds → GET accounts → PUT selection, 409 on the toggle and
+metrics paths). Both are true of this branch, so taking either side would have deleted a shipped
+behaviour from the catalog. The row is now one description covering both, and it ends with the
+sentence that makes them compose: a project that has connected NOTHING falls back to the LF row,
+while a project that has connected credentials but selected no account is served by its own row
+and never falls back — its connection exists, so there is nothing to fall back from.
+
+The three tests all pin `if`s whose two branches are one keyword apart in the source and very far
+apart in consequence.
+
+`internal/dispatch/creds_test.go` gains
+`TestResolveDoesNotFallBackFromATransientProjectLookupFailure`. The fallback is gated on
+`errors.Is(err, domain.ErrNotFound)`; every other repository error must fail closed. Falling back
+on a genuine absence spends LF budget for a project that chose to have no account, which is the
+design. Falling back on a DB timeout spends it for a project that may have a perfectly good
+account of its own, on the strength of a lookup that never answered. The fake serves a USABLE
+system row, so the wrong behaviour is the silent, working one — revert-verified by widening the
+guard to `err != nil`, which resolves `sys-account` and fails the test.
+
+`internal/infrastructure/postgres/dbtest/connection_live_test.go` is new, and it exists because
+`TestClaimVersionIsBackedByACompareAndSwap`'s own doc comment says what changed: "asserted against
+the SQL text because this package has no live-database harness in CI". It has one now. The
+property under test is not that `AND version = $n` appears in a string — it is that a second
+writer holding the same expected version matches ZERO rows once the first commits, that the
+repository tells that apart from a missing row, and that the rejected write leaves nothing
+partially applied. Only a real `UPDATE` can answer any of the three. A third case pins what
+`UpdateWithCredential` is for: the losing rotation carries both a different account and a
+different credential, so a two-statement write could leave the row holding one run's account
+beside the other's credential — a state that authenticates against the wrong account, which is
+the worst available outcome because it is the one that does not fail.
+
+`internal/infrastructure/config/config_test.go` pins the `DATABASE_URL` / `PG*` precedence, and
+the second case is the one worth reading: a PARTIAL `PG*` set is REFUSED, not quietly ignored in
+favour of `DATABASE_URL`. That is the right answer precisely because the alternative reads as
+friendlier — a chart revision that drops `PGPASSWORD` would otherwise redirect the service to
+whatever `DATABASE_URL` happens to hold, and everything would start while the data went somewhere
+else. The server and `bootstrap-system-account` resolve the DSN through this same function; were
+they ever to disagree, the subcommand would install the LF credential in one database and the
+server would read from another, and the symptom would be a connection that is simply not there.
