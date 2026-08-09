@@ -88,6 +88,17 @@ made explicit here, and both come from the same asymmetry: `FindCampaignByName` 
 decoded name against the name it asked for, so a corrupted name surfaces as a filter-not-honoured
 error, whereas this path has no expected name — the name IS the answer.
 
+**That "for free" was overstated, and a later review round found where.** The echo-check covers
+every requested name except one that already contains U+FFFD — which is a legal campaign name.
+Ask for `bad<U+FFFD>name`, receive a row whose raw bytes are `"bad\xffname"`, and the
+substitution produces precisely the requested string: the comparison passes on a value nothing
+ever saw intact, and an id comes back from an unverified response for an adoption to bind paid
+spend to. The raw-bytes guard therefore runs on BOTH lookup paths, not just this one. The
+narrowness is not an argument against fixing it — a guard that holds for all names but the
+one an attacker or a corrupt upstream can choose is not a guard. Pinned by
+`TestFindCampaignByName_MalformedUTF8RowCannotEchoTheRequestedName`, which also keeps the
+narrowing half: a name that genuinely carries a properly-encoded U+FFFD must still adopt.
+
 First, `encoding/json` does not enforce that its input is UTF-8. A JSON document must be UTF-8
 (RFC 8259 s8.1), but malformed bytes inside a string are silently replaced with U+FFFD and no
 error is returned, so `"name":"bad\xffname"` decoded into a perfectly successful `CampaignRef`

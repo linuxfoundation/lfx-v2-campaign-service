@@ -190,6 +190,22 @@ func (c *Client) FindCampaignByName(ctx context.Context, name string) (string, e
 
 	var matches []string
 	for _, raw := range rows {
+		// The same raw-bytes guard GetCampaign applies, and for a reason that is easy to
+		// argue away: the echo-check below looks like it already covers this, since a
+		// substituted U+FFFD would make the decoded name differ from `lookup` and error.
+		// It covers it for every name EXCEPT one that already contains U+FFFD — and that
+		// is a legal campaign name. Ask for `bad�name`, receive a row whose raw bytes
+		// are `"bad\xffname"` (or `"bad\uD800name"`), and encoding/json substitutes the
+		// very rune that was asked for: the echo-check passes on a value it never saw
+		// intact, and an ID is returned from a response nothing verified. That an adoption
+		// binds a paid campaign to that ID is what makes the narrow case worth closing.
+		//
+		// Checked on the raw bytes, not by hunting U+FFFD in the decoded value, precisely
+		// because U+FFFD is legal in a name. See hasUnpairedSurrogateEscape for why byte
+		// validity alone is not enough.
+		if !utf8.Valid(raw) || hasUnpairedSurrogateEscape(raw) {
+			return "", fmt.Errorf("google-ads campaign lookup: exact-match query for %q returned a row whose name cannot survive JSON decoding intact (malformed UTF-8 bytes, or an unpaired surrogate escape); decoding it would substitute U+FFFD and could echo back the requested name from a value that never matched it", lookup)
+		}
 		var row campaignLookupRow
 		if err := json.Unmarshal(raw, &row); err != nil {
 			// A 2xx row we cannot decode is NOT a non-match. Treating it as one would
@@ -393,10 +409,11 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 	for _, raw := range rows {
 		// A JSON document must be UTF-8 (RFC 8259 s8.1), and encoding/json does NOT enforce
 		// it: malformed bytes inside a string are silently replaced with U+FFFD and no error
-		// is returned. FindCampaignByName can survive that, because it echo-checks the
-		// decoded name against the name it asked for, so a substitution turns into a loud
-		// filter-not-honoured error. This path has no expected name to compare against — the
-		// name IS the answer the operator confirms against — so a substituted name would be
+		// is returned. FindCampaignByName runs the same guard for a narrower reason: its
+		// echo-check against the requested name turns most substitutions into a loud
+		// filter-not-honoured error, but not when the requested name itself contains
+		// U+FFFD. This path has no expected name to compare against at all — the name IS
+		// the answer the operator confirms against — so a substituted name would be
 		// returned as a successful CampaignRef under a name the campaign does not have.
 		// Checked on the RAW bytes rather than by hunting U+FFFD in the decoded value,
 		// because U+FFFD is itself a legal character in a campaign name.
