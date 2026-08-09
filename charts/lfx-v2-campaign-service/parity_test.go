@@ -649,6 +649,33 @@ func TestDeploymentRejectsReservedAndBypassEnv(t *testing.T) {
 				"app.extraEnv[0].valueFrom.secretKeyRef.key=principal",
 			want: "may not set",
 		},
+		// Helm's scalar typing is the third door. `--set ...value=false` is parsed as a
+		// BOOLEAN, and Helm's `default ""` treats boolean false and numeric 0 as empty — so
+		// a guard written as `default "" .value` saw nothing while the renderer went on to
+		// emit `value: "false"`, a perfectly non-empty container env var. These four cases
+		// exist because that bypass was real: it rendered a Deployment carrying the bypass
+		// key, which the runtime then refuses to boot with, turning a template-time
+		// rejection into a CrashLoopBackOff. Both scalars, both env inputs.
+		{
+			name: "environment sets the auth bypass to boolean false",
+			set:  "app.environment." + bypassKey + ".value=false",
+			want: "must stay empty",
+		},
+		{
+			name: "environment sets the auth bypass to numeric zero",
+			set:  "app.environment." + bypassKey + ".value=0",
+			want: "must stay empty",
+		},
+		{
+			name: "extraEnv sets the auth bypass to boolean false",
+			set:  "app.extraEnv[0].name=" + bypassKey + ",app.extraEnv[0].value=false",
+			want: "may not set",
+		},
+		{
+			name: "extraEnv sets the auth bypass to numeric zero",
+			set:  "app.extraEnv[0].name=" + bypassKey + ",app.extraEnv[0].value=0",
+			want: "may not set",
+		},
 	}
 
 	for _, tc := range cases {
