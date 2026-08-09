@@ -169,6 +169,13 @@ const invalidIndexCheckTimeout = 10 * time.Second
 // arbitrating something it has stopped arbitrating.
 var ErrInvalidIndex = errors.New("schema carries an INVALID index")
 
+// ErrMissingRequiredIndex reports that an index the schema RELIES ON for correctness is
+// absent (or present-but-invalid, which is the same fact). Like ErrInvalidIndex it is
+// PERMANENT: golang-migrate has already recorded the migration that creates it as clean,
+// so no re-run will rebuild it — the version has to be forced back first. It exists
+// because the recovery for ErrInvalidIndex, done halfway, produces exactly this state.
+var ErrMissingRequiredIndex = errors.New("schema is missing an index it relies on for correctness")
+
 // invalidIndexQuery lists indexes in the connection's schema that Postgres has marked
 // invalid. Only CREATE INDEX CONCURRENTLY produces one: a plain CREATE INDEX rolls its
 // failure back, while a CONCURRENTLY build that fails leaves the index PRESENT and
@@ -226,11 +233,76 @@ func checkNoInvalidIndexes(dsn string) error {
 	if len(names) > 0 {
 		return fmt.Errorf("%w: %s. Left by a failed CREATE INDEX CONCURRENTLY: it "+
 			"enforces nothing and the planner will not use it, yet a re-run of the "+
-			"migration that creates it finds the NAME and reports success. Drop each "+
-			"index listed and re-run that migration",
+			"migration that creates it finds the NAME and reports success. To recover: "+
+			"DROP each index listed, then `migrate force <version-1>` so the migration "+
+			"that creates it will RUN again — dropping alone leaves the version clean, "+
+			"and the next boot then succeeds with the index absent entirely",
 			ErrInvalidIndex, strings.Join(names, ", "))
 	}
+
+	// And the absence case, which is what the recovery above walks straight into if only
+	// half of it is done. Dropping the debris leaves migration 18 recorded CLEAN, so Up()
+	// returns ErrNoChange, the scan above finds nothing invalid, and boot succeeds against
+	// a schema with no uniqueness at all — the same silent loss the scan exists to catch,
+	// reached by following the remedy. Detection therefore cannot be "no invalid index";
+	// it has to be "the index that enforces the invariant is PRESENT and valid".
+	//
+	// A hand-maintained list is the cost of that, and it is bounded: an entry belongs here
+	// only for an index whose absence is SILENT — a unique index standing in for a
+	// constraint. A performance index going missing is slow, not wrong, and does not
+	// belong. The live test TestMigrateRefusesADroppedRequiredIndex fails if an entry
+	// names an index no migration creates, so a stale name cannot sit here unnoticed.
+	missing, err := missingRequiredIndexes(ctx, conn)
+	if err != nil {
+		return err
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("%w: %s. This index is the ONLY thing enforcing its invariant — "+
+			"without it the writes it serializes all succeed and the damage is silent. "+
+			"Recover with `migrate force <version-1>` so the migration that creates it "+
+			"runs again; do not start the service against this schema",
+			ErrMissingRequiredIndex, strings.Join(missing, ", "))
+	}
 	return nil
+}
+
+// requiredIndexes are indexes whose ABSENCE is silent: each one stands in for a constraint,
+// so with it gone every write it was serializing succeeds and nothing reports a problem.
+// See checkNoInvalidIndexes for why membership is deliberately narrow.
+var requiredIndexes = []string{
+	// migration 000018: at most one audience per (brief, platform) in `building`.
+	"uq_campaign_audiences_brief_platform_building",
+}
+
+const requiredIndexQuery = `SELECT c.relname
+	FROM pg_class c
+	JOIN pg_namespace n ON n.oid = c.relnamespace
+	JOIN pg_index i ON i.indexrelid = c.oid
+	WHERE c.relname = ANY($1) AND n.nspname = current_schema() AND i.indisvalid`
+
+// missingRequiredIndexes returns the requiredIndexes absent from the schema. An index that
+// exists but is INVALID counts as missing: it enforces nothing, so the two are the same
+// fact to a caller deciding whether the invariant holds.
+func missingRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) ([]string, error) {
+	rows, err := conn.Query(ctx, requiredIndexQuery, requiredIndexes)
+	if err != nil {
+		return nil, fmt.Errorf("check for required indexes: %w", err)
+	}
+	found, err := pgxv5.CollectRows(rows, pgxv5.RowTo[string])
+	if err != nil {
+		return nil, fmt.Errorf("check for required indexes: %w", err)
+	}
+	present := make(map[string]struct{}, len(found))
+	for _, n := range found {
+		present[n] = struct{}{}
+	}
+	var missing []string
+	for _, want := range requiredIndexes {
+		if _, ok := present[want]; !ok {
+			missing = append(missing, want)
+		}
+	}
+	return missing, nil
 }
 
 // IsPermanentMigrationErr reports whether a Migrate error is a PERMANENT state that
@@ -247,7 +319,12 @@ func IsPermanentMigrationErr(err error) bool {
 	// ErrInvalidIndex joins it: an invalid index is catalog debris no retry rebuilds.
 	// Retrying would boot-loop in 503 while the schema silently enforces nothing —
 	// which is worse than the dirty case, because the version reads CLEAN.
-	return errors.As(err, &dirty) || errors.Is(err, ErrInvalidIndex)
+	// ErrMissingRequiredIndex is permanent for the same reason and one step further along:
+	// the version is already clean, so Up() returns ErrNoChange forever and the index is
+	// never rebuilt. Only `migrate force` moves it.
+	return errors.As(err, &dirty) ||
+		errors.Is(err, ErrInvalidIndex) ||
+		errors.Is(err, ErrMissingRequiredIndex)
 }
 
 // ValidateMigrationDSN reports whether dsn is in the URL form migrations require,

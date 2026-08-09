@@ -77,3 +77,54 @@ func TestMigrateRefusesAnInvalidIndex(t *testing.T) {
 		t.Errorf("ErrInvalidIndex is not permanent; boot would 503-loop instead of failing fast")
 	}
 }
+
+// TestMigrateRefusesADroppedRequiredIndex pins the step AFTER the one above: the state an
+// operator reaches by doing half of the recovery.
+//
+// Dropping the invalid index clears the scan in TestMigrateRefusesAnInvalidIndex, but
+// golang-migrate has already recorded migration 18 as CLEAN — so Up() returns ErrNoChange,
+// nothing rebuilds the index, and boot succeeds against a schema with no uniqueness at all.
+// That is the same silent loss the invalid-index scan exists to prevent, reached by
+// following its own remedy. Detection cannot be "nothing is invalid"; it has to be "the
+// index that enforces the invariant is present and valid".
+//
+// This test also keeps `requiredIndexes` honest: it drops each name and requires Migrate to
+// notice, so an entry naming an index no migration creates fails here rather than sitting
+// in the list as decoration.
+func TestMigrateRefusesADroppedRequiredIndex(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+
+	const idx = "uq_campaign_audiences_brief_platform_building"
+
+	// Restore it whatever happens: every later test in this database depends on the lease.
+	t.Cleanup(func() {
+		if err := postgres.Migrate(dbtest.DSN()); err == nil {
+			return // the forced re-run below already put it back
+		}
+		if _, err := pool.Exec(context.Background(),
+			"CREATE UNIQUE INDEX IF NOT EXISTS "+idx+" ON campaign_audiences (brief_id, platform) WHERE status = 'building'"); err != nil {
+			t.Errorf("restore %s: %v — later lease tests would silently pass without it", idx, err)
+		}
+	})
+
+	if _, err := pool.Exec(ctx, "DROP INDEX IF EXISTS "+idx); err != nil {
+		t.Fatalf("drop the required index: %v", err)
+	}
+
+	// Precisely the operator's next move: re-run the migration, as the ErrInvalidIndex
+	// message used to advise on its own. The version is clean, so this rebuilds nothing.
+	err := postgres.Migrate(dbtest.DSN())
+	if !errors.Is(err, postgres.ErrMissingRequiredIndex) {
+		t.Fatalf("Migrate after dropping %s: got %v, want ErrMissingRequiredIndex — "+
+			"succeeding here starts the service with the audience-build race wide open "+
+			"and nothing to report it", idx, err)
+	}
+	if !strings.Contains(err.Error(), idx) {
+		t.Errorf("the error does not name %s: %v", idx, err)
+	}
+	if !postgres.IsPermanentMigrationErr(err) {
+		t.Errorf("ErrMissingRequiredIndex is not permanent; boot would 503-loop rather than " +
+			"telling the operator the version must be forced back")
+	}
+}

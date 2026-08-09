@@ -218,6 +218,28 @@ A connect/query failure inside the check is NOT wrapped in the sentinel, so ordi
 unreachability stays retryable. `TestMigrateRefusesAnInvalidIndex` provokes a genuine
 invalid index (a unique `CONCURRENTLY` build over duplicate rows) and asserts the refusal.
 
+### …and refuses to succeed with the index MISSING, which is where its own remedy leads
+
+The instruction "drop the invalid index and re-run" is only half a recovery, and the other
+half is not optional. Once the drop is done, migration 18 is still recorded CLEAN, so
+`Up()` returns `ErrNoChange`, nothing rebuilds the index, the invalid-index scan finds
+nothing wrong, and boot succeeds against a schema with **no uniqueness at all** — the same
+silent loss the scan exists to prevent, arrived at by following the scan's own advice. The
+version has to be forced back to 17 first, which the error message now says.
+
+Instruction alone is not a control, so detection changed shape: not "nothing is invalid"
+but "the index that enforces the invariant is PRESENT and valid". `requiredIndexes` names
+them and `ErrMissingRequiredIndex` reports a gap, permanent for the same reason —
+`ErrNoChange` forever until someone forces the version.
+
+Membership in that list is deliberately narrow: an index belongs only if its absence is
+SILENT, meaning it stands in for a constraint and every write it was serializing succeeds
+without it. A performance index going missing makes the service slow, not wrong, and does
+not qualify. The hand-maintained list is kept honest by
+`TestMigrateRefusesADroppedRequiredIndex`, which drops each name and requires `Migrate` to
+notice — an entry naming an index no migration creates fails there rather than sitting in
+the list as decoration.
+
 ## Actor attribution
 
 Campaigns execute under **system accounts** — shared, LF-owned platform credentials —

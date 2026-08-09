@@ -126,3 +126,31 @@ Both are now covered by live tests that hold the lease with a real build first, 
 path under test is genuinely second. Revert-verified: removing either mapping surfaces the
 raw `duplicate key value violates unique constraint ... (SQLSTATE 23505)` — which is a 500,
 reading as a broken service rather than an occupied slot.
+
+## The remedy in the error message was itself a way to lose the index
+
+Both bots flagged the same line independently, which is the strongest signal available, and
+they were right about a defect in the fix rather than in the original code.
+`checkNoInvalidIndexes` told the operator to drop the invalid index and re-run the
+migration. Do exactly that and the service boots green with no uniqueness at all: the drop
+clears the scan, but migration 18 is still recorded CLEAN, so `Up()` returns `ErrNoChange`,
+nothing rebuilds anything, and the audience-build race is wide open with nothing to report
+it. The guard's own advice reproduces the failure the guard was written to catch.
+
+Reverting the new check confirms it exactly — `Migrate` returns `nil` after the index is
+dropped.
+
+Worth naming as a class: **a detection whose remedy is a state the detection cannot see.**
+The scan asked "is anything invalid", and the operator's action moves the schema from
+"invalid" to "absent", which is a different bad state on the far side of the question. The
+fix is not better wording — wording is not a control. Detection had to change shape, from
+"nothing is invalid" to "the index that enforces the invariant is present and valid", which
+is the property the code actually depends on. The message now also says to force the
+version back, but the guard no longer relies on anyone reading it.
+
+`requiredIndexes` is a hand-maintained list, and that cost is accepted narrowly: an entry
+belongs only where absence is SILENT — a unique index standing in for a constraint, where
+every write it serialized still succeeds without it. A performance index going missing is
+slow, not wrong. `TestMigrateRefusesADroppedRequiredIndex` drops each name and requires
+`Migrate` to notice, so an entry naming an index no migration creates fails the suite
+rather than sitting in the list looking like protection.
