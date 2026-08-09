@@ -179,13 +179,17 @@ type linkedInResponse struct {
 	ID     flexibleID `json:"id"`
 	Name   string     `json:"name"`
 	Status string     `json:"status"`
-	// Elements is a POINTER slice so the "elements field absent or null" case is
-	// distinguishable from the "elements present but empty" case. A malformed 2xx
-	// search body like `{}` or `null` decodes with Elements == nil (field absent)
-	// and CANNOT prove absence, whereas an intentional empty result `{"elements":[]}`
-	// decodes with a non-nil, len-0 slice and IS a confirmed not-found. Collapsing
-	// both to a plain nil slice let a `{}`/`null` body read as "no elements → not
-	// found", permitting a DUPLICATE create. See doRequest's search-presence guard.
+	// Elements separates "the elements field was absent or null" from "elements was
+	// present but empty", which is the difference between a body that CANNOT prove
+	// absence (a malformed 2xx like `{}`) and one that confirms a not-found
+	// (`{"elements":[]}`). Getting that wrong would let a `{}` read as "no elements →
+	// not found" and permit a DUPLICATE create. See doRequest's search-presence guard.
+	//
+	// Note that `encoding/json` already draws this line for a PLAIN slice: a present
+	// `[]` is decoded into a non-nil empty slice, while an absent or null field leaves
+	// the slice nil. The pointer is not what makes the distinction possible — it only
+	// makes it impossible to miss at the type level, and it removes the dependency on
+	// the value being freshly zeroed per response.
 	Elements *[]responseElement `json:"elements"`
 	Metadata linkedInMetadata   `json:"metadata"`
 }
@@ -254,6 +258,14 @@ type responseElement struct {
 	// lookup to the resolved group, so a same-name campaign under a DIFFERENT
 	// (e.g. archived/replaced) group is not treated as a match.
 	CampaignGroup string `json:"campaignGroup"`
+	// Type, Currency, Test and ServingStatuses are only populated for ad-account
+	// search results (ListAdAccounts, accounts.go). An ad account carries two
+	// independent health axes — its lifecycle `status`, decoded above, and the
+	// `servingStatuses` array below — and the picker needs both.
+	Type            string   `json:"type"`
+	Currency        string   `json:"currency"`
+	Test            bool     `json:"test"`
+	ServingStatuses []string `json:"servingStatuses"`
 }
 
 // pathValidRE allow-lists the characters a built request path may contain. `%` is included
