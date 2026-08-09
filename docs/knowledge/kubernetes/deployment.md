@@ -1,7 +1,7 @@
 ---
 type: "Kubernetes Resource"
 title: "Deployment"
-description: "Helm Deployment for the campaign service, including PG*, CREDENTIAL_ENCRYPTION_KEY, SNOWFLAKE_* and AI_* from lfx-v2-campaign-service-secrets."
+description: "Helm Deployment for the campaign service, including PG*, CREDENTIAL_ENCRYPTION_KEY, SNOWFLAKE_* and the AI_PROXY_URL / AI_API_KEY credentials from lfx-v2-campaign-service-secrets, plus plain non-secret values such as AI_MODEL."
 resource: "charts/lfx-v2-campaign-service/templates/deployment.yaml"
 ---
 
@@ -34,9 +34,13 @@ cluster with no LiteLLM provisioning must still start, and `llm.NewClient` repor
 each call site rediscovering it. The secret is the **proxy's** key, not a Bedrock or
 Anthropic credential. `AI_MODEL` is a plain (non-secret) value, empty by default:
 a model id is not a credential, and empty selects `llm.DefaultModel`. All three are
-printed by `Config.String()` — the URL and model verbatim, the key through
-`redactSecret` — because "copy generation did not run" is diagnosed by knowing
-whether a proxy and key are configured at all.
+printed by `Config.String()` — the model verbatim, the key through `redactSecret`,
+and the URL through `redactAIProxyURL`, which keeps scheme/host/path and masks the
+whole value if it will not parse or its scheme is neither `http` nor `https`. That
+last reduction is not decoration: `Config.String()` renders at startup before
+`llm.NewClient` can reject a bad value, so it is the only place a pasted credential
+would otherwise land in the log. What survives is enough for the thing being
+diagnosed — whether a proxy and key are configured at all.
 
 `REDDIT_METRICS_ENABLED` is likewise a plain (non-secret) value, defaulting to
 `"false"`. It is a feature gate rather than a credential: the Reddit reporting

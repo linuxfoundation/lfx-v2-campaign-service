@@ -138,10 +138,16 @@ meaningful default (it selects `llm.DefaultModel`). See
 **proxy's** key, not a Bedrock or Anthropic credential, so it cannot be replayed against a model
 provider directly.
 
-`Config.String()` prints `AIProxyURL` and `AIModel` verbatim and masks `AIAPIKey` through
-`redactSecret`, which renders `""` for unset and `xxxxx` for present. That asymmetry is
-deliberate: "copy generation did not run" is diagnosed by knowing whether a proxy and a key are
-configured at all, and omitting the fields entirely would be log-safe while answering nothing.
+`Config.String()` prints `AIModel` verbatim, masks `AIAPIKey` through `redactSecret` (which
+renders `""` for unset and `xxxxx` for present), and reduces `AIProxyURL` through
+`redactAIProxyURL` to scheme, host and path — dropping userinfo, query and fragment, and
+masking the whole value when it fails to parse or carries a scheme that is neither `http` nor
+`https`. The URL is *not* verbatim, and that matters here rather than only in `llm.NewClient`:
+`Config.String()` runs on the startup log path **before** the constructor gets to reject
+anything, so a pasted credential shaped like a URL reaches a pod log through this function or
+not at all. The graded treatment is deliberate: "copy generation did not run" is diagnosed by
+knowing whether a proxy and a key are configured at all, and omitting the fields entirely would
+be log-safe while answering nothing.
 
 It is **non-streaming, deliberately**: the lfx-one implementation this ports from streams
 because its caller is an SSE endpoint rendering tokens into a browser, and this service has no
