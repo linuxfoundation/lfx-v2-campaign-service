@@ -68,9 +68,13 @@ func actorFromCtx(ctx context.Context) *model.Actor {
 // successful one is. Worse, a deploy that breaks auth AND breaks writes would go silent
 // precisely when the signal is most needed. Alert on the rate relative to total write
 // attempts, not to commits.
-// The message says the write records NO actor, not that it records NULL. Those differ: the
-// update paths write `updated_by=COALESCE($n, updated_by)`, so a nil here leaves whoever last
-// moved the row in place. The column reads NULL only when no attributed write ever reached it.
+// The message says the write records NO actor, not that it records NULL, because this helper
+// is shared across write paths that dispose of a nil differently and only the weaker claim is
+// true of all of them. The campaign upsert writes `updated_by=COALESCE($n, updated_by)`, so a
+// nil leaves whoever last moved the row in place; the brief and connection updates assign
+// `updated_by=$n` outright, so a nil there does write NULL. Saying "records no actor" is
+// accurate under both: this write contributes no attribution. Which of the two the column then
+// reads is the repository's decision, made in SQL, and pinned in each repo's own tests.
 func attributedActor(ctx context.Context, operation string) *model.Actor {
 	a := actorFromCtx(ctx)
 	if a == nil {

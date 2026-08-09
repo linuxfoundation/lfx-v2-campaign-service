@@ -206,11 +206,14 @@ func TestCampaignActor_ToggleStampsUpdatedByOnly(t *testing.T) {
 // here rather than only in the SQL. The assertion is on the service's contract (it hands the
 // repo no actor); the COALESCE is pinned in campaign_repo_test.go.
 //
-// This is a NEGATIVE pin and is deliberately not binding on the attribution code: with that
-// code removed UpdatedBy is nil anyway, so the test still passes. What it guards is the
-// opposite regression — a future change that stamps a placeholder actor ("system", the
-// campaign's creator) onto an unauthenticated toggle, which would make the audit trail claim
-// a principal that never acted. TestCampaignActor_ToggleStampsUpdatedByOnly is the binding half.
+// Seeding the prior mover is what makes this binding rather than merely descriptive. It used
+// to start from a nil UpdatedBy, where deleting the service's attribution line left nil in
+// place and the test stayed green — a pin on a value the fixture had already supplied. With
+// `previous` seeded, the campaign arrives at ToggleCampaignStatus already attributed, so the
+// service must actively CLEAR it; drop the assignment and that inherited actor rides into
+// ReplaceCampaign and the assertion below fails, naming them. The regression it guards is the
+// audit trail claiming a principal who never acted — whether by carrying the last mover
+// forward or by stamping a stand-in like "system" or the campaign's creator.
 func TestCampaignActor_SystemToggleRecordsNoActor(t *testing.T) {
 	previous := &model.Actor{Name: "Katherine Johnson", Email: "katherine@lf.dev", Username: "katherine"}
 	camp := &model.Campaign{
