@@ -301,6 +301,36 @@ func TestFindCampaignByName_RemovedRowIsSkipped(t *testing.T) {
 	}
 }
 
+// TestFindCampaignByName_RemovedRowWithUnusableIdentityIsNotAnAbsence pins the one
+// CONTRACT CHANGE the campaignRowIdentity extraction makes to this method, so it is a
+// decision on the record rather than a side effect.
+//
+// Before the extraction, status was judged first: a REMOVED row was skipped whatever else
+// it said, so a tombstone naming another customer's campaign returned ("", nil) — the
+// licence-to-create value. Identity is now established first, and this errors.
+//
+// That is the correct direction. "A tombstone is unadoptable however it arrived" is only
+// true once we know WHICH campaign it is a tombstone for; a row we could not identify is
+// not evidence that the campaign we asked about is absent, and the caller acts on that
+// absence by creating a duplicate PAID campaign. The narrower half still holds —
+// TestFindCampaignByName_RemovedRowIsSkipped keeps a well-formed tombstone a clean
+// non-match, which is the ordinary case.
+func TestFindCampaignByName_RemovedRowWithUnusableIdentityIsNotAnAbsence(t *testing.T) {
+	srv, _ := newLookupServer(t, []json.RawMessage{
+		json.RawMessage(`{"campaign":{"id":"300","name":"tombstoned","status":"REMOVED",` +
+			`"resourceName":"customers/999/campaigns/42"}}`),
+	})
+	client := newAccountsTestClient(t, srv)
+
+	got, err := client.FindCampaignByName(context.Background(), "tombstoned")
+	if err == nil {
+		t.Fatalf("a tombstone scoped to another customer must not read as an absence, got %q", got)
+	}
+	if !strings.Contains(err.Error(), "resource name") {
+		t.Errorf("error does not say why the row was refused: %v", err)
+	}
+}
+
 // TestFindCampaignByName_MalformedRowIsNotAnAbsence: an undecodable 2xx row must fail
 // the lookup, not read as "no match" and license a duplicate create.
 func TestFindCampaignByName_MalformedRowIsNotAnAbsence(t *testing.T) {

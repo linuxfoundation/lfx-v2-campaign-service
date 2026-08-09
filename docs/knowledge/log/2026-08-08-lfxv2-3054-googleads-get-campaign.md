@@ -52,6 +52,16 @@ with identity fields that disagree, or with no usable id at all returned a clean
 verdict, and the by-id caller reported a campaign it had never identified as absent. A row must
 now say who it is before its status is allowed to mean anything.
 
+**That reordering is a CONTRACT CHANGE to the existing `FindCampaignByName`, not only to the
+new by-id path, and calling the extraction behaviour-preserving was wrong.** The by-name lookup
+also skipped tombstones before validating them, so a `REMOVED` row that is malformed,
+cross-customer, or missing its identity fields used to return `("", nil)` and now errors. The
+new behaviour is the one worth having — such a row is not evidence that the campaign we asked
+about is absent, and the caller acts on an absence by creating a duplicate PAID campaign — but
+it is a change in what an existing exported method returns, so it is pinned by
+`TestFindCampaignByName_RemovedRowWithUnusableIdentityIsNotAnAbsence` rather than left implicit.
+The narrow half is unchanged and still tested: a WELL-FORMED tombstone is a clean non-match.
+
 The third finding is the mirror image: `GetCampaign` skipped tombstones before the
 duplicate-details check, so a response carrying campaign 555 once as `ENABLED` and once as
 `REMOVED` returned the live ref. One campaign cannot be both, so such a response has
