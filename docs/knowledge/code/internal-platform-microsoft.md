@@ -32,8 +32,17 @@ Like Google Ads, Microsoft auth is richer than a single Bearer token. `Credentia
 carries the OAuth2 `client_id`/`client_secret` + `developer_token` + `refresh_token`;
 `AccountConfig` carries the `account_id` (digits only, sent as `CustomerAccountId`)
 and an optional `customer_id` (digits only, sent as `CustomerId` when set). Every
-call sends the bearer access token, the `DeveloperToken` header, `CustomerAccountId`,
-and — when set — `CustomerId`. The refresh-token→access-token exchange runs against
+call sends the bearer access token and the `DeveloperToken` header, and — when set —
+`CustomerId`.
+
+`CustomerAccountId` is **not** universal, and neither is the account id itself.
+Campaign Management calls are account-scoped and send it; **Customer Management**
+calls (ad-account discovery) do not, and do not validate `account_id` either. An
+empty header is a claim about an account, so it is omitted entirely rather than sent
+blank. This is what makes discovery reachable from a connection that holds
+credentials and no account id at all — the exact state discovery exists to resolve —
+and it is why "one client, one ad account" describes the Campaign Management surface
+rather than a construction invariant of `Client`. The refresh-token→access-token exchange runs against
 the Microsoft identity platform (`login.microsoftonline.com/common/oauth2/v2.0/token`,
 scope `https://ads.microsoft.com/msads.manage offline_access`) and is coalesced with a
 single-flight leader/follower (the token mutex is never held across the network call,

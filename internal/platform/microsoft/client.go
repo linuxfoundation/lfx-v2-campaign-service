@@ -135,7 +135,10 @@ type Credentials struct {
 // AccountConfig identifies the ad account the client operates on.
 type AccountConfig struct {
 	// AccountID is the Microsoft Advertising ad account id, DIGITS ONLY, e.g.
-	// "1234567". Sent as the `CustomerAccountId` header on every call.
+	// "1234567". Sent as the `CustomerAccountId` header on every CAMPAIGN
+	// MANAGEMENT call. It is OPTIONAL: Customer Management calls (ad-account
+	// discovery) neither send nor validate it, so a credentials-only connection
+	// leaves it empty until an account is chosen.
 	AccountID string
 	// CustomerID is the OPTIONAL parent customer (manager) id, DIGITS ONLY. Sent as
 	// the `CustomerId` header when set. Empty omits the header (single-account
@@ -149,7 +152,13 @@ type AccountConfig struct {
 // Client
 // ---------------------------------------------------------------------------
 
-// Client is a Microsoft Advertising API client for one ad account.
+// Client is a Microsoft Advertising API client. It is USUALLY bound to one ad
+// account — every Campaign Management call is account-scoped and sends the
+// account id as a header — but the binding is not a construction invariant: the
+// Customer Management surface (ListAdAccounts) answers questions about the
+// CREDENTIALS, and a client built with an empty AccountConfig.AccountID is valid
+// for exactly those calls. That is the state a connection is in before an account
+// has been picked, which is what discovery exists to resolve.
 type Client struct {
 	creds   Credentials
 	account AccountConfig
@@ -281,7 +290,9 @@ func withRetryBaseDelay(d time.Duration) Option {
 }
 
 // NewClient builds a Microsoft Advertising client from injected credentials and
-// account config. Redirect following is force-disabled on whatever *http.Client is
+// account config. AccountConfig.AccountID may be empty; the id is validated at the
+// request choke point of the surface that needs it (Campaign Management) rather
+// than here, so a credentials-only client can still reach ad-account discovery. Redirect following is force-disabled on whatever *http.Client is
 // used, including one supplied via WithHTTPClient (applied to a shallow copy so the
 // caller's client is not mutated). Mirrors the google-ads/reddit clients.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
