@@ -48,4 +48,24 @@ container boots in 503 mode and retries the pool in the background (see the
 `internal/container` concept), so `/readyz` stays 503 and the pod is kept alive
 across the window rather than crash-looping.
 
+**Rolling back is not the deploy run backwards.** `pool.go` only ever calls `m.Up()`,
+so reverting the image leaves the schema at whatever version the newer binary migrated it
+to. That is harmless for a migration that only ADDS a column the old code ignores, and it
+is not harmless for one that adds a CONSTRAINT the old code has no error mapping for: the
+old binary meets a 23505 it was never written to see and answers 500 where the new one
+answers 409. The audience build lease (`000018`) is the current example.
+
+So the order is **database first, then image**: run the migration's `.down.sql` (via
+`migrate ... goto <previous>`) while the new image is still serving, then roll the
+Deployment back. The reverse order leaves a window whose length is however long the
+rollback takes to notice. Every `.down.sql` in this repo is written to be run this way —
+the concurrent-index ones use `DROP INDEX CONCURRENTLY` precisely so the drop does not
+block writes from the pod still serving during that window.
+
+Two things this does not mean. It is not an argument for skipping the down migration and
+leaving the constraint in place, which trades a documented procedure for a silent
+error-surface regression. And it is not a claim that the newer schema is what makes the
+old binary unsafe — the old binary's behaviour on the old schema is by definition what
+rolling back is asking for, including whatever the new constraint existed to prevent.
+
 See [charts/lfx-v2-campaign-service/templates/deployment.yaml](../../../charts/lfx-v2-campaign-service/templates/deployment.yaml).

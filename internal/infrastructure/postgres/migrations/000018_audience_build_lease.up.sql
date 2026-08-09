@@ -42,6 +42,19 @@
 -- than this migration; otherwise the surviving old pods answer a lost lease with a bare
 -- 500 for the length of the rollout.
 --
+-- ROLLING BACK is the direction that needs a procedure, because it is not symmetric.
+-- pool.go only ever calls m.Up(), so reverting the image leaves this index in place while
+-- restoring a binary that does not map 23505 on campaign_audiences: a concurrent losing
+-- build answers 500 instead of 409 for as long as the old image runs. Roll the DATABASE
+-- back first (`migrate ... goto 17`, i.e. run the .down.sql beside this file), THEN the
+-- image; the down migration drops the index CONCURRENTLY and the old binary is back on
+-- exactly the schema it was written against. Note what rolling back does and does not
+-- cost: the 500 is a real degradation of the error surface, but the DUPLICATE HubSpot
+-- lists are not a new exposure introduced by rolling back past this index — the old
+-- binary has no lease of any kind, so it creates them on any concurrent build regardless
+-- of whether the index is still there. Dropping the index restores the old behaviour
+-- exactly, which is what a rollback is for.
+--
 -- CONCURRENTLY, for the same reason as 000013 — a plain CREATE INDEX takes a lock that
 -- blocks writes to campaign_audiences for the whole build, and /readyz gates traffic on
 -- migrations finishing, so a slow blocking build is startup latency the pod cannot serve
