@@ -167,6 +167,27 @@ approval. A read failure here is reported as-is and never treated as "probably s
 the caller is about to create real lists, and the only safe reading of "could not check" is
 that the check did not pass.
 
+**The re-check has to LOCK, which is why it is a repository operation.** Its first form read
+the brief with `GetBrief` and compared in the service, and that cannot answer the question it
+was asked. `GetBrief` is a plain `SELECT`, so under READ COMMITTED it returns the last
+COMMITTED row: a `ReplaceBrief` that has updated the row and not yet committed is invisible
+to it. The check would pass, the withdrawal would commit, and the lists would be created
+from an approval the operator had already revoked — with nothing afterwards to tell those
+lists from a legitimate build's. `BriefReader.ConfirmBriefApproved` does the read under
+`SELECT ... FOR UPDATE` inside its own transaction, so the confirmation QUEUES behind such a
+writer instead of reading around it and sees the writer's row once it commits. It does not
+close the window (the lock is released when that transaction ends, and holding a transaction
+open across an HTTP call to HubSpot is not an option) — what it removes is the
+already-decided case, where the withdrawal has happened and merely has not committed yet.
+
+**A brief that is not there is a 404, not the stale-approval 409.** The claim's gate cannot
+find a missing or archived brief either, so it too refuses with `ErrStaleApproval` — and left
+to that mapping the caller is told to refresh and rebuild a brief that does not exist, about a
+race they were not in. Before the claim moved ahead of the brief read this was a plain 404, and
+`refusedClaimErr` keeps it one by re-reading and treating `ErrNotFound` as the definite answer
+it is. A brief that cannot be re-read AT ALL is different and still falls through to the
+generic mapping: "I could not look" must not be reported as "it is not there."
+
 ## Only approved briefs
 
 Building creates real HubSpot lists and makes a brief sendable, so `BuildAudience` applies the

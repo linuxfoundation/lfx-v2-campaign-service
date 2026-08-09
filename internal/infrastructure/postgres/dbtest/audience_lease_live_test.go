@@ -8,6 +8,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -269,5 +270,71 @@ func TestAudienceBuildLeaseRefusesUpdateBackToBuilding(t *testing.T) {
 	if _, err := repo.UpdateAudience(ctx, failed, failed.Version); !errors.Is(err, domain.ErrAudienceBuildInFlight) {
 		t.Fatalf("PATCH a failed row back to building while the lease is held: got %v, want "+
 			"ErrAudienceBuildInFlight", err)
+	}
+}
+
+// TestConfirmBriefApprovedWaitsForAnInFlightWithdrawal is the property that made
+// ConfirmBriefApproved a repository operation instead of a GetBrief and a comparison, and
+// like the lease above it can only be observed against a real database: what is under test
+// is PostgreSQL's row locking, and no fake has any.
+//
+// The build's last act before creating real HubSpot lists is to confirm the brief is still
+// approved. Under READ COMMITTED a plain SELECT reads the last COMMITTED row, so an operator
+// withdrawing approval — a ReplaceBrief that has updated the row and not yet committed — is
+// INVISIBLE to it. The build would read "approved", the withdrawal would commit, and the
+// lists would be created from an approval that no longer existed. Nothing about that is
+// detectable afterwards: the lists look exactly like a legitimate build's.
+//
+// `FOR UPDATE` makes the confirmation queue behind the writer instead of reading around it.
+// The test asserts both halves, and the first is the one a non-locking implementation passes
+// by accident: the call must still be BLOCKED while the writer is open, and must report
+// ErrStaleApproval once it commits.
+func TestConfirmBriefApprovedWaitsForAnInFlightWithdrawal(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+	repo := postgres.NewBriefRepo(&postgres.Pool{Pool: pool})
+
+	briefID, projectID := insertApprovedBrief(ctx, t, pool)
+	var version int64
+	if err := pool.QueryRow(ctx, `SELECT version FROM campaign_briefs WHERE id = $1`, briefID).Scan(&version); err != nil {
+		t.Fatalf("read the brief's version: %v", err)
+	}
+
+	// The withdrawal: updated, deliberately NOT committed.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin the withdrawing transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `UPDATE campaign_briefs SET status = 'draft', version = version + 1 WHERE id = $1`, briefID); err != nil {
+		t.Fatalf("withdraw approval: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- repo.ConfirmBriefApproved(ctx, projectID, briefID, version) }()
+
+	// A plain SELECT would answer immediately, and answer "approved" — so returning at all
+	// here is the failure. The wait is one-sided: it can only produce a false PASS if the
+	// machine is slow, never a false failure.
+	select {
+	case cerr := <-done:
+		t.Fatalf("ConfirmBriefApproved returned %v while a withdrawal was in flight; it read "+
+			"around the uncommitted writer instead of locking behind it, which is how a build "+
+			"creates HubSpot lists from an approval that is already being withdrawn", cerr)
+	case <-time.After(250 * time.Millisecond):
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit the withdrawal: %v", err)
+	}
+
+	select {
+	case cerr := <-done:
+		if !errors.Is(cerr, domain.ErrStaleApproval) {
+			t.Fatalf("ConfirmBriefApproved = %v, want ErrStaleApproval — the lock was granted "+
+				"after the withdrawal committed, so the row it read is the withdrawn one", cerr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("ConfirmBriefApproved never returned after the withdrawal committed")
 	}
 }

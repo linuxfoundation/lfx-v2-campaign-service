@@ -723,6 +723,32 @@ func TestBuildAudience_ApprovalMovingBeforeTheClaimIsAPlain400(t *testing.T) {
 	assert.Empty(t, arepo.rows(), "a refused claim inserts nothing")
 }
 
+// TestBuildAudience_MissingBriefIsStillA404 pins the third case the claim's gate cannot tell
+// apart on its own, and the one moving the claim first was most likely to lose.
+//
+// The gate reads the brief under its lock and refuses anything not approved — including a brief
+// that is not there, which comes back as the same domain.ErrStaleApproval a moved brief does.
+// Left to that mapping, a build for a deleted or archived brief answers "the brief changed while
+// its audience was being built; refresh and rebuild": a 409 sending the caller to refresh
+// something that does not exist, about a race they were not in. Before the reorder this was a
+// plain 404 — a brief read came first and answered the question directly — so the reorder must
+// not be allowed to take that away.
+func TestBuildAudience_MissingBriefIsStillA404(t *testing.T) {
+	b := &fakeBuilder{}
+	s, arepo, brepo := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+	delete(brepo.briefs, briefKey("cncf", "brief-1"))
+
+	_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	require.Error(t, err)
+
+	var notFound *audiences.NotFoundError
+	assert.ErrorAs(t, err, &notFound,
+		"a brief that is not there is a 404, not a 409 telling the caller to refresh it")
+	assert.Empty(t, arepo.rows(), "a refused claim inserts nothing")
+}
+
 // TestBuildAudience_ConcurrentBuildIsRefusedWithItsOwnMessage is the service half of the build
 // lease (migration 000018). The index does the arbitration, but what the loser is TOLD is a
 // service decision, and getting it wrong is expensive here: the generic ErrConflict message,

@@ -299,3 +299,46 @@ the current binary, and database-first is the ordering that MAXIMISES the window
 binary is still serving. The rule is now stated as a property of the individual migration:
 safe exactly when the down is benign to the binary still serving, decided per migration, and
 for a multi-version `goto` per migration crossed.
+
+## Round 6: the reorder's two remaining debts
+
+Both findings are consequences of moving the claim first, and neither was visible until the
+move was made. Worth recording together, because they are the same debt paid in two places:
+the claim's gate now answers questions it was never the right instrument for.
+
+**A missing brief came back as a stale-approval 409.** The gate refuses anything not approved,
+and a brief that is not there is not approved, so it refuses with `ErrStaleApproval` exactly as
+a moved brief does. Before the reorder a brief read ran first and a missing brief was a plain
+404; afterwards the caller was told to "refresh and rebuild" a brief that does not exist.
+`refusedClaimErr` already re-read the brief to separate the never-approved case (a 400 naming
+the status) from the raced case; it now also treats `ErrNotFound` as its own answer. The
+distinction that matters is between `ErrNotFound` and a read that FAILED: the first is a
+definite answer about the brief, the second is a statement about the service, and only the
+first may be reported as a 404.
+
+**The pre-upstream re-check could not see an in-flight withdrawal.** This is the more serious
+one. Round 4 and Round 5 justified the re-check by saying the claim's gate no longer dates the
+approval; what neither round noticed is that the re-check was built on `GetBrief`, a plain
+`SELECT`. The claim's transaction — the one that held `FOR UPDATE` — has long since committed,
+so under READ COMMITTED an uncommitted `ReplaceBrief` is simply absent from the re-check's
+snapshot. Withdraw approval, and while your transaction is open the build reads "still
+approved" and starts creating lists.
+
+So the guard was in the right place and made of the wrong material. It is now
+`BriefReader.ConfirmBriefApproved`, a repository operation doing `SELECT ... FOR UPDATE` in
+its own transaction: the confirmation queues behind the writer and reads the writer's row.
+That is not a closed window — the lock ends with the transaction, and a transaction cannot be
+held open across the HubSpot calls — but it removes the already-decided case, which is the
+case an operator can actually cause on purpose.
+
+The general rule this adds to the file: **serialization is a property of the READ, not of the
+comparison.** Rounds 4 and 5 both moved a check to a better POSITION. This one leaves the
+position alone and changes what the check is made of, and no amount of reordering would have
+substituted for it.
+
+Verified against live PostgreSQL rather than a fake, because a fake has no locks and would
+have passed either implementation. `TestConfirmBriefApprovedWaitsForAnInFlightWithdrawal`
+opens a withdrawal, leaves it uncommitted, and requires the confirmation to still be BLOCKED;
+dropping `FOR UPDATE` gives `ConfirmBriefApproved returned <nil> while a withdrawal was in
+flight`. The fake's `ConfirmBriefApproved` deliberately does NOT fire `onGet`, for the same
+reason its claim uses `snapshot()`: a hook there would model a window the lock removes.

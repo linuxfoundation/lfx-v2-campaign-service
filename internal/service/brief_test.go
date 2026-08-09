@@ -95,6 +95,24 @@ func (r *fakeBriefRepo) GetBrief(_ context.Context, projectID, id string) (*mode
 	return &cp, nil
 }
 
+// ConfirmBriefApproved answers from the CURRENT stored row and does NOT fire onGet.
+//
+// Not firing it is the point. The real one holds a row lock, so an in-flight writer either
+// commits before this read (and is seen) or after it (and is a different race entirely) —
+// there is no moment inside the read for a hook to mutate. A fake that fired onGet here would
+// model a window the lock removes, and a test written against it would pass whether or not
+// the implementation locked at all.
+func (r *fakeBriefRepo) ConfirmBriefApproved(_ context.Context, projectID, id string, expectedVersion int64) error {
+	b, ok := r.snapshot(projectID, id)
+	if !ok || b.Status == model.BriefArchived {
+		return domain.ErrNotFound
+	}
+	if b.Status != model.BriefApproved || b.Version != expectedVersion {
+		return domain.ErrStaleApproval
+	}
+	return nil
+}
+
 func (r *fakeBriefRepo) CreateBrief(_ context.Context, b *model.CampaignBrief, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
 	if r.createErr != nil {
 		return nil, r.createErr

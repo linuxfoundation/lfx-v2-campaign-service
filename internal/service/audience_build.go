@@ -381,30 +381,44 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 // implying they collided with somebody. Since the claim runs first there is no earlier read to
 // tell the two apart, so this one is done here, on the failure path only.
 //
-// A brief that cannot be re-read falls through to the generic mapping. Guessing 400 there
-// would blame the caller for the service's own inability to look.
+// A brief that is MISSING or archived is a third case, and it needs separating from the other
+// two rather than being left to the stale-approval mapping. The claim's gate cannot find such a
+// brief either, so it too comes back as ErrStaleApproval — and answering "the brief changed
+// while its audience was being built; refresh and rebuild" sends the caller to refresh a brief
+// that is not there. Before the claim moved ahead of the brief read this was a plain 404, and
+// it has to stay one.
+//
+// ErrNotFound is a DEFINITE answer, which is what makes it safe to act on here; a brief that
+// cannot be re-read at all still falls through to the generic mapping, because guessing would
+// blame the caller for the service's own inability to look.
 func refusedClaimErr(ctx context.Context, briefs domain.BriefRepository, p *audiences.BuildAudiencePayload, cerr error) error {
 	if errors.Is(cerr, domain.ErrStaleApproval) {
-		if brief, berr := briefs.GetBrief(ctx, p.ProjectID, p.BriefID); berr == nil && brief.Status != model.BriefApproved {
+		brief, berr := briefs.GetBrief(ctx, p.ProjectID, p.BriefID)
+		switch {
+		case berr == nil && brief.Status != model.BriefApproved:
 			return audienceValidationErr(fmt.Errorf("brief must be approved before building its audience (it is %s)", brief.Status))
+		case errors.Is(berr, domain.ErrNotFound):
+			return mapAudienceErr(berr)
 		}
 	}
 	return mapAudienceErr(cerr)
 }
 
-// confirmStillApproved re-reads the brief and reports domain.ErrStaleApproval unless it is
-// still approved at expectedVersion. A read failure is reported as-is and is NOT treated as
-// "probably still fine": the caller is about to create real HubSpot lists, and the only safe
-// reading of "could not check" is that the check did not pass.
+// confirmStillApproved asks the REPOSITORY whether the brief is still approved at
+// expectedVersion, rather than reading it and comparing here.
+//
+// The comparison is the easy half and it was never the problem. The hard half is that a
+// plain GetBrief is a `SELECT` under READ COMMITTED: a ReplaceBrief that has updated the row
+// and not yet committed does not appear in it, so this check could pass on an approval that
+// was already being withdrawn, and the withdrawal could commit before the first list was
+// created. domain.BriefReader.ConfirmBriefApproved takes a row lock, which makes this read
+// QUEUE behind such a writer instead of reading around it.
+//
+// A read failure is reported as-is and is NOT treated as "probably still fine": the caller
+// is about to create real HubSpot lists, and the only safe reading of "could not check" is
+// that the check did not pass.
 func confirmStillApproved(ctx context.Context, briefs domain.BriefRepository, projectID, briefID string, expectedVersion int64) error {
-	brief, err := briefs.GetBrief(ctx, projectID, briefID)
-	if err != nil {
-		return err
-	}
-	if brief.Status != model.BriefApproved || brief.Version != expectedVersion {
-		return domain.ErrStaleApproval
-	}
-	return nil
+	return briefs.ConfirmBriefApproved(ctx, projectID, briefID, expectedVersion)
 }
 
 // releaseUnstartedClaim marks a just-inserted `building` row FAILED when the build never
