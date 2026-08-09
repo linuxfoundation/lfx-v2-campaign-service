@@ -80,6 +80,26 @@ func (r *ConnectionRepo) Get(ctx context.Context, projectID string, provider mod
 	return c, nil
 }
 
+// Disconnected reports whether the project once had a connection for this provider and
+// explicitly removed it. Delete soft-deletes, and Get filters `status = 'deleted'` out, so
+// without this probe a deliberate disconnect is indistinguishable from never having connected —
+// and the dispatch fallback treats the latter as licence to use the LF-owned ad account.
+//
+// EXISTS rather than a row fetch: the caller needs one bit, and a project may accumulate several
+// tombstones (the partial unique index constrains only the live row).
+func (r *ConnectionRepo) Disconnected(ctx context.Context, projectID string, provider model.Provider) (bool, error) {
+	if !provider.Valid() {
+		return false, fmt.Errorf("unknown provider %q", provider)
+	}
+	//nolint:gosec // table name comes from a fixed internal allowlist, not user input.
+	q := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE project_id = $1 AND status = 'deleted')", provider.Table())
+	var exists bool
+	if err := r.db.QueryRow(ctx, q, projectID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check disconnected connection: %w", err)
+	}
+	return exists, nil
+}
+
 // Create inserts the project's connection. Returns domain.ErrConflict if one
 // already exists (partial unique index on project_id WHERE status <> 'deleted').
 func (r *ConnectionRepo) Create(ctx context.Context, c *model.Connection) (*model.Connection, error) {

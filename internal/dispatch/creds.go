@@ -122,6 +122,14 @@ func parseCampaignDate(s string) *time.Time {
 // to the single method they use so a test can supply a tiny fake.
 type connReader interface {
 	Get(ctx context.Context, projectID string, provider model.Provider) (*model.Connection, error)
+	// Disconnected reports whether the project once had a connection for this provider and
+	// explicitly removed it. It exists because Get cannot answer it: Delete SOFT-deletes
+	// (status = 'deleted') and Get filters those out, so both "never connected" and
+	// "deliberately disconnected" arrive as domain.ErrNotFound — and only the first of those
+	// may fall back to the LF-owned account. It is on the INTERFACE rather than behind a type
+	// assertion so a reader that cannot answer fails to compile, instead of silently taking
+	// the fallback that the assertion's else-branch would give it.
+	Disconnected(ctx context.Context, projectID string, provider model.Provider) (bool, error)
 }
 
 // credsSource resolves a project's decrypted platform credentials. It is the ONLY
@@ -244,6 +252,23 @@ func (s *credsSource) systemConn(ctx context.Context, projectID string, provider
 	// own guidance: a provider added later returns "" from Kind() until someone classifies
 	// it, so it is denied the LF credential by default instead of inheriting it.
 	if !provider.IsPaidAds() {
+		return nil, nil
+	}
+	// A project that DISCONNECTED its account said something, and the LF account is not it.
+	// Delete soft-deletes and Get filters status = 'deleted' out, so an explicit disconnect
+	// reaches the caller as the same domain.ErrNotFound as never having connected at all —
+	// and the branch above reads that as licence to spend LF budget on that project's
+	// campaigns. Absence of a statement is what this fallback is for; a statement to the
+	// contrary is not absence.
+	//
+	// Fails CLOSED on a probe error: an unanswered "was this disconnected?" is not a no.
+	switch disconnected, derr := s.repo.Disconnected(ctx, projectID, provider); {
+	case derr != nil:
+		return nil, notCreated(fmt.Errorf("check whether project %s disconnected its %s account: %w",
+			projectID, provider, derr))
+	case disconnected:
+		slog.InfoContext(ctx, "project disconnected its account; not falling back to the system account",
+			"project_id", projectID, "provider", string(provider))
 		return nil, nil
 	}
 	conn, err := s.repo.Get(ctx, model.SystemProjectID, provider)

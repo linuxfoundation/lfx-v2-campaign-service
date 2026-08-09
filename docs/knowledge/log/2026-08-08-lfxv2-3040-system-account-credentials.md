@@ -271,3 +271,34 @@ The narrowing matters as much: whitespace INSIDE a value is untouched (a secret'
 this command's business), and padding on a key the provider does not require is ignored. Seven
 sub-tests, revert-checked — with the guard removed, the padded values appear verbatim inside the
 written row's encrypted blob.
+
+## An explicit no, read as silence
+
+The fallback's safety argument is that only a GENUINE absence falls back — a repo error, an empty
+blob, a decrypt failure all mean the project has a connection needing attention, and running its
+campaign on the LF account would spend LF money on a request the project believed was its own.
+Review found the one absence that is not genuine and was being treated as though it were.
+
+`ConnectionRepo.Delete` soft-deletes: it sets `status = 'deleted'`, and `Get` filters those rows
+out and returns `domain.ErrNotFound`. So a project owner who deliberately disconnected their ad
+account produced exactly the sentinel the fallback reads as "never connected", and the next
+dispatch quietly moved their spend onto the Linux Foundation's account — with an INFO log for it
+and nothing else. The invariant this PR wrote down in its own comment was violated by the branch
+directly beneath it.
+
+`connReader.Disconnected` is the probe that separates the two states, backed by a one-bit
+`SELECT EXISTS(... status = 'deleted')`. Two decisions in it are worth keeping:
+
+- It is on the INTERFACE, not behind a type assertion. A reader that cannot answer now fails to
+  COMPILE. Behind an assertion, the else-branch would hand exactly the projects whose repo could
+  not answer the fallback this guard exists to withhold — the defect restored by the mechanism
+  meant to fix it.
+- A probe that ERRORS fails closed. An unanswered "was this disconnected?" is not a no, and
+  failing open would restore the whole defect on any database blip, which is the shape a fallback
+  fails in.
+
+The refusal keeps `ErrNotFound` wrapped, so read-only callers still answer 404 rather than 5xx —
+the project genuinely has no usable connection; what changed is which account does not get used.
+Three sub-tests, revert-checked: with the probe ignored, a disconnected project resolves with
+`fromSystem: true`.
+

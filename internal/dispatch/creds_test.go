@@ -156,6 +156,19 @@ type scopedConnReader struct {
 	rows map[string]*model.Connection
 	errs map[string]error
 	gets []string // every project id asked for, in order
+
+	// tombstoned models the state Get CANNOT express: a row soft-deleted by Delete, which
+	// Get filters out and reports as ErrNotFound like any other absence. disconnectErr is the
+	// probe itself failing, which must not be read as "no".
+	tombstoned    map[string]bool
+	disconnectErr error
+}
+
+func (f *scopedConnReader) Disconnected(_ context.Context, projectID string, _ model.Provider) (bool, error) {
+	if f.disconnectErr != nil {
+		return false, f.disconnectErr
+	}
+	return f.tombstoned[projectID], nil
 }
 
 func (f *scopedConnReader) Get(_ context.Context, projectID string, _ model.Provider) (*model.Connection, error) {
@@ -572,4 +585,61 @@ func TestSystemFallbackIsGatedByClassificationNotByName(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestADisconnectedProjectDoesNotFallBackToTheLFAccount covers the difference between a project
+// that never said anything and one that said no.
+//
+// Delete SOFT-deletes (status = 'deleted') and Get filters those rows out, so both states reach
+// resolve as the same domain.ErrNotFound. The fallback reads that as licence to run the
+// project's campaigns on the LF-owned ad account — so an owner who deliberately disconnected
+// their account got their spend moved onto the Linux Foundation's, with an INFO log for it and
+// nothing else. Absence of a statement is what the fallback is for; a statement to the contrary
+// is not absence.
+//
+// The narrowing half is the whole point of the fallback and must keep working: a project that
+// never connected still gets the LF account.
+func TestADisconnectedProjectDoesNotFallBackToTheLFAccount(t *testing.T) {
+	sysRows := map[string]*model.Connection{model.SystemProjectID: usableConn(`{"sys":true}`, "sys-account")}
+
+	t.Run("a disconnected project is refused", func(t *testing.T) {
+		repo := &scopedConnReader{rows: sysRows, tombstoned: map[string]bool{"cncf": true}}
+		got, err := newCredsSource(repo, identityEncryptor{}).
+			resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+		if err == nil {
+			t.Fatalf("resolve = %+v, want a refusal: this project disconnected its account, so "+
+				"running its campaign on the LF account spends LF budget against an explicit no", got)
+		}
+		if !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("err = %v, want it to keep ErrNotFound so read-only callers still answer 404", err)
+		}
+		for _, scope := range repo.gets {
+			if scope == model.SystemProjectID {
+				t.Errorf("scopes asked = %v, want the system scope never consulted", repo.gets)
+			}
+		}
+	})
+
+	t.Run("a project that never connected still falls back", func(t *testing.T) {
+		repo := &scopedConnReader{rows: sysRows}
+		got, err := newCredsSource(repo, identityEncryptor{}).
+			resolve(context.Background(), "cncf", model.ProviderGoogleAds)
+		if err != nil {
+			t.Fatalf("resolve: %v — a project that never connected is exactly what the fallback is for", err)
+		}
+		if !got.fromSystem {
+			t.Fatalf("resolved = %+v, want the system account", got)
+		}
+	})
+
+	// An unanswered "was this disconnected?" is not a no. Failing open here would restore the
+	// whole defect on any database blip, which is the shape a fallback fails in.
+	t.Run("a probe failure fails closed", func(t *testing.T) {
+		repo := &scopedConnReader{rows: sysRows, disconnectErr: errors.New("db down")}
+		if _, err := newCredsSource(repo, identityEncryptor{}).
+			resolve(context.Background(), "cncf", model.ProviderGoogleAds); err == nil {
+			t.Fatal("resolve = nil error, want a refusal: the probe did not answer, so nothing " +
+				"proves this project did not disconnect")
+		}
+	})
 }

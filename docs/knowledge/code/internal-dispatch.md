@@ -452,6 +452,17 @@ error, an empty blob, a decrypt failure each mean the project HAS a connection n
 and running its campaign on the LF account spends LF money on a request the project believed was
 billed to itself. `resolveConn` is shared, so a failed FALLBACK lookup is not an absence either.
 
+**And `ErrNotFound` is not by itself a genuine absence.** `Delete` SOFT-deletes
+(`status = 'deleted'`) and `ConnectionRepo.Get` filters those rows out, so a project that
+deliberately DISCONNECTED its ad account arrives at the fallback wearing the same sentinel as one
+that never connected — and the branch above reads that as licence to spend LF budget on its
+campaigns. Absence of a statement is what this fallback is for; a statement to the contrary is
+not absence. `connReader.Disconnected` is the probe that separates them, and it sits on the
+INTERFACE rather than behind a type assertion so a reader that cannot answer fails to compile
+instead of silently inheriting the fallback the assertion's else-branch would give it. A probe
+that ERRORS fails closed: an unanswered "was this disconnected?" is not a no, and failing open
+there would restore the whole defect on any database blip.
+
 **Origin and classification are two questions, and one sentinel cannot answer both.**
 `ErrSystemConnectionNotUsable` answers "who must fix this" and only rides along with
 `ErrConnectionNotUsable`, so a failure it does not classify — a blob that fails authenticated
