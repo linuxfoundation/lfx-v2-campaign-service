@@ -1616,7 +1616,7 @@ func TestGoogleAds_Adoption_FindsAndAdoptsExistingCampaign(t *testing.T) {
 		googleads.WithTokenURL(tokenSrv.URL),
 		googleads.WithBaseURL(apiSrv.URL),
 	)
-	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50}}`)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"adoptExisting":true}}`)
 	brief := testBrief() // "brief-1" / "cncf" / "KubeCon NA 2026"
 
 	camp, err := d.Dispatch(context.Background(), brief, model.ProviderGoogleAds, cfg)
@@ -1626,8 +1626,14 @@ func TestGoogleAds_Adoption_FindsAndAdoptsExistingCampaign(t *testing.T) {
 	if camp == nil || camp.PlatformCampaignID != "999" {
 		t.Fatalf("adoption must return campaign with id 999, got: %+v", camp)
 	}
-	if camp.Status != campaignStatusCreated {
-		t.Errorf("adoption status = %q, want %q", camp.Status, campaignStatusCreated)
+	// `created_degraded`, not `created`: this path pushed NOTHING upstream — no budget,
+	// no ad group, no ad, and not this request's budget/config either. A clean `created`
+	// would assert wiring that never happened, and it is the row an operator reconciling
+	// against the platform reads. Mirrors twitter.go's Reused case.
+	if camp.Status != campaignStatusCreatedDegraded {
+		t.Errorf("adoption status = %q, want %q — an adopted campaign is not a clean create: "+
+			"its budget/config were never applied upstream and no ad group exists, so the row "+
+			"must say so", camp.Status, campaignStatusCreatedDegraded)
 	}
 	// The adopted row must still record what the dispatch ASKED for. These columns hold
 	// the caller-supplied config, not a readback of platform state, so leaving them NULL
@@ -1683,18 +1689,85 @@ func TestGoogleAds_Adoption_ProceedsToCreateWhenAbsent(t *testing.T) {
 		googleads.WithTokenURL(tokenSrv.URL),
 		googleads.WithBaseURL(apiSrv.URL),
 	)
-	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50}}`)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"adoptExisting":true}}`)
 	brief := testBrief()
 
 	camp, err := d.Dispatch(context.Background(), brief, model.ProviderGoogleAds, cfg)
 	if err != nil {
 		t.Fatalf("Dispatch on absent campaign must proceed to create, got: %v", err)
 	}
+	// t.Fatalf with %+v on camp, not t.Errorf with camp.PlatformCampaignID: the guard's own
+	// first disjunct is `camp == nil`, so the field read in the message panics on exactly
+	// the case it is written to report, and Errorf would run on into the nil deref below.
 	if camp == nil || camp.PlatformCampaignID != "222" {
-		t.Errorf("created campaign id = %q, want 222", camp.PlatformCampaignID)
+		t.Fatalf("created campaign = %+v, want id 222", camp)
 	}
 	if camp.Status != campaignStatusCreated {
 		t.Errorf("creation status = %q, want %q", camp.Status, campaignStatusCreated)
+	}
+}
+
+// TestGoogleAds_Adoption_IsOptInAndOffByDefault is the binding test for the delete/
+// re-dispatch defect. A config with no adoptExisting must not perform the lookup AT ALL.
+//
+// Why the default is the property that matters: ComposeName is deterministic in
+// Project/EventName/NameSuffix and is unchanged by a soft delete of the local campaign
+// row, while getCampaignByPlatformQuery excludes deleted rows — so after a documented
+// delete the orchestrator sees "never dispatched" and takes the fresh-claim path into
+// Dispatch. With an unconditional lookup that dispatch re-attaches to the still-live
+// upstream campaign the delete walked away from, persists THIS request's budget and
+// config against it, and pushes none of it upstream. Nothing surfaces: the caller is
+// told a campaign was provisioned.
+//
+// The server here fails the test if the search endpoint is touched, which is the whole
+// assertion — the create path proceeding to id 222 is the corroborating half.
+func TestGoogleAds_Adoption_IsOptInAndOffByDefault(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+			// Answering with the live campaign would let an unguarded lookup adopt it —
+			// so an implementation that regresses fails on the id AND on this Errorf.
+			t.Errorf("adoption lookup ran without adoptExisting; a re-dispatch after a local "+
+				"delete would silently re-attach to the live upstream campaign (path %q)", r.URL.Path)
+			_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"999","name":"LFX | Search Campaign | cncf | KubeCon NA 2026 | brief-1","status":"ENABLED","resourceName":"customers/1234567890/campaigns/999"}}]}`)
+		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
+		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroups/333"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupAds/333~444"}]}`)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)},
+		identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL),
+		googleads.WithBaseURL(apiSrv.URL),
+	)
+	// No adoptExisting key at all — the shape every existing caller sends.
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50}}`)
+
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch without adoptExisting must create, got: %v", err)
+	}
+	if camp == nil || camp.PlatformCampaignID != "222" {
+		t.Fatalf("campaign = %+v, want a freshly CREATED campaign with id 222, not the "+
+			"adopted 999", camp)
+	}
+	if camp.Status != campaignStatusCreated {
+		t.Errorf("status = %q, want %q", camp.Status, campaignStatusCreated)
 	}
 }
 
@@ -1721,7 +1794,7 @@ func TestGoogleAds_Adoption_ErrorsOnLookupFailure(t *testing.T) {
 		googleads.WithTokenURL(tokenSrv.URL),
 		googleads.WithBaseURL(apiSrv.URL),
 	)
-	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50}}`)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"adoptExisting":true}}`)
 	brief := testBrief()
 
 	camp, err := d.Dispatch(context.Background(), brief, model.ProviderGoogleAds, cfg)
@@ -1762,7 +1835,7 @@ func TestGoogleAds_Adoption_ErrorsOnNameMismatch(t *testing.T) {
 		googleads.WithTokenURL(tokenSrv.URL),
 		googleads.WithBaseURL(apiSrv.URL),
 	)
-	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50}}`)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"adoptExisting":true}}`)
 	brief := testBrief()
 
 	camp, err := d.Dispatch(context.Background(), brief, model.ProviderGoogleAds, cfg)
@@ -1801,7 +1874,7 @@ func TestGoogleAds_Adoption_ErrorsOnAccountMismatch(t *testing.T) {
 		googleads.WithTokenURL(tokenSrv.URL),
 		googleads.WithBaseURL(apiSrv.URL),
 	)
-	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50}}`)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"adoptExisting":true}}`)
 	brief := testBrief()
 
 	camp, err := d.Dispatch(context.Background(), brief, model.ProviderGoogleAds, cfg)
@@ -1850,7 +1923,7 @@ func TestGoogleAds_Adoption_SkipsRemovedCampaign(t *testing.T) {
 		googleads.WithTokenURL(tokenSrv.URL),
 		googleads.WithBaseURL(apiSrv.URL),
 	)
-	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50}}`)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"adoptExisting":true}}`)
 	brief := testBrief()
 
 	camp, err := d.Dispatch(context.Background(), brief, model.ProviderGoogleAds, cfg)
@@ -1897,7 +1970,7 @@ func TestGoogleAds_Adoption_DoesNotBypassInputValidation(t *testing.T) {
 	)
 	// A zero budget is rejected by the preflight (it rounds to 0 micros). Any input the
 	// preflight rejects would do; this one needs no long strings to express.
-	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":0}}`)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":0,"adoptExisting":true}}`)
 
 	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
 	if err == nil {

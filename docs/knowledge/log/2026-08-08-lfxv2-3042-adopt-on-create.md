@@ -41,6 +41,44 @@ and settings it was created with, and this path creates no budget and no ad grou
 records the request; the platform keeps its state. Reconciling the two is a metrics read's
 job, not the mapper's.
 
+## Follow-on (review round 1) — adoption had to become opt-in
+
+The first cut ran the lookup on EVERY dispatch. That is correct for the case it was written
+for (a retry after an ambiguous create) and wrong for the case it actually reaches most
+often.
+
+`ComposeName` is deterministic in Project/EventName/NameSuffix and is **unchanged by a soft
+delete of the local campaign row**, while `getCampaignByPlatformQuery` excludes deleted rows.
+So after a documented delete the orchestrator reads the pair as "never dispatched"
+(`campaign_repo.go`), takes the fresh-claim path (`orchestrator.go`), and calls `Dispatch`
+again. The unconditional lookup then found the campaign the delete had walked away from —
+still live, still spending — adopted it, and persisted the NEW request's budget and config
+against it while pushing nothing upstream. The caller was told a campaign was provisioned.
+Nothing anywhere surfaced the rebind.
+
+Worse, the retry case adoption was written for is largely unreachable: a dispatch that dies
+mid-flow leaves a RETAINED partial claim, which the orchestrator reports as "reconciliation
+required" without calling `Dispatch` again at all. So the path that reached adoption in
+practice was the one where it was wrong.
+
+`googleAdsConfig.adoptExisting` (default `false`) is the fix. Adoption is now a deliberate
+act — which is what binding an already-existing campaign to a brief always was — and with the
+flag off a post-delete re-dispatch goes down the create path, where Google's `DUPLICATE_NAME`
+surfaces as a retained partial requiring reconciliation. Visible beats silent.
+
+`TestGoogleAds_Adoption_IsOptInAndOffByDefault` binds it: the fake API `t.Errorf`s if the
+search endpoint is touched at all, and still answers with the live campaign, so a regression
+fails on the call AND on the adopted id.
+
+### And an adopted row is `created_degraded`
+
+It was `created`. It is not a clean create: no budget, no ad group and no ad were made, and
+this request's config was never applied upstream — the campaign may be serving under settings
+nobody in this system chose. `twitter.go` already stamps `created_degraded` for exactly this
+shape (its `Reused` case). Both statuses are terminal to `isReusableCampaign`, so this does
+not invite a re-dispatch; it makes the row say what happened, which is all an operator
+reconciling against the platform has to go on.
+
 ## Note on the test
 
 `TestGoogleAds_Adoption_FindsAndAdoptsExistingCampaign` uses `atomic.Bool` for its

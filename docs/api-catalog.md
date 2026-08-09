@@ -381,6 +381,19 @@ audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTI
                                   `targetingSetting.targetRestrictions` (AUDIENCE, bidOnly) on the ad group
                                   create so these segments stay observation-only rather than Google's
                                   default of restricting delivery to the audience alone.
+adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When true, the dispatcher first
+                                  looks the composed campaign name up on the account and, if a single
+                                  live campaign already carries it, ADOPTS that campaign instead of
+                                  creating one: the row is persisted with the existing
+                                  platform_campaign_id and status `created_degraded`, no budget/ad
+                                  group/ad is created, and this request's budget and config are recorded
+                                  on the row but NOT pushed upstream. Use it to bind a campaign that
+                                  already exists on the account to a brief. Leave it off otherwise: the
+                                  composed name is deterministic and survives a campaign DELETE, so an
+                                  unconditional lookup would silently re-attach a re-dispatch to the
+                                  still-live campaign the delete walked away from. With the flag off,
+                                  that dispatch creates, and Google's duplicate-name response surfaces
+                                  as a job failure requiring reconciliation.
 ```
 
 #### HubSpotConfig (the `hubspotConfig` object)

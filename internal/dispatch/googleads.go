@@ -74,6 +74,20 @@ type googleAdsConfig struct {
 	// not created by this dispatcher. See googleads.validateAudienceSegments for the
 	// accepted shapes.
 	AudienceSegments []string `json:"audienceSegments"`
+	// AdoptExisting opts THIS dispatch in to adopting a campaign that already carries the
+	// composed name instead of creating one. It defaults to FALSE, and the default is the
+	// safety property, not a convenience: ComposeName is deterministic in
+	// Project/EventName/NameSuffix and does NOT change when the local campaign row is
+	// soft-deleted, while getCampaignByPlatformQuery excludes deleted rows — so after a
+	// delete the orchestrator reads the pair as "never dispatched" and takes the fresh-claim
+	// path. An unconditional lookup would then silently re-attach to the still-live upstream
+	// campaign the delete was meant to walk away from, and persist THIS request's
+	// budget/config against it while pushing nothing upstream. Requiring the caller to ask
+	// makes the one case where adoption is genuinely wanted — binding a campaign that
+	// already exists on the account — an explicit act, and leaves the delete/re-dispatch
+	// case to the create path, where a duplicate name surfaces as a visible
+	// reconciliation outcome rather than a silent rebind.
+	AdoptExisting bool `json:"adoptExisting"`
 }
 
 // GoogleAdsDispatcher creates Google Ads campaigns for the orchestrator.
@@ -151,31 +165,36 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		d.opts...,
 	)
 
-	// ComposeName is deterministic in the brief, so a RETRIED dispatch asks for the same
-	// name a previous attempt may already have created. Adopt it rather than create a
-	// second PAID campaign. Only a verified absence licenses the create below:
-	// FindCampaignByName errors on anything it cannot verify (transport failure, a name
-	// that does not match the WHERE clause, a campaign in another customer), so the
-	// lookup never reduces an unverifiable response to a clean "not found".
-	//
 	// Validate the input FIRST, and note this is not merely tidy ordering. Adoption
 	// returns before CreateCampaign runs its preflight, so without this call the same
 	// request would be rejected when no campaign exists and accepted when one does — a
 	// NaN budget or a malformed registration URL would fail on the first dispatch and
 	// silently succeed on the retry. Whether a request is well-formed cannot depend on
-	// what happens to be sitting in the ad account.
+	// what happens to be sitting in the ad account. Validating unconditionally (rather
+	// than only on the adoption branch) also keeps the two paths' acceptance identical
+	// whichever way cfg.AdoptExisting is set.
 	if err := client.ValidateCampaignInput(in); err != nil {
 		return nil, notCreated(err)
 	}
 	campaignName := googleads.ComposeName("Search Campaign", in)
-	adoptID, adoptErr := client.FindCampaignByName(ctx, campaignName)
-	if adoptErr != nil {
-		// notCreated: nothing was created upstream, so the orchestrator releases the
-		// claim. FindCampaignByName already wraps with its own context.
-		return nil, notCreated(adoptErr)
-	}
-	if adoptID != "" {
-		return campaignFromGoogleAdsAdoption(ctx, adoptID, campaignName, accountID, res.label, cfg), nil
+	// Adoption is OPT-IN (see googleAdsConfig.AdoptExisting for why the default must be
+	// off). When asked for: ComposeName is deterministic in the brief, so the caller is
+	// pointing at a campaign that already carries this exact name on this account. Adopt
+	// it rather than create a second PAID campaign. Only a verified absence licenses the
+	// create below: FindCampaignByName errors on anything it cannot verify (transport
+	// failure, a name that does not match the WHERE clause, a campaign in another
+	// customer), so the lookup never reduces an unverifiable response to a clean
+	// "not found".
+	if cfg.AdoptExisting {
+		adoptID, adoptErr := client.FindCampaignByName(ctx, campaignName)
+		if adoptErr != nil {
+			// notCreated: nothing was created upstream, so the orchestrator releases the
+			// claim. FindCampaignByName already wraps with its own context.
+			return nil, notCreated(adoptErr)
+		}
+		if adoptID != "" {
+			return campaignFromGoogleAdsAdoption(ctx, adoptID, campaignName, accountID, res.label, cfg), nil
+		}
 	}
 	// The GA client's contract (mirrors reddit/meta/twitter): (nil, err) ONLY when
 	// NOTHING was (or may have been) created — a validation/pre-send/definite failure.
@@ -265,7 +284,15 @@ func campaignFromGoogleAdsAdoption(ctx context.Context, campaignID, campaignName
 	c := &model.Campaign{
 		PlatformCampaignID: campaignID,
 		CampaignName:       campaignName,
-		Status:             campaignStatusCreated,
+		// `created_degraded`, NOT `created` — the same status twitter.go stamps for its
+		// Reused case, and for the same reason: the campaign exists but this request's
+		// budget/config were never pushed to it, and no budget or ad group was created,
+		// so it may be serving under settings nobody here chose (or not serving at all).
+		// Both statuses are terminal to isReusableCampaign, so this does not invite a
+		// re-dispatch; what it does is make the row say what actually happened, which is
+		// what an operator reconciling against the platform has to go on. A clean
+		// `created` here would assert a wiring that this path deliberately never does.
+		Status: campaignStatusCreatedDegraded,
 	}
 	// The config is applied for the same reason as on the create path, and it is worth
 	// being precise about what these columns mean, because "adopted" invites the reading

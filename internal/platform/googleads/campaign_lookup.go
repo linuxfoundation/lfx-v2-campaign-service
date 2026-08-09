@@ -131,8 +131,9 @@ func canonicalCampaignID(s string) string {
 // findCampaignByName, linkedin's findMatch, twitter's and microsoft's) because callers
 // make the same decision from the result. It is the first one EXPORTED, though: the
 // others are called only from inside their own create path; this one is exported because
-// dispatch's adoption path is INTENDED to call it — that wiring is a follow-up, and no
-// production caller exists yet. The outcomes:
+// dispatch's adoption path calls it (GoogleAdsDispatcher.Dispatch, LFXV2-3042) — and only
+// when that dispatch set adoptExisting, so the caller is a deliberate act rather than
+// every create. The outcomes:
 //
 //   - exactly one live match  -> (id, nil)
 //   - no live match           -> ("", nil)   — a clean, trustworthy absence

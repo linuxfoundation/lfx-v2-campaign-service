@@ -100,8 +100,21 @@ fail-closed logic mirrors the other clients' lookups (meta's `findCampaignByName
 `findMatch`, twitter's and microsoft's) because callers make the same decision from the
 result. It is the first one **exported** — the others are called only from inside their own
 create path; this one is exported because `GoogleAdsDispatcher.Dispatch` calls it before
-creating, to adopt a campaign a previous attempt already made rather than create a second
-paid one (LFXV2-3042).
+creating, to adopt a campaign that already carries the composed name rather than create a
+second paid one (LFXV2-3042).
+
+Adoption is **opt-in** — `googleAdsConfig.adoptExisting`, default `false` — and the default
+is a correctness property, not a convenience. `ComposeName` is deterministic in
+Project/EventName/NameSuffix and does not change when the local campaign row is soft-deleted,
+while `getCampaignByPlatformQuery` excludes deleted rows. So after a documented delete the
+orchestrator reads the pair as "never dispatched" and re-enters `Dispatch`; an unconditional
+lookup would there re-attach to the still-live upstream campaign the delete walked away from
+and persist the new request's budget/config against it while pushing nothing upstream. With
+the flag off, that dispatch goes down the create path, where Google's `DUPLICATE_NAME` is
+surfaced as a retained partial requiring reconciliation — visible, which the silent rebind
+is not. An adopted row is persisted `created_degraded`, never `created`: nothing was wired
+upstream (no budget, no ad group, no ad, and not this request's config), the same reason
+`twitter.go` degrades its `Reused` case.
 
 | outcome | result |
 |---|---|
