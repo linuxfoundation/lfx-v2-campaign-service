@@ -68,10 +68,13 @@ func actorFromCtx(ctx context.Context) *model.Actor {
 // successful one is. Worse, a deploy that breaks auth AND breaks writes would go silent
 // precisely when the signal is most needed. Alert on the rate relative to total write
 // attempts, not to commits.
+// The message says the write records NO actor, not that it records NULL. Those differ: the
+// update paths write `updated_by=COALESCE($n, updated_by)`, so a nil here leaves whoever last
+// moved the row in place. The column reads NULL only when no attributed write ever reached it.
 func attributedActor(ctx context.Context, operation string) *model.Actor {
 	a := actorFromCtx(ctx)
 	if a == nil {
-		slog.WarnContext(ctx, "write attempted with no authenticated actor; attribution will be recorded as NULL if it commits",
+		slog.WarnContext(ctx, "write attempted with no authenticated actor; it will record no actor",
 			"operation", operation)
 	}
 	return a
