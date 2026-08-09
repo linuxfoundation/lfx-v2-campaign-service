@@ -340,15 +340,26 @@ func TestDisconnectedProbeIsIndexed(t *testing.T) {
 			continue
 		}
 		t.Run(string(p), func(t *testing.T) {
-			conn, err := pool.Acquire(ctx)
+			// The EXPLAIN runs inside an explicit transaction because SET LOCAL is
+			// TRANSACTION-scoped, not session-scoped: issued outside a transaction block
+			// Postgres answers `WARNING: SET LOCAL can only be used in transaction blocks`
+			// and discards it. pgx surfaces that as a successful SET, so the no-op is
+			// silent — and the EXPLAIN that follows is then planned with seqscan still on,
+			// which on a table of this size means Seq Scan even when the index exists.
+			// Measured on 16.10: 50 rows, index present, no transaction => Seq Scan;
+			// same query inside BEGIN ... SET LOCAL => Index Only Scan. So the setting is
+			// not belt-and-braces here, it is the whole assertion.
+			//
+			// A transaction is also how the setting is contained. `SET` on a pooled
+			// connection would outlive Release() — pgxpool does not reset session state —
+			// and leak into whichever test acquired it next.
+			tx, err := pool.Begin(ctx)
 			if err != nil {
-				t.Fatalf("acquire: %v", err)
+				t.Fatalf("begin: %v", err)
 			}
-			defer conn.Release()
+			defer func() { _ = tx.Rollback(ctx) }()
 
-			// Session-scoped, and the connection is released rather than returned to the pool
-			// carrying the setting, so no other test inherits it.
-			if _, err := conn.Exec(ctx, "SET LOCAL enable_seqscan = off"); err != nil {
+			if _, err := tx.Exec(ctx, "SET LOCAL enable_seqscan = off"); err != nil {
 				t.Fatalf("disable seqscan: %v", err)
 			}
 
@@ -356,7 +367,7 @@ func TestDisconnectedProbeIsIndexed(t *testing.T) {
 			q := fmt.Sprintf(
 				"EXPLAIN SELECT EXISTS(SELECT 1 FROM %s WHERE project_id = $1 AND status = 'deleted')",
 				p.Table())
-			rows, err := conn.Query(ctx, q, "any-project")
+			rows, err := tx.Query(ctx, q, "any-project")
 			if err != nil {
 				t.Fatalf("explain: %v", err)
 			}
