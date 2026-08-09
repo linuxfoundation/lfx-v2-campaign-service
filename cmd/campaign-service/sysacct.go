@@ -96,6 +96,20 @@ func parseProviderConfig(s string) (map[string]string, error) {
 	return cfg, nil
 }
 
+// paidAdsProviders lists the providers this command can actually install, for its usage
+// error. Derived by asking IsPaidAds rather than hand-listing, so it stays in step with the
+// same classification bootstrap.InstallSystemAccount enforces — a provider added later is
+// offered here exactly when it starts being accepted there, never before.
+func paidAdsProviders() []model.Provider {
+	out := make([]model.Provider, 0, len(model.AllProviders()))
+	for _, p := range model.AllProviders() {
+		if p.IsPaidAds() {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // runSysacctBootstrap is the subcommand entry point. The credential is read from STDIN, never
 // a flag: a flag lands in shell history and every `ps` listing, indefinite exposure for a
 // long-lived refresh token.
@@ -108,9 +122,23 @@ func runSysacctBootstrap(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// flag.Parse STOPS at the first non-flag argument and leaves the rest in Args(), so a
+	// stray word swallows every flag after it without any error. `-provider google-ads typo
+	// -account-id 123` would install a credentials-first row here, or on a rotation keep an
+	// account id the operator believed they were changing — a silently wrong outcome on the
+	// command that installs the credentials paid campaigns are dispatched with. There is no
+	// positional argument in this subcommand's grammar, so anything left over is a mistake.
+	if rest := fs.Args(); len(rest) > 0 {
+		return fmt.Errorf("unexpected argument %q: this command takes flags only, and Go's flag "+
+			"parser IGNORES every flag after the first non-flag word, so re-check the ones you "+
+			"passed after it", rest[0])
+	}
 
 	if *provider == "" {
-		return fmt.Errorf("-provider is required (one of %v)", model.AllProviders())
+		// Only the paid-ads providers, not AllProviders(): a HubSpot row is refused further
+		// down (the reserved-scope fallback resolves paid ads only), so offering it here
+		// would send an operator to a value that cannot succeed.
+		return fmt.Errorf("-provider is required (one of %v)", paidAdsProviders())
 	}
 	cfg, err := parseProviderConfig(*configKV)
 	if err != nil {

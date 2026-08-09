@@ -6,6 +6,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
 // TestRunCommandRefusesAnUnknownCommandInsteadOfServing pins the dispatch decision main() makes
@@ -75,6 +77,58 @@ func TestParseProviderConfigDistinguishesAClearFromAMalformedEntry(t *testing.T)
 			t.Fatalf("parseProviderConfig(%q) = nil error, want a refusal: it names no column", bad)
 		} else if !strings.Contains(err.Error(), "not key=value") {
 			t.Fatalf("parseProviderConfig(%q) error = %v, want it to say what the form is", bad, err)
+		}
+	}
+}
+
+// TestRunSysacctBootstrapRejectsResidualArguments pins the residual-argument check.
+//
+// It matters because of how flag.Parse fails: it STOPS at the first non-flag word and returns
+// no error, leaving everything after it in Args(). A typo mid-command therefore does not fail —
+// it silently discards every flag that follows. `-provider google-ads typo -account-id 123`
+// would install a credentials-first row, or on a rotation keep the account id the operator
+// thought they were replacing, on the command that installs the credentials paid campaigns are
+// dispatched with.
+//
+// The case with a flag AFTER the positional is the one worth having: it fails identically
+// today, but it is the shape that silently dropped a flag, so a future edit that accepted
+// stray words while keeping the check on flags-only invocations would still be caught here.
+func TestRunSysacctBootstrapRejectsResidualArguments(t *testing.T) {
+	for name, args := range map[string][]string{
+		"a bare stray word":         {"-provider", "google-ads", "typo"},
+		"a flag after a positional": {"-provider", "google-ads", "typo", "-account-id", "123"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := runSysacctBootstrap(args)
+			if err == nil {
+				t.Fatal("runSysacctBootstrap accepted a stray argument; flags after it are silently ignored")
+			}
+			if !strings.Contains(err.Error(), "unexpected argument") {
+				t.Errorf("error = %v, want it to name the stray argument rather than fail later "+
+					"for a missing credential", err)
+			}
+		})
+	}
+}
+
+// TestSysacctUsageOffersOnlyInstallableProviders keeps the -provider usage error in step with
+// what InstallSystemAccount accepts. A HubSpot system row is refused there (the reserved-scope
+// fallback resolves paid ads only), so naming it here would send an operator to a value that
+// cannot succeed — the usage message is the only place they learn the valid set.
+func TestSysacctUsageOffersOnlyInstallableProviders(t *testing.T) {
+	err := runSysacctBootstrap(nil)
+	if err == nil {
+		t.Fatal("runSysacctBootstrap(nil) succeeded; -provider is required")
+	}
+	if strings.Contains(err.Error(), string(model.ProviderHubSpot)) {
+		t.Errorf("error = %v, but a hubspot system row is refused further down", err)
+	}
+	if !strings.Contains(err.Error(), string(model.ProviderGoogleAds)) {
+		t.Errorf("error = %v, want it to offer the paid-ads providers", err)
+	}
+	for _, p := range paidAdsProviders() {
+		if !p.IsPaidAds() {
+			t.Errorf("paidAdsProviders included %s, which is not a paid-ads provider", p)
 		}
 	}
 }
