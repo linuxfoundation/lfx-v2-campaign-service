@@ -10,18 +10,51 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
+
+// recordedURIs collects the request URIs an httptest handler saw. The handler runs on the
+// server's own goroutine and the assertions run on the test goroutine, with only a TCP
+// socket between them — which is not a happens-before edge the race detector can see. The
+// mutex is what makes the handoff safe, and it is the pattern the Google Ads discovery and
+// meta listAdIDs tests already use.
+type recordedURIs struct {
+	mu   sync.Mutex
+	uris []string
+}
+
+// add records a request URI and returns its zero-based sequence number. Handing back the
+// index under the SAME lock is what keeps the page counter safe too: consecutive requests
+// are served on different goroutines, so a plain `n++` in the handler is as unsynchronized
+// as the slice append.
+func (r *recordedURIs) add(uri string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.uris = append(r.uris, uri)
+	return len(r.uris) - 1
+}
+
+func (r *recordedURIs) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.uris)
+}
+
+func (r *recordedURIs) all() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.uris...)
+}
 
 // adAccountsServer serves /me/adaccounts from a list of canned page bodies, one per
 // request, and records the full request URI of every call. Recording the URI is not
 // incidental: it is what TestListAdAccounts_NeverPutsTheTokenInAURL asserts on.
-func adAccountsServer(t *testing.T, pages ...string) (*httptest.Server, *[]string) {
+func adAccountsServer(t *testing.T, pages ...string) (*httptest.Server, *recordedURIs) {
 	t.Helper()
-	var uris []string
-	var n int
+	rec := &recordedURIs{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		uris = append(uris, r.URL.RequestURI())
+		n := rec.add(r.URL.RequestURI())
 		if r.URL.Path != "/me/adaccounts" {
 			t.Errorf("unexpected path %q; discovery must ask about the TOKEN, not an account", r.URL.Path)
 		}
@@ -31,12 +64,10 @@ func adAccountsServer(t *testing.T, pages ...string) (*httptest.Server, *[]strin
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		body := pages[n]
-		n++
-		_, _ = io.WriteString(w, body)
+		_, _ = io.WriteString(w, pages[n])
 	}))
 	t.Cleanup(srv.Close)
-	return srv, &uris
+	return srv, rec
 }
 
 func newAccountsClient(srv *httptest.Server) *Client {
@@ -50,7 +81,7 @@ func TestListAdAccounts_ReturnsEveryAccountWithItsStatus(t *testing.T) {
 	srv, _ := adAccountsServer(t, `{"data":[
 		{"id":"act_111","name":"LF Core","account_status":1},
 		{"id":"act_222","name":"LF Events","account_status":3},
-		{"id":"act_333","account_status":1}
+		{"id":"act_333"}
 	]}`)
 
 	got, err := newAccountsClient(srv).ListAdAccounts(context.Background())
@@ -68,7 +99,16 @@ func TestListAdAccounts_ReturnsEveryAccountWithItsStatus(t *testing.T) {
 	if lbl := got[1].StatusLabel(); lbl != "unsettled" {
 		t.Errorf("StatusLabel() = %q, want %q", lbl, "unsettled")
 	}
-	// account_status absent decodes to 0, which is NOT a claim of disabled: no label.
+	// act_333's row OMITS account_status entirely. It must decode to 0 — and 0 is NOT a
+	// claim of disabled, so it carries no label AND is not reported active. Asserting the
+	// label alone would not pin this: an active account has no label either, so a fixture
+	// that sent account_status:1 here would pass while testing nothing about absence.
+	if got[2].Status != 0 {
+		t.Errorf("absent account_status decoded to %d, want 0", got[2].Status)
+	}
+	if got[2].Active() {
+		t.Error("absent account_status reported Active(); 0 is not a claim either way")
+	}
 	if lbl := got[2].StatusLabel(); lbl != "" {
 		t.Errorf("absent account_status produced label %q, want empty", lbl)
 	}
@@ -94,13 +134,13 @@ func TestListAdAccounts_WalksEveryPage(t *testing.T) {
 	if len(got) != 2 || got[0].ID != "act_1" || got[1].ID != "act_2" {
 		t.Fatalf("pages not concatenated in order: %+v", got)
 	}
-	if len(*uris) != 2 {
-		t.Fatalf("made %d requests, want 2", len(*uris))
+	if uris.count() != 2 {
+		t.Fatalf("made %d requests, want 2", uris.count())
 	}
 	// The cursor is carried as an ESCAPED query parameter on a path we build ourselves.
 	// A raw "CUR sor/1" here would mean the cursor was concatenated unescaped.
-	if !strings.Contains((*uris)[1], "after=CUR+sor%2F1") && !strings.Contains((*uris)[1], "after=CUR%20sor%2F1") {
-		t.Errorf("second request did not carry the escaped cursor: %s", (*uris)[1])
+	if second := uris.all()[1]; !strings.Contains(second, "after=CUR+sor%2F1") && !strings.Contains(second, "after=CUR%20sor%2F1") {
+		t.Errorf("second request did not carry the escaped cursor: %s", second)
 	}
 }
 
@@ -117,7 +157,7 @@ func TestListAdAccounts_NeverPutsTheTokenInAURL(t *testing.T) {
 	if _, err := newAccountsClient(srv).ListAdAccounts(context.Background()); err != nil {
 		t.Fatalf("ListAdAccounts: %v", err)
 	}
-	for i, u := range *uris {
+	for i, u := range uris.all() {
 		if strings.Contains(u, "tok-secret-abc") || strings.Contains(u, "access_token") || strings.Contains(u, "appsecret_proof") {
 			t.Fatalf("request %d leaked the credential into its URL: %s", i, u)
 		}
@@ -206,9 +246,12 @@ func TestListAdAccounts_FailsRatherThanTruncating(t *testing.T) {
 func TestListAdAccounts_PageCapIsAnErrorNotATruncation(t *testing.T) {
 	// Every page advertises another one with a fresh cursor, so only the cap stops the
 	// walk. Returning what was collected would be a silently short account list.
-	var n int
+	rec := &recordedURIs{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n++
+		// Sequence number comes back from the guarded recorder rather than a bare `n++`:
+		// each request is served on its own goroutine, and the assertion below reads the
+		// count from the test goroutine.
+		n := rec.add(r.URL.RequestURI()) + 1
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"data":[{"id":"act_`+strconv.Itoa(n)+`","account_status":1}],`+
 			`"paging":{"cursors":{"after":"cur-`+strings.Repeat("x", n)+`"},"next":"https://graph.facebook.com/next"}}`)
@@ -225,7 +268,7 @@ func TestListAdAccounts_PageCapIsAnErrorNotATruncation(t *testing.T) {
 	if !strings.Contains(err.Error(), "exceeded") {
 		t.Errorf("error = %q, want it to mention the page cap", err)
 	}
-	if n != adAccountMaxPages {
+	if n := rec.count(); n != adAccountMaxPages {
 		t.Errorf("made %d requests, want exactly the cap %d", n, adAccountMaxPages)
 	}
 }
@@ -256,8 +299,8 @@ func TestListAdAccounts_RequestsTheFieldsItDecodes(t *testing.T) {
 	// Graph returns only the fields asked for. Dropping one of these from the query
 	// would silently zero the corresponding struct field for every account.
 	for _, want := range []string{"id", "name", "account_status"} {
-		if !strings.Contains((*uris)[0], want) {
-			t.Errorf("request did not ask for %q: %s", want, (*uris)[0])
+		if first := uris.all()[0]; !strings.Contains(first, want) {
+			t.Errorf("request did not ask for %q: %s", want, first)
 		}
 	}
 }

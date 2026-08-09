@@ -30,6 +30,11 @@ acts on the ABSENCE — the account they wanted is simply not offered, and they 
 token cannot reach it. An error is the better outcome, because it is the only one that can be
 told apart from the truth.
 
+The id check reuses `accountIDRE` — the very regexp `AccountConfig.AccountID` is validated
+against — rather than restating the `act_<digits>` pattern. An account this walk offers has to
+be one the client will later accept, and a second copy of that contract could drift into
+offering ids that fail at bind time.
+
 The unusable-id case fails the WHOLE walk rather than skipping the row. A response shape that
 far from the documented one means it is not the response we think it is, and the rest of it
 is not trustworthy either.

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -21,12 +20,6 @@ const (
 	// Exceeding it is an ERROR, never a truncated list — see ListAdAccounts.
 	adAccountMaxPages = 20
 )
-
-// adAccountIDRE matches Meta's ad-account node id: the literal "act_" followed by the
-// numeric account id. This is the form AccountConfig.AccountID takes and the form every
-// account-scoped path in this client is built from, so an id that does not match is not
-// storable as a connection's account and must not be offered as a choice.
-var adAccountIDRE = regexp.MustCompile(`^act_[0-9]+$`)
 
 // AdAccount is one ad account reachable with this client's access token.
 type AdAccount struct {
@@ -57,8 +50,9 @@ func (a AdAccount) StatusLabel() string { return inactiveAccountStatusLabels[a.S
 // It asks about the TOKEN, not about any one account: the path is `/me/adaccounts`, and
 // the client's AccountConfig is not consulted at all. That is what lets a connection with
 // no account id — or one being re-pointed at a different account — ask which accounts are
-// available. See resolveMetaDiscoveryClient for which of those lifecycles is reachable
-// today.
+// available. Which of those lifecycles a caller can actually reach is decided above this
+// package, by whether the connection's config requires an account id at create time; today
+// only re-pointing is reachable for Meta (LFXV2-3061).
 //
 // Disabled, unsettled and closed accounts are RETURNED, not filtered. This is a picker:
 // a user whose only account is unsettled needs to see it and its reason, and dropping it
@@ -116,7 +110,11 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 		}
 		for _, a := range *resp.Data {
 			id := strings.TrimSpace(a.ID)
-			if !adAccountIDRE.MatchString(id) {
+			// accountIDRE is the SAME regexp AccountConfig.AccountID is validated against
+			// (client.go). Discovery deliberately reuses it rather than restating the
+			// pattern: an account this walk offers must be one the client will later
+			// accept, and two copies of the contract can drift apart.
+			if !accountIDRE.MatchString(id) {
 				// An entry whose id is not act_DIGITS cannot be stored as a connection's
 				// account or used to build any account-scoped path, so offering it would
 				// hand the user a choice that fails at bind time. Failing the whole walk
