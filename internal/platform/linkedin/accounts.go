@@ -88,13 +88,21 @@ func (a AdAccount) Active() bool { return a.Status == "ACTIVE" }
 func (a AdAccount) StatusLabel() string { return lifecycleStatusLabels[a.Status] }
 
 // Servable reports whether LinkedIn says the account can serve: servingStatuses is exactly
-// the single element RUNNABLE. An ABSENT or empty servingStatuses returns false, because
-// this is an allow-list rather than an exclusion — an unrecognized or omitted value is not
-// evidence that the account can spend, and the honest answer is "not confirmed servable".
-// Callers that need to distinguish "held" from "unknown" read ServingHolds, which is empty
-// in the unknown case.
+// the single element RUNNABLE, and the account is not a TEST account. An ABSENT or empty
+// servingStatuses returns false, because this is an allow-list rather than an exclusion —
+// an unrecognized or omitted value is not evidence that the account can spend, and the
+// honest answer is "not confirmed servable". Callers that need to distinguish "held" from
+// "unknown" read ServingHolds, which is empty in the unknown case.
+//
+// The test-account term is not redundant with servingStatuses. LinkedIn reports RUNNABLE
+// on test accounts — they are runnable in the sense the field means — while a campaign
+// bound to one never serves, never bills, and has its creatives auto-rejected. Without
+// this term a picker built on Servable would present a test account as the one healthy
+// choice, which is the single most misleading answer it could give. Test accounts are
+// still RETURNED by ListAdAccounts and still carry their flag; what changes here is only
+// the claim "this can serve", which for a test account is false.
 func (a AdAccount) Servable() bool {
-	return len(a.ServingStatuses) == 1 && a.ServingStatuses[0] == "RUNNABLE"
+	return !a.Test && len(a.ServingStatuses) == 1 && a.ServingStatuses[0] == "RUNNABLE"
 }
 
 // ServingHolds returns a human-readable reason for each RECOGNIZED serving hold on the

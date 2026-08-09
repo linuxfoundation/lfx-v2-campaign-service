@@ -178,6 +178,12 @@ func TestListAdAccounts_AsksAboutTheTokenAndPaginatesByCursor(t *testing.T) {
 		if !strings.Contains(u, "pageSize="+strconv.Itoa(adAccountPageSize)) {
 			t.Errorf("request %q is missing pageSize=%d", u, adAccountPageSize)
 		}
+		// No `search` criteria, on EITHER page. Omitting it is what makes the request ask
+		// about the token rather than about a filtered subset — and a cursor page is the
+		// easy place to reintroduce one, since it is built separately from page 1.
+		if strings.Contains(u, "search=") || strings.Contains(u, "search.") {
+			t.Errorf("request %q carries search criteria; discovery must omit them entirely", u)
+		}
 	}
 	// The first request must NOT send an empty pageToken: LinkedIn treats a present-but-
 	// blank cursor as a malformed one on some finders.
@@ -315,6 +321,27 @@ func TestListAdAccounts_FailsRatherThanTruncating(t *testing.T) {
 			t.Errorf("made %d requests, want exactly the cap of %d", n, adAccountMaxPages)
 		}
 	})
+}
+
+// A test account reports RUNNABLE — it is runnable in the sense servingStatuses means —
+// while a campaign bound to one never serves, never bills, and has its creatives
+// auto-rejected. Servable must not present it as the healthy choice.
+func TestAdAccountServable_TestAccountIsNotServable(t *testing.T) {
+	test := AdAccount{Test: true, ServingStatuses: []string{"RUNNABLE"}}
+	if test.Servable() {
+		t.Error("a RUNNABLE TEST account reported Servable(); a campaign bound to it never serves")
+	}
+	// The flag must not be the only thing consulted either: the same account without the
+	// flag is servable, so the RUNNABLE term is still doing its work.
+	real := AdAccount{ServingStatuses: []string{"RUNNABLE"}}
+	if !real.Servable() {
+		t.Error("a RUNNABLE non-test account did not report Servable()")
+	}
+	// And a held test account stays unservable for BOTH reasons, not by accident of order.
+	heldTest := AdAccount{Test: true, ServingStatuses: []string{"BILLING_HOLD"}}
+	if heldTest.Servable() {
+		t.Error("a held TEST account reported Servable()")
+	}
 }
 
 func TestAdAccountServingHolds_ReportsEveryRecognizedHold(t *testing.T) {

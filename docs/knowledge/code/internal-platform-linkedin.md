@@ -137,15 +137,19 @@ PENDING_DELETION, REMOVED) and its `servingStatuses` array answer different ques
 disagree: an ACTIVE account on BILLING_HOLD is perfectly bindable but will not spend. So
 `Active()`/`StatusLabel()` report the lifecycle and `Servable()`/`ServingHolds()` report the
 serving state, rather than collapsing into one verdict that would either hide a usable account
-or promise one that cannot serve. `Servable()` is an ALLOW-LIST — exactly `["RUNNABLE"]` — so an
-absent or unrecognized value reads as "not confirmed servable" rather than as healthy;
-`ServingHolds()` stays empty in that case, which is how a caller tells "held" from "unknown".
-An absent lifecycle `status` is likewise not a claim either way: not `Active()`, and no label.
+or promise one that cannot serve. `Servable()` is an ALLOW-LIST — exactly `["RUNNABLE"]`, and
+not a test account — so an absent or unrecognized value reads as "not confirmed servable"
+rather than as healthy. The test-account term is not redundant: LinkedIn reports `RUNNABLE` on
+test accounts, because they *are* runnable in the sense that field means, while a campaign
+bound to one never serves. Without it, a picker built on `Servable()` would present a test
+account as the one healthy choice — the most misleading answer available to it.
+`ServingHolds()` stays empty in that case, which is how a caller tells "held" from "unknown". An absent lifecycle `status` is likewise not a claim either way: not `Active()`, and no label.
 
 `test` accounts are surfaced through the `Test` field rather than filtered. A test account
 never serves and never bills, so binding a real campaign to one produces a campaign that
 silently does nothing — but a developer wiring up an integration is looking for precisely that
-account, so the honest move is to show it and say what it is. Same reasoning applies to
+account, so the honest move is to show it and say what it is — surfaced, but never reported
+as servable. Same reasoning applies to
 canceled, draft and held accounts: this feeds a picker, and dropping a user's only account
 answers "your token reaches no ad accounts" about an account sitting right there.
 

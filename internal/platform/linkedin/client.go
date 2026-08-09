@@ -185,11 +185,15 @@ type linkedInResponse struct {
 	// (`{"elements":[]}`). Getting that wrong would let a `{}` read as "no elements →
 	// not found" and permit a DUPLICATE create. See doRequest's search-presence guard.
 	//
-	// Note that `encoding/json` already draws this line for a PLAIN slice: a present
-	// `[]` is decoded into a non-nil empty slice, while an absent or null field leaves
-	// the slice nil. The pointer is not what makes the distinction possible — it only
-	// makes it impossible to miss at the type level, and it removes the dependency on
-	// the value being freshly zeroed per response.
+	// The pointer is not what MAKES the distinction possible — `encoding/json` already
+	// draws it for a plain slice, since a present `[]` decodes to a non-nil empty slice
+	// while an absent or null field is left untouched. (Nor does the pointer add a
+	// re-use guarantee: json leaves a field ALONE when the key is absent, pointer or
+	// not, so a struct decoded into twice keeps the previous value either way. The
+	// protection there is declaring the value per response, which every call site does.)
+	// It is here so the distinction cannot be dropped by accident: a plain slice invites
+	// a future `len(x) == 0` check that silently merges the two cases, whereas a nil
+	// pointer has to be dereferenced and the compiler makes that decision explicit.
 	Elements *[]responseElement `json:"elements"`
 	Metadata linkedInMetadata   `json:"metadata"`
 }
