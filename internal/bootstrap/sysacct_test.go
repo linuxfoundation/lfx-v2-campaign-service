@@ -379,6 +379,62 @@ func TestCredentialValuesMustBeNonEmptyStrings(t *testing.T) {
 	}
 }
 
+// TestPaddedCredentialValuesAreRefusedRatherThanStored covers the same deferred failure as the
+// test above, one step subtler. Checking `TrimSpace(v) == ""` proves a value is not BLANK; it
+// says nothing about a value that merely has padding, and the ORIGINAL RawMessage — padding
+// included — is what gets encrypted. `"access_token":" token "` therefore installed cleanly and
+// exited 0, and LinkedIn's preflight refuses a padded token
+// (internal/platform/linkedin/client.go), so the system row every unconnected project falls back
+// to was one that every dispatch rejects — with nothing at install time to say so.
+//
+// Refused rather than trimmed: a credential is opaque here, and silently rewriting one would
+// hide a truncated paste. The narrowing half is that padding INSIDE a value, and padding on a
+// key this provider does not require, are both left alone — a secret's interior is not this
+// command's business.
+func TestPaddedCredentialValuesAreRefusedRatherThanStored(t *testing.T) {
+	for name, tc := range map[string]struct {
+		provider model.Provider
+		creds    string
+		wantErr  string
+	}{
+		"a trailing space on a linkedin token":  {model.ProviderLinkedInAds, `{"access_token":"tok "}`, "access_token"},
+		"a leading space on a linkedin token":   {model.ProviderLinkedInAds, `{"access_token":" tok"}`, "access_token"},
+		"a newline from a here-doc":             {model.ProviderLinkedInAds, `{"access_token":"tok\n"}`, "access_token"},
+		"a tab on one of four google ads keys":  {model.ProviderGoogleAds, `{"refresh_token":"rt","client_id":"\tci","client_secret":"cs","developer_token":"dt"}`, "client_id"},
+		"padding on two keys names them sorted": {model.ProviderGoogleAds, `{"refresh_token":"rt ","client_id":" ci","client_secret":"cs","developer_token":"dt"}`, "client_id, refresh_token"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := &stubRepo{getErr: domain.ErrNotFound}
+			err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+				tc.provider, "", false, nil, []byte(tc.creds))
+			if err == nil || repo.created != nil {
+				t.Fatalf("err = %v, created = %+v; want a refusal: the padding is stored verbatim "+
+					"and would be sent to the provider", err, repo.created)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("err = %v, want it to name %s", err, tc.wantErr)
+			}
+		})
+	}
+
+	// The narrowing half. Neither of these is padding this command can act on.
+	for name, creds := range map[string]string{
+		"whitespace inside a value":    `{"access_token":"to ken"}`,
+		"padding on an unrequired key": `{"access_token":"tok","note":"  ignore me  "}`,
+	} {
+		t.Run(name+" installs", func(t *testing.T) {
+			repo := &stubRepo{getErr: domain.ErrNotFound}
+			if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+				model.ProviderLinkedInAds, "509123456", false, map[string]string{"org_id": "123"}, []byte(creds)); err != nil {
+				t.Fatalf("InstallSystemCredentials: %v — this is a credential the provider accepts", err)
+			}
+			if repo.created == nil {
+				t.Fatal("no row written")
+			}
+		})
+	}
+}
+
 // TestInstallRejectsConfigKeysTheProviderDoesNotStore: a -config key outside the provider's
 // column set has nowhere to be written, so before this guard the command dropped it and exited
 // 0 — telling the operator a routing setting was installed that nothing held. The keys below

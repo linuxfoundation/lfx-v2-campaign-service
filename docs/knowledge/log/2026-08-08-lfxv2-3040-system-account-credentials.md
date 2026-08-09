@@ -247,3 +247,27 @@ a shape complaint about a value nobody supplied), and a clear before the row exi
 rather than dropped — obeying it and ignoring it produce the same row, so accepting it would
 report success for an instruction that never ran, and the likely cause is an operator who thought
 they were rotating a row that is not there.
+
+## A third way the installer exited 0 on a row nothing could use
+
+Both defects above were an omission meaning the wrong thing. Review found a third of the same
+family, one step subtler than the string-decoding check already recorded here.
+
+`canonicalCredentials` proved each required value was a non-blank string with
+`strings.TrimSpace(v) == ""`. That answers "is this blank?" and nothing else — and the value
+written is the ORIGINAL `json.RawMessage`, padding intact, since folding rebuilds the map from the
+raw messages rather than the decoded strings. So `{"access_token":" token "}` passed validation and
+was encrypted verbatim. LinkedIn's own preflight rejects an access token that differs from its
+trimmed form, so the install exited 0 having written the system row every unconnected project falls
+back to, in a state every LinkedIn dispatch refuses — the exact deferred failure the surrounding
+check exists to prevent, reached by a route the check did not cover.
+
+It is refused rather than trimmed. A credential is opaque to this command, so silently rewriting
+one would hide a truncated paste, and no provider issues a secret whose surrounding whitespace is
+significant. The diagnostic names every padded key, sorted, and is separate from the missing-keys
+one so an operator is not told a key they supplied is "missing".
+
+The narrowing matters as much: whitespace INSIDE a value is untouched (a secret's interior is not
+this command's business), and padding on a key the provider does not require is ignored. Seven
+sub-tests, revert-checked — with the guard removed, the padded values appear verbatim inside the
+written row's encrypted blob.

@@ -64,21 +64,38 @@ func canonicalCredentials(provider model.Provider, credsJSON []byte) ([]byte, er
 		}
 		folded[credentialKey(k)] = v
 	}
-	var missing []string
+	var missing, padded []string
 	for _, want := range requiredCredentialKeys[provider] {
 		// Decoded as a STRING, not merely checked for presence: every dispatcher
 		// unmarshals these fields into string struct members, so `"client_id": 123`
 		// or `"  "` installs cleanly, exits 0, and fails at dispatch — the exact
 		// deferred failure this validation exists to prevent.
 		var v string
-		if raw, ok := folded[credentialKey(want)]; !ok ||
-			json.Unmarshal(raw, &v) != nil || strings.TrimSpace(v) == "" {
+		raw, ok := folded[credentialKey(want)]
+		switch {
+		case !ok || json.Unmarshal(raw, &v) != nil || strings.TrimSpace(v) == "":
 			missing = append(missing, want)
+		case v != strings.TrimSpace(v):
+			// Surrounding whitespace is REFUSED, not trimmed away. Testing only the
+			// trimmed value while encrypting the original was the same deferred failure
+			// in a subtler form: `"access_token":" token "` passed, and LinkedIn's
+			// preflight rejects a padded token (internal/platform/linkedin/client.go),
+			// so the install exited 0 having written a system row every dispatch refuses.
+			//
+			// Refused rather than canonicalized because a credential is opaque to this
+			// command: silently rewriting one would hide a truncated paste, and no
+			// provider issues a secret whose surrounding whitespace is significant.
+			padded = append(padded, want)
 		}
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
 		return nil, fmt.Errorf("bootstrap: %s credentials are missing %s", provider, strings.Join(missing, ", "))
+	}
+	if len(padded) > 0 {
+		sort.Strings(padded)
+		return nil, fmt.Errorf("bootstrap: %s credentials have surrounding whitespace in %s; a secret is stored verbatim, so the padding would be sent to the provider",
+			provider, strings.Join(padded, ", "))
 	}
 	return json.Marshal(folded)
 }

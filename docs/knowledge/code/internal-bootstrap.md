@@ -33,6 +33,14 @@ enforced on the system row:
 - **Values are decoded as STRINGS**, not merely checked for presence. Every dispatcher unmarshals
   these into string members, so `"client_id": 123` or `"  "` would install cleanly, exit 0, and
   fail at dispatch.
+- **Surrounding whitespace is REFUSED, not trimmed.** Testing `TrimSpace(v) == ""` proves a value
+  is not blank and says nothing about one that merely has padding — and the ORIGINAL `RawMessage`,
+  padding included, is what gets encrypted. `"access_token":" token "` therefore installed cleanly
+  while LinkedIn's preflight (`internal/platform/linkedin/client.go`) refuses a padded token, so
+  the row every unconnected project falls back to was one every dispatch rejects. Refused rather
+  than canonicalized: a credential is opaque here, and silently rewriting one would hide a
+  truncated paste. Padding INSIDE a value, and padding on a key the provider does not require, are
+  left alone — a secret's interior is not this command's business.
 - **Shape rules** (`valueShapes`) come from TWO sources, because that is where they live:
   `design/connection.go` `Pattern()` for LinkedIn, Meta and X, and the runtime validators for
   Google Ads, Microsoft and Reddit, whose designs check presence alone. Mirroring only the design
