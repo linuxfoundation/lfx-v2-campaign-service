@@ -233,8 +233,8 @@ Three consequences follow, and they are what the SQL encodes:
 
 - **The claim INSERT is the row's first INSERT.** `claimCampaignDispatchQuery` is where
   `created_by` is stamped. Every later write for that (brief, platform) pair — a retry, a
-  re-dispatch after a brief edit, a reconcile — normally takes `upsertCampaignQuery`'s
-  conflict arm — and normally does, since every dispatch claims before it upserts. (The
+  re-dispatch after a brief edit, a reconcile — goes through `upsertCampaignQuery`, and
+  normally takes its CONFLICT arm, since every dispatch claims before it upserts. (The
   upsert's INSERT arm stamps `created_by` too, for the case where there is no row to conflict
   with: a soft-deleted row falls outside the partial unique index, and a claim can be removed
   concurrently. Both arms setting it is what keeps the column populated on every path that can
