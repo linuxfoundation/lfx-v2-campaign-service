@@ -235,6 +235,15 @@ func TestGetEmailMetrics_PartiallyRenamedCounterVocabularyIsAnError(t *testing.T
 		"mapped key merely absent":      {`{"sent":1000,"open":400}`, false},
 		"unknown key merely added":      {`{"sent":1,"delivered":1,"open":1,"click":1,"bounce":1,"unsubscribed":1,"engagements":9}`, false},
 		"all mapped absent, only known": {`{"notsent":1}`, false},
+		// The innocent co-occurrence: an upstream release adds `engagements` in the same
+		// week this email omits its zero-valued `bounce`. It errors, and that is the
+		// deliberate trade rather than an oversight — with both signals present the client
+		// cannot distinguish this from a rename, and a false "cannot read" is recoverable
+		// by widening the vocabulary while the false zero is a live campaign read as dead.
+		"omission and addition together": {`{"sent":1,"delivered":1,"open":1,"click":1,"unsubscribed":1,"engagements":9}`, true},
+		// The quiet path stays working however many mapped keys are absent: `pending` and
+		// `notsent` are KNOWN, so there is no unknown key and the guard cannot fire.
+		"quiet email, several known unmapped": {`{"notsent":1,"pending":2}`, false},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

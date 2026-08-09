@@ -207,6 +207,15 @@ VERIFY must be an error, never a clean zero.
   reappears under another name. What still slips through is a rename with no new key
   visible in the same response; the widened `ErrUnrecognizedCounters` catches the whole-
   vocabulary version of that, and nothing catches a silent single-key drop.
+  The two signals CAN co-occur innocently — an upstream release adds a counter in the
+  same week an email omits a zero-valued one — and that case errors on purpose. With
+  both present the client cannot distinguish addition-plus-omission from a rename, and
+  the rule this section opens with applies: an answer it cannot verify is an error, not a
+  clean zero. The asymmetry is what settles it — a false "cannot read this" is recovered
+  by adding the new key to the probe set, while the false zero is a live campaign
+  reported as dead and nobody goes looking. The quiet `notsent`/`pending` path is
+  untouched by all of this: those keys are KNOWN, so no unknown key is present and the
+  guard cannot fire however many mapped keys are absent.
 - **`ErrNegativeCounter`** — any counter below zero. These are event counts, so a
   negative is malformed upstream data; passed through it becomes negative impressions
   and a negative CTR that reads as authoritative. Checked across the WHOLE map rather

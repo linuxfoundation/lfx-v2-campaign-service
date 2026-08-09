@@ -77,6 +77,17 @@ var (
 	// vocabulary evolves, and rejecting additive change would break the client on an
 	// upstream release that took nothing away. Only the two together carry the signature
 	// of a rename, because a renamed key does not vanish — it reappears under a new name.
+	//
+	// The two CAN co-occur innocently: an upstream release adds a counter in the same week
+	// an email omits a zero-valued one. That case errors, deliberately. At the moment both
+	// signals are present this client cannot tell an addition-plus-omission from a rename,
+	// and the rule this whole file is built on is that an answer it cannot VERIFY is an
+	// error rather than a clean zero — a false "we cannot read this" is recoverable by
+	// widening the vocabulary, while the false zero it would otherwise return is a live
+	// campaign reported as dead. TestGetEmailMetrics_PartiallyRenamedCounterVocabularyIsAnError
+	// pins the combination so the trade is visible rather than incidental. Note the quiet
+	// `notsent`/`pending` path is NOT affected: those are known keys, so no unknown key is
+	// present and the guard cannot fire however many mapped keys are absent.
 	ErrRenamedCounter = errors.New("hubspot: a mapped counter is absent while an unrecognized counter is present")
 
 	// ErrNegativeCounter reports a counter below zero. These are event counts, so a
