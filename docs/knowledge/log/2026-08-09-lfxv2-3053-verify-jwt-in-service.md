@@ -23,8 +23,10 @@ PS256 pinned, issuer `heimdall`, audience `lfx-v2-campaign-service`, 5-minute ke
 later"*: an unreferenced verification package passes every gate and secures nothing. *A
 nil verifier rejects rather than falls back*: decoding-as-before would put the old
 behaviour one wiring mistake away, so failing closed makes it an outage — and
-`TestNewContainer_AllPathsInjectTheTokenVerifier` makes it a test failure first, three
-services × every boot path, since the degraded paths construct theirs independently. *An
+`TestNewContainer_AllPathsInjectTheTokenVerifier` makes it a test failure first, since the
+degraded paths construct theirs independently — and, for the live path a unit test cannot
+boot, `TestNoServiceIsConstructedOutsideItsVerifierInjectingHelper` asserts in the SOURCE
+that no construction escapes its verifier-injecting helper. *An
 empty JWKS URL defaults, a wrong one fails the pod*: erroring on empty turned every
 hand-built `config.Config` into a service refusing all traffic, while defaulting a *typo*
 would hide a misconfiguration.

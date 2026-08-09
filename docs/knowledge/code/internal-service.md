@@ -367,7 +367,15 @@ resolve **silently** to the outer one, so a lock taken in the wrong place would 
 and protect nothing. And a nil verifier REJECTS, making missing wiring an outage rather
 than a silent return to trusting unverified claims —
 `TestNewContainer_AllPathsInjectTheTokenVerifier` pins that all three services get one on
-every boot path, the only place that bug is visible.
+the boot paths a test can reach — no-database and 503-mode — which is the only place that
+bug is visible at runtime. It cannot reach the LIVE path: `wireLiveBackends` needs a
+reachable PostgreSQL and constructs all three services independently, so "every boot path"
+was a claim about code that had been read, not tested.
+`TestNoServiceIsConstructedOutsideItsVerifierInjectingHelper` closes that half in the
+source instead: it parses the `container` package and fails if any non-test call to
+`service.NewBriefService` / `NewConnectionService` / `NewAudienceService` sits outside its
+verifier-injecting helper. Reachability is a source property, so a new construction site is
+caught whether or not a unit test can boot the path it is on.
 
 Rejections are 400, not 401: the design declares no Unauthorized type and
 `commonBriefErrors` documents 400 as the JWTAuth rejection status (401 is a follow-up).
