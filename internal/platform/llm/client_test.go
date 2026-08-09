@@ -232,13 +232,19 @@ func TestNewClient_RejectsAProxyURLCarryingUserinfoOrQuery(t *testing.T) {
 // TestNewClient_RejectionNeverEchoesTheRawURL covers the OTHER rejection paths for the same
 // property. The parse-failure branch is the subtle one: url.Parse returns a *url.Error whose
 // Error() embeds the raw url verbatim, so simply wrapping it re-publishes a value that may
-// carry a token — and the wrapping looked entirely idiomatic.
+// carry a token — and the wrapping looked entirely idiomatic. Unwrapping to the bare cause
+// is only most of the fix, which is what the malformed-port case below pins: net/url's
+// causes quote the FRAGMENT they choked on, so the cause is discarded outright.
 func TestNewClient_RejectionNeverEchoesTheRawURL(t *testing.T) {
 	const secret = "sup3r-s3cret" // secretlint-disable-line -- fixture asserting it is not echoed
 	for _, tc := range []struct{ name, url string }{
 		// Unparseable: "%zz" is an invalid escape, so url.Parse fails with the raw
 		// value — secret included — inside the *url.Error it returns.
 		{"parse failure", "https://user:" + secret + "@litellm.internal/%zz"},
+		// The case unwrapping does NOT fix. No "@", so the secret is read as a PORT,
+		// and the inner cause is `invalid port ":sup3r-s3cret" after host` — the
+		// credential quoted by the cause itself, not by the *url.Error wrapper.
+		{"secret mistaken for a port", "https://litellm.internal:" + secret},
 		// Wrong scheme, but userinfo still present: takes the scheme branch, which
 		// must report the components it JUDGED rather than the value it read.
 		{"bad scheme with userinfo", "ftp://user:" + secret + "@litellm.internal"},

@@ -114,7 +114,17 @@ scheme and host, which `url.Parse` has already separated from userinfo and query
 therefore cannot carry either. The parse-failure branch is the subtle one and the one that
 looked most idiomatic before the fix: `url.Parse` returns a `*url.Error` whose `Error()`
 embeds the raw url verbatim, so `fmt.Errorf("%w: %w", sentinel, perr)` re-publishes the whole
-credential-bearing string. `parseCause` unwraps to the bare cause first.
+credential-bearing string.
+
+Unwrapping that to the bare cause — the first fix, and the one that looks sufficient — is
+**not** enough, because `net/url`'s causes quote the fragment of the input they choked on.
+`https://litellm.internal:sk-secret` has no `@`, so the secret is read as a PORT and the
+cause alone is `invalid port ":sk-secret" after host`; `%zz` gives `invalid URL escape
+"%zz"`. So the cause is **discarded**, not unwrapped, and the branch returns a message built
+entirely from constants. Nothing a caller could use is lost: `url.Parse`'s causes are
+unexported types or plain strings, so `errors.Is`/`As` reach nothing, and the sentinel is
+what callers match on. `TestNewClient_RejectionNeverEchoesTheRawURL` carries the
+malformed-port shape specifically, because it is the case that passes under unwrapping.
 
 **There is no such composition root yet.** This package has no non-test caller: nothing in
 `internal/container` imports it, so nothing currently logs `ErrNotConfigured` or degrades

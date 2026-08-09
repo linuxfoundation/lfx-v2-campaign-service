@@ -207,11 +207,18 @@ func NewClient(cfg Config, opts ...Option) (*Client, error) {
 	u, perr := url.Parse(cfg.ProxyURL)
 	switch {
 	case perr != nil:
-		// url.Error.Error() embeds the raw URL verbatim, so the wrapped error is
-		// unwrapped to its bare cause. errors.Is/As still reach nothing useful here —
-		// the cause is an unexported *url.EscapeError or a parse message — and the
-		// sentinel above is what callers actually match on.
-		return nil, fmt.Errorf("%w: %w", ErrInvalidProxyURL, parseCause(perr))
+		// The cause is DISCARDED, not unwrapped. url.Error.Error() embeds the raw url,
+		// which is the obvious leak — but unwrapping to uerr.Err is only most of the fix,
+		// because net/url's causes quote the FRAGMENT of the input they choked on:
+		// "https://litellm.internal:sk-secret" yields `invalid port ":sk-secret" after
+		// host`, and "%zz" yields `invalid URL escape "%zz"`. A message that reproduces
+		// any part of an unvalidated value cannot honour this constructor's no-echo rule,
+		// so nothing derived from the input is carried. Nothing is lost that a caller
+		// could use: url.Parse's causes are unexported or plain strings, so errors.Is/As
+		// reach nothing, and the sentinel is what callers match on. The operator learns
+		// which variable is malformed, which is what they need to go and look at it.
+		return nil, fmt.Errorf("%w (it does not parse as a url; the value is not quoted "+
+			"here because it is unvalidated and may carry a credential)", ErrInvalidProxyURL)
 	case u.Scheme != "http" && u.Scheme != "https", u.Hostname() == "":
 		return nil, fmt.Errorf("%w, got scheme %q and host %q", ErrInvalidProxyURL, u.Scheme, u.Host)
 	case u.User != nil, u.RawQuery != "", u.ForceQuery, u.Fragment != "":
@@ -231,19 +238,6 @@ func NewClient(cfg Config, opts ...Option) (*Client, error) {
 		o(c)
 	}
 	return c, nil
-}
-
-// parseCause returns the failure INSIDE a url.Parse error, discarding the *url.Error
-// wrapper whose Error() prints the raw url. Anything that is not a *url.Error is
-// returned as-is: url.Parse documents *url.Error as its only error type, so the
-// fallback is unreachable today and exists so a future change cannot silently make
-// this function drop an error instead of an url.
-func parseCause(err error) error {
-	var uerr *url.Error
-	if errors.As(err, &uerr) && uerr.Err != nil {
-		return uerr.Err
-	}
-	return err
 }
 
 // notBaseComponents names which disallowed components a proxy URL carried, so the
