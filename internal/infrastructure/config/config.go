@@ -267,9 +267,17 @@ func (c *Config) String() string {
 		// redactSecret answers exactly that — "" for unset, "xxxxx" for present — without
 		// putting the credential in a log. The model is not a secret; the URL is reduced
 		// to its non-secret components rather than printed raw (see redactAIProxyURL).
-		redactAIProxyURL(c.AIProxyURL),
-		c.AIModel,
-		redactSecret(c.AIAPIKey),
+		//
+		// All three are trimmed FIRST, because llm.NewClient trims them and stores the
+		// normalized form: these arrive from Kubernetes secrets, where a trailing newline
+		// is the commonest way a value is malformed. Printing the originals would make the
+		// diagnostic disagree with construction on exactly the values it exists to report —
+		// a newline-only URL would render as `[redacted]` and a newline-only key as
+		// `xxxxx`, both reading as CONFIGURED, while NewClient returns ErrNotConfigured for
+		// them; and a padded model would be logged differently from the model actually sent.
+		redactAIProxyURL(strings.TrimSpace(c.AIProxyURL)),
+		strings.TrimSpace(c.AIModel),
+		redactSecret(strings.TrimSpace(c.AIAPIKey)),
 		c.PGHost,
 		c.PGPort,
 		c.PGUser,

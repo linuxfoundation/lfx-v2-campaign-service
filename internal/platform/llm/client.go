@@ -171,7 +171,10 @@ func WithRequestTimeout(d time.Duration) Option {
 
 // NewClient builds a client from injected config. A missing URL or key fails HERE
 // rather than at call time, so a deployment without a model wired is discovered
-// once at construction and callers are routed to their degraded path.
+// once at construction. The contract for the part-2 consumer that will wire this
+// into HubSpot dispatch is that ErrNotConfigured is a DEGRADE signal, not a fatal
+// one: copy generation is an enrichment, so the composition root logs it and
+// proceeds without a client. No such consumer exists in this PR.
 func NewClient(cfg Config, opts ...Option) (*Client, error) {
 	// Normalize before validating, and STORE the normalized form — mirroring the
 	// hubspot/meta/twitter clients. Trimming only for the emptiness check would let a
@@ -419,9 +422,11 @@ func (c *Client) Complete(ctx context.Context, systemPrompt, userPrompt string) 
 // The field was previously decoded and DISCARDED, which made "length" — the max_tokens
 // truncation — indistinguishable from a clean answer at every call site, and removed the
 // only signal a caller could have used to refuse partial copy. Returning an error rather
-// than the reason keeps Complete's signature at (string, error): a caller that cannot use
-// a truncated completion is every caller this package has, and one that later wants the
-// reason can match the sentinel.
+// than the reason keeps Complete's signature at (string, error). The contract this sets
+// for the part-2 consumer is that a truncated completion is unusable — it must not fall
+// back to the returned string — and one that later wants the reason itself can match the
+// sentinel. This package has no non-test caller yet, so nothing exercises that path
+// today.
 //
 // An EMPTY reason is accepted. The field is optional in practice — OpenAI-compatible
 // proxies fronting other providers do omit it — and the content has already been checked

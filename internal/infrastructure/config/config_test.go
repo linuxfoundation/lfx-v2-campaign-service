@@ -361,6 +361,25 @@ func TestConfigString_RedactsAIProxyCredentials(t *testing.T) {
 	}
 }
 
+// TestConfigString_AISettingsAgreeWithConstruction pins the diagnostic to what
+// llm.NewClient will actually see. NewClient trims all three AI values and stores the
+// normalized form, so a whitespace-only URL or key is NOT configured — it returns
+// ErrNotConfigured. Printing the untrimmed originals made this string say the opposite:
+// redactAIProxyURL's emptiness check ran before its TrimSpace, so "\n" rendered as
+// "[redacted]", and redactSecret rendered a "\n" key as "xxxxx". Both read as CONFIGURED
+// on the one line an operator consults to find out whether copy generation can run.
+func TestConfigString_AISettingsAgreeWithConstruction(t *testing.T) {
+	cfg := &Config{AIProxyURL: "\n", AIModel: "  gpt-4o-mini\n", AIAPIKey: " \t "}
+	formatted := cfg.String()
+
+	assert.Contains(t, formatted, `AIProxyURL:""`,
+		"a whitespace-only proxy URL is unconfigured; [redacted] would report a proxy that NewClient rejects")
+	assert.Contains(t, formatted, `AIAPIKey:""`,
+		"a whitespace-only key is unconfigured; xxxxx would report a credential that is not there")
+	assert.Contains(t, formatted, `AIModel:"gpt-4o-mini"`,
+		"the model must be logged as it will be SENT, not as it was received")
+}
+
 // TestRedactAIProxyURL_Shapes covers the forms the value takes. Every http(s) case
 // collapses to the same two-constant rendering, which is the point: the only component
 // reproduced is a scheme this function has already checked equals "http" or "https", so

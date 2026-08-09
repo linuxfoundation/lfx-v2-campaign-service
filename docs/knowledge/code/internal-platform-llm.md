@@ -186,8 +186,10 @@ since a reason a proxy newly invents is far likelier to mean "not finished" than
 The named cases describe themselves; the default names the situation without QUOTING the value,
 because the reason is text the model controls — the redaction rule from the URL components,
 applied to a field that is not part of a URL. Returning an error rather than widening the
-signature keeps `Complete` at `(string, error)`, and every caller already declines to use the
-string when the error is non-nil.
+signature keeps `Complete` at `(string, error)`. The contract this sets for the part-2 consumer
+is that the string must be DISCARDED whenever the error is non-nil — there is no partial-copy
+fallback. As noted above, no such caller exists in this PR, so this is the contract the wiring
+must honour, not behaviour that already runs.
 
 ## Three places where a defence has to be exact rather than approximately right
 
