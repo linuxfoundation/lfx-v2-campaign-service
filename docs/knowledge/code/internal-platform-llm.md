@@ -86,7 +86,12 @@ otherwise. `localhost:4000` is the case that makes this necessary rather than ti
 accepts it, reading `localhost` as the SCHEME, so nothing objects until `http.NewRequest`
 refuses it — on every single generation. A one-line deployment mistake then reads as a
 recurring transport failure instead of as misconfiguration, which is the exact outcome
-constructing eagerly exists to prevent. `ErrInvalidProxyURL` WRAPS `ErrNotConfigured`
+constructing eagerly exists to prevent. An explicit PORT is checked the same way and for the same reason. `url.Parse` validates only
+that a port is DIGITS, so `http://proxy.internal:99999` parses with a non-empty hostname and
+an acceptable scheme, construction succeeds, and every `Complete` then fails in the transport
+with an invalid-port error — the same recurring-transport-failure disguise `localhost:4000`
+wore. `usablePort` accepts an EMPTY port, which means the scheme's default and is the ordinary
+case, or 1..65535. `ErrInvalidProxyURL` WRAPS `ErrNotConfigured`
 deliberately: to a caller the operational fact is identical — this deployment has no usable
 model, degrade — and a separate sentinel would silently stop each of them degrading. It exists
 only so the message names the defect. The validated value is used to build the
@@ -151,6 +156,27 @@ anything, so a pasted credential shaped like a URL reaches a pod log through thi
 not at all. The graded treatment is deliberate: "copy generation did not run" is diagnosed by
 knowing whether a proxy and a key are configured at all, and omitting the fields entirely would
 be log-safe while answering nothing.
+
+## A 200 is not the same as a finished answer
+
+`finish_reason` is part of the completion contract, not diagnostics. A proxy returns
+`finish_reason: "length"` on a perfectly ordinary 200 whose content `max_tokens` cut off
+mid-sentence, so `Complete` checks it and returns `ErrIncompleteCompletion` rather than the
+partial string with a nil error. This is the opposite shape from `ErrEmptyCompletion` and the
+more dangerous one: there is no empty value to notice, just real, plausible-looking output —
+half an email reads like an email, and the caller landing in part 2 would send it. The two are
+separate sentinels because a caller may reasonably fall back to the cloned template's own body
+on a truncation while treating an empty completion as a proxy defect.
+
+`stop` and an EMPTY reason are accepted — the field is optional in practice, and absence is not
+evidence of truncation. `length`, `content_filter`, `tool_calls`/`function_call` and anything
+UNRECOGNISED are rejected; failing closed on the unrecognised case is the cheap direction,
+since a reason a proxy newly invents is far likelier to mean "not finished" than "finished".
+The named cases describe themselves; the default names the situation without QUOTING the value,
+because the reason is text the model controls — the redaction rule from the URL components,
+applied to a field that is not part of a URL. Returning an error rather than widening the
+signature keeps `Complete` at `(string, error)`, and every caller already declines to use the
+string when the error is non-nil.
 
 ## Three places where a defence has to be exact rather than approximately right
 

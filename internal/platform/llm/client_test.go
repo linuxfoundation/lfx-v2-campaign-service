@@ -172,6 +172,12 @@ func TestNewClient_RejectsAProxyURLThatIsNotAbsoluteHTTP(t *testing.T) {
 		{"relative", "proxy/v1"},
 		{"not http", "ftp://proxy.internal"},
 		{"control character", "http://proxy\x7f.internal"},
+		// url.Parse checks only that an explicit port is DIGITS. These parse with a
+		// non-empty hostname, so without the range check construction succeeds and the
+		// transport rejects them once per generated email instead.
+		{"port above the tcp range", "http://proxy.internal:99999"},
+		{"port zero", "http://proxy.internal:0"},
+		{"port too large for an int", "http://proxy.internal:99999999999999999999"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := NewClient(Config{ProxyURL: tc.url, APIKey: testKey})
@@ -821,5 +827,60 @@ func TestNewClient_SnapshotsTemperatureRatherThanAliasingTheCaller(t *testing.T)
 	}
 	if got := rec.Req().Temperature; got != 0.2 {
 		t.Errorf("temperature = %v, want 0.2 (the value at construction; the client aliased the caller's variable)", got)
+	}
+}
+
+// TestComplete_RefusesACompletionTheModelDidNotFinish pins the contract chosen for
+// finish_reason, which was previously decoded and thrown away. "length" is the case that
+// matters: max_tokens truncated the output, so what came back is real, fluent, and PARTIAL
+// — half an email reads like an email, which is why a nil error here is worse than an
+// empty response. The default branch must not quote the value; it is text the model
+// controls, and this package only prints components it has compared to a constant.
+func TestComplete_RefusesACompletionTheModelDidNotFinish(t *testing.T) {
+	const modelText = "sup3r-s3cret-reason" // secretlint-disable-line -- fixture asserting it is not echoed
+	for _, tc := range []struct {
+		name, reason string
+		wantErr      bool
+	}{
+		{"stop is the finished answer", "stop", false},
+		{"absent is accepted; the field is optional in practice", "", false},
+		{"length means truncated mid-output", "length", true},
+		{"content filter stopped it", "content_filter", true},
+		{"the model wanted a tool this client does not offer", "tool_calls", true},
+		{"an unrecognised reason fails closed", modelText, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				q, _ := json.Marshal(tc.reason)
+				_, _ = io.WriteString(w,
+					`{"choices":[{"message":{"content":"a whole email, apparently"},"finish_reason":`+
+						string(q)+`}]}`)
+			})
+			out, err := c.Complete(context.Background(), "s", "u")
+			if !tc.wantErr {
+				if err != nil {
+					t.Fatalf("finish_reason %q: Complete = %v, want the content returned", tc.reason, err)
+				}
+				if out != "a whole email, apparently" {
+					t.Errorf("content = %q, want it returned unchanged", out)
+				}
+				return
+			}
+			if !errors.Is(err, ErrIncompleteCompletion) {
+				t.Fatalf("finish_reason %q: err = %v, want ErrIncompleteCompletion — partial copy "+
+					"returned with a nil error is indistinguishable from a finished answer", tc.reason, err)
+			}
+			if out != "" {
+				t.Errorf("finish_reason %q returned content %q alongside the error; a caller that "+
+					"ignores the error would send truncated copy", tc.reason, out)
+			}
+			if errors.Is(err, ErrEmptyCompletion) {
+				t.Errorf("finish_reason %q must not read as ErrEmptyCompletion: there IS content, "+
+					"and the two failures call for different handling", tc.reason)
+			}
+			if strings.Contains(err.Error(), modelText) {
+				t.Errorf("the unrecognised reason was echoed into %q; it is model-controlled text", err)
+			}
+		})
 	}
 }

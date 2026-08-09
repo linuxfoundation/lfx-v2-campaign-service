@@ -97,6 +97,13 @@ var (
 	// ErrEmptyCompletion means a 200 carried no usable content — distinct from a
 	// transport error, since the request did reach the model.
 	ErrEmptyCompletion = errors.New("llm: proxy returned no completion content")
+
+	// ErrIncompleteCompletion means a 200 carried content the model did not FINISH
+	// producing — most often because max_tokens truncated it mid-sentence. It is a
+	// separate sentinel from ErrEmptyCompletion because the failure is the opposite
+	// shape: there is real, plausible-looking output, which is precisely why returning
+	// it with a nil error is the dangerous answer. Half an email reads like an email.
+	ErrIncompleteCompletion = errors.New("llm: proxy returned an incomplete completion")
 )
 
 // Config is the injected proxy configuration. ProxyURL and APIKey are required;
@@ -247,6 +254,17 @@ func NewClient(cfg Config, opts ...Option) (*Client, error) {
 	case u.Hostname() == "":
 		return nil, fmt.Errorf("%w (it has no host; the value is not quoted here because "+
 			"it is unvalidated and may carry a credential)", ErrInvalidProxyURL)
+	case !usablePort(u.Port()):
+		// url.Parse only checks that an explicit port is DIGITS, not that it is a port
+		// a socket can be opened on. "http://proxy.internal:99999" therefore parses with
+		// a non-empty hostname and construction succeeds, and every Complete then fails
+		// in the transport with an invalid-port error — the once-per-generation late
+		// failure this constructor exists to convert into a once-at-startup one. The
+		// value is NOT echoed: this branch is reached with a value that is unvalidated
+		// as a whole, and a port is a component like any other.
+		return nil, fmt.Errorf("%w (its port is not in the usable range 1-65535; the value "+
+			"is not quoted here because it is unvalidated and may carry a credential)",
+			ErrInvalidProxyURL)
 	case u.User != nil, u.RawQuery != "", u.ForceQuery, u.Fragment != "":
 		// notBaseComponents names components, never their values. The host is no longer
 		// quoted alongside them: a hostname is as much unvalidated input as the rest.
@@ -266,6 +284,21 @@ func NewClient(cfg Config, opts ...Option) (*Client, error) {
 		o(c)
 	}
 	return c, nil
+}
+
+// usablePort reports whether a URL's explicit port can actually be dialled. An EMPTY
+// port is usable — it means the scheme's default, which is the ordinary case. url.Parse
+// has already rejected a non-numeric port, so Atoi fails here only on a value too large
+// for an int, which is out of range by definition.
+func usablePort(port string) bool {
+	if port == "" {
+		return true
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil {
+		return false
+	}
+	return n >= 1 && n <= 65535
 }
 
 // notBaseComponents names which disallowed components a proxy URL carried, so the
@@ -358,7 +391,46 @@ func (c *Client) Complete(ctx context.Context, systemPrompt, userPrompt string) 
 	if len(resp.Choices) == 0 || strings.TrimSpace(resp.Choices[0].Message.Content) == "" {
 		return "", ErrEmptyCompletion
 	}
+	if ferr := finishReasonErr(resp.Choices[0].FinishReason); ferr != nil {
+		return "", ferr
+	}
 	return resp.Choices[0].Message.Content, nil
+}
+
+// finishReasonErr rejects a completion the model stopped short of finishing.
+//
+// The field was previously decoded and DISCARDED, which made "length" — the max_tokens
+// truncation — indistinguishable from a clean answer at every call site, and removed the
+// only signal a caller could have used to refuse partial copy. Returning an error rather
+// than the reason keeps Complete's signature at (string, error): a caller that cannot use
+// a truncated completion is every caller this package has, and one that later wants the
+// reason can match the sentinel.
+//
+// An EMPTY reason is accepted. The field is optional in practice — OpenAI-compatible
+// proxies fronting other providers do omit it — and the content has already been checked
+// non-empty, so rejecting on absence would make this client unusable against a working
+// deployment to protect against a case it cannot detect anyway.
+//
+// A reason this function does not recognise is named as unrecognised rather than quoted.
+// It is model-adjacent text arriving over the wire, and the rule this package holds is
+// that a component is safe to print only where the code has compared it to a constant
+// first — which is exactly what the named cases below have done and the default has not.
+func finishReasonErr(reason string) error {
+	switch strings.TrimSpace(reason) {
+	case "", "stop":
+		return nil
+	case "length":
+		return fmt.Errorf("%w (it hit the max_tokens budget and was cut off mid-output)",
+			ErrIncompleteCompletion)
+	case "content_filter":
+		return fmt.Errorf("%w (a content filter stopped the model)", ErrIncompleteCompletion)
+	case "tool_calls", "function_call":
+		return fmt.Errorf("%w (the model asked to call a tool, and this client offers none, "+
+			"so what came back is not the answer)", ErrIncompleteCompletion)
+	default:
+		return fmt.Errorf("%w (for a reason this client does not recognise; the value is not "+
+			"quoted here because it is text the model controls)", ErrIncompleteCompletion)
+	}
 }
 
 // do performs the POST with per-attempt deadlines and bounded 429 retry.
