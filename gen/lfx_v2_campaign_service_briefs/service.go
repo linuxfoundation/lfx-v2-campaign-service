@@ -50,7 +50,14 @@ type Service interface {
 	// dispatches the status change to the platform and updates the row only after
 	// the platform confirms. Support is per-platform: a campaign whose platform
 	// has no status-toggle dispatcher wired returns 400 (Reddit is wired in this
-	// change; other platforms follow).
+	// change; other platforms follow). ONE EXCEPTION to the persist: pausing a
+	// campaign in 'created_degraded' pauses it upstream and returns 200 with the
+	// status and ETag UNCHANGED. 'created_degraded' records that the campaign's
+	// wiring was never verified, and this schema has one status column, so writing
+	// 'paused' would spend the reconciliation marker to record a run state the
+	// platform already holds authoritatively. Resuming such a campaign is refused
+	// outright (409). Read the pause's effect from the ad platform, not from this
+	// row.
 	ToggleCampaignStatus(context.Context, *ToggleCampaignStatusPayload) (res *Campaign, err error)
 	// Delete a campaign (soft delete, requires If-Match). LOCAL ONLY: this removes
 	// the campaign from this service and frees its (brief, platform) slot so the
