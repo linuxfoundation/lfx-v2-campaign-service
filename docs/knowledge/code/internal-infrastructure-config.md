@@ -34,19 +34,31 @@ secret — empty selects `llm.DefaultModel`.
 HubSpot dispatch, which will fall back to the cloned template's own body when the group is
 unconfigured — lands in part 2. Setting them now is harmless and changes no behaviour.
 
-`String()` prints `AI_PROXY_URL` through `redactAIProxyURL`, which rebuilds it from scheme,
-host and path and drops everything else. The field LOOKS secret-free — the key has its own
-field — but that is a property of whatever an operator typed, not of the field: userinfo and
-the query are both credential-bearing, both survive `%q` intact, and `String()` is the form
-every config log line uses. It does not mask wholesale the way `redactDatabaseURL` does, on
-`redactNATSURL`'s reasoning: the only question the value answers is "is copy generation
-pointed at a proxy, and which one", and `[redacted]` answers neither, while scheme/host/path
-answer both and are structurally incapable of carrying userinfo or a query once `url.Parse`
-has split them out. Two shapes mask anyway, because no component of them is known safe: an
-unparseable value, and an OPAQUE one (`mailto:u:p@host`) whose whole content sits in a field
-this does not render — a missing `Host` is the tell. This is redaction for DISPLAY only;
-`llm.NewClient` REJECTS both components outright, so a value that reached a live client has
-neither.
+`String()` prints `AI_PROXY_URL` through `redactAIProxyURL`, which rebuilds it from scheme
+and host and drops everything else — userinfo, path, query, fragment. The field LOOKS
+secret-free — the key has its own field — but that is a property of whatever an operator
+typed, not of the field: a URL has several places a credential rides for free, all of them
+survive `%q` intact, and `String()` is the form every config log line uses. It does not mask
+wholesale the way `redactDatabaseURL` does, on `redactNATSURL`'s reasoning: the only question
+the value answers is "is copy generation pointed at a proxy, and which one", `[redacted]`
+answers neither, and scheme and host answer both.
+
+**The path took three rounds to drop, and the reason is the interesting part.** Each earlier
+version reasoned that `url.Parse` had already split the dangerous components into their own
+fields, so whatever remained was structurally safe. That confuses where the DELIMITERS fall
+with what a component CONTAINS — the same mistake made about the scheme
+(`localhost:sk-secret` parses the secret as an opaque scheme), then about the host, and
+finally about the path (`https://litellm.example.com/sup3r-s3cret/v1` parses perfectly).
+The rule that survives all three is narrower than "not userinfo and not query": a component
+is reproduced only when it is BOTH structurally incapable of holding a secret AND load-bearing
+for the diagnosis. The path fails on both counts — "which proxy" is answered by the host.
+
+Two shapes mask anyway, because no component of them is known safe: an unparseable value, and
+an OPAQUE one (`mailto:u:p@host`) whose whole content sits in a field this does not render — a
+missing `Host` is the tell. A scheme that is neither `http` nor `https` masks for the same
+reason. This is redaction for DISPLAY only; `llm.NewClient` REJECTS userinfo, query and
+fragment outright, so a value that reached a live client has none of them — but it ACCEPTS a
+path, and `String()` runs on the startup log path before the constructor in any case.
 
 `splitCSV` parses the comma-separated `EVENT_URL_NAT64_PREFIXES` into its non-empty,
 space-trimmed entries, returning nil for an empty or all-blank value so a caller can tell

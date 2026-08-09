@@ -330,12 +330,16 @@ func TestConfigString_RedactsNATSCredentials(t *testing.T) {
 
 // TestConfigString_RedactsAIProxyCredentials pins that String() does not leak a credential
 // carried INSIDE the proxy URL. The field looks secret-free — the key has its own field —
-// but a URL has two places a token rides for free, userinfo and the query, and both survive
-// %q intact into every log line that formats the config.
+// but that is a property of what an operator typed, not of the field, and a URL has several
+// places a token rides for free. Userinfo and the query were the obvious two; the PATH is
+// here because it is the one that survived two earlier rounds of this exact fix, on the
+// reasoning that url.Parse had already split the dangerous components out. Where the
+// delimiters fall says nothing about what a component holds.
 func TestConfigString_RedactsAIProxyCredentials(t *testing.T) {
 	for name, raw := range map[string]string{
 		"userinfo": "https://svcuser:sup3r-s3cret@litellm.example.com/v1",          // secretlint-disable-line -- fixture
 		"query":    "https://litellm.example.com/v1?api-key=sup3r-s3cret",          // secretlint-disable-line -- fixture
+		"path":     "https://litellm.example.com/sup3r-s3cret/v1",                  // secretlint-disable-line -- fixture
 		"both":     "https://u:sup3r-s3cret@litellm.example.com/v1?k=sup3r-s3cret", // secretlint-disable-line -- fixture
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -343,8 +347,10 @@ func TestConfigString_RedactsAIProxyCredentials(t *testing.T) {
 			for _, formatted := range []string{cfg.String(), cfg.GoString(), fmt.Sprintf("%v", cfg), fmt.Sprintf("%+v", cfg)} {
 				assert.NotContains(t, formatted, "sup3r-s3cret", "a credential inside AI_PROXY_URL must never reach a log line")
 				assert.NotContains(t, formatted, "svcuser", "the username is part of the credential")
-				// Wholesale masking would cost the only question this field answers.
-				assert.Contains(t, formatted, "https://litellm.example.com/v1")
+				// Wholesale masking would cost the only question this field answers:
+				// WHICH proxy. That is the host, and nothing below it — the path is
+				// dropped, so this asserts the scheme+host form exactly.
+				assert.Contains(t, formatted, `AIProxyURL:"https://litellm.example.com"`)
 			}
 		})
 	}
@@ -356,11 +362,15 @@ func TestRedactAIProxyURL_Shapes(t *testing.T) {
 	cases := map[string]string{
 		"":                                  "",
 		"https://litellm.example.com":       "https://litellm.example.com",
-		"https://litellm.example.com/v1/":   "https://litellm.example.com/v1/",
-		"http://litellm:4000/v1":            "http://litellm:4000/v1",
-		"https://u:p@litellm.example.com/v": "https://litellm.example.com/v", // secretlint-disable-line -- fixture
+		"https://litellm.example.com/v1/":   "https://litellm.example.com",
+		"http://litellm:4000/v1":            "http://litellm:4000",
+		"https://u:p@litellm.example.com/v": "https://litellm.example.com", // secretlint-disable-line -- fixture
 		"https://litellm.example.com?k=v":   "https://litellm.example.com",
-		"https://litellm.example.com/v#f":   "https://litellm.example.com/v",
+		"https://litellm.example.com/v#f":   "https://litellm.example.com",
+		// A token in a PATH SEGMENT. This parses cleanly and the path is not userinfo or
+		// a query, so the earlier scheme/host/path rebuild printed it verbatim. Dropping
+		// the path costs nothing diagnostic — "which proxy" is answered by the host.
+		"https://litellm.example.com/sup3r-s3cret/v1": "https://litellm.example.com", // secretlint-disable-line -- fixture
 		// Unparseable: no component this function can vouch for, so it masks.
 		"https://litellm.example.com/%zz": "[redacted]",
 		// Opaque/relative: the whole value sits in a field this does not render.

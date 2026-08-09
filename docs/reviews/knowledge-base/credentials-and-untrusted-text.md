@@ -152,5 +152,17 @@ unencrypted (`internal/domain/model/campaign.go` `ConfigSnapshot`), which is why
 `applyCampaignConfig` scrubs before storing.
 
 **Not a finding when:** the full URL is used in the outbound request itself —
-that is required. A redactor that keeps scheme, host and path is the intended
-output, not a partial fix.
+that is required.
+
+**But "it kept the path" IS a finding.** `redactAIProxyURL`
+(`internal/infrastructure/config/config.go`) took three review rounds to get to
+scheme-and-host-only, and each round's mistake was the same one: reasoning that
+because `url.Parse` had already split userinfo and the query into their own
+fields, whatever remained was structurally safe. Where the DELIMITERS fall says
+nothing about what a component CONTAINS. `sk-secret:foo` parses with the token as
+the SCHEME; `https://litellm.example.com/sup3r-s3cret/v1` parses with it as a PATH
+segment. The rule that survives: reproduce a component only when it is BOTH
+structurally incapable of holding a secret AND load-bearing for the diagnosis.
+For a service endpoint that is scheme and host — "which proxy" is the host — and
+nothing below it. When reviewing a URL redactor, ask of every component it keeps
+"could an operator have pasted a token here, and does an operator need it?"

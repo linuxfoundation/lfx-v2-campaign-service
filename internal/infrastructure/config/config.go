@@ -311,8 +311,8 @@ func redactNATSURL(u string) string {
 	return "***@" + u[at+1:]
 }
 
-// redactAIProxyURL reduces AI_PROXY_URL to the components that cannot carry a credential:
-// scheme, host and path. Everything else is dropped.
+// redactAIProxyURL reduces AI_PROXY_URL to its scheme and host. Everything else —
+// userinfo, path, query, fragment — is dropped.
 //
 // The value LOOKS secret-free — it is a service endpoint, and the key that authenticates
 // to it lives in its own field — but "looks secret-free" is not a property of the field,
@@ -325,11 +325,22 @@ func redactNATSURL(u string) string {
 // This does NOT mask wholesale the way redactDatabaseURL does, for the same reason
 // redactNATSURL does not: the one question this string exists to answer is "is copy
 // generation pointed at a proxy, and which one", and "[redacted]" answers neither.
-// Scheme, host and path answer both and are structurally incapable of carrying userinfo
-// or a query — url.Parse has already split those into their own fields by the time this
-// rebuilds the value. An unparseable value is the exception: there are no components to
-// trust, so it masks. Note this is redaction for DISPLAY only; llm.NewClient REJECTS a
-// proxy URL carrying either component, so a value reaching production has neither.
+// Scheme and host answer both.
+//
+// The PATH is dropped, and that is a correction rather than an original decision. An
+// earlier version kept it, on the reasoning that url.Parse had already split userinfo
+// and query into their own fields so what remained was structurally safe. That confuses
+// where the delimiters fall with what a component contains — the same error made twice
+// before, about the scheme and about the host. A path segment holds a pasted token as
+// readily as a query parameter does ("https://litellm.example.com/sk-secret/v1"), and
+// unlike scheme and host it answers nothing an operator asked: "which proxy" is the
+// host. The rule that survives all three rounds is that a component is reproduced only
+// when it is BOTH structurally incapable of holding a secret and load-bearing for the
+// diagnosis, and the path fails on both counts.
+//
+// Note this is redaction for DISPLAY only; llm.NewClient REJECTS a proxy URL carrying
+// userinfo, a query or a fragment, so a value reaching a live client has none of them —
+// but it accepts a path, and String() runs before it in any case.
 func redactAIProxyURL(raw string) string {
 	if raw == "" {
 		return ""
@@ -351,7 +362,7 @@ func redactAIProxyURL(raw string) string {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return "[redacted]"
 	}
-	safe := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}
+	safe := url.URL{Scheme: u.Scheme, Host: u.Host}
 	return safe.String()
 }
 

@@ -109,9 +109,11 @@ value never reaches `Config`, a log, or anything downstream that formats it.
 
 **No rejection path echoes the value.** A URL this constructor is refusing is the one least
 entitled to be quoted — it is unvalidated operator input, and one reason it can be invalid is
-"there is a token in its userinfo". Each branch names the components it JUDGED instead:
-scheme and host, which `url.Parse` has already separated from userinfo and query and which
-therefore cannot carry either. The parse-failure branch is the subtle one and the one that
+"there is a token in its userinfo". Each branch NAMES the component it judged —
+"its scheme is neither http nor https", "it has no host" — without reproducing that
+component's value, which is the distinction that matters: a scheme or a host can itself be a
+pasted secret (`sk-secret:foo` parses with the token AS the scheme), so naming the field is
+safe where echoing it is not. The parse-failure branch is the subtle one and the one that
 looked most idiomatic before the fix: `url.Parse` returns a `*url.Error` whose `Error()`
 embeds the raw url verbatim, so `fmt.Errorf("%w: %w", sentinel, perr)` re-publishes the whole
 credential-bearing string.
@@ -140,7 +142,7 @@ provider directly.
 
 `Config.String()` prints `AIModel` verbatim, masks `AIAPIKey` through `redactSecret` (which
 renders `""` for unset and `xxxxx` for present), and reduces `AIProxyURL` through
-`redactAIProxyURL` to scheme, host and path — dropping userinfo, query and fragment, and
+`redactAIProxyURL` to scheme and host — dropping userinfo, path, query and fragment, and
 masking the whole value when it fails to parse or carries a scheme that is neither `http` nor
 `https`. The URL is *not* verbatim, and that matters here rather than only in `llm.NewClient`:
 `Config.String()` runs on the startup log path **before** the constructor gets to reject

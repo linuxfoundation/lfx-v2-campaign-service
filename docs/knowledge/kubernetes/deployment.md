@@ -35,7 +35,7 @@ each call site rediscovering it. The secret is the **proxy's** key, not a Bedroc
 Anthropic credential. `AI_MODEL` is a plain (non-secret) value, empty by default:
 a model id is not a credential, and empty selects `llm.DefaultModel`. All three are
 printed by `Config.String()` — the model verbatim, the key through `redactSecret`,
-and the URL through `redactAIProxyURL`, which keeps scheme/host/path and masks the
+and the URL through `redactAIProxyURL`, which keeps only scheme and host and masks the
 whole value if it will not parse or its scheme is neither `http` nor `https`. That
 last reduction is not decoration: `Config.String()` renders at startup before
 `llm.NewClient` can reject a bad value, so it is the only place a pasted credential
