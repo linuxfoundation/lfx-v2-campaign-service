@@ -1,15 +1,25 @@
 # 2026-08-08 — Adopting an existing Google Ads campaign instead of creating a second one
 
-**Update** — `GoogleAdsDispatcher.Dispatch` now calls `FindCampaignByName` before creating.
-When a campaign with the deterministic composed name already exists on the account, it is
-adopted; only a verified absence licenses a create.
+**Update** — `GoogleAdsDispatcher.Dispatch` can now call `FindCampaignByName` before creating,
+and adopt a campaign already carrying the deterministic composed name instead of creating a
+second one. It is **opt-in**, per `googleAdsConfig.AdoptExisting`; only a verified absence
+licenses the create that follows.
 
-## Why a retry needed this
+## Why opt-in, and what the default path actually does
 
 `ComposeName` is deterministic in the brief, so a retried dispatch asks for the same campaign
-name a previous attempt may already have created. Before this, the retry created a second
-PAID campaign — the duplicate-name 4xx from Google was the only thing standing between a
-retry and double spend, and it only fires when the name collides exactly.
+name a previous attempt may already have created. With adoption off — the default — that retry
+does not create a second live campaign: Google enforces name uniqueness among non-removed
+campaigns, so the second create is rejected with `CampaignError.DUPLICATE_CAMPAIGN_NAME` and
+the dispatch fails. The retry is BLOCKED, not silently duplicated. That is the failure this
+setting converts into a success, and it is why the setting is worth having.
+
+It is not the default because the guarantee has a hole with teeth. Uniqueness covers non-removed
+campaigns only, so once a campaign is REMOVED the name is free again — and an unconditional
+lookup in the dispatcher would rebind a brief to whatever now carries that name, which is the
+soft-delete rebind defect. Leaving adoption to an explicit request keeps the decision with the
+caller who knows which campaign they mean, rather than with a name that is only conditionally
+unique.
 
 The lookup's fail-closed contract is what makes this safe to act on: `FindCampaignByName`
 errors on anything it cannot verify (a transport failure, a row whose name does not match the
