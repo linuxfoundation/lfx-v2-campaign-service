@@ -1441,6 +1441,182 @@ func DecodeCreateCampaignsResponse(decoder func(*http.Response) goahttp.Decoder,
 	}
 }
 
+// BuildAdoptCampaignRequest instantiates a HTTP request object with method and
+// path set to call the "lfx-v2-campaign-service-briefs" service
+// "adopt-campaign" endpoint
+func (c *Client) BuildAdoptCampaignRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+		briefID   string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.AdoptCampaignPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "adopt-campaign", "*lfxv2campaignservicebriefs.AdoptCampaignPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: AdoptCampaignLfxV2CampaignServiceBriefsPath(projectID, briefID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "adopt-campaign", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeAdoptCampaignRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs adopt-campaign server.
+func EncodeAdoptCampaignRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.AdoptCampaignPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "adopt-campaign", "*lfxv2campaignservicebriefs.AdoptCampaignPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		body := NewAdoptCampaignRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
+		}
+		return nil
+	}
+}
+
+// DecodeAdoptCampaignResponse returns a decoder for responses returned by the
+// lfx-v2-campaign-service-briefs adopt-campaign endpoint. restoreBody controls
+// whether the response body should be restored after having been read.
+// DecodeAdoptCampaignResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - error: internal error
+func DecodeAdoptCampaignResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusCreated:
+			var (
+				body AdoptCampaignResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
+			}
+			err = ValidateAdoptCampaignResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
+			}
+			var (
+				etag *string
+			)
+			etagRaw := resp.Header.Get("Etag")
+			if etagRaw != "" {
+				etag = &etagRaw
+			}
+			res := NewAdoptCampaignCampaignCreated(&body, etag)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body AdoptCampaignBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
+			}
+			err = ValidateAdoptCampaignBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
+			}
+			return nil, NewAdoptCampaignBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body AdoptCampaignConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
+			}
+			err = ValidateAdoptCampaignConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
+			}
+			return nil, NewAdoptCampaignConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body AdoptCampaignServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
+			}
+			err = ValidateAdoptCampaignServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
+			}
+			return nil, NewAdoptCampaignServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body AdoptCampaignInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
+			}
+			err = ValidateAdoptCampaignInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
+			}
+			return nil, NewAdoptCampaignInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body AdoptCampaignNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
+			}
+			err = ValidateAdoptCampaignNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
+			}
+			return nil, NewAdoptCampaignNotFound(&body)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "adopt-campaign", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildGetCampaignRequest instantiates a HTTP request object with method and
 // path set to call the "lfx-v2-campaign-service-briefs" service "get-campaign"
 // endpoint

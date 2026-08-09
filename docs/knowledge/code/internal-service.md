@@ -172,6 +172,56 @@ unreachable there (see `internal/platform/twitter` and `internal/dispatch/twitte
 below). A single global default would make every omitted-window request against an X
 campaign fail with a guaranteed 400.
 
+## Campaign adoption
+
+`BriefService.AdoptCampaign` (backing `POST .../campaigns/adopt`) binds a campaign that
+ALREADY exists on the ad platform to an approved brief; the one platform call it makes is a
+read. This is the path for campaigns launched in a platform's own console before onboarding,
+or during an outage — without it they are unreachable by the metrics read, the status toggle
+and delete, all of which resolve a campaign through its stored row.
+
+`Orchestrator.LookupPlatformCampaign` type-asserts the dispatcher for the optional
+`CampaignAdopter` capability, the same discovery pattern as `MetricsReader`, `StatusToggler`
+and `AccountLister`: adoption is NOT part of `PlatformDispatcher`, so platforms gain it one
+at a time and an unwired platform answers `ErrAdoptionUnsupported` (400) with no network
+call. Bounded by `adoptLookupTimeout` (20s, matching `metricsCallTimeout`).
+
+**Absence and unverifiability are distinct, and that is the whole design.** The
+`CampaignAdopter` contract says `(nil, nil)` means the platform ANSWERED and there is no such
+campaign; every other failure is an error. `LookupPlatformCampaign` converts a nil ref into
+`ErrPlatformCampaignAbsent` at the boundary so no caller can dereference nil on a nil error,
+and the handler maps that sentinel — and only that sentinel — to 404; everything unclassified
+becomes 503. An operator told "no such campaign" goes and creates one, so a false absence
+costs a duplicate PAID campaign while a false 503 costs a retry.
+
+Every check that can be made locally precedes the platform call: project slug, platform
+validity, a `TrimSpace` re-check of `platform_campaign_id` (the design's `MinLength(1)`
+rejects `""` but not `" "`, and an effectively-empty filter on a lenient client returns
+somebody else's campaign as the adoption target), then the brief load and its approved gate.
+Loading the brief first keeps an unauthorized caller from using adoption as an oracle for
+which campaign ids exist on an ad account they cannot otherwise see, and stops an unapproved
+brief acquiring campaigns by a route that bypasses approval.
+
+Two details of what gets persisted:
+
+- **The id bound is `ref.ID`, the one the platform echoed, never the one requested.** They
+  are equal on every correct response — the Google Ads lookup errors when its own filter
+  comes back unhonoured — so persisting the echo means a platform that ever answers with a
+  different campaign cannot have the requested id written against its record.
+- **`Status` is `model.CampaignStatusCreated`, never the platform's run state.** That column
+  is this service's lifecycle vocabulary, which `CampaignStatusDeletable` and
+  `CampaignStatusNeedsReconciliation` switch on; both default-deny an unknown value, so a
+  stored `ENABLED` would be undeletable AND never reconciled. `created` is exactly true of an
+  adopted campaign, making it toggleable and deletable like any other; the upstream
+  ENABLED/PAUSED axis is served by the metrics read. `model.PlatformCampaignRef` therefore
+  carries no status: adoptability is the ADAPTER's decision, in the platform's own vocabulary.
+
+Persistence goes through `CampaignRepository.AdoptCampaign`, deliberately not
+`UpsertCampaign` — see `internal-infrastructure-postgres.md`. An already-live
+`(brief, platform)` pair is a 409; `ErrAccountNotSelected` is matched ABOVE the broad
+`ErrConnectionNotUsable` arm, because it is wrapped alongside it and a broad match first
+would tell an operator whose credentials are fine to go repair them.
+
 ## Account discovery
 
 `ConnectionService.ListGoogleAdsAccounts` (backing `GET .../connection-google-ads/accounts`)

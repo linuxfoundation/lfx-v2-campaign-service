@@ -497,6 +497,115 @@ func (s *BriefService) GetCampaign(ctx context.Context, p *briefs.GetCampaignPay
 	return campaignResult(c), nil
 }
 
+// AdoptCampaign binds a campaign that ALREADY exists on the ad platform to a brief, without
+// creating anything upstream.
+//
+// This is the verify-before-bind path, and the order of its three steps is the design. It
+// CONFIRMS the campaign exists under the project's own connection, then persists a row
+// pointing at it. It never does the reverse — persist first and reconcile later — because a
+// row that claims to reference an upstream campaign is treated as provisioned by every other
+// handler here: the status toggle will pause it, the metrics reader will read it, and the
+// deleter will retire it. Binding an id that was never verified aims all three at whatever
+// campaign happens to carry that id, which on an ad platform is somebody's live paid spend.
+func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaignPayload) (*briefs.Campaign, error) {
+	briefRepo, campaignRepo, _, orch, err := s.ready()
+	if err != nil {
+		return nil, err
+	}
+	// Slug-only, for the same reason as CreateCampaigns: project_id is the exact-match key
+	// for the connection lookup that scopes the platform read to this project's ad account.
+	if verr := validateProjectSlug(p.ProjectID); verr != nil {
+		return nil, verr
+	}
+	platform := model.Provider(p.Platform)
+	if !platform.Valid() {
+		return nil, &briefs.BadRequestError{Code: "400", Message: "unknown platform: " + p.Platform}
+	}
+	// The design's MinLength(1) rejects "" but not " ". Re-checking here keeps a
+	// whitespace-only id from reaching the platform as an effectively empty filter — see
+	// LookupPlatformCampaign for why that is dangerous rather than merely useless.
+	platformCampaignID := strings.TrimSpace(p.PlatformCampaignID)
+	if platformCampaignID == "" {
+		return nil, &briefs.BadRequestError{Code: "400", Message: "platform_campaign_id is required"}
+	}
+	// Load the brief first: adopting under a brief that does not exist, or that belongs to
+	// another project, must 404 before the ad platform is contacted at all. Doing it in this
+	// order also means an unauthorized caller cannot use adoption as an oracle for which
+	// campaign ids exist on an account they cannot otherwise see.
+	brief, berr := briefRepo.GetBrief(ctx, p.ProjectID, p.BriefID)
+	if berr != nil {
+		return nil, mapBriefErr(berr)
+	}
+	// Same gate as create: adoption must not be the way around approval.
+	if brief.Status != model.BriefApproved {
+		return nil, &briefs.BadRequestError{Code: "400", Message: "brief must be approved before adopting campaigns"}
+	}
+
+	ref, lerr := orch.LookupPlatformCampaign(ctx, p.ProjectID, platform, platformCampaignID)
+	if lerr != nil {
+		switch {
+		case errors.Is(lerr, ErrAdoptionUnsupported):
+			return nil, &briefs.BadRequestError{Code: "400", Message: "campaign adoption is not supported for this platform"}
+		case errors.Is(lerr, ErrPlatformCampaignAbsent):
+			return nil, &briefs.NotFoundError{Code: "404", Message: "no such campaign exists on the ad platform under this project's connection"}
+		case errors.Is(lerr, domain.ErrAccountNotSelected):
+			// ABOVE the general unusable-connection arm on purpose. ErrAccountNotSelected is
+			// always wrapped ALONGSIDE ErrConnectionNotUsable, so a broad match placed first
+			// swallows it and tells an operator whose credentials are fine to go repair them.
+			// Same ordering as GetCampaignMetrics and ToggleCampaignStatus.
+			slog.WarnContext(ctx, "campaign adoption blocked: no ad account selected on the project's connection",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "platform", platform,
+				"reason", unusableConnectionReason(lerr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection has no ad account selected — choose one from the connection's accounts endpoint and save it before adopting a campaign"}
+		case errors.Is(lerr, domain.ErrConnectionNotUsable):
+			// A 409, not the 503 below: the platform was never contacted and will not be
+			// until a human edits the connection, so a retry would be a false promise.
+			// Logged with the fixed reason token rather than the error — one condition
+			// behind this sentinel is found by decoding the DECRYPTED credential blob.
+			slog.WarnContext(ctx, "campaign adoption blocked: the project's connection is not usable",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "platform", platform,
+				"reason", unusableConnectionReason(lerr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection is not ready — its stored credentials or provider settings need attention; repair the connection before adopting a campaign"}
+		default:
+			// Everything else is UNVERIFIABLE, not absent, and must not be reported as "no
+			// such campaign" — the one answer an operator acts on by creating a duplicate.
+			// The platform's error text stays server-side; it carries account ids.
+			slog.WarnContext(ctx, "could not verify the campaign to adopt",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "platform", platform,
+				"platform_campaign_id", platformCampaignID, "error", safeErrSummary(lerr))
+			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the ad platform could not be reached to verify the campaign"}
+		}
+	}
+
+	// ref.ID, not platformCampaignID: bind the id the PLATFORM reported. The two are equal
+	// on every correct response — googleads.GetCampaign errors when its own filter comes
+	// back unhonoured — and persisting the echoed one means a platform that ever returns a
+	// different campaign cannot have the requested id written against its record.
+	adopted, aerr := campaignRepo.AdoptCampaign(ctx, &model.Campaign{
+		ProjectID:          p.ProjectID,
+		BriefID:            p.BriefID,
+		Platform:           platform,
+		PlatformCampaignID: ref.ID,
+		CampaignName:       ref.Name,
+		// The row's LIFECYCLE state, never the platform's ENABLED/PAUSED. "created" is
+		// exactly true of an adopted campaign — it exists upstream, fully provisioned — so
+		// it is toggleable and deletable like any other. A platform literal here would land
+		// outside every status predicate's known set, and both default-deny: the row would
+		// be undeletable AND never reconciled.
+		Status: model.CampaignStatusCreated,
+	}, s.campaignIndexPayload(indexer.ActionCreated))
+	if aerr != nil {
+		if errors.Is(aerr, domain.ErrConflict) {
+			return nil, &briefs.ConflictError{Code: "409", Message: "this brief already has a live campaign on that platform"}
+		}
+		return nil, mapBriefErr(aerr)
+	}
+	slog.InfoContext(ctx, "adopted an existing platform campaign",
+		"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", adopted.ID,
+		"platform", platform, "platform_campaign_id", adopted.PlatformCampaignID)
+	return campaignResult(adopted), nil
+}
+
 // GetCampaignMetrics reads live performance metrics for a campaign directly from its ad
 // platform. Unlike GetCampaign, this is a pure read: nothing is persisted, so there is no
 // If-Match/version to check.

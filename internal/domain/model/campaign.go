@@ -226,3 +226,31 @@ type CampaignJob struct {
 	UpdatedAt time.Time
 	ExpiresAt *time.Time
 }
+
+// PlatformCampaignRef is what a platform lookup reports about a campaign that ALREADY
+// exists upstream. It is the evidence adoption binds on, so it is deliberately the
+// smallest set of fields that answers "is this really the campaign you named": the id we
+// can prove the platform returned, and the name an operator recognises it by.
+//
+// It carries NO live status, deliberately. Campaign.Status is this service's own lifecycle
+// vocabulary that CampaignStatusDeletable and CampaignStatusNeedsReconciliation switch on;
+// a platform's ENABLED/PAUSED is a different axis, and writing one into the other yields a
+// row both predicates default-deny — undeletable and never reconciled. The upstream run
+// state is served by the metrics read and the status toggle. Whether a campaign is
+// adoptable at all is the ADAPTER's decision, in the platform's own vocabulary: a lookup
+// returns nil for a removed or otherwise unbindable campaign rather than handing the
+// service a status string it would have to learn every dialect to interpret.
+//
+// A nil *PlatformCampaignRef with a nil error means the campaign is genuinely ABSENT —
+// the platform answered, and there is no such campaign. That is a load-bearing
+// distinction, not a Go convention: the adopt handler returns 404 for absence and 503
+// for "we could not verify", and conflating them would let an unverifiable answer read
+// as a definitive "no such campaign".
+type PlatformCampaignRef struct {
+	// ID is the platform's own campaign id, echoed back from the platform's response
+	// rather than from the request, so a filter the platform failed to honour cannot
+	// pass as a match.
+	ID string
+	// Name is the campaign name as the platform holds it.
+	Name string
+}

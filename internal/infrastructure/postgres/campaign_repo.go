@@ -337,6 +337,59 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 	return upserted, nil
 }
 
+// adoptCampaignQuery binds an already-existing upstream campaign to a (brief, platform)
+// pair that has none. It carries the SAME conflict target and predicate as
+// upsertCampaignQuery — see claimCampaignDispatchQuery for why the predicate is mandatory
+// — but DO NOTHING where the upsert does DO UPDATE.
+//
+// That one word is the whole point. Adoption's input is a caller-supplied platform
+// campaign id; letting it take the upsert's update arm would repoint an existing binding
+// at a different upstream campaign, orphaning the previous one — which keeps spending,
+// with nothing in this service left pointing at it. Zero rows back therefore means "this
+// pair is already bound", which AdoptCampaign reports as ErrConflict.
+//
+// A soft-deleted row sits outside the partial index, so a pair whose campaign was deleted
+// can be adopted afresh, exactly as it can be re-dispatched.
+const adoptCampaignQuery = `INSERT INTO campaigns
+	(project_id, brief_id, platform, platform_campaign_id, campaign_name, status)
+	VALUES ($1,$2,$3,$4,$5,$6)
+	ON CONFLICT (brief_id, platform) WHERE status <> 'deleted' DO NOTHING
+	RETURNING ` + campaignCols
+
+// AdoptCampaign inserts the campaign row binding an existing upstream campaign to a brief.
+// It returns domain.ErrConflict when the (brief, platform) pair already has a live campaign.
+func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("adopt campaign: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	row := tx.QueryRow(ctx, adoptCampaignQuery,
+		c.ProjectID, c.BriefID, string(c.Platform), nullStr(c.PlatformCampaignID),
+		c.CampaignName, c.Status,
+	)
+	adopted, err := scanCampaign(row)
+	if err != nil {
+		// DO NOTHING returns no row on conflict, which pgx reports as ErrNoRows. That is
+		// the ONLY way this statement declines: the pair is already bound. Every other
+		// scan failure is a real error and must not be reported as a conflict, or a
+		// column/type defect would surface to the caller as "already adopted" and send
+		// them looking for a campaign that isn't there.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("%w: brief %s already has a live %s campaign", domain.ErrConflict, c.BriefID, c.Platform)
+		}
+		return nil, fmt.Errorf("adopt campaign: %w", err)
+	}
+	if eerr := enqueueCampaignIndex(ctx, tx, adopted, indexPayload); eerr != nil {
+		return nil, fmt.Errorf("adopt campaign: %w", eerr)
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return nil, fmt.Errorf("adopt campaign: commit: %w", cerr)
+	}
+	return adopted, nil
+}
+
 // enqueueCampaignIndex writes a campaign's index message to the outbox inside tx.
 //
 // EVERY campaign write co-commits, exactly as the brief writes do. Mixing paths does not work:

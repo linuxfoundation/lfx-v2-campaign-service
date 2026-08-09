@@ -383,3 +383,26 @@ package. A DB-backed test of `DeleteCampaign` would need a docker dependency in 
 no other test here uses.
 
 See [internal/infrastructure/postgres](../../../internal/infrastructure/postgres).
+
+## `AdoptCampaign` — why it is not `UpsertCampaign`
+
+`adoptCampaignQuery` inserts a campaigns row with `ON CONFLICT (brief_id, platform) WHERE
+status <> 'deleted' DO NOTHING ... RETURNING`, and `AdoptCampaign` classifies `pgx.ErrNoRows`
+as `domain.ErrConflict`.
+
+The predicate is mandatory for the same reason it is on every other statement targeting this
+pair: migration 000014 drops the full `UNIQUE (brief_id, platform)` constraint, leaving only
+000013's PARTIAL unique index, so a bare conflict target infers no arbiter index and fails at
+runtime. `TestCampaignRepo_OnConflictCarriesLivePredicate` covers this statement too.
+
+`DO NOTHING` is what distinguishes adoption from an upsert. `UpsertCampaign`'s `DO UPDATE`
+arm is correct where it is used, because it overwrites a row describing THE SAME campaign
+this service is provisioning — that is how a retried dispatch converges. Adoption's caller
+names an ARBITRARY upstream campaign, so an updating arm would repoint a live binding at a
+different campaign and orphan the one it used to name; this service never deletes or pauses
+upstream, so that orphan keeps spending with nothing here pointing at it. `RETURNING` is
+load-bearing for the same reason the classification is: "no rows came back" IS the conflict
+signal, so dropping it makes a refused adoption indistinguishable from a successful one.
+
+The insert and its outbox index row are co-committed in one transaction, as every campaign
+write is — see `enqueueCampaignIndex`.

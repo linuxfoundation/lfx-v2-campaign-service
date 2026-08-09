@@ -237,4 +237,21 @@ var (
 	// is precisely what makes the bootstrap possible, since discovery is how the operator
 	// finds the account to select. Discovery's own 400 covers its other unusable states.
 	ErrAccountNotSelected = errors.New("no ad account has been selected for the stored connection")
+
+	// ErrAdoptionUnsupported indicates the platform has no campaign-adoption capability
+	// wired (no dispatcher, or the dispatcher is not a CampaignAdopter). The platform is
+	// never contacted. Maps to 400, exactly as ErrMetricsUnsupported and
+	// ErrAccountsUnsupported do for their capabilities, and it lives here for the same
+	// reason: a platform dispatcher can return it without importing the orchestration layer.
+	ErrAdoptionUnsupported = errors.New("campaign adoption is not supported for this platform")
+
+	// ErrPlatformCampaignAbsent indicates the platform answered the lookup and there is no
+	// such campaign under the project's connection. Maps to 404.
+	//
+	// It exists to keep ABSENCE separate from UNVERIFIABLE, which is the whole safety
+	// property of verify-before-bind. Every other lookup failure — a transport error, a
+	// malformed row, a filter the platform did not honour — must surface as an ordinary
+	// error (503), because binding is a claim about upstream reality and an unanswered
+	// question is not evidence. Only this sentinel means "we asked, and the answer was no".
+	ErrPlatformCampaignAbsent = errors.New("no such campaign exists on the ad platform")
 )

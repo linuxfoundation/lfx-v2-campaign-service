@@ -50,6 +50,10 @@ type Client struct {
 	// create-campaigns endpoint.
 	CreateCampaignsDoer goahttp.Doer
 
+	// AdoptCampaign Doer is the HTTP client used to make requests to the
+	// adopt-campaign endpoint.
+	AdoptCampaignDoer goahttp.Doer
+
 	// GetCampaign Doer is the HTTP client used to make requests to the
 	// get-campaign endpoint.
 	GetCampaignDoer goahttp.Doer
@@ -102,6 +106,7 @@ func NewClient(
 		DeleteBriefDoer:          doer,
 		FetchEventURLDoer:        doer,
 		CreateCampaignsDoer:      doer,
+		AdoptCampaignDoer:        doer,
 		GetCampaignDoer:          doer,
 		GetCampaignMetricsDoer:   doer,
 		UpdateCampaignDoer:       doer,
@@ -303,6 +308,30 @@ func (c *Client) CreateCampaigns() goa.Endpoint {
 		resp, err := c.CreateCampaignsDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "create-campaigns", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// AdoptCampaign returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service adopt-campaign server.
+func (c *Client) AdoptCampaign() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeAdoptCampaignRequest(c.encoder)
+		decodeResponse = DecodeAdoptCampaignResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildAdoptCampaignRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.AdoptCampaignDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "adopt-campaign", err)
 		}
 		return decodeResponse(resp)
 	}

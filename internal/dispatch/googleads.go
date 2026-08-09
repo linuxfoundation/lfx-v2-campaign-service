@@ -615,6 +615,42 @@ func (d *GoogleAdsDispatcher) ReadMetrics(ctx context.Context, projectID string,
 	}, nil
 }
 
+// LookupCampaign implements service.CampaignAdopter for Google Ads: it confirms that
+// platformCampaignID names a real, live campaign under the PROJECT'S OWN connection, so an
+// existing campaign can be bound to a brief without creating anything.
+//
+// It resolves the ordinary (non-discovery) client deliberately. Discovery credentials can
+// reach every account the login customer administers; adoption must be scoped to the one
+// account this project is connected to, or a caller could bind a campaign belonging to a
+// different project — or a different foundation — and then read its spend through this
+// service. The account check that ReadMetrics performs after the fact is unnecessary here
+// for the same reason it is unavailable: there is no stored row yet to compare against, so
+// the connection IS the scope, and googleads.GetCampaign issues its query against exactly
+// that customer.
+//
+// (nil, nil) means the campaign is genuinely absent under this connection — that is
+// googleads.GetCampaign's contract, and it distinguishes absence from every unverifiable
+// answer, each of which it returns as an error rather than an empty result.
+func (d *GoogleAdsDispatcher) LookupCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) (*model.PlatformCampaignRef, error) {
+	client, err := d.resolveGoogleAdsClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	ref, err := client.GetCampaign(ctx, platformCampaignID)
+	if err != nil {
+		return nil, fmt.Errorf("look up google ads campaign: %w", err)
+	}
+	if ref == nil {
+		return nil, nil
+	}
+	// ref.Status (ENABLED/PAUSED) is deliberately not carried across: reaching this line
+	// at all already means the campaign is live, because GetCampaign filters REMOVED
+	// server-side and errors on any status outside its known set rather than passing it
+	// on. Adoptability is decided here, in Google's vocabulary; the service layer never
+	// sees it. See model.PlatformCampaignRef.
+	return &model.PlatformCampaignRef{ID: ref.ID, Name: ref.Name}, nil
+}
+
 // googleAdsCreationCustomerID recovers the ad account the campaign was CREATED under from
 // the persisted googleads.CampaignResult blob, mirroring googleAdsChildIDs.
 //

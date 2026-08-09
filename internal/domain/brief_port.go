@@ -127,6 +127,21 @@ type CampaignWriter interface {
 	// UpsertCampaign inserts or updates the campaign row for a (brief, platform).
 	// Campaigns are updated in place when a brief changes after they exist.
 	UpsertCampaign(ctx context.Context, c *model.Campaign, indexPayload CampaignIndexPayloadFunc) (*model.Campaign, error)
+
+	// AdoptCampaign INSERTs the campaign row for a (brief, platform) pair that has no live
+	// campaign yet, binding an already-existing upstream campaign to the brief.
+	//
+	// It is deliberately NOT UpsertCampaign. The upsert's conflict arm overwrites the live
+	// row in place, which is right for a re-dispatch of a campaign this service created and
+	// wrong for adoption: the caller supplies a platform campaign id, and silently
+	// repointing an existing binding at a different upstream campaign would orphan the old
+	// one — still spending, with nothing in this service referring to it. AdoptCampaign
+	// returns ErrConflict instead and leaves the existing binding alone.
+	//
+	// The check is the INSERT itself (ON CONFLICT DO NOTHING against the live partial
+	// unique index), not a preceding read, so two concurrent adopts of the same pair cannot
+	// both observe "no campaign yet" and race.
+	AdoptCampaign(ctx context.Context, c *model.Campaign, indexPayload CampaignIndexPayloadFunc) (*model.Campaign, error)
 	// ReplaceCampaign replaces a campaign's mutable fields, gating on version. lockToken is the
 	// token returned by ClaimCampaignVersion when the caller holds the claim lock for this
 	// campaign (the zero CampaignLockToken otherwise) — implementations that reuse the lock

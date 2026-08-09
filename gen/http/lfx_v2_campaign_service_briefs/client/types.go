@@ -40,6 +40,15 @@ type CreateCampaignsRequestBody struct {
 	Input *CampaignCreateInputRequestBody `form:"input" json:"input" xml:"input"`
 }
 
+// AdoptCampaignRequestBody is the type of the "lfx-v2-campaign-service-briefs"
+// service "adopt-campaign" endpoint HTTP request body.
+type AdoptCampaignRequestBody struct {
+	// Ad platform the campaign lives on
+	Platform string `form:"platform" json:"platform" xml:"platform"`
+	// The ad platform's own id for the existing campaign
+	PlatformCampaignID string `form:"platform_campaign_id" json:"platform_campaign_id" xml:"platform_campaign_id"`
+}
+
 // UpdateCampaignRequestBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
 // request body.
@@ -243,6 +252,28 @@ type CreateCampaignsResponseBody struct {
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// Platforms this job will create on
 	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
+}
+
+// AdoptCampaignResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "adopt-campaign" endpoint HTTP
+// response body.
+type AdoptCampaignResponseBody struct {
+	// Campaign UUID
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Owning project
+	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
+	// Parent brief
+	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
+	// Channel
+	Platform *string `form:"platform,omitempty" json:"platform,omitempty" xml:"platform,omitempty"`
+	// ID returned by the ad platform
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// Campaign name
+	CampaignName *string `form:"campaign_name,omitempty" json:"campaign_name,omitempty" xml:"campaign_name,omitempty"`
+	// Campaign status
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Optimistic-concurrency version
+	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 }
 
 // GetCampaignResponseBody is the type of the "lfx-v2-campaign-service-briefs"
@@ -785,6 +816,56 @@ type CreateCampaignsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// AdoptCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "adopt-campaign" endpoint HTTP
+// response body for the "BadRequest" error.
+type AdoptCampaignBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// AdoptCampaignConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "adopt-campaign" endpoint HTTP
+// response body for the "Conflict" error.
+type AdoptCampaignConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// AdoptCampaignServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "adopt-campaign" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type AdoptCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// AdoptCampaignInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "adopt-campaign" endpoint HTTP
+// response body for the "InternalServerError" error.
+type AdoptCampaignInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// AdoptCampaignNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "adopt-campaign" endpoint HTTP
+// response body for the "NotFound" error.
+type AdoptCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetCampaignBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-campaign" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -1237,6 +1318,17 @@ func NewCreateCampaignsRequestBody(p *lfxv2campaignservicebriefs.CreateCampaigns
 	body := &CreateCampaignsRequestBody{}
 	if p.Input != nil {
 		body.Input = marshalLfxv2campaignservicebriefsCampaignCreateInputToCampaignCreateInputRequestBody(p.Input)
+	}
+	return body
+}
+
+// NewAdoptCampaignRequestBody builds the HTTP request body from the payload of
+// the "adopt-campaign" endpoint of the "lfx-v2-campaign-service-briefs"
+// service.
+func NewAdoptCampaignRequestBody(p *lfxv2campaignservicebriefs.AdoptCampaignPayload) *AdoptCampaignRequestBody {
+	body := &AdoptCampaignRequestBody{
+		Platform:           p.Platform,
+		PlatformCampaignID: p.PlatformCampaignID,
 	}
 	return body
 }
@@ -1907,6 +1999,79 @@ func NewCreateCampaignsInternalServerError(body *CreateCampaignsInternalServerEr
 // NewCreateCampaignsNotFound builds a lfx-v2-campaign-service-briefs service
 // create-campaigns endpoint NotFound error.
 func NewCreateCampaignsNotFound(body *CreateCampaignsNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewAdoptCampaignCampaignCreated builds a "lfx-v2-campaign-service-briefs"
+// service "adopt-campaign" endpoint result from a HTTP "Created" response.
+func NewAdoptCampaignCampaignCreated(body *AdoptCampaignResponseBody, etag *string) *lfxv2campaignservicebriefs.Campaign {
+	v := &lfxv2campaignservicebriefs.Campaign{
+		ID:                 *body.ID,
+		ProjectID:          *body.ProjectID,
+		BriefID:            *body.BriefID,
+		Platform:           *body.Platform,
+		PlatformCampaignID: body.PlatformCampaignID,
+		CampaignName:       *body.CampaignName,
+		Status:             *body.Status,
+		Version:            *body.Version,
+	}
+	v.Etag = etag
+
+	return v
+}
+
+// NewAdoptCampaignBadRequest builds a lfx-v2-campaign-service-briefs service
+// adopt-campaign endpoint BadRequest error.
+func NewAdoptCampaignBadRequest(body *AdoptCampaignBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewAdoptCampaignConflict builds a lfx-v2-campaign-service-briefs service
+// adopt-campaign endpoint Conflict error.
+func NewAdoptCampaignConflict(body *AdoptCampaignConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewAdoptCampaignServiceUnavailable builds a lfx-v2-campaign-service-briefs
+// service adopt-campaign endpoint ServiceUnavailable error.
+func NewAdoptCampaignServiceUnavailable(body *AdoptCampaignServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewAdoptCampaignInternalServerError builds a lfx-v2-campaign-service-briefs
+// service adopt-campaign endpoint InternalServerError error.
+func NewAdoptCampaignInternalServerError(body *AdoptCampaignInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewAdoptCampaignNotFound builds a lfx-v2-campaign-service-briefs service
+// adopt-campaign endpoint NotFound error.
+func NewAdoptCampaignNotFound(body *AdoptCampaignNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
 		Code:    *body.Code,
 		Message: *body.Message,
@@ -2616,6 +2781,33 @@ func ValidateCreateCampaignsResponseBody(body *CreateCampaignsResponseBody) (err
 	return
 }
 
+// ValidateAdoptCampaignResponseBody runs the validations defined on
+// Adopt-CampaignResponseBody
+func ValidateAdoptCampaignResponseBody(body *AdoptCampaignResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.ProjectID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("project_id", "body"))
+	}
+	if body.BriefID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("brief_id", "body"))
+	}
+	if body.Platform == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform", "body"))
+	}
+	if body.CampaignName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_name", "body"))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	if body.Version == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
+	}
+	return
+}
+
 // ValidateGetCampaignResponseBody runs the validations defined on
 // Get-CampaignResponseBody
 func ValidateGetCampaignResponseBody(body *GetCampaignResponseBody) (err error) {
@@ -3272,6 +3464,66 @@ func ValidateCreateCampaignsInternalServerErrorResponseBody(body *CreateCampaign
 // ValidateCreateCampaignsNotFoundResponseBody runs the validations defined on
 // create-campaigns_NotFound_response_body
 func ValidateCreateCampaignsNotFoundResponseBody(body *CreateCampaignsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateAdoptCampaignBadRequestResponseBody runs the validations defined on
+// adopt-campaign_BadRequest_response_body
+func ValidateAdoptCampaignBadRequestResponseBody(body *AdoptCampaignBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateAdoptCampaignConflictResponseBody runs the validations defined on
+// adopt-campaign_Conflict_response_body
+func ValidateAdoptCampaignConflictResponseBody(body *AdoptCampaignConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateAdoptCampaignServiceUnavailableResponseBody runs the validations
+// defined on adopt-campaign_ServiceUnavailable_response_body
+func ValidateAdoptCampaignServiceUnavailableResponseBody(body *AdoptCampaignServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateAdoptCampaignInternalServerErrorResponseBody runs the validations
+// defined on adopt-campaign_InternalServerError_response_body
+func ValidateAdoptCampaignInternalServerErrorResponseBody(body *AdoptCampaignInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateAdoptCampaignNotFoundResponseBody runs the validations defined on
+// adopt-campaign_NotFound_response_body
+func ValidateAdoptCampaignNotFoundResponseBody(body *AdoptCampaignNotFoundResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

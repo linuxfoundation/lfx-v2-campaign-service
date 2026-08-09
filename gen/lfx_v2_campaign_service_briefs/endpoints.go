@@ -24,6 +24,7 @@ type Endpoints struct {
 	DeleteBrief          goa.Endpoint
 	FetchEventURL        goa.Endpoint
 	CreateCampaigns      goa.Endpoint
+	AdoptCampaign        goa.Endpoint
 	GetCampaign          goa.Endpoint
 	GetCampaignMetrics   goa.Endpoint
 	UpdateCampaign       goa.Endpoint
@@ -46,6 +47,7 @@ func NewEndpoints(s Service) *Endpoints {
 		DeleteBrief:          NewDeleteBriefEndpoint(s, a.JWTAuth),
 		FetchEventURL:        NewFetchEventURLEndpoint(s, a.JWTAuth),
 		CreateCampaigns:      NewCreateCampaignsEndpoint(s, a.JWTAuth),
+		AdoptCampaign:        NewAdoptCampaignEndpoint(s, a.JWTAuth),
 		GetCampaign:          NewGetCampaignEndpoint(s, a.JWTAuth),
 		GetCampaignMetrics:   NewGetCampaignMetricsEndpoint(s, a.JWTAuth),
 		UpdateCampaign:       NewUpdateCampaignEndpoint(s, a.JWTAuth),
@@ -66,6 +68,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.DeleteBrief = m(e.DeleteBrief)
 	e.FetchEventURL = m(e.FetchEventURL)
 	e.CreateCampaigns = m(e.CreateCampaigns)
+	e.AdoptCampaign = m(e.AdoptCampaign)
 	e.GetCampaign = m(e.GetCampaign)
 	e.GetCampaignMetrics = m(e.GetCampaignMetrics)
 	e.UpdateCampaign = m(e.UpdateCampaign)
@@ -255,6 +258,29 @@ func NewCreateCampaignsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.E
 			return nil, err
 		}
 		return s.CreateCampaigns(ctx, p)
+	}
+}
+
+// NewAdoptCampaignEndpoint returns an endpoint function that calls the method
+// "adopt-campaign" of service "lfx-v2-campaign-service-briefs".
+func NewAdoptCampaignEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*AdoptCampaignPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.AdoptCampaign(ctx, p)
 	}
 }
 

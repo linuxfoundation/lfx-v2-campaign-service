@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -98,6 +99,9 @@ func (r *fakeJobRepo) FailStuckJobs(_ context.Context, jobErr string) (int64, er
 type fakeCampaignRepo struct {
 	mu       sync.Mutex
 	upserted []*model.Campaign
+	// adopted records campaigns bound via AdoptCampaign, kept separate from upserted so a
+	// test can tell "bound an existing upstream campaign" from "wrote one we created".
+	adopted []*model.Campaign
 	// indexPayloads records the co-committed index messages, so a test can assert a campaign is
 	// indexed rather than only persisted.
 	indexPayloads [][]byte
@@ -193,6 +197,34 @@ func (r *fakeCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, 
 	r.existing[c.BriefID+"|"+string(c.Platform)] = c
 	return c, nil
 }
+
+// AdoptCampaign mirrors CampaignRepo.AdoptCampaign: an INSERT that DECLINES rather than
+// updating when the (brief, platform) pair already has a live row. Modelling the refusal is
+// the point — a fake that simply overwrote, as UpsertCampaign does, would let a handler that
+// clobbers an existing binding pass every adoption test.
+func (r *fakeCampaignRepo) AdoptCampaign(_ context.Context, c *model.Campaign, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := c.BriefID + "|" + string(c.Platform)
+	if existing, ok := r.existing[key]; ok && existing.Status != "deleted" {
+		return nil, fmt.Errorf("%w: brief %s already has a live %s campaign", domain.ErrConflict, c.BriefID, c.Platform)
+	}
+	c.Version = 1
+	if indexPayload != nil {
+		payload, perr := indexPayload(c)
+		if perr != nil {
+			return nil, perr
+		}
+		r.indexPayloads = append(r.indexPayloads, payload)
+	}
+	if r.existing == nil {
+		r.existing = map[string]*model.Campaign{}
+	}
+	r.existing[key] = c
+	r.adopted = append(r.adopted, c)
+	return c, nil
+}
+
 func (r *fakeCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64, domain.CampaignLockToken, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	return nil, errors.New("unused")
 }

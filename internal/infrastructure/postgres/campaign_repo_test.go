@@ -46,6 +46,7 @@ func TestCampaignRepo_OnConflictCarriesLivePredicate(t *testing.T) {
 	for name, q := range map[string]string{
 		"ClaimCampaignDispatch": claimCampaignDispatchQuery,
 		"UpsertCampaign":        upsertCampaignQuery,
+		"AdoptCampaign":         adoptCampaignQuery,
 	} {
 		t.Run(name, func(t *testing.T) {
 			m := onConflictBriefPlatform.FindStringSubmatch(q)
@@ -260,4 +261,32 @@ func TestDeleteCampaign_ParticipatesInAdvisoryLockProtocol(t *testing.T) {
 	require.NotContains(t, body, "r.db.Begin(",
 		"beginning on the pool takes a SECOND connection while holding the lock, which self-deadlocks "+
 			"on a saturated pool")
+}
+
+// TestAdoptCampaign_RefusesToRepointALiveBinding pins the one thing that separates
+// adoption from an upsert.
+//
+// UpsertCampaign's conflict arm UPDATES: re-running a create for a (brief, platform)
+// pair that already has a row is how a retried dispatch converges, and overwriting is
+// correct there because the row being overwritten describes the same campaign this
+// service is provisioning. Adoption is the opposite case — the caller names an
+// ARBITRARY upstream campaign — so the same conflict arm would repoint an existing
+// binding at a different campaign, and the one it used to name keeps spending with
+// nothing in this service pointing at it. DO NOTHING turns that into zero rows, which
+// the Go code classifies as domain.ErrConflict and the handler as a 409.
+func TestAdoptCampaign_RefusesToRepointALiveBinding(t *testing.T) {
+	q := normalizeWS(adoptCampaignQuery)
+	upper := strings.ToUpper(q)
+
+	require.Contains(t, upper, "DO NOTHING",
+		"AdoptCampaign must DO NOTHING on conflict. DO UPDATE would repoint a live binding at a "+
+			"different upstream campaign and orphan the one it used to name, which this service cannot "+
+			"stop because it never deletes upstream.")
+	require.NotContains(t, upper, "DO UPDATE",
+		"AdoptCampaign must never take an updating conflict arm")
+	require.Contains(t, upper, "RETURNING",
+		"the insert must RETURN the stored row: the handler's conflict classification is 'no rows "+
+			"came back', so without RETURNING a refused adoption is indistinguishable from a successful one")
+	require.Contains(t, upper, "INSERT INTO CAMPAIGNS",
+		"adoption creates a NEW binding row; it must not mutate an existing one")
 }

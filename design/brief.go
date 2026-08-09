@@ -453,6 +453,42 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		})
 	})
 
+	Method("adopt-campaign", func() {
+		Description("Bind a campaign that ALREADY exists on the ad platform to this brief. The platform is read, never written: the campaign must already exist under the project's connection, and nothing is created upstream. Returns 404 when the platform holds no such campaign, 409 when this brief already has a live campaign on that platform, and 400 when the platform has no adoption capability wired.")
+		Payload(func() {
+			bearerToken()
+			// Slug-only, matching create-campaigns: project_id is the exact-match key for
+			// the connection lookup that scopes the platform read to this project's ad
+			// account. The lookup's safety property is that it runs under the project's OWN
+			// credentials, not a discovery credential that can see every account.
+			projectSlugAttr()
+			briefIDAttr()
+			Attribute("platform", String, "Ad platform the campaign lives on", func() {
+				Example("google_ads")
+			})
+			Attribute("platform_campaign_id", String, "The ad platform's own id for the existing campaign", func() {
+				// Load-bearing, not hygiene: an empty id degrades the lookup from "this
+				// campaign" to "any campaign", and a platform whose filter silently drops
+				// an empty operand answers with somebody else's campaign.
+				MinLength(1)
+				MaxLength(64)
+				Example("1234567890")
+			})
+			Required("project_id", "brief_id", "platform", "platform_campaign_id")
+		})
+		Result(Campaign)
+		commonBriefErrors(true)
+		HTTP(func() {
+			// POST to a sub-collection rather than PUT on the campaign: no campaign
+			// resource exists yet at any URL. Not idempotent by design — a second adopt of
+			// the same pair is a 409, the report an operator needs, not a silent re-bind.
+			POST("/projects/{project_id}/briefs/{brief_id}/campaigns/adopt")
+			Header("bearer_token:Authorization")
+			Response(StatusCreated, func() { Header("etag:ETag") })
+			briefErrorResponses(true)
+		})
+	})
+
 	Method("get-campaign", func() {
 		Description("Get one campaign under a brief; returns ETag.")
 		Payload(func() {

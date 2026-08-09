@@ -437,3 +437,36 @@ Two places this shows up today:
   DESIGN, while an ad platform's toggle may simply not be wired yet.
 
 See [internal/dispatch](../../../internal/dispatch).
+
+## `CampaignAdopter` (optional capability)
+
+`CampaignAdopter` is a fourth OPTIONAL dispatcher interface, alongside `StatusToggler`,
+`MetricsReader` and `AccountLister`, declared in `internal/service/orchestrator.go` and
+discovered by the same type assertion. A dispatcher that does not implement it makes the
+platform answer `ErrAdoptionUnsupported` (400) with no network call. **Google Ads is the
+only implementation today.**
+
+```go
+LookupCampaign(ctx, projectID, platform, platformCampaignID) (*model.PlatformCampaignRef, error)
+```
+
+The contract has one rule that matters more than the signature: **`(nil, nil)` means the
+platform answered and the campaign is genuinely absent.** Anything an adapter could not
+verify — a transport failure, an unhonoured filter, an undecodable row, a status outside the
+known set — must be an ERROR, because the service turns absence into a 404 and an operator
+acts on a 404 by creating a duplicate paid campaign. An adapter must never reduce an
+unverifiable response to a clean absence (the `continue`-on-mismatch shape: skipping every
+non-matching row yields zero matches, exactly the licence-to-create answer the check existed
+to prevent).
+
+`GoogleAdsDispatcher.LookupCampaign` resolves the ORDINARY client via
+`resolveGoogleAdsClient`, not the discovery client, on purpose: discovery credentials see
+every account the login customer administers, so adoption through them could bind a
+campaign belonging to a different project. Scoping to the project's own connection is what
+makes the returned campaign the project's to adopt.
+
+It also drops the platform's `ENABLED`/`PAUSED` rather than passing it up. Reaching the
+mapping at all already means the campaign is live — `googleads.GetCampaign` filters
+`REMOVED` server-side and errors on any status outside its known set — so adoptability is
+decided here, in Google's vocabulary, and `model.PlatformCampaignRef` never carries a
+status the service would have to learn every platform's dialect to interpret.
