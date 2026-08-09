@@ -240,6 +240,40 @@ not qualify. The hand-maintained list is kept honest by
 notice — an entry naming an index no migration creates fails there rather than sitting in
 the list as decoration.
 
+### The check is on the DEFINITION, because the name is what IF NOT EXISTS matches
+
+"Present and valid" under the right name is still not enough, and the reason is the same
+`IF NOT EXISTS` that produced the invalid-index case. Any index carrying the name makes
+migration 000018's `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS` a silent no-op — so a
+non-unique index, one on a superset of the keys, or one with a different predicate leaves
+the real constraint unbuilt and then *satisfies* a name-only check. Boot succeeds,
+concurrent builds are unconstrained, nothing reports it.
+
+This is not a hypothetical: migration 000014's drop-guard was written to close exactly this
+hole, and `TestMigration000014_GuardChecksIndexDefinition` records the PostgreSQL 16.10 run
+where a same-named NON-unique index passed the name-only form. Each `requiredIndex` entry
+therefore carries uniqueness, relation, key columns in order, and the predicate **as
+Postgres deparses it** — comparing against the deparsed form is what lets an equivalent
+spelling (an explicit `::text` cast, different whitespace) compare equal instead of raising
+a false alarm. `indisready` is checked alongside `indisvalid` because the two fail apart: a
+`CONCURRENTLY` build that dies between phases can leave an index valid but not ready.
+
+Absent and wrong-definition are **separate sentinels** (`ErrMissingRequiredIndex`,
+`ErrRequiredIndexMismatch`) because their recovery differs in a way an operator cannot
+guess. An absent index needs the version forced so the `CREATE` runs. An impostor must be
+DROPPED *first* — force the version without dropping and the `CREATE` matches the name
+again and skips, leaving the operator exactly where they started. The message names every
+defect it found, not the first: told only "wrong definition", an operator rebuilds
+something that is still wrong.
+
+One consequence worth stating for anyone writing a live test against this schema: a
+cleanup that restores the lease index must **not** use `Migrate`'s return value as its
+success signal. `Migrate` answering "clean" is precisely the regression these tests exist
+to catch, so a cleanup that trusts it restores nothing when the guard is weakened, and
+every later lease test in that database then passes against an unconstrained table.
+`restoreLeaseIndex` drops, re-creates, and verifies against `pg_index` — and drops rather
+than using `IF NOT EXISTS`, since an impostor carries the right name.
+
 ## Actor attribution
 
 Campaigns execute under **system accounts** — shared, LF-owned platform credentials —

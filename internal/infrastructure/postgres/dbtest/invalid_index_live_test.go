@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/dbtest"
 )
@@ -97,16 +100,7 @@ func TestMigrateRefusesADroppedRequiredIndex(t *testing.T) {
 
 	const idx = "uq_campaign_audiences_brief_platform_building"
 
-	// Restore it whatever happens: every later test in this database depends on the lease.
-	t.Cleanup(func() {
-		if err := postgres.Migrate(dbtest.DSN()); err == nil {
-			return // the forced re-run below already put it back
-		}
-		if _, err := pool.Exec(context.Background(),
-			"CREATE UNIQUE INDEX IF NOT EXISTS "+idx+" ON campaign_audiences (brief_id, platform) WHERE status = 'building'"); err != nil {
-			t.Errorf("restore %s: %v — later lease tests would silently pass without it", idx, err)
-		}
-	})
+	t.Cleanup(func() { restoreLeaseIndex(t, pool) })
 
 	if _, err := pool.Exec(ctx, "DROP INDEX IF EXISTS "+idx); err != nil {
 		t.Fatalf("drop the required index: %v", err)
@@ -126,5 +120,104 @@ func TestMigrateRefusesADroppedRequiredIndex(t *testing.T) {
 	if !postgres.IsPermanentMigrationErr(err) {
 		t.Errorf("ErrMissingRequiredIndex is not permanent; boot would 503-loop rather than " +
 			"telling the operator the version must be forced back")
+	}
+}
+
+// TestMigrateRefusesARequiredIndexWithTheWrongDefinition pins the third state in this
+// family, and the one a NAME-only check cannot see at all.
+//
+// Migration 000018 creates the lease index with CREATE UNIQUE INDEX CONCURRENTLY *IF NOT
+// EXISTS*, so any index already carrying that name makes it a silent no-op — the real
+// constraint is never built. A runner check that asks only "is an index of this name
+// present and valid" then reports the schema healthy, and every concurrent build proceeds
+// unconstrained with nothing to report it. This is not a hypothetical shape: it is the
+// same hole migration 000014's drop-guard was written to close, and
+// TestMigration000014_GuardChecksIndexDefinition records the PostgreSQL 16.10 run where a
+// same-named NON-unique index passed the name-only form of that guard.
+//
+// The impostor here is non-unique AND non-partial, so it is wrong in two independent ways
+// and the message has to say which — an operator who is told only "wrong definition" has
+// to go read the catalog themselves.
+func TestMigrateRefusesARequiredIndexWithTheWrongDefinition(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+
+	const idx = "uq_campaign_audiences_brief_platform_building"
+
+	t.Cleanup(func() { restoreLeaseIndex(t, pool) })
+
+	if _, err := pool.Exec(ctx, "DROP INDEX IF EXISTS "+idx); err != nil {
+		t.Fatalf("drop the real index: %v", err)
+	}
+	// Exactly what 000018 would find and skip over.
+	if _, err := pool.Exec(ctx,
+		"CREATE INDEX "+idx+" ON campaign_audiences (brief_id, platform)"); err != nil {
+		t.Fatalf("create the impostor index: %v", err)
+	}
+
+	err := postgres.Migrate(dbtest.DSN())
+	if !errors.Is(err, postgres.ErrRequiredIndexMismatch) {
+		t.Fatalf("Migrate with a same-named non-unique index: got %v, want "+
+			"ErrRequiredIndexMismatch — the migration's IF NOT EXISTS skipped, so this "+
+			"schema arbitrates no lease at all while every name-based check passes", err)
+	}
+	// The two defects must BOTH be named. A message that stops at the first one sends the
+	// operator to rebuild an index that would still be wrong.
+	for _, want := range []string{idx, "indisunique=false", "predicate"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not mention %q: %v", want, err)
+		}
+	}
+	// Dropping is a required step here and not in the missing-index case, so the message
+	// has to say so: forcing the version alone re-runs a CREATE the impostor no-ops.
+	if !strings.Contains(err.Error(), "DROPPING") {
+		t.Errorf("the error does not tell the operator to DROP the impostor first: %v", err)
+	}
+	if !postgres.IsPermanentMigrationErr(err) {
+		t.Errorf("ErrRequiredIndexMismatch is not permanent; boot would 503-loop instead of " +
+			"naming the one thing an operator has to do")
+	}
+}
+
+// restoreLeaseIndex puts the audience-build lease index back exactly as migration 000018
+// defines it, for tests that deliberately remove or replace it.
+//
+// It does NOT ask Migrate whether the index is back, and that is the point. Migrate
+// returning nil is precisely the regression these tests exist to catch: if the runner
+// check is weakened or deleted, Migrate answers "clean" over a schema with no lease at
+// all, a cleanup trusting that answer restores nothing, and every LATER lease test in this
+// database then passes against an unconstrained table. The cleanup's success signal must
+// not be the code under test. DROP-then-CREATE rather than IF NOT EXISTS for the same
+// reason the guard exists: an impostor left by the mismatch test carries the right name,
+// so IF NOT EXISTS would skip and leave it in place.
+func restoreLeaseIndex(t *testing.T, pool interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+},
+) {
+	t.Helper()
+	ctx := context.Background()
+	const idx = "uq_campaign_audiences_brief_platform_building"
+
+	if _, err := pool.Exec(ctx, "DROP INDEX IF EXISTS "+idx); err != nil {
+		t.Errorf("restore %s: drop: %v", idx, err)
+		return
+	}
+	if _, err := pool.Exec(ctx, "CREATE UNIQUE INDEX "+idx+
+		" ON campaign_audiences (brief_id, platform) WHERE status = 'building'"); err != nil {
+		t.Errorf("restore %s: create: %v", idx, err)
+		return
+	}
+	// Verified against the catalog, not against the CREATE's exit status, so a restore
+	// that silently built the wrong thing fails here rather than in an unrelated test.
+	var unique, valid, partial bool
+	if err := pool.QueryRow(ctx, `SELECT i.indisunique, i.indisvalid, i.indpred IS NOT NULL
+		FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+		WHERE c.relname = $1`, idx).Scan(&unique, &valid, &partial); err != nil {
+		t.Errorf("restore %s: verify: %v — later lease tests would silently pass without it", idx, err)
+		return
+	}
+	if !unique || !valid || !partial {
+		t.Errorf("restore %s: unique=%t valid=%t partial=%t, want all true", idx, unique, valid, partial)
 	}
 }

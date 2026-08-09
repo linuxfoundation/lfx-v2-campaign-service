@@ -154,3 +154,45 @@ every write it serialized still succeeds without it. A performance index going m
 slow, not wrong. `TestMigrateRefusesADroppedRequiredIndex` drops each name and requires
 `Migrate` to notice, so an entry naming an index no migration creates fails the suite
 rather than sitting in the list looking like protection.
+
+## Round 2: the required-index check had the same hole it was added to close
+
+Two bots, one class, and it is the class this whole file keeps circling.
+
+**Copilot:** the new required-index check accepts any valid index with the expected NAME —
+non-unique, wrong keys, wrong predicate, wrong table. Since migration 000018 uses `IF NOT
+EXISTS`, such an index makes the migration skip building the real lease and then satisfies the
+check, so startup succeeds while concurrent builds stay unconstrained. It pointed at
+`campaign_repo_test.go:157-195`, where the repo already guards this exact failure mode for
+migration 000014.
+
+Right, and the precedent is the part that stings: 000014's drop-guard pins uniqueness, key
+count, key names, relation and predicate precisely because a PostgreSQL 16.10 run showed a
+same-named non-unique index passing the name-only form. I wrote a name-only check one file away
+from the test that documents why name-only does not work. Each `requiredIndex` entry now carries
+the full definition, compared against Postgres's DEPARSED predicate so an equivalent spelling
+does not raise a false alarm, with `indisready` alongside `indisvalid` since a `CONCURRENTLY`
+build that dies between phases can leave an index valid but not ready.
+
+Absent and wrong-definition became separate sentinels. Not for taxonomy — the recovery differs
+and an operator cannot guess the difference. Absent: force the version so the `CREATE` runs.
+Impostor: DROP it first, because forcing alone re-runs a `CREATE` the impostor no-ops, which
+lands the operator back where they began having done work. Reverting to the name-only query
+makes the new test report `got <nil>` against a non-unique index of the right name.
+
+**Cursor:** the cleanup in the dropped-index test treats a nil `Migrate` result as "already
+restored", but a nil return is exactly the open-guard regression under test — so a weakened
+guard leaves the index absent for every later lease test in the shared database.
+
+Also right, and it had ALREADY HAPPENED: the live run for this round failed on ten tests because
+`audlease106` was sitting there with no lease index, left by an earlier run of the very cleanup
+that was supposed to restore it. `restoreLeaseIndex` now drops, re-creates and verifies against
+`pg_index`, and asks `Migrate` nothing. It drops rather than using `IF NOT EXISTS` for the same
+reason the guard exists — an impostor carries the right name.
+
+The class, stated once more because three rounds have now produced three instances of it: **a
+check whose passing condition is also producible by the failure it is checking for.** An invalid
+index passes a name lookup. A dropped index passes an invalid-index scan. An impostor passes a
+name-and-validity check. A cleanup that asks the code under test whether it worked passes when
+the code under test is broken. Each time the fix is the same shape — assert the property you
+actually need, against a source that does not depend on the thing you are testing.

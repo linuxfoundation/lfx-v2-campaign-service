@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -176,6 +177,14 @@ var ErrInvalidIndex = errors.New("schema carries an INVALID index")
 // because the recovery for ErrInvalidIndex, done halfway, produces exactly this state.
 var ErrMissingRequiredIndex = errors.New("schema is missing an index it relies on for correctness")
 
+// ErrRequiredIndexMismatch reports an index that carries a required index's NAME while
+// enforcing something else — non-unique, different keys, different predicate, different
+// table. It is a separate sentinel from ErrMissingRequiredIndex because the recovery is
+// different in a way an operator cannot guess: the impostor has to be DROPPED before the
+// version is forced, since the migration's CREATE ... IF NOT EXISTS matches on the name
+// alone and would skip again. Permanent for the same reason as its siblings.
+var ErrRequiredIndexMismatch = errors.New("an index required for correctness exists under the right name with the wrong definition")
+
 // invalidIndexQuery lists indexes in the connection's schema that Postgres has marked
 // invalid. Only CREATE INDEX CONCURRENTLY produces one: a plain CREATE INDEX rolls its
 // failure back, while a CONCURRENTLY build that fails leaves the index PRESENT and
@@ -252,7 +261,7 @@ func checkNoInvalidIndexes(dsn string) error {
 	// constraint. A performance index going missing is slow, not wrong, and does not
 	// belong. The live test TestMigrateRefusesADroppedRequiredIndex fails if an entry
 	// names an index no migration creates, so a stale name cannot sit here unnoticed.
-	missing, err := missingRequiredIndexes(ctx, conn)
+	missing, wrong, err := checkRequiredIndexes(ctx, conn)
 	if err != nil {
 		return err
 	}
@@ -263,46 +272,113 @@ func checkNoInvalidIndexes(dsn string) error {
 			"runs again; do not start the service against this schema",
 			ErrMissingRequiredIndex, strings.Join(missing, ", "))
 	}
+	if len(wrong) > 0 {
+		return fmt.Errorf("%w: %s. An index of the right NAME that enforces something else "+
+			"is worse than none: the migration's IF NOT EXISTS finds the name and skips, "+
+			"so the real constraint is never built and every name-based check passes. "+
+			"Recover by DROPPING the listed index and then `migrate force <version-1>` — "+
+			"forcing alone re-runs a CREATE that the impostor makes a no-op",
+			ErrRequiredIndexMismatch, strings.Join(wrong, "; "))
+	}
 	return nil
 }
 
 // requiredIndexes are indexes whose ABSENCE is silent: each one stands in for a constraint,
 // so with it gone every write it was serializing succeeds and nothing reports a problem.
 // See checkNoInvalidIndexes for why membership is deliberately narrow.
-var requiredIndexes = []string{
+//
+// Each entry carries the index's DEFINITION, not just its name, and the reason is the
+// same IF NOT EXISTS that produced the invalid-index case above. A name-only check has a
+// hole an attacker does not need to find, because an ordinary mistake produces it: any
+// index that happens to carry this name — a non-unique one, one on a superset of the
+// keys, one with a different predicate — makes migration 000018's CREATE ... IF NOT
+// EXISTS a silent no-op, and then satisfies a check that asks only whether the name is
+// present and valid. Boot succeeds; concurrent builds are unconstrained; nothing reports
+// it. The repo already guards exactly this for migration 000014, whose drop-guard pins
+// uniqueness, key count, key names, relation and predicate rather than the name
+// (TestMigration000014_GuardChecksIndexDefinition records the PostgreSQL 16.10 run where
+// a same-named NON-unique index passed the name-only form). This is that guard, moved to
+// the runner, for the index 000018 creates.
+var requiredIndexes = []requiredIndex{{
 	// migration 000018: at most one audience per (brief, platform) in `building`.
-	"uq_campaign_audiences_brief_platform_building",
+	name:   "uq_campaign_audiences_brief_platform_building",
+	table:  "campaign_audiences",
+	unique: true,
+	keys:   []string{"brief_id", "platform"},
+	// As Postgres DEPARSES `WHERE status = 'building'`. Comparing against the deparsed
+	// form rather than the source text is what makes an equivalent spelling — an
+	// explicit ::text cast, extra whitespace — compare equal instead of tripping a
+	// false alarm, on the same reasoning as 000014's guard.
+	predicate: "(status = 'building'::text)",
+}}
+
+// requiredIndex is an index whose absence — or silent replacement by something of the
+// same name — leaves an invariant unenforced with no other symptom.
+type requiredIndex struct {
+	name      string
+	table     string
+	unique    bool
+	keys      []string
+	predicate string // deparsed; "" means the index must NOT be partial
 }
 
-const requiredIndexQuery = `SELECT c.relname
+// requiredIndexQuery reads one index's definition. indisready joins indisvalid because the
+// two fail apart: a CONCURRENTLY build that dies between its phases can leave an index
+// marked valid but not ready, which enforces nothing on new writes.
+const requiredIndexQuery = `SELECT
+		i.indisunique,
+		i.indisvalid AND i.indisready,
+		i.indrelid = to_regclass($2),
+		COALESCE(pg_get_expr(i.indpred, i.indrelid), ''),
+		COALESCE((
+			SELECT array_agg(a.attname ORDER BY k.ord)
+			FROM unnest(string_to_array(i.indkey::text, ' ')::int2[]) WITH ORDINALITY AS k(attnum, ord)
+			JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+			WHERE k.ord <= i.indnkeyatts
+		), '{}')
 	FROM pg_class c
 	JOIN pg_namespace n ON n.oid = c.relnamespace
 	JOIN pg_index i ON i.indexrelid = c.oid
-	WHERE c.relname = ANY($1) AND n.nspname = current_schema() AND i.indisvalid`
+	WHERE c.relname = $1 AND n.nspname = current_schema()`
 
-// missingRequiredIndexes returns the requiredIndexes absent from the schema. An index that
-// exists but is INVALID counts as missing: it enforces nothing, so the two are the same
-// fact to a caller deciding whether the invariant holds.
-func missingRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) ([]string, error) {
-	rows, err := conn.Query(ctx, requiredIndexQuery, requiredIndexes)
-	if err != nil {
-		return nil, fmt.Errorf("check for required indexes: %w", err)
-	}
-	found, err := pgxv5.CollectRows(rows, pgxv5.RowTo[string])
-	if err != nil {
-		return nil, fmt.Errorf("check for required indexes: %w", err)
-	}
-	present := make(map[string]struct{}, len(found))
-	for _, n := range found {
-		present[n] = struct{}{}
-	}
-	var missing []string
+// checkRequiredIndexes splits the required indexes into those ABSENT and those present
+// under the right name with the wrong definition. The two are separated because their
+// recovery differs: an absent index needs the version forced so the CREATE runs, while an
+// impostor must be DROPPED first — force it without dropping and the CREATE finds the name
+// again and skips, leaving the operator where they started. An index that exists but is
+// INVALID counts as absent: it enforces nothing, which is the same fact to a caller
+// deciding whether the invariant holds, and its recovery is the drop-then-force above.
+func checkRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) (missing, wrong []string, err error) {
 	for _, want := range requiredIndexes {
-		if _, ok := present[want]; !ok {
-			missing = append(missing, want)
+		var unique, live, rightTable bool
+		var predicate string
+		var keys []string
+		row := conn.QueryRow(ctx, requiredIndexQuery, want.name, want.table)
+		switch scanErr := row.Scan(&unique, &live, &rightTable, &predicate, &keys); {
+		case errors.Is(scanErr, pgxv5.ErrNoRows), scanErr == nil && !live:
+			missing = append(missing, want.name)
+			continue
+		case scanErr != nil:
+			return nil, nil, fmt.Errorf("check for required indexes: %w", scanErr)
+		}
+		var defects []string
+		if unique != want.unique {
+			defects = append(defects, fmt.Sprintf("indisunique=%t, want %t", unique, want.unique))
+		}
+		if !rightTable {
+			defects = append(defects, "on a different table than "+want.table)
+		}
+		if !slices.Equal(keys, want.keys) {
+			defects = append(defects, fmt.Sprintf("keys %v, want %v", keys, want.keys))
+		}
+		if predicate != want.predicate {
+			defects = append(defects, fmt.Sprintf("predicate %q, want %q", predicate, want.predicate))
+		}
+		if len(defects) > 0 {
+			wrong = append(wrong, want.name+" ("+strings.Join(defects, ", ")+")")
 		}
 	}
-	return missing, nil
+	return missing, wrong, nil
 }
 
 // IsPermanentMigrationErr reports whether a Migrate error is a PERMANENT state that
@@ -324,7 +400,8 @@ func IsPermanentMigrationErr(err error) bool {
 	// never rebuilt. Only `migrate force` moves it.
 	return errors.As(err, &dirty) ||
 		errors.Is(err, ErrInvalidIndex) ||
-		errors.Is(err, ErrMissingRequiredIndex)
+		errors.Is(err, ErrMissingRequiredIndex) ||
+		errors.Is(err, ErrRequiredIndexMismatch)
 }
 
 // ValidateMigrationDSN reports whether dsn is in the URL form migrations require,
