@@ -57,7 +57,30 @@ place would otherwise rewrite the identity of every later request.
 That bypass is **refused, not warned about, inside Kubernetes.** The chart declares the key
 under `app.environment` and `deployment.yaml` renders any override, so an unpleasant name
 and a boot warning could not stop a deploy from switching authentication off; `Config.
-InCluster` — set from `KUBERNETES_SERVICE_HOST`, which the kubelet injects and the chart
-cannot unset — makes `New` return an error naming the key instead. Erroring rather than
+InCluster` makes `New` return an error naming the key instead. Erroring rather than
 quietly verifying for real is the point: a values file asking for no authentication has to
 be fixed, not tolerated by whichever build happens to carry the guard.
+
+**`InCluster` is deliberately not read from `KUBERNETES_SERVICE_HOST` alone.** An earlier
+version was, on the reasoning that the kubelet injects it and the chart cannot unset it.
+The second half of that was false: `deployment.yaml` renders every key of
+`app.environment` and appends `app.extraEnv` verbatim, and an explicit container `env`
+entry takes precedence over the kubelet's service variables — so one override could set
+the mock principal *and* declare `KUBERNETES_SERVICE_HOST: ""`, clearing the very
+discriminator meant to catch it. Exactly the combination the guard exists to prevent.
+
+It is closed at both layers, because each covers what the other cannot:
+
+- **Template time** — a guard at the top of `deployment.yaml` `fail`s the render if either
+  env input declares any `KUBERNETES_*` name, or gives the bypass key a non-empty value.
+  A deploy carrying the hole cannot be produced, so there is no window in which a cluster
+  is running it. This does nothing for deploys that never pass through the chart.
+- **Runtime** — `config.runningInCluster` ORs in a signal the environment cannot express:
+  the projected service-account directory at
+  `/var/run/secrets/kubernetes.io/serviceaccount`. A hand-applied manifest, a `kubectl
+  patch`, or an ArgoCD override that clears the variable still meets a pod that knows it
+  is in a cluster. Suppressing this one needs `automountServiceAccountToken: false` — a
+  separate, visible change, not one more line in the same env block.
+
+Both signals are consulted rather than just the file, so a pod legitimately running
+without an automounted token is still recognized.

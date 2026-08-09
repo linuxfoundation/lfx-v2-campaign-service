@@ -32,7 +32,9 @@ type Config struct {
 	MockLocalPrincipal string
 	// InCluster reports whether this process is running as a Kubernetes pod. It exists
 	// so auth.New can REFUSE MockLocalPrincipal in a deployment rather than trust the
-	// chart's empty default; see the comment there.
+	// chart's empty default; see the comment there. Derived from two independent signals
+	// so that one env override cannot both enable the bypass and hide the cluster —
+	// see runningInCluster.
 	InCluster bool
 
 	// NATSUrl is the NATS server URL. Used to publish Query Service index updates; empty
@@ -77,6 +79,41 @@ type Config struct {
 	pgPortPresent bool
 }
 
+// serviceAccountDir is where the kubelet projects a pod's service-account token. Its
+// presence is a cluster signal that does NOT come from the environment, which is the
+// whole reason it is consulted: see runningInCluster.
+const serviceAccountDir = "/var/run/secrets/kubernetes.io/serviceaccount"
+
+// runningInCluster reports whether this process is a Kubernetes pod, from the OR of two
+// independent signals.
+//
+// KUBERNETES_SERVICE_HOST alone is NOT sufficient, and the comment that used to sit here
+// claiming the chart could not set it was wrong: templates/deployment.yaml renders every
+// key of app.environment and appends app.extraEnv verbatim, so an override can declare
+// this exact name with an empty value — and an explicit container env entry takes
+// precedence over the kubelet's service variables. The single override that enables the
+// mock principal could therefore also conceal the cluster, which is precisely the
+// combination the InCluster check exists to prevent.
+//
+// The chart now refuses to render either input (see the reserved-name guard in
+// templates/deployment.yaml), so that path is closed at deploy time. This second signal
+// closes it at RUNTIME as well, for the deploys that never go through the chart — a
+// hand-applied manifest, a kubectl patch, an ArgoCD override. Suppressing it needs
+// automountServiceAccountToken: false, which is a separate, visible, and unrelated change
+// rather than one line in the same env block.
+//
+// Both are checked, not just the file: KUBERNETES_SERVICE_HOST still catches a pod that
+// legitimately runs without an automounted token.
+func runningInCluster(getenv func(string) string, saDir string) bool {
+	if getenv(constants.EnvKubernetesServiceHost) != "" {
+		return true
+	}
+	// Only a directory counts. A stat error of any kind — absent, or unreadable — is not
+	// a cluster signal, and the env check above is the one that has to carry those cases.
+	info, err := os.Stat(saDir)
+	return err == nil && info.IsDir()
+}
+
 // LoadConfig loads configuration from CLI flags, then environment variables, then defaults.
 // Priority: CLI flags > env vars > defaults.
 //
@@ -110,10 +147,7 @@ func LoadConfig() *Config {
 		// os.Getenv, not envOrDefault: there is no default for a verification
 		// bypass, and unset must stay unset.
 		MockLocalPrincipal: strings.TrimSpace(os.Getenv(constants.EnvMockLocalPrincipal)),
-		// Injected by the kubelet into every pod, and not settable from the chart — which
-		// is the point: the override that could enable the mock principal cannot also
-		// conceal that it is running in a cluster.
-		InCluster: os.Getenv(constants.EnvKubernetesServiceHost) != "",
+		InCluster:          runningInCluster(os.Getenv, serviceAccountDir),
 		// NOT envOrDefault: an explicitly-empty NATS_URL is the documented switch
 		// that disables index publishing, and envOrDefault cannot express it (it
 		// collapses unset and empty into the default).

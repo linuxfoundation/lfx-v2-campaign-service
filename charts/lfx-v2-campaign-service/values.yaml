@@ -188,10 +188,20 @@ app:
       value: lfx-v2-campaign-service
 
     # JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL disables JWT validation entirely and treats every
-    # request as the named principal. Local development only, and now ENFORCED as such: a pod
-    # that starts with this set REFUSES TO BOOT and logs which key to unset. The service
-    # detects the cluster via KUBERNETES_SERVICE_HOST, which the kubelet injects and this
-    # chart cannot unset — so setting a value here does not open a hole, it breaks the deploy.
+    # request as the named principal. Local development only, and ENFORCED as such at two
+    # layers. (1) Template time: the guard at the top of templates/deployment.yaml FAILS the
+    # render if this is given a non-empty value, so a deploy carrying the bypass cannot be
+    # produced at all. (2) Runtime: a pod that somehow starts with it set REFUSES TO BOOT and
+    # logs which key to unset.
+    #
+    # The runtime half depends on the service knowing it is in a cluster, and that is NOT
+    # from KUBERNETES_SERVICE_HOST alone. This chart renders every app.environment key and
+    # appends app.extraEnv verbatim, and an explicit container env entry overrides the
+    # kubelet's — so that variable IS chart-settable, and one override could otherwise both
+    # enable the bypass and hide the cluster. The template guard therefore also rejects any
+    # KUBERNETES_* name in either input, and the service ORs in a second signal the
+    # environment cannot express (the projected service-account directory).
+    #
     # Leave it empty. It stays declared only so the key is discoverable; the empty default is
     # pinned by the parity test's exempt list.
     JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL:

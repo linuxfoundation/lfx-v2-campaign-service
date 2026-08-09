@@ -55,11 +55,42 @@ or an edited values file could ship a running pod accepting ANY bearer token as 
 principal — on the endpoints that spend money. The empty default and the parity exemption
 keep the chart honest about *its own* value; neither can stop an override.
 
-`New` now refuses the mock principal when `KUBERNETES_SERVICE_HOST` is set. That variable
-is the discriminator for one reason: the kubelet injects it into every pod and the chart
-cannot unset it, so the same override that would enable the bypass cannot also conceal the
-cluster. A laptop, `go run`, a plain container and CI do not have it, so the workflow this
-switch exists for is untouched.
+`New` now refuses the mock principal when the process detects a cluster. A laptop,
+`go run`, a plain container and CI do not, so the workflow this switch exists for is
+untouched.
+
+**The first version of that detection was `KUBERNETES_SERVICE_HOST != ""`, and the reason
+given for it was wrong.** The claim was that the kubelet injects the variable and the
+chart cannot unset it, so the same override that enables the bypass cannot also conceal
+the cluster. But `deployment.yaml` renders every key of `app.environment` and appends
+`app.extraEnv` verbatim, and an explicit container `env` entry takes precedence over the
+kubelet's service variables — so a single override could set the principal *and* declare
+`KUBERNETES_SERVICE_HOST: ""`, producing a pod that accepts any bearer token as that
+principal. The guard was defeated by exactly the input it was guarding.
+
+Worth naming as a class: the property being relied on was "the chart cannot express this",
+and that was never verified against the template. A rendering loop over an arbitrary map
+can express *any* variable name, which makes "the environment says so" a weak foundation
+for any security discriminator.
+
+The replacement does not rest on one layer:
+
+- **Template time** — a guard at the top of `deployment.yaml` `fail`s the render when
+  either env input declares a `KUBERNETES_*` name or gives the bypass key a non-empty
+  value. The deploy cannot be produced, so no cluster ever runs it.
+- **Runtime** — `config.runningInCluster` ORs the variable with the presence of the
+  projected service-account directory, a signal the environment cannot express. This
+  covers what the chart guard structurally cannot: manifests applied outside Helm.
+
+Whitespace is treated as unset in both places, matching `LoadConfig`'s `TrimSpace` — a
+value the service ignores must not fail a deploy.
+
+Each guard was revert-checked. Dropping the service-account signal fails
+`TestRunningInCluster/service-account mount only, variable cleared` with `= false, want
+true`; dropping the template guard makes `helm template --set
+app.environment.KUBERNETES_SERVICE_HOST.value=` succeed, which
+`TestDeploymentRejectsReservedAndBypassEnv` reports as rendering an env block that can
+disable authentication.
 
 The refusal is an **error, not a silent downgrade** to real verification. Starting anyway —
 verifying, serving, saying nothing — would leave the request path safe and the intent live

@@ -538,11 +538,14 @@ func TestEveryConfiguredEnvVarIsWiredInTheChart(t *testing.T) {
 		// one edit away.
 		"JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL": "local dev only; deliberately not deployable",
 
-		// Injecting this would DEFEAT it. It is the discriminator that lets auth.New refuse
-		// the mock principal in a deployment, and it works only because the kubelet sets it
-		// and the chart cannot: the same override that would enable the bypass must not also
-		// be able to conceal the cluster. A chart entry — even one rendering the right value —
-		// would put "unset it" back within reach of whoever set the bypass.
+		// Injecting this would DEFEAT it. It is one discriminator that lets auth.New refuse
+		// the mock principal in a deployment: the same override that would enable the bypass
+		// must not also be able to conceal the cluster. A chart entry — even one rendering
+		// the right value — would put "unset it" back within reach of whoever set the bypass.
+		//
+		// Absence from the DEFAULT values is not the guarantee, though; an operator override
+		// renders just as readily. TestDeploymentRejectsReservedAndBypassEnv pins the
+		// template-time guard that refuses the name outright.
 		"KUBERNETES_SERVICE_HOST": "kubelet-injected; chart-settable would defeat the auth-bypass guard",
 
 		// Have working in-code defaults, and the chart's own values (service.port, the
@@ -576,6 +579,101 @@ func TestEveryConfiguredEnvVarIsWiredInTheChart(t *testing.T) {
 				"so the feature behind it is silently disabled in every deployed environment. "+
 				"Add it to app.environment in values.yaml, or add it to the exempt map with a reason.",
 				name)
+		}
+	}
+}
+
+// TestDeploymentRejectsReservedAndBypassEnv pins the template-time guard.
+//
+// The runtime refuses to boot with JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL set only when it
+// also detects a cluster, and one of the signals it uses for that is
+// KUBERNETES_SERVICE_HOST. Because app.environment renders every key it is handed and
+// app.extraEnv is appended verbatim, an override could otherwise supply BOTH — the bypass
+// plus an explicit empty KUBERNETES_SERVICE_HOST, which takes precedence over the
+// kubelet's — and get a pod that accepts any token as the named principal. The render has
+// to fail instead, in every input that reaches the container's env.
+func TestDeploymentRejectsReservedAndBypassEnv(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skipf("helm not on PATH; skipping chart guard test: %v", err)
+	}
+
+	const bypassKey = "JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL"
+	cases := []struct {
+		name string
+		set  string
+		want string
+	}{
+		{
+			name: "environment declares the kubelet variable",
+			set:  "app.environment.KUBERNETES_SERVICE_HOST.value=",
+			want: "is reserved",
+		},
+		{
+			// The empty value is the dangerous one, so it gets its own case: a guard keyed on
+			// truthiness rather than on the NAME would let this through.
+			name: "environment declares a sibling KUBERNETES_ variable",
+			set:  "app.environment.KUBERNETES_SERVICE_PORT.value=443",
+			want: "is reserved",
+		},
+		{
+			name: "environment sets the auth bypass",
+			set:  "app.environment." + bypassKey + ".value=someone@example.com",
+			want: "must stay empty",
+		},
+		{
+			name: "extraEnv declares the kubelet variable",
+			set:  "app.extraEnv[0].name=KUBERNETES_SERVICE_HOST,app.extraEnv[0].value=",
+			want: "is reserved",
+		},
+		{
+			name: "extraEnv sets the auth bypass",
+			set:  "app.extraEnv[0].name=" + bypassKey + ",app.extraEnv[0].value=someone@example.com",
+			want: "may not set",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := exec.Command("helm", "template", chartDir,
+				"--show-only", "templates/deployment.yaml", "--set", tc.set).CombinedOutput()
+			if err == nil {
+				t.Fatalf("helm template SUCCEEDED with --set %s; the deployment renders an env "+
+					"block that can disable authentication:\n%s", tc.set, out)
+			}
+			if !strings.Contains(string(out), tc.want) {
+				t.Errorf("render failed, but not on the guard: want a message containing %q, got:\n%s",
+					tc.want, out)
+			}
+		})
+	}
+}
+
+// TestDeploymentStillRendersWithOrdinaryOverrides is the other half: a guard that rejected
+// everything would pass the test above while breaking every real deploy.
+func TestDeploymentStillRendersWithOrdinaryOverrides(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skipf("helm not on PATH; skipping chart guard test: %v", err)
+	}
+	out, err := exec.Command("helm", "template", chartDir,
+		"--show-only", "templates/deployment.yaml",
+		"--set", "app.environment.LOG_LEVEL.value=debug",
+		"--set", "app.environment.JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL.value= ",
+		"--set", "app.extraEnv[0].name=MY_EXTRA,app.extraEnv[0].value=x",
+		// The empty default must keep rendering — it is declared so the key is discoverable.
+		"--set", "app.environment.JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL.value=",
+	).CombinedOutput()
+	// A whitespace-only bypass value is checked here rather than among the rejections,
+	// because it is NOT a bypass: config.LoadConfig applies strings.TrimSpace, so " "
+	// leaves MockLocalPrincipal empty and verification fully on. The guard trims for
+	// exactly that reason — it has to judge the value the same way the service will, and
+	// failing the render for a value the service treats as unset would block a deploy over
+	// nothing.
+	if err != nil {
+		t.Fatalf("helm template failed on ordinary overrides: %v\n%s", err, out)
+	}
+	for _, want := range []string{"name: LOG_LEVEL", "name: MY_EXTRA"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("rendered deployment is missing %q:\n%s", want, out)
 		}
 	}
 }

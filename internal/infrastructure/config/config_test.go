@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -327,5 +329,60 @@ func TestRedactNATSURL_Shapes(t *testing.T) {
 	}
 	for in, want := range cases {
 		assert.Equal(t, want, redactNATSURL(in), "input %q", in)
+	}
+}
+
+// TestRunningInCluster covers the discriminator auth.New uses to refuse the local
+// mock-principal bypass in a deployment.
+//
+// The env variable alone is not trustworthy: the chart renders every app.environment key
+// and appends app.extraEnv verbatim, and an explicit container env entry overrides the
+// kubelet's service variables — so the one override that enables the bypass could also
+// have cleared KUBERNETES_SERVICE_HOST. The chart now refuses to render that, and this
+// pins the runtime half: the service-account directory is a second signal, so a manifest
+// applied outside the chart cannot hide the cluster by clearing the variable either.
+func TestRunningInCluster(t *testing.T) {
+	saDir := t.TempDir()
+	// A path that does not exist, for the "not in a cluster" cases.
+	absent := filepath.Join(saDir, "no-such-dir")
+
+	// A FILE at the service-account path is not a mounted token directory. Only a
+	// directory counts, so a stray file cannot fabricate a cluster.
+	saFile := filepath.Join(saDir, "not-a-dir")
+	if err := os.WriteFile(saFile, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	env := func(v string) func(string) string {
+		return func(k string) string {
+			if k == constants.EnvKubernetesServiceHost {
+				return v
+			}
+			return ""
+		}
+	}
+
+	tests := []struct {
+		name  string
+		host  string
+		saDir string
+		want  bool
+	}{
+		{"neither signal: a developer's laptop", "", absent, false},
+		{"kubelet variable only", "10.96.0.1", absent, true},
+		// THE case the guard exists for: the deploy cleared the variable, and the
+		// service-account mount still gives it away.
+		{"service-account mount only, variable cleared", "", saDir, true},
+		{"both signals", "10.96.0.1", saDir, true},
+		{"a file at the service-account path is not a mount", "", saFile, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := runningInCluster(env(tc.host), tc.saDir); got != tc.want {
+				t.Errorf("runningInCluster(host=%q, saDir=%q) = %v, want %v",
+					tc.host, tc.saDir, got, tc.want)
+			}
+		})
 	}
 }
