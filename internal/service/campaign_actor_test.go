@@ -137,6 +137,123 @@ func TestCampaignActor_UpdateStampsUpdatedByOnly(t *testing.T) {
 	}
 }
 
+// TestCampaignActor_ToggleStampsUpdatedByOnly asserts a status toggle records the toggler and
+// does not touch created_by. A toggle is a mutation but it records a different actor than the
+// creator — the person who paused/resumed the campaign, not the person who authorized the spend.
+// The two must be kept separate to properly attribute who did what.
+//
+// Uses the same fake infrastructure as the toggle tests in brief_test.go, but asserts the
+// actor attribution specifically.
+func TestCampaignActor_ToggleStampsUpdatedByOnly(t *testing.T) {
+	author := &model.Actor{Name: "Ada Lovelace", Email: "ada@lf.dev", Username: "ada"}
+	editor := &model.Actor{Name: "Katherine Johnson", Email: "katherine@lf.dev", Username: "katherine"}
+	toggler := &model.Actor{Name: "Grace Hopper", Email: "grace@lf.dev", Username: "grace"}
+
+	// UpdatedBy starts at a DIFFERENT actor than either the author or the toggler. Starting
+	// it at nil would leave two implementations indistinguishable — one that stamps the
+	// toggler, and one that merely carries the previous mover forward — because with no
+	// previous mover both produce the same row. Seeding one separates them: only a toggle
+	// that actually reads the request actor can end up naming Grace here.
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", Status: model.CampaignStatusCreated, Version: 2,
+		CreatedBy: author, UpdatedBy: editor,
+	}
+	// Use an okDispatcher that supports StatusToggler (stubToggler does).
+	tog := &stubToggler{}
+	repo := &toggleCampaignRepo{got: camp}
+	s := &BriefService{
+		briefs:    &fakeBriefRepo{briefs: map[string]*model.CampaignBrief{}},
+		campaigns: repo,
+		jobs:      newFakeJobRepo(),
+		orch:      NewOrchestrator(repo, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderRedditAds: tog}),
+	}
+	v := "2"
+
+	res, err := s.ToggleCampaignStatus(ctxWithActor(toggler), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &v,
+		Status: model.CampaignRunPaused,
+	})
+	if err != nil {
+		t.Fatalf("ToggleCampaignStatus: %v", err)
+	}
+
+	if repo.replaced == nil {
+		t.Fatal("ReplaceCampaign was never called")
+	}
+	if repo.replaced.UpdatedBy == nil || repo.replaced.UpdatedBy.Email != toggler.Email {
+		t.Errorf("UpdatedBy = %+v, want %+v — the toggle must record who paused/resumed the "+
+			"campaign, not carry forward the previous mover (%+v)",
+			repo.replaced.UpdatedBy, toggler, editor)
+	}
+	if repo.replaced.CreatedBy == nil || repo.replaced.CreatedBy.Email != author.Email {
+		t.Errorf("CreatedBy = %+v, want the original author %+v — a toggle must not rewrite "+
+			"who authorized the spend", repo.replaced.CreatedBy, author)
+	}
+	if res.Status != model.CampaignRunPaused {
+		t.Errorf("result status = %q, want paused", res.Status)
+	}
+}
+
+// TestCampaignActor_SystemToggleRecordsNoActor pins the legitimate nil: a system-initiated
+// toggle with no authenticated principal must still succeed and must carry no actor rather
+// than inventing one.
+//
+// Note what this does NOT say. The nil reaching the repo does not become a NULL column:
+// replaceCampaignQuery writes `updated_by=COALESCE($9, updated_by)`, so the row keeps whoever
+// last moved it. That is the intended reading of nil — "this write records nothing", not
+// "forget what you knew" — and the fixture seeds a prior mover so the distinction is visible
+// here rather than only in the SQL. The assertion is on the service's contract (it hands the
+// repo no actor); the COALESCE is pinned in campaign_repo_test.go.
+//
+// This is a NEGATIVE pin and is deliberately not binding on the attribution code: with that
+// code removed UpdatedBy is nil anyway, so the test still passes. What it guards is the
+// opposite regression — a future change that stamps a placeholder actor ("system", the
+// campaign's creator) onto an unauthenticated toggle, which would make the audit trail claim
+// a principal that never acted. TestCampaignActor_ToggleStampsUpdatedByOnly is the binding half.
+func TestCampaignActor_SystemToggleRecordsNoActor(t *testing.T) {
+	previous := &model.Actor{Name: "Katherine Johnson", Email: "katherine@lf.dev", Username: "katherine"}
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", Status: model.CampaignStatusCreated, Version: 1,
+		CreatedBy: &model.Actor{Email: "creator@lf.dev"}, UpdatedBy: previous,
+	}
+	tog := &stubToggler{}
+	repo := &toggleCampaignRepo{got: camp}
+	s := &BriefService{
+		briefs:    &fakeBriefRepo{briefs: map[string]*model.CampaignBrief{}},
+		campaigns: repo,
+		jobs:      newFakeJobRepo(),
+		orch:      NewOrchestrator(repo, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderRedditAds: tog}),
+	}
+	v := "1"
+
+	// System-initiated toggle: no actor in context (like a scheduled task or recovery action).
+	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &v,
+		Status: model.CampaignRunActive,
+	})
+	if err != nil {
+		t.Fatalf("ToggleCampaignStatus: %v", err)
+	}
+
+	if repo.replaced == nil {
+		t.Fatal("ReplaceCampaign was never called")
+	}
+	if repo.replaced.UpdatedBy != nil {
+		t.Errorf("UpdatedBy = %+v, want nil — a system toggle has no authenticated actor, and "+
+			"carrying the previous mover (%+v) forward as if they performed this toggle would "+
+			"attribute it to someone who did not. The repo's COALESCE is what preserves the "+
+			"column; the service must not do it by substituting a stand-in here",
+			repo.replaced.UpdatedBy, previous)
+	}
+	// CreatedBy must be preserved unchanged.
+	if repo.replaced.CreatedBy == nil || repo.replaced.CreatedBy.Email != "creator@lf.dev" {
+		t.Errorf("CreatedBy = %+v, want the original creator — a toggle must not touch it",
+			repo.replaced.CreatedBy)
+	}
+}
+
 // TestCampaignActor_DeleteStampsTheDeletingActor pins the attribution on the one mutation
 // where "who did this" is asked after the fact.
 //
