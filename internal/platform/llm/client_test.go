@@ -162,6 +162,12 @@ func TestNewClient_RejectsAProxyURLThatIsNotAbsoluteHTTP(t *testing.T) {
 	for _, tc := range []struct{ name, url string }{
 		{"host and port, no scheme", "localhost:4000"},
 		{"scheme only", "http://"},
+		// Port-only authorities are the reason the guard reads Hostname() rather than
+		// Host: url.Parse gives these a NON-EMPTY Host (":4000"), and http.NewRequest
+		// accepts them, so a Host check would let them through and the failure would
+		// land once per generation instead of once at startup.
+		{"port only", "http://:4000"},
+		{"port only, https", "https://:8080"},
 		{"schemeless absolute path", "/v1"},
 		{"relative", "proxy/v1"},
 		{"not http", "ftp://proxy.internal"},

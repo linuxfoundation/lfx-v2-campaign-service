@@ -173,11 +173,18 @@ func NewClient(cfg Config, opts ...Option) (*Client, error) {
 	// This constructor's whole reason for existing is to move that discovery to startup,
 	// so it must check what the request will actually need: an absolute URL, an http(s)
 	// scheme, and a host.
+	//
+	// The host check reads Hostname(), not Host. A port-only authority like
+	// "http://:4000" parses with Host == ":4000" — non-empty — and http.NewRequest
+	// accepts it, so a Host check would pass it through and the failure would surface
+	// once per generation at Do() time, which is exactly the outcome this constructor
+	// exists to prevent. Hostname() strips the port and is empty for that value. The
+	// LinkedIn and Reddit clients guard the same way, for the same reason.
 	u, perr := url.Parse(cfg.ProxyURL)
 	switch {
 	case perr != nil:
 		return nil, fmt.Errorf("%w: %w", ErrInvalidProxyURL, perr)
-	case u.Scheme != "http" && u.Scheme != "https", u.Host == "":
+	case u.Scheme != "http" && u.Scheme != "https", u.Hostname() == "":
 		return nil, fmt.Errorf("%w, got %q", ErrInvalidProxyURL, cfg.ProxyURL)
 	}
 	c := &Client{
