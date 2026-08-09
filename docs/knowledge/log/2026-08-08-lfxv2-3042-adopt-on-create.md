@@ -104,3 +104,22 @@ reconciling against the platform has to go on.
 handler-side call flags. The completed HTTP response does establish a happens-before, so
 `-race` is clean with plain bools too — but that argument has to be reconstructed by every
 reader, and the next test to copy the shape may not preserve the property it depends on.
+
+## Two review findings that were both about accuracy, not behaviour
+
+The lookup's contract comment said adoption reads `("", nil)` as "licence to report nothing to
+adopt". That is the future by-name adopt ENDPOINT, not this caller: adopt-on-create falls
+through to `CreateCampaign`, so a false absence here produces a second paid campaign next to the
+one already running — the exact outcome adoption exists to prevent. The fail-closed rule is the
+same either way; the cost is not, and the comment named the wrong one.
+
+The second was subtler and is worth recording as a class. Extracting `campaignPreflight` put a
+type declaration between `CreateCampaign`'s doc block and `CreateCampaign`, and Go binds a doc
+comment to whatever declaration FOLLOWS it — so the entire create-cascade contract (partial
+results, the UNCONFIRMED classification, which mutate leaves what committed) silently became
+`campaignPreflight`'s documentation and `go doc Client.CreateCampaign` printed nothing. No build
+error, no vet warning, and a diff that reads as a pure addition. `TestCreateCampaignKeepsItsDocComment`
+now asserts the method has a doc that names it and still carries the contract's three load-bearing
+words. It is scoped to that one method deliberately: the package-wide version of the rule fires on
+struct-field comments and comments inside function bodies, and a test that fails on things nobody
+intends to change gets turned off rather than obeyed.
