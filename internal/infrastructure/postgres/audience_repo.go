@@ -145,6 +145,18 @@ func (r *AudienceRepo) CreateAudience(ctx context.Context, a *model.CampaignAudi
 	// brief id from project B (tenant/parent disagree), and would accept an archived
 	// brief. INSERT...SELECT...WHERE EXISTS inserts zero rows when the active,
 	// same-project parent is absent, which we map to ErrNotFound.
+	//
+	// This executes in an explicit transaction to handle the ambiguous-commit case:
+	// if the connection drops after PostgreSQL commits but before pgx receives the
+	// RETURNING result, a `building` row is committed and holds the lease, but we
+	// have no way to know its ID for reconciliation if this isn't a transaction that
+	// kept the ID in scope. This matches CreateAudienceForApprovedBrief's pattern.
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create audience: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	q := `INSERT INTO campaign_audiences
 		(project_id, brief_id, platform, platform_master_list_id, suppression_list_ids,
 		 inclusion_summary, status, created_by)
@@ -154,12 +166,11 @@ func (r *AudienceRepo) CreateAudience(ctx context.Context, a *model.CampaignAudi
 			WHERE id=$2 AND project_id=$1 AND status <> 'archived'
 		)
 		RETURNING ` + audienceCols
-	row := r.db.QueryRow(ctx, q,
+	created, err := scanAudience(tx.QueryRow(ctx, q,
 		a.ProjectID, a.BriefID, string(a.Platform), nullStr(a.PlatformMasterListID),
 		nullJSON(a.SuppressionListIDs), nullStr(a.InclusionSummary), string(a.StatusOrDefault()),
 		nullJSON(a.CreatedBy),
-	)
-	created, err := scanAudience(row)
+	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		// No active parent brief for (project, brief) → the parent is missing,
 		// archived, or belongs to another project.
@@ -172,7 +183,20 @@ func (r *AudienceRepo) CreateAudience(ctx context.Context, a *model.CampaignAudi
 		return nil, domain.ErrAudienceBuildInFlight
 	}
 	if err != nil {
-		return nil, fmt.Errorf("create audience: %w", err)
+		return nil, fmt.Errorf("create audience: insert: %w", err)
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		// A Commit error does not prove the server rolled back: PostgreSQL may have
+		// committed the row before the connection failed to acknowledge it. If it did,
+		// this INSERT's `building` row silently holds the (brief_id, platform) lease
+		// (000018) forever — the caller here returns an error, so there is no row to
+		// pass to releaseUnstartedClaim. Reconcile directly: best-effort move the row
+		// to `failed` under a bounded, detached context, using the id/version this
+		// INSERT already observed inside the (possibly-rolled-back) transaction. If the
+		// commit genuinely rolled back, no row exists at that id and the UPDATE is a
+		// harmless no-op.
+		reconcileAmbiguousAudienceCommit(ctx, r.db, created)
+		return nil, fmt.Errorf("create audience: commit: %w", cerr)
 	}
 	return created, nil
 }
