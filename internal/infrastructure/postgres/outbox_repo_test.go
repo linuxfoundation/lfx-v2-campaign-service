@@ -263,12 +263,25 @@ func TestMigrations_UniqueNumbering(t *testing.T) {
 // numbering bug — this branch must not merge before the PR that fills it, or those migrations
 // are skipped forever. The list must shrink to empty as siblings land.
 var allowedVersionGaps = map[int]string{
+	// 18 — 000018_audience_build_lease is claimed by PR #106 (LFXV2-3059,
+	// feat/LFXV2-3059-audience-build-lease), still open. #106 must merge before this branch
+	// or its lease index is skipped forever. This branch's own migration moved 000017 ->
+	// 000018 -> 000019 as #93 merged and then as #106's number was found: this branch is the
+	// one that renumbers, because its migration is named only in its own test and two doc
+	// lines, which is the cheaper of the two edits.
 	18: "000018_audience_build_lease is claimed by PR #106 (LFXV2-3059, " +
 		"feat/LFXV2-3059-audience-build-lease), still open. #106 must merge before this branch " +
-		"or its lease index is skipped forever. This branch's own migration moved 000017 -> " +
-		"000018 -> 000019 as #93 merged and then as #106's number was found: this branch is the " +
-		"one that renumbers, because its migration is named only in its own test and two doc " +
-		"lines, which is the cheaper of the two edits.",
+		"or its lease index is skipped forever.",
+	// 16 — REMOVED (LFXV2-3068). 000016_campaign_actor_columns was claimed by PR #95
+	// (LFXV2-3038) while it was unmerged, and this entry excused the gap so #93 could stay
+	// green. #95 has merged, so 000016 exists in the tree, the ordering obligation is
+	// discharged, and TestMigrations_AllowedVersionGapsAreStillOpen correctly refused to keep
+	// tolerating it — an entry that outlives its gap re-permits, at that exact version, the
+	// silent-skip hazard TestMigrations_NoVersionGaps exists to catch.
+	//
+	// The map is left declared and empty on purpose: a gap is a legitimate transitional state
+	// and the next sibling PR to need one should add an entry here rather than re-deriving why
+	// the mechanism exists. The comments in this body are the record of what has been retired.
 }
 
 // TestMigrations_NoVersionGaps guards against numbering a migration ABOVE versions that do not
