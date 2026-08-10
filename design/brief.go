@@ -197,13 +197,21 @@ var Campaign = Type("campaign", func() {
 // It is never persisted — a fresh platform read populates it on every request, unlike
 // Campaign (which reflects the stored row plus an ETag).
 var CampaignMetrics = Type("campaign-metrics", func() {
-	Attribute("campaign_id", String, "Campaign UUID")
+	Attribute("campaign_id", String, "Campaign UUID", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	// No example on platform_campaign_id: its format is the CHANNEL's, and this one type
+	// serves all of them, so any single value would be a claim about the others.
 	Attribute("platform_campaign_id", String, "The id the CHANNEL returned when the campaign was created. On an ad platform that is its campaign id; on the email channel it is the HubSpot marketing-email id of the cloned draft, which is what the metrics read queries by.")
 	Attribute("window", String, "The reporting window that was REQUESTED. On the ad platforms it is also the period the counters cover. On the email channel it is not: it selects which emails are in scope by their send date, and the counters are then that email's totals to date — see the email object.", metricsWindowEnum)
-	Attribute("impressions", Int64, "Impressions over the window on an ad platform; opens to date on the email channel")
-	Attribute("clicks", Int64, "Clicks over the window on an ad platform; clicks to date on the email channel")
-	Attribute("cost_micros", Int64, "Cost over the window, in micro-units of the platform's native currency (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter, etc.). Always 0 on the email channel, which bills no per-send cost — do not blend that 0 into a cross-channel cost-per-acquisition.")
-	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0")
+	// The counters below are examples of an EMAIL-channel response, not an ad-platform one,
+	// and that is forced rather than chosen: `email` is optional but Goa emits every attribute
+	// into the generated example, so the example always shows an email response. Given that,
+	// the numbers have to obey the mapping the adapter enforces — impressions == email.opens,
+	// clicks == email.clicks, cost_micros == 0 — or the contract's own example contradicts the
+	// descriptions two lines above it. Goa's fabricated integers satisfied none of the three.
+	Attribute("impressions", Int64, "Impressions over the window on an ad platform; opens to date on the email channel", func() { Example(1840) })
+	Attribute("clicks", Int64, "Clicks over the window on an ad platform; clicks to date on the email channel", func() { Example(212) })
+	Attribute("cost_micros", Int64, "Cost over the window, in micro-units of the platform's native currency (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter, etc.). Always 0 on the email channel, which bills no per-send cost — do not blend that 0 into a cross-channel cost-per-acquisition.", func() { Example(0) })
+	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0", func() { Example(0.1152) })
 	Attribute("email", EmailMetrics, "Email-channel counters. Present only for the email channel (HubSpot); absent for every ad platform.")
 	Required("campaign_id", "platform_campaign_id", "window", "impressions", "clicks", "cost_micros", "ctr")
 })
@@ -213,12 +221,16 @@ var CampaignMetrics = Type("campaign-metrics", func() {
 // fields that are structurally zero, which a client cannot distinguish from "zero sends".
 var EmailMetrics = Type("email-metrics", func() {
 	Description("Counters that only an email campaign has. NONE of them is scoped to the requested window: the window selects which emails are in scope by their SEND date, and every counter below is then that email's total to date. Rendering any of them as \"in the last N days\" is therefore wrong. impressions/clicks on the parent object mirror opens/clicks; cost_micros is always 0 for email because the platform bills no per-send cost — that 0 must not be blended into a cross-channel cost-per-acquisition.")
-	Attribute("sent", Int64, "Emails handed to the delivery pipeline, to date")
-	Attribute("delivered", Int64, "Emails the receiving server accepted, to date")
-	Attribute("opens", Int64, "Opens to date (mirrors impressions)")
-	Attribute("clicks", Int64, "Clicks to date (mirrors clicks)")
-	Attribute("bounces", Int64, "Bounced emails, to date")
-	Attribute("unsubscribes", Int64, "Unsubscribes, to date")
+	// Examples chosen to be internally consistent with each other and with the parent
+	// object: sent = delivered + bounces, opens <= delivered, and opens/clicks equal the
+	// parent's impressions/clicks. See the note on campaign-metrics for why the example
+	// has to hold up rather than merely exist.
+	Attribute("sent", Int64, "Emails handed to the delivery pipeline, to date", func() { Example(9400) })
+	Attribute("delivered", Int64, "Emails the receiving server accepted, to date", func() { Example(9268) })
+	Attribute("opens", Int64, "Opens to date (mirrors impressions)", func() { Example(1840) })
+	Attribute("clicks", Int64, "Clicks to date (mirrors clicks)", func() { Example(212) })
+	Attribute("bounces", Int64, "Bounced emails, to date", func() { Example(132) })
+	Attribute("unsubscribes", Int64, "Unsubscribes, to date", func() { Example(17) })
 	Required("sent", "delivered", "opens", "clicks", "bounces", "unsubscribes")
 })
 

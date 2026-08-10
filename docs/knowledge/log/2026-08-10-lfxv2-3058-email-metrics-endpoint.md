@@ -125,3 +125,25 @@ there is no ad account in an email connection to mismatch, so HubSpot emits neit
 - `docs/knowledge/log/2026-08-09-lfxv2-3058-hubspot-email-metrics.md` — part 1, the client
 - `docs/knowledge/code/internal-dispatch.md` — the `MetricsReader` capability
 - `docs/knowledge/code/internal-service.md` — status mapping for the metrics read
+
+## The canonical 409 sentence was falsified by this PR's own 409
+
+`docs/api-catalog.md` opened the metrics row's status discussion with "**409** always means the
+read was refused before the platform was contacted". That was true of every adapter before this
+one. HubSpot's `ErrNoMetricsInWindow` is a 409 raised AFTER a successful upstream call returned
+nothing, so the row now describes two different moments under one status: a pre-contact
+configuration refusal and a post-contact "no data". They call for opposite operator responses —
+repair the connection versus wait for someone to press send — and the response body cannot
+separate them, since `ConflictError` carries only `code` and `message`. The row now says so
+explicitly and points at the message text as the only discriminator.
+
+## The generated example claimed a mapping the adapter forbids
+
+`campaign-metrics.email` is optional, but Goa emits every attribute into the generated example,
+so the published example is always an email-channel response whether or not that was intended.
+With no explicit values Goa fabricated independent integers, and the result advertised a nonzero
+`cost_micros` on an email response plus `impressions`/`clicks` that did not equal
+`email.opens`/`email.clicks` — contradicting, in the same document, the three invariants the
+descriptions directly above it state and the adapter enforces. Both types now carry explicit
+examples that satisfy the mapping, and `sent = delivered + bounces` besides, so the example is
+a legible email response rather than six unrelated numbers.
