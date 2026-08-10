@@ -544,6 +544,20 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 		return nil, &briefs.BadRequestError{Code: "400", Message: "brief must be approved before adopting campaigns"}
 	}
 
+	// Preflight: check if this brief already has a campaign on this platform. If it does,
+	// return the deterministic 409 conflict immediately without contacting the platform.
+	// Only if no campaign exists (ErrNotFound) do we proceed to verify the upstream campaign.
+	// This ensures that an occupied brief returns 409 even if the platform is unreachable or slow.
+	if _, cerr := campaignRepo.GetCampaignByPlatform(ctx, p.ProjectID, p.BriefID, platform); cerr != nil {
+		if !errors.Is(cerr, domain.ErrNotFound) {
+			return nil, mapBriefErr(cerr)
+		}
+		// No existing campaign for this (brief, platform) pair; proceed to platform lookup
+	} else {
+		// A campaign already exists for this (brief, platform) pair
+		return nil, &briefs.ConflictError{Code: "409", Message: "this brief already has a live campaign on that platform"}
+	}
+
 	ref, lerr := orch.LookupPlatformCampaign(ctx, p.ProjectID, platform, platformCampaignID)
 	if lerr != nil {
 		switch {

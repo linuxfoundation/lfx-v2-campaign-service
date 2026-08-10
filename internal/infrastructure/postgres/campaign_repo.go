@@ -434,7 +434,10 @@ const adoptCampaignQuery = `INSERT INTO campaigns
 // lock. Identical in purpose to CreateJobForApprovedBrief's lock: see the long comment there for
 // why FOR UPDATE — not a plain re-read, and not the single-statement atomicity of the INSERT — is
 // what makes a check-then-write atomic against a concurrent replace or archive.
-const lockAdoptBriefQuery = `SELECT status, version FROM campaign_briefs WHERE id = $1 FOR UPDATE`
+// Scoped by project_id for tenant isolation: if the brief exists but belongs to another project,
+// the lock returns no rows and the caller gets ErrStaleApproval (the existing sentinel for
+// "brief not found"), not a success path.
+const lockAdoptBriefQuery = `SELECT status, version FROM campaign_briefs WHERE id = $1 AND project_id = $2 FOR UPDATE`
 
 // AdoptCampaign inserts the campaign row binding an existing upstream campaign to a brief.
 //
@@ -458,10 +461,11 @@ func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, exp
 		status  string
 		version int64
 	)
-	if serr := tx.QueryRow(ctx, lockAdoptBriefQuery, c.BriefID).Scan(&status, &version); serr != nil {
+	if serr := tx.QueryRow(ctx, lockAdoptBriefQuery, c.BriefID, c.ProjectID).Scan(&status, &version); serr != nil {
 		if errors.Is(serr, pgx.ErrNoRows) {
-			// The brief was deleted between the service's read and this lock. There is
-			// nothing approved at expectedVersion to bind to, which is what stale means.
+			// The brief was deleted between the service's read and this lock, or belongs to
+			// another project. There is nothing approved at expectedVersion to bind to, which
+			// is what stale means.
 			return nil, domain.ErrStaleApproval
 		}
 		return nil, fmt.Errorf("adopt campaign: lock brief: %w", serr)

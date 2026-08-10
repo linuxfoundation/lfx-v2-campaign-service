@@ -565,3 +565,18 @@ func TestMigration000016_AddsCampaignActorColumns(t *testing.T) {
 				"column and the pair drift apart", col)
 	}
 }
+
+// TestLockAdoptBriefQuery_IsProjectScoped pins the lock query's tenant isolation:
+// if a brief exists but belongs to another project, the lock must return no rows,
+// and the caller must get ErrStaleApproval (the existing sentinel for "brief not found"),
+// not a success path. This prevents adoption attempts against briefs from other projects.
+func TestLockAdoptBriefQuery_IsProjectScoped(t *testing.T) {
+	q := normalizeWS(lockAdoptBriefQuery)
+	upper := strings.ToUpper(q)
+
+	require.Contains(t, upper, "AND PROJECT_ID",
+		"lockAdoptBriefQuery must scope by project_id for tenant isolation: "+
+			"a brief from another project must not be adopted")
+	require.Contains(t, upper, "FOR UPDATE",
+		"the lock must use FOR UPDATE to serialize concurrent mutations")
+}

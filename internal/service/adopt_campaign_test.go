@@ -532,3 +532,53 @@ func TestAdoptCampaign_APaddedIDIsNotNormalisedIntoAValidOne(t *testing.T) {
 		t.Errorf("persisted %d campaigns for a padded id, want 0", len(camps.adopted))
 	}
 }
+
+// TestAdoptCampaign_OccupiedBriefReturns409WithoutPlatformCall verifies that when a brief
+// already has a campaign on the requested platform, adoption returns a 409 conflict
+// WITHOUT contacting the platform. This ensures deterministic behavior — an occupied brief
+// always returns 409, never 503 or 404 due to platform outage or lookup issues.
+func TestAdoptCampaign_OccupiedBriefReturns409WithoutPlatformCall(t *testing.T) {
+	// Create a dispatcher that will FAIL if called, to verify it's not invoked
+	disp := &adopterDispatcher{
+		err: errors.New("platform client was called but should not have been"),
+	}
+	s, camps := newAdoptService(t, model.ProviderGoogleAds, disp)
+
+	// Initialize the existing map if nil
+	if camps.existing == nil {
+		camps.existing = make(map[string]*model.Campaign)
+	}
+
+	// Pre-populate the campaign repo with an existing campaign for this (brief, platform) pair
+	// The key format is briefID|platformString
+	camps.existing["b1|google-ads"] = &model.Campaign{
+		ID:                 "existing-campaign",
+		ProjectID:          "cncf",
+		BriefID:            "b1",
+		Platform:           model.ProviderGoogleAds,
+		PlatformCampaignID: "5555555555",
+		CampaignName:       "Existing Campaign",
+		Status:             model.CampaignStatusCreated,
+	}
+
+	_, err := s.AdoptCampaign(context.Background(), adoptPayload())
+
+	// Should return 409 Conflict
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("got %T (%v), want *briefs.ConflictError — an occupied brief must return 409", err, err)
+	}
+	if !strings.Contains(conflict.Message, "already has a live campaign") {
+		t.Errorf("error message = %q, want one mentioning the brief already has a campaign", conflict.Message)
+	}
+
+	// CRITICAL: the platform client must NOT have been called
+	if disp.calls != 0 {
+		t.Errorf("platform was looked up %d times, want 0 — occupied brief should return 409 locally without platform call", disp.calls)
+	}
+
+	// Nothing should have been persisted
+	if len(camps.adopted) != 0 {
+		t.Errorf("persisted %d campaigns for an occupied brief, want 0", len(camps.adopted))
+	}
+}

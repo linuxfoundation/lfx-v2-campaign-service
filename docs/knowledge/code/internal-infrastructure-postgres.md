@@ -566,29 +566,17 @@ Two guards live in the same transaction as the insert, and neither can be enforc
   `platform = 'google-ads'`**. 000013's index answers only
   "does this BRIEF have a campaign here"; adoption names an arbitrary upstream campaign, so
   without this a second brief can bind the same one and the two rows toggle it against each
-  other. **It is deliberately not scoped by project, and equally deliberately scoped to one
-  provider.** The project-scoped version reads as the careful choice — a bare platform id is
-  unique only within the account that minted it — but it assumes
-  each project has its own account, and for the provider adoption supports that is false:
-  Google Ads is one shared customer across every foundation, one connection row per project
-  pointing at it, so project-scoping lets two projects bind one live campaign. Keying globally
-  can in principle reject a legitimate binding if two per-foundation accounts mint the same
-  numeric id, which has not been observed on any provider here; the asymmetry decides it — a
-  false reject is a 409 someone reads, a false accept is two briefs silently fighting over paid
-  spend.
-
-  **The `platform = 'google-ads'` predicate was added in `1ca63e97`, and the reasoning above
-  is exactly why it is needed.** That reasoning holds *because* Google Ads is one shared
-  customer — it does not generalise. Microsoft campaign ids are ACCOUNT-scoped rather than
-  globally unique, and this service supports separate per-project Microsoft connections, each
-  account minting its own ids. Without the predicate, a perfectly legitimate dispatch from
-  Microsoft account B would be rejected because account A had already minted the same numeric
-  id — and on the dispatch path that 23505 does not even map to the adoption-specific 409
-  (only `AdoptCampaign` classifies it that way), so the operator gets a generic conflict and a
-  retained UNCONFIRMED partial. The predicate keeps a normal dispatch from ever touching this
-  index. **When adoption gains a second provider, that provider needs its own uniqueness
-  handling in a separate constraint — do not widen this one**, because whether a global key is
-  even correct depends on whether that provider's ids are account-scoped.
+  other. The index is deliberately not scoped by project and equally deliberately scoped to one
+  provider: Google Ads campaign IDs are globally unique within Google's shared customer account
+  across every foundation, while Microsoft campaign IDs are account-scoped. This service
+  supports separate per-project Microsoft connections, so a global uniqueness index would
+  false-reject a perfectly legitimate dispatch from Microsoft account B because account A had
+  already minted the same numeric ID. The `platform = 'google-ads'` predicate was added in
+  commit `1ca63e97` to prevent the dispatch path from ever touching this index when using
+  non-Google providers, keeping a normal dispatch from triggering the wrong conflict error. When
+  adoption gains a second provider, that provider needs its own uniqueness handling in a
+  separate constraint — do not widen this one, because whether a global key is even correct
+  depends on whether that provider's IDs are account-scoped or globally unique like Google Ads.
 
   Note what this is NOT: an ownership check. A project connected to the shared customer
   can already read and pause anything in it through Google's API, so adoption cannot be more
