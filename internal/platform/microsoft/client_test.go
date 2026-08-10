@@ -268,6 +268,31 @@ func TestDoRequest_OmitsCustomerIdHeaderWhenUnset(t *testing.T) {
 	}
 }
 
+// TestDoRequest_StillSendsTheAccountHeader guards the refactor that split doRequest and
+// It lives here rather than beside ListAdAccounts because it is a doRequest test: what
+// it asserts is that the CAMPAIGN transport was left alone, and the other TestDoRequest_*
+// cases are the ones a change to that transport would be read against. Its acctRecorder
+// helper is defined in accounts_test.go, same package.
+// doCustomerRequest: the campaign path must keep its per-account identity. Without this,
+// making the header conditional could silently drop it everywhere.
+func TestDoRequest_StillSendsTheAccountHeader(t *testing.T) {
+	rec := &acctRecorder{}
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		rec.capture(r)
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	})
+	if _, err := c.doRequest(context.Background(), http.MethodGet, "Campaigns", nil, true); err != nil {
+		t.Fatalf("doRequest: %v", err)
+	}
+	saw := rec.read(t)
+	if saw.acct != "1234567" {
+		t.Errorf("CustomerAccountId = %q, want the campaign path still account-scoped", saw.acct)
+	}
+	if !strings.HasPrefix(saw.path, "/CampaignManagement/") {
+		t.Errorf("path = %q, want the campaign service unchanged", saw.path)
+	}
+}
+
 func TestDoRequest_RetriesIdempotent429(t *testing.T) {
 	var calls int32
 	c := newAPIClient(t, func(w http.ResponseWriter, _ *http.Request) {

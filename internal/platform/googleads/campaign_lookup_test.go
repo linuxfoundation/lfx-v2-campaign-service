@@ -301,6 +301,36 @@ func TestFindCampaignByName_RemovedRowIsSkipped(t *testing.T) {
 	}
 }
 
+// TestFindCampaignByName_RemovedRowWithUnusableIdentityIsNotAnAbsence pins the one
+// CONTRACT CHANGE the campaignRowIdentity extraction makes to this method, so it is a
+// decision on the record rather than a side effect.
+//
+// Before the extraction, status was judged first: a REMOVED row was skipped whatever else
+// it said, so a tombstone naming another customer's campaign returned ("", nil) — the
+// licence-to-create value. Identity is now established first, and this errors.
+//
+// That is the correct direction. "A tombstone is unadoptable however it arrived" is only
+// true once we know WHICH campaign it is a tombstone for; a row we could not identify is
+// not evidence that the campaign we asked about is absent, and the caller acts on that
+// absence by creating a duplicate PAID campaign. The narrower half still holds —
+// TestFindCampaignByName_RemovedRowIsSkipped keeps a well-formed tombstone a clean
+// non-match, which is the ordinary case.
+func TestFindCampaignByName_RemovedRowWithUnusableIdentityIsNotAnAbsence(t *testing.T) {
+	srv, _ := newLookupServer(t, []json.RawMessage{
+		json.RawMessage(`{"campaign":{"id":"300","name":"tombstoned","status":"REMOVED",` +
+			`"resourceName":"customers/999/campaigns/42"}}`),
+	})
+	client := newAccountsTestClient(t, srv)
+
+	got, err := client.FindCampaignByName(context.Background(), "tombstoned")
+	if err == nil {
+		t.Fatalf("a tombstone scoped to another customer must not read as an absence, got %q", got)
+	}
+	if !strings.Contains(err.Error(), "resource name") {
+		t.Errorf("error does not say why the row was refused: %v", err)
+	}
+}
+
 // TestFindCampaignByName_MalformedRowIsNotAnAbsence: an undecodable 2xx row must fail
 // the lookup, not read as "no match" and license a duplicate create.
 func TestFindCampaignByName_MalformedRowIsNotAnAbsence(t *testing.T) {
@@ -642,5 +672,57 @@ func TestFindCampaignByName_NullIsNeverAnAbsence(t *testing.T) {
 				t.Errorf("id = %q, want empty alongside the error", id)
 			}
 		})
+	}
+}
+
+// TestFindCampaignByName_MalformedUTF8RowCannotEchoTheRequestedName covers the one case the
+// echo-check below it cannot: a requested name that already contains U+FFFD.
+//
+// For every other name the echo-check IS the guard — encoding/json substitutes U+FFFD for a
+// malformed byte without erroring, the decoded name then differs from the one asked for, and
+// the lookup fails loudly as an unhonoured filter. U+FFFD is a legal campaign name character,
+// though, so a caller can ask for one; the substitution then produces exactly the requested
+// string, the comparison passes on a value nobody ever saw intact, and an id is returned from
+// a response nothing verified. An adoption binds paid spend to that id.
+//
+// Both routes in are covered, because byte validity catches only the first: a raw malformed
+// byte, and an unpaired surrogate escape whose bytes are pure ASCII and which only becomes
+// U+FFFD when encoding/json resolves it.
+func TestFindCampaignByName_MalformedUTF8RowCannotEchoTheRequestedName(t *testing.T) {
+	const requested = "bad�name"
+	for _, tc := range []struct{ name, rawName string }{
+		// Hand-built, not via jsonQuote: quoting would encode the bad byte as a valid
+		// � escape, which is the substitution under test rather than its cause.
+		{"a malformed byte", "bad\xffname"},
+		{"an unpaired surrogate escape", `bad\uD800name`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _ := newLookupServer(t, []json.RawMessage{
+				json.RawMessage(`{"campaign":{"resourceName":"customers/1234567890/campaigns/4242",` +
+					`"id":"4242","name":"` + tc.rawName + `","status":"` + StatusEnabled + `"}}`),
+			})
+			id, err := newAccountsTestClient(t, srv).FindCampaignByName(context.Background(), requested)
+			if err == nil {
+				t.Fatalf("FindCampaignByName = %q, want an error: the row's name decodes to the "+
+					"requested string only because it was rewritten, so the match is not evidence", id)
+			}
+			if id != "" {
+				t.Errorf("id = %q alongside the error; a caller ignoring err would adopt an unverified campaign", id)
+			}
+			if !strings.Contains(err.Error(), "UTF-8") && !strings.Contains(err.Error(), "surrogate") {
+				t.Errorf("error = %v, want it to name the encoding fault", err)
+			}
+		})
+	}
+
+	// The narrowing half: U+FFFD is legal in a campaign name, so a row that genuinely
+	// carries one — encoded properly — must still match rather than trip the guard.
+	srv, _ := newLookupServer(t, []json.RawMessage{lookupRow("4242", requested, StatusEnabled)})
+	id, err := newAccountsTestClient(t, srv).FindCampaignByName(context.Background(), requested)
+	if err != nil {
+		t.Fatalf("FindCampaignByName(%q) = %v; a name that genuinely contains U+FFFD is legal and must adopt", requested, err)
+	}
+	if id != "4242" {
+		t.Errorf("id = %q, want 4242", id)
 	}
 }

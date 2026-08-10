@@ -176,7 +176,13 @@ func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]string, error) {
 		// configured id being trusted more than a discovered one is backwards: both are
 		// identity claims, and the configured one has been sitting in a connection
 		// record since whenever it was written.
-		id := numberID((*json.Number)(&c.account.CustomerID))
+		// A value conversion, not a pointer cast. `(*json.Number)(&c.account.CustomerID)`
+		// compiles — json.Number's underlying type is string — but it reads as a
+		// reinterpretation of the connection record's own field, and the two callers
+		// below (`&role.CustomerID`, `&ai.ID`) take the address of a json.Number that
+		// already is one. Converting first keeps all three sites saying the same thing.
+		customerID := json.Number(c.account.CustomerID)
+		id := numberID(&customerID)
 		if id == "" {
 			return nil, fmt.Errorf("invalid Microsoft Advertising customer id %q on this connection: must be a positive integer", clipID(c.account.CustomerID))
 		}

@@ -642,27 +642,6 @@ func TestListAdAccounts_RetriesA429(t *testing.T) {
 	}
 }
 
-// TestDoRequest_StillSendsTheAccountHeader guards the refactor that split doRequest and
-// doCustomerRequest: the campaign path must keep its per-account identity. Without this,
-// making the header conditional could silently drop it everywhere.
-func TestDoRequest_StillSendsTheAccountHeader(t *testing.T) {
-	rec := &acctRecorder{}
-	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
-		rec.capture(r)
-		_, _ = io.WriteString(w, `{"ok":true}`)
-	})
-	if _, err := c.doRequest(context.Background(), http.MethodGet, "Campaigns", nil, true); err != nil {
-		t.Fatalf("doRequest: %v", err)
-	}
-	saw := rec.read(t)
-	if saw.acct != "1234567" {
-		t.Errorf("CustomerAccountId = %q, want the campaign path still account-scoped", saw.acct)
-	}
-	if !strings.HasPrefix(saw.path, "/CampaignManagement/") {
-		t.Errorf("path = %q, want the campaign service unchanged", saw.path)
-	}
-}
-
 // TestListAdAccounts_RejectsAnUnusableConfiguredCustomer covers the asymmetry Copilot
 // found: the configured customer id was being trusted more than a discovered one.
 //
