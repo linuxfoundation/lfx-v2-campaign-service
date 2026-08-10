@@ -253,12 +253,16 @@ func campaignFromGoogleAds(ctx context.Context, r *googleads.CampaignResult, cfg
 // The customer id is trimmed ONCE and the trimmed value returned, so a whitespace-padded id
 // can't pass the empty check here and then fail the client's digits-only validator as a
 // confusing downstream error.
-func validateGoogleAdsConnection(projectID string, res *resolved) (googleAdsCreds, string, error) {
-	creds, err := validateGoogleAdsCredentials(projectID, res)
+func validateGoogleAdsConnection(projectID string, res *resolved) (creds googleAdsCreds, accountID string, err error) {
+	// Same defer as validateGoogleAdsCredentials, for the same reason: the account-id
+	// branch below is a stored-state defect too, and on the LF fallback row it names a
+	// connection the project cannot go select an account on.
+	defer func() { err = res.systemScoped(err) }()
+	creds, err = validateGoogleAdsCredentials(projectID, res)
 	if err != nil {
 		return creds, "", err
 	}
-	accountID := strings.TrimSpace(res.accountID)
+	accountID = strings.TrimSpace(res.accountID)
 	if accountID == "" {
 		// BOTH sentinels, for the same reason every other branch on this path wraps two:
 		// ErrConnectionNotUsable decides the HTTP status, ErrAccountNotSelected names the
@@ -308,8 +312,14 @@ func validateGoogleAdsConnection(projectID string, res *resolved) (googleAdsCred
 // respond" for a connection the platform was never asked about, with a remedy (retry) that
 // no amount of waiting can satisfy. Tagging at the point of detection is also what keeps
 // the two resolve paths below from having to agree about it.
-func validateGoogleAdsCredentials(projectID string, res *resolved) (googleAdsCreds, error) {
-	var creds googleAdsCreds
+// Every error below is tagged for its AUDIENCE here, in the validator, rather than by each
+// caller. Caller-side tagging is what produced the defect this replaces: discovery applied
+// systemScoped and the create, toggle and metrics paths did not, so the same LF-system-row
+// defect reached a project as a 400 telling it to edit a connection it does not own. A named
+// return plus defer means a return site added later cannot forget; systemScoped is a no-op for
+// project-owned rows and idempotent, so a caller that also tags costs nothing.
+func validateGoogleAdsCredentials(projectID string, res *resolved) (creds googleAdsCreds, err error) {
+	defer func() { err = res.systemScoped(err) }()
 	if res.status != model.StatusActive {
 		return creds, fmt.Errorf("%w: %w: google ads connection for project %s is %s, not active",
 			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
@@ -372,8 +382,16 @@ func validatedLoginCustomerID(res *resolved) (string, error) {
 		// vocabulary log fragment). Naming the field and the rule is everything an
 		// operator needs to go fix the row; the value adds nothing they do not
 		// already have and puts account data in a log line.
-		return "", fmt.Errorf("%w: %w: stored login_customer_id is invalid (must be digits only, no dashes or spaces)",
-			domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid)
+		//
+		// systemScoped for the same reason as the credential defect in
+		// validateGoogleAdsCredentials: on the LF fallback row there is no project-owned
+		// connection to edit, so a bare 400 aims the remedy at someone who cannot apply
+		// it. EVERY stored-state defect on this path has to carry it, not just the first
+		// one. It lands here rather than at the call sites precisely because there are
+		// now three of them — tagging at the caller is what let the toggle path drift
+		// away from the discovery path in the first place.
+		return "", res.systemScoped(fmt.Errorf("%w: %w: stored login_customer_id is invalid (must be digits only, no dashes or spaces)",
+			domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid))
 	}
 	return loginCustomerID, nil
 }
@@ -434,6 +452,12 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 	// usable" would lose it.
 	creds, err := validateGoogleAdsCredentials(projectID, res)
 	if err != nil {
+		// Already tagged for BOTH axes by the validator: domain.ErrConnectionNotUsable for
+		// the status, and — when these credentials came from the LF fallback row —
+		// domain.ErrSystemConnectionNotUsable for the audience, so the defect pages
+		// whoever installed the LF credential instead of returning a 400 to a project that
+		// owns no connection to fix. This used to be tagged here, at the caller, which is
+		// why only THIS path had it.
 		return nil, err
 	}
 	loginCustomerID, err := validatedLoginCustomerID(res)

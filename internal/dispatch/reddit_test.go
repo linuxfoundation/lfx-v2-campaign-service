@@ -33,6 +33,11 @@ func (f fakeConnReader) Get(context.Context, string, model.Provider) (*model.Con
 	return f.conn, f.err
 }
 
+// Disconnected: these tests are about a project that HAS a connection, so no tombstone exists.
+func (f fakeConnReader) Disconnected(context.Context, string, model.Provider) (bool, error) {
+	return false, nil
+}
+
 // identityEncryptor treats ciphertext as plaintext, so tests can put readable JSON in
 // EncryptedCredentials. errEncryptor always fails Decrypt.
 type identityEncryptor struct{}
