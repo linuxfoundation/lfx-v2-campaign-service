@@ -347,12 +347,23 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // exists to produce, which made discovery useful only for RE-POINTING a connection that was
 // already complete.
 //
-// The other providers keep Required("account_id") deliberately. Relaxing it for them would
-// create a connection that can never be finished from inside this API — there is no list to
-// choose from, so the operator would have to obtain the id out-of-band anyway, and the only
-// thing gained is a half-configured row. Add the requirement back for Google Ads, or drop it
-// for another provider, only together with that provider's discovery endpoint AND its
-// account_not_selected tagging.
+// The other providers keep Required("account_id") deliberately, but for two different reasons
+// now, and conflating them would hide which of the two is actually load-bearing.
+//
+// For LinkedIn, Microsoft, Reddit and X there is still no list to choose from, so relaxing the
+// requirement would create a connection that can never be finished from inside this API: the
+// operator has to obtain the id out-of-band anyway, and the only thing gained is a
+// half-configured row.
+//
+// Meta is NOT in that position as of this endpoint — an account-less Meta connection can be
+// completed through this API, by discovery followed by PUT. It stays required because the
+// second half is missing: Meta's Dispatch answers an empty account id with a generic error
+// rather than reason=account_not_selected, so a caller who created the row and stopped there
+// would meet a 503 that neither names the missing choice nor points at the list that would
+// supply it. That is a tagging gap with a ticket (LFXV2-3061), not a structural one.
+//
+// Add the requirement back for Google Ads, or drop it for another provider, only together with
+// that provider's discovery endpoint AND its account_not_selected tagging.
 //
 // A connection in this state stays status=active, and account_id comes back as "". See
 // docs/knowledge/code/internal-service.md — "active" says the connection is ENABLED for
@@ -673,7 +684,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Attribute("accounts", ArrayOf(AccessibleAccount), func() {
 				Example([]map[string]any{
 					{"id": "act_8666746580", "label": "Linux Foundation"},
-					{"id": "act_1234567890", "label": "CNCF (disabled: unsettled)"},
+					{"id": "act_1234567890", "label": "CNCF (unsettled)"},
 				})
 			})
 			Required("accounts")

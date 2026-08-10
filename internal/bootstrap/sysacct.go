@@ -226,7 +226,9 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // every dispatch with no path to completion. That is exactly the failure requiredConfigKeys
 // above exists to prevent, applied to the one column that is not part of ProviderConfig.
 //
-// **Membership is NOT "the dispatcher implements domain.AccountLister".** Meta does, as of the
+// **Membership is NOT "the dispatcher implements the service-side AccountLister".** (The
+// interface lives in internal/service/orchestrator.go; internal/domain owns only the
+// ErrAccountsUnsupported sentinel it is paired with.) Meta implements it, as of the
 // discovery endpoint added in LFXV2-3062, and is deliberately still absent here. Discovery is
 // only half of a completable lifecycle: the other half is that the path which DOES need an
 // account id fails in a way that names the missing choice, and Meta's Dispatch still returns

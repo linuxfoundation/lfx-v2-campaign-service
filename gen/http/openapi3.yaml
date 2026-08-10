@@ -3847,7 +3847,7 @@ paths:
                                     - id: act_8666746580
                                       label: Linux Foundation
                                     - id: act_1234567890
-                                      label: 'CNCF (disabled: unsettled)'
+                                      label: CNCF (unsettled)
                 "400":
                     description: 'BadRequest: Bad request'
                     content:

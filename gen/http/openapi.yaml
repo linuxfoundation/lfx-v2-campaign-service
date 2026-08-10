@@ -5893,13 +5893,13 @@ definitions:
                     - id: act_8666746580
                       label: Linux Foundation
                     - id: act_1234567890
-                      label: 'CNCF (disabled: unsettled)'
+                      label: CNCF (unsettled)
         example:
             accounts:
                 - id: act_8666746580
                   label: Linux Foundation
                 - id: act_1234567890
-                  label: 'CNCF (disabled: unsettled)'
+                  label: CNCF (unsettled)
         required:
             - accounts
     LfxV2CampaignServiceConnectionsSetCredentialGoogleAdsRequestBody:
