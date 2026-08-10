@@ -164,6 +164,18 @@ func (c *Config) loadDatabaseFromEnv() {
 	}
 }
 
+// ResolveDatabaseURL resolves the DSN as the SERVER does without touching the process flag set,
+// for subcommands (LoadConfig runs flag.Parse on the global set). Reading DATABASE_URL alone is
+// wrong in-cluster: the chart injects PG* and leaves it unset. "" means no database configured.
+func ResolveDatabaseURL() (string, error) {
+	c := &Config{DatabaseURL: os.Getenv(constants.EnvDatabaseURL)}
+	c.loadDatabaseFromEnv()
+	if err := c.ValidateDatabaseSettings(); err != nil {
+		return "", err
+	}
+	return c.DatabaseURL, nil
+}
+
 // ValidateDatabaseSettings validates PostgreSQL settings when any are supplied.
 // Callers that load from the environment must run loadDatabaseFromEnv first
 // (LoadConfig does this). Password is never stored on Config and is never

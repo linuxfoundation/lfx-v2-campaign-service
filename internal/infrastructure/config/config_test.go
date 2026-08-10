@@ -450,3 +450,83 @@ func TestRedactNATSURL_Shapes(t *testing.T) {
 		assert.Equal(t, want, redactNATSURL(in), "input %q", in)
 	}
 }
+
+// TestResolveDatabaseURL: the subcommand must compose the DSN the server does from the PG* the
+// chart injects, not read DATABASE_URL, unset in-cluster. PGPORT/PGENGINE are pinned rather than
+// omitted: ambient values would change the expected DSN or fail validation before the assertion.
+func TestResolveDatabaseURL(t *testing.T) {
+	t.Setenv("PGHOST", "db.internal")
+	t.Setenv("PGPORT", "5432")
+	t.Setenv("PGENGINE", "postgres")
+	t.Setenv("PGUSER", "svc")
+	t.Setenv("PGPASSWORD", "p@ss word")
+	t.Setenv("PGDATABASE", "campaigns")
+	dsn, err := ResolveDatabaseURL()
+	assert.NoError(t, err)
+	assert.Equal(t, "postgres://svc:p%40ss%20word@db.internal:5432/campaigns", dsn) // secretlint-disable-line -- intentional fake DSN
+}
+
+// TestResolveDatabaseURL_PGVarsWinOverDatabaseURL makes the precedence a decision rather
+// than an accident. ResolveDatabaseURL seeds DatabaseURL from DATABASE_URL and then
+// loadDatabaseFromEnv OVERWRITES it whenever the PG* set is complete, so PG* wins — which
+// is right for the deployment this service actually has (the chart injects PG* and leaves
+// DATABASE_URL unset), but nothing said so, and both orderings look equally plausible
+// reading the two functions.
+//
+// It matters because the server and the bootstrap-system-account subcommand resolve the
+// DSN through this same function. Were they ever to disagree, the subcommand would write
+// the LF system credential into one database while the server read from another, and the
+// symptom would be a connection that is simply "not there" — not an error either side
+// could report.
+func TestResolveDatabaseURL_PGVarsWinOverDatabaseURL(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://other:other@elsewhere:5432/other") // secretlint-disable-line -- intentional fake DSN
+	t.Setenv("PGHOST", "db.internal")
+	t.Setenv("PGPORT", "5432")
+	t.Setenv("PGENGINE", "postgres")
+	t.Setenv("PGUSER", "svc")
+	t.Setenv("PGPASSWORD", "pw")
+	t.Setenv("PGDATABASE", "campaigns")
+
+	dsn, err := ResolveDatabaseURL()
+	assert.NoError(t, err)
+	assert.Equal(t, "postgres://svc:pw@db.internal:5432/campaigns", dsn, // secretlint-disable-line -- intentional fake DSN
+		"a complete PG* set must win over DATABASE_URL: the chart injects PG*, so the "+
+			"in-cluster value has to be the one that takes effect")
+}
+
+// TestResolveDatabaseURL_IncompletePGVarsAreRefusedNotIgnored pins the other half, and it
+// is the half that surprises: a PARTIAL PG* set is an ERROR, not a quiet fall-through to
+// DATABASE_URL. `loadDatabaseFromEnv` composes a DSN only when host, user, password and
+// database are all present, but `ValidateDatabaseSettings` then refuses a set that is
+// non-empty and incomplete, so the explicit DATABASE_URL is never reached.
+//
+// That is the right answer and worth pinning precisely because the alternative reads as
+// friendlier. Silently preferring DATABASE_URL when PG* is half-set would mean a chart
+// revision that drops PGPASSWORD quietly redirects the service to whatever DATABASE_URL
+// happens to hold — the class of failure where everything starts and the data goes
+// somewhere else. Refusing to start says so at the only moment anyone is watching.
+func TestResolveDatabaseURL_IncompletePGVarsAreRefusedNotIgnored(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://svc:pw@explicit:5432/campaigns") // secretlint-disable-line -- intentional fake DSN
+	t.Setenv("PGHOST", "db.internal")
+	t.Setenv("PGUSER", "svc")
+	// PGPASSWORD and PGDATABASE are set EMPTY rather than left unset: every reader here
+	// tests for emptiness (loadDatabaseFromEnv: `password != ""`, and TrimSpace on the
+	// rest), so empty and absent are the same input — while "left unset" would inherit
+	// whatever the developer's shell or a CI job with a Postgres service exports. A test
+	// for a partial set must not depend on the ambient environment being empty; there it
+	// would silently become a COMPLETE set and stop exercising this branch at all.
+	// PGPORT and PGENGINE are cleared for the same reason: an ambient value would change
+	// which validation arm is reached.
+	t.Setenv("PGPASSWORD", "")
+	t.Setenv("PGDATABASE", "")
+	t.Setenv("PGPORT", "")
+	t.Setenv("PGENGINE", "")
+
+	dsn, err := ResolveDatabaseURL()
+	require.Error(t, err, "a partial PG* set must be refused rather than silently redirecting "+
+		"the service to whatever DATABASE_URL holds")
+	assert.Empty(t, dsn)
+	assert.Contains(t, err.Error(), "PGPASSWORD")
+	assert.Contains(t, err.Error(), "PGDATABASE")
+	assert.NotContains(t, err.Error(), "explicit", "the error must not echo the DSN")
+}
