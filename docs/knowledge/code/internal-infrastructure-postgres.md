@@ -645,6 +645,39 @@ a DRAFT, which `CreateAudienceForApprovedBrief` rejects with `ErrStaleApproval` 
 lease is ever consulted, so a test built on it would pass for the wrong reason and
 `insertApprovedBrief` exists for that alone.
 
+**`reconcileAmbiguousAudienceCommit` cannot be tested from `dbtest_test`, and its own live
+test cannot import `dbtest` either — both for the same import cycle.** `dbtest.go` is a
+non-test file that imports `internal/infrastructure/postgres` (production) to build its
+fixtures, so `package postgres`'s own test files cannot import `dbtest` back (`go vet`
+reports `import cycle not allowed in test` if one tries). The function is also unexported,
+which rules out testing it from the external `dbtest_test` package regardless.
+`audience_reconcile_live_test.go` (`package postgres`) works around both constraints at
+once: it calls `Migrate` and `NewPool` directly — the same two calls `dbtest.Pool` makes
+internally — rather than going through `dbtest`, giving it its own live pool with no import
+of the `dbtest` package at all. It duplicates `dbtest.UniqueID`'s shape (name prefix + a
+`crypto/rand` suffix) for the same reason `dbtest` uses that shape: the schema is shared and
+never dropped between runs.
+
+## `CreateAudienceForApprovedBrief`'s ambiguous-commit path
+
+A `tx.Commit(ctx)` failure does not prove PostgreSQL rolled back — the server can commit the
+row before the client's acknowledgement of the commit itself is lost (a dropped connection,
+a timeout on the ack). If that happens here, the INSERT's `building` row is real and holds
+the `(brief_id, platform)` build lease (migration 000018) — but `CreateAudienceForApprovedBrief`
+returns `nil` for the created row on this path, so the service layer's `releaseUnstartedClaim`
+(`internal/service/audience_build.go`) has no row to call `UpdateAudience` on. Nothing would
+ever release that lease.
+
+`reconcileAmbiguousAudienceCommit` closes the gap directly in the repo, using the id and
+version the INSERT's `RETURNING` clause already observed inside the (possibly-rolled-back)
+transaction: a bounded (`ambiguousCommitReconcileTimeout = 5s`), detached
+(`context.WithoutCancel`) `UPDATE ... WHERE id=$1 AND version=$2` that moves the row to
+`failed`. If the commit genuinely rolled back, no row exists at that id and the UPDATE
+affects zero rows — a harmless no-op, not an error. It is best-effort and only logs on
+failure, matching `releaseUnstartedClaim`'s own error handling for the same reason: the
+caller is already returning an error from `CreateAudienceForApprovedBrief` and has no
+better path to report a second failure on top of the first.
+
 ## DeleteCampaign's guards
 
 `DeleteCampaign` takes a `SELECT status, version … FOR UPDATE` lock inside one

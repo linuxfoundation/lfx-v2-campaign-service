@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -91,11 +93,46 @@ func (r *AudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *mo
 		return nil, 0, fmt.Errorf("create audience for approved brief: insert: %w", serr)
 	}
 	if cerr := tx.Commit(ctx); cerr != nil {
+		// A Commit error does not prove the server rolled back: PostgreSQL may have
+		// committed the row before the connection failed to acknowledge it. If it did,
+		// this INSERT's `building` row silently holds the (brief_id, platform) lease
+		// (000018) forever — the caller here returns an error and `created` is nil, so
+		// there is no row for it to pass to releaseUnstartedClaim. Reconcile directly:
+		// best-effort move the row to `failed` under a bounded, detached context, using
+		// the id/version this INSERT already observed inside the (possibly-rolled-back)
+		// transaction. If the commit genuinely rolled back, no row exists at that id and
+		// the UPDATE is a harmless no-op.
+		reconcileAmbiguousAudienceCommit(ctx, r.db, out)
 		return nil, 0, fmt.Errorf("create audience for approved brief: commit: %w", cerr)
 	}
 	// The version is reported from INSIDE the transaction that locked the brief, so it is the
 	// version the approval was observed at rather than whatever a later read might see.
 	return out, version, nil
+}
+
+// ambiguousCommitReconcileTimeout bounds reconcileAmbiguousAudienceCommit. Short and
+// detached from the caller's context for the same reason releaseUnstartedClaim's timeout
+// is: the caller is already on its way out with an error, so a client disconnect must not
+// be the reason a possibly-committed lease stays held.
+const ambiguousCommitReconcileTimeout = 5 * time.Second
+
+// reconcileAmbiguousAudienceCommit runs after tx.Commit returns an error that does not prove
+// the transaction rolled back. If it actually committed, row is a real `building` row holding
+// the (brief_id, platform) build lease (migration 000018) with no other code path left to
+// release it — CreateAudienceForApprovedBrief returns nil for `created` on this path, so the
+// service layer's releaseUnstartedClaim has nothing to call UpdateAudience on. This moves the
+// row straight to `failed` by id+version, matching what releaseUnstartedClaim would have done
+// had it received the row. If the commit genuinely rolled back, no row exists at that id and
+// this UPDATE affects zero rows — a harmless no-op, not an error.
+func reconcileAmbiguousAudienceCommit(ctx context.Context, pool *Pool, row *model.CampaignAudience) {
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ambiguousCommitReconcileTimeout)
+	defer cancel()
+	q := `UPDATE campaign_audiences SET status='failed', version=version+1, updated_at=now()
+		WHERE id=$1 AND version=$2`
+	if _, err := pool.Exec(rctx, q, row.ID, row.Version); err != nil {
+		slog.ErrorContext(ctx, "failed to reconcile an audience build row after an ambiguous commit error",
+			"audience_id", row.ID, "error", err)
+	}
 }
 
 func (r *AudienceRepo) CreateAudience(ctx context.Context, a *model.CampaignAudience) (*model.CampaignAudience, error) {
