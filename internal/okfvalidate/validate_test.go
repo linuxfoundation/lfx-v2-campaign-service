@@ -431,6 +431,26 @@ func TestValidateIndexBulletTrailingSpaceIsNotTolerated(t *testing.T) {
 	}
 }
 
+// TestValidateIndexBulletRejectsBlankDescription pins the case a whitespace-only
+// description would otherwise slip through: the target has no comparable
+// description of its own (same fixture shape as SkipsNonConceptTargets), so
+// checkBulletDescription's silent early-return would leave a blank bullet
+// unreported. The pattern's "(.+)$" only requires one character, so this has to
+// be caught before checkBulletDescription is ever called.
+func TestValidateIndexBulletRejectsBlankDescription(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "bare.md"), "---\ntype: \"Note\"\n---\n\n# Bare\n")
+	writeFile(t, filepath.Join(dir, "index.md"), "# Bundle\n\n* [Bare](bare.md) -    \n")
+
+	errs := Validate(dir)
+	if len(errs) != 1 {
+		t.Fatalf("Validate() = %v, want the blank bullet description to be rejected", errs)
+	}
+	if !strings.Contains(errs[0].Error(), "blank description") {
+		t.Errorf("Validate() error = %q, want the blank-description diagnostic", errs[0])
+	}
+}
+
 // TestValidateIndexBulletDecodesPercentEscapes pins the ORDER of the two tests on a
 // destination: it has to be parsed as a URL reference before its shape is judged, or a
 // percent escape becomes a way to opt a working link out of description sync. Both

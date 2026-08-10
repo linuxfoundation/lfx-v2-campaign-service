@@ -139,6 +139,19 @@ func validateIndex(bundleDir, path string, isRoot bool) []error {
 			errs = append(errs, fmt.Errorf("%s: bullet %q does not match \"* [Title](url) - description\" (the url must be a bare path: no spaces, angle brackets, or link title)", path, trimmed))
 			continue
 		}
+		// The pattern's "(.+)$" only requires one character, so a bullet ending
+		// in "- " plus trailing spaces still matches with a whitespace-only
+		// description. checkBulletDescription would otherwise miss that: it
+		// returns nil silently whenever the target is unreadable or has no
+		// frontmatter description, both deliberately (see its doc comment), so
+		// a malformed bullet pointing at such a target would never surface —
+		// not because the frontmatter agreed with it, but because nothing ever
+		// compared. Rejecting it here, before that lookup, closes the gap
+		// without adding a tolerance to the comparison itself.
+		if strings.TrimSpace(m[3]) == "" {
+			errs = append(errs, fmt.Errorf("%s: bullet %q has a blank description", path, trimmed))
+			continue
+		}
 		if e := checkBulletDescription(bundleDir, path, m[2], m[3]); e != nil {
 			errs = append(errs, e)
 		}
