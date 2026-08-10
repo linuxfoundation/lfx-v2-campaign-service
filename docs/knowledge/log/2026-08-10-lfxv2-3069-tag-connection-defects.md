@@ -53,6 +53,16 @@ LFXV2-3061, which concerns Meta's Goa `Required("account_id")` and `accountDisco
 in different files. Leaving it would have shipped a helper that classifies three of its four
 exits.
 
+## The 409's remedy had to stop naming an endpoint
+
+Tagging these three adapters routes them into `brief.go`'s `ErrAccountNotSelected` arm for the
+first time, and that arm's message told the caller to "choose one from the connection's accounts
+endpoint". Only Google Ads has one (`design/connection.go`, `list-google-ads-accounts`). Reddit,
+X/Twitter and Microsoft Ads would have been sent to a route that 404s — worse than no remedy,
+because the caller reads it as a service bug rather than a value they have to supply. Both
+messages now say to save an ad account id on the connection, which is true of every provider.
+A test asserts the string "accounts endpoint" appears in neither.
+
 ## Placement: after the resolve, and in the helper
 
 Two ordering constraints, both easy to get wrong:

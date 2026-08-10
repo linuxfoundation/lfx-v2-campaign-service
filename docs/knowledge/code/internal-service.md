@@ -294,6 +294,13 @@ Goa type with exactly `code` and `message`, so exposing a machine-readable `reas
 changing a type every 409 in this service returns; the reason token reaches operators through
 the log instead.
 
+**The message names no accounts endpoint**, and that constraint is load-bearing rather than
+stylistic. Only Google Ads has one (`design/connection.go`, `list-google-ads-accounts`), and
+since Reddit, X/Twitter and Microsoft Ads tag this defect too they reach the same arm — a
+message pointing them at `.../accounts` would prescribe a route that 404s, which reads as a
+service bug rather than a value the caller has to supply. "Save an ad account id on the
+connection" is true of every provider. `assertNoAccountsEndpointPromised` pins it.
+
 Two DIFFERENT guards protect the empty-vs-nil distinction, and they fail in opposite directions —
 document them separately so a future change preserves each for its own reason:
 
