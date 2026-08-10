@@ -58,11 +58,37 @@ symptom that matters.
 
 `ReadMetrics` was the second caller of `Dispatch`'s credential sequence, so it came out into
 `resolveHubSpotClient` rather than being inlined a third time. The subtle part is the error
-contract: the helper returns its own errors UNMARKED. `creds.resolve`'s error already carries
-`NoUpstreamCreate`, and marking everything else is the MUTATING caller's job — a read has no
-create to disown. `Dispatch` passes an already-marked error through and wraps the rest in
-`notCreated`, the same shape the reddit adapter uses; double-wrapping is what the `errors.As`
-check exists to avoid.
+contract, and there are TWO axes, owned by different places.
+
+The CREATE axis is the mutating caller's. `creds.resolve`'s error already carries
+`NoUpstreamCreate`; the helper adds it to nothing else, because a read has no create to disown.
+`Dispatch` passes an already-marked error through and wraps the rest in `notCreated`, the same
+shape the reddit adapter uses; double-wrapping is what the `errors.As` check exists to avoid.
+
+The AUDIENCE axis is the helper's, tagged at the point of DETECTION. The first cut of this
+helper returned its three stored-connection defects — inactive, undecodable, incomplete — bare,
+and that was a regression of a bug this repo had already fixed once: `googleads_test.go:1200`
+records verbatim that "an inactive or incomplete connection came back off
+`resolveGoogleAdsClient` bare, missed [the 409]". Bare, they fall to `GetCampaignMetrics`'
+default arm and answer 503 — "the platform did not respond" about a platform that was never
+contacted, with a remedy (retry) that no amount of waiting can satisfy, since only a human
+editing the connection can fix it. Each now carries `domain.ErrConnectionNotUsable` alongside a
+reason sentinel (`ErrConnectionInactive`, `ErrCredentialsUndecodable`, `ErrCredentialsIncomplete`),
+which `unusableConnectionReason` maps onto the fixed log vocabulary and the service maps to 409.
+The signature is a named return with `defer func() { err = res.systemScoped(err) }()`, copied
+from `validateGoogleAdsCredentials`, so a return site added later cannot forget to re-attribute
+the error to the LF system row when the credentials came from there; it is a no-op for
+project-owned connections and idempotent.
+
+The unmarshal error is DROPPED, not wrapped, for the same reason as the google ads validator.
+It is the one error on this path derived from the DECRYPTED credential blob, and `encoding/json`
+quotes its input: a `*json.SyntaxError` names the offending character and a
+`*json.UnmarshalTypeError` names the field. Retaining it would put credential-derived bytes into
+the 503 arm's `safeErrSummary` log line for exactly the connection whose credentials are
+malformed. Nothing actionable is lost — the remedy is "re-save the credential", not "fix byte
+41". `TestHubSpot_ReadMetricsRejectsUndecodableCredentialsWithoutQuotingThem` asserts the absence
+via `errors.As` rather than a substring match on `Error()`, since a cause still in the chain is
+reachable by any `errors.As`-walking logger even when the top-level string looks clean.
 
 The token is `TrimSpace`d ONCE in the helper and the trimmed value is what reaches
 `hubspot.NewClient`. Not for the wire — the client trims again, so padding could never get

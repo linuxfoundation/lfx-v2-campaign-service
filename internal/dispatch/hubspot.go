@@ -69,21 +69,42 @@ func NewHubSpotDispatcher(repo connReader, enc domain.Encryptor, audiences audie
 // the credential-resolution sequence is where the connection-state and
 // incomplete-credential checks live, and two copies of it drift.
 //
-// Errors are returned unmarked except for resolve()'s own, which already carries
-// NoUpstreamCreate — a READ caller has no create to mark, so marking is the mutating
-// caller's job.
-func (d *HubSpotDispatcher) resolveHubSpotClient(ctx context.Context, projectID string, platform model.Provider) (*hubspot.Client, error) {
+// NoUpstreamCreate is NOT added here — a READ caller has no create to disown, so marking
+// that axis is the mutating caller's job. The AUDIENCE axis is different and is tagged
+// here, at the point of detection, exactly as validateGoogleAdsCredentials does: each of
+// the three stored-connection defects below carries domain.ErrConnectionNotUsable
+// alongside the sentinel naming which defect it is. Returned bare they fall to
+// GetCampaignMetrics' default arm and answer 503 — "the platform did not respond" about a
+// platform that was never contacted, with a remedy (retry) that no amount of waiting can
+// satisfy, since only a human editing the connection can fix it.
+//
+// The named return plus deferred systemScoped means a return site added later cannot
+// forget to re-attribute the error to the LF system row when the credentials came from
+// there; it is a no-op for project-owned connections and idempotent.
+func (d *HubSpotDispatcher) resolveHubSpotClient(ctx context.Context, projectID string, platform model.Provider) (client *hubspot.Client, err error) {
 	res, err := d.creds.resolve(ctx, projectID, platform)
 	if err != nil {
 		return nil, err // already a preCreateError
 	}
+	defer func() { err = res.systemScoped(err) }()
+
 	if res.status != model.StatusActive {
-		return nil, fmt.Errorf("hubspot connection for project %s is %s, not active", projectID, res.status)
+		return nil, fmt.Errorf("%w: %w: hubspot connection for project %s is %s, not active",
+			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
 	}
 
 	var creds hubspotCreds
 	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return nil, fmt.Errorf("decode hubspot credentials: %w", err)
+		// The unmarshal error is DROPPED, not wrapped — same reasoning as the google ads
+		// validator. It is the one error on this path derived from the DECRYPTED
+		// credential blob, and encoding/json quotes its input: a *json.SyntaxError names
+		// the offending character and a *json.UnmarshalTypeError names the field it was
+		// reading. Wrapping it would put credential-derived bytes into the service's log
+		// line for exactly the connection whose credentials are malformed. Nothing
+		// actionable is lost — the remedy is "re-save the credential", not "fix byte 41" —
+		// and the sentinel keeps the condition greppable with no payload attached.
+		return nil, fmt.Errorf("%w: %w: hubspot credentials for project %s are not valid JSON",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, projectID)
 	}
 	// Trimmed ONCE, and the trimmed value is what reaches the client. hubspot.NewClient
 	// trims again, so padding could not reach the wire either way; the point of trimming
@@ -93,7 +114,8 @@ func (d *HubSpotDispatcher) resolveHubSpotClient(ctx context.Context, projectID 
 	// it surface later as a generic missing-token failure from inside the client.
 	token := strings.TrimSpace(creds.PrivateAppToken)
 	if token == "" {
-		return nil, fmt.Errorf("hubspot credentials are incomplete (need privateAppToken)")
+		return nil, fmt.Errorf("%w: %w: hubspot credentials are incomplete (need privateAppToken)",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
 	}
 
 	return hubspot.NewClient(

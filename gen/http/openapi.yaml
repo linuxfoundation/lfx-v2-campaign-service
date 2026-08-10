@@ -1321,7 +1321,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: get-campaign-metrics lfx-v2-campaign-service-briefs
-            description: 'Read live performance metrics (impressions, clicks, cost, CTR) for one campaign directly from its ad platform. This is a pure read — never persisted — unlike get-campaign, which returns the stored row. Support is per-platform: a campaign whose platform has no metrics-read dispatcher wired returns 400.'
+            description: 'Read live performance metrics (impressions, clicks, cost, CTR) for one campaign directly from the platform that runs it — an ad platform, or HubSpot for the email channel, which additionally returns the email object. This is a pure read — never persisted — unlike get-campaign, which returns the stored row. Support is per-platform: a campaign whose platform has no metrics-read dispatcher wired returns 400. Note that the requested window scopes the counters on the ad platforms but NOT on email, where it selects which emails are in scope by send date and the counters are those emails'' totals to date.'
             operationId: lfx-v2-campaign-service-briefs#get-campaign-metrics
             parameters:
                 - name: window
@@ -4866,12 +4866,12 @@ definitions:
                 example: Sit perspiciatis iusto molestiae cupiditate.
             clicks:
                 type: integer
-                description: Clicks in window
+                description: Clicks over the window on an ad platform; clicks to date on the email channel
                 example: 6793214267223092591
                 format: int64
             cost_micros:
                 type: integer
-                description: 'Cost in window, in micro-units of the platform''s native currency (platform-dependent: USD for LinkedIn/Reddit, X''s billing unit for Twitter, etc.)'
+                description: 'Cost over the window, in micro-units of the platform''s native currency (platform-dependent: USD for LinkedIn/Reddit, X''s billing unit for Twitter, etc.). Always 0 on the email channel, which bills no per-send cost — do not blend that 0 into a cross-channel cost-per-acquisition.'
                 example: 8371122204160647366
                 format: int64
             ctr:
@@ -4883,7 +4883,7 @@ definitions:
                 $ref: '#/definitions/EmailMetrics'
             impressions:
                 type: integer
-                description: Impressions in window
+                description: Impressions over the window on an ad platform; opens to date on the email channel
                 example: 6400616612750181266
                 format: int64
             platform_campaign_id:
@@ -4892,7 +4892,7 @@ definitions:
                 example: Modi blanditiis totam tempora.
             window:
                 type: string
-                description: Platform-agnostic reporting window the metrics were read for
+                description: 'The reporting window that was REQUESTED. On the ad platforms it is also the period the counters cover. On the email channel it is not: it selects which emails are in scope by their send date, and the counters are then that email''s totals to date — see the email object.'
                 example: last_30_days
                 enum:
                     - today
@@ -5008,35 +5008,35 @@ definitions:
         properties:
             bounces:
                 type: integer
-                description: Bounced emails in window
+                description: Bounced emails, to date
                 example: 7120012312944135566
                 format: int64
             clicks:
                 type: integer
-                description: Clicks in window (mirrors clicks)
+                description: Clicks to date (mirrors clicks)
                 example: 1383964163890455117
                 format: int64
             delivered:
                 type: integer
-                description: Emails the receiving server accepted
+                description: Emails the receiving server accepted, to date
                 example: 5176745903400774991
                 format: int64
             opens:
                 type: integer
-                description: Opens in window (mirrors impressions)
+                description: Opens to date (mirrors impressions)
                 example: 5322689045741823198
                 format: int64
             sent:
                 type: integer
-                description: Emails handed to the delivery pipeline
+                description: Emails handed to the delivery pipeline, to date
                 example: 805011195370661207
                 format: int64
             unsubscribes:
                 type: integer
-                description: Unsubscribes in window
+                description: Unsubscribes, to date
                 example: 8004589395967495786
                 format: int64
-        description: Counters that only an email campaign has. impressions/clicks on the parent object mirror opens/clicks; cost_micros is always 0 for email because the platform bills no per-send cost — that 0 must not be blended into a cross-channel cost-per-acquisition.
+        description: 'Counters that only an email campaign has. NONE of them is scoped to the requested window: the window selects which emails are in scope by their SEND date, and every counter below is then that email''s total to date. Rendering any of them as "in the last N days" is therefore wrong. impressions/clicks on the parent object mirror opens/clicks; cost_micros is always 0 for email because the platform bills no per-send cost — that 0 must not be blended into a cross-channel cost-per-acquisition.'
         example:
             bounces: 6630207652424081561
             clicks: 5028001885208672636

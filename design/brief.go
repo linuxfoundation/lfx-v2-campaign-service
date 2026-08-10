@@ -199,10 +199,10 @@ var Campaign = Type("campaign", func() {
 var CampaignMetrics = Type("campaign-metrics", func() {
 	Attribute("campaign_id", String, "Campaign UUID")
 	Attribute("platform_campaign_id", String, "ID returned by the ad platform")
-	Attribute("window", String, "Platform-agnostic reporting window the metrics were read for", metricsWindowEnum)
-	Attribute("impressions", Int64, "Impressions in window")
-	Attribute("clicks", Int64, "Clicks in window")
-	Attribute("cost_micros", Int64, "Cost in window, in micro-units of the platform's native currency (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter, etc.)")
+	Attribute("window", String, "The reporting window that was REQUESTED. On the ad platforms it is also the period the counters cover. On the email channel it is not: it selects which emails are in scope by their send date, and the counters are then that email's totals to date — see the email object.", metricsWindowEnum)
+	Attribute("impressions", Int64, "Impressions over the window on an ad platform; opens to date on the email channel")
+	Attribute("clicks", Int64, "Clicks over the window on an ad platform; clicks to date on the email channel")
+	Attribute("cost_micros", Int64, "Cost over the window, in micro-units of the platform's native currency (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter, etc.). Always 0 on the email channel, which bills no per-send cost — do not blend that 0 into a cross-channel cost-per-acquisition.")
 	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0")
 	Attribute("email", EmailMetrics, "Email-channel counters. Present only for the email channel (HubSpot); absent for every ad platform.")
 	Required("campaign_id", "platform_campaign_id", "window", "impressions", "clicks", "cost_micros", "ctr")
@@ -212,13 +212,13 @@ var CampaignMetrics = Type("campaign-metrics", func() {
 // than extra attributes on campaign-metrics so an ad-platform response does not carry six
 // fields that are structurally zero, which a client cannot distinguish from "zero sends".
 var EmailMetrics = Type("email-metrics", func() {
-	Description("Counters that only an email campaign has. impressions/clicks on the parent object mirror opens/clicks; cost_micros is always 0 for email because the platform bills no per-send cost — that 0 must not be blended into a cross-channel cost-per-acquisition.")
-	Attribute("sent", Int64, "Emails handed to the delivery pipeline")
-	Attribute("delivered", Int64, "Emails the receiving server accepted")
-	Attribute("opens", Int64, "Opens in window (mirrors impressions)")
-	Attribute("clicks", Int64, "Clicks in window (mirrors clicks)")
-	Attribute("bounces", Int64, "Bounced emails in window")
-	Attribute("unsubscribes", Int64, "Unsubscribes in window")
+	Description("Counters that only an email campaign has. NONE of them is scoped to the requested window: the window selects which emails are in scope by their SEND date, and every counter below is then that email's total to date. Rendering any of them as \"in the last N days\" is therefore wrong. impressions/clicks on the parent object mirror opens/clicks; cost_micros is always 0 for email because the platform bills no per-send cost — that 0 must not be blended into a cross-channel cost-per-acquisition.")
+	Attribute("sent", Int64, "Emails handed to the delivery pipeline, to date")
+	Attribute("delivered", Int64, "Emails the receiving server accepted, to date")
+	Attribute("opens", Int64, "Opens to date (mirrors impressions)")
+	Attribute("clicks", Int64, "Clicks to date (mirrors clicks)")
+	Attribute("bounces", Int64, "Bounced emails, to date")
+	Attribute("unsubscribes", Int64, "Unsubscribes, to date")
 	Required("sent", "delivered", "opens", "clicks", "bounces", "unsubscribes")
 })
 
@@ -488,7 +488,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("get-campaign-metrics", func() {
-		Description("Read live performance metrics (impressions, clicks, cost, CTR) for one campaign directly from its ad platform. This is a pure read — never persisted — unlike get-campaign, which returns the stored row. Support is per-platform: a campaign whose platform has no metrics-read dispatcher wired returns 400.")
+		Description("Read live performance metrics (impressions, clicks, cost, CTR) for one campaign directly from the platform that runs it — an ad platform, or HubSpot for the email channel, which additionally returns the email object. This is a pure read — never persisted — unlike get-campaign, which returns the stored row. Support is per-platform: a campaign whose platform has no metrics-read dispatcher wired returns 400. Note that the requested window scopes the counters on the ad platforms but NOT on email, where it selects which emails are in scope by send date and the counters are those emails' totals to date.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()

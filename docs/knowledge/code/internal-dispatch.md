@@ -287,11 +287,23 @@ reports false numbers:
   per send", not "free", and must not be blended into a cross-channel CPA.
 
 `resolveHubSpotClient` was extracted from `Dispatch` once `ReadMetrics` became a second
-caller, rather than inlining the credential sequence a third time. It returns its own errors
-UNMARKED: `creds.resolve`'s error already carries `NoUpstreamCreate`, and marking the rest is
-the MUTATING caller's job — a read has no create to disown. `Dispatch` therefore passes an
-already-marked error through and wraps everything else in `notCreated`, the same shape the
-reddit adapter uses. The token is `TrimSpace`d ONCE inside the helper and the trimmed value is
+caller, rather than inlining the credential sequence a third time. Its two error axes are owned
+by different places:
+
+- **CREATE axis — the mutating caller's.** The helper adds `NoUpstreamCreate` to nothing;
+  `creds.resolve`'s error already carries it, and a read has no create to disown. `Dispatch`
+  therefore passes an already-marked error through and wraps everything else in `notCreated`,
+  the same shape the reddit adapter uses.
+- **AUDIENCE axis — the helper's, at the point of detection.** Each of the three
+  stored-connection defects carries `domain.ErrConnectionNotUsable` plus a reason sentinel:
+  `ErrConnectionInactive`, `ErrCredentialsUndecodable`, `ErrCredentialsIncomplete`. Returned
+  bare they fall to `GetCampaignMetrics`' default arm and answer 503 for a platform that was
+  never contacted. Same template as `validateGoogleAdsCredentials`, including the named return
+  with `defer func() { err = res.systemScoped(err) }()` so a later return site cannot forget to
+  re-attribute the error to the LF system row. The `json.Unmarshal` cause is DROPPED, not
+  wrapped — it is derived from the DECRYPTED blob and `encoding/json` quotes its input.
+
+The token is `TrimSpace`d ONCE inside the helper and the trimmed value is
 what reaches `hubspot.NewClient`, so the incomplete-credential check is made against the value
 the client will actually use.
 

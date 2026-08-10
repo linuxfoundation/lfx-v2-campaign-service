@@ -274,15 +274,20 @@ type GetCampaignMetricsResponseBody struct {
 	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
 	// ID returned by the ad platform
 	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
-	// Platform-agnostic reporting window the metrics were read for
+	// The reporting window that was REQUESTED. On the ad platforms it is also the
+	// period the counters cover. On the email channel it is not: it selects which
+	// emails are in scope by their send date, and the counters are then that
+	// email's totals to date — see the email object.
 	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
-	// Impressions in window
+	// Impressions over the window on an ad platform; opens to date on the email
+	// channel
 	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
-	// Clicks in window
+	// Clicks over the window on an ad platform; clicks to date on the email channel
 	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
-	// Cost in window, in micro-units of the platform's native currency
+	// Cost over the window, in micro-units of the platform's native currency
 	// (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter,
-	// etc.)
+	// etc.). Always 0 on the email channel, which bills no per-send cost — do not
+	// blend that 0 into a cross-channel cost-per-acquisition.
 	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
@@ -1180,17 +1185,17 @@ type CampaignCreateInputRequestBody struct {
 
 // EmailMetricsResponseBody is used to define fields on response body types.
 type EmailMetricsResponseBody struct {
-	// Emails handed to the delivery pipeline
+	// Emails handed to the delivery pipeline, to date
 	Sent *int64 `form:"sent,omitempty" json:"sent,omitempty" xml:"sent,omitempty"`
-	// Emails the receiving server accepted
+	// Emails the receiving server accepted, to date
 	Delivered *int64 `form:"delivered,omitempty" json:"delivered,omitempty" xml:"delivered,omitempty"`
-	// Opens in window (mirrors impressions)
+	// Opens to date (mirrors impressions)
 	Opens *int64 `form:"opens,omitempty" json:"opens,omitempty" xml:"opens,omitempty"`
-	// Clicks in window (mirrors clicks)
+	// Clicks to date (mirrors clicks)
 	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
-	// Bounced emails in window
+	// Bounced emails, to date
 	Bounces *int64 `form:"bounces,omitempty" json:"bounces,omitempty" xml:"bounces,omitempty"`
-	// Unsubscribes in window
+	// Unsubscribes, to date
 	Unsubscribes *int64 `form:"unsubscribes,omitempty" json:"unsubscribes,omitempty" xml:"unsubscribes,omitempty"`
 }
 

@@ -5,6 +5,7 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -119,11 +120,57 @@ func TestHubSpot_ReadMetricsRejectsAnInactiveConnection(t *testing.T) {
 	conn.Status = model.StatusInactive
 	d := NewHubSpotDispatcher(fakeConnReader{conn: conn}, identityEncryptor{}, fakeAudienceReader{},
 		hubspot.WithBaseURL(srv.URL))
-	if _, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, stagedEmail(), model.MetricsWindowToday); err == nil {
+	_, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, stagedEmail(), model.MetricsWindowToday)
+	if err == nil {
 		t.Fatal("an inactive connection was accepted")
+	}
+	// Marked at the point of DETECTION, exactly as validateGoogleAdsCredentials does. Bare,
+	// this reaches GetCampaignMetrics' default arm and answers 503 — "the platform did not
+	// respond" about a platform that was never contacted, telling the operator to retry a
+	// request that only a human editing the connection can ever make succeed.
+	if !errors.Is(err, domain.ErrConnectionNotUsable) {
+		t.Errorf("err = %v, want it to wrap ErrConnectionNotUsable (else the service answers 503, not 409)", err)
+	}
+	if !errors.Is(err, domain.ErrConnectionInactive) {
+		t.Errorf("err = %v, want it to name the reason as ErrConnectionInactive", err)
 	}
 	if rec.Called() {
 		t.Error("a request was sent on an inactive connection")
+	}
+}
+
+// Credentials that are not JSON are a stored-connection defect, and the error must say so
+// WITHOUT quoting the blob. encoding/json's errors are derived from the DECRYPTED plaintext —
+// *json.SyntaxError names the offending character, *json.UnmarshalTypeError names the field —
+// and the 503 default arm logs the chain through safeErrSummary, so a wrapped cause would put
+// credential-derived bytes in the service log for exactly the connection whose credentials are
+// malformed. The sentinel keeps the condition greppable with no payload attached.
+func TestHubSpot_ReadMetricsRejectsUndecodableCredentialsWithoutQuotingThem(t *testing.T) {
+	srv, rec := statsServer(t)
+	const secret = "s3cr3t-private-app-token"
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(`{"PrivateAppToken":"` + secret + `"`)},
+		identityEncryptor{}, fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+	_, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, stagedEmail(), model.MetricsWindowToday)
+	if err == nil {
+		t.Fatal("undecodable credentials were accepted")
+	}
+	if !errors.Is(err, domain.ErrConnectionNotUsable) {
+		t.Errorf("err = %v, want it to wrap ErrConnectionNotUsable", err)
+	}
+	if !errors.Is(err, domain.ErrCredentialsUndecodable) {
+		t.Errorf("err = %v, want it to name the reason as ErrCredentialsUndecodable", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Error("the credential blob leaked into the error message")
+	}
+	// The unmarshal cause itself must be gone, not merely unquoted at the top level: anything
+	// still in the chain is reachable by an errors.As-walking logger.
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) {
+		t.Error("the json.SyntaxError survived in the chain, carrying plaintext-derived detail")
+	}
+	if rec.Called() {
+		t.Error("a request was sent with undecodable credentials")
 	}
 }
 
@@ -142,6 +189,12 @@ func TestHubSpot_ReadMetricsRejectsAWhitespaceOnlyToken(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "incomplete") {
 		t.Errorf("err = %v, want it to name the credential as incomplete", err)
+	}
+	if !errors.Is(err, domain.ErrConnectionNotUsable) {
+		t.Errorf("err = %v, want it to wrap ErrConnectionNotUsable", err)
+	}
+	if !errors.Is(err, domain.ErrCredentialsIncomplete) {
+		t.Errorf("err = %v, want it to name the reason as ErrCredentialsIncomplete", err)
 	}
 	if rec.Called() {
 		t.Error("a request was sent with no usable token")

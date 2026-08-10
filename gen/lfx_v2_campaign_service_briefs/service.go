@@ -38,10 +38,14 @@ type Service interface {
 	// Get one campaign under a brief; returns ETag.
 	GetCampaign(context.Context, *GetCampaignPayload) (res *Campaign, err error)
 	// Read live performance metrics (impressions, clicks, cost, CTR) for one
-	// campaign directly from its ad platform. This is a pure read — never
-	// persisted — unlike get-campaign, which returns the stored row. Support is
-	// per-platform: a campaign whose platform has no metrics-read dispatcher wired
-	// returns 400.
+	// campaign directly from the platform that runs it — an ad platform, or
+	// HubSpot for the email channel, which additionally returns the email object.
+	// This is a pure read — never persisted — unlike get-campaign, which returns
+	// the stored row. Support is per-platform: a campaign whose platform has no
+	// metrics-read dispatcher wired returns 400. Note that the requested window
+	// scopes the counters on the ad platforms but NOT on email, where it selects
+	// which emails are in scope by send date and the counters are those emails'
+	// totals to date.
 	GetCampaignMetrics(context.Context, *GetCampaignMetricsPayload) (res *CampaignMetrics, err error)
 	// Replace a campaign (requires If-Match).
 	UpdateCampaign(context.Context, *UpdateCampaignPayload) (res *Campaign, err error)
@@ -188,15 +192,20 @@ type CampaignMetrics struct {
 	CampaignID string
 	// ID returned by the ad platform
 	PlatformCampaignID string
-	// Platform-agnostic reporting window the metrics were read for
+	// The reporting window that was REQUESTED. On the ad platforms it is also the
+	// period the counters cover. On the email channel it is not: it selects which
+	// emails are in scope by their send date, and the counters are then that
+	// email's totals to date — see the email object.
 	Window string
-	// Impressions in window
+	// Impressions over the window on an ad platform; opens to date on the email
+	// channel
 	Impressions int64
-	// Clicks in window
+	// Clicks over the window on an ad platform; clicks to date on the email channel
 	Clicks int64
-	// Cost in window, in micro-units of the platform's native currency
+	// Cost over the window, in micro-units of the platform's native currency
 	// (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter,
-	// etc.)
+	// etc.). Always 0 on the email channel, which bills no per-send cost — do not
+	// blend that 0 into a cross-channel cost-per-acquisition.
 	CostMicros int64
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr float64
@@ -262,22 +271,25 @@ type DeleteCampaignPayload struct {
 	IfMatch *string
 }
 
-// Counters that only an email campaign has. impressions/clicks on the parent
-// object mirror opens/clicks; cost_micros is always 0 for email because the
-// platform bills no per-send cost — that 0 must not be blended into a
-// cross-channel cost-per-acquisition.
+// Counters that only an email campaign has. NONE of them is scoped to the
+// requested window: the window selects which emails are in scope by their SEND
+// date, and every counter below is then that email's total to date. Rendering
+// any of them as "in the last N days" is therefore wrong. impressions/clicks
+// on the parent object mirror opens/clicks; cost_micros is always 0 for email
+// because the platform bills no per-send cost — that 0 must not be blended
+// into a cross-channel cost-per-acquisition.
 type EmailMetrics struct {
-	// Emails handed to the delivery pipeline
+	// Emails handed to the delivery pipeline, to date
 	Sent int64
-	// Emails the receiving server accepted
+	// Emails the receiving server accepted, to date
 	Delivered int64
-	// Opens in window (mirrors impressions)
+	// Opens to date (mirrors impressions)
 	Opens int64
-	// Clicks in window (mirrors clicks)
+	// Clicks to date (mirrors clicks)
 	Clicks int64
-	// Bounced emails in window
+	// Bounced emails, to date
 	Bounces int64
-	// Unsubscribes in window
+	// Unsubscribes, to date
 	Unsubscribes int64
 }
 
