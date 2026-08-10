@@ -121,8 +121,8 @@ func TestTruncateString(t *testing.T) {
 	}{
 		{"Hello", "Hello", 10},
 		{"Hello World", "Hello", 5},
-		{"Hello   ", "Hello", 8},      // trailing spaces get trimmed
-		{"Hello   ", "Hello", 5},      // truncated before spaces, no trim needed
+		{"Hello   ", "Hello", 8}, // trailing spaces get trimmed
+		{"Hello   ", "Hello", 5}, // truncated before spaces, no trim needed
 		{"", "", 10},
 		{"a", "a", 1},
 		{"ab", "a", 1},
@@ -149,25 +149,25 @@ func TestParseEmailCopyResponse(t *testing.T) {
 		wantTruncated bool
 	}{
 		{
-			name: "valid json response",
-			raw:  `{"subject":"Join KubeCon","preheader":"Save your spot","body":"<p>Register now</p>","cta":"Register"}`,
+			name:        "valid json response",
+			raw:         `{"subject":"Join KubeCon","preheader":"Save your spot","body":"<p>Register now</p>","cta":"Register"}`,
 			wantSubject: "Join KubeCon",
 			wantCta:     "Register",
 			wantError:   false,
 		},
 		{
-			name: "valid json with fences",
-			raw:  "```json\n{\"subject\":\"Join KubeCon\",\"preheader\":\"Save your spot\",\"body\":\"<p>Register now</p>\",\"cta\":\"Register\"}\n```",
+			name:        "valid json with fences",
+			raw:         "```json\n{\"subject\":\"Join KubeCon\",\"preheader\":\"Save your spot\",\"body\":\"<p>Register now</p>\",\"cta\":\"Register\"}\n```",
 			wantSubject: "Join KubeCon",
 			wantCta:     "Register",
 			wantError:   false,
 		},
 		{
-			name: "truncate long subject",
-			raw:  `{"subject":"` + repeatStr("x", 250) + `","preheader":"p","body":"b","cta":"c"}`,
-			wantSubject: repeatStr("x", 200),
-			wantCta:     "c",
-			wantError:   false,
+			name:          "truncate long subject",
+			raw:           `{"subject":"` + repeatStr("x", 250) + `","preheader":"p","body":"b","cta":"c"}`,
+			wantSubject:   repeatStr("x", 200),
+			wantCta:       "c",
+			wantError:     false,
 			wantTruncated: true,
 		},
 		{
@@ -276,7 +276,9 @@ func TestGenerateEmailCopy_BriefNotFound(t *testing.T) {
 	repo := newFakeBriefRepo()
 	svc := newTestBriefService(repo)
 	svc.SetLLMClient(newTestLLMClient(t, httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) { t.Fatal("LLM should not be called when the brief lookup fails") }))))
+		func(w http.ResponseWriter, r *http.Request) {
+			t.Fatal("LLM should not be called when the brief lookup fails")
+		}))))
 
 	payload := &briefs.GenerateEmailCopyPayload{
 		ProjectID:   "proj-123",
@@ -306,7 +308,9 @@ func TestGenerateEmailCopy_InvalidEventDetails(t *testing.T) {
 	}
 	svc := newTestBriefService(repo)
 	svc.SetLLMClient(newTestLLMClient(t, httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) { t.Fatal("LLM should not be called when event details are invalid") }))))
+		func(w http.ResponseWriter, r *http.Request) {
+			t.Fatal("LLM should not be called when event details are invalid")
+		}))))
 
 	payload := &briefs.GenerateEmailCopyPayload{
 		ProjectID:   "proj-123",
