@@ -1028,11 +1028,21 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// contacted for the last group.
 	//
 	// The classification of that last group is NO LONGER uniform across dispatchers, and this
-	// comment used to say it was. Google Ads tags every one of its preflight failures with
-	// domain.ErrConnectionNotUsable (internal/dispatch/googleads.go): the three in
+	// comment used to say it was. Google Ads tags every one of its CONNECTION-STATE checks
+	// with domain.ErrConnectionNotUsable (internal/dispatch/googleads.go): the three in
 	// validateGoogleAdsCredentials, the missing-account guard in validateGoogleAdsConnection,
 	// and the stored-login_customer_id check in validatedLoginCustomerID. All five run on this
 	// path. The caller maps them to 409 — correct, because none of them improves with time.
+	//
+	// The middle group — cred RESOLUTION, credsSource.resolve — is deliberately not covered by
+	// that statement, on Google Ads or anywhere else. Three of its returns carry no
+	// ErrConnectionNotUsable at all (internal/dispatch/creds.go): a missing connection row keeps
+	// domain.ErrNotFound, a repository failure keeps only the wrapped repo error, and a GCM
+	// AUTHENTICATION failure carries domain.ErrCredentialDecryptionFailed. Each is a distinct
+	// answer — 404, retry-later, and page-ops respectively — and reading "everything before the
+	// platform call is a 409" off this paragraph would flatten all three into "edit your
+	// connection". Only the row-is-provably-bad returns (no stored credentials,
+	// ErrCredentialsMalformed) are tagged.
 	//
 	// The manager-id check is the newest of the five and was for a while NOT reachable here:
 	// it sat inline in the discovery resolver, so a malformed stored value reached this path

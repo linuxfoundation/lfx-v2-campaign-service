@@ -94,3 +94,29 @@ The 503 was correctly described as an open gap in `internal/service/orchestrator
 LFXV2-2023 shipped, rather than papered over; that comment now records the gap as closed.
 Writing down "this is wrong and here is why" at the point you decline to fix it is what made
 this a ticket instead of a surprise.
+
+## "Preflight" named two groups the paragraph had just separated
+
+The `toggleCampaignStatus` comment opens by splitting everything before the platform call into
+two groups — the dispatcher's **cred resolution** and its **connection-state checks** — and then
+says the classification of "that last group" is no longer uniform. The very next sentence read
+"Google Ads tags every one of its **preflight** failures with `domain.ErrConnectionNotUsable`".
+
+That is false of cred resolution, on Google Ads as everywhere else.
+`credsSource.resolve` (`internal/dispatch/creds.go`) has three returns carrying no
+`ErrConnectionNotUsable` at all: a missing connection row keeps `domain.ErrNotFound` (404), a
+repository failure keeps only the wrapped repo error (retry later), and a GCM authentication
+failure carries `domain.ErrCredentialDecryptionFailed` (page ops — a wrong or rotated
+application key is not something a project admin can fix by editing a connection). Only the
+provably-bad-row returns — no stored credentials, `ErrCredentialsMalformed` — are tagged.
+
+So a reader taking the paragraph at its word would flatten three genuinely different answers
+into "edit your connection", which is exactly the distinction `resolve`'s own comments spend
+thirty lines protecting.
+
+The tell is that the sentence used a **different word** for the group it had just named.
+`preflight` is the informal umbrella for both halves; `connection-state checks` is the term the
+paragraph defined two sentences earlier. Swapping to the loose synonym silently re-scoped the
+claim over a group the writer had explicitly excluded. **When a paragraph defines a partition,
+every later sentence must keep using the partition's names** — a synonym is how a claim about
+one half becomes a claim about the whole.
