@@ -121,10 +121,17 @@ func actorFromCtx(ctx context.Context) *model.Actor {
 // without the security scheme, which would otherwise present only as NULL attribution and
 // nothing else failing. It counts ATTEMPTS, not commits — whether an actor is present is
 // decided upstream of anything the repository does.
+//
+// The message says "unattributed", not "recorded as NULL", because NULL is only what an
+// INSERT does. Every update path COALESCEs (`campaign_repo.go`, the upsert conflict arm, the
+// replace, and the soft delete), so a nil actor there PRESERVES the last actor known rather
+// than clearing it — deliberately, since forgetting who last touched a row is worse than not
+// learning who touched it this time. A warning promising NULL would send an operator looking
+// for a null column that the row does not have.
 func attributedActor(ctx context.Context, operation string) *model.Actor {
 	a := actorFromCtx(ctx)
 	if a == nil {
-		slog.WarnContext(ctx, "write attempted with no authenticated actor; attribution will be recorded as NULL if it commits",
+		slog.WarnContext(ctx, "write attempted with no authenticated actor; this write is unattributed (inserts record NULL; updates preserve the previous actor via COALESCE)",
 			"operation", operation)
 	}
 	return a

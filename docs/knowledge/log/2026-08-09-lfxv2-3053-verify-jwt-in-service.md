@@ -579,3 +579,54 @@ earlier round asked "does this line print the URL safely?" and the answer was ev
 at every site. The question that was never asked is who else formats it. The value was handed
 to a library that renders it into an error on a path with no format verb of ours anywhere in
 it — so the audit that walks your own `%s` sites reports clean, correctly, and misses the leak.
+
+## The redactor leaked a token tail through the comma rule
+
+`URLUserinfo` splits a comma-separated value entry by entry when the split is "provably safe",
+and the proof was that every entry carries an `@` or none does. A comma is also legal inside a
+QUERY, and the query is exactly where the other credential shape lives:
+`https://idp/jwks?access_token=s3cret,b64tail` has no `@` in either piece, so the rule called it
+a list — and the second piece was then `b64tail`, a bare fragment of the token with no `?` in
+front of it for `trimQueryAndFragment` to cut, joined straight back into the output.
+
+Every segment must now also begin its own `scheme://`. A comma that does not start a new URL is
+a character inside the preceding value. That rejects the schemeless NATS list form
+(`nats://h1:4222,h2:4222`), which is fine: it falls back to the whole-value rule, and the
+whole-value rule returns a credential-free list unchanged.
+
+## And it read an `@` in a query as userinfo
+
+`redactOne` scanned the WHOLE string for the last `@`. Userinfo can appear only inside the
+authority (RFC 3986 §3.2), so an ordinary `https://idp.example.com/jwks?contact=ops@b.example`
+was rendered `https://***@b.example` — no leak, but the host and path are the only reason to
+log a URL at all, and an operator reading that concludes the endpoint is misconfigured.
+
+The scan is now bounded to the authority, and bounded at the first `/` alone. `?` and `#` are
+equally illegal unescaped in userinfo, but the values reaching this function include the ones
+that FAILED to parse: bounding at `?` cuts `nats://u:p?x@host` down to `nats://u:p` and logs
+half a password, the same defect as splitting on a comma too eagerly. Bounding at `/` leaves
+such a value inside the authority region, where the `@` rule still catches it.
+
+One exception, because the bound proves nothing about a value holding more than one URL: an
+ambiguous NATS list that the split declined arrives here whole, with later servers' credentials
+outside the first authority. A second `://` past the authority start restores the conservative
+whole-string rule — lossy about the earlier hosts, but it cannot print a password.
+
+Both are revert-verified: against the previous implementation the token tail appears in the
+output and the query `@` erases the host.
+
+## Three statements that were true of a narrower thing than they described
+
+- The no-actor warning promised "attribution will be recorded as NULL if it commits". Only an
+  INSERT does that. Every update path COALESCEs — the upsert conflict arm, the replace and the
+  soft delete in `campaign_repo.go` — so a nil actor there PRESERVES the last actor known, and
+  an operator following the warning would look for a null column the row does not have.
+- `commonBriefErrors` said JWTAuth returns `*conn.BadRequestError`. Goa generates one concrete
+  type per service from the shared design type, so `BriefService.JWTAuth` returns
+  `*briefs.BadRequestError` — identically shaped and a different Go type.
+- The README said the mock-principal variable "cannot be set in a deployed environment". The
+  runtime guard is a detection, not a proof: `runningInCluster` looks for
+  `KUBERNETES_SERVICE_HOST` and the service-account directory, and `config.go` says so itself.
+  A manifest that sets the variable AND suppresses both signals is not caught. The README now
+  states the guard's actual shape and the bar it is built to — three deliberate visible changes
+  rather than one env line.

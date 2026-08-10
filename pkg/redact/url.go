@@ -43,9 +43,16 @@ import (
 // does not matter — when EVERY segment carries an `@` (each is a credential-bearing server,
 // so every one gets redacted) or NONE does (there is no credential anywhere to leak). Any
 // mix is ambiguous and falls back to the whole-value rule, which is lossy but cannot leak.
+//
+// The `@` test alone is not sufficient, because a comma is also legal inside a QUERY, and a
+// query is exactly where the other credential shape lives. `https://idp/jwks?access_token=a,b`
+// has no `@` in either piece, so the count rule calls it unambiguous, and the second piece is
+// then `b` — a bare fragment of the token with nothing to trim it, joined straight back into
+// the output. Every segment must therefore also carry its own `://`: a list of servers is a
+// list of URLs, and a comma that does not begin one is a character inside the value.
 func URLUserinfo(u string) string {
 	if strings.ContainsRune(u, ',') {
-		if parts := strings.Split(u, ","); unambiguousList(parts) {
+		if parts := strings.Split(u, ","); unambiguousList(parts) && allSchemed(parts) {
 			for i, p := range parts {
 				parts[i] = redactOne(p)
 			}
@@ -67,19 +74,74 @@ func unambiguousList(parts []string) bool {
 	return withAt == 0 || withAt == len(parts)
 }
 
+// allSchemed reports whether every segment begins a URL of its own. A comma that does not
+// start a new `scheme://` is a character inside the preceding value — a query separator, or a
+// sub-delim in a password — not a list delimiter.
+//
+// This rejects the schemeless NATS list form (`nats://h1:4222,h2:4222`), deliberately. That
+// value falls back to the whole-value rule, which for a credential-free list returns it
+// unchanged and for a credential-bearing one is lossy without leaking. Both are correct
+// outcomes; admitting the form would mean deciding, from the value alone, whether `h2:4222`
+// is a server or the tail of a password.
+func allSchemed(parts []string) bool {
+	for _, p := range parts {
+		if !strings.Contains(p, "://") {
+			return false
+		}
+	}
+	return true
+}
+
 // redactOne is URLUserinfo for a value known to hold at most one URL.
 //
-// The split is on the LAST `@`, not the first: a password may legally contain a percent-
-// encoded `@`, and splitting on the first would leave the tail of it in the output.
+// The split is on the LAST `@` WITHIN THE AUTHORITY, not the last `@` in the string, and not
+// the first. Last-within-the-authority because a password may legally contain a percent-
+// encoded `@` and splitting on the first would leave the tail of it in the output. Bounded to
+// the authority because userinfo can appear nowhere else (RFC 3986 §3.2): scanning the whole
+// string mistakes an ordinary `https://idp/jwks?contact=a@b.example` for a credential and
+// prints `https://***@b.example`, discarding the host and path that are the only reason to log
+// the URL at all.
+//
+// The authority is bounded at the first `/` after `://`, and at nothing else. `/`, `?` and `#`
+// are all illegal unescaped in userinfo, so any of them would be a conforming bound — but a
+// value that reaches this function may be exactly the malformed one that failed to parse.
+// Bounding at `?` would cut `nats://u:p?x@host` down to `nats://u:p` and log half a password,
+// the same defect as splitting on a comma too eagerly. Bounding at `/` cannot: it leaves such
+// a value inside the authority region, where the `@` rule redacts it.
+//
+// The cost is over-redaction of a path-less URL whose query holds an `@` (`https://idp?q=a@b`
+// prints `https://***@b`). That is this package's stated preference throughout — lossy beats
+// leaky — and no credential escapes it.
+//
+// The authority bound is trusted only while the value holds ONE url. A second `://` anywhere
+// past the first authority's start means it does not — an ambiguous NATS list that
+// `URLUserinfo` declined to split arrives here whole, and its later servers' credentials sit
+// outside the first authority.
+// There the conservative whole-string rule applies again: redact from the LAST `@` anywhere,
+// losing the earlier hosts rather than printing a password.
 func redactOne(u string) string {
-	at := strings.LastIndexByte(u, '@')
+	scheme := strings.Index(u, "://")
+	authStart := 0
+	if scheme >= 0 {
+		authStart = scheme + 3
+	}
+	authEnd := len(u)
+	if i := strings.IndexByte(u[authStart:], '/'); i >= 0 {
+		authEnd = authStart + i
+	}
+	at := strings.LastIndexByte(u[authStart:authEnd], '@')
 	if at < 0 {
+		if strings.Contains(u[authStart:], "://") {
+			// More than one URL in the value: the authority bound proves nothing about
+			// what follows, so fall back to the whole-string rule.
+			if last := strings.LastIndexByte(u, '@'); last >= 0 {
+				return trimQueryAndFragment(u[:authStart] + "***@" + u[last+1:])
+			}
+		}
 		return trimQueryAndFragment(u) // no userinfo, but a query can still carry a token
 	}
-	if scheme := strings.Index(u, "://"); scheme >= 0 && scheme+3 <= at {
-		return trimQueryAndFragment(u[:scheme+3] + "***@" + u[at+1:])
-	}
-	return trimQueryAndFragment("***@" + u[at+1:])
+	at += authStart
+	return trimQueryAndFragment(u[:authStart] + "***@" + u[at+1:])
 }
 
 // trimQueryAndFragment drops everything from the first `?` or `#`.

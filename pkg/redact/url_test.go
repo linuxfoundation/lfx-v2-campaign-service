@@ -105,6 +105,21 @@ func TestURLUserinfo_Shapes(t *testing.T) {
 		{"https://svc:pw@idp.example.com/jwks?access_token=s3cret", "https://***@idp.example.com/jwks"}, // secretlint-disable-line
 		{"nats://u:p?x@host:4222", "nats://***@host:4222"},                                              // secretlint-disable-line
 		{"https://idp.example.com/jwks#s3cret", "https://idp.example.com/jwks"},
+		// A comma is legal in a QUERY too, and the query is where the other credential
+		// shape lives. Neither piece of this value carries an '@', so the every-or-none
+		// rule alone calls it a list — and the second piece is then 'b64tail', a bare
+		// fragment of the token with no '?' to trim it, joined straight back into the
+		// output. Requiring every segment to begin its own 'scheme://' is what stops it.
+		{"https://idp.example.com/jwks?access_token=s3cret,b64tail", "https://idp.example.com/jwks"},
+		// Same rule, credential-free: the schemeless NATS list form does not split either,
+		// but the whole-value rule returns it unchanged because there is nothing to redact.
+		{"nats://a:4222,b:4222", "nats://a:4222,b:4222"},
+		// An '@' AFTER the authority is not a userinfo delimiter. Scanning the whole string
+		// for the last '@' redacts this to 'https://***@b.example' — no leak, but the host
+		// and path that are the only reason to log a URL are gone, and the operator reading
+		// it concludes the endpoint is misconfigured.
+		{"https://idp.example.com/jwks?contact=ops@b.example", "https://idp.example.com/jwks"},
+		{"https://svc:pw@idp.example.com/jwks?contact=ops@b.example", "https://***@idp.example.com/jwks"}, // secretlint-disable-line
 		{"", ""},
 	} {
 		if got := URLUserinfo(tc.in); got != tc.want {

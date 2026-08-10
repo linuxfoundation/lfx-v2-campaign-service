@@ -91,11 +91,18 @@ openssl rand -base64 32
 - `JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL` (default unset) — local
   development only: when non-empty it **disables JWT verification** and
   attributes every request to this principal, logging a `WARN` on every
-  boot that sets it. It cannot be set in a deployed environment: the chart
-  refuses to render it, and if a manifest applied outside the chart sets it
-  anyway the pod fails startup rather than degrading — so the failure is a
-  crash-loop, not a silently unauthenticated service. Worth knowing before
-  debugging a rollout that will not come up.
+  boot that sets it. Two independent guards keep it out of a deployed
+  environment: the chart refuses to render it, and at runtime the pod fails
+  startup rather than degrading whenever it detects it is running in a
+  cluster — so the failure is a crash-loop, not a silently unauthenticated
+  service. Worth knowing before debugging a rollout that will not come up.
+  The runtime guard is a detection, not a proof: it looks for
+  `KUBERNETES_SERVICE_HOST` and the service-account directory, so a manifest
+  applied outside the chart that both sets this variable and suppresses those
+  two signals (an explicit empty `KUBERNETES_SERVICE_HOST` plus
+  `automountServiceAccountToken: false`) is not caught. That combination is
+  three deliberate, visible changes rather than one env line, which is the
+  bar the guard is built to — see `internal/infrastructure/config/config.go`.
 - `NATS_URL` — NATS server URL (reserved for messaging; defaults to
   in-cluster NATS URL)
 - `EVENT_URL_NAT64_PREFIXES` (default unset) — comma-separated

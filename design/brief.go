@@ -610,7 +610,10 @@ func metricsWindowEnum() {
 // commonBriefErrors declares the standard error set for a brief method.
 //
 // BadRequest is unconditional, and it takes no parameter deciding otherwise. JWTAuth
-// returns *conn.BadRequestError for any refused token, and Goa builds each method's
+// returns this service's own *briefs.BadRequestError for any refused token — Goa generates
+// one concrete type per service from the shared design type, so the connections service's
+// identically-shaped error is a DIFFERENT Go type and naming it here would send a reader to
+// the wrong package. Goa builds each method's
 // error encoder from its declared list — a method that omits BadRequest has no case
 // for it, so the typed 400 falls out of the generic encoder as a 500 and never appears
 // in OpenAPI. That is true of a bodyless GET exactly as much as of a create. An earlier
