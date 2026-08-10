@@ -22,6 +22,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
 	"strings"
 	"time"
 
@@ -135,8 +137,13 @@ func New(cfg Config) (*Verifier, error) {
 	// its userinfo (`https://user:pass@host/...`), and these errors are returned to main.go,
 	// which LOGS them — so echoing the raw value writes the secret to the log. url.Parse's
 	// own error embeds the whole raw URL, which is why it is reported rather than wrapped;
-	// Redacted() is the printable form, replacing the password with `xxxxx`. The config key
-	// is named instead, which is what an operator actually needs to fix it.
+	// the config key is named instead, which is what an operator actually needs to fix it.
+	//
+	// The printable form is redact.URL, NOT url.URL.Redacted(): Redacted() masks the password
+	// and KEEPS the username, and this service treats the username in a credential-bearing
+	// URL as credential material — it is issued with the password as half of one credential,
+	// so printing it narrows an attacker's search. Every formatting site below uses the same
+	// helper for the same reason.
 	rawJWKS := orDefault(cfg.JWKSURL, constants.DefaultJWKSURL)
 	jwksURL, err := url.Parse(rawJWKS)
 	if err != nil {
@@ -146,7 +153,7 @@ func New(cfg Config) (*Verifier, error) {
 	// accepting one would satisfy the fail-fast check and then refuse every request.
 	if (jwksURL.Scheme != "http" && jwksURL.Scheme != "https") || jwksURL.Host == "" {
 		return nil, fmt.Errorf("%s (%q) is not an absolute http(s) URL",
-			constants.EnvJWKSURL, jwksURL.Redacted())
+			constants.EnvJWKSURL, redact.URL(jwksURL))
 	}
 	issuer, err := url.Parse(orDefault(cfg.Issuer, constants.DefaultIssuer))
 	if err != nil {
@@ -246,8 +253,8 @@ func (g *jwksStatusGuard) RoundTrip(req *http.Request) (*http.Response, error) {
 	// travel into logs; the status and the URL are what identify the misconfiguration, and
 	// the body goes to a debug log where its length is bounded and its origin is obvious.
 	slog.Debug("JWKS endpoint returned a non-2xx response",
-		"url", req.URL.Redacted(), "status", resp.StatusCode, "body_prefix", string(peek))
-	return nil, fmt.Errorf("JWKS endpoint %s returned HTTP %d", req.URL.Redacted(), resp.StatusCode)
+		"url", redact.URL(req.URL), "status", resp.StatusCode, "body_prefix", string(peek))
+	return nil, fmt.Errorf("JWKS endpoint %s returned HTTP %d", redact.URL(req.URL), resp.StatusCode)
 }
 
 // checkKeys reads a 2xx JWKS body, refuses one with no keys in it, and replays the bytes
@@ -268,10 +275,10 @@ func (g *jwksStatusGuard) checkKeys(req *http.Request, resp *http.Response) (*ht
 	buf, err := io.ReadAll(io.LimitReader(resp.Body, jwksMaxBody+1))
 	_ = resp.Body.Close()
 	if err != nil {
-		return nil, fmt.Errorf("read JWKS response from %s: %w", req.URL.Redacted(), err)
+		return nil, fmt.Errorf("read JWKS response from %s: %w", redact.URL(req.URL), err)
 	}
 	if len(buf) > jwksMaxBody {
-		return nil, fmt.Errorf("JWKS endpoint %s returned more than %d bytes", req.URL.Redacted(), jwksMaxBody)
+		return nil, fmt.Errorf("JWKS endpoint %s returned more than %d bytes", redact.URL(req.URL), jwksMaxBody)
 	}
 	var doc struct {
 		Keys []json.RawMessage `json:"keys"`
@@ -280,11 +287,11 @@ func (g *jwksStatusGuard) checkKeys(req *http.Request, resp *http.Response) (*ht
 		// The body is not quoted into the error: untrusted upstream text that would travel
 		// into logs. It goes to a bounded debug line instead, as the non-2xx path does.
 		slog.Debug("JWKS endpoint returned an undecodable 2xx body",
-			"url", req.URL.Redacted(), "body_prefix", string(buf[:min(len(buf), jwksErrorBodyPeek)]))
-		return nil, fmt.Errorf("JWKS endpoint %s returned a 2xx body that is not a key set", req.URL.Redacted())
+			"url", redact.URL(req.URL), "body_prefix", string(buf[:min(len(buf), jwksErrorBodyPeek)]))
+		return nil, fmt.Errorf("JWKS endpoint %s returned a 2xx body that is not a key set", redact.URL(req.URL))
 	}
 	if len(doc.Keys) == 0 {
-		return nil, fmt.Errorf("JWKS endpoint %s returned no signing keys", req.URL.Redacted())
+		return nil, fmt.Errorf("JWKS endpoint %s returned no signing keys", redact.URL(req.URL))
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(buf))
 	return resp, nil

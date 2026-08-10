@@ -23,5 +23,6 @@
 * [internal/service](internal-service.md) - Campaign service business logic, including Readyz (DB-backed readiness) and Livez (process-only liveness).
 * [pkg/constants](pkg-constants.md) - Application-wide constants, including PG* and DATABASE_URL environment variable names.
 * [pkg/log](pkg-log.md) - Package log provides structured logging utilities for context-aware logging.
+* [pkg/redact](pkg-redact.md) - Renders credential-bearing values into log-safe forms; strips URL userinfo entirely, unlike url.URL.Redacted().
 * [pkg/utils](pkg-utils.md) - Package utils provides OpenTelemetry SDK setup utilities.
 * [design](design.md) - Package design contains the DSL for the campaign service Goa API generation.

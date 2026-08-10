@@ -469,3 +469,38 @@ The class worth remembering: a redacting formatter is a **allow-list of fields s
 were safe at the time**, and every field added later defaults into the safe list silently. A new
 config field with a URL or a credential in it has to be argued about at the formatter, not only
 at the place that reads it.
+
+## Round N+4: the standard library's definition of "redacted" is not this service's
+
+Round N+3 above got the config formatter right and then, one file over, reached for
+`url.URL.Redacted()` at eight sites in `jwt.go` — the startup scheme check and every
+`jwksStatusGuard` error and debug line. `Redacted()` masks the password and **keeps the
+username**, on the reasonable general view that a username identifies rather than
+authenticates. That view is wrong here, and this branch had already said so: the config test
+added in the previous round asserts the username never reaches a log line, because a JWKS
+endpoint behind a basic-auth gateway is issued the username and password together as one
+credential. So the branch shipped two formatting sites, in two packages, disagreeing about
+what "redacted" means — and the one that disagreed is the one that runs on a loop. The
+startup URL is rendered once; the guard renders `req.URL` on every failed refresh, so a
+misconfigured endpoint writes the same line until someone notices.
+
+The fix is a package, not an edit. `pkg/redact` holds one implementation with two entry
+points — `URL` for a parsed URL, `URLUserinfo` for the path where `url.Parse` itself failed
+and the raw string is exactly what must not be printed. `URL` clears `User` on a **copy**:
+mutating the caller's URL would be a formatter with a side effect on the credential it is
+hiding, and the next request would go out unauthenticated.
+
+Writing the tests turned up a second, smaller thing. `URLUserinfo` splits on the last `@`,
+which is right for a password containing a percent-encoded one and wrong for a NATS **server
+list** — everything before the final credential is taken as userinfo, so a three-server value
+diagnoses as one server. Nothing leaked; the value was truncated. But a helper whose entire
+justification is that the host stays visible should not silently eat two of the three hosts,
+so a comma-separated value is now redacted entry by entry. Worth recording because the bug was
+invisible from the call site and only appeared once a test asserted the *whole* output rather
+than "the secret is absent".
+
+The class: **a security helper from the standard library encodes someone else's threat model.**
+`Redacted()` is not wrong — it is correct for the definition of "credential" it was written
+against. The question to ask of any borrowed redactor is not "does this hide the secret" but
+"does its notion of secret match the one this service has already committed to elsewhere",
+because the place that commitment is written down is usually a test, not a type.

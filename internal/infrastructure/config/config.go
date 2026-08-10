@@ -14,6 +14,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
+
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
@@ -344,16 +346,7 @@ func redactDatabaseURL(dsn string) string {
 // needs when diagnosing an indexing outage or a failing JWKS fetch, and both values are always
 // parseable URLs (there is no keyword-DSN form to worry about), so the credential portion can
 // be removed precisely.
-func redactURLUserinfo(u string) string {
-	at := strings.LastIndexByte(u, '@')
-	if at < 0 {
-		return u // no userinfo: nothing to redact
-	}
-	if scheme := strings.Index(u, "://"); scheme >= 0 && scheme+3 <= at {
-		return u[:scheme+3] + "***@" + u[at+1:]
-	}
-	return "***@" + u[at+1:]
-}
+func redactURLUserinfo(u string) string { return redact.URLUserinfo(u) }
 
 // splitCSV parses a comma-separated env var into its non-empty, space-trimmed entries.
 //

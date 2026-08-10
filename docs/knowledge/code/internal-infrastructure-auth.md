@@ -138,12 +138,22 @@ outage, allowing everything is the hole this package closes.
 **Neither refusal renders the configured URL.** A URL can carry credentials in its
 userinfo, and `main.go` logs whatever `New` returns, so a rejected value printed verbatim
 writes a password into the startup log of every pod that fails to boot — where it survives
-rotation of the thing it protected. The scheme check prints `jwksURL.Redacted()`; the parse
+rotation of the thing it protected. The scheme check prints `redact.URL(jwksURL)`; the parse
 failure is *reported, not wrapped*, because `url.Parse`'s own error embeds the whole raw URL
 of its own accord — wrapping it leaks by inheritance rather than by formatting. Both name
 `JWKS_URL`, the config key, which is the part an operator needs.
 `TestNew_RejectionDoesNotLeakURLCredentials` covers both arms; the second exists because it
 is the one that looks safe.
+**The printable form is [`pkg/redact`](pkg-redact.md), not `url.URL.Redacted()`.** `Redacted()`
+masks the password and KEEPS the username, and this service treats a username in a
+credential-bearing URL as credential material — a basic-auth gateway issues the pair together,
+so printing half of it narrows an attacker's search. The same helper is used at every
+`jwksStatusGuard` formatting site, which matters more than the startup one: the startup URL is
+rendered once, while the guard renders `req.URL` on every failed refresh, so a misconfigured
+endpoint writes the same line on a loop.
+`TestJWKSStatusGuard_ErrorsDoNotLeakURLCredentials` covers all four fetch-error arms
+separately, because the leak is per-format-verb — fixing one and missing another leaves the
+credential in the logs just as often.
 
 `JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL` bypasses all of it and returns a fixed actor for
 any token; the name is deliberately unpleasant, the container logs a `WARN` on every boot

@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -436,9 +437,10 @@ func TestNew_ConfigHandling(t *testing.T) {
 // wrapped, which reads like lost detail until you know what the detail was.
 func TestNew_RejectionDoesNotLeakURLCredentials(t *testing.T) {
 	const secret = "hunter2"
+	const username = "svcuser"
 	for _, bad := range []string{
-		"ftp://user:" + secret + "@h/jwks", // parses; refused by the scheme check
-		"://user:" + secret + "@nope",      // does not parse
+		"ftp://" + username + ":" + secret + "@h/jwks", // parses; refused by the scheme check
+		"://" + username + ":" + secret + "@nope",      // does not parse
 	} {
 		_, err := New(Config{JWKSURL: bad, Audience: testAudience, Issuer: testIssuer})
 		if err == nil {
@@ -448,6 +450,78 @@ func TestNew_RejectionDoesNotLeakURLCredentials(t *testing.T) {
 			t.Errorf("the error for a URL with userinfo carries its password, and this "+
 				"error is logged at startup: %v", err)
 		}
+		// The username is credential material here, not an identifier: a JWKS endpoint
+		// behind a basic-auth gateway is issued the pair together. url.URL.Redacted()
+		// keeps it, which is why these sites use redact.URL instead.
+		if strings.Contains(err.Error(), username) {
+			t.Errorf("the error carries the userinfo USERNAME, which is half of the "+
+				"credential and is logged at startup: %v", err)
+		}
+	}
+}
+
+// TestJWKSStatusGuard_ErrorsDoNotLeakURLCredentials covers the fetch-time formatting sites.
+// The startup check above is one URL rendered once; the guard renders req.URL on every
+// failed refresh, so a misconfigured endpoint writes the same line on a loop. Each arm here
+// is a distinct error path, because the leak is per-format-verb: fixing one and missing
+// another leaves the credential in the logs just as often.
+func TestJWKSStatusGuard_ErrorsDoNotLeakURLCredentials(t *testing.T) {
+	const secret = "hunter2"
+	const username = "svcuser"
+
+	for _, tc := range []struct {
+		name    string
+		handler http.HandlerFunc
+	}{
+		{"non-2xx", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`upstream down`))
+		}},
+		{"undecodable 2xx", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`not json`))
+		}},
+		{"empty key set", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"keys":[]}`))
+		}},
+		{"oversize body", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write(bytes.Repeat([]byte("a"), jwksMaxBody+1))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(tc.handler)
+			defer srv.Close()
+
+			u, err := url.Parse(srv.URL + "/.well-known/jwks.json")
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			u.User = url.UserPassword(username, secret)
+
+			req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+			if err != nil {
+				t.Fatalf("new request: %v", err)
+			}
+			g := &jwksStatusGuard{next: http.DefaultTransport}
+			resp, err := g.RoundTrip(req)
+			if resp != nil {
+				_ = resp.Body.Close()
+			}
+			if err == nil {
+				t.Fatal("the guard accepted a response it must refuse")
+			}
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("password leaked into a per-refresh error: %v", err)
+			}
+			if strings.Contains(err.Error(), username) {
+				t.Errorf("userinfo username leaked into a per-refresh error: %v", err)
+			}
+			// The host has to survive: it is the only thing in these errors that tells an
+			// operator WHICH endpoint is misconfigured, and a redactor that ate it would
+			// be replaced by a raw print at the next outage.
+			if !strings.Contains(err.Error(), u.Host) {
+				t.Errorf("the error lost the host, leaving nothing diagnosable: %v", err)
+			}
+		})
 	}
 }
 
