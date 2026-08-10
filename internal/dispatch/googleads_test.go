@@ -2568,3 +2568,138 @@ func TestValidateGoogleAdsConnection_NoAccountSelected(t *testing.T) {
 		}
 	}
 }
+
+// TestGoogleAds_ToggleStatus_MalformedManagerIDIsClassified is the regression test for
+// LFXV2-3052.
+//
+// The stored-login_customer_id check used to sit inline in the discovery resolver, so only
+// the discovery endpoint ran it. The toggle path read the SAME column and handed it to the
+// SAME client, but uninspected: the value failed later inside client.validateLoginCustomerID,
+// during the call that talks to Google, and arrived here indistinguishable from an upstream
+// failure. The service layer's default arm then answered 503 — "the platform did not
+// respond", with an implied remedy of retrying — about a stored value that no amount of
+// retrying can repair.
+//
+// So the assertion that matters is the SENTINEL, not the message. The substring check alone
+// would have passed against the buggy version too, because the client's own validator
+// produces near-identical text; what it could not produce is the wrap that tells the handler
+// to answer 409. Both statuses are covered because ACTIVATE and PAUSE take different
+// pre-guard routes to the same resolver, and a check reachable from only one of them is the
+// same class of bug all over again.
+//
+// The API server fails the test if it is touched at all: a connection this broken must be
+// refused before anything is sent, or a refusal becomes an unconfirmed mutation.
+func TestGoogleAds_ToggleStatus_MalformedManagerIDIsClassified(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("reached Google Ads with an invalid stored login_customer_id (got %s %s)", r.Method, r.URL.Path)
+	}))
+	defer apiSrv.Close()
+
+	for _, status := range []string{"paused", "active"} {
+		t.Run(status, func(t *testing.T) {
+			conn := activeGoogleAdsConn(goodGoogleAdsCreds)
+			conn.ProviderConfig = map[string]string{"login_customer_id": "999-999-9999"}
+			d := NewGoogleAdsDispatcher(
+				fakeConnReader{conn: conn}, identityEncryptor{},
+				googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+			)
+			camp := &model.Campaign{
+				Platform:           model.ProviderGoogleAds,
+				PlatformCampaignID: "777",
+				Result:             json.RawMessage(`{"campaignId":"777","adGroupId":"888","adId":"999","keywordCriteriaIds":["kw-1"]}`),
+			}
+			err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, status)
+			if err == nil {
+				t.Fatal("expected a connection error, got nil")
+			}
+			if !errors.Is(err, domain.ErrProviderConfigInvalid) {
+				t.Errorf("error = %v, want errors.Is(err, domain.ErrProviderConfigInvalid): this "+
+					"sentinel is what names the specific defect in the handler's fixed reason "+
+					"vocabulary, so an unclassified error logs nothing an operator can act on", err)
+			}
+			if !errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Errorf("error = %v, want errors.Is(err, domain.ErrConnectionNotUsable): without "+
+					"the sentinel this falls to the handler's default arm and answers 503, "+
+					"promising that a retry might fix a stored value only a human can fix", err)
+			}
+			// A refusal that never reached Google changed nothing upstream, so it must not be
+			// reported as unconfirmed — that sends the caller reconciling a mutation that
+			// provably did not happen.
+			var unconfirmed interface{ Unconfirmed() bool }
+			if errors.As(err, &unconfirmed) && unconfirmed.Unconfirmed() {
+				t.Errorf("a pre-flight refusal must not be classified as unconfirmed, got %v", err)
+			}
+		})
+	}
+}
+
+// TestGoogleAds_Dispatch_MalformedManagerIDIsClassified is the toggle test's counterpart on
+// the path that spends money, and it exists because its absence is exactly why the create
+// path was missed when the shape check was hoisted into validatedLoginCustomerID: two of the
+// three readers of the stored login_customer_id had a test, and the third did not.
+//
+// What it asserts is NOT a status code, and the difference from the toggle test matters.
+// Create is queued work: dispatchOne collapses every dispatcher error into the same
+// "platform campaign creation failed" job result, so there is no 503 here to replace. An
+// unclassified failure costs claim semantics instead — and the client's own validator embeds
+// the raw manager id in its message with %q, which then lands in the dispatch-failure log
+// line the orchestrator writes on both the released- and retained-claim arms. A manager id is
+// account-identifying configuration; the rest of this path keeps error text to a fixed
+// sentinel vocabulary with no payload precisely so it can be logged.
+//
+// The two assertions unique to create are the last ones. NoUpstreamCreate must hold: nothing
+// was sent, so the orchestrator RELEASES the claim. The old path would have wrapped a
+// pre-send CreateCampaign failure (result==nil) with notCreated anyway, so claim semantics
+// were already correct; what this precheck adds is log hygiene (preventing the raw manager id
+// from being embedded in the error) and no unnecessary upstream API call. And the campaign
+// result must be nil, since a non-nil partial is this adapter's signal for "may exist upstream".
+func TestGoogleAds_Dispatch_MalformedManagerIDIsClassified(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("reached Google Ads with an invalid stored login_customer_id (got %s %s)", r.Method, r.URL.Path)
+	}))
+	defer apiSrv.Close()
+
+	conn := activeGoogleAdsConn(goodGoogleAdsCreds)
+	conn.ProviderConfig = map[string]string{"login_customer_id": "999-999-9999"}
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: conn}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds,
+		json.RawMessage(`{"googleAdsConfig":{"budget":50}}`))
+	if err == nil {
+		t.Fatalf("expected a connection error, got nil (campaign %+v)", camp)
+	}
+	if camp != nil {
+		t.Errorf("campaign = %+v, want nil: a non-nil result means \"may exist upstream\", and "+
+			"nothing was sent", camp)
+	}
+	if !errors.Is(err, domain.ErrProviderConfigInvalid) {
+		t.Errorf("error = %v, want errors.Is(err, domain.ErrProviderConfigInvalid): this sentinel "+
+			"names the specific defect in the handler's fixed reason vocabulary", err)
+	}
+	if !errors.Is(err, domain.ErrConnectionNotUsable) {
+		t.Errorf("error = %v, want errors.Is(err, domain.ErrConnectionNotUsable): without the "+
+			"sentinel this is reported as an upstream failure, promising that a retry might fix "+
+			"a stored value only a human can fix", err)
+	}
+	if strings.Contains(err.Error(), "999-999-9999") {
+		t.Errorf("error %q echoes the raw manager id; this text reaches the orchestrator's "+
+			"dispatch-failure log line, and an account identifier does not belong there", err)
+	}
+	var nuc interface{ NoUpstreamCreate() bool }
+	if !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+		t.Errorf("error = %v, want NoUpstreamCreate(): nothing was sent, so the orchestrator must "+
+			"release the claim — retaining it would wedge the (brief, platform) slot against the "+
+			"re-dispatch that fixing the stored row exists to enable", err)
+	}
+}
