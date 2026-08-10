@@ -159,30 +159,73 @@ func unusableConnectionReason(err error) string {
 	}
 }
 
-func (s *ConnectionService) ListGoogleAdsAccounts(ctx context.Context, p *conn.ListGoogleAdsAccountsPayload) (*conn.ListGoogleAdsAccountsResult, error) {
+// accountDiscovery is everything about the account-discovery endpoints that differs
+// between providers, which is the provider constant and the caller-facing wording.
+//
+// The wording is in here rather than shared because it is the one part that MUST differ:
+// the not-usable 400 names the fields an operator has to go and check, and Google's set
+// (login_customer_id) and Meta's set (accessToken) have nothing in common. Handing a Meta
+// operator Google's remedy sends them looking for a field their connection does not have,
+// and every status-code assertion in the tests passes while it does — which is why
+// TestListMetaAdsAccounts_MessagesNameMetaNotGoogleAds asserts the text.
+//
+// Nothing about the STATUS MAPPING is in here, deliberately: that is the part which must
+// not vary (see listAccounts).
+type accountDiscovery struct {
+	provider    model.Provider
+	displayName string
+	// notUsableRemedy completes "the stored <displayName> connection cannot be used as
+	// configured: ..." and is the only actionable thing the caller is told, since the
+	// underlying cause is credential-derived and never leaves the process.
+	notUsableRemedy string
+}
+
+var googleAdsAccountDiscovery = accountDiscovery{
+	provider:    model.ProviderGoogleAds,
+	displayName: "google ads",
+	notUsableRemedy: "check that it is active, that the stored credential is valid json with " +
+		"every field set, and that login_customer_id is digits only",
+}
+
+var metaAdsAccountDiscovery = accountDiscovery{
+	provider:    model.ProviderMetaAds,
+	displayName: "meta ads",
+	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
+		"with accessToken set",
+}
+
+// listAccounts is the whole of account discovery except the strings that name the provider.
+//
+// Sharing it is not only de-duplication: the status mapping below encodes several judgements
+// that are easy to get subtly wrong per provider — a 404 rather than 503 for a connection
+// that does not exist, a 500 that logs but does not echo a decryption failure, a 400 rather
+// than 503 for a connection no amount of waiting will fix — and a second copy is where one
+// of them quietly diverges. Every provider that gains discovery gets the arms that were
+// reasoned about here, or none of them.
+func (s *ConnectionService) listAccounts(ctx context.Context, projectID string, d accountDiscovery) ([]*conn.AccessibleAccount, error) {
 	// The SEVENTH endpoint taking a caller-supplied project_id, and the only one not
 	// reaching the repo through a helper in connection_handler.go — which is why it was
 	// missed. Left open, GET on the reserved scope decrypts the LF credential and
 	// enumerates the Linux Foundation's own ad accounts. A project with NO connection still
 	// sees those accounts under its OWN id, deliberately (dispatch/creds.go); addressing
 	// the reserved scope directly is the different thing, and it is rejected.
-	if err := rejectSystemScope(p.ProjectID); err != nil {
+	if err := rejectSystemScope(projectID); err != nil {
 		return nil, err
 	}
 	_, _, orch, err := s.resolveBackendWithOrch()
 	if err != nil {
 		return nil, err
 	}
-	accounts, aerr := orch.ReadAccounts(ctx, p.ProjectID, model.ProviderGoogleAds)
+	accounts, aerr := orch.ReadAccounts(ctx, projectID, d.provider)
 	if aerr != nil {
 		switch {
 		case errors.Is(aerr, ErrAccountsUnsupported):
 			return nil, &conn.BadRequestError{Code: "400", Message: "account discovery is not supported for this platform"}
 		case errors.Is(aerr, domain.ErrNotFound):
-			// The project has no stored Google Ads connection. That is a client-side
+			// The project has no stored connection for this provider. That is a client-side
 			// state error, not a platform outage — reporting 503 would tell the caller
 			// to retry something that can never succeed until a connection exists.
-			return nil, &conn.NotFoundError{Code: "404", Message: "no google ads connection configured for this project"}
+			return nil, &conn.NotFoundError{Code: "404", Message: "no " + d.displayName + " connection configured for this project"}
 		case errors.Is(aerr, domain.ErrCredentialDecryptionFailed):
 			// A blob long enough to BE our own output that nonetheless failed authenticated
 			// decryption. Two causes reach here and they have opposite blast radii:
@@ -216,13 +259,13 @@ func (s *ConnectionService) ListGoogleAdsAccounts(ctx context.Context, p *conn.L
 			// failures spread across many projects, i.e. the deployment-wide reading this
 			// arm must not assert. Origin is carried by ErrSystemConnectionOrigin, separate
 			// from the usability sentinels, because this error is not a usability defect.
-			credentialProject := p.ProjectID
+			credentialProject := projectID
 			if errors.Is(aerr, domain.ErrSystemConnectionOrigin) {
 				credentialProject = model.SystemProjectID
 			}
 			slog.ErrorContext(ctx, "stored credentials failed authenticated decryption; check the application encryption key, and whether this is one row or every connection",
-				"project_id", credentialProject, "requested_by_project_id", p.ProjectID,
-				"provider", string(model.ProviderGoogleAds), "error", aerr)
+				"project_id", credentialProject, "requested_by_project_id", projectID,
+				"provider", string(d.provider), "error", aerr)
 			return nil, &conn.InternalServerError{Code: "500", Message: "account discovery could not be completed"}
 		case errors.Is(aerr, domain.ErrSystemConnectionNotUsable):
 			// The project has no connection of its own and the LF system row it fell back
@@ -231,7 +274,7 @@ func (s *ConnectionService) ListGoogleAdsAccounts(ctx context.Context, p *conn.L
 			// but an operator can act, so page one and say nothing specific to the caller.
 			// The reason is safe to log; the error itself is not (see the arm below).
 			slog.ErrorContext(ctx, "the LF system connection is not usable; account discovery is failing for every project without its own connection",
-				"provider", string(model.ProviderGoogleAds), "reason", unusableConnectionReason(aerr))
+				"provider", string(d.provider), "reason", unusableConnectionReason(aerr))
 			return nil, &conn.InternalServerError{Code: "500", Message: "account discovery could not be completed"}
 		case errors.Is(aerr, domain.ErrConnectionNotUsable):
 			// The connection EXISTS but cannot be used as it stands — inactive, an
@@ -257,17 +300,17 @@ func (s *ConnectionService) ListGoogleAdsAccounts(ctx context.Context, p *conn.L
 			// the dispatch layer wraps a reason sentinel precisely so this line stays
 			// actionable, and a fixed token is what an alert or a grep wants anyway. The
 			// response body names the remedy surface, which is the same for all of them.
-			slog.WarnContext(ctx, "google ads connection is not usable for account discovery",
-				"project_id", p.ProjectID, "reason", unusableConnectionReason(aerr))
+			slog.WarnContext(ctx, "connection is not usable for account discovery",
+				"project_id", projectID, "provider", string(d.provider),
+				"reason", unusableConnectionReason(aerr))
 			return nil, &conn.BadRequestError{
 				Code: "400",
-				Message: "the stored google ads connection cannot be used as configured: check that it " +
-					"is active, that the stored credential is valid json with every field set, and " +
-					"that login_customer_id is digits only",
+				Message: "the stored " + d.displayName + " connection cannot be used as configured: " +
+					d.notUsableRemedy,
 			}
 		default:
-			slog.WarnContext(ctx, "account discovery failed on google ads",
-				"project_id", p.ProjectID, "error", aerr)
+			slog.WarnContext(ctx, "account discovery failed upstream",
+				"project_id", projectID, "provider", string(d.provider), "error", aerr)
 			return nil, &conn.ConnServiceUnavailableError{Code: "503", Message: "account discovery could not be completed"}
 		}
 	}
@@ -283,7 +326,28 @@ func (s *ConnectionService) ListGoogleAdsAccounts(ctx context.Context, p *conn.L
 			Label: &label,
 		})
 	}
-	return &conn.ListGoogleAdsAccountsResult{Accounts: connAccounts}, nil
+	return connAccounts, nil
+}
+
+func (s *ConnectionService) ListGoogleAdsAccounts(ctx context.Context, p *conn.ListGoogleAdsAccountsPayload) (*conn.ListGoogleAdsAccountsResult, error) {
+	accounts, err := s.listAccounts(ctx, p.ProjectID, googleAdsAccountDiscovery)
+	if err != nil {
+		return nil, err
+	}
+	return &conn.ListGoogleAdsAccountsResult{Accounts: accounts}, nil
+}
+
+// ListMetaAdsAccounts enumerates the ad accounts the stored Meta credential reaches.
+//
+// Meta's account ids arrive act_-prefixed and are returned that way: that is the form the
+// connection stores and the form every account-scoped Meta path is built from, so the answer
+// is directly assignable rather than needing the caller to reconstruct it.
+func (s *ConnectionService) ListMetaAdsAccounts(ctx context.Context, p *conn.ListMetaAdsAccountsPayload) (*conn.ListMetaAdsAccountsResult, error) {
+	accounts, err := s.listAccounts(ctx, p.ProjectID, metaAdsAccountDiscovery)
+	if err != nil {
+		return nil, err
+	}
+	return &conn.ListMetaAdsAccountsResult{Accounts: accounts}, nil
 }
 
 // ─── LinkedinAds ───

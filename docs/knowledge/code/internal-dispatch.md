@@ -265,7 +265,7 @@ permanent X API constraint documented in the knowledge base. Spend is returned b
 `GoogleAdsDispatcher.ListAccounts(ctx, projectID, platform) ([]model.AccessibleAccount, error)`
 enumerates the ad accounts reachable **upstream at the provider** with the connection's stored
 credential. It exists so an operator configuring a connection can pick the right account instead
-of pasting a customer ID by hand.
+of pasting a customer ID by hand. `MetaDispatcher.ListAccounts` is the second implementation.
 
 **Now fully wired.** The adapter landed one PR ahead of its caller; both halves are present as of
 this change. `internal/service/orchestrator.go` declares `AccountLister` alongside `StatusToggler`
@@ -298,6 +298,40 @@ discovery. `resolveGoogleAdsDiscoveryClient` tags the one that is not about the 
 all: a `login_customer_id` stored with dashes. Reading either as "the resolver wraps every
 pre-send failure" would suggest the campaign paths are unclassified, which is the opposite of
 what happens.
+
+### Meta
+
+`MetaDispatcher.ListAccounts` follows the same contract, through
+`resolveMetaDiscoveryClient`, and the differences are the interesting part.
+
+**The account id is not consulted, and `AccountConfig` is left zero.** Graph
+`GET /me/adaccounts` asks what the TOKEN reaches, so scoping the client to one of the answers
+would narrow the response to a subset of the question. Requiring an account id would also make
+the endpoint reachable only by connections that no longer need it.
+
+**Only re-pointing is reachable today.** The resolver is already correct for first-time
+bootstrap — credentials stored, account chosen afterwards, the way Google Ads works — but
+`MetaAdsConnectionConfig` still declares `Required("account_id")`, so that create is a 400
+before any of this code runs. Closing it is not a one-line loosening: only
+`resolveGoogleAdsClient` tags an empty account id with `domain.ErrAccountNotSelected`, so a
+Meta connection parked mid-bootstrap would answer the status toggle and metrics read with a
+generic error instead of the 409 that names the missing choice. Tracked as LFXV2-3061.
+
+**The unmarshal cause on the decrypted blob is DROPPED, not wrapped.** It is the only value in
+the resolver derived from decrypted plaintext, and this error is logged and, on the not-usable
+arm, described to the caller. Today's `encoding/json` happens not to quote the offending bytes
+for a struct of string fields, but that is a behaviour rather than a documented guarantee and
+it does not hold for every field type. `TestMeta_ListAccounts_UndecodableBlobDropsTheUnmarshalCause`
+asserts the error text is EXACTLY the two sentinels — asserting merely that it does not contain
+the secret would not bind, because it passes with the cause appended.
+
+**Known-bad accounts are returned, not filtered.** Disabled, unsettled, pending-review,
+pending-settlement, grace-period and closed accounts come back with the reason in the label
+(`"LF Events (disabled)"`). This is a picker: dropping them answers "your token reaches no ad
+accounts" about an account sitting right there. The label reuses
+`inactiveAccountStatusLabels`, the same map `CreateCampaign`'s preflight refuses on, so the
+picker and the create path cannot disagree about which accounts are known-bad. `account_status`
+0 means the field was absent, which is not a claim of disabled, and gets no label.
 
 The manager-id check is duplicated on purpose. `Client.validateLoginCustomerID` still validates it
 (the backstop for every other caller), but it does so inside the same call that talks to Google, so

@@ -833,7 +833,7 @@ paths:
                             audience:
                                 inclusion_summary: Dolorem sapiente.
                                 platform: hubspot
-                                platform_master_list_id: Aperiam dolorem molestias natus velit.
+                                platform_master_list_id: Dolorem molestias natus velit.
                                 status: failed
                                 suppression_list_ids:
                                     - Dolorum odit est.
@@ -3806,6 +3806,78 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/connection-meta-ads/accounts:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-meta-ads-accounts lfx-v2-campaign-service-connections
+            description: Enumerate the Meta ad accounts accessible via the stored connection credential. Returns act_-prefixed account ids, ready to store as the connection's account_id. Accounts Meta reports as disabled, unsettled or closed are included with the reason in their label rather than filtered out, so the caller can see why an account they expected cannot be used.
+            operationId: lfx-v2-campaign-service-connections#list-meta-ads-accounts
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListGoogleAdsAccountsResponseBody'
+                            example:
+                                accounts:
+                                    - id: "8666746580"
+                                      label: Iste et aspernatur delectus.
+                                    - id: "8666746580"
+                                      label: Iste et aspernatur delectus.
+                                    - id: "8666746580"
+                                      label: Iste et aspernatur delectus.
+                                    - id: "8666746580"
+                                      label: Iste et aspernatur delectus.
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/connection-meta-ads/set-credential:
         post:
             tags:
@@ -5865,7 +5937,7 @@ components:
                 inclusion_summary:
                     type: string
                     description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
-                    example: Harum nisi illo quia.
+                    example: Aliquid consectetur.
                 platform:
                     type: string
                     description: Platform the audience is built on
@@ -5875,11 +5947,11 @@ components:
                 platform_master_list_id:
                     type: string
                     description: Pointer to the built master list in the platform (empty until built)
-                    example: Aut vitae est est.
+                    example: Est est voluptatum nobis.
                 status:
                     type: string
                     description: Build lifecycle status
-                    example: built
+                    example: building
                     enum:
                         - building
                         - built
@@ -5888,20 +5960,20 @@ components:
                     type: array
                     items:
                         type: string
-                        example: Nobis ipsam blanditiis commodi accusamus maxime.
+                        example: Blanditiis commodi.
                     description: Platform suppression list ids applied to the master
                     example:
-                        - Sed eum ad sunt.
-                        - Sint recusandae iusto aspernatur fugit et facere.
-                        - Provident quisquam sit ut aliquid consectetur.
+                        - Sint quia sed eum.
+                        - Sunt impedit sint recusandae iusto aspernatur fugit.
+                        - Facere eligendi provident quisquam sit.
             example:
-                inclusion_summary: Et ad et.
+                inclusion_summary: Fuga et id voluptatem et et et.
                 platform: hubspot
-                platform_master_list_id: Voluptate quam delectus optio.
-                status: built
+                platform_master_list_id: Illo quia assumenda aut in voluptate.
+                status: failed
                 suppression_list_ids:
-                    - Aliquam vel cum alias iusto.
-                    - Fuga et id voluptatem et et et.
+                    - Optio saepe ducimus aliquam vel.
+                    - Alias iusto.
             required:
                 - platform
         AudienceUpdateInput:
@@ -5918,7 +5990,7 @@ components:
                 platform_master_list_id:
                     type: string
                     description: Pointer to the built master list in the platform (empty until built)
-                    example: Dolor quia et.
+                    example: Ad et doloribus ex dolor quia.
                 status:
                     type: string
                     description: Build lifecycle status
@@ -5931,7 +6003,7 @@ components:
                     type: array
                     items:
                         type: string
-                        example: Commodi distinctio ea dignissimos ab.
+                        example: Dolores commodi distinctio ea dignissimos ab.
                     description: Platform suppression list ids applied to the master
                     example:
                         - Consequatur laboriosam.
@@ -7023,7 +7095,7 @@ components:
                 audience:
                     inclusion_summary: Dolorem sapiente.
                     platform: hubspot
-                    platform_master_list_id: Aperiam dolorem molestias natus velit.
+                    platform_master_list_id: Dolorem molestias natus velit.
                     status: failed
                     suppression_list_ids:
                         - Dolorum odit est.

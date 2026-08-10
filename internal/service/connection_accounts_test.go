@@ -474,6 +474,9 @@ func TestListGoogleAdsAccounts_ProviderFailureIs503(t *testing.T) {
 // ErrAccountsUnsupported like mockDispatcher does.
 type mockAccountListerDispatcher struct {
 	accounts []model.AccessibleAccount
+	// gotPlatform records the provider the handler passed down, so a test can distinguish
+	// "the right dispatcher answered" from "some dispatcher answered".
+	gotPlatform model.Provider
 	// err, when set, is returned instead of accounts — used to exercise the handler's
 	// error classification (missing connection vs. platform failure).
 	err error
@@ -484,6 +487,10 @@ func (m *mockAccountListerDispatcher) Dispatch(ctx context.Context, brief *model
 }
 
 func (m *mockAccountListerDispatcher) ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error) {
+	// Recorded so a caller can prove WHICH provider the handler asked for. Every status
+	// assertion in this file passes with the wrong provider constant wired, because the
+	// orchestrator would then reach a different dispatcher that answers just as well.
+	m.gotPlatform = platform
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -595,5 +602,160 @@ func TestListGoogleAdsAccounts_DecryptionFailureNamesTheRowThatFailed(t *testing
 	// system scope, which is the exact regression it exists to catch.
 	if line := buf.String(); !strings.Contains(line, " project_id=cncf") {
 		t.Errorf("project's own row was not named as its own: %q", line)
+	}
+}
+
+// ─── Meta Ads account discovery ───
+//
+// The Meta handler is three lines over the same listAccounts helper the Google Ads handler
+// uses, so the status mapping is not re-tested here — it is the SAME code, and a second copy
+// of those eleven tests would only assert that Go still calls the function it was given. What
+// is genuinely per-provider is the two-field accountDiscovery descriptor, and that is exactly
+// what the tests below pin, because nothing else in the suite can tell a mis-wired descriptor
+// from a correct one: every status code is identical either way.
+
+// TestListMetaAdsAccounts_QueriesTheMetaDispatcher pins the provider constant in
+// metaAdsAccountDiscovery.
+//
+// The Google Ads dispatcher registered alongside is the whole point: it is an ordinary
+// PlatformDispatcher with NO ListAccounts, so if the descriptor named ProviderGoogleAds the
+// call would reach it and come back ErrAccountsUnsupported — a 400, which no status-code
+// assertion in this file would flag as wrong for a Meta connection. Asserting the recorded
+// platform closes that, and asserting the ids come back untouched closes the other half:
+// act_-prefixed is the form the connection column stores, so a handler that stripped or
+// re-added the prefix would hand the UI a value that fails on PUT.
+func TestListMetaAdsAccounts_QueriesTheMetaDispatcher(t *testing.T) {
+	lister := &mockAccountListerDispatcher{
+		accounts: []model.AccessibleAccount{
+			{ID: "act_123456789", Label: "LF Foundation Ads"},
+			{ID: "act_987654321", Label: "CNCF Ads (disabled)"},
+		},
+	}
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	svc.SetOrchestrator(&Orchestrator{
+		dispatchers: map[model.Provider]PlatformDispatcher{
+			model.ProviderMetaAds:   lister,
+			model.ProviderGoogleAds: &mockDispatcher{},
+		},
+	})
+
+	result, err := svc.ListMetaAdsAccounts(context.Background(), &conn.ListMetaAdsAccountsPayload{ProjectID: "p"})
+	if err != nil {
+		t.Fatalf("ListMetaAdsAccounts failed: %v", err)
+	}
+	if lister.gotPlatform != model.ProviderMetaAds {
+		t.Fatalf("dispatcher was asked for provider %q, want %q — the descriptor names the wrong provider",
+			lister.gotPlatform, model.ProviderMetaAds)
+	}
+	wantIDs := []string{"act_123456789", "act_987654321"}
+	if len(result.Accounts) != len(wantIDs) {
+		t.Fatalf("expected %d accounts, got %d", len(wantIDs), len(result.Accounts))
+	}
+	for i, got := range result.Accounts {
+		if got.ID != wantIDs[i] {
+			t.Errorf("account %d: id = %q, want %q — the act_ prefix is the stored form and must survive verbatim",
+				i, got.ID, wantIDs[i])
+		}
+	}
+}
+
+// TestListMetaAdsAccounts_MessagesNameMetaNotGoogleAds pins the caller-facing half of the
+// descriptor.
+//
+// Both handlers reach the identical switch, so a Meta endpoint wired to
+// googleAdsAccountDiscovery answers every request with the right STATUS and the wrong TEXT:
+// a 404 saying no google ads connection exists on a project that has a Meta one, and a 400
+// telling the operator to check `login_customer_id`, a field a Meta connection does not
+// have. Neither is detectable from the status code, and the operator's next action is
+// entirely determined by the text — so the text is the assertion.
+func TestListMetaAdsAccounts_MessagesNameMetaNotGoogleAds(t *testing.T) {
+	newSvc := func(dispatchErr error) *ConnectionService {
+		svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+		svc.SetOrchestrator(&Orchestrator{
+			dispatchers: map[model.Provider]PlatformDispatcher{
+				model.ProviderMetaAds: &mockAccountListerDispatcher{err: dispatchErr},
+			},
+		})
+		return svc
+	}
+
+	t.Run("404 names meta", func(t *testing.T) {
+		_, err := newSvc(domain.ErrNotFound).ListMetaAdsAccounts(context.Background(),
+			&conn.ListMetaAdsAccountsPayload{ProjectID: "p"})
+		notFound, ok := err.(*conn.NotFoundError)
+		if !ok {
+			t.Fatalf("expected NotFoundError, got %T: %v", err, err)
+		}
+		if !strings.Contains(notFound.Message, "meta ads") {
+			t.Errorf("message = %q, want it to name meta ads", notFound.Message)
+		}
+		if strings.Contains(notFound.Message, "google") {
+			t.Errorf("message = %q names google ads on the meta endpoint", notFound.Message)
+		}
+	})
+
+	t.Run("400 names the fields a meta connection actually has", func(t *testing.T) {
+		wrapped := fmt.Errorf("%w: %w: meta credentials need accessToken",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
+		_, err := newSvc(wrapped).ListMetaAdsAccounts(context.Background(),
+			&conn.ListMetaAdsAccountsPayload{ProjectID: "p"})
+		badRequest, ok := err.(*conn.BadRequestError)
+		if !ok {
+			t.Fatalf("expected BadRequestError, got %T: %v", err, err)
+		}
+		if !strings.Contains(badRequest.Message, "accessToken") {
+			t.Errorf("remedy = %q, want it to name accessToken — the only credential field a meta connection has",
+				badRequest.Message)
+		}
+		if strings.Contains(badRequest.Message, "login_customer_id") {
+			t.Errorf("remedy = %q sends a meta operator looking for a google ads field", badRequest.Message)
+		}
+		// Same discipline as the Google arm: the cause is credential-derived and neither
+		// returned nor logged.
+		if strings.Contains(badRequest.Message, "accessToken\"") || strings.Contains(badRequest.Message, "need accessToken") {
+			t.Errorf("message %q echoes the wrapped cause", badRequest.Message)
+		}
+	})
+}
+
+// TestListAccounts_RejectsTheReservedSystemScope covers BOTH discovery endpoints in one
+// table, because the guard is the first statement of the shared helper and adding a third
+// provider must not require remembering to add a third test.
+//
+// The reserved scope is unaddressable by design: a GET on it would decrypt the LF system
+// credential and enumerate the Linux Foundation's own ad accounts for whoever asked. The
+// rejection has to happen before resolveBackendWithOrch, so a service with NO orchestrator
+// wired still rejects rather than answering 503 — which is what the assertion below relies
+// on to prove the guard runs first.
+func TestListAccounts_RejectsTheReservedSystemScope(t *testing.T) {
+	cases := []struct {
+		name string
+		call func(*ConnectionService) error
+	}{
+		{"google ads", func(s *ConnectionService) error {
+			_, err := s.ListGoogleAdsAccounts(context.Background(),
+				&conn.ListGoogleAdsAccountsPayload{ProjectID: model.SystemProjectID})
+			return err
+		}},
+		{"meta ads", func(s *ConnectionService) error {
+			_, err := s.ListMetaAdsAccounts(context.Background(),
+				&conn.ListMetaAdsAccountsPayload{ProjectID: model.SystemProjectID})
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Deliberately no orchestrator: if the guard moved below resolveBackendWithOrch
+			// this would be a 503 and the reserved scope would be reachable the moment the
+			// service finished warming up.
+			err := tc.call(NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{}))
+			if _, ok := err.(*conn.ConnServiceUnavailableError); ok {
+				t.Fatalf("got 503, want the system-scope rejection — the guard is running after "+
+					"the backend check, so the reserved scope is reachable on a warm service: %v", err)
+			}
+			if err == nil {
+				t.Fatal("the reserved system scope was accepted")
+			}
+		})
 	}
 }

@@ -736,3 +736,217 @@ func TestMeta_ReadMetrics_InactiveConnectionErrors(t *testing.T) {
 		t.Fatal("expected an error for an inactive connection")
 	}
 }
+
+// ---- account discovery ----------------------------------------------------
+
+// metaAccountsServer serves one page of GET /me/adaccounts with the given JSON entries and
+// records the path it was asked for.
+func metaAccountsServer(t *testing.T, entries string, gotPath *string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if gotPath != nil {
+			*gotPath = r.URL.Path
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[`+entries+`]}`)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestMeta_ListAccounts_AsksAboutTheTokenNotTheAccount pins the account-agnostic request
+// path.
+//
+// The connection fixture carries `act_777`, and every other Meta call this dispatcher makes
+// is scoped to that id. Discovery must not be: the question is "which accounts does this
+// token reach?", and scoping it to one of the answers would narrow the response to a subset
+// of the question. A regression here does not fail loudly — it returns a plausible one-account
+// list — so the path itself is the assertion.
+func TestMeta_ListAccounts_AsksAboutTheTokenNotTheAccount(t *testing.T) {
+	var gotPath string
+	srv := metaAccountsServer(t, `{"id":"act_111","name":"Alpha","account_status":1}`, &gotPath)
+
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL))
+	accounts, err := d.ListAccounts(context.Background(), "proj", model.ProviderMetaAds)
+	if err != nil {
+		t.Fatalf("ListAccounts: %v", err)
+	}
+	if !strings.HasSuffix(gotPath, "/me/adaccounts") {
+		t.Errorf("path = %q, want the account-agnostic /me/adaccounts", gotPath)
+	}
+	if strings.Contains(gotPath, "act_777") {
+		t.Errorf("path = %q is scoped to the connection's stored account; discovery asks about the token", gotPath)
+	}
+	if len(accounts) != 1 || accounts[0].ID != "act_111" {
+		t.Fatalf("accounts = %+v, want the one discovered act_ id verbatim", accounts)
+	}
+}
+
+// TestMeta_ListAccounts_WorksBeforeAnAccountIsChosen pins the omission that makes discovery
+// useful. The resolver deliberately does not check the account id: a connection that has one
+// does not need to ask which accounts exist, so requiring one would make the endpoint
+// reachable only by callers who no longer have the question.
+//
+// Only re-pointing reaches this today — MetaAdsConnectionConfig still requires account_id at
+// create — but the resolver is already correct for first-time bootstrap, which is why
+// LFXV2-3061 is a change to the config and the account-needing paths, not to this function.
+func TestMeta_ListAccounts_WorksBeforeAnAccountIsChosen(t *testing.T) {
+	srv := metaAccountsServer(t, `{"id":"act_222","name":"Beta","account_status":1}`, nil)
+
+	c := activeMetaConn(goodMetaCreds)
+	c.AccountID = "" // not chosen yet — the exact state discovery exists to resolve
+
+	d := NewMetaDispatcher(fakeConnReader{conn: c}, identityEncryptor{}, meta.WithBaseURL(srv.URL))
+	accounts, err := d.ListAccounts(context.Background(), "proj", model.ProviderMetaAds)
+	if err != nil {
+		t.Fatalf("discovery must work with no account id chosen yet, got: %v", err)
+	}
+	if len(accounts) != 1 || accounts[0].ID != "act_222" {
+		t.Errorf("accounts = %+v, want the one discovered account", accounts)
+	}
+}
+
+// TestMeta_ListAccounts_KnownBadAccountsAreLabelledNotDropped pins the picker contract.
+//
+// Dropping a disabled account answers "your token reaches no ad accounts" about an account
+// sitting right there, sending the user to look for a permissions problem that does not
+// exist. Returning it with the reason in the label is the only outcome that lets them see why
+// the account they expected cannot be used — and it is the same map CreateCampaign's preflight
+// refuses on, so the picker and the create path cannot disagree.
+//
+// The last two cases are the ones a naive "label everything non-1" would get wrong: status 0
+// means Meta omitted the field, which is not a claim of disabled, and an unnamed account must
+// fall back to its id because a blank row in a picker is unpickable.
+func TestMeta_ListAccounts_KnownBadAccountsAreLabelledNotDropped(t *testing.T) {
+	srv := metaAccountsServer(t, `
+		{"id":"act_1","name":"Active One","account_status":1},
+		{"id":"act_2","name":"Disabled One","account_status":2},
+		{"id":"act_3","name":"Unsettled One","account_status":3},
+		{"id":"act_4","name":"Closed One","account_status":101},
+		{"id":"act_5","name":"Status Absent"},
+		{"id":"act_6","account_status":2}`, nil)
+
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL))
+	accounts, err := d.ListAccounts(context.Background(), "proj", model.ProviderMetaAds)
+	if err != nil {
+		t.Fatalf("ListAccounts: %v", err)
+	}
+	want := []model.AccessibleAccount{
+		{ID: "act_1", Label: "Active One"},
+		{ID: "act_2", Label: "Disabled One (disabled)"},
+		{ID: "act_3", Label: "Unsettled One (unsettled)"},
+		{ID: "act_4", Label: "Closed One (closed)"},
+		{ID: "act_5", Label: "Status Absent"},
+		{ID: "act_6", Label: "act_6 (disabled)"},
+	}
+	if len(accounts) != len(want) {
+		t.Fatalf("got %d accounts, want %d — a known-bad account was filtered out: %+v", len(accounts), len(want), accounts)
+	}
+	for i, w := range want {
+		if accounts[i] != w {
+			t.Errorf("account %d = %+v, want %+v", i, accounts[i], w)
+		}
+	}
+}
+
+// TestMeta_ListAccounts_UndecodableBlobDropsTheUnmarshalCause pins the one value in the
+// resolver derived from DECRYPTED plaintext.
+//
+// The error reaches the discovery handler, which logs it and describes the not-usable arm to
+// the caller. Today's encoding/json happens not to quote the offending bytes for a struct of
+// string fields, but that is a behaviour rather than a documented guarantee and it does not
+// hold for every field type — a number decoded into a numeric field appears verbatim.
+//
+// The assertion is that the text is EXACTLY the two sentinels. Merely asserting that it does
+// not contain the secret would not bind: that passes with the cause appended, and the whole
+// point is to remove the class rather than to check one instance of it.
+func TestMeta_ListAccounts_UndecodableBlobDropsTheUnmarshalCause(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("reached Meta with an undecodable credential blob")
+	}))
+	defer srv.Close()
+
+	c := activeMetaConn(`{"AccessToken": SUPER-SECRET-PLAINTEXT}`)
+	d := NewMetaDispatcher(fakeConnReader{conn: c}, identityEncryptor{}, meta.WithBaseURL(srv.URL))
+
+	_, err := d.ListAccounts(context.Background(), "proj", model.ProviderMetaAds)
+	if err == nil {
+		t.Fatal("an undecodable credential blob must not reach Meta")
+	}
+	want := domain.ErrConnectionNotUsable.Error() + ": " + domain.ErrCredentialsUndecodable.Error()
+	if err.Error() != want {
+		t.Errorf("error = %q, want exactly %q — anything appended is derived from decrypted plaintext",
+			err.Error(), want)
+	}
+	if !errors.Is(err, domain.ErrConnectionNotUsable) || !errors.Is(err, domain.ErrCredentialsUndecodable) {
+		t.Error("both sentinels must survive: the first is how the handler answers 400 rather than 503, " +
+			"the second is the fixed token it logs in place of the cause")
+	}
+}
+
+// TestMeta_ListAccounts_StillRejectsUnusableConnections pins the other half of dropping the
+// account-id requirement: the rest of the connection contract must survive.
+//
+// Each case must satisfy errors.Is(err, domain.ErrConnectionNotUsable). That is not
+// decoration — it is the ONLY thing the service layer has to tell "this connection needs
+// editing" (400) from "Meta did not answer" (503). Without the wrap every case here lands in
+// the default arm and becomes a 503: a promise that retrying might help, made about
+// conditions that cannot change until a human edits the connection. A substring assertion on
+// the message would not catch that, because the message is identical either way.
+//
+// The missing-connection case is deliberately the opposite: it must NOT be tagged, because
+// domain.ErrNotFound is what the handler turns into a 404, and flattening it into "not
+// usable" would tell a caller with no connection at all to go and edit one.
+func TestMeta_ListAccounts_StillRejectsUnusableConnections(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("reached Meta with an unusable connection")
+	}))
+	defer srv.Close()
+
+	cases := []struct {
+		name        string
+		repo        connReader
+		wantReason  error
+		wantNotUsab bool
+	}{
+		{
+			name: "inactive connection",
+			repo: func() connReader {
+				c := activeMetaConn(goodMetaCreds)
+				c.Status = model.StatusInactive
+				return fakeConnReader{conn: c}
+			}(),
+			wantReason:  domain.ErrConnectionInactive,
+			wantNotUsab: true,
+		},
+		{
+			name:        "credentials with no access token",
+			repo:        fakeConnReader{conn: activeMetaConn(`{"AccessToken":"   "}`)},
+			wantReason:  domain.ErrCredentialsIncomplete,
+			wantNotUsab: true,
+		},
+		{
+			name:        "no connection at all",
+			repo:        fakeConnReader{err: domain.ErrNotFound},
+			wantReason:  domain.ErrNotFound,
+			wantNotUsab: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := NewMetaDispatcher(tc.repo, identityEncryptor{}, meta.WithBaseURL(srv.URL))
+			_, err := d.ListAccounts(context.Background(), "proj", model.ProviderMetaAds)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !errors.Is(err, tc.wantReason) {
+				t.Errorf("error %v does not carry %v; the handler classifies on the sentinel, not the text", err, tc.wantReason)
+			}
+			if got := errors.Is(err, domain.ErrConnectionNotUsable); got != tc.wantNotUsab {
+				t.Errorf("errors.Is(err, ErrConnectionNotUsable) = %v, want %v — this decides 400 vs 404/503", got, tc.wantNotUsab)
+			}
+		})
+	}
+}

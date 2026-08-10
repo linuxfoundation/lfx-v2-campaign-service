@@ -2990,6 +2990,63 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/connection-meta-ads/accounts:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-meta-ads-accounts lfx-v2-campaign-service-connections
+            description: Enumerate the Meta ad accounts accessible via the stored connection credential. Returns act_-prefixed account ids, ready to store as the connection's account_id. Accounts Meta reports as disabled, unsettled or closed are included with the reason in their label rather than filtered out, so the caller can see why an account they expected cannot be used.
+            operationId: lfx-v2-campaign-service-connections#list-meta-ads-accounts
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/LfxV2CampaignServiceConnectionsListMetaAdsAccountsResponseBody'
+                        required:
+                            - accounts
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/connection-meta-ads/set-credential:
         post:
             tags:
@@ -4409,11 +4466,11 @@ definitions:
             brief_id:
                 type: string
                 description: Owning brief
-                example: Et quam totam.
+                example: Error eos repudiandae voluptate.
             id:
                 type: string
                 description: Audience UUID
-                example: Facere iste.
+                example: Iste et alias quis magni ad.
             inclusion_summary:
                 type: string
                 description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
@@ -4427,11 +4484,11 @@ definitions:
             platform_master_list_id:
                 type: string
                 description: Pointer to the built master list in the platform (empty until built)
-                example: Repudiandae voluptate est enim aut laborum.
+                example: Aut laborum sequi non consequatur est et.
             project_id:
                 type: string
                 description: Owning project
-                example: Alias quis magni ad doloremque.
+                example: Soluta et quam.
             status:
                 type: string
                 description: Build lifecycle status
@@ -4444,12 +4501,11 @@ definitions:
                 type: array
                 items:
                     type: string
-                    example: Non consequatur est et.
+                    example: Magni est officiis enim qui occaecati.
                 description: Platform suppression list ids applied to the master
                 example:
-                    - Est officiis enim qui.
-                    - Repellendus autem ullam odio quis.
-                    - Consequatur velit atque nam voluptatem in.
+                    - Ullam odio.
+                    - Sed consequatur velit atque nam voluptatem in.
                     - Explicabo voluptatem et.
             version:
                 type: integer
@@ -5398,7 +5454,7 @@ definitions:
             audience:
                 inclusion_summary: Dolorem sapiente.
                 platform: hubspot
-                platform_master_list_id: Aperiam dolorem molestias natus velit.
+                platform_master_list_id: Dolorem molestias natus velit.
                 status: failed
                 suppression_list_ids:
                     - Dolorum odit est.
@@ -5785,6 +5841,33 @@ definitions:
                       label: Iste et aspernatur delectus.
         example:
             accounts:
+                - id: "8666746580"
+                  label: Iste et aspernatur delectus.
+                - id: "8666746580"
+                  label: Iste et aspernatur delectus.
+        required:
+            - accounts
+    LfxV2CampaignServiceConnectionsListMetaAdsAccountsResponseBody:
+        title: LfxV2CampaignServiceConnectionsListMetaAdsAccountsResponseBody
+        type: object
+        properties:
+            accounts:
+                type: array
+                items:
+                    $ref: '#/definitions/AccessibleAccount'
+                example:
+                    - id: "8666746580"
+                      label: Iste et aspernatur delectus.
+                    - id: "8666746580"
+                      label: Iste et aspernatur delectus.
+                    - id: "8666746580"
+                      label: Iste et aspernatur delectus.
+        example:
+            accounts:
+                - id: "8666746580"
+                  label: Iste et aspernatur delectus.
+                - id: "8666746580"
+                  label: Iste et aspernatur delectus.
                 - id: "8666746580"
                   label: Iste et aspernatur delectus.
                 - id: "8666746580"

@@ -586,8 +586,10 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	connectionMethods("microsoft-ads", "Microsoft Ads", MicrosoftAdsConnectionConfig, MicrosoftAdsCredentials, MicrosoftAdsConnection)
 	connectionMethods("hubspot", "HubSpot", HubSpotConnectionConfig, HubSpotCredentials, HubSpotConnection)
 
-	// Google Ads specific: account discovery (not in connectionMethods, as other providers
-	// will add their own account-discovery methods in follow-up PRs).
+	// Account discovery is declared per provider rather than inside connectionMethods:
+	// only providers whose dispatcher implements the AccountLister interface have one, and
+	// a generated method for a provider that cannot answer it would be a 400 by
+	// construction. LinkedIn, X, Reddit and Microsoft follow in their own tickets.
 	Method("list-google-ads-accounts", func() {
 		Description("Enumerate the Google Ads ad accounts accessible via the stored connection credential.")
 		Payload(func() {
@@ -605,6 +607,36 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
 			GET("/projects/{project_id}/connection-google-ads/accounts")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("BadRequest", StatusBadRequest)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("list-meta-ads-accounts", func() {
+		Description("Enumerate the Meta ad accounts accessible via the stored connection credential. " +
+			"Returns act_-prefixed account ids, ready to store as the connection's account_id. " +
+			"Accounts Meta reports as disabled, unsettled or closed are included with the reason " +
+			"in their label rather than filtered out, so the caller can see why an account they " +
+			"expected cannot be used.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Required("project_id")
+		})
+		Result(func() {
+			Attribute("accounts", ArrayOf(AccessibleAccount))
+			Required("accounts")
+		})
+		Error("NotFound", NotFoundError, "Resource not found")
+		Error("BadRequest", BadRequestError, "Bad request")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-meta-ads/accounts")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)
