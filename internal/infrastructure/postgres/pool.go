@@ -335,8 +335,69 @@ type requiredIndex struct {
 var createIndexRe = regexp.MustCompile(
 	`(?is)CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?"?([a-zA-Z0-9_]+)"?`)
 
+// lineCommentRe matches a `--` comment to end of line. Comments are stripped before the
+// CREATE scan because these migrations DISCUSS the statements they are avoiding: 000009's
+// header contains the phrase "a failed CREATE INDEX CONCURRENTLY", from which the regexp
+// happily reads the index name `does`. Junk names are inert — no real index is called
+// that — but a scan whose output depends on prose is one prose edit away from claiming a
+// migration owns an index it never touches.
+var lineCommentRe = regexp.MustCompile(`--[^\n]*`)
+
+// dollarTagRe matches a dollar-quote delimiter ($$ or $tag$).
+//
+// Matching the delimiter and pairing it in code, rather than matching the whole block in
+// one pattern, is forced: a `$tag$...$tag$` pattern needs a BACKREFERENCE to require the
+// closing tag be the same as the opening one, and RE2 — Go's engine — has none. A
+// tag-agnostic `\$\w*\$.*?\$\w*\$` would instead close one block on another block's
+// OPENING delimiter and delete the executable statements between them.
+var dollarTagRe = regexp.MustCompile(`\$[a-zA-Z0-9_]*\$`)
+
+// executableSQL strips what the CREATE scan must not read: `--` prose, and the body of
+// every dollar-quoted block.
+//
+// An UNTERMINATED block drops everything after it. That is the safe direction: the file
+// would not run at all, so under-reporting ownership costs an annotation on a migration
+// nobody can apply, while carrying on past it would read a half-quoted body as executable.
+func executableSQL(body string) string {
+	body = lineCommentRe.ReplaceAllString(body, "")
+	var out strings.Builder
+	for {
+		open := dollarTagRe.FindStringIndex(body)
+		if open == nil {
+			out.WriteString(body)
+			return out.String()
+		}
+		out.WriteString(body[:open[0]])
+		tag := body[open[0]:open[1]]
+		rest := body[open[1]:]
+		end := strings.Index(rest, tag)
+		if end < 0 {
+			return out.String()
+		}
+		body = rest[end+len(tag):]
+	}
+}
+
 // migrationIndexOwners maps an index name to the highest migration version whose up-file
-// CREATEs it, read once from the embedded migrations.
+// CREATEs it UNCONDITIONALLY, read once from the embedded migrations.
+//
+// "Unconditionally" is the load-bearing word, and it is why the body of a dollar-quoted
+// block does not count. The remedy this map feeds is "DROP the index, then force back so
+// the migration RUNS again" — which only recovers the index if that migration's CREATE
+// fires against a schema where the index is ABSENT. A DO block exists precisely to make
+// DDL conditional, and 000009's condition is "an INVALID copy is present": the operator's
+// drop, the first half of the remedy, is exactly what makes it false. Counting that
+// rebuild as ownership would send an operator to force 8, watch 000009 no-op, and boot
+// clean with idx_campaigns_stuck_claims gone for good — the stuck-claim scan silently
+// full-scanning forever, which is the very failure 000008 and 000009 exist to prevent.
+//
+// Skipping the block hands the same operator 000008 instead, whose plain
+// `CREATE INDEX CONCURRENTLY ... IF NOT EXISTS` does fire once the name is gone. Forcing
+// one version further back replays 000009 too, which then correctly no-ops.
+//
+// The general rule, which outlives this pair: ownership means "re-running this migration
+// against a schema missing the index rebuilds it". A conditional create cannot promise
+// that, so it is not ownership — it is repair, and repair is not a recovery target.
 var migrationIndexOwners = sync.OnceValue(func() map[string]int {
 	owners := map[string]int{}
 	entries, err := migrations.FS.ReadDir(".")
@@ -358,7 +419,7 @@ var migrationIndexOwners = sync.OnceValue(func() map[string]int {
 		if rerr != nil {
 			continue
 		}
-		for _, m := range createIndexRe.FindAllStringSubmatch(string(body), -1) {
+		for _, m := range createIndexRe.FindAllStringSubmatch(executableSQL(string(body)), -1) {
 			if v > owners[m[1]] {
 				owners[m[1]] = v
 			}
@@ -387,6 +448,9 @@ var migrationIndexOwners = sync.OnceValue(func() map[string]int {
 // which drops (brief_id, platform) uniqueness permanently, boots clean, and lets concurrent
 // claims double-create PAID campaigns. Any list narrower than "every index a migration
 // creates" produces that class of answer; the migrations are the only set that is not.
+//
+// "Creates" means creates UNCONDITIONALLY — see migrationIndexOwners. A rebuild guarded on
+// the debris the remedy tells the operator to delete is not a recovery target.
 func describeInvalid(names []string) string {
 	owner := migrationIndexOwners()
 	out := make([]string, 0, len(names))

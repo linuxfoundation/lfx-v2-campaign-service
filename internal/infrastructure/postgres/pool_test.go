@@ -268,3 +268,57 @@ func TestDescribeInvalid_LeavesTrulyUnownedIndexesAlone(t *testing.T) {
 	assert.Containsf(t, got, "zz_hand_built_idx (no migration creates this",
 		"describeInvalid = %q, want the unowned index told to leave the version alone", got)
 }
+
+// TestMigrationIndexOwners_IgnoresAConditionalRebuild is the finding that a CREATE inside a
+// DO block cannot be a recovery target.
+//
+// The remedy the map feeds is "DROP the index, then force back so the migration RUNS again".
+// 000009 rebuilds idx_campaigns_stuck_claims only IF an INVALID copy is present — and the
+// operator's drop, the first half of that remedy, is precisely what makes the condition
+// false. Attributing the index to 000009 would send them to force 8, watch 000009 no-op, and
+// boot clean with the index gone for good: the stuck-claim scan full-scanning forever, which
+// is the failure 000008 and 000009 exist to prevent. 000008's plain CREATE ... IF NOT EXISTS
+// does fire against a schema missing the name, so it is the answer.
+func TestMigrationIndexOwners_IgnoresAConditionalRebuild(t *testing.T) {
+	const stuck = "idx_campaigns_stuck_claims"
+
+	// The premise: 000009 really does contain a CREATE for this name, inside a DO block.
+	body, err := migrations.FS.ReadFile("000009_drop_invalid_stuck_claim_index.up.sql")
+	require.NoError(t, err)
+	require.Contains(t, string(body), "CREATE INDEX "+stuck,
+		"this test is only meaningful while 000009 rebuilds the index")
+
+	assert.Equalf(t, 8, migrationIndexOwners()[stuck],
+		"%s must be attributed to 000008, whose CREATE fires against a schema missing the "+
+			"index; 000009's rebuild is conditional on the invalid copy the remedy deletes", stuck)
+	assert.Contains(t, describeInvalid([]string{stuck}), stuck+" (migration 000008: force 7)")
+}
+
+// executableSQL is the reason the answer above is 8, and it strips two different things for
+// two different reasons. The prose case is not hypothetical: 000009's header contains the
+// phrase "a failed CREATE INDEX CONCURRENTLY", from which createIndexRe reads the index name
+// "does". Inert today — nothing is called that — but a scan whose output depends on comment
+// wording is one prose edit away from claiming a migration owns an index it never touches.
+func TestExecutableSQL(t *testing.T) {
+	for name, tc := range map[string]struct{ in, want string }{
+		"line comment": {"-- CREATE INDEX a\nCREATE INDEX b;", "\nCREATE INDEX b;"},
+		"dollar block": {"CREATE INDEX a;\nDO $$ CREATE INDEX b; $$;\n", "CREATE INDEX a;\nDO ;\n"},
+		"tagged block": {"A $tag$ hidden $tag$ B", "A  B"},
+		// Two blocks in a row: a tag-agnostic regexp would close the first on the second's
+		// OPENING delimiter and swallow the statement between them.
+		"two blocks":    {"$$x$$ CREATE INDEX keep; $$y$$", " CREATE INDEX keep; "},
+		"unterminated":  {"CREATE INDEX a; DO $$ CREATE INDEX b;", "CREATE INDEX a; DO "},
+		"no delimiters": {"CREATE INDEX a;", "CREATE INDEX a;"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, executableSQL(tc.in))
+		})
+	}
+
+	// And the property that matters, stated against the real file rather than a fixture.
+	body, err := migrations.FS.ReadFile("000009_drop_invalid_stuck_claim_index.up.sql")
+	require.NoError(t, err)
+	assert.NotContains(t, executableSQL(string(body)), "CREATE INDEX",
+		"000009 executes no unconditional CREATE INDEX; every one it contains is prose or "+
+			"inside the DO block")
+}

@@ -432,3 +432,49 @@ parse and requires the map to know each one, so the parser cannot be checked aga
 asserting first that the index is still outside `requiredIndexes` so the test cannot quietly
 stop testing anything. Revert-verified: restoring the `requiredIndexes`-derived map fails it
 with the literal wrong advice in the diagnostic.
+
+## Round N: the recovery advice destroyed its own precondition
+
+Two findings on the invalid-index remedy, one stale and one real.
+
+**Copilot's is stale.** It said `requiredIndexes` omits `uq_campaigns_brief_platform_live`, so an
+invalid copy gets the "no migration creates this; drop it, leave the schema version alone"
+advice. True of the commit it reviewed; `a1266307` had already moved ownership off
+`requiredIndexes` and onto the migrations for exactly that reason, and the index is annotated
+`(migration 000013: force 12)`. Replied with the diff rather than editing anything.
+
+**Cursor's is real, and it is a nastier shape than it first reads.** `migrationIndexOwners`
+attributed `idx_campaigns_stuck_claims` to 000009 rather than 000008, because 000009 rebuilds
+it inside a `DO` block and the highest CREATE wins. On its face "force 8" looks fine — 000009
+IS the recovery migration for this index. The problem is what the operator does first. The
+error message says "DROP each index listed", then force. 000009's rebuild is guarded on
+`NOT indisvalid`, so after the drop there is no invalid copy, the block no-ops, and the index
+is gone permanently. Boot succeeds. The stuck-claim scan full-scans forever with nothing
+reporting it — precisely the silent failure 000008 and 000009 were written to prevent.
+
+The remedy destroyed its own precondition. That is the generalisable part, and it is not
+specific to indexes: **an instruction with two steps where step one invalidates the guard step
+two depends on is a bug in the instruction, not in either step.** Neither half is wrong on its
+own, which is why it survived review.
+
+The fix names the property the map actually needs, rather than patching the one case:
+ownership means "re-running this migration against a schema missing the index rebuilds it".
+A conditional create cannot promise that, so `executableSQL` strips dollar-quoted bodies before
+the scan and `idx_campaigns_stuck_claims` resolves to 000008, whose plain
+`CREATE … IF NOT EXISTS` does fire against a missing name.
+
+Two things fell out of writing it:
+
+- The scan was also reading index names out of PROSE. `createIndexRe` matched the phrase "a
+  failed CREATE INDEX CONCURRENTLY" in 000009's header and recorded an index called `does`.
+  Inert, because nothing is named that — but a parser whose output depends on comment wording
+  is one edit away from a wrong attribution, and this one feeds an operator instruction. `--`
+  comments are stripped too now.
+- Pairing the dollar-quote delimiters had to happen in Go, not in the pattern. Requiring the
+  closing tag to match the opening one needs a BACKREFERENCE, and RE2 has none. The
+  tag-agnostic `\$\w*\$.*?\$\w*\$` that compiles is actively wrong: given two adjacent blocks
+  it closes the first on the SECOND's opening delimiter and deletes the executable statements
+  between them. A test case pins that.
+
+`TestMigrationIndexOwners_IgnoresAConditionalRebuild` was revert-verified against the
+unstripped scan and fails naming both the attributed version and the rendered advice.

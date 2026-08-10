@@ -233,6 +233,30 @@ DROPs an index is not reported as the version to force back to; where two migrat
 create one name, the highest wins. `TestMigrationIndexOwners_FindsEveryCreatedIndex`
 re-derives the names a different way and fails if the map misses any.
 
+**"Creates" means creates UNCONDITIONALLY, which is why `executableSQL` strips the body of
+every dollar-quoted block before the scan.** The remedy this map feeds is "DROP the index,
+then force back so the migration RUNS again" — and that only recovers the index if the
+CREATE fires against a schema where the index is ABSENT. A `DO $$ … $$` block exists
+precisely to make DDL conditional, and 000009's condition is "an INVALID copy is present":
+the operator's drop, the first half of the remedy, is exactly what makes it false. Count
+that rebuild as ownership and an operator is told to force 8, watches 000009 no-op, and
+boots clean with `idx_campaigns_stuck_claims` gone for good — the stuck-claim scan silently
+full-scanning forever, the very failure 000008 and 000009 exist to prevent. Skipping the
+block hands them 000008, whose plain `CREATE INDEX CONCURRENTLY … IF NOT EXISTS` does fire
+once the name is gone; forcing one version further back replays 000009 too, which then
+correctly no-ops. The general rule: **ownership means "re-running this migration against a
+schema missing the index rebuilds it". A conditional create cannot promise that — it is
+repair, and repair is not a recovery target.**
+
+`executableSQL` also strips `--` comments, because these migrations DISCUSS the statements
+they avoid: 000009's header contains the phrase "a failed CREATE INDEX CONCURRENTLY", from
+which the regexp reads the index name `does`. Inert — nothing is called that — but a scan
+whose output depends on prose is one comment edit away from claiming a migration owns an
+index it never touches. The block stripping pairs delimiters in CODE rather than in one
+pattern because a `$tag$…$tag$` regexp needs a BACKREFERENCE and RE2 has none; a
+tag-agnostic pattern would close one block on the next block's OPENING delimiter and delete
+the executable statements between them.
+
 Any hit returns `ErrInvalidIndex`,
 which `IsPermanentMigrationErr` reports as permanent — and "permanent" here means the
 container stops trying, not that it keeps trying. Retrying rebuilds nothing, so both
