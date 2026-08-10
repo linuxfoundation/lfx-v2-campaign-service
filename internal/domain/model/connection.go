@@ -23,6 +23,52 @@ const (
 	ProviderHubSpot      Provider = "hubspot"
 )
 
+// SystemProjectID is the reserved connection scope holding the LF-owned platform
+// credentials a project falls back to when it has connected no account of its own.
+//
+// A reserved scope rather than a new table or LFX_SYS_* environment variables: a
+// system account needs exactly what a project account needs (encryption at rest,
+// an account id, provider config, a status, an If-Match version, an updated_by
+// trail), so bootstrap and account discovery work on it with no new code.
+//
+// The value is deliberately UNREACHABLE through the API: projectSlugProblem's
+// `^[a-z0-9]+(-[a-z0-9]+)*$` cannot match the colon, so no create endpoint can
+// plant a row here. Necessary but NOT sufficient — the other paths stay permissive
+// on project_id for historical UUID rows and reject this scope explicitly (see
+// rejectSystemScope in internal/service).
+const SystemProjectID = "system:linuxfoundation"
+
+// providerConfigKeys lists the non-secret, provider-specific config keys each provider
+// PERSISTS, in snake_case wire form and in a fixed order. It is exhaustive by construction:
+// storage gives each key its own column, so a key that is not here has nowhere to be written.
+//
+// It lives in the domain rather than beside the SQL because two callers need the SAME answer
+// for opposite reasons — the repository builds its column list from it, and any writer that
+// accepts operator- or caller-supplied config must REJECT a key outside it. Two copies would
+// let the second drift into accepting a key the first silently drops.
+//
+// The values are compile-time constants, never input, which is what makes interpolating them
+// into SQL safe.
+var providerConfigKeys = map[Provider][]string{
+	ProviderGoogleAds:    {"login_customer_id"},
+	ProviderLinkedInAds:  {"org_id"},
+	ProviderMetaAds:      {"page_id", "app_id"},
+	ProviderRedditAds:    {},
+	ProviderTwitterAds:   {"funding_instrument_id"},
+	ProviderMicrosoftAds: {"customer_id"},
+	ProviderHubSpot:      {"portal_id", "sender_email", "sender_name", "brand_kit"},
+}
+
+// ConfigKeys returns the provider's persisted config keys in their fixed order. The slice is a
+// copy: callers append to it to build column lists, and appending to the package's own backing
+// array would corrupt it for everyone else.
+func (p Provider) ConfigKeys() []string {
+	keys := providerConfigKeys[p]
+	out := make([]string, len(keys))
+	copy(out, keys)
+	return out
+}
+
 // Table returns the Postgres table name backing this provider's connections.
 func (p Provider) Table() string {
 	switch p {

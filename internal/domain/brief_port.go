@@ -87,7 +87,16 @@ type CampaignReader interface {
 	//     completed it; the caller reuses that row instead of dispatching again.
 	// The placeholder row also survives an upstream-create-then-crash, making the
 	// orphan recoverable (its status stays 'pending').
-	ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string) (claimed bool, row *model.Campaign, err error)
+	//
+	// `by` is the human who asked for the dispatch, stamped as the row's created_by.
+	// It is a PARAMETER rather than something the repository reads from ctx because
+	// dispatch runs on the orchestrator's root context, long after the request
+	// returned — an actor read from this ctx would be nil for every campaign ever
+	// created. Orchestrator.Start captures it while the request context is still in
+	// hand and threads it down. nil is legitimate: Start reads the actor with
+	// attributedActor, which returns nil — after logging a warning — when the request
+	// carried no authenticated principal, and NULL means "not recorded", not "nobody".
+	ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string, by *model.Actor) (claimed bool, row *model.Campaign, err error)
 	// DeleteDispatchClaim removes a still-'pending' claim row for (brief, platform)
 	// so the pair can be retried after a dispatch fails before the upstream
 	// campaign is created. It only deletes rows still in 'pending' status, so it
@@ -236,7 +245,10 @@ type CampaignWriter interface {
 	// The campaign is ALWAYS co-indexed on delete, just as every other write,
 	// so the indexer can remove it and keep search consistent. A nil indexPayload
 	// means the caller does not want the delete indexed; the soft delete still commits.
-	DeleteCampaign(ctx context.Context, projectID, briefID, id string, expectedVersion int64, indexPayload CampaignIndexPayloadFunc) error
+	// `by` is stamped onto updated_by so the audit trail names who retired the row
+	// rather than whoever last edited it; nil (an unauthenticated, system-initiated
+	// delete) leaves the column at its previous value rather than clearing it.
+	DeleteCampaign(ctx context.Context, projectID, briefID, id string, expectedVersion int64, by *model.Actor, indexPayload CampaignIndexPayloadFunc) error
 }
 
 // CampaignRepository is the full persistence port for campaigns.

@@ -88,6 +88,42 @@ both require valid UTF-8, so no stored campaign name can contain a malformed byt
 form: *an encoder that lossily repairs its input is a silent query rewriter, and a fail-closed
 lookup must validate against what will actually be transmitted, not what it was handed.*
 
+**A repeated JSON key is a self-disagreement the decoder settles for you.** RFC 8259 leaves
+duplicate object keys undefined and `encoding/json` keeps the LAST one, so a row reading
+`{"id":"999","id":"555","resourceName":"customers/1/campaigns/555"}` decodes as campaign 555,
+agrees with its own resource name, passes every identity guard, and is returned as a confirmed
+lookup — while the same bytes also identify 999 to any reader following the equally-permitted
+first-wins convention. Every other guard on these two paths exists to refuse a row that
+contradicts itself; this is the one contradiction the decoder resolves silently rather than
+reporting. `hasDuplicateKeys` therefore walks the raw bytes before `Unmarshal` on **both**
+lookup paths, and it walks the WHOLE row, not just the fields this client reads: a duplicate
+anywhere is evidence the producer is not emitting what we think it is, and the selected-field
+set changes over time, so a guard scoped to today's fields would quietly stop covering
+tomorrow's. Malformed JSON reports false and defers to `Unmarshal`, whose error is the better
+diagnostic.
+
+**Sameness is the decoder's, not the bytes'.** `encoding/json` prefers an exact tag match and
+falls back to a CASE-INSENSITIVE one, so `{"id":"999","ID":"555"}` assigns the same field twice
+and leaves 555 — two contradictory ids and no repeated key for a byte-comparing guard to see.
+Keys are therefore folded (`foldKey`) before comparison, including the two runes the decoder
+special-cases, KELVIN SIGN and LATIN SMALL LETTER LONG S, which simple-fold onto `k` and `s`.
+Folding cannot over-reject here: Google's JSON is lowerCamelCase throughout, so no legitimate
+object carries two keys differing only in case.
+
+**The guards also run on the ENVELOPE, and there the reason is stronger.** The row checks run
+on rows the envelope has already produced, so no row guard can see a corruption that destroys a
+row on the way out. `{"results":[<campaign 555>],"results":[]}` is that corruption: last-wins
+leaves zero rows, the guard loop never executes, and what reaches the caller is a clean,
+trustworthy absence — the one answer a fail-closed lookup must never manufacture, because its
+callers read an absence as a licence to create a real paid campaign. A duplicated
+`nextPageToken` silently truncates or redirects pagination the same way. `gaqlSearchForCustomer`
+therefore runs `utf8.Valid`, the surrogate scan and `hasDuplicateKeys` on the raw page before
+decoding it, which covers every GAQL reader in the package rather than the two lookup paths.
+Neither of the first two can over-reject a page: invalid UTF-8 bytes make the document malformed
+per RFC 8259 §8.1, and Google Ads cannot store an unpaired surrogate in any field. The per-row
+checks stay where they are — they name the campaign in their diagnostics, which the envelope
+check cannot.
+
 The name is queried **verbatim**, no `TrimSpace`: trimming is a no-op for the create path
 (`composeName` already trims), so it only ever alters adoption, answering `"  foo  "` with the
 campaign named `"foo"`. `TrimSpace` only *detects* whitespace-only input. Anything new
@@ -125,7 +161,12 @@ query still returns 2xx rows for OTHER campaigns. **The disposition matters as m
 check:** a name mismatch is an **error**, never a skip, because skipping every injected row
 leaves `("", nil)` — *a skip that reduces an unverifiable response to a clean absence is a
 false-absence bug.* Status is the deliberate asymmetry: `REMOVED` **is** a per-row skip,
-because a tombstone is unadoptable however it arrived.
+because a tombstone is unadoptable — but only once you know it IS a tombstone of some
+identifiable campaign. `campaignRowIdentity` validates the id and resource name BEFORE it
+reports `live == false`, so "however it arrived" describes the STATUS, not the row: a
+`REMOVED` row with a malformed, cross-customer or self-disagreeing identity is an error like
+any other, because such a row is not evidence that anything was removed. Skippability is a
+property of an identified tombstone.
 
 Identity is validated **whenever present**, not only as a fallback: both fields are selected,
 so both are evidence of what the row is, and a malformed or cross-customer resource name beside
@@ -190,7 +231,10 @@ campaign is this row, and is it adoptable" for both entry points. Duplicating th
 the by-id path become the lenient one, which is the worse direction to drift — a caller
 handing over an id is about to attach real spend. `live == false` is returned for `REMOVED`
 alone, the one skippable state; every other unrecognised status is an error, per the
-enumerate-and-default-deny rule above.
+enumerate-and-default-deny rule above. And it is returned only AFTER identity is
+established — status is read last, so a tombstone whose identity does not check out errors
+rather than skipping. Callers may rely on `live == false` meaning "this identified row is
+unadoptable", never "there was something here, unclear what".
 
 **The caller's id is validated as an identity, not merely as safe text.** `canonicalCampaignID`
 runs *before* interpolation, so `"0"`, a value past `math.MaxInt64` and the leading-zero

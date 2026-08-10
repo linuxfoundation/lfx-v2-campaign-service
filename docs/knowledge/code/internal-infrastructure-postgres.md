@@ -161,9 +161,14 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   decide whether a pair was already dispatched.
 
 - `000015` — `created_by` / `updated_by` JSONB on `campaign_briefs` (see *Actor
-  attribution* below). `campaigns` gets the same treatment in a separate version: its
-  write paths (dispatch claim, upsert, status toggle) are a distinct change with
-  distinct failure modes.
+  attribution* below).
+
+- `000016` — the same two columns on `campaigns`. Deliberately a separate version, not
+  a second `ALTER` inside `000015`: the write paths differ in KIND, not just in table
+  (see *Async attribution on campaigns* below), and that difference is a signature change
+  across the dispatch path. Ordering matters — `000016` must reach `main` AFTER `000015`,
+  because golang-migrate tracks a single version integer and would step straight past a
+  lower version that appeared later.
 
 ## Actor attribution
 
@@ -208,6 +213,80 @@ Three properties are load-bearing, and each is pinned by a test in `brief_repo_t
   first edit makes "who touched this last" unanswerable without also consulting
   `created_by`; the two diverge from the first update onwards, which is when it matters.
 
+### Async attribution on campaigns
+
+Everything above describes a write on the REQUEST goroutine, where reading the actor at the
+point of the write is enough. Campaign creation is not one. `Orchestrator.Start` returns as
+soon as the job row exists; the dispatch runs on `o.rootCtx` in a goroutine that outlives the
+request. No context reachable from inside `dispatchPlatform` carries an actor, so an
+`actorFromCtx` at the INSERT would return nil for every campaign ever created — silently, with
+no error and no log line.
+
+So `Start` captures it while the request context is still in hand and threads it down through
+`run` → `dispatchPlatform` → `ClaimCampaignDispatch`. `by` is therefore a PARAMETER on that
+repository method rather than something the repo reads from its ctx. What is captured is the
+DECODED actor value, never the bearer token: a token captured for asynchronous use may be
+expired by the time the work runs and there is no retry, while a decoded value has no expiry
+and is the exact thing being recorded.
+
+Three consequences follow, and they are what the SQL encodes:
+
+- **The claim INSERT is the row's first INSERT.** `claimCampaignDispatchQuery` is where
+  `created_by` is stamped, and `upsertCampaignQuery`'s conflict arm then FINALIZES that same
+  claim rather than revisiting some earlier dispatch's row. `dispatchPlatform` reaches an
+  upsert only when the claim was WON: every `!claimed` branch returns first — a reusable
+  campaign is reported as a reuse, a retained partial as a reconcile, a bare pending claim as
+  a skip — so a later dispatch of the pair never reaches the upsert at all. A retry is not the
+  exception it looks like either: it re-claims first, and since the released row is gone the
+  INSERT wins and re-stamps `created_by` with the retrying actor. A
+  re-dispatch after a soft delete is NOT the exception it looks like: the deleted row falls
+  outside the partial unique index, so it is the CLAIM that inserts the fresh campaign and
+  stamps its `created_by`, and the upsert conflicts with that. (A `pending` row cannot be
+  soft-deleted in the first place — `CampaignStatusDeletable` is a whitelist of settled
+  statuses.) The upsert's INSERT arm stamps `created_by` too, but only for the case where the
+  claim row is gone by the time the upsert runs: an operator clearing an apparently-stuck
+  claim, or a concurrent `DeleteDispatchClaim`. Both arms setting it is what keeps the column
+  populated on every path that can create the row.
+- **The claim stamps BOTH actor columns from one placeholder** (`$5, $5`), matching
+  `createBriefQuery`. At creation the author IS the last mover, and leaving `updated_by` NULL
+  would make "untouched since it was made" indistinguishable from "we never recorded who" —
+  which the conflict arm cannot repair later, since it only moves `updated_by` when it has a
+  non-NULL actor to move. Pinned by `TestClaimCampaignDispatchStampsBothActorColumns`.
+- **`created_by` is absent from that conflict arm's SET list.** Given the reachability above,
+  this is not stopping an overwrite today's orchestrator would otherwise perform — it is
+  REPOSITORY SEMANTICS. `UpsertCampaign` is a general-purpose method, not a private half of
+  `dispatchPlatform`, and its conflict arm has to be safe for a caller that reaches it without
+  a claim in front of it. Such a caller, with `created_by` in the SET list, would rewrite the
+  original author with whoever triggered the latest write; under shared system accounts the ad
+  platform cannot supply that author again, so once gone it is gone. Being a property of the
+  SQL rather than of any Go path, no service-layer test can reach it, and it is asserted
+  against the statement text (`TestUpsertCampaignDoesNotRewriteCreatedBy`).
+- **`updated_by` moves via `COALESCE(EXCLUDED.updated_by, campaigns.updated_by)`**, not a
+  bare assignment. The actor threaded into a re-dispatch is whatever `attributedActor`
+  produced back in `Orchestrator.Start` — nil whenever that request carried no authenticated
+  principal — and letting that NULL land would turn "we know who" into "we do not".
+  `replaceCampaignQuery` and `deleteCampaignQuery` do the same for the update and delete paths.
+- **The soft delete stamps `updated_by`** (`TestDeleteCampaignStampsTheDeletingActor`). The
+  row is kept precisely because it may still point at a campaign spending upstream, so "who
+  retired this" is a question actually asked of it later; leaving the column alone would
+  answer with whoever last EDITED the campaign — worse than NULL, because it reads as
+  knowledge and names the wrong person.
+
+A campaign row therefore attributes to whoever asked for the DISPATCH: the person who
+authorized the spend, which is the question `created_by` exists to answer, and not the same
+question as "who was authenticated when some later goroutine got around to writing the row".
+A NULL is correct on an unattributed write, not a lost attribution.
+
+`scanCampaign` is covered directly (`TestScanCampaign_MapsEachColumnToItsField`,
+`TestCampaignCols_MatchesTheDeclaredOrder`) rather than only through the queries that call it.
+Both actor columns are JSONB and both timestamps are `time.Time`, so a swap in its destination
+list cannot fail at the type level: `created_by` and `updated_by` would simply trade places and
+every other test would stay green while the audit trail named the wrong person on every row.
+Distinct per-column values are what make the swap visible. A NULL actor decodes to nil
+(ordinary — every row predating `000016` has both NULL); actor JSON of the wrong SHAPE fails
+the scan with the column named, since a silently-nil actor is indistinguishable from "not
+recorded", which is the confusion the NULL semantics exist to avoid.
+
 `Approve` moves `updated_by` alongside `approved_by`, and the two then diverge:
 `ReplaceBrief` CLEARS `approved_by` (a modified brief must not stay approved) while
 `updated_by` survives — which is exactly the difference between "who signed off on this
@@ -249,12 +328,41 @@ name-derived id collides with the row the PREVIOUS run inserted against
 `uq_campaign_briefs_project_event`, which breaks `go test -count=2` and, worse, turns a
 failure at setup into a test that never reaches its own assertion.
 
-**What belongs here is a claim about the SERVER, not about the code.** The two tests present
-both pin migration 000013/000014: that the bare `ON CONFLICT (brief_id, platform)` raises
-SQLSTATE `42P10` now that the full unique constraint is gone, and that a `'deleted'` row stops
+**What belongs here is a claim about the SERVER, not about the code.** Two of the tests pin
+migration 000013/000014: that the bare `ON CONFLICT (brief_id, platform)` raises SQLSTATE
+`42P10` now that the full unique constraint is gone, and that a `'deleted'` row stops
 occupying its `(brief_id, platform)` slot. Restore the dropped constraint and both fail — that
 is the check the regex test cannot perform, and it is the reason to reach for this package
 rather than another source-text assertion.
+
+`ConnectionRepo.Disconnected` is here for a sharper version of the same reason. Its whole job
+is to tell a deliberate disconnect apart from never having connected, and the two are
+distinguished by ONE clause — `status = 'deleted'` — in one statement. Every other test of
+that distinction runs against a fake reader that answers the question by construction, so all
+of them stay green against a predicate that lost the clause and started reporting every
+project as disconnected. `TestDisconnectedTellsADeliberateDisconnectApartFromNeverConnected`
+writes the three real rows (never connected, tombstoned, live) and asserts the answer for
+each, so the clause has to survive in the SQL and not merely in the fake. It also asserts an
+unknown provider ERRORS rather than answering `false`: `false` here means "no deliberate
+disconnect", which would hand a typo'd provider the system-account fallback.
+
+**That probe also needed an index of its own, and the reason it did not have one is worth
+recording.** Every connection table indexes `project_id` — but under
+`WHERE status <> 'deleted'` (migration 000001), the exact complement of the rows this query
+reads. The index was present, named for the column, and covered none of the rows in question.
+Migration 000017 adds the mirror-image partial index on the six paid-ads tables, so the two
+partition the table between them and neither pays for the other's rows.
+
+Only paid-ads tables are indexed, because `credsSource` gates the probe behind
+`provider.IsPaidAds()` — the system account is an ad-ACCOUNT fallback and HubSpot never
+reaches it, so an index on `hubspot_connections` would be write cost for a query never issued.
+
+`TestDisconnectedProbeIsIndexed` binds it, and it is a PLAN assertion rather than a timing
+one: the query returns the same answer indexed or not, so no correctness test can see the
+difference. It runs `EXPLAIN` with `enable_seqscan = off` and fails on a surviving `Seq Scan`.
+Turning seqscan off does not force an index to be used — it cannot be, if none applies — it
+only removes the reason a usable index would be passed over on a table this small. Dropping the
+six indexes turns all six sub-tests red with the plan printed, which is the revert-check.
 
 ## DeleteCampaign's guards
 

@@ -601,6 +601,13 @@ type platformResult struct {
 // It takes NO caller token. Dispatch results are indexed by co-committing an outbox row (see
 // campaignIndexPayload), which the relay publishes with the SERVICE credential — deliberately,
 // because by publish time the originating request is long gone and its JWT may have expired.
+//
+// The ACTOR, unlike the token, IS captured — here, from the request context, because this is
+// the last point at which it exists. The decoded value (name, email, principal) has no expiry,
+// so none of the reasoning that rules out capturing the JWT applies to it. Every campaign row
+// this run writes attributes to that person: they authorized the spend, which is the question
+// created_by exists to answer, and it is not the same question as "who was authenticated when
+// some later goroutine got around to writing the row".
 func (o *Orchestrator) Start(ctx context.Context, brief *model.CampaignBrief, approvedVersion int64, platforms []model.Provider, config json.RawMessage) (string, error) {
 	// Register the run with the drain WaitGroup under the lock so a concurrent
 	// Shutdown can't start waiting between the draining check and wg.Add (which
@@ -633,16 +640,19 @@ func (o *Orchestrator) Start(ctx context.Context, brief *model.CampaignBrief, ap
 	// so it survives the request ending but can still be cancelled by Shutdown if
 	// the drain deadline expires.
 	dispatchCtx := o.rootCtx
+	// Read the actor from the REQUEST ctx, before it goes out of scope. Below this line
+	// the only context in play is o.rootCtx, which carries no actor.
+	by := attributedActor(ctx, "dispatch campaign brief")
 	go func() {
 		defer o.wg.Done()
-		o.run(dispatchCtx, job.ID, brief, platformsCopy, configCopy)
+		o.run(dispatchCtx, job.ID, brief, platformsCopy, configCopy, by)
 	}()
 
 	return job.ID, nil
 }
 
 // run performs the parallel per-platform dispatch and finalizes the job.
-func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.CampaignBrief, platforms []model.Provider, config json.RawMessage) {
+func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.CampaignBrief, platforms []model.Provider, config json.RawMessage, by *model.Actor) {
 	// Mark the job running. Don't abort dispatch on failure (the work should still
 	// proceed and the final status write will correct it), but log it — silently
 	// dropping this can leave a job stuck at "queued" in the client's view.
@@ -695,7 +705,7 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 				}
 			}()
 
-			results[i] = o.dispatchPlatform(gctx, jobID, brief, p, config)
+			results[i] = o.dispatchPlatform(gctx, jobID, brief, p, config, by)
 			return nil
 		})
 	}
@@ -738,7 +748,7 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 // arbitrates); the other reuses the existing row or, if it's still pending, is
 // reported in-progress. campaign_id is always the upstream platform id, so the
 // field means the same on the reuse and create paths.
-func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, config json.RawMessage) platformResult {
+func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, config json.RawMessage, by *model.Actor) platformResult {
 	res := platformResult{Platform: string(p)}
 
 	// Fast path: if this pair already has a completed campaign (upstream id set),
@@ -785,7 +795,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// Single-flight claim: atomically insert a 'pending' placeholder for (brief,
 	// platform). Exactly one worker across all replicas wins (the unique index
 	// arbitrates) — no held connection, no blocking lock.
-	claimed, existing, err := o.campaigns.ClaimCampaignDispatch(ctx, brief.ProjectID, brief.ID, p, jobID)
+	claimed, existing, err := o.campaigns.ClaimCampaignDispatch(ctx, brief.ProjectID, brief.ID, p, jobID, by)
 	if err != nil {
 		slog.ErrorContext(ctx, "claim dispatch failed", "platform", p, "job_id", jobID, "error", err)
 		res.Error = "could not claim campaign dispatch"
@@ -893,6 +903,25 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				campaign.BriefID = brief.ID
 				campaign.ProjectID = brief.ProjectID
 				campaign.Platform = p
+				// Both, not just UpdatedBy. Reaching here means we OWN the claim, so a
+				// live 'pending' row for this (brief, platform) existed a moment ago and
+				// this upsert normally takes the conflict arm. That covers the
+				// re-dispatch-after-delete case too, which is NOT an INSERT-arm case:
+				// DeleteCampaign refuses a 'pending' row outright, so only a settled row
+				// can be soft-deleted, and the ClaimCampaignDispatch above then inserts a
+				// FRESH live row (the deleted one sits outside the partial unique index) —
+				// which is the statement that stamps the new campaign's created_by, and
+				// this upsert conflicts with it.
+				//
+				// CreatedBy is set for the one case that does reach the INSERT arm: the
+				// claim row disappearing between that call and this one — an operator
+				// clearing what looked like a stuck claim (see StuckDispatchClaims), or a
+				// concurrent DeleteDispatchClaim. On the conflict arm the query leaves the
+				// column alone, so passing it costs nothing; omitting it would leave a
+				// campaign with no recorded author on the one path that creates a row
+				// without a live claim in front of it.
+				campaign.CreatedBy = by
+				campaign.UpdatedBy = by
 				// Decide the persisted status. Preserve a dispatcher-set status that
 				// carries real meaning; otherwise flatten to 'pending' so the row can't read
 				// as complete. Two kinds of status are preserved:
@@ -954,6 +983,8 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	campaign.BriefID = brief.ID
 	campaign.ProjectID = brief.ProjectID
 	campaign.Platform = p
+	campaign.CreatedBy = by
+	campaign.UpdatedBy = by
 	// Persist the successful result on a context DETACHED from the dispatch ctx.
 	// The upstream (paid) campaign now EXISTS; on the phase-two shutdown path
 	// rootCancel has already cancelled the dispatch ctx, and reusing it here would

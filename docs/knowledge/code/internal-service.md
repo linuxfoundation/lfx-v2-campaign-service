@@ -136,6 +136,18 @@ so the row can't diverge from the platform if the request is cancelled after the
 and a stuck DB can't hang shutdown; a persist failure after the platform changed is logged as a
 divergence reconcile signal.
 
+**Actor attribution:** The toggle records WHO performed it (the person who paused/resumed the campaign)
+in the `updated_by` column of the row, capturing the actor from the request context BEFORE the
+detached context persists the row. A system-initiated toggle (e.g., a scheduled remediation, no authenticated
+principal) records no actor rather than substituting a stand-in — the campaign's creator, a literal
+"system" — because "not recorded" is a distinct state from naming a principal that never acted.
+Note what the repo then does with that nil: `replaceCampaignQuery` writes
+`updated_by=COALESCE($9, updated_by)`, so an unattributed toggle LEAVES the previous mover in
+place rather than clearing the column. Nil means "this write records nothing", not "forget what
+you knew" — the column only reads NULL if no attributed write ever reached the row.
+The `created_by` column (the person who authorized the spend) is never touched
+by a toggle. See `campaign_actor_test.go` and the `000016` migration (campaigns' actor columns).
+
 ## Campaign metrics read
 
 `BriefService.GetCampaignMetrics` (backing `GET .../campaigns/{id}/metrics`) reads live
@@ -198,23 +210,23 @@ Every check that can be made locally precedes the platform call: project slug, p
 validity, a `TrimSpace` re-check of `platform_campaign_id` (the design's `MinLength(1)`
 rejects `""` but not `" "`, and an effectively-empty filter on a lenient client returns
 somebody else's campaign as the adoption target), then the brief load and its approved gate.
-Loading the brief first keeps an unauthorized caller from using adoption as an oracle for
-which campaign ids exist on an ad account they cannot otherwise see, and stops an unapproved
-brief acquiring campaigns by a route that bypasses approval.
+Loading the brief first stops adoption being an oracle for which campaign ids exist on an ad
+account the caller cannot otherwise see, and stops an unapproved brief acquiring campaigns by
+a route that bypasses approval.
 
 Two details of what gets persisted:
 
 - **The id bound is `ref.ID`, the one the platform echoed, never the one requested.** They
-  are equal on every correct response — the Google Ads lookup errors when its own filter
-  comes back unhonoured — so persisting the echo means a platform that ever answers with a
-  different campaign cannot have the requested id written against its record.
-- **`Status` is `model.CampaignStatusCreated`, never the platform's run state.** That column
-  is this service's lifecycle vocabulary, which `CampaignStatusDeletable` and
-  `CampaignStatusNeedsReconciliation` switch on; both default-deny an unknown value, so a
-  stored `ENABLED` would be undeletable AND never reconciled. `created` is exactly true of an
-  adopted campaign, making it toggleable and deletable like any other; the upstream
-  ENABLED/PAUSED axis is served by the metrics read. `model.PlatformCampaignRef` therefore
-  carries no status: adoptability is the ADAPTER's decision, in the platform's own vocabulary.
+  are equal on every correct response — the Google Ads lookup errors when its own filter comes
+  back unhonoured — so persisting the echo means a platform that ever answers with a different
+  campaign cannot have the requested id written against its record.
+- **`Status` is `model.CampaignStatusCreated`, never the platform's run state.** That column is
+  this service's lifecycle vocabulary, which `CampaignStatusDeletable` and
+  `CampaignStatusNeedsReconciliation` switch on; both default-deny an unknown value, so a stored
+  `ENABLED` would be undeletable AND never reconciled. `created` is exactly true of an adopted
+  campaign; the upstream ENABLED/PAUSED axis is served by the metrics read.
+  `model.PlatformCampaignRef` therefore carries no status: adoptability is the ADAPTER's
+  decision, in the platform's own vocabulary.
 
 Persistence goes through `CampaignRepository.AdoptCampaign`, deliberately not
 `UpsertCampaign` — see `internal-infrastructure-postgres.md`. An already-live

@@ -262,6 +262,8 @@ func TestMigrations_UniqueNumbering(t *testing.T) {
 // sibling PR that has not merged yet. A gap listed here is a merge-ORDERING obligation, not a
 // numbering bug — this branch must not merge before the PR that fills it, or those migrations
 // are skipped forever. The list must shrink to empty as siblings land.
+// Empty is the resting state: TestMigrations_AllowedVersionGapsAreStillOpen fails on a stale
+// entry, so the merge that closes a gap cannot be green while its excuse survives.
 var allowedVersionGaps = map[int]string{}
 
 // TestMigrations_NoVersionGaps guards against numbering a migration ABOVE versions that do not
