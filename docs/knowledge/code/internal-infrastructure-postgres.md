@@ -232,9 +232,13 @@ and is the exact thing being recorded.
 Three consequences follow, and they are what the SQL encodes:
 
 - **The claim INSERT is the row's first INSERT.** `claimCampaignDispatchQuery` is where
-  `created_by` is stamped. Every later write for that (brief, platform) pair — a retry, a
-  re-dispatch after a brief edit, a reconcile — goes through `upsertCampaignQuery`, and
-  normally takes its CONFLICT arm, since every dispatch claims before it upserts. A
+  `created_by` is stamped, and `upsertCampaignQuery`'s conflict arm then FINALIZES that same
+  claim rather than revisiting some earlier dispatch's row. `dispatchPlatform` reaches an
+  upsert only when the claim was WON: every `!claimed` branch returns first — a reusable
+  campaign is reported as a reuse, a retained partial as a reconcile, a bare pending claim as
+  a skip — so a later dispatch of the pair never reaches the upsert at all. A retry is not the
+  exception it looks like either: it re-claims first, and since the released row is gone the
+  INSERT wins and re-stamps `created_by` with the retrying actor. A
   re-dispatch after a soft delete is NOT the exception it looks like: the deleted row falls
   outside the partial unique index, so it is the CLAIM that inserts the fresh campaign and
   stamps its `created_by`, and the upsert conflicts with that. (A `pending` row cannot be
@@ -248,10 +252,15 @@ Three consequences follow, and they are what the SQL encodes:
   would make "untouched since it was made" indistinguishable from "we never recorded who" —
   which the conflict arm cannot repair later, since it only moves `updated_by` when it has a
   non-NULL actor to move. Pinned by `TestClaimCampaignDispatchStampsBothActorColumns`.
-- **`created_by` is absent from that conflict arm's SET list**, so a re-dispatch cannot
-  rewrite the original author with whoever triggered the latest run. That is the one fact
-  no service-layer test can reach, so it is asserted against the SQL text
-  (`TestUpsertCampaignDoesNotRewriteCreatedBy`).
+- **`created_by` is absent from that conflict arm's SET list.** Given the reachability above,
+  this is not stopping an overwrite today's orchestrator would otherwise perform — it is
+  REPOSITORY SEMANTICS. `UpsertCampaign` is a general-purpose method, not a private half of
+  `dispatchPlatform`, and its conflict arm has to be safe for a caller that reaches it without
+  a claim in front of it. Such a caller, with `created_by` in the SET list, would rewrite the
+  original author with whoever triggered the latest write; under shared system accounts the ad
+  platform cannot supply that author again, so once gone it is gone. Being a property of the
+  SQL rather than of any Go path, no service-layer test can reach it, and it is asserted
+  against the statement text (`TestUpsertCampaignDoesNotRewriteCreatedBy`).
 - **`updated_by` moves via `COALESCE(EXCLUDED.updated_by, campaigns.updated_by)`**, not a
   bare assignment. The actor threaded into a re-dispatch is whatever `attributedActor`
   produced back in `Orchestrator.Start` — nil whenever that request carried no authenticated

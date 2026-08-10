@@ -119,3 +119,39 @@ actually reaches it, or the justification argues for removal.
 Pinned by extending the comment on `CampaignStatusPending: false` in
 `TestCampaignStatusDeletable` to record what else depends on that row: it is the fact that
 makes the claim, not the upsert, the statement that preserves attribution after a delete.
+
+## Round N+1: the arm's justification described a caller that cannot reach it
+
+Copilot, in a suppressed comment. Real, and it invalidates the reasoning recorded near the top
+of this log ("otherwise a retry would rewrite the original author with whoever triggered the
+latest run") — which stays where it is, because this file is history; the correction lives here.
+
+The claim was that `upsertCampaignQuery`'s conflict arm is taken by "every later dispatch of
+the same (brief, platform) — a retry, a re-dispatch after a brief edit". It is not. Tracing
+`dispatchPlatform`: the upsert is reached only when `ClaimCampaignDispatch` returned
+`claimed=true`, and every `!claimed` branch returns before it — a reusable campaign is reported
+as a reuse, a retained partial as a reconcile-required failure, a bare pending claim as a skip.
+So the conflict arm always finalizes the claim THIS invocation just inserted. The two cases
+that look like exceptions are not: a retry re-claims first (the released row is gone, the
+INSERT wins, and `created_by` is re-stamped with the retrying actor anyway), and a re-dispatch
+after a soft delete inserts a fresh row outside the partial unique index.
+
+What survives is the omission itself, on a different and better footing. `UpsertCampaign` is a
+general-purpose repository method, not a private half of `dispatchPlatform`, and its conflict
+arm has to be safe for a caller that reaches it WITHOUT a claim in front of it. For that caller
+`created_by` in the SET list would rewrite the original author, and under shared system accounts
+no ad platform can supply it again. So the SQL is unchanged and
+`TestUpsertCampaignDoesNotRewriteCreatedBy` keeps its assertion — only the stated reason moves
+from "prevents a thing that happens" to "keeps a contract the caller could otherwise break".
+
+The `updated_by` COALESCE is the interesting contrast, and its old justification was closer to
+right than `created_by`'s: it IS reachable today, because the claim and the upsert are separate
+statements and only the second can run against a row the first already stamped.
+
+Two things worth keeping from this. First, a defensive guard justified by a scenario that
+cannot occur is *more* fragile than one justified as a contract, not less: the next reader who
+traces the reachability finds the justification false, and the natural conclusion is that the
+guard is unnecessary. Second, the correct account was already sitting in the neighbouring
+`ClaimCampaignDispatch` godoc ("A retry claims again first, so the row is back and the conflict
+arm takes it") — two comments about one mechanism, written at different times, and only one of
+them re-derived. Same shape as this round's `pool.go` finding on #106.

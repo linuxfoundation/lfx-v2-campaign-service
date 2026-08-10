@@ -301,21 +301,37 @@ const upsertCampaignQuery = `INSERT INTO campaigns
 		budget_amount=EXCLUDED.budget_amount, budget_type=EXCLUDED.budget_type,
 		start_date=EXCLUDED.start_date, end_date=EXCLUDED.end_date,
 		config_snapshot=EXCLUDED.config_snapshot, result=EXCLUDED.result,
-		-- created_by is NOT in the update list. The INSERT arm stamps it once, at claim
-		-- time, and the conflict arm must leave it alone: every later dispatch of the
-		-- same (brief, platform) — a retry, a re-dispatch after a brief edit — takes
-		-- this arm, and copying EXCLUDED.created_by here would rewrite the original
-		-- author with whoever triggered the most recent run. That is exactly the
-		-- information updated_by exists to carry, and it is the one field created_by
-		-- exists NOT to carry.
+		-- created_by is NOT in the update list. What this arm does, on every path the
+		-- orchestrator actually takes, is FINALIZE THE CURRENT CLAIM: dispatchPlatform
+		-- reaches an upsert only when ClaimCampaignDispatch returned claimed=true, and
+		-- that INSERT stamped created_by moments earlier. Every !claimed branch returns
+		-- before this statement — a reusable campaign is reported as a reuse, a retained
+		-- partial as a reconcile, a bare pending claim as a skip — so a LATER dispatch of
+		-- the same (brief, platform) never reaches here at all. The same holds for the
+		-- cases that look like exceptions: a retry re-claims first (the released row is
+		-- gone, so the INSERT wins and re-stamps), and a re-dispatch after a soft delete
+		-- inserts a fresh row outside the partial unique index.
 		--
-		-- COALESCE, not a bare assignment, for the same reason from the other side. This
-		-- arm runs for every re-dispatch, and the actor threaded into it is whatever
-		-- attributedActor produced back in Orchestrator.Start — nil whenever that request
-		-- carried no authenticated principal. An unattributed re-dispatch is an ordinary
-		-- event, and it must not erase the actor recorded by the attributed dispatch
-		-- before it: NULL means "not recorded", so writing one over a real actor would
-		-- turn "we know who" into "we do not".
+		-- So the omission is not preventing an overwrite the orchestrator would otherwise
+		-- perform; it is REPOSITORY SEMANTICS. UpsertCampaign is a general-purpose method
+		-- on a repository, not a private half of dispatchPlatform, and its conflict arm
+		-- must be safe for a future caller that reaches it WITHOUT a claim in front of it.
+		-- For that caller, copying EXCLUDED.created_by would rewrite the original author
+		-- with whoever triggered the most recent write — exactly the information updated_by
+		-- exists to carry, and the one thing created_by exists NOT to carry. Under shared
+		-- system accounts the ad platform cannot supply the original author, so once
+		-- overwritten it is gone for good; the column is worth defending against a caller
+		-- that does not exist yet.
+		--
+		-- COALESCE, not a bare assignment, for the same reason from the other side. The
+		-- actor threaded into this arm is whatever attributedActor produced back in
+		-- Orchestrator.Start — nil whenever that request carried no authenticated
+		-- principal — and a NULL means "not recorded", so writing one over a real actor
+		-- would turn "we know who" into "we do not". Unlike created_by above, this one is
+		-- reachable TODAY without inventing a caller: the claim and the upsert are two
+		-- statements, and only the second can be re-run against a row the first already
+		-- stamped (the retained-partial persist and the success persist are both upserts
+		-- over the same claim). An unattributed re-persist is an ordinary event.
 		updated_by=COALESCE(EXCLUDED.updated_by, campaigns.updated_by),
 		version=campaigns.version+1, updated_at=now()
 	RETURNING ` + campaignCols

@@ -275,13 +275,19 @@ func TestDeleteCampaign_ParticipatesInAdvisoryLockProtocol(t *testing.T) {
 // TestUpsertCampaignDoesNotRewriteCreatedBy pins the one property of the actor columns that
 // SQL alone decides and no service-layer test can reach.
 //
-// A campaign row is INSERTed exactly once — by ClaimCampaignDispatch. Every write after that,
-// for the life of the (brief, platform) pair, takes upsertCampaignQuery's conflict arm: a
-// re-dispatch after a brief edit, a retry, a reconcile. If created_by appeared in that arm's
-// SET list it would be rewritten on every one of them, and the column would end up recording
-// the most recent re-dispatcher rather than whoever launched the campaign. That is precisely
-// what updated_by is for, and precisely what created_by is not: under shared system accounts
-// the ad platform cannot supply the original author, so once overwritten it is gone.
+// A campaign row is INSERTed by ClaimCampaignDispatch, and upsertCampaignQuery's conflict arm
+// FINALIZES that same claim: dispatchPlatform reaches an upsert only when the claim was won,
+// and every !claimed branch returns first (reuse, reconcile, skip). So no orchestrator path
+// takes this arm against a row some EARLIER dispatch created — a retry re-claims and re-stamps,
+// and a re-dispatch after a soft delete inserts a fresh row outside the partial unique index.
+//
+// The assertion is therefore about the repository's contract rather than about today's caller.
+// UpsertCampaign is a general-purpose method, and a future caller reaching this arm without a
+// claim in front of it would, if created_by were in the SET list, rewrite the original author
+// with whoever triggered the most recent write. That is precisely what updated_by is for, and
+// precisely what created_by is not: under shared system accounts the ad platform cannot supply
+// the original author, so once overwritten it is gone. Pinning it now costs one assertion;
+// discovering it later costs the column.
 //
 // The mistake is a one-word edit (copying the neighbouring EXCLUDED lines) and produces no
 // build error, no test failure elsewhere, and no wrong-looking data until someone asks who
@@ -293,9 +299,9 @@ func TestUpsertCampaignDoesNotRewriteCreatedBy(t *testing.T) {
 		"restructured, update this test deliberately:\n%s", upsertCampaignQuery)
 
 	assert.NotContains(t, updateArm, "created_by=",
-		"created_by is assigned in the conflict arm: every re-dispatch would overwrite the "+
-			"original author with whoever triggered the latest run, and under system accounts "+
-			"nothing else records it")
+		"created_by is assigned in the conflict arm: any caller reaching this arm without a "+
+			"claim in front of it would overwrite the original author with whoever triggered "+
+			"the latest write, and under system accounts nothing else records it")
 
 	assert.Contains(t, normalizeWS(updateArm), "updated_by=COALESCE(EXCLUDED.updated_by, campaigns.updated_by)",
 		"updated_by must move on the conflict arm, and must COALESCE: an unattributed "+
