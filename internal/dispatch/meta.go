@@ -121,7 +121,12 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	}
 	pageID := strings.TrimSpace(res.providerConfig["page_id"])
 	if pageID == "" {
-		return nil, notCreated(fmt.Errorf("meta connection for project %s is missing page id", brief.ProjectID))
+		// page_id is Required at connection creation (design/connection.go), so this is
+		// unreachable through normal API validation; it only fires if a row somehow
+		// stored an empty value. Wrap it like every other stored-state defect on this
+		// path so the service classifies it as a 400, not an opaque 503.
+		return nil, notCreated(res.systemScoped(fmt.Errorf("%w: %w: meta connection for project %s is missing page id",
+			domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid, brief.ProjectID)))
 	}
 
 	var cfg metaConfig
