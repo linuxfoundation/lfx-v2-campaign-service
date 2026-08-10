@@ -276,6 +276,20 @@ func TestValidateIndexBulletDescriptionResolvesAnchoredLink(t *testing.T) {
 	}
 }
 
+// A query string is stripped for the same reason as an anchor, and is worth its
+// own case because the two are stripped by one `IndexAny(target, "#?")` — a
+// narrowing of that set to "#" alone leaves this bullet skipped and only this
+// test notices. Asserted on the drifting case, as above.
+func TestValidateIndexBulletDescriptionResolvesQueryStringLink(t *testing.T) {
+	dir := t.TempDir()
+	writeConcept(t, filepath.Join(dir, "thing.md"), "Does the thing.")
+	writeFile(t, filepath.Join(dir, "index.md"), "# Bundle\n\n* [Thing](thing.md?v=2) - Does something else.\n")
+
+	if errs := Validate(dir); len(errs) != 1 {
+		t.Fatalf("Validate() = %v, want the query-string bullet's drift to be caught", errs)
+	}
+}
+
 func TestValidateRealBundle(t *testing.T) {
 	// Use relative path from package directory to the real bundle at repo root
 	bundleDir := filepath.Join("..", "..", "docs", "knowledge")
