@@ -164,7 +164,7 @@ func unusableConnectionReason(err error) string {
 //
 // The wording is in here rather than shared because it is the one part that MUST differ:
 // the not-usable 400 names the fields an operator has to go and check, and Google's set
-// (login_customer_id) and Meta's set (accessToken) have nothing in common. Handing a Meta
+// (login_customer_id) and Meta's set (access_token) have nothing in common. Handing a Meta
 // operator Google's remedy sends them looking for a field their connection does not have,
 // and every status-code assertion in the tests passes while it does — which is why
 // TestListMetaAdsAccounts_MessagesNameMetaNotGoogleAds asserts the text.
@@ -177,6 +177,12 @@ type accountDiscovery struct {
 	// notUsableRemedy completes "the stored <displayName> connection cannot be used as
 	// configured: ..." and is the only actionable thing the caller is told, since the
 	// underlying cause is credential-derived and never leaves the process.
+	//
+	// It names PUBLISHED API field names (design/connection.go's set-credential payloads),
+	// not the Go field names of the persisted blob. The two differ for Meta —
+	// `access_token` on the wire, `AccessToken` in storage — and the caller can only act
+	// on the name it sends. Dispatch-layer messages name the Go field, correctly: their
+	// audience is this codebase, not the operator.
 	notUsableRemedy string
 }
 
@@ -191,7 +197,7 @@ var metaAdsAccountDiscovery = accountDiscovery{
 	provider:    model.ProviderMetaAds,
 	displayName: "meta ads",
 	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
-		"with accessToken set",
+		"with access_token set",
 }
 
 // listAccounts is the whole of account discovery except the strings that name the provider.

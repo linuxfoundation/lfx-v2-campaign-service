@@ -361,11 +361,12 @@ func campaignFromMeta(ctx context.Context, r *meta.CampaignResult, cfg metaConfi
 // NOT reachable for Meta, because MetaAdsConnectionConfig still declares
 // Required("account_id") and the create is rejected as a 400 before this code is involved.
 // Google Ads dropped that requirement precisely because it had a discovery endpoint; Meta
-// now has one too, but the change is not free here. Every Meta path that DOES need an
-// account (dispatch, the status toggle, the metrics read) would have to tag its empty-id
-// failure with domain.ErrAccountNotSelected the way resolveGoogleAdsClient does, or a
-// connection parked mid-bootstrap answers those calls with a generic error instead of one
-// that names the missing choice. That is tracked separately (LFXV2-3061); this resolver is
+// now has one too, but the change is not free here. Dispatch — the ONE Meta path that needs
+// an account id, since ToggleStatus and ReadMetrics both target the campaign node by id and
+// say so — would have to tag its empty-id failure with domain.ErrAccountNotSelected the way
+// resolveGoogleAdsClient does, or a connection parked mid-bootstrap answers a create with a
+// generic error instead of one that names the missing choice. That is tracked separately
+// (LFXV2-3061); this resolver is
 // already correct for it, which is why the account id is not consulted here.
 //
 // AccountConfig is left ZERO for the same reason. GET /me/adaccounts is account-agnostic:
@@ -379,11 +380,22 @@ func campaignFromMeta(ctx context.Context, r *meta.CampaignResult, cfg metaConfi
 // creds.resolve are deliberately left untagged: that layer distinguishes ErrNotFound (no
 // connection at all — a 404) from a storage failure (genuinely transient — a 503), and
 // flattening both into "not usable" would lose it.
-func (d *MetaDispatcher) resolveMetaDiscoveryClient(ctx context.Context, projectID string, platform model.Provider) (*meta.Client, error) {
+//
+// Every not-usable return below also passes through res.systemScoped, via a named return and
+// a defer, for the reason validateGoogleAdsCredentials documents: the three defects here are
+// in STORED STATE, and on a project that owns no connection that stored state belongs to the
+// LF system row it fell back to. Untagged, the shared handler answers such a project a 400
+// telling it to go and edit a connection it does not have and cannot address, instead of the
+// 500 that pages whoever installed the system credential. The defer rather than three call
+// sites is deliberate: this is a defect class the Google Ads path already had and fixed once
+// by exactly this means, and a fourth return added later must not be able to forget.
+// systemScoped is a no-op for project-owned rows and idempotent, so it costs nothing here.
+func (d *MetaDispatcher) resolveMetaDiscoveryClient(ctx context.Context, projectID string, platform model.Provider) (client *meta.Client, err error) {
 	res, err := d.creds.resolve(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}
+	defer func() { err = res.systemScoped(err) }()
 	if res.status != model.StatusActive {
 		return nil, fmt.Errorf("%w: %w: meta connection for project %s is %s, not active",
 			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)

@@ -196,7 +196,7 @@ of pasting an account id by hand.
 several judgements that are individually easy to get wrong — 404 rather than 503 for a missing
 connection, a 500 that logs but never echoes a decryption failure, a 400 rather than 503 for a
 connection no waiting will fix — and a second copy is where one of them quietly diverges. What
-IS per-provider is the caller-facing text: Meta's remedy names `accessToken`, Google's names
+IS per-provider is the caller-facing text: Meta's remedy names `access_token`, Google's names
 `login_customer_id`, and pointing the second handler at the first's `accountDiscovery` would
 tell a Meta operator to check a field their connection does not have.
 `TestListMetaAdsAccounts_MessagesNameMetaNotGoogleAds` is the test for exactly that, because

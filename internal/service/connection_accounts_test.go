@@ -703,8 +703,11 @@ func TestListMetaAdsAccounts_MessagesNameMetaNotGoogleAds(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected BadRequestError, got %T: %v", err, err)
 		}
-		if !strings.Contains(badRequest.Message, "accessToken") {
-			t.Errorf("remedy = %q, want it to name accessToken — the only credential field a meta connection has",
+		// access_token, the field name the caller sends to set-credential
+		// (design/connection.go MetaAdsCredentials) — NOT the persisted blob's Go field
+		// name AccessToken, which the operator has no way to address.
+		if !strings.Contains(badRequest.Message, "access_token") {
+			t.Errorf("remedy = %q, want it to name access_token — the API field a meta credential carries",
 				badRequest.Message)
 		}
 		if strings.Contains(badRequest.Message, "login_customer_id") {

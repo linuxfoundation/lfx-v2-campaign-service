@@ -402,8 +402,9 @@ account-agnostic: it asks which customer ids the CREDENTIAL reaches, so an accou
 a narrower version of the question, it is a different one.
 
 Both lifecycles are now SUPPORTED. `GoogleAdsConnectionConfig` no longer declares
-`Required("account_id")` (Google Ads alone — it is the only provider with a discovery endpoint,
-so the only one where a caller can create a connection and then find out what to put in it), so
+`Required("account_id")` (Google Ads alone — Meta has a discovery endpoint too as of LFXV2-3062,
+but a credentials-first row also needs the account-needing paths to fail with
+`account_not_selected`, which Meta's campaign create does not yet do), so
 this endpoint serves BOTH re-pointing an existing connection ("which other customer ids does this
 credential reach?") and first-time bootstrap:
 

@@ -67,10 +67,12 @@ connection to a different account. It does NOT yet serve first-time bootstrap th
 Ads does, because `MetaAdsConnectionConfig` still declares `Required("account_id")` and the
 create is rejected as a 400 before any of this code runs.
 
-The follow-up (LFXV2-3061) is not just dropping that requirement. Every Meta path that DOES
-need an account — dispatch, the status toggle, the metrics read — has to tag its empty-id
-failure with `domain.ErrAccountNotSelected`, or a connection parked mid-bootstrap answers
-those calls with a generic error instead of one that names the missing choice.
+The follow-up (LFXV2-3061) is not just dropping that requirement. The one Meta path that DOES
+need an account — `Dispatch` — has to tag its empty-id failure with
+`domain.ErrAccountNotSelected`, or a connection parked mid-bootstrap answers a create with a
+generic error instead of one that names the missing choice. It is only that one path:
+`ToggleStatus` and `ReadMetrics` target the campaign node by id and both document that they
+need no account id, so there is nothing there to tag.
 
 Which is why `accountDiscoveryProviders` in `internal/bootstrap/sysacct.go` still lists Google
 Ads alone, and now says so explicitly. Membership there is not "the dispatcher implements
@@ -78,6 +80,48 @@ Ads alone, and now says so explicitly. Membership there is not "the dispatcher i
 lifecycle state", which needs discovery AND the tagging. Until both exist, an account-less
 Meta system row is still a dead row; it merely has a way to find out what it is missing that
 nothing tells the operator to go and use.
+
+## Round 2 — review fixes
+
+Six findings from the Cursor Bugbot + Copilot sweep, all verified against the tree before
+acting. Two were real defects; four were prose that had drifted from what the code does.
+
+**The endpoint was unreachable through the gateway.** The Goa method and the handler were
+wired, but `charts/.../templates/httproute.yaml` only admitted `/accounts` under the literal
+`connection-google-ads` branch and the RuleSet ruled only that path. Heimdall default-denies,
+so deployed, the new endpoint answered nothing. Both files now carry `meta-ads`, and
+`parity_test.go` has the row — which fails in BOTH directions if a future edit touches one
+file and not the other (verified by reverting each in turn: route-only gives "no RuleSet entry
+authorizes it", rule-only gives "a dead rule, or a route gap"). This class is invisible to a
+diff-scoped review: the defect lives entirely in files the change did not touch.
+
+**Discovery did not attribute LF-system-row defects.** `resolveMetaDiscoveryClient` returned
+its three stored-state failures as plain `ErrConnectionNotUsable`, so a project running on the
+system fallback got a 400 telling it to edit a connection it does not own, instead of the 500
+that pages the operator who installed the credential. Fixed the way the Google Ads path was:
+a named return plus `defer func() { err = res.systemScoped(err) }()`, so a fourth return added
+later cannot forget. `TestMeta_ListAccounts_AttributesSystemRowDefects` covers all three
+defects × system/project.
+
+**The remedy text named the wrong field.** The 400 told a Meta operator to check
+`accessToken` — the Go field name of the persisted blob. The operator sends `access_token`
+(`design/connection.go`, `MetaAdsCredentials`); the storage name is unaddressable from
+outside. `notUsableRemedy` now documents that it carries PUBLISHED field names. Dispatch-layer
+messages still name the Go field, correctly: their audience is this codebase.
+
+**Two claims in the prose were false.** "Every Meta path that needs an account — dispatch, the
+status toggle, the metrics read" was wrong: `ToggleStatus` and `ReadMetrics` both target the
+campaign node by id and say so in their own comments, so `Dispatch` is the only one, and
+LFXV2-3061 tags one call site rather than three. And "Google Ads is the only provider with a
+discovery endpoint" stopped being true in this very change; what is still true, and is the
+actual reason `GoogleAdsConnectionConfig` is alone in relaxing `Required("account_id")`, is
+that discovery is necessary but not sufficient — the account-needing path must also fail with
+`account_not_selected`. Corrected in `design/connection.go`, `internal/bootstrap/sysacct.go`,
+`internal/dispatch/meta.go`, `docs/api-catalog.md` and
+`docs/knowledge/code/internal-dispatch.md`, and in the section above.
+
+Also: `metaAccountsServer` wrote the captured request path from the httptest handler goroutine
+with no mutex. Now a `recordedPath` with one, matching the rest of the file.
 
 ## Related
 

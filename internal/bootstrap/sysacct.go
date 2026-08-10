@@ -228,12 +228,14 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 //
 // **Membership is NOT "the dispatcher implements domain.AccountLister".** Meta does, as of the
 // discovery endpoint added in LFXV2-3062, and is deliberately still absent here. Discovery is
-// only half of a completable lifecycle: the other half is that the paths which DO need an
-// account id fail in a way that names the missing choice, and Meta's dispatch, toggle and
-// metrics paths still return a generic error for an empty id rather than tagging it with
-// domain.ErrAccountNotSelected. Until that lands (LFXV2-3061), an account-less Meta row is
-// still a dead row — it just has a way to find out what it is missing that nothing tells the
-// operator to go and use. Add Meta here in that ticket, with the tagging, not before.
+// only half of a completable lifecycle: the other half is that the path which DOES need an
+// account id fails in a way that names the missing choice, and Meta's Dispatch still returns
+// a generic error for an empty id rather than tagging it with domain.ErrAccountNotSelected.
+// (Only Dispatch — Meta's ToggleStatus and ReadMetrics target the campaign node by id and
+// document that they need no account id, so there is nothing to tag there.) Until that lands
+// (LFXV2-3061), an account-less Meta row is still a dead row — it just has a way to find out
+// what it is missing that nothing tells the operator to go and use. Add Meta here in that
+// ticket, with the tagging, not before.
 var accountDiscoveryProviders = map[model.Provider]bool{
 	model.ProviderGoogleAds: true,
 }
@@ -246,7 +248,7 @@ func requireAccountID(provider model.Provider, effective string) error {
 		return nil
 	}
 	return fmt.Errorf("bootstrap: %s requires -account-id: its dispatcher refuses a connection without one and "+
-		"there is no account-discovery endpoint for this provider to finish the row later", provider)
+		"this provider has no credentials-first bootstrap to finish the row later", provider)
 }
 
 // mergeConfig overlays the supplied flags on what the row already holds. Update rewrites EVERY

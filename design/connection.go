@@ -327,9 +327,15 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 })
 
 // GoogleAdsConnectionConfig is the ONE provider config where account_id is optional, and
-// the reason is specific rather than a general loosening: Google Ads is the only provider
-// with an account-DISCOVERY endpoint, so it is the only one where a caller can create a
-// connection without an account id and then find out what to put there.
+// the reason is specific rather than a general loosening: a caller may only create a
+// connection without an account id where there is an account-DISCOVERY endpoint to find out
+// what to put there afterwards.
+//
+// Discovery is a NECESSARY condition, not a sufficient one, which is why Google Ads is still
+// alone here now that Meta has a discovery endpoint too (LFXV2-3062). The other half is that
+// the operations needing an account id must fail with reason=account_not_selected rather than
+// a generic error; Meta's campaign create does not yet, so LFXV2-3061 covers both halves and
+// this config stays the only relaxed one until it lands.
 //
 // That is the bootstrap this enables — credentials first, account chosen afterwards:
 //
@@ -345,7 +351,8 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // create a connection that can never be finished from inside this API — there is no list to
 // choose from, so the operator would have to obtain the id out-of-band anyway, and the only
 // thing gained is a half-configured row. Add the requirement back for Google Ads, or drop it
-// for another provider, only together with that provider's discovery endpoint.
+// for another provider, only together with that provider's discovery endpoint AND its
+// account_not_selected tagging.
 //
 // A connection in this state stays status=active, and account_id comes back as "". See
 // docs/knowledge/code/internal-service.md — "active" says the connection is ENABLED for

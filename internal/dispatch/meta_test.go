@@ -739,13 +739,34 @@ func TestMeta_ReadMetrics_InactiveConnectionErrors(t *testing.T) {
 
 // ---- account discovery ----------------------------------------------------
 
+// recordedPath carries a request path from the httptest handler back to the test body.
+// The handler runs on the server's own goroutine, so a bare *string shared across that
+// boundary is a data race that `go test -race` fails — the same reason the mutex in
+// TestMeta_ConfigHSTokenTakesPrecedence exists.
+type recordedPath struct {
+	mu   sync.Mutex
+	path string
+}
+
+func (p *recordedPath) set(s string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.path = s
+}
+
+func (p *recordedPath) get() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.path
+}
+
 // metaAccountsServer serves one page of GET /me/adaccounts with the given JSON entries and
 // records the path it was asked for.
-func metaAccountsServer(t *testing.T, entries string, gotPath *string) *httptest.Server {
+func metaAccountsServer(t *testing.T, entries string, gotPath *recordedPath) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if gotPath != nil {
-			*gotPath = r.URL.Path
+			gotPath.set(r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"data":[`+entries+`]}`)
@@ -763,8 +784,8 @@ func metaAccountsServer(t *testing.T, entries string, gotPath *string) *httptest
 // of the question. A regression here does not fail loudly — it returns a plausible one-account
 // list — so the path itself is the assertion.
 func TestMeta_ListAccounts_AsksAboutTheTokenNotTheAccount(t *testing.T) {
-	var gotPath string
-	srv := metaAccountsServer(t, `{"id":"act_111","name":"Alpha","account_status":1}`, &gotPath)
+	var rec recordedPath
+	srv := metaAccountsServer(t, `{"id":"act_111","name":"Alpha","account_status":1}`, &rec)
 
 	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
 		meta.WithBaseURL(srv.URL))
@@ -772,6 +793,7 @@ func TestMeta_ListAccounts_AsksAboutTheTokenNotTheAccount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAccounts: %v", err)
 	}
+	gotPath := rec.get()
 	if !strings.HasSuffix(gotPath, "/me/adaccounts") {
 		t.Errorf("path = %q, want the account-agnostic /me/adaccounts", gotPath)
 	}
@@ -804,6 +826,57 @@ func TestMeta_ListAccounts_WorksBeforeAnAccountIsChosen(t *testing.T) {
 	}
 	if len(accounts) != 1 || accounts[0].ID != "act_222" {
 		t.Errorf("accounts = %+v, want the one discovered account", accounts)
+	}
+}
+
+// TestMeta_ListAccounts_AttributesSystemRowDefects is the Meta half of what
+// TestSystemScopedCoversEveryCallerNotJustDiscovery pins for Google Ads: every stored-state
+// defect the discovery resolver detects belongs to whichever row it was READ FROM.
+//
+// A project with no connection of its own falls back to the LF system row. Untagged, all
+// three defects below reach the handler as a plain ErrConnectionNotUsable, which it answers
+// 400 — "the stored meta ads connection cannot be used as configured" — to a caller whose
+// project owns no connection and cannot address the reserved scope. The correct answer is the
+// 500 that pages whoever installed the LF credential. The mirror half matters just as much:
+// the project's OWN broken row must stay a 400, or every fixable connection becomes a page.
+func TestMeta_ListAccounts_AttributesSystemRowDefects(t *testing.T) {
+	defects := map[string]func() *model.Connection{
+		"connection not active": func() *model.Connection {
+			c := activeMetaConn(goodMetaCreds)
+			c.Status = model.StatusInactive
+			return c
+		},
+		"credentials undecodable": func() *model.Connection { return activeMetaConn(`not json`) },
+		"credentials incomplete":  func() *model.Connection { return activeMetaConn(`{"AccessToken":""}`) },
+	}
+
+	for name, conn := range defects {
+		t.Run(name, func(t *testing.T) {
+			dispatcherFor := func(scope string) *MetaDispatcher {
+				return NewMetaDispatcher(&scopedConnReader{
+					rows: map[string]*model.Connection{scope: conn()},
+				}, identityEncryptor{})
+			}
+
+			_, err := dispatcherFor(model.SystemProjectID).ListAccounts(
+				context.Background(), "cncf", model.ProviderMetaAds)
+			if !errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Fatalf("err = %v, want ErrConnectionNotUsable", err)
+			}
+			if !errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+				t.Errorf("err = %v, want it attributed to the SYSTEM connection — otherwise the "+
+					"caller is told to edit a row it does not own", err)
+			}
+
+			_, err = dispatcherFor("cncf").ListAccounts(
+				context.Background(), "cncf", model.ProviderMetaAds)
+			if !errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Fatalf("err = %v, want ErrConnectionNotUsable", err)
+			}
+			if errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+				t.Errorf("err = %v, must not be attributed to the system account", err)
+			}
+		})
 	}
 }
 
