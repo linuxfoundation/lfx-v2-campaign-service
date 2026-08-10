@@ -129,6 +129,48 @@ func TestMigrateRefusesADroppedRequiredIndex(t *testing.T) {
 	}
 }
 
+// TestMigrateRefusesADroppedDispatchIndex is the same state for the OTHER required index,
+// and it is the one with money attached.
+//
+// Migration 000014 dropped campaigns_brief_id_platform_key, so uq_campaigns_brief_platform_live
+// is the sole arbiter of (brief_id, platform) uniqueness and the thing ClaimCampaignDispatch
+// rests on. 000014 guards its definition — but only once, while 000014 is running. An index
+// lost afterwards (an operator clearing invalid-index debris, a rebuild from 000013 whose
+// IF NOT EXISTS no-opped against a same-named leftover) left a schema that booted clean and
+// double-created paid campaigns under concurrency. That is exactly the silent absence the
+// runner check exists to refuse, so it has to cover this index and not only the lease one.
+func TestMigrateRefusesADroppedDispatchIndex(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+
+	const idx = "uq_campaigns_brief_platform_live"
+
+	t.Cleanup(func() { restoreDispatchIndex(t, pool) })
+
+	if _, err := pool.Exec(ctx, "DROP INDEX IF EXISTS "+idx); err != nil {
+		t.Fatalf("drop the required index: %v", err)
+	}
+
+	err := postgres.Migrate(dbtest.DSN())
+	if !errors.Is(err, postgres.ErrMissingRequiredIndex) {
+		t.Fatalf("Migrate after dropping %s: got %v, want ErrMissingRequiredIndex — "+
+			"succeeding here starts the service with (brief_id, platform) uniqueness gone "+
+			"and concurrent claims free to double-create paid campaigns", idx, err)
+	}
+	if !strings.Contains(err.Error(), idx) {
+		t.Errorf("the error does not name %s: %v", idx, err)
+	}
+	// The remedy has to point at 000013, the migration that CREATES this index —
+	// forcing back to 17 replays 000018 and rebuilds the wrong one.
+	if !strings.Contains(err.Error(), "force 12") {
+		t.Errorf("the error does not tell the operator to force back to 12: %v", err)
+	}
+	if !postgres.IsPermanentMigrationErr(err) {
+		t.Errorf("ErrMissingRequiredIndex is not permanent; boot would 503-loop rather than " +
+			"telling the operator the version must be forced back")
+	}
+}
+
 // TestMigrateRefusesARequiredIndexWithTheWrongDefinition pins the third state in this
 // family, and the one a NAME-only check cannot see at all.
 //
@@ -202,15 +244,40 @@ func restoreLeaseIndex(t *testing.T, pool interface {
 },
 ) {
 	t.Helper()
+	restoreRequiredIndex(t, pool, "uq_campaign_audiences_brief_platform_building",
+		"CREATE UNIQUE INDEX uq_campaign_audiences_brief_platform_building"+
+			" ON campaign_audiences (brief_id, platform) WHERE status = 'building'")
+}
+
+// restoreDispatchIndex rebuilds the campaigns partial unique index (migration 000013).
+// Since 000014 dropped campaigns_brief_id_platform_key this is the ONLY thing standing
+// between two concurrent claims and two paid campaigns for one (brief, platform), so a
+// test that leaves it dropped does not merely dirty the database — it makes every later
+// dispatch test pass against a table that cannot enforce what they are about.
+func restoreDispatchIndex(t *testing.T, pool interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+},
+) {
+	t.Helper()
+	restoreRequiredIndex(t, pool, "uq_campaigns_brief_platform_live",
+		"CREATE UNIQUE INDEX uq_campaigns_brief_platform_live"+
+			" ON campaigns (brief_id, platform) WHERE status <> 'deleted'")
+}
+
+func restoreRequiredIndex(t *testing.T, pool interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, idx, create string,
+) {
+	t.Helper()
 	ctx := context.Background()
-	const idx = "uq_campaign_audiences_brief_platform_building"
 
 	if _, err := pool.Exec(ctx, "DROP INDEX IF EXISTS "+idx); err != nil {
 		t.Errorf("restore %s: drop: %v", idx, err)
 		return
 	}
-	if _, err := pool.Exec(ctx, "CREATE UNIQUE INDEX "+idx+
-		" ON campaign_audiences (brief_id, platform) WHERE status = 'building'"); err != nil {
+	if _, err := pool.Exec(ctx, create); err != nil {
 		t.Errorf("restore %s: create: %v", idx, err)
 		return
 	}

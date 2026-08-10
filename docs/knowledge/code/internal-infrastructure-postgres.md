@@ -221,13 +221,15 @@ Ownership comes from the MIGRATIONS themselves — `migrationIndexOwners` parses
 `*.up.sql` in the embedded FS for its `CREATE … INDEX` statements — and not from
 `requiredIndexes`. That distinction is the whole safety of the advice, not a style
 preference. `requiredIndexes` is deliberately narrow: it lists only indexes whose ABSENCE
-is silent, so most migration-created indexes are legitimately absent from it, including
-`uq_campaigns_brief_platform_live` (000013), the sole arbiter of dispatch uniqueness once
-000014 drops the old constraint. Derive ownership from that list and an operator holding
-an invalid copy of it is told to drop it and leave the schema version alone — which
-removes `(brief_id, platform)` uniqueness permanently, boots clean, and lets concurrent
-claims double-create PAID campaigns. **Any list narrower than "every index a migration
-creates" produces that class of answer; the migrations are the only set that is not.**
+is silent, so most migration-created indexes are legitimately absent from it —
+`idx_campaigns_stuck_claims` (000008) among them, a performance index whose loss makes the
+stuck-claim scan full-scan forever. Derive ownership from that list and an operator holding
+an invalid copy of it is told to drop it and leave the schema version alone, which deletes
+the index permanently and boots clean. **Any list narrower than "every index a migration
+creates" produces that class of answer; the migrations are the only set that is not.** The
+narrowness is not incidental either: `requiredIndexes` grows only when an index's absence
+would be silent, and the invalid-index scan must keep annotating correctly for every index
+it does not list, both today's and the ones added after this code was written.
 The parser matches the CREATE, not the name anywhere in the file, so a migration that
 DROPs an index is not reported as the version to force back to; where two migrations
 create one name, the highest wins. `TestMigrationIndexOwners_FindsEveryCreatedIndex`
@@ -295,6 +297,30 @@ not qualify. The hand-maintained list is kept honest by
 `TestMigrateRefusesADroppedRequiredIndex`, which drops each name and requires `Migrate` to
 notice — an entry naming an index no migration creates fails there rather than sitting in
 the list as decoration.
+
+Two indexes qualify. `uq_campaign_audiences_brief_platform_building` (000018) is the
+audience-build lease. `uq_campaigns_brief_platform_live` (000013) is the arbiter of
+`ClaimCampaignDispatch`, and since 000014 dropped `campaigns_brief_id_platform_key` it is
+the **only** thing enforcing at most one live campaign per `(brief_id, platform)`. 000014's
+drop-guard pins that same definition — deliberately, not redundantly: the guard runs once,
+at migration time, and cannot speak for the schema a year of operations later. Two checks
+on one definition is the design.
+
+### The recovery version is annotated per NAME, never per message
+
+The missing-index error used to end in a single `migrate force <version-1>`. That was
+correct while the registry held one entry and became wrong the moment it held two, because
+the two are created by different migrations. An operator whose schema is missing
+`uq_campaigns_brief_platform_live`, following that sentence to force 17, replays 000018,
+rebuilds the *audience* index, and boots against a campaigns table that still enforces
+nothing — having done exactly what the message said. Advice that is right for the first
+name in a list and wrong for the second is worse than no advice, because it gets followed.
+
+`indexRecovery` renders the clause for one name and both messages (missing and
+wrong-definition) build from it, reusing the same migration-derived ownership
+`describeInvalid` already used. `TestRequiredIndexes_AnnotateToDifferentMigrations` fails
+if two entries ever resolve to the same version, which is the signal to re-derive the
+advice rather than assume it still holds.
 
 ### The check is on the DEFINITION, because the name is what IF NOT EXISTS matches
 

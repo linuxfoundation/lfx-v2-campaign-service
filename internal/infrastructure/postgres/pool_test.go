@@ -230,14 +230,45 @@ func TestMigrationIndexOwners_FindsEveryCreatedIndex(t *testing.T) {
 	}
 }
 
-// The specific index that motivated deriving ownership from the migrations instead of from
-// requiredIndexes. It is the sole arbiter of dispatch uniqueness once 000014 drops the old
-// constraint, and it is deliberately NOT in requiredIndexes — so the previous form told an
-// operator holding an invalid copy to drop it and leave the schema version alone, which
-// removes (brief_id, platform) uniqueness permanently and lets concurrent claims
-// double-create paid campaigns.
-func TestDescribeInvalid_AnnotatesIndexesOutsideRequiredIndexes(t *testing.T) {
+// TestRequiredIndexes_CoversTheDispatchUniqueIndex pins the membership, not the message.
+//
+// uq_campaigns_brief_platform_live is the sole arbiter of (brief_id, platform) uniqueness
+// once 000014 drops campaigns_brief_id_platform_key, and 000014's guard checks it exactly
+// once — while 000014 runs. An index lost any time afterwards left a schema that booted
+// clean with concurrent claims free to double-create paid campaigns. Membership in
+// requiredIndexes is what makes every later boot re-check it, and the DEFINITION is
+// checked rather than the name because 000013 creates it with IF NOT EXISTS: any index
+// carrying the name makes that a no-op, and a name-only check then calls the schema
+// healthy (TestMigration000014_GuardChecksIndexDefinition records the PostgreSQL 16.10 run
+// where a same-named NON-unique index passed the name-only form of 000014's own guard).
+func TestRequiredIndexes_CoversTheDispatchUniqueIndex(t *testing.T) {
 	const dispatchUnique = "uq_campaigns_brief_platform_live"
+
+	var got *requiredIndex
+	for i, ri := range requiredIndexes {
+		if ri.name == dispatchUnique {
+			got = &requiredIndexes[i]
+		}
+	}
+	require.NotNilf(t, got, "%s is not in requiredIndexes: nothing re-checks the only "+
+		"index enforcing dispatch uniqueness after 000014 drops the constraint", dispatchUnique)
+
+	assert.Equal(t, "campaigns", got.table)
+	assert.True(t, got.unique, "a non-unique index of this name arbitrates nothing")
+	assert.Equal(t, []string{"brief_id", "platform"}, got.keys)
+	// Character-identical to the deparsed form 000014's guard compares against. Two
+	// checks on one definition are only two checks while they agree on what it is.
+	assert.Equal(t, "(status <> 'deleted'::text)", got.predicate)
+}
+
+// describeInvalid's annotation is derived from the migrations, not from requiredIndexes,
+// and that has to keep holding for indexes the registry does not name — otherwise an
+// operator holding an invalid copy of one is told to drop it and leave the schema version
+// alone, which removes it permanently. idx_campaigns_stuck_claims is such an index: 000008
+// creates it, nothing re-checks it at boot, and the stuck-claim scan degrades to a full
+// table scan without it.
+func TestDescribeInvalid_AnnotatesIndexesOutsideRequiredIndexes(t *testing.T) {
+	const stuck = "idx_campaigns_stuck_claims"
 	require.NotContains(t,
 		func() []string {
 			var n []string
@@ -245,13 +276,13 @@ func TestDescribeInvalid_AnnotatesIndexesOutsideRequiredIndexes(t *testing.T) {
 				n = append(n, ri.name)
 			}
 			return n
-		}(), dispatchUnique,
+		}(), stuck,
 		"this test is only meaningful while the index is outside requiredIndexes")
 
-	got := describeInvalid([]string{dispatchUnique})
-	assert.Containsf(t, got, dispatchUnique+" (migration 000013: force 12)",
-		"describeInvalid = %q, want the dispatch unique index annotated with the migration "+
-			"that creates it", got)
+	got := describeInvalid([]string{stuck})
+	assert.Containsf(t, got, stuck+" (migration 000008: force 7)",
+		"describeInvalid = %q, want the index annotated with the migration that "+
+			"unconditionally creates it", got)
 	assert.NotContains(t, got, "no migration creates this")
 }
 
@@ -267,6 +298,33 @@ func TestDescribeInvalid_LeavesTrulyUnownedIndexesAlone(t *testing.T) {
 		"describeInvalid = %q, want the owned index annotated with its version", got)
 	assert.Containsf(t, got, "zz_hand_built_idx (no migration creates this",
 		"describeInvalid = %q, want the unowned index told to leave the version alone", got)
+}
+
+// TestRequiredIndexes_AnnotateToDifferentMigrations pins the reason the missing-index error
+// annotates per NAME instead of ending in one `migrate force <version-1>` sentence.
+//
+// The generic sentence was correct while requiredIndexes held a single entry and became
+// wrong the moment it held two, because the two are created by different migrations. An
+// operator holding a schema missing uq_campaigns_brief_platform_live who forces 17 replays
+// 000018, rebuilds the AUDIENCE index, and boots against a campaigns table that still has
+// nothing enforcing (brief_id, platform) uniqueness — having followed the message exactly.
+// This test fails the day a third entry lands whose owner collides with neither, which is
+// the moment to re-read the advice rather than trust it.
+func TestRequiredIndexes_AnnotateToDifferentMigrations(t *testing.T) {
+	seen := make(map[string]string, len(requiredIndexes))
+	for _, idx := range requiredIndexes {
+		got := indexRecovery(idx.name)
+		require.NotContainsf(t, got, "no migration creates this",
+			"%s is in requiredIndexes but no migration creates it: the error would tell the "+
+				"operator to drop an index the service refuses to boot without", idx.name)
+		if other, dup := seen[got]; dup {
+			t.Fatalf("%s and %s both annotate to %q — if that is genuinely true the advice is "+
+				"fine, but verify it rather than assuming: forcing one version must rebuild "+
+				"BOTH indexes", idx.name, other, got)
+		}
+		seen[got] = idx.name
+	}
+	require.Len(t, seen, len(requiredIndexes))
 }
 
 // TestMigrationIndexOwners_IgnoresAConditionalRebuild is the finding that a CREATE inside a

@@ -88,9 +88,16 @@ func (r *BriefRepo) GetBrief(ctx context.Context, projectID, id string) (*model.
 // writer's row and the version no longer matches. When the writer rolls back, the read
 // proceeds against the unchanged row and the confirmation passes, which is also correct.
 //
-// The transaction is READ-ONLY and rolled back rather than committed — nothing is written,
-// and a rollback releases the lock exactly as a commit would. It is held for the length of
-// one indexed lookup, so it never delays a brief mutation by anything measurable.
+// The transaction WRITES NOTHING and is rolled back rather than committed — a rollback
+// releases the lock exactly as a commit would. It is held for the length of one indexed
+// lookup, so it never delays a brief mutation by anything measurable.
+//
+// "Writes nothing" and not "READ ONLY": the latter names a PostgreSQL transaction mode
+// this transaction is NOT in (`Begin` uses the read-write default) and, more to the
+// point, one it could not be — `SELECT ... FOR UPDATE` takes a row lock, which a
+// genuinely READ ONLY transaction rejects. Do not "make the comment true" by adding
+// pgx.TxOptions{AccessMode: pgx.ReadOnly}; it would break the lock this function exists
+// for.
 //
 // The archived predicate matches GetBrief's: an archived brief is ErrNotFound, not a
 // stale approval, because "refresh and rebuild" is the wrong instruction for a brief that

@@ -478,3 +478,37 @@ Two things fell out of writing it:
 
 `TestMigrationIndexOwners_IgnoresAConditionalRebuild` was revert-verified against the
 unstripped scan and fails naming both the attributed version and the rendered advice.
+
+## Round 7: the second registry entry made the recovery advice wrong
+
+Copilot's suppressed finding on #106 was that `uq_campaigns_brief_platform_live` belongs in
+`requiredIndexes`. Verified on the merits and correct: 000013 creates it, 000014 pins that exact
+definition and then drops `campaigns_brief_id_platform_key`, and after that nothing re-checks
+dispatch uniqueness ever again. 000014's guard is not a substitute — it runs once, at migration
+time, and cannot speak for the schema a year of operations later. Two checks on one definition
+is the point.
+
+Adding it exposed a defect the finding did not mention, and the new live test
+`TestMigrateRefusesADroppedDispatchIndex` caught it on its first run. The
+`ErrMissingRequiredIndex` message ended in a generic ``migrate force `<version-1>` ``. That was
+correct while the registry held exactly one entry and became wrong the instant it held two,
+because 000013 and 000018 create them. An operator missing the campaigns index who follows the
+message to force 17 replays 000018, rebuilds the AUDIENCE index, and boots against a campaigns
+table that still enforces nothing — having done precisely what the error told them to do.
+
+The fix reuses machinery that already existed for exactly this reason: `describeInvalid` had
+been annotating per NAME since the invalid-index scan went in, for the same argument. Extracted
+`indexRecovery(name)` from it; both required-index messages now build from it, so each name
+carries the version that rebuilds THAT index.
+`TestRequiredIndexes_AnnotateToDifferentMigrations` fails if two entries ever collide on one
+version, and was revert-verified by making `indexRecovery` return the old generic string.
+
+Two doc claims went stale in the same move and were corrected rather than left: both the concept
+doc and `describeInvalid`'s godoc used `uq_campaigns_brief_platform_live` as the example of an
+index legitimately ABSENT from `requiredIndexes`. It is in the list now.
+`idx_campaigns_stuck_claims` (000008) carries the argument instead — a performance index, which
+is the class that genuinely does not qualify.
+
+The general shape, worth keeping: **advice generated from a one-element set can be indefensibly
+generic and still read as correct.** The second element is what makes the message wrong, and
+nothing about adding it looks like an advice change.

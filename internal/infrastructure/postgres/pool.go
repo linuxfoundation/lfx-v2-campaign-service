@@ -270,18 +270,22 @@ func checkNoInvalidIndexes(dsn string) error {
 		return err
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("%w: %s. This index is the ONLY thing enforcing its invariant — "+
-			"without it the writes it serializes all succeed and the damage is silent. "+
-			"Recover with `migrate force <version-1>` so the migration that creates it "+
-			"runs again; do not start the service against this schema",
-			ErrMissingRequiredIndex, strings.Join(missing, ", "))
+		return fmt.Errorf("%w: %s. Each index listed is the ONLY thing enforcing its "+
+			"invariant — without it the writes it serializes all succeed and the damage "+
+			"is silent. Force the version annotated against each NAME so the migration "+
+			"that creates that index runs again; the annotations differ per index and "+
+			"forcing one does not rebuild the other. Do not start the service against "+
+			"this schema",
+			ErrMissingRequiredIndex, describeInvalid(missing))
 	}
 	if len(wrong) > 0 {
 		return fmt.Errorf("%w: %s. An index of the right NAME that enforces something else "+
 			"is worse than none: the migration's IF NOT EXISTS finds the name and skips, "+
 			"so the real constraint is never built and every name-based check passes. "+
-			"Recover by DROPPING the listed index and then `migrate force <version-1>` — "+
-			"forcing alone re-runs a CREATE that the impostor makes a no-op",
+			"Recover by DROPPING the listed index and then forcing the version annotated "+
+			"against it — forcing alone re-runs a CREATE that the impostor makes a no-op, "+
+			"and forcing a version annotated against a DIFFERENT name rebuilds a "+
+			"different index",
 			ErrRequiredIndexMismatch, strings.Join(wrong, "; "))
 	}
 	return nil
@@ -314,6 +318,23 @@ var requiredIndexes = []requiredIndex{{
 	// explicit ::text cast, extra whitespace — compare equal instead of tripping a
 	// false alarm, on the same reasoning as 000014's guard.
 	predicate: "(status = 'building'::text)",
+}, {
+	// at most one live campaign per (brief, platform) — the arbiter of
+	// ClaimCampaignDispatch, and since 000014 dropped campaigns_brief_id_platform_key,
+	// the ONLY one. 000014's guard pins this same definition before it drops the
+	// constraint, but that guard runs once, at migration time. Nothing re-checked it
+	// afterwards, so an index dropped or replaced later — including by an operator
+	// clearing invalid-index debris and rebuilding from 000013 with IF NOT EXISTS
+	// silently no-opping against a same-named leftover — left uniqueness unenforced with
+	// a clean boot and duplicate PAID campaigns as the first symptom. Two guards on one
+	// definition is the point: a migration-time check cannot speak for the schema a year
+	// of operations later.
+	name:   "uq_campaigns_brief_platform_live",
+	table:  "campaigns",
+	unique: true,
+	keys:   []string{"brief_id", "platform"},
+	// Deparsed, and character-identical to the form 000014's guard compares against.
+	predicate: "(status <> 'deleted'::text)",
 }}
 
 // requiredIndex is an index whose absence — or silent replacement by something of the
@@ -441,28 +462,40 @@ var migrationIndexOwners = sync.OnceValue(func() map[string]int {
 // Ownership is read from the MIGRATIONS, not from requiredIndexes, and the difference is
 // load-bearing rather than stylistic. requiredIndexes is deliberately narrow — it lists only
 // indexes whose ABSENCE is silent — so most migration-created indexes are legitimately
-// missing from it: `uq_campaigns_brief_platform_live` (000013), the sole arbiter of dispatch
-// uniqueness once 000014 drops the old constraint, and `idx_campaigns_stuck_claims` (000008)
-// among them. Deriving ownership from that list would hand an operator holding an invalid
-// copy of the dispatch unique index the "drop it, leave the schema version alone" advice,
-// which drops (brief_id, platform) uniqueness permanently, boots clean, and lets concurrent
-// claims double-create PAID campaigns. Any list narrower than "every index a migration
-// creates" produces that class of answer; the migrations are the only set that is not.
+// missing from it, `idx_campaigns_stuck_claims` (000008) among them. Deriving ownership from
+// that list would hand an operator holding an invalid copy of THAT index the "drop it, leave
+// the schema version alone" advice, which deletes it permanently and boots clean with the
+// stuck-claim scan full-scanning forever. Any list narrower than "every index a migration
+// creates" produces that class of answer; the migrations are the only set that is not, and
+// they stay correct for indexes added after this code was written.
 //
 // "Creates" means creates UNCONDITIONALLY — see migrationIndexOwners. A rebuild guarded on
 // the debris the remedy tells the operator to delete is not a recovery target.
 func describeInvalid(names []string) string {
-	owner := migrationIndexOwners()
 	out := make([]string, 0, len(names))
 	for _, n := range names {
-		if v, ok := owner[n]; ok {
-			out = append(out, fmt.Sprintf("%s (migration %06d: force %d)", n, v, v-1))
-			continue
-		}
-		out = append(out, fmt.Sprintf("%s (no migration creates this; drop it, leave the "+
-			"schema version alone)", n))
+		out = append(out, n+" ("+indexRecovery(n)+")")
 	}
 	return strings.Join(out, ", ")
+}
+
+// indexRecovery renders the recovery clause for ONE index name: the version to force so
+// the migration that creates it runs again, or the drop-only advice for a name no
+// migration owns.
+//
+// It is per-name and not per-message because more than one index can be reported at once
+// and they need not share an owner: `uq_campaign_audiences_brief_platform_building` comes
+// from 000018 and `uq_campaigns_brief_platform_live` from 000013. A single
+// `force <version-1>` sentence covering both is wrong for at least one of them — an
+// operator who forces 17 replays 000018 and the campaigns index is still absent, with the
+// error now silent because the message they followed said this was the remedy. Advice
+// that is right for the first name in a list and wrong for the second is worse than no
+// advice, because it is followed.
+func indexRecovery(name string) string {
+	if v, ok := migrationIndexOwners()[name]; ok {
+		return fmt.Sprintf("migration %06d: force %d", v, v-1)
+	}
+	return "no migration creates this; drop it, leave the schema version alone"
 }
 
 // requiredIndexQuery reads one index's definition. indisready joins indisvalid because the
