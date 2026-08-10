@@ -514,3 +514,51 @@ func TestAudienceService_Update_SuppressionListOps(t *testing.T) {
 		t.Errorf("clear flag must win over a supplied list, got: %v", both.SuppressionListIds)
 	}
 }
+
+// TestMapAudienceErr_ConflictReasonsAreDistinctAndStable pins the machine-readable half of
+// the three 409s.
+//
+// All three carry code "409". Before `reason` existed the only thing telling them apart was
+// the message, and a caller cannot act on those: "wait for the build that holds the lease"
+// and "refresh and rebuild" are opposite instructions, and the prose that expresses them is
+// rewritten whenever an operator finds it unclear. This asserts the slugs, so a reworded
+// message is free and a renamed slug is a failing test.
+//
+// It also asserts the three are pairwise distinct — a copy-paste that gave two branches the
+// same slug would re-merge exactly the cases the attribute exists to separate, and every
+// individual assertion would still pass.
+func TestMapAudienceErr_ConflictReasonsAreDistinctAndStable(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"stale approval", domain.ErrStaleApproval, "stale_approval"},
+		{"lease held", domain.ErrAudienceBuildInFlight, "audience_build_in_flight"},
+		{"generic conflict", domain.ErrConflict, "already_exists"},
+	}
+
+	seen := make(map[string]string, len(cases))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var conflict *audiences.ConflictError
+			if !errors.As(mapAudienceErr(tc.err), &conflict) {
+				t.Fatalf("mapAudienceErr(%v) is not a ConflictError", tc.err)
+			}
+			if conflict.Reason == nil {
+				t.Fatalf("no reason on the %s conflict: the caller is back to matching on "+
+					"message prose to tell it from the other two 409s", tc.name)
+			}
+			if *conflict.Reason != tc.want {
+				t.Errorf("reason = %q, want %q — this slug is the part clients are promised, "+
+					"so renaming it breaks them silently", *conflict.Reason, tc.want)
+			}
+			if prev, dup := seen[*conflict.Reason]; dup {
+				t.Errorf("%s reuses the reason %q already returned for %s, which merges two "+
+					"conflicts that call for opposite client behaviour",
+					tc.name, *conflict.Reason, prev)
+			}
+			seen[*conflict.Reason] = tc.name
+		})
+	}
+}

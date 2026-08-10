@@ -61,11 +61,16 @@ remedies — stale approval says rebuild, the lease says do not — so a client 
 code alone gets one of them wrong, and the wrong one duplicates portal lists. The catalog table
 gives the exact message text for each, plus the operator procedure for a stuck lease.
 
-**Merge ordering.** `allowedVersionGaps` in `outbox_repo_test.go` records `000016` (PR #95) and
-`000017` (PR #93) as open. golang-migrate stores only the HIGHEST applied version, so if this
-tree deploys first those two are skipped silently and permanently. **#95 and #93 must both land
-before this branch.** `TestMigrations_AllowedVersionGapsAreStillOpen` fails once they do, which
-is what forces the entries to be deleted rather than left to rot.
+**Merge ordering — discharged.** This branch carried an ordering obligation on `000016`
+(PR #95) and `000017` (PR #93): golang-migrate stores only the HIGHEST applied version, so a
+tree deploying above an unfilled gap skips those migrations silently and permanently. Both
+have merged, and `allowedVersionGaps` in `outbox_repo_test.go` now holds no live entries —
+its body is the comments recording why each was removed, plus `000018`, which is this
+branch's own migration and is deliberately kept rather than renumbered (pool.go's
+version-forcing recovery path and its tests name the number). **There is no remaining merge
+order this branch depends on.** Deleting each entry was not a thing anyone had to remember:
+`TestMigrations_AllowedVersionGapsAreStillOpen` fails the moment the sibling lands, which is
+why the list is trustworthy enough to read a merge decision off.
 
 ## `IF NOT EXISTS` cannot recover from its own failure — so the runner checks
 
@@ -698,3 +703,58 @@ instead of passing vacuously.
   `docs/knowledge/code/internal-infrastructure-postgres.md`: main added the `000016` bullet
   where this branch had a sentence promising it. Kept main's bullet, kept this branch's
   `000018` section.
+
+## Round N+3: the three findings that were never a thread
+
+Copilot filed these inside a `<details><summary>Suppressed comments</summary>` block in the
+review BODY. `unresolved=0` on the PR was true and meaningless — there were no threads to
+resolve because suppressed findings do not create any. All three were real.
+
+### The oracle cannot report that it has shrunk
+
+Every index check in `invalid_index_live_test.go` iterates `requiredIndexes` and asks whether
+the schema honours it. That direction catches an index dropped from the DATABASE and is
+structurally incapable of catching one dropped from the REGISTRY: delete an entry and each
+test loops one fewer name, passes, and the index it used to cover is now unguarded. The
+`len(names) < 8` floor was doing the whole job of noticing, and only until the eighth
+deletion. Two rounds ago this same file was corrected for a loop over a hardcoded list that
+*claimed* to be driven off the registry; driving it off the registry fixed the claim and left
+the registry itself unaudited.
+
+`TestEveryUniquePartialIndexIsRequired` runs the other direction: enumerate the migrated
+schema and require every unique PARTIAL index to be registered. The predicate is the argument,
+not a filter of convenience — a unique constraint declared with `ADD CONSTRAINT` has a
+`pg_constraint` row and Postgres refuses to drop its index, so partial unique indexes are
+exactly the class whose invariant lives only in an object any `DROP INDEX` removes without
+complaint. That is the class `requiredIndexes` exists for, which makes membership checkable
+rather than a matter of taste. The live schema has ten and all ten were already registered, so
+this passes today and buys nothing except every future one.
+
+### Three 409s separated only by English
+
+`mapAudienceErr` returned `Code: "409"` three times with three different messages carrying
+three different instructions — refresh and retry, wait and do NOT retry, stop. A client can
+only act on that by matching message text, and this repo rewrites those messages freely: the
+in-flight one has been reworded twice in this branch alone, for operator clarity, with no
+version bump and nothing that would fail. `ConflictError` now carries an optional `reason`
+slug (`stale_approval`, `audience_build_in_flight`, `already_exists`), enum-constrained in the
+design so a typo fails response validation. Optional is what made it a two-line change: the
+other eighteen construction sites of the shared type compile and behave unchanged, and the
+connection-usability 409s deliberately stay unslugged because their remedy is identical in
+every case. The test asserts the slugs are pairwise distinct as well as correct — one
+copy-pasted slug would re-merge the cases the field exists to separate while every individual
+assertion still passed.
+
+### A merge-order instruction outliving its merge
+
+The head summary told a reader that #95 and #93 must land before this branch. Both had, in
+this branch's own history, and the `allowedVersionGaps` entries recording the obligation were
+deleted by the test that watches them. The paragraph was left behind.
+
+The class: **operational instructions in a document whose other sections are append-only.**
+Round sections are history and correcting them would be a lie about what was known when. The
+summary is not history — it is what someone reads to decide whether to merge — and the
+machinery that discharged the obligation (`TestMigrations_AllowedVersionGapsAreStillOpen`
+fails the moment a sibling lands) has no reach into prose. Anything stated as a current
+constraint has to be re-derived from the thing that enforces it, and a document mixing the two
+kinds of section makes it easy to inherit the append-only habit for both.

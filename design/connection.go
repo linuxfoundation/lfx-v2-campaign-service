@@ -96,8 +96,25 @@ var NotFoundError = Type("not-found-error", func() {
 	errorAttrs("404", "The connection was not found.")
 })
 
+// ConflictError carries an OPTIONAL reason on top of the standard code/message pair.
+//
+// Several endpoints return 409 for genuinely different situations that call for
+// different client behaviour — retry after a refresh, wait and poll, or stop and
+// surface the collision. Distinguishing them by the message text means a client
+// pattern-matches English prose that this repo edits freely for operator clarity, so
+// the first reworded message silently breaks it. `reason` is the part that is promised
+// not to change.
+//
+// It is deliberately NOT Required: only the endpoints that actually return more than
+// one kind of conflict populate it, and adding it to the rest would imply a taxonomy
+// nobody maintains. A client must treat an absent reason as "unspecified conflict",
+// which is what the message already says.
 var ConflictError = Type("conflict-error", func() {
 	errorAttrs("409", "A connection for this provider already exists on the project.")
+	Attribute("reason", String, "Stable machine-readable discriminator, present only where an endpoint returns more than one kind of conflict. Absent means unspecified.", func() {
+		Enum("stale_approval", "audience_build_in_flight", "already_exists")
+		Example("audience_build_in_flight")
+	})
 })
 
 var PreconditionFailedError = Type("precondition-failed-error", func() {

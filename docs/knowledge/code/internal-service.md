@@ -285,10 +285,15 @@ connection is exactly what makes the bootstrap work, since discovery is how the 
 the account to select. Discovery's 400 is reserved for its *other* unusable states (inactive,
 credential blob absent/incomplete/malformed, provider config invalid).
 
-The distinction is carried in the response **message**, not a field. `ConflictError` is a shared
-Goa type with exactly `code` and `message`, so exposing a machine-readable `reason` would mean
-changing a type every 409 in this service returns; the reason token reaches operators through
-the log instead.
+The distinction here is carried in the response **message**, not a field, and that is now a
+choice rather than a limitation. `ConflictError` (`design/connection.go`) carries an OPTIONAL
+`reason` slug alongside `code` and `message`; being optional is what let it be added without
+touching the eighteen other sites that construct the shared type. The audience build populates
+it — three 409s with three opposite remedies — and these connection-usability 409s do not,
+because their remedy is the same one in every case (fix the connection, the message says how)
+and a slug per unusable state would be a taxonomy with no client reading it. The reason token
+reaches operators here through the log. A client must treat an absent `reason` as "unspecified
+conflict"; see `mapAudienceErr` in `internal/service/audience.go` for the populated case.
 
 Two DIFFERENT guards protect the empty-vs-nil distinction, and they fail in opposite directions —
 document them separately so a future change preserves each for its own reason:

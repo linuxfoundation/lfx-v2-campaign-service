@@ -92,6 +92,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -207,6 +208,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -284,6 +286,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -388,6 +391,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -521,6 +525,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "412":
                     description: 'PreconditionFailed: ETag mismatch'
                     content:
@@ -652,6 +657,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "412":
                     description: 'PreconditionFailed: ETag mismatch'
                     content:
@@ -777,6 +783,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -895,6 +902,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -1008,6 +1016,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -1144,6 +1153,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "412":
                     description: 'PreconditionFailed: ETag mismatch'
                     content:
@@ -1263,6 +1273,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -1387,6 +1398,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -1483,6 +1495,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "412":
                     description: 'PreconditionFailed: ETag mismatch'
                     content:
@@ -1608,6 +1621,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -1735,6 +1749,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "412":
                     description: 'PreconditionFailed: ETag mismatch'
                     content:
@@ -1869,6 +1884,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -1994,6 +2010,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "412":
                     description: 'PreconditionFailed: ETag mismatch'
                     content:
@@ -2226,6 +2243,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -2758,6 +2776,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -3214,6 +3233,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -3668,6 +3688,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -4124,6 +4145,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -4576,6 +4598,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -5029,6 +5052,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -5361,6 +5385,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -5459,6 +5484,7 @@ paths:
                             example:
                                 code: "409"
                                 message: A connection for this provider already exists on the project.
+                                reason: audience_build_in_flight
                 "500":
                     description: 'InternalServerError: Internal server error'
                     content:
@@ -6975,9 +7001,18 @@ components:
                     type: string
                     description: Error message
                     example: A connection for this provider already exists on the project.
+                reason:
+                    type: string
+                    description: Stable machine-readable discriminator, present only where an endpoint returns more than one kind of conflict. Absent means unspecified.
+                    example: audience_build_in_flight
+                    enum:
+                        - stale_approval
+                        - audience_build_in_flight
+                        - already_exists
             example:
                 code: "409"
                 message: A connection for this provider already exists on the project.
+                reason: audience_build_in_flight
             required:
                 - code
                 - message

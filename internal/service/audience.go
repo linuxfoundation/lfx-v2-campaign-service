@@ -324,6 +324,21 @@ func audienceValidationErr(err error) error {
 	return &audiences.BadRequestError{Code: "400", Message: err.Error()}
 }
 
+// conflictReason returns the ConflictError.reason discriminator as the optional
+// attribute's *string.
+//
+// The three 409s below are three different instructions to the caller — refresh and
+// retry, wait for a lease to clear, stop because the thing exists — and until now the
+// only thing separating them was the English message. Those messages are edited
+// whenever an operator finds them unclear (the in-flight one has been rewritten twice
+// for exactly that reason), so any client that matched on their text would break on a
+// wording change with no version bump and no failing test anywhere. The slug is the
+// contract; the message stays free to improve.
+//
+// Values are constrained by the Enum in design/connection.go, so a typo here fails
+// response validation rather than shipping a reason no client recognises.
+func conflictReason(slug string) *string { return &slug }
+
 // mapAudienceErr maps domain errors to the generated audiences API error types,
 // preserving already-typed audiences errors.
 func mapAudienceErr(err error) error {
@@ -339,7 +354,7 @@ func mapAudienceErr(err error) error {
 		// The brief moved (re-edited / re-approved) between the build's approval check and the
 		// insert. A 409 tells the caller to refresh and retry rather than implying the brief
 		// or audience is missing.
-		return &audiences.ConflictError{Code: "409", Message: "the brief changed while its audience was being built; refresh and rebuild"}
+		return &audiences.ConflictError{Code: "409", Reason: conflictReason("stale_approval"), Message: "the brief changed while its audience was being built; refresh and rebuild"}
 	case errors.Is(err, domain.ErrAudienceBuildInFlight):
 		// Named separately from ErrConflict below because "the resource already exists" is
 		// the wrong instruction: nothing the caller asked for exists yet. The remedy is to
@@ -361,9 +376,9 @@ func mapAudienceErr(err error) error {
 		// Every list a build creates carries the first 8 characters of its audience row id
 		// (Plan.BuildRef, see internal/audience.listName), so that prefix finds them whether
 		// or not the row recorded anything, and the message names it as the primary handle.
-		return &audiences.ConflictError{Code: "409", Message: "an audience build for this brief is already in progress; wait for it to finish, or — if it is stuck — first reconcile its HubSpot lists, then PATCH its audience row to failed. Its lists are named with the first 8 characters of the audience row id in parentheses; search the portal for that, because a build that crashed before recording anything leaves lists behind with an EMPTY inclusion_summary"}
+		return &audiences.ConflictError{Code: "409", Reason: conflictReason("audience_build_in_flight"), Message: "an audience build for this brief is already in progress; wait for it to finish, or — if it is stuck — first reconcile its HubSpot lists, then PATCH its audience row to failed. Its lists are named with the first 8 characters of the audience row id in parentheses; search the portal for that, because a build that crashed before recording anything leaves lists behind with an EMPTY inclusion_summary"}
 	case errors.Is(err, domain.ErrConflict):
-		return &audiences.ConflictError{Code: "409", Message: "the resource already exists"}
+		return &audiences.ConflictError{Code: "409", Reason: conflictReason("already_exists"), Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):
 		return &audiences.PreconditionFailedError{Code: "412", Message: "the supplied ETag does not match the current version"}
 	}

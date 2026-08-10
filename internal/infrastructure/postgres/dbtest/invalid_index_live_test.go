@@ -455,3 +455,74 @@ func TestRequiredIndexCreateSQL_RebuildsAnIndexTheCheckAccepts(t *testing.T) {
 		})
 	}
 }
+
+// TestEveryUniquePartialIndexIsRequired closes the direction none of the tests above can:
+// schema -> registry.
+//
+// Every check in this file starts from `requiredIndexes` and asks whether the schema
+// honours it. That catches an index dropped from the DATABASE. It cannot catch an index
+// dropped from the REGISTRY — delete an entry and each of those tests simply iterates one
+// fewer name, reports success, and the index it used to cover is now unguarded, with the
+// `len(names) < 8` floor above the only thing standing in the way and only until the eighth
+// deletion. The list is the oracle, so nothing that reads the list can tell it has shrunk.
+//
+// The population is not "every index": it is every UNIQUE PARTIAL one, and that predicate
+// is the point rather than a convenience. A unique constraint declared with ADD CONSTRAINT
+// has a pg_constraint row, and dropping its index is refused outright by Postgres. A
+// partial unique index cannot be expressed as a constraint at all, so it is the one class
+// where the invariant lives ONLY in an index that any `DROP INDEX` removes without
+// complaint — exactly the class requiredIndexes exists to re-assert at boot. Membership is
+// therefore not a style rule; it is what makes the constraint survive.
+//
+// Revert check: delete any entry from requiredIndexes (or drop a provider from
+// connectionSingletonIndexes) and this fails naming that index, while every other test in
+// the package still passes.
+func TestEveryUniquePartialIndexIsRequired(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+
+	rows, err := pool.Query(ctx, `
+		SELECT c.relname
+		FROM pg_index i
+		JOIN pg_class c ON c.oid = i.indexrelid
+		JOIN pg_class t ON t.oid = i.indrelid
+		WHERE i.indisunique
+		  AND i.indpred IS NOT NULL
+		  AND t.relnamespace = current_schema()::regnamespace
+		ORDER BY c.relname`)
+	if err != nil {
+		t.Fatalf("enumerate the unique partial indexes: %v", err)
+	}
+	defer rows.Close()
+
+	var inSchema []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan index name: %v", err)
+		}
+		inSchema = append(inSchema, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("enumerate the unique partial indexes: %v", err)
+	}
+	if len(inSchema) == 0 {
+		t.Fatal("the migrated schema has no unique partial indexes at all, which cannot be " +
+			"true while 000013 and 000020 exist — the query is wrong, and a query that " +
+			"finds nothing agrees with any registry")
+	}
+
+	registered := make(map[string]bool, len(postgres.RequiredIndexNames()))
+	for _, name := range postgres.RequiredIndexNames() {
+		registered[name] = true
+	}
+
+	for _, name := range inSchema {
+		if !registered[name] {
+			t.Errorf("%s is a unique PARTIAL index in the migrated schema and is not in "+
+				"requiredIndexes: it is the sole enforcement of its invariant, no constraint "+
+				"backs it, and a DROP would leave the service booting cleanly with a second "+
+				"live row insertable for the same key", name)
+		}
+	}
+}
