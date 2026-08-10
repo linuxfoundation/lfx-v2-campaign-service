@@ -30,7 +30,14 @@ func (c *Client) AuthenticatedPortalID(ctx context.Context) (string, error) {
 		PortalID json.Number `json:"portalId"`
 	}
 	if uerr := json.Unmarshal(raw, &body); uerr != nil {
-		return "", fmt.Errorf("read hubspot account details: response is not valid JSON: %w", uerr)
+		// The cause is dropped, not just the body: json.SyntaxError and
+		// json.UnmarshalTypeError can reproduce fragments of the input in their own
+		// messages. Both callers of this method put perr into something that ends up
+		// logged — GetCampaignMetrics's default branch via safeErrSummary(err), and
+		// Dispatch's best-effort warning directly — so a wrapped cause here is a second
+		// path into the same log line statistics.go's decode error already avoids.
+		// Matches internal/platform/hubspot/statistics.go's decode error.
+		return "", fmt.Errorf("read hubspot account details: response is not valid JSON (%d bytes)", len(raw))
 	}
 	// A zero or absent portalId is a successful call that established nothing, and the
 	// caller's whole reason for asking is to refuse when identity is unknown. Reporting

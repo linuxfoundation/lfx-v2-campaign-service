@@ -161,9 +161,12 @@ implement it; a dispatcher that isn't a `MetricsReader` — or a platform with n
 registered at all — returns `ErrMetricsUnsupported` (400) without ever contacting the
 platform. An unprovisioned campaign (`PlatformCampaignID` empty, or `campaign == nil`)
 returns `ErrCampaignNotProvisioned` (409) before any platform call, same as the toggle. A
-connection the dispatcher refuses BEFORE contacting the platform — `ErrCampaignAccountMismatch`,
-`ErrAccountNotSelected`, `ErrConnectionNotUsable` — is also a 409 (see the classification
-section below). `ErrNoMetricsInWindow` is a fourth 409, and the one that is not about a
+connection the dispatcher refuses before the TENANT-SCOPED metrics request itself —
+`ErrCampaignAccountMismatch`, `ErrAccountNotSelected`, `ErrConnectionNotUsable` — is also a 409
+(see the classification section below). This is not the same as "before any platform call":
+HubSpot's `ErrCampaignAccountMismatch` path calls `AuthenticatedPortalID`
+(`GET /account-info/v3/details`) to resolve the token's portal before it can compare, so the
+platform is reached even though the metrics read itself never runs. `ErrNoMetricsInWindow` is a fourth 409, and the one that is not about a
 connection at all: the platform answered successfully and reported no data. It is kept off
 the 503 default deliberately, because for the email channel it is the ORDINARY state (a
 staged draft nobody has sent yet) and calling that an outage would send an operator to
