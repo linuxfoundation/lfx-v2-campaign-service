@@ -50,8 +50,14 @@ import (
 // then `b` — a bare fragment of the token with nothing to trim it, joined straight back into
 // the output. Every segment must therefore also carry its own `://`: a list of servers is a
 // list of URLs, and a comma that does not begin one is a character inside the value.
+// The `://` test is in turn not sufficient on its own, because a query can contain one:
+// `https://idp/jwks?access_token=a,secret://tail` passes both rules, and the first segment
+// trims at its `?` while the second is joined back in whole — the same leak the `://` rule
+// was added to close, one shape further out. A `?` or `#` BEFORE the first comma settles it
+// without guessing: everything after the start of a query or fragment belongs to it
+// (RFC 3986 §3.4, §3.5), so no comma past that point can be a list delimiter.
 func URLUserinfo(u string) string {
-	if strings.ContainsRune(u, ',') {
+	if i := strings.IndexRune(u, ','); i >= 0 && strings.IndexAny(u[:i], "?#") < 0 {
 		if parts := strings.Split(u, ","); unambiguousList(parts) && allSchemed(parts) {
 			for i, p := range parts {
 				parts[i] = redactOne(p)
@@ -113,17 +119,38 @@ func allSchemed(parts []string) bool {
 // prints `https://***@b`). That is this package's stated preference throughout — lossy beats
 // leaky — and no credential escapes it.
 //
-// The authority bound is trusted only while the value holds ONE url. A second `://` anywhere
-// past the first authority's start means it does not — an ambiguous NATS list that
-// `URLUserinfo` declined to split arrives here whole, and its later servers' credentials sit
-// outside the first authority.
-// There the conservative whole-string rule applies again: redact from the LAST `@` anywhere,
-// losing the earlier hosts rather than printing a password.
+// The authority bound is trusted only while the value holds ONE url. An ambiguous NATS list
+// that `URLUserinfo` declined to split arrives here whole, and its later servers' credentials
+// sit outside the first authority. There the conservative whole-string rule applies again:
+// redact from the LAST `@` anywhere, losing the earlier hosts rather than printing a password.
+//
+// Two things about that test, both of which were wrong before and each of which leaked:
+//
+// It is checked FIRST, not only when the first authority has no `@`. A list where SOME entries
+// carry credentials is exactly the mix `URLUserinfo` refuses to split, so it is the likeliest
+// value to arrive here — and for `nats://u:p@a,nats://u2:p2@b,nats://c` the first authority
+// DOES have an `@`, so a test reached only in the `at < 0` branch never runs. The first
+// credential would be redacted, the second printed verbatim.
+//
+// It requires a COMMA as well as a second `://`. Without a comma there is one URL, and a later
+// `://` is inside its query or path — a redirect parameter, most obviously. Treating that as a
+// second URL rebuilds the output from an `@` in the query, which drops the `?` along with the
+// prefix, so `trimQueryAndFragment` finds nothing to cut and every parameter after that `@`
+// survives into the log. One JWKS URL of the form `?redirect=https://x@y&access_token=…` was
+// enough to print the token in full.
 func redactOne(u string) string {
 	scheme := strings.Index(u, "://")
 	authStart := 0
 	if scheme >= 0 {
 		authStart = scheme + 3
+	}
+	if strings.ContainsRune(u, ',') && strings.Contains(u[authStart:], "://") {
+		// More than one URL in the value: the authority bound proves nothing about what
+		// follows, so fall back to the whole-string rule.
+		if last := strings.LastIndexByte(u, '@'); last >= 0 {
+			return trimQueryAndFragment(u[:authStart] + "***@" + u[last+1:])
+		}
+		return trimQueryAndFragment(u)
 	}
 	authEnd := len(u)
 	if i := strings.IndexByte(u[authStart:], '/'); i >= 0 {
@@ -131,13 +158,6 @@ func redactOne(u string) string {
 	}
 	at := strings.LastIndexByte(u[authStart:authEnd], '@')
 	if at < 0 {
-		if strings.Contains(u[authStart:], "://") {
-			// More than one URL in the value: the authority bound proves nothing about
-			// what follows, so fall back to the whole-string rule.
-			if last := strings.LastIndexByte(u, '@'); last >= 0 {
-				return trimQueryAndFragment(u[:authStart] + "***@" + u[last+1:])
-			}
-		}
 		return trimQueryAndFragment(u) // no userinfo, but a query can still carry a token
 	}
 	at += authStart

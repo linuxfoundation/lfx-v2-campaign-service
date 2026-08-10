@@ -127,3 +127,60 @@ func TestURLUserinfo_Shapes(t *testing.T) {
 		}
 	}
 }
+
+// TestURLUserinfo_NeverEmitsACredential covers the three values that got a live secret past
+// this package. Each is a case where a rule added to close one leak opened another, so they
+// are asserted twice over: the exact output, and — separately — that the secret's own text is
+// nowhere in it. The second assertion is the one that generalises. An exact-output test only
+// fails for the shape someone thought of; `strings.Contains` fails for any rewriting that
+// happens to carry the secret through, which is how all three of these arrived.
+func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
+	for _, tc := range []struct {
+		name, in, want string
+		secrets        []string
+	}{
+		{
+			// A `://` inside the QUERY is not a second URL. Read as one, the output was
+			// rebuilt from the `@` in `x@y.example` — which discards the `?` along with the
+			// prefix, so trimQueryAndFragment had no query left to find and the token rode
+			// out on `&access_token=`. A redirect parameter is ordinary in an OIDC
+			// deployment, and `Config.String` sends JWKS URLs through here.
+			name:    "query holding a URL with an @ is one URL, not two",
+			in:      "https://idp.example.com/jwks?redirect=https://x@y.example&access_token=s3cret", // secretlint-disable-line
+			want:    "https://idp.example.com/jwks",
+			secrets: []string{"s3cret", "access_token"},
+		},
+		{
+			// The multi-URL fallback used to be reachable only when the FIRST authority had
+			// no '@'. This value is the mix URLUserinfo deliberately refuses to split, so it
+			// is the likeliest thing to arrive whole — and its first authority does have an
+			// '@', so the fallback never ran. `u:p` was redacted and `u2:p2` was printed.
+			name:    "mixed list redacts every credential, not just the first",
+			in:      "nats://u:p@a:4222,nats://u2:p2@b:4222,nats://c:4222", // secretlint-disable-line
+			want:    "nats://***@b:4222,nats://c:4222",
+			secrets: []string{"u:p", "u2:p2"},
+		},
+		{
+			// Requiring every segment to carry its own `://` was meant to stop a token being
+			// split at a comma. A token whose tail happens to contain `://` satisfies it: the
+			// first segment trimmed at its `?` and the second was joined straight back in. A
+			// `?` before the first comma proves the comma is inside the query.
+			name:    "a comma inside a query is never a list delimiter",
+			in:      "https://idp.example.com/jwks?access_token=s3cret,secret://b64tail", // secretlint-disable-line
+			want:    "https://idp.example.com/jwks",
+			secrets: []string{"s3cret", "b64tail"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := URLUserinfo(tc.in)
+			if got != tc.want {
+				t.Errorf("URLUserinfo(%q)\n got %q\nwant %q", tc.in, got, tc.want)
+			}
+			for _, s := range tc.secrets {
+				if strings.Contains(got, s) {
+					t.Errorf("URLUserinfo(%q) = %q, which still carries %q", tc.in, got, s)
+				}
+			}
+		})
+	}
+}

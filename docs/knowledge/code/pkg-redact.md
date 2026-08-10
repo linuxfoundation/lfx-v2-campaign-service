@@ -59,6 +59,35 @@ or a user and password. So the split happens only where the answer does not matt
 or **none** does (there is no credential to leak). Any mix falls back to the whole-value
 rule: lossy, but incapable of leaking.
 
+That test alone still splits a token, because a comma is legal in a **query** too and a query
+is where the other credential shape lives: neither piece of
+`https://idp/jwks?access_token=a,b64tail` has an `@`, so the count rule calls it a list and
+`b64tail` is joined straight back into the output. Two further conditions close it. Every
+segment must begin its own `scheme://` — a list of servers is a list of URLs, and a comma that
+does not start one is a character inside a value. And no `?` or `#` may appear **before** the
+first comma: everything past the start of a query or fragment belongs to it (RFC 3986 §3.4,
+§3.5), so a comma there is never a delimiter. The second condition exists because the first is
+satisfiable by a token whose tail happens to contain `://`.
+
+### When the whole-value fallback runs
+
+`redactOne` bounds userinfo to the authority, and that bound is only trustworthy while the
+value holds one URL. A comma **and** a second `://` means it does not, and the conservative
+whole-string rule applies instead: redact from the last `@` anywhere, losing the earlier hosts
+rather than printing a password.
+
+Both halves of that condition are load-bearing, and each was learned by leaking:
+
+- The check runs **before** the first authority's `@` is handled, not only when that authority
+  has none. A mixed list is exactly what the split refuses, so it is the likeliest value to
+  arrive whole — and in `nats://u:p@a,nats://u2:p2@b` the first authority *does* have an `@`,
+  so a later-placed check never runs and the second credential prints verbatim.
+- A comma is **required**, not just a second `://`. Without a comma there is one URL, and a
+  later `://` sits in its query or path — a `?redirect=https://…` parameter, most obviously.
+  Treating that as a second URL rebuilds the output from an `@` inside the query, discarding
+  the `?` along with the prefix, so the query trim finds nothing to cut and every parameter
+  after that `@` survives. One JWKS URL of that shape printed an `access_token` in full.
+
 ## Callers
 
 `internal/infrastructure/config` (`Config.String`/`GoString`, for `JWKS_URL` and `NATS_URL`)

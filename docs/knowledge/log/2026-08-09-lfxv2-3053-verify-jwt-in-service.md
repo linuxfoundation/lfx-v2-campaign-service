@@ -630,3 +630,41 @@ output and the query `@` erases the host.
   A manifest that sets the variable AND suppresses both signals is not caught. The README now
   states the guard's actual shape and the bar it is built to — three deliberate visible changes
   rather than one env line.
+
+## Both of the previous round's rules were still leaking, in three ways
+
+Cursor and Copilot came back on `pkg/redact/url.go` with three findings, and all three are the
+same shape as the two rounds above: a rule added to close one leak opened the next one out.
+Each is now a case in `TestURLUserinfo_NeverEmitsACredential`, asserted both on exact output and
+on the secret's own text being absent — the second assertion is the one that generalises,
+because an exact-output test only fails for the shape someone thought of.
+
+**A `://` inside a query is not a second URL.** The multi-URL fallback fires on any later
+`://`, and `https://idp/jwks?redirect=https://x@y.example&access_token=s3cret` has one in a
+redirect parameter — an ordinary shape in an OIDC deployment, and `Config.String` sends JWKS
+URLs down this path. Read as two URLs, the output was rebuilt from the `@` in `x@y.example`,
+which discards the `?` along with everything before it, so `trimQueryAndFragment` had no query
+left to find and the token rode out on `&access_token=`. The fallback now requires a **comma**
+as well: without one there is a single URL, and a later `://` is inside its query or path.
+
+**The fallback was unreachable for the value most likely to need it.** It sat inside the
+`at < 0` branch, so it only ran when the FIRST authority had no `@`. A mixed list is precisely
+what the split refuses, so it is the likeliest thing to arrive here whole — and
+`nats://u:p@a:4222,nats://u2:p2@b:4222,nats://c:4222` has an `@` in its first authority. `u:p`
+was redacted, `u2:p2` printed verbatim. The check now runs before the authority `@` is handled
+at all.
+
+**A token tail containing `://` satisfies the scheme rule.** Requiring every segment to carry
+its own `scheme://` was the previous round's fix for a comma inside a query, and
+`https://idp/jwks?access_token=s3cret,secret://b64tail` meets it: the first segment trims at its
+`?`, the second is joined straight back in. The settling test is a `?` or `#` **before** the
+first comma — everything after the start of a query or fragment belongs to it (RFC 3986 §3.4,
+§3.5), so no comma past that point can be a delimiter. Unlike the every-or-none and
+all-schemed rules, this one is not a heuristic about what a comma might be; it is a grammar
+fact about where it sits.
+
+The recurring class, now three rounds deep: **each of these rules infers structure from a
+value that is in this function precisely because its structure could not be trusted.** Every
+one held for the shape it was written against and broke on the next. What finally stopped the
+sequence was not a smarter inference but a cheaper one — a positional fact from the grammar,
+and a conservative branch that costs earlier hosts rather than trying to keep them.
