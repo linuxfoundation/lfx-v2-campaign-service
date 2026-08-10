@@ -37,6 +37,10 @@ type Service interface {
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Get one campaign under a brief; returns ETag.
 	GetCampaign(context.Context, *GetCampaignPayload) (res *Campaign, err error)
+	// List all campaigns under a brief. Returns an empty array if the brief has no
+	// campaigns (200, not 404). Returns 404 if the brief does not exist or has
+	// been archived.
+	ListCampaigns(context.Context, *ListCampaignsPayload) (res []*Campaign, err error)
 	// Read live performance metrics (impressions, clicks, cost, CTR) for one
 	// campaign directly from its ad platform. This is a pure read — never
 	// persisted — unlike get-campaign, which returns the stored row. Support is
@@ -84,7 +88,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [14]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "create-campaigns", "get-campaign", "get-campaign-metrics", "update-campaign", "toggle-campaign-status", "delete-campaign", "get-job"}
+var MethodNames = [15]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "create-campaigns", "get-campaign", "list-campaigns", "get-campaign-metrics", "update-campaign", "toggle-campaign-status", "delete-campaign", "get-job"}
 
 // ApproveBriefPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service approve-brief method.
@@ -382,6 +386,17 @@ type JobPollResponse struct {
 	Result []*PlatformResult
 	// Terminal error, if any
 	Error *string
+}
+
+// ListCampaignsPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service list-campaigns method.
+type ListCampaignsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
 }
 
 type PlatformResult struct {

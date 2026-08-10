@@ -25,6 +25,7 @@ type Endpoints struct {
 	FetchEventURL        goa.Endpoint
 	CreateCampaigns      goa.Endpoint
 	GetCampaign          goa.Endpoint
+	ListCampaigns        goa.Endpoint
 	GetCampaignMetrics   goa.Endpoint
 	UpdateCampaign       goa.Endpoint
 	ToggleCampaignStatus goa.Endpoint
@@ -47,6 +48,7 @@ func NewEndpoints(s Service) *Endpoints {
 		FetchEventURL:        NewFetchEventURLEndpoint(s, a.JWTAuth),
 		CreateCampaigns:      NewCreateCampaignsEndpoint(s, a.JWTAuth),
 		GetCampaign:          NewGetCampaignEndpoint(s, a.JWTAuth),
+		ListCampaigns:        NewListCampaignsEndpoint(s, a.JWTAuth),
 		GetCampaignMetrics:   NewGetCampaignMetricsEndpoint(s, a.JWTAuth),
 		UpdateCampaign:       NewUpdateCampaignEndpoint(s, a.JWTAuth),
 		ToggleCampaignStatus: NewToggleCampaignStatusEndpoint(s, a.JWTAuth),
@@ -67,6 +69,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.FetchEventURL = m(e.FetchEventURL)
 	e.CreateCampaigns = m(e.CreateCampaigns)
 	e.GetCampaign = m(e.GetCampaign)
+	e.ListCampaigns = m(e.ListCampaigns)
 	e.GetCampaignMetrics = m(e.GetCampaignMetrics)
 	e.UpdateCampaign = m(e.UpdateCampaign)
 	e.ToggleCampaignStatus = m(e.ToggleCampaignStatus)
@@ -278,6 +281,29 @@ func NewGetCampaignEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpo
 			return nil, err
 		}
 		return s.GetCampaign(ctx, p)
+	}
+}
+
+// NewListCampaignsEndpoint returns an endpoint function that calls the method
+// "list-campaigns" of service "lfx-v2-campaign-service-briefs".
+func NewListCampaignsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ListCampaignsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ListCampaigns(ctx, p)
 	}
 }
 

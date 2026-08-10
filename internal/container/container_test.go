@@ -167,6 +167,9 @@ func (stubCampaignRepo) GetCampaign(context.Context, string, string, string) (*m
 func (stubCampaignRepo) GetCampaignByPlatform(context.Context, string, string, model.Provider) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
+func (stubCampaignRepo) ListCampaignsForBrief(context.Context, string, string) ([]*model.Campaign, error) {
+	return []*model.Campaign{}, nil
+}
 func (stubCampaignRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string, *model.Actor) (bool, *model.Campaign, error) {
 	return true, &model.Campaign{Status: "pending"}, nil
 }

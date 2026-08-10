@@ -472,6 +472,24 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		})
 	})
 
+	Method("list-campaigns", func() {
+		Description("List all campaigns under a brief. Returns an empty array if the brief has no campaigns (200, not 404). Returns 404 if the brief does not exist or has been archived.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			Required("project_id", "brief_id")
+		})
+		Result(ArrayOf(Campaign))
+		commonBriefErrors(false)
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/campaigns")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses(false)
+		})
+	})
+
 	Method("get-campaign-metrics", func() {
 		Description("Read live performance metrics (impressions, clicks, cost, CTR) for one campaign directly from its ad platform. This is a pure read — never persisted — unlike get-campaign, which returns the stored row. Support is per-platform: a campaign whose platform has no metrics-read dispatcher wired returns 400.")
 		Payload(func() {

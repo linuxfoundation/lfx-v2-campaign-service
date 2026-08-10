@@ -497,6 +497,25 @@ func (s *BriefService) GetCampaign(ctx context.Context, p *briefs.GetCampaignPay
 	return campaignResult(c), nil
 }
 
+// ListCampaigns returns all campaigns under a brief. Returns an empty array if
+// the brief exists but has no campaigns (200, not 404). Returns 404 if the brief
+// does not exist or has been archived.
+func (s *BriefService) ListCampaigns(ctx context.Context, p *briefs.ListCampaignsPayload) ([]*briefs.Campaign, error) {
+	_, campaignRepo, _, _, err := s.ready()
+	if err != nil {
+		return nil, err
+	}
+	campaigns, err := campaignRepo.ListCampaignsForBrief(ctx, p.ProjectID, p.BriefID)
+	if err != nil {
+		return nil, mapBriefErr(err)
+	}
+	result := make([]*briefs.Campaign, len(campaigns))
+	for i, c := range campaigns {
+		result[i] = campaignResult(c)
+	}
+	return result, nil
+}
+
 // GetCampaignMetrics reads live performance metrics for a campaign directly from its ad
 // platform. Unlike GetCampaign, this is a pure read: nothing is persisted, so there is no
 // If-Match/version to check.

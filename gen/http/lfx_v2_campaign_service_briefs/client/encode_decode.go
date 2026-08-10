@@ -17,6 +17,7 @@ import (
 
 	lfxv2campaignservicebriefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	goahttp "goa.design/goa/v3/http"
+	goa "goa.design/goa/v3/pkg"
 )
 
 // BuildCreateBriefRequest instantiates a HTTP request object with method and
@@ -1615,6 +1616,177 @@ func DecodeGetCampaignResponse(decoder func(*http.Response) goahttp.Decoder, res
 	}
 }
 
+// BuildListCampaignsRequest instantiates a HTTP request object with method and
+// path set to call the "lfx-v2-campaign-service-briefs" service
+// "list-campaigns" endpoint
+func (c *Client) BuildListCampaignsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+		briefID   string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.ListCampaignsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "list-campaigns", "*lfxv2campaignservicebriefs.ListCampaignsPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ListCampaignsLfxV2CampaignServiceBriefsPath(projectID, briefID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "list-campaigns", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeListCampaignsRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs list-campaigns server.
+func EncodeListCampaignsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.ListCampaignsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "list-campaigns", "*lfxv2campaignservicebriefs.ListCampaignsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		return nil
+	}
+}
+
+// DecodeListCampaignsResponse returns a decoder for responses returned by the
+// lfx-v2-campaign-service-briefs list-campaigns endpoint. restoreBody controls
+// whether the response body should be restored after having been read.
+// DecodeListCampaignsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - error: internal error
+func DecodeListCampaignsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body []*CampaignResponse
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "list-campaigns", err)
+			}
+			for _, e := range body {
+				if e != nil {
+					if err2 := ValidateCampaignResponse(e); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
+				}
+			}
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "list-campaigns", err)
+			}
+			res := NewListCampaignsCampaignOK(body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ListCampaignsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "list-campaigns", err)
+			}
+			err = ValidateListCampaignsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "list-campaigns", err)
+			}
+			return nil, NewListCampaignsBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body ListCampaignsConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "list-campaigns", err)
+			}
+			err = ValidateListCampaignsConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "list-campaigns", err)
+			}
+			return nil, NewListCampaignsConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ListCampaignsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "list-campaigns", err)
+			}
+			err = ValidateListCampaignsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "list-campaigns", err)
+			}
+			return nil, NewListCampaignsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ListCampaignsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "list-campaigns", err)
+			}
+			err = ValidateListCampaignsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "list-campaigns", err)
+			}
+			return nil, NewListCampaignsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ListCampaignsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "list-campaigns", err)
+			}
+			err = ValidateListCampaignsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "list-campaigns", err)
+			}
+			return nil, NewListCampaignsNotFound(&body)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "list-campaigns", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildGetCampaignMetricsRequest instantiates a HTTP request object with
 // method and path set to call the "lfx-v2-campaign-service-briefs" service
 // "get-campaign-metrics" endpoint
@@ -2644,6 +2816,25 @@ func marshalCampaignCreateInputRequestBodyToLfxv2campaignservicebriefsCampaignCr
 		}
 	} else {
 		res.Platforms = []string{}
+	}
+
+	return res
+}
+
+// unmarshalCampaignResponseToLfxv2campaignservicebriefsCampaign builds a value
+// of type *lfxv2campaignservicebriefs.Campaign from a value of type
+// *CampaignResponse.
+func unmarshalCampaignResponseToLfxv2campaignservicebriefsCampaign(v *CampaignResponse) *lfxv2campaignservicebriefs.Campaign {
+	res := &lfxv2campaignservicebriefs.Campaign{
+		ID:                 *v.ID,
+		ProjectID:          *v.ProjectID,
+		BriefID:            *v.BriefID,
+		Platform:           *v.Platform,
+		PlatformCampaignID: v.PlatformCampaignID,
+		CampaignName:       *v.CampaignName,
+		Status:             *v.Status,
+		Version:            *v.Version,
+		Etag:               v.Etag,
 	}
 
 	return res

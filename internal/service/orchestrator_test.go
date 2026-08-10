@@ -142,6 +142,35 @@ func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, _ string, br
 	return nil, domain.ErrNotFound
 }
 
+// ListCampaignsForBrief returns all campaigns for a brief from the byID map (or existing),
+// used by the service to list all campaigns.
+func (r *fakeCampaignRepo) ListCampaignsForBrief(_ context.Context, _, briefID string) ([]*model.Campaign, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var result []*model.Campaign
+	for _, c := range r.existing {
+		if c.BriefID == briefID && c.Status != "deleted" {
+			result = append(result, c)
+		}
+	}
+	for _, c := range r.byID {
+		if c.BriefID == briefID && c.Status != "deleted" {
+			// Check if already included from existing
+			found := false
+			for _, existing := range result {
+				if existing.ID == c.ID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				result = append(result, c)
+			}
+		}
+	}
+	return result, nil
+}
+
 // ClaimCampaignDispatch simulates INSERT ... ON CONFLICT DO NOTHING: if an entry
 // for (brief, platform) already exists it's a conflict (not claimed) returning
 // the existing row; otherwise it inserts a pending placeholder and claims.

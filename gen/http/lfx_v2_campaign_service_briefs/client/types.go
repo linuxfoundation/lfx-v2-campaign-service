@@ -835,6 +835,56 @@ type GetCampaignNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListCampaignsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-campaigns" endpoint HTTP
+// response body for the "BadRequest" error.
+type ListCampaignsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListCampaignsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-campaigns" endpoint HTTP
+// response body for the "Conflict" error.
+type ListCampaignsConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListCampaignsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-campaigns" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type ListCampaignsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListCampaignsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-campaigns" endpoint HTTP
+// response body for the "InternalServerError" error.
+type ListCampaignsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListCampaignsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-campaigns" endpoint HTTP
+// response body for the "NotFound" error.
+type ListCampaignsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetCampaignMetricsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -1173,6 +1223,28 @@ type CampaignCreateInputRequestBody struct {
 	Platforms []string `form:"platforms" json:"platforms" xml:"platforms"`
 	// Per-platform campaign configuration
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
+}
+
+// CampaignResponse is used to define fields on response body types.
+type CampaignResponse struct {
+	// Campaign UUID
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Owning project
+	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
+	// Parent brief
+	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
+	// Channel
+	Platform *string `form:"platform,omitempty" json:"platform,omitempty" xml:"platform,omitempty"`
+	// ID returned by the ad platform
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// Campaign name
+	CampaignName *string `form:"campaign_name,omitempty" json:"campaign_name,omitempty" xml:"campaign_name,omitempty"`
+	// Campaign status
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Optimistic-concurrency version
+	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
+	// ETag header value (mirrors version)
+	Etag *string `form:"etag,omitempty" json:"etag,omitempty" xml:"etag,omitempty"`
 }
 
 // CampaignUpdateInputRequestBody is used to define fields on request body
@@ -1980,6 +2052,76 @@ func NewGetCampaignInternalServerError(body *GetCampaignInternalServerErrorRespo
 // NewGetCampaignNotFound builds a lfx-v2-campaign-service-briefs service
 // get-campaign endpoint NotFound error.
 func NewGetCampaignNotFound(body *GetCampaignNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListCampaignsCampaignOK builds a "lfx-v2-campaign-service-briefs" service
+// "list-campaigns" endpoint result from a HTTP "OK" response.
+func NewListCampaignsCampaignOK(body []*CampaignResponse) []*lfxv2campaignservicebriefs.Campaign {
+	v := make([]*lfxv2campaignservicebriefs.Campaign, len(body))
+	for i, val := range body {
+		if val == nil {
+			v[i] = nil
+			continue
+		}
+		v[i] = unmarshalCampaignResponseToLfxv2campaignservicebriefsCampaign(val)
+	}
+
+	return v
+}
+
+// NewListCampaignsBadRequest builds a lfx-v2-campaign-service-briefs service
+// list-campaigns endpoint BadRequest error.
+func NewListCampaignsBadRequest(body *ListCampaignsBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListCampaignsConflict builds a lfx-v2-campaign-service-briefs service
+// list-campaigns endpoint Conflict error.
+func NewListCampaignsConflict(body *ListCampaignsConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListCampaignsServiceUnavailable builds a lfx-v2-campaign-service-briefs
+// service list-campaigns endpoint ServiceUnavailable error.
+func NewListCampaignsServiceUnavailable(body *ListCampaignsServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListCampaignsInternalServerError builds a lfx-v2-campaign-service-briefs
+// service list-campaigns endpoint InternalServerError error.
+func NewListCampaignsInternalServerError(body *ListCampaignsInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListCampaignsNotFound builds a lfx-v2-campaign-service-briefs service
+// list-campaigns endpoint NotFound error.
+func NewListCampaignsNotFound(body *ListCampaignsNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
 		Code:    *body.Code,
 		Message: *body.Message,
@@ -3341,6 +3483,66 @@ func ValidateGetCampaignNotFoundResponseBody(body *GetCampaignNotFoundResponseBo
 	return
 }
 
+// ValidateListCampaignsBadRequestResponseBody runs the validations defined on
+// list-campaigns_BadRequest_response_body
+func ValidateListCampaignsBadRequestResponseBody(body *ListCampaignsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListCampaignsConflictResponseBody runs the validations defined on
+// list-campaigns_Conflict_response_body
+func ValidateListCampaignsConflictResponseBody(body *ListCampaignsConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListCampaignsServiceUnavailableResponseBody runs the validations
+// defined on list-campaigns_ServiceUnavailable_response_body
+func ValidateListCampaignsServiceUnavailableResponseBody(body *ListCampaignsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListCampaignsInternalServerErrorResponseBody runs the validations
+// defined on list-campaigns_InternalServerError_response_body
+func ValidateListCampaignsInternalServerErrorResponseBody(body *ListCampaignsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListCampaignsNotFoundResponseBody runs the validations defined on
+// list-campaigns_NotFound_response_body
+func ValidateListCampaignsNotFoundResponseBody(body *ListCampaignsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetCampaignMetricsBadRequestResponseBody runs the validations
 // defined on get-campaign-metrics_BadRequest_response_body
 func ValidateGetCampaignMetricsBadRequestResponseBody(body *GetCampaignMetricsBadRequestResponseBody) (err error) {
@@ -3742,6 +3944,32 @@ func ValidateCampaignCreateInputRequestBody(body *CampaignCreateInputRequestBody
 		if !(e == "google-ads" || e == "linkedin-ads" || e == "meta-ads" || e == "reddit-ads" || e == "twitter-ads" || e == "microsoft-ads" || e == "hubspot") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.platforms[*]", e, []any{"google-ads", "linkedin-ads", "meta-ads", "reddit-ads", "twitter-ads", "microsoft-ads", "hubspot"}))
 		}
+	}
+	return
+}
+
+// ValidateCampaignResponse runs the validations defined on campaignResponse
+func ValidateCampaignResponse(body *CampaignResponse) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.ProjectID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("project_id", "body"))
+	}
+	if body.BriefID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("brief_id", "body"))
+	}
+	if body.Platform == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform", "body"))
+	}
+	if body.CampaignName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_name", "body"))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	if body.Version == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
 	}
 	return
 }

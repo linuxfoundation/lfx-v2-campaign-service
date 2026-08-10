@@ -587,6 +587,9 @@ func (r *campaignEditRepo) GetCampaign(context.Context, string, string, string) 
 func (r *campaignEditRepo) GetCampaignByPlatform(context.Context, string, string, model.Provider) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
+func (r *campaignEditRepo) ListCampaignsForBrief(context.Context, string, string) ([]*model.Campaign, error) {
+	return []*model.Campaign{}, nil
+}
 func (r *campaignEditRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string, *model.Actor) (bool, *model.Campaign, error) {
 	return true, nil, nil
 }
@@ -2354,6 +2357,68 @@ func newMetricsService(camp *model.Campaign, disp PlatformDispatcher) *BriefServ
 	jobs := newFakeJobRepo()
 	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{camp.Platform: disp})
 	return NewBriefService(repo, camps, jobs, orch)
+}
+
+// --- list campaigns ---
+
+func newListCampaignsService(campaigns map[string]*model.Campaign) *BriefService {
+	repo := newFakeBriefRepo()
+	camps := &fakeCampaignRepo{existing: campaigns}
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(camps, jobs, nil)
+	return NewBriefService(repo, camps, jobs, orch)
+}
+
+func TestBriefService_ListCampaigns_HappyPath(t *testing.T) {
+	camp1 := &model.Campaign{ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds, Status: "created", Version: 1}
+	camp2 := &model.Campaign{ID: "c2", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds, Status: "created", Version: 1}
+	s := newListCampaignsService(map[string]*model.Campaign{
+		"b1|google-ads": camp1,
+		"b1|reddit-ads": camp2,
+	})
+	res, err := s.ListCampaigns(context.Background(), &briefs.ListCampaignsPayload{
+		ProjectID: "cncf", BriefID: "b1",
+	})
+	if err != nil {
+		t.Fatalf("ListCampaigns: %v", err)
+	}
+	if len(res) != 2 {
+		t.Errorf("expected 2 campaigns, got %d", len(res))
+	}
+}
+
+func TestBriefService_ListCampaigns_EmptyList(t *testing.T) {
+	s := newListCampaignsService(map[string]*model.Campaign{})
+	res, err := s.ListCampaigns(context.Background(), &briefs.ListCampaignsPayload{
+		ProjectID: "cncf", BriefID: "b1",
+	})
+	if err != nil {
+		t.Fatalf("ListCampaigns: %v", err)
+	}
+	if len(res) != 0 {
+		t.Errorf("expected 0 campaigns, got %d", len(res))
+	}
+}
+
+func TestBriefService_ListCampaigns_ExcludesSoftDeleted(t *testing.T) {
+	camp1 := &model.Campaign{ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds, Status: "created", Version: 1}
+	deletedCamp := &model.Campaign{ID: "c2", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds, Status: "deleted", Version: 1}
+	s := newListCampaignsService(map[string]*model.Campaign{
+		"b1|google-ads": camp1,
+		"b1|reddit-ads": deletedCamp,
+	})
+	res, err := s.ListCampaigns(context.Background(), &briefs.ListCampaignsPayload{
+		ProjectID: "cncf", BriefID: "b1",
+	})
+	if err != nil {
+		t.Fatalf("ListCampaigns: %v", err)
+	}
+	if len(res) != 1 {
+		t.Errorf("expected 1 campaign (deleted excluded), got %d", len(res))
+	}
+	if res[0].ID != "c1" {
+		t.Errorf("wrong campaign returned: expected c1, got %s", res[0].ID)
+	}
 }
 
 func TestBriefService_GetCampaignMetrics_HappyPath(t *testing.T) {

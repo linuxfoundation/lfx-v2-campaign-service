@@ -286,6 +286,43 @@ func (r *CampaignRepo) GetCampaignByPlatform(ctx context.Context, projectID, bri
 	return c, nil
 }
 
+// ListCampaignsForBrief returns all non-deleted campaigns under a brief, or
+// an empty array when the brief exists but has no campaigns. Returns ErrNotFound
+// if the brief does not exist or has been archived, enforcing the same scoping
+// as GetCampaign (projectID + briefID).
+func (r *CampaignRepo) ListCampaignsForBrief(ctx context.Context, projectID, briefID string) ([]*model.Campaign, error) {
+	// Verify the brief exists first; if it doesn't, return ErrNotFound without scanning campaigns.
+	briefCheckQuery := `SELECT 1 FROM campaign_briefs WHERE id=$1 AND project_id=$2 AND status <> 'archived'`
+	err := r.db.QueryRow(ctx, briefCheckQuery, briefID, projectID).Scan(nil)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("list campaigns for brief: check brief: %w", err)
+	}
+
+	rows, err := r.db.Query(ctx, `SELECT `+campaignCols+` FROM campaigns
+		WHERE brief_id=$1 AND project_id=$2 AND status <> 'deleted'
+		ORDER BY created_at ASC, id ASC`, briefID, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list campaigns for brief: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*model.Campaign
+	for rows.Next() {
+		c, serr := scanCampaign(rows)
+		if serr != nil {
+			return nil, fmt.Errorf("list campaigns for brief: scan: %w", serr)
+		}
+		out = append(out, c)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, fmt.Errorf("list campaigns for brief: iterate: %w", rerr)
+	}
+	return out, nil
+}
+
 // upsertCampaignQuery's conflict target carries the partial index's predicate — see
 // claimCampaignDispatchQuery for why it is mandatory. A soft-deleted row sits outside
 // the index, so an upsert after a delete INSERTs a fresh campaign rather than

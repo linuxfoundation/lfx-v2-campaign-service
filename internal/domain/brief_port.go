@@ -77,6 +77,12 @@ type CampaignReader interface {
 	// a platform must not create a second upstream (paid) campaign on retry. Scoped
 	// by projectID for tenant isolation, matching GetCampaign/ClaimCampaignDispatch.
 	GetCampaignByPlatform(ctx context.Context, projectID, briefID string, platform model.Provider) (*model.Campaign, error)
+	// ListCampaignsForBrief returns all non-deleted campaigns under a brief, or
+	// an empty array when the brief exists but has no campaigns. The brief's
+	// existence is verified (404 if absent or archived); a campaign under a
+	// different project or brief is guaranteed not to appear. Results are ordered
+	// deterministically by created_at (ascending), with id as a tie-break.
+	ListCampaignsForBrief(ctx context.Context, projectID, briefID string) ([]*model.Campaign, error)
 	// ClaimCampaignDispatch atomically claims the right to dispatch (brief,
 	// platform) by inserting a placeholder campaign row (status 'pending') via
 	// INSERT ... ON CONFLICT (brief_id, platform) DO NOTHING. Exactly one worker

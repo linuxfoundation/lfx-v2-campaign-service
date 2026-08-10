@@ -1348,6 +1348,135 @@ func EncodeGetCampaignError(encoder func(context.Context, http.ResponseWriter) g
 	}
 }
 
+// EncodeListCampaignsResponse returns an encoder for responses returned by the
+// lfx-v2-campaign-service-briefs list-campaigns endpoint.
+func EncodeListCampaignsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.([]*lfxv2campaignservicebriefs.Campaign)
+		enc := encoder(ctx, w)
+		body := NewListCampaignsResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeListCampaignsRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-briefs list-campaigns endpoint.
+func DecodeListCampaignsRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignservicebriefs.ListCampaignsPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignservicebriefs.ListCampaignsPayload, error) {
+		var payload *lfxv2campaignservicebriefs.ListCampaignsPayload
+		var (
+			projectID   string
+			briefID     string
+			bearerToken *string
+			err         error
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewListCampaignsPayload(projectID, briefID, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeListCampaignsError returns an encoder for errors returned by the
+// list-campaigns lfx-v2-campaign-service-briefs endpoint.
+func EncodeListCampaignsError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignservicebriefs.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListCampaignsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignservicebriefs.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListCampaignsConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignservicebriefs.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListCampaignsServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignservicebriefs.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListCampaignsInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignservicebriefs.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListCampaignsNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // EncodeGetCampaignMetricsResponse returns an encoder for responses returned
 // by the lfx-v2-campaign-service-briefs get-campaign-metrics endpoint.
 func EncodeGetCampaignMetricsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
@@ -2182,6 +2311,25 @@ func unmarshalCampaignCreateInputRequestBodyToLfxv2campaignservicebriefsCampaign
 	res.Platforms = make([]string, len(v.Platforms))
 	for i, val := range v.Platforms {
 		res.Platforms[i] = val
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsCampaignToCampaignResponse builds a value
+// of type *CampaignResponse from a value of type
+// *lfxv2campaignservicebriefs.Campaign.
+func marshalLfxv2campaignservicebriefsCampaignToCampaignResponse(v *lfxv2campaignservicebriefs.Campaign) *CampaignResponse {
+	res := &CampaignResponse{
+		ID:                 v.ID,
+		ProjectID:          v.ProjectID,
+		BriefID:            v.BriefID,
+		Platform:           v.Platform,
+		PlatformCampaignID: v.PlatformCampaignID,
+		CampaignName:       v.CampaignName,
+		Status:             v.Status,
+		Version:            v.Version,
+		Etag:               v.Etag,
 	}
 
 	return res

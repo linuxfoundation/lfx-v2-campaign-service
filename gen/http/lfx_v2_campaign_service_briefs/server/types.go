@@ -266,6 +266,11 @@ type GetCampaignResponseBody struct {
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
 
+// ListCampaignsResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-campaigns" endpoint HTTP
+// response body.
+type ListCampaignsResponseBody []*CampaignResponse
+
 // GetCampaignMetricsResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
 // HTTP response body.
@@ -835,6 +840,56 @@ type GetCampaignNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListCampaignsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-campaigns" endpoint HTTP
+// response body for the "BadRequest" error.
+type ListCampaignsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListCampaignsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-campaigns" endpoint HTTP
+// response body for the "Conflict" error.
+type ListCampaignsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListCampaignsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-campaigns" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type ListCampaignsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListCampaignsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-campaigns" endpoint HTTP
+// response body for the "InternalServerError" error.
+type ListCampaignsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListCampaignsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-campaigns" endpoint HTTP
+// response body for the "NotFound" error.
+type ListCampaignsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetCampaignMetricsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -1145,6 +1200,28 @@ type GetJobNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// CampaignResponse is used to define fields on response body types.
+type CampaignResponse struct {
+	// Campaign UUID
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Parent brief
+	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
+	// Channel
+	Platform string `form:"platform" json:"platform" xml:"platform"`
+	// ID returned by the ad platform
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// Campaign name
+	CampaignName string `form:"campaign_name" json:"campaign_name" xml:"campaign_name"`
+	// Campaign status
+	Status string `form:"status" json:"status" xml:"status"`
+	// Optimistic-concurrency version
+	Version int64 `form:"version" json:"version" xml:"version"`
+	// ETag header value (mirrors version)
+	Etag *string `form:"etag,omitempty" json:"etag,omitempty" xml:"etag,omitempty"`
+}
+
 // PlatformResultResponseBody is used to define fields on response body types.
 type PlatformResultResponseBody struct {
 	// Platform this result is for
@@ -1373,6 +1450,21 @@ func NewGetCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *GetCa
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		Version:            res.Version,
+	}
+	return body
+}
+
+// NewListCampaignsResponseBody builds the HTTP response body from the result
+// of the "list-campaigns" endpoint of the "lfx-v2-campaign-service-briefs"
+// service.
+func NewListCampaignsResponseBody(res []*lfxv2campaignservicebriefs.Campaign) ListCampaignsResponseBody {
+	body := make([]*CampaignResponse, len(res))
+	for i, val := range res {
+		if val == nil {
+			body[i] = nil
+			continue
+		}
+		body[i] = marshalLfxv2campaignservicebriefsCampaignToCampaignResponse(val)
 	}
 	return body
 }
@@ -1987,6 +2079,61 @@ func NewGetCampaignNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFound
 	return body
 }
 
+// NewListCampaignsBadRequestResponseBody builds the HTTP response body from
+// the result of the "list-campaigns" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCampaignsBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *ListCampaignsBadRequestResponseBody {
+	body := &ListCampaignsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListCampaignsConflictResponseBody builds the HTTP response body from the
+// result of the "list-campaigns" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCampaignsConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *ListCampaignsConflictResponseBody {
+	body := &ListCampaignsConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListCampaignsServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "list-campaigns" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCampaignsServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *ListCampaignsServiceUnavailableResponseBody {
+	body := &ListCampaignsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListCampaignsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "list-campaigns" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCampaignsInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *ListCampaignsInternalServerErrorResponseBody {
+	body := &ListCampaignsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListCampaignsNotFoundResponseBody builds the HTTP response body from the
+// result of the "list-campaigns" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListCampaignsNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *ListCampaignsNotFoundResponseBody {
+	body := &ListCampaignsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetCampaignMetricsBadRequestResponseBody builds the HTTP response body
 // from the result of the "get-campaign-metrics" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -2426,6 +2573,17 @@ func NewGetCampaignPayload(projectID string, briefID string, campaignID string, 
 	v.ProjectID = projectID
 	v.BriefID = briefID
 	v.CampaignID = campaignID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListCampaignsPayload builds a lfx-v2-campaign-service-briefs service
+// list-campaigns endpoint payload.
+func NewListCampaignsPayload(projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.ListCampaignsPayload {
+	v := &lfxv2campaignservicebriefs.ListCampaignsPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
 	v.BearerToken = bearerToken
 
 	return v

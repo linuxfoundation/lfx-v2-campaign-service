@@ -29,6 +29,7 @@ type Server struct {
 	FetchEventURL        http.Handler
 	CreateCampaigns      http.Handler
 	GetCampaign          http.Handler
+	ListCampaigns        http.Handler
 	GetCampaignMetrics   http.Handler
 	UpdateCampaign       http.Handler
 	ToggleCampaignStatus http.Handler
@@ -72,6 +73,7 @@ func New(
 			{"FetchEventURL", "POST", "/projects/{project_id}/fetch-event-url"},
 			{"CreateCampaigns", "POST", "/projects/{project_id}/briefs/{brief_id}/campaigns"},
 			{"GetCampaign", "GET", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}"},
+			{"ListCampaigns", "GET", "/projects/{project_id}/briefs/{brief_id}/campaigns"},
 			{"GetCampaignMetrics", "GET", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/metrics"},
 			{"UpdateCampaign", "PUT", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}"},
 			{"ToggleCampaignStatus", "PATCH", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/status"},
@@ -87,6 +89,7 @@ func New(
 		FetchEventURL:        NewFetchEventURLHandler(e.FetchEventURL, mux, decoder, encoder, errhandler, formatter),
 		CreateCampaigns:      NewCreateCampaignsHandler(e.CreateCampaigns, mux, decoder, encoder, errhandler, formatter),
 		GetCampaign:          NewGetCampaignHandler(e.GetCampaign, mux, decoder, encoder, errhandler, formatter),
+		ListCampaigns:        NewListCampaignsHandler(e.ListCampaigns, mux, decoder, encoder, errhandler, formatter),
 		GetCampaignMetrics:   NewGetCampaignMetricsHandler(e.GetCampaignMetrics, mux, decoder, encoder, errhandler, formatter),
 		UpdateCampaign:       NewUpdateCampaignHandler(e.UpdateCampaign, mux, decoder, encoder, errhandler, formatter),
 		ToggleCampaignStatus: NewToggleCampaignStatusHandler(e.ToggleCampaignStatus, mux, decoder, encoder, errhandler, formatter),
@@ -109,6 +112,7 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.FetchEventURL = m(s.FetchEventURL)
 	s.CreateCampaigns = m(s.CreateCampaigns)
 	s.GetCampaign = m(s.GetCampaign)
+	s.ListCampaigns = m(s.ListCampaigns)
 	s.GetCampaignMetrics = m(s.GetCampaignMetrics)
 	s.UpdateCampaign = m(s.UpdateCampaign)
 	s.ToggleCampaignStatus = m(s.ToggleCampaignStatus)
@@ -131,6 +135,7 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountFetchEventURLHandler(mux, h.FetchEventURL)
 	MountCreateCampaignsHandler(mux, h.CreateCampaigns)
 	MountGetCampaignHandler(mux, h.GetCampaign)
+	MountListCampaignsHandler(mux, h.ListCampaigns)
 	MountGetCampaignMetricsHandler(mux, h.GetCampaignMetrics)
 	MountUpdateCampaignHandler(mux, h.UpdateCampaign)
 	MountToggleCampaignStatusHandler(mux, h.ToggleCampaignStatus)
@@ -605,6 +610,60 @@ func NewGetCampaignHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "get-campaign")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountListCampaignsHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "list-campaigns" endpoint.
+func MountListCampaignsHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/briefs/{brief_id}/campaigns", f)
+}
+
+// NewListCampaignsHandler creates a HTTP handler which loads the HTTP request
+// and calls the "lfx-v2-campaign-service-briefs" service "list-campaigns"
+// endpoint.
+func NewListCampaignsHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeListCampaignsRequest(mux, decoder)
+		encodeResponse = EncodeListCampaignsResponse(encoder)
+		encodeError    = EncodeListCampaignsError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "list-campaigns")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
 		payload, err := decodeRequest(r)
 		if err != nil {
