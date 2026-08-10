@@ -76,6 +76,12 @@ func TestMigrateRefusesAnInvalidIndex(t *testing.T) {
 	if !strings.Contains(err.Error(), idx) {
 		t.Errorf("the error does not name %s: %v — an operator has to know which index to drop", idx, err)
 	}
+	// This index is hand-built — no migration creates it — and the message must say so.
+	// The scan is schema-wide, so this is not a contrived case: sending an operator to
+	// force a version would replay unrelated DDL to fix an index nothing recreates.
+	if !strings.Contains(err.Error(), idx+" (no migration creates this") {
+		t.Errorf("the error offers version advice for a hand-built index: %v", err)
+	}
 	if !postgres.IsPermanentMigrationErr(err) {
 		t.Errorf("ErrInvalidIndex is not permanent; boot would 503-loop instead of failing fast")
 	}

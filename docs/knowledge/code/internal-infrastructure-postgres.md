@@ -207,7 +207,19 @@ the index up by name still passes. Migration tests run on a fresh database and c
 see it.
 
 So `Migrate` ends with `checkNoInvalidIndexes`, a catalog read for
-`pg_index.indisvalid = false` in the current schema. Any hit returns `ErrInvalidIndex`,
+`pg_index.indisvalid = false` in the current schema. The scan is schema-wide, not scoped
+to names this repo knows: an invalid index is never an intended state, and every future
+CONCURRENTLY migration gets the check for free. That breadth is also why the RECOVERY
+advice is attached per NAME rather than to the sentence. Dropping the debris is always
+step one, but "then force `<version-1>`" is only right for an index a migration creates —
+a hand-built index, another tool's, or two hits from different migrations each make one
+blanket version wrong, and forcing an unrelated version replays unrelated DDL.
+`describeInvalid` therefore annotates each name from `requiredIndexes` with its owning
+migration and tells the operator to leave the version alone for anything else.
+`TestRequiredIndexMigrationsExistAndCreateTheirIndex` keeps those numbers honest — it
+fails if a version names no migration file, or names one that does not mention the index.
+
+Any hit returns `ErrInvalidIndex`,
 which `IsPermanentMigrationErr` reports as permanent — and "permanent" here means the
 container stops trying, not that it keeps trying. Retrying rebuilds nothing, so both
 startup paths refuse rather than loop: `NewContainer` returns the error, which crashes the

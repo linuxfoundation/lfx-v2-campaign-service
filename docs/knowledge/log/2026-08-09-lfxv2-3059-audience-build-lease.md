@@ -364,3 +364,33 @@ reason reads as a redundant second option and gets skipped.
 The rule: **a recovery instruction has to name evidence that exists in the FAILURE it is written
 for, not in the success case.** Close kin to Round 3 and to #101's "a guard must run where the
 evidence still exists" — same mistake, pointed at an operator instead of a decoder.
+
+## Round N: recovery advice that is only right for some of what the scan finds
+
+Copilot on `pool.go:247`: the invalid-index error tells the operator to
+`migrate force <version-1>`, but the scan producing the names is schema-wide. An invalid
+index may have been created by hand — the live test does exactly that — and two hits may
+come from two different migrations, so there is no single version to force, and forcing an
+unrelated one replays unrelated DDL.
+
+Right, and the shape of the mistake is worth naming: the breadth of the scan was a
+deliberate decision (an invalid index is never intended, and every future CONCURRENTLY
+migration gets the check for free), while the remedy sentence was written for the ONE index
+this migration adds. The two were correct separately.
+
+`describeInvalid` now annotates per name rather than per sentence — each name matched
+against `requiredIndexes` gets `(migration 000018: force 17)`, and anything else gets
+"no migration creates this; drop it, leave the schema version alone". `requiredIndex` grew
+a `migration` field to carry it; it is reported, never checked.
+
+A number that exists only to be printed is the kind that rots, so it is pinned twice.
+`TestRequiredIndexMigrationsExistAndCreateTheirIndex` fails if a version names no
+`*.up.sql`, and — the half that survives a rename — if the file it names does not mention
+the index. `TestDescribeInvalid_AnnotatesOnlyMigrationOwnedIndexes` covers both branches
+without a database. The live test now also asserts that its hand-built index is NOT offered
+a version, which is the case that motivated the finding. Both new unit tests
+revert-verified.
+
+**When a check is deliberately broader than the case it was written for, its ERROR MESSAGE
+inherits that breadth and usually does not deserve it.** The scan was general; the remedy
+was specific; nothing connected the two until an operator followed it.

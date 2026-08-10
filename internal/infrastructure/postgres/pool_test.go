@@ -7,10 +7,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/migrations"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -167,4 +169,58 @@ func TestCheckReady_PassesContextToPing(t *testing.T) {
 	})
 	require.False(t, ok)
 	assert.True(t, sawCanceled)
+}
+
+// A requiredIndex's `migration` is reported to an operator as the version to force back
+// to, so a wrong number is worse than no number: it replays unrelated DDL. Nothing else
+// checks it — the live test drops the index by NAME and never reads this field — so the
+// number is pinned against the embedded migration files here, where it costs no database.
+//
+// Both halves matter. A version naming no file is a typo. A version whose file does not
+// mention the index name means the annotation points at the wrong migration, which is the
+// failure that survives a rename.
+func TestRequiredIndexMigrationsExistAndCreateTheirIndex(t *testing.T) {
+	entries, err := fs.Glob(migrations.FS, "*.up.sql")
+	if err != nil {
+		t.Fatalf("glob migrations: %v", err)
+	}
+	for _, ri := range requiredIndexes {
+		prefix := fmt.Sprintf("%06d_", ri.migration)
+		var found string
+		for _, e := range entries {
+			if strings.HasPrefix(e, prefix) {
+				found = e
+				break
+			}
+		}
+		if found == "" {
+			t.Errorf("%s: migration %d has no *.up.sql; an operator forcing %d would "+
+				"replay something else", ri.name, ri.migration, ri.migration-1)
+			continue
+		}
+		body, rerr := migrations.FS.ReadFile(found)
+		if rerr != nil {
+			t.Fatalf("read %s: %v", found, rerr)
+		}
+		if !strings.Contains(string(body), ri.name) {
+			t.Errorf("%s: migration %s does not mention it, so forcing %d would not "+
+				"recreate it", ri.name, found, ri.migration-1)
+		}
+	}
+}
+
+// The invalid-index scan is schema-wide, so it turns up names no migration owns. Those
+// must NOT carry force advice: the operator would replay unrelated DDL to fix an index
+// nothing will recreate. The live test builds exactly such an index by hand.
+func TestDescribeInvalid_AnnotatesOnlyMigrationOwnedIndexes(t *testing.T) {
+	owned := requiredIndexes[0].name
+	got := describeInvalid([]string{owned, "zz_hand_built_idx"})
+
+	if !strings.Contains(got, fmt.Sprintf("%s (migration %06d: force %d)",
+		owned, requiredIndexes[0].migration, requiredIndexes[0].migration-1)) {
+		t.Errorf("describeInvalid = %q, want the owned index annotated with its version", got)
+	}
+	if !strings.Contains(got, "zz_hand_built_idx (no migration creates this") {
+		t.Errorf("describeInvalid = %q, want the unowned index told to leave the version alone", got)
+	}
 }

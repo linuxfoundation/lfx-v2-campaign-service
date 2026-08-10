@@ -242,11 +242,12 @@ func checkNoInvalidIndexes(dsn string) error {
 	if len(names) > 0 {
 		return fmt.Errorf("%w: %s. Left by a failed CREATE INDEX CONCURRENTLY: it "+
 			"enforces nothing and the planner will not use it, yet a re-run of the "+
-			"migration that creates it finds the NAME and reports success. To recover: "+
-			"DROP each index listed, then `migrate force <version-1>` so the migration "+
-			"that creates it will RUN again — dropping alone leaves the version clean, "+
-			"and the next boot then succeeds with the index absent entirely",
-			ErrInvalidIndex, strings.Join(names, ", "))
+			"migration that creates it finds the NAME and reports success. DROP each "+
+			"index listed. Dropping is the whole remedy only for an index no migration "+
+			"creates; for the ones annotated above, dropping alone leaves the version "+
+			"recorded clean and the next boot then succeeds with the index absent "+
+			"entirely, so force the annotated version so its migration RUNS again",
+			ErrInvalidIndex, describeInvalid(names))
 	}
 
 	// And the absence case, which is what the recovery above walks straight into if only
@@ -300,11 +301,12 @@ func checkNoInvalidIndexes(dsn string) error {
 // a same-named NON-unique index passed the name-only form). This is that guard, moved to
 // the runner, for the index 000018 creates.
 var requiredIndexes = []requiredIndex{{
-	// migration 000018: at most one audience per (brief, platform) in `building`.
-	name:   "uq_campaign_audiences_brief_platform_building",
-	table:  "campaign_audiences",
-	unique: true,
-	keys:   []string{"brief_id", "platform"},
+	// at most one audience per (brief, platform) in `building`.
+	name:      "uq_campaign_audiences_brief_platform_building",
+	table:     "campaign_audiences",
+	migration: 18,
+	unique:    true,
+	keys:      []string{"brief_id", "platform"},
 	// As Postgres DEPARSES `WHERE status = 'building'`. Comparing against the deparsed
 	// form rather than the source text is what makes an equivalent spelling — an
 	// explicit ::text cast, extra whitespace — compare equal instead of tripping a
@@ -315,11 +317,43 @@ var requiredIndexes = []requiredIndex{{
 // requiredIndex is an index whose absence — or silent replacement by something of the
 // same name — leaves an invariant unenforced with no other symptom.
 type requiredIndex struct {
-	name      string
-	table     string
+	name  string
+	table string
+	// migration is the version that CREATES this index, and it is here to be reported
+	// rather than checked: the invalid-index remedy needs a version to force back to,
+	// and the scan that produces it is schema-wide, so it also turns up indexes no
+	// migration owns. One `<version-1>` for the whole list would be wrong for those
+	// and wrong again for a list spanning two migrations. See describeInvalid.
+	migration int
 	unique    bool
 	keys      []string
 	predicate string // deparsed; "" means the index must NOT be partial
+}
+
+// describeInvalid renders the invalid index names, annotating each one this repo's
+// migrations create with the version to force back to.
+//
+// The scan is schema-wide on purpose — an invalid index is never an intended state, and
+// scoping it to known names would miss the next CONCURRENTLY migration written after this
+// code. The consequence is that a name here may be nothing to do with a migration: a
+// hand-built index, an operator's experiment, another tool's. Telling that operator to
+// force a version would replay unrelated DDL to fix an index no migration will recreate.
+// So the version is attached per NAME, not to the sentence.
+func describeInvalid(names []string) string {
+	owner := make(map[string]int, len(requiredIndexes))
+	for _, ri := range requiredIndexes {
+		owner[ri.name] = ri.migration
+	}
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if v, ok := owner[n]; ok {
+			out = append(out, fmt.Sprintf("%s (migration %06d: force %d)", n, v, v-1))
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s (no migration creates this; drop it, leave the "+
+			"schema version alone)", n))
+	}
+	return strings.Join(out, ", ")
 }
 
 // requiredIndexQuery reads one index's definition. indisready joins indisvalid because the
