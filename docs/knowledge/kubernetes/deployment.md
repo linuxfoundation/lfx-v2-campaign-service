@@ -29,17 +29,16 @@ default so a cluster with no override uses the account's default.
 `AI_PROXY_URL` / `AI_API_KEY` follow the Snowflake pattern exactly: `secretKeyRef`
 to `lfx-v2-campaign-service-secrets` (keys `ai-proxy-url`, `ai-api-key`), both
 `optional: true`. Generated email copy is an enrichment on the same terms — a
-cluster with no LiteLLM provisioning must still start, and `llm.NewClient` reports
-`ErrNotConfigured` at construction so the composition root decides once instead of
-each call site rediscovering it. The secret is the **proxy's** key, not a Bedrock or
-Anthropic credential. `AI_MODEL` is a plain (non-secret) value, empty by default:
-a model id is not a credential, and empty selects `llm.DefaultModel`. All three are
-printed by `Config.String()` — the model verbatim, the key through `redactSecret`,
-and the URL through `redactAIProxyURL`, which keeps only the scheme, renders the host
-as `xxxxx`, and masks the whole value if it will not parse or its scheme is neither
-`http` nor `https`. The host is masked because it can itself BE the pasted secret —
-`AI_PROXY_URL=https://sup3r-s3cret/` is a well-formed absolute URL. That
-last reduction is not decoration: `Config.String()` renders at startup before
+cluster with no LiteLLM provisioning must still start, and the `GenerateEmailCopy`
+endpoint returns 503 ServiceUnavailable when unconfigured. The secret is the **proxy's**
+key, not a Bedrock or Anthropic credential. `AI_MODEL` is a plain (non-secret) value,
+empty by default: a model id is not a credential, and empty selects `llm.DefaultModel`.
+All three are printed by `Config.String()` — the model verbatim, the key through
+`redactSecret`, and the URL through `redactAIProxyURL`, which keeps only the scheme,
+renders the host as `xxxxx`, and masks the whole value if it will not parse or its
+scheme is neither `http` nor `https`. The host is masked because it can itself BE the
+pasted secret — `AI_PROXY_URL=https://sup3r-s3cret/` is a well-formed absolute URL.
+That reduction is deliberate: `Config.String()` renders at startup before
 `llm.NewClient` can reject a bad value, so it is the only place a pasted credential
 would otherwise land in the log. What survives is enough for the thing being
 diagnosed — whether a proxy and key are configured at all.

@@ -29,10 +29,7 @@ here: `internal/platform/llm`'s `NewClient` returns `ErrNotConfigured` when url 
 missing, so a caller can degrade rather than the pod refusing to start. `AI_MODEL` is not a
 secret — empty selects `llm.DefaultModel`.
 
-**These three are loaded and chart-wired but not yet READ by anything (LFXV2-2775 part 1 of
-2).** Nothing constructs an `llm.Client` today; the consumer — the email-copy step in the
-HubSpot dispatch, which will fall back to the cloned template's own body when the group is
-unconfigured — lands in part 2. Setting them now is harmless and changes no behaviour.
+**These three are loaded by `Container.newLLMClient()` and injected into `BriefService`.** When unconfigured (URL or key missing), the `GenerateEmailCopy` endpoint returns 503 ServiceUnavailable. The service otherwise starts successfully with or without these values configured, making them truly optional as a GROUP.
 
 `String()` prints `AI_PROXY_URL` through `redactAIProxyURL`, which keeps ONLY the scheme and
 renders the host as `xxxxx` — `https://xxxxx`. Everything else is dropped. The field LOOKS

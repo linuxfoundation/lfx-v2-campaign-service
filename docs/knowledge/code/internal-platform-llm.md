@@ -144,11 +144,7 @@ unexported types or plain strings, so `errors.Is`/`As` reach nothing, and the se
 what callers match on. `TestNewClient_RejectionNeverEchoesTheRawURL` carries the
 malformed-port shape specifically, because it is the case that passes under unwrapping.
 
-**There is no such composition root yet.** This package has no non-test caller: nothing in
-`internal/container` imports it, so nothing currently logs `ErrNotConfigured` or degrades
-anything. That wiring is part 2 of LFXV2-2775, which adds the email-copy step to the HubSpot
-dispatch. This PR ships the client and its contract only. Two of the three `AI_*` values — `AI_PROXY_URL`
-and `AI_API_KEY` — are wired in the chart as OPTIONAL secret refs, on the same reasoning as
+**The composition root is `Container.newLLMClient()` in `internal/container/container.go`.** This package is imported and used by `BriefService.GenerateEmailCopy`, which handles the synchronous `POST /projects/{id}/briefs/{id}/email-copy` endpoint. When the LLM client is nil (AI_PROXY_URL or AI_API_KEY unset), `GenerateEmailCopy` returns 503 ServiceUnavailable. Two of the three `AI_*` values — `AI_PROXY_URL` and `AI_API_KEY` — are wired in the chart as OPTIONAL secret refs, on the same reasoning as
 `SNOWFLAKE_*`: generated copy is an enrichment, so an unprovisioned secret must not stop the pod.
 `AI_MODEL` is a plain `value: ''`, because a model id is not a credential and empty is a
 meaningful default (it selects `llm.DefaultModel`). See
@@ -194,10 +190,9 @@ since a reason a proxy newly invents is far likelier to mean "not finished" than
 The named cases describe themselves; the default names the situation without QUOTING the value,
 because the reason is text the model controls — the redaction rule from the URL components,
 applied to a field that is not part of a URL. Returning an error rather than widening the
-signature keeps `Complete` at `(string, error)`. The contract this sets for the part-2 consumer
-is that the string must be DISCARDED whenever the error is non-nil — there is no partial-copy
-fallback. As noted above, no such caller exists in this PR, so this is the contract the wiring
-must honour, not behaviour that already runs.
+signature keeps `Complete` at `(string, error)`. `GenerateEmailCopy` honours this contract: it
+discards the string whenever the error is non-nil and returns 503 ServiceUnavailable, treating
+truncation and model errors the same way. No partial-copy fallback is attempted.
 
 ## Three places where a defence has to be exact rather than approximately right
 

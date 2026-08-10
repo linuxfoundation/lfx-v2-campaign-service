@@ -37,6 +37,7 @@ A brief is the funnel unit: it carries the **program** (`program_type` = events 
 | PUT | `/projects/{projectId}/briefs/{brief_id}` | `campaign_manager` | JSON | Replace a brief (requires `If-Match`). |
 | POST | `/projects/{projectId}/briefs/{brief_id}/refresh` | `campaign_manager` | JSON | Re-run generation against latest event data, producing a new version. |
 | POST | `/projects/{projectId}/briefs/{brief_id}/approve` | `campaign_manager` | JSON | Approve a brief for campaign creation (requires `If-Match`; approval is version-gated so a brief replaced since it was fetched cannot be approved on stale content). |
+| POST | `/projects/{projectId}/briefs/{brief_id}/email-copy` | `campaign_manager` | JSON | Generate AI-written email copy (subject, preheader, body, CTA) for the brief. Returns immediately with generated text; does NOT persist to the brief. The AI model is optional — without it configured this endpoint returns 503. Requires valid brief event details (event name). |
 | DELETE | `/projects/{projectId}/briefs/{brief_id}` | `campaign_manager` | JSON | Archive a brief (soft delete). |
 
 > Listing briefs and viewing a brief's version history are served by the Query Service, not by dedicated endpoints here.

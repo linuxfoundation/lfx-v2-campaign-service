@@ -21,6 +21,7 @@
 * [internal/platform/llm](internal-platform-llm.md) - Client for the LF LiteLLM proxy's OpenAI-compatible /chat/completions surface: the service's only route to a model, with redirect refusal that survives client injection, per-attempt context deadlines, 429 retry with drained bodies, and rebuilt (never forwarded) transport errors.
 * [internal/platform/snowflake](internal-platform-snowflake.md) - Read-only Snowflake client (email channel): resolves past-edition EVENT_NAME strings from PLATINUM_LFX_ONE for HubSpot BEHAVIORAL_EVENT filters.
 * [internal/service](internal-service.md) - Campaign service business logic, including Readyz (DB-backed readiness) and Livez (process-only liveness).
+* [internal/service/email_copy](internal-service-email-copy.md) - AI-generated email copy (subject, preheader, body, CTA) for campaign briefs using the LiteLLM proxy client. Implements scrape-not-invent, defensive parsing, code-enforced length limits, and graceful degradation when the model is unconfigured.
 * [pkg/constants](pkg-constants.md) - Application-wide constants, including PG*, DATABASE_URL and AI_* environment variable names.
 * [pkg/log](pkg-log.md) - Package log provides structured logging utilities for context-aware logging.
 * [pkg/utils](pkg-utils.md) - Package utils provides OpenTelemetry SDK setup utilities.

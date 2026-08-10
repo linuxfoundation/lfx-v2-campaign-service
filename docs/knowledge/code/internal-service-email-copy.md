@@ -30,10 +30,10 @@ The implementation follows six principles from the reference lfx-one implementat
 ## Key Types and Functions
 
 ### `emailCopyEventDetails`
-Opportunistic decode target for the brief's opaque `EventDetails` blob. Contains `event_name`, `location`, `start_date`, `end_date`. Only `event_name` is required (validated in `decodeEmailCopyEventDetails`).
+Decode target for the brief's opaque `EventDetails` blob. Contains `eventName`, `location`, `startDate`, `endDate`. Only `eventName` is required (validated in `decodeEmailCopyEventDetails`).
 
 ### `decodeEmailCopyEventDetails(blob)`
-Decodes the brief's `EventDetails` and validates that at least an event name is present. Mirrors the pattern in `audience_build.go`: a blob that isn't this shape is skipped rather than failing the request.
+Decodes the brief's `EventDetails` and validates that at least an event name is present. Unlike `audience_build.go` (which skips mismatched shapes), returns an error for missing or invalid event details, causing `GenerateEmailCopy` to return 400 BadRequest.
 
 ### `composeEmailCopyPrompt(vars)`
 Returns (systemPrompt, userPrompt) built from fixed blocks. The system prompt contains role instruction, constraints, and the scrape-not-recall mandate. The user prompt carries the specific event details (name, location, dates). Prompt composition is deterministic and auditable.
@@ -42,7 +42,7 @@ Returns (systemPrompt, userPrompt) built from fixed blocks. The system prompt co
 Formats start/end dates into a human-readable string. If both dates are present, joins them with " - ". If only one, returns it. If neither, returns "Date TBD".
 
 ### `parseEmailCopyResponse(raw)`
-Parses the model's JSON response, stripping code fences and handling both snake_case and camelCase keys. Returns `(*briefs.EmailCopy, error)`. If JSON parsing fails outright, returns an error (not a fallback to raw text).
+Parses the model's JSON response, stripping code fences (e.g., ```json). Returns `(*briefs.EmailCopy, error)`. If JSON parsing fails, returns an error; this is fail-closed because email copy is the primary output of this endpoint (no fallback to raw text).
 
 ### `truncateString(s, maxLen)`
 Enforces length limits in code, stripping trailing whitespace. Applied after parsing to all four copy fields (subject, preheader, body, CTA).
