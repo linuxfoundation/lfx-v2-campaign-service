@@ -69,3 +69,22 @@ scheduled one: `main` already carries `000017`, so the first environment to appl
 forever. `#95` must merge before the next deploy, or be renumbered above `000017`. That is
 `#95`'s obligation; nothing this branch does can discharge it, and the
 `allowedVersionGaps[16]` entry now says so in those terms.
+
+## Round N+2: 000018 was taken too — and the number moved again, on purpose
+
+The renumber above landed on `000018`, which PR #106 (LFXV2-3059, the audience build lease)
+already holds. Moved again, to `000019`.
+
+The choice of WHICH branch moves is not arbitrary and is worth stating, because "renumber the
+one you happen to be looking at" is the wrong rule. #106's number is named in `pool.go`'s
+version-forcing recovery path and in three of its tests (`migration 000018: force 17`), so
+moving it means rewriting recovery logic and its assertions. This branch names its number in
+one test and two documentation lines. **Renumber the branch with the fewest references to the
+number, not the branch you are in** — a migration version is a value that leaks into prose and
+recovery code, and the leak, not the file name, is the cost.
+
+Three numbers in one branch also says something about the numbering scheme itself: picking
+"next free against `main`" is picking against a snapshot every sibling PR can invalidate, and
+the number is only settled at merge. The `allowedVersionGaps` map plus
+`TestMigrations_UniqueNumbering` is what makes each invalidation loud instead of silent, which
+is the only property that actually matters here.

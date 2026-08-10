@@ -265,11 +265,16 @@ func TestMigrations_UniqueNumbering(t *testing.T) {
 var allowedVersionGaps = map[int]string{
 	16: "000016_campaign_actor_columns is claimed by PR #95 (LFXV2-3038, " +
 		"feat/LFXV2-3038-campaign-actor-attribution), which has NOT merged. #93 introduced " +
-		"000017 and has already merged, so main now carries the gap: the first environment to " +
+		"000017 and has already merged, so main now carries this gap: the first environment to " +
 		"apply 000017 records it as the highest applied version, and #95's 000016 is thereafter " +
-		"skipped silently and forever. This is a live merge-ordering obligation on #95 (merge " +
-		"before the next deploy, or renumber above 000017), not something this branch can fix. " +
-		"Delete this entry once #95 is on main.",
+		"skipped silently and forever. That is a live obligation on #95 (merge before the next " +
+		"deploy, or renumber above 000017), not something this branch can discharge.",
+	18: "000018_audience_build_lease is claimed by PR #106 (LFXV2-3059, " +
+		"feat/LFXV2-3059-audience-build-lease), still open. #106 must merge before this branch " +
+		"or its lease index is skipped forever. This branch's own migration moved 000017 -> " +
+		"000018 -> 000019 as #93 merged and then as #106's number was found: #106 keeps 000018 " +
+		"because its version-forcing recovery path names the number in pool.go and three tests, " +
+		"whereas this one is named only in its own test and two doc lines.",
 }
 
 // TestMigrations_NoVersionGaps guards against numbering a migration ABOVE versions that do not

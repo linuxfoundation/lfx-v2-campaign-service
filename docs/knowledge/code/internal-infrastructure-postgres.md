@@ -165,14 +165,16 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   write paths (dispatch claim, upsert, status toggle) are a distinct change with
   distinct failure modes.
 
-- `000018` — `updated_by` JSONB on `campaign_audiences`. Only the one column: that table
+- `000019` — `updated_by` JSONB on `campaign_audiences`. Only the one column: that table
   has carried `created_by` since `000005`, and `000015` recorded the missing half as a
   known gap. Versions `000016` and `000017` are both skipped here: `000016` is reserved
-  for the campaigns actor columns (PR #95, still open) and `000017` is the disconnected
-  probe index, which merged with #93. This column was numbered `000017` until that merge
-  landed and it became a silent duplicate — golang-migrate applies one file per version
-  and skips the other with no error, so the collision surfaces only as a missing column.
-  See *Migration numbering* below.
+  for the campaigns actor columns (PR #95, still open), `000017` is the disconnected probe
+  index, which merged with #93, and `000018` is the audience build lease (PR #106, still
+  open). This column was numbered `000017` until #93 merged and made it a silent duplicate,
+  then `000018` until that collided with #106 — golang-migrate applies one file per version
+  and skips the other with no error, so a collision surfaces only as a missing column. It
+  moved rather than #106 because #106's version-forcing recovery path names its number in
+  code and in three tests. See *Migration numbering* below.
 
 ## Actor attribution
 
