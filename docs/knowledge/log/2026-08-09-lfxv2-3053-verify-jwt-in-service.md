@@ -504,3 +504,41 @@ The class: **a security helper from the standard library encodes someone else's 
 against. The question to ask of any borrowed redactor is not "does this hide the secret" but
 "does its notion of secret match the one this service has already committed to elsewhere",
 because the place that commitment is written down is usually a test, not a type.
+
+## Round N+5: the fix for the lossy redactor was a leaking redactor
+
+Four findings, and the first is mine from last round.
+
+**The comma split leaked.** Round N+4 changed `URLUserinfo` to split a NATS server list on
+commas so a three-server value stopped diagnosing as one server. `,` is an RFC 3986 sub-delim
+and legal unescaped inside userinfo, so `nats://u:p,x@host` is one URL whose password contains
+a comma — and the split turns it into `nats://u:p` (no `@`, nothing redacted, emitted whole)
+plus `***@host`. Half a password in the log, on the exact code path whose justification is that
+it never leaks. The behaviour it replaced was lossy and safe; the replacement was pretty and
+unsafe.
+
+Which a comma is cannot be decided from the value: `nats://a:4222` is either a host and port or
+a user and password. So the split now happens only where the answer does not matter — every
+segment has an `@`, or none does. Any mix falls back to the whole-value rule. The test case that
+used to assert `nats://a:4222,nats://***@b:4222` now asserts the lossy `nats://***@b:4222`,
+which is a worse-looking output and the correct one.
+
+**Userinfo is not the only place a credential lives in a URL.** `?access_token=…` is a shape
+real identity providers accept, and the JWKS URL is operator-supplied, so clearing `User` and
+printing the query satisfied `net/url`'s idea of a credential and missed the actual one. Both
+entry points now drop query and fragment. Ordering is load-bearing in the string form: the
+strip runs AFTER userinfo removal, because a password may contain a `?` and cutting first would
+truncate `nats://u:p?x@host` to `nats://u:p` — the same defect as the comma, one round later.
+
+**Two debug lines logged the upstream response body.** Both carried a comment saying the body
+is untrusted text that would travel into logs, immediately above the call that sent it there.
+The argument was that a bounded length and a debug level made it safe. Neither is the relevant
+property: an error page can reflect the request back — a gateway rejecting our `Authorization`
+header being the likeliest case — and debug output lands in the same store as everything else.
+The bodies are discarded now; the endpoint and status carry the whole diagnostic.
+
+The class this round: **a comment that states the risk is not a control for it.** Three of the
+four sites named the exact danger in prose and then did the dangerous thing on the next line.
+The prose is what made them read as handled — including to me, twice, since the query strip and
+the comma guard fail the same way in the same function and I shipped the second one while
+fixing the first.

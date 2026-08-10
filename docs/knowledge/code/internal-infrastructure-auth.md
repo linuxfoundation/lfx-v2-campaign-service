@@ -88,9 +88,9 @@ Both checks live in **`jwksStatusGuard`**, a `RoundTripper` that runs *before* t
 provider decodes anything:
 
 - A **non-2xx** becomes a transport error. It drains a bounded prefix of the body
-  (`jwksErrorBodyPeek`) to a debug log — never into the error, which travels further —
-  and closes it, which also keeps the connection poolable on an endpoint that fails on
-  every refresh.
+  (`jwksErrorBodyPeek`) **to `io.Discard`** and closes it, which keeps the connection
+  poolable on an endpoint that fails on every refresh. The body reaches neither the error
+  nor the log.
 - A **2xx** is read in full (bounded by `jwksMaxBody`), its `keys` array counted, and the
   bytes replayed on the response so the provider can still decode them. Zero keys is an
   error, whatever produced it: a 200 carrying `{"keys":[]}`, an issuer mid-rotation with
@@ -154,6 +154,18 @@ endpoint writes the same line on a loop.
 `TestJWKSStatusGuard_ErrorsDoNotLeakURLCredentials` covers all four fetch-error arms
 separately, because the leak is per-format-verb — fixing one and missing another leaves the
 credential in the logs just as often.
+
+The upstream **response body** is a second channel, and it was open for a while behind a
+comment that argued it was closed. Both guard paths logged a bounded prefix of the body at
+debug, reasoning that bounding the length and naming the origin made it safe. That conceded
+the premise — the body is untrusted upstream text — and then ignored it. Length is not the
+property that matters: an error page can reflect the request back, and a gateway that
+rejected our `Authorization` header is the case most likely to quote it, which is also
+exactly when an operator turns debug on. Nor is the debug **level** a mitigation; debug
+output lands in the same log store. Both paths now log the redacted endpoint and the status
+only, and `TestJWKSStatusGuard_UpstreamBodiesNeverReachTheLog` captures the handler output
+and fails on both the secret and on the reappearance of a `body_prefix` attribute — while
+still asserting the endpoint survives, so the test cannot be satisfied by logging nothing.
 
 `JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL` bypasses all of it and returns a fixed actor for
 any token; the name is deliberately unpleasant, the container logs a `WARN` on every boot

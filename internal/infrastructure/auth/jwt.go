@@ -247,13 +247,17 @@ func (g *jwksStatusGuard) RoundTrip(req *http.Request) (*http.Response, error) {
 	// this body. Drain a bounded prefix for the diagnostic, then close: draining also lets
 	// net/http return the connection to the idle pool instead of tearing down TCP+TLS,
 	// which matters because a misconfigured endpoint fails on EVERY refresh.
-	peek, _ := io.ReadAll(io.LimitReader(resp.Body, jwksErrorBodyPeek))
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, jwksErrorBodyPeek))
 	_ = resp.Body.Close()
-	// The body is NOT quoted into the error. It is untrusted upstream text that would
-	// travel into logs; the status and the URL are what identify the misconfiguration, and
-	// the body goes to a debug log where its length is bounded and its origin is obvious.
+	// The body is discarded, not recorded anywhere. An earlier version logged a bounded
+	// prefix of it at debug, with a comment arguing that bounding the length and naming the
+	// origin made it safe — which conceded the premise and then ignored it. Length is not
+	// the property that matters: an upstream error page can reflect the request back, and a
+	// gateway that rejected our Authorization header is exactly the case most likely to
+	// quote it. A debug level does not help either, since debug output lands in the same
+	// log store. The status and the redacted URL identify the misconfiguration on their own.
 	slog.Debug("JWKS endpoint returned a non-2xx response",
-		"url", redact.URL(req.URL), "status", resp.StatusCode, "body_prefix", string(peek))
+		"url", redact.URL(req.URL), "status", resp.StatusCode)
 	return nil, fmt.Errorf("JWKS endpoint %s returned HTTP %d", redact.URL(req.URL), resp.StatusCode)
 }
 
@@ -284,10 +288,11 @@ func (g *jwksStatusGuard) checkKeys(req *http.Request, resp *http.Response) (*ht
 		Keys []json.RawMessage `json:"keys"`
 	}
 	if err := json.Unmarshal(buf, &doc); err != nil {
-		// The body is not quoted into the error: untrusted upstream text that would travel
-		// into logs. It goes to a bounded debug line instead, as the non-2xx path does.
-		slog.Debug("JWKS endpoint returned an undecodable 2xx body",
-			"url", redact.URL(req.URL), "body_prefix", string(buf[:min(len(buf), jwksErrorBodyPeek)]))
+		// Not quoted into the error and not logged either, for the reason on the non-2xx
+		// path above: a 2xx body that is not a key set is still untrusted upstream text,
+		// and "the body was undecodable" is the whole diagnostic. Its CONTENT would only
+		// tell an operator what a request to this URL already tells them.
+		slog.Debug("JWKS endpoint returned an undecodable 2xx body", "url", redact.URL(req.URL))
 		return nil, fmt.Errorf("JWKS endpoint %s returned a 2xx body that is not a key set", redact.URL(req.URL))
 	}
 	if len(doc.Keys) == 0 {

@@ -30,9 +30,34 @@ and a redactor that eats them gets replaced by a raw print at the next outage.
 * `URLUserinfo(string) string` — for a URL that may not parse. `url.Parse`'s own error embeds
   the whole raw URL, so the raw string is exactly what must not be printed and there is no
   `*url.URL` to work with. Splits on the **last** `@`, because a password may contain a
-  percent-encoded one. A comma-separated value is redacted entry by entry: NATS accepts a
-  server list in one URL, and the last-`@` rule would otherwise take everything before the
-  final credential as userinfo and drop the earlier hosts.
+  percent-encoded one.
+
+Both drop the **query and fragment** as well as userinfo. A JWKS endpoint is
+operator-supplied, and `https://idp/jwks?access_token=…` is a shape real identity providers
+accept — so clearing `User` and printing the query would honour the letter of the contract
+and miss the credential actually present. In the string form the strip runs strictly **after**
+userinfo removal: a password may contain a `?`, so cutting first would truncate
+`nats://u:p?x@host` to `nats://u:p` and log half a secret. Once userinfo is gone, every
+remaining `?` and `#` is at or after the host.
+
+### The comma rule, and why it is conditional
+
+NATS accepts a server list in one URL value, and the last-`@` rule flattens such a value to
+its final server — safe, but it hides the hosts this package exists to keep visible. So a
+comma-separated value **is** redacted entry by entry, but only when splitting is provably
+safe.
+
+The catch is that `,` is an RFC 3986 sub-delim and legal unescaped inside userinfo. Split
+`nats://u:p,x@host` blindly and the first piece is `nats://u:p` — no `@`, nothing to redact,
+half the password in the log. That is strictly worse than the lossy behaviour the split was
+meant to improve on, and it shipped once: the entry-by-entry split landed unconditional and
+Cursor caught it on review.
+
+Which a comma is cannot be decided from the value. `nats://a:4222` is either a host and port
+or a user and password. So the split happens only where the answer does not matter — when
+**every** segment carries an `@` (each is a credential-bearing server, so all get redacted)
+or **none** does (there is no credential to leak). Any mix falls back to the whole-value
+rule: lossy, but incapable of leaking.
 
 ## Callers
 

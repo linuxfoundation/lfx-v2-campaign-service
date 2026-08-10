@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -755,5 +756,73 @@ func TestCoalesceKeyFunc_LeaderCancellationDoesNotFailFollowers(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("follower never returned")
+	}
+}
+
+// TestJWKSStatusGuard_UpstreamBodiesNeverReachTheLog pins the two debug lines in
+// jwksStatusGuard.
+//
+// Both once logged a bounded PREFIX of the upstream response body, with a comment arguing
+// that bounding the length and naming the origin made it safe. That conceded the premise —
+// the body is untrusted upstream text — and then ignored it. Length is not the property that
+// matters. A gateway that rejected our Authorization header is the case most likely to quote
+// the request back, so the body most in need of redaction is the one this endpoint returns
+// when it is misconfigured, which is exactly when an operator turns debug on. The debug LEVEL
+// is not a mitigation either: it lands in the same log store as everything else.
+//
+// The assertion is on what the guard EMITS, not on the error it returns, because the error
+// was already clean; the leak was in the line beside it.
+func TestJWKSStatusGuard_UpstreamBodiesNeverReachTheLog(t *testing.T) {
+	// A body shaped like the leak that matters: an error page reflecting the credential it
+	// was sent. Long enough that a "bounded prefix" would still contain the secret.
+	const reflected = "401 Unauthorized: rejected Authorization: Bearer s3cret-token-value"
+
+	for _, tc := range []struct {
+		name    string
+		handler http.HandlerFunc
+	}{
+		{"non-2xx", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(reflected))
+		}},
+		{"undecodable 2xx", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(reflected))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(tc.handler)
+			defer srv.Close()
+
+			var logged bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			defer slog.SetDefault(prev)
+
+			req, err := http.NewRequest(http.MethodGet, srv.URL+"/.well-known/jwks.json", nil)
+			if err != nil {
+				t.Fatalf("build request: %v", err)
+			}
+			g := &jwksStatusGuard{next: http.DefaultTransport}
+			resp, err := g.RoundTrip(req)
+			if resp != nil {
+				_ = resp.Body.Close()
+			}
+			if err == nil {
+				t.Fatal("the guard accepted a response it must refuse")
+			}
+
+			out := logged.String()
+			if strings.Contains(out, "s3cret-token-value") {
+				t.Errorf("an upstream response body reached the log: %s", out)
+			}
+			if strings.Contains(out, "body_prefix") {
+				t.Errorf("the body_prefix attribute is back; it is the channel this test exists to keep closed: %s", out)
+			}
+			// Without this the test would also pass if the guard stopped logging at all,
+			// or logged something with no diagnostic value.
+			if !strings.Contains(out, srv.Listener.Addr().String()) {
+				t.Errorf("the log lost the endpoint, leaving nothing diagnosable: %s", out)
+			}
+		})
 	}
 }
