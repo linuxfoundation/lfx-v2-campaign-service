@@ -167,7 +167,7 @@ func (stubCampaignRepo) GetCampaign(context.Context, string, string, string) (*m
 func (stubCampaignRepo) GetCampaignByPlatform(context.Context, string, string, model.Provider) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
-func (stubCampaignRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string) (bool, *model.Campaign, error) {
+func (stubCampaignRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string, *model.Actor) (bool, *model.Campaign, error) {
 	return true, &model.Campaign{Status: "pending"}, nil
 }
 func (stubCampaignRepo) DeleteDispatchClaim(context.Context, string, model.Provider) error {
@@ -179,7 +179,7 @@ func (stubCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, _ d
 func (stubCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64, domain.CampaignLockToken, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
-func (stubCampaignRepo) DeleteCampaign(context.Context, string, string, string, int64, domain.CampaignIndexPayloadFunc) error {
+func (stubCampaignRepo) DeleteCampaign(context.Context, string, string, string, int64, *model.Actor, domain.CampaignIndexPayloadFunc) error {
 	return nil
 }
 func (stubCampaignRepo) ClaimCampaignVersion(context.Context, string, string, string, int64) (*model.Campaign, domain.CampaignLockToken, error) {
@@ -1121,6 +1121,9 @@ func (fakeConnRepo) Update(context.Context, *model.Connection, int64) (*model.Co
 	return nil, domain.ErrNotFound
 }
 func (fakeConnRepo) SetCredential(context.Context, string, model.Provider, []byte, *model.Actor) (*model.Connection, error) {
+	return nil, domain.ErrNotFound
+}
+func (fakeConnRepo) UpdateWithCredential(context.Context, *model.Connection, []byte, int64) (*model.Connection, error) {
 	return nil, domain.ErrNotFound
 }
 func (fakeConnRepo) Delete(context.Context, string, model.Provider, *model.Actor) error {
