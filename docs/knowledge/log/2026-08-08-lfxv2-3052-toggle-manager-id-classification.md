@@ -145,3 +145,31 @@ Reusable: **a documented search command is executable documentation and rots the
 does.** It has two failure modes, not one — it can fail to run, which is loud, or it can run and
 return a confidently wrong answer, which is not. Re-run any grep a doc recommends after the
 refactor that doc describes.
+
+## Correction to the round above: those sentinels are not this endpoint's answers
+
+The round above is right that `credsSource.resolve` returns three errors carrying no
+`ErrConnectionNotUsable`, and wrong about what happens to them. It annotated them "(404)",
+"(retry later)" and "(page ops)" as though those were the toggle endpoint's responses. They are
+not. `ToggleCampaignStatus`'s switch (`internal/service/brief.go`) has exactly **two** arms —
+`ErrConnectionNotUsable` and an `Unconfirmed()` platform error. All three untagged returns fall
+to `default`: logged, then 503, indistinguishable from a repository failure. The distinct
+classifications are honoured by the read-only discovery handlers, which is where they were
+introduced.
+
+The mistake is a specific and repeatable one, and it is the mirror image of the defect the round
+was correcting. That round widened a claim by swapping in a loose synonym; this one widened a
+claim by reading a sentinel's **intended meaning** as its **realised behaviour**. A sentinel is a
+proposal — it says what a caller *could* distinguish. Only the caller's switch says what any
+caller *does*. Writing "`ErrNotFound` (404)" in a comment above a switch that has no
+`ErrNotFound` arm documents an endpoint that does not exist, and it is worse than saying nothing,
+because the next person adding a caller will assume the mapping is already there.
+
+Rule: **when a comment attaches a status code to a sentinel, the switch that produces that status
+must be in view.** If you cannot point at the arm, write down what actually happens and what the
+gap is.
+
+The gap itself is real and now recorded in the comment: "no connection configured for this
+project" is permanent, and answering 503 invites a retry that cannot succeed. Fixing it means
+adding arms to the toggle handler — a behaviour change, tracked as LFXV2-3065, deliberately not
+smuggled into a classification-documentation PR.

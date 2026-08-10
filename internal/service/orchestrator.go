@@ -1038,11 +1038,20 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// that statement, on Google Ads or anywhere else. Three of its returns carry no
 	// ErrConnectionNotUsable at all (internal/dispatch/creds.go): a missing connection row keeps
 	// domain.ErrNotFound, a repository failure keeps only the wrapped repo error, and a GCM
-	// AUTHENTICATION failure carries domain.ErrCredentialDecryptionFailed. Each is a distinct
-	// answer — 404, retry-later, and page-ops respectively — and reading "everything before the
-	// platform call is a 409" off this paragraph would flatten all three into "edit your
-	// connection". Only the row-is-provably-bad returns (no stored credentials,
-	// ErrCredentialsMalformed) are tagged.
+	// AUTHENTICATION failure carries domain.ErrCredentialDecryptionFailed. Only the
+	// row-is-provably-bad returns (no stored credentials, ErrCredentialsMalformed) are tagged.
+	//
+	// What the TOGGLE CALLER does with those three today is a single thing: nothing special.
+	// ToggleCampaignStatus's switch (internal/service/brief.go) has exactly two arms —
+	// ErrConnectionNotUsable and an Unconfirmed platform error — so all three untagged returns
+	// land in default, get logged, and return 503. Their distinct classifications are honoured
+	// by the read-only DISCOVERY handlers, not here. Do not read the sentinel names off this
+	// paragraph and assume this endpoint already answers 404 or 500; it does not.
+	//
+	// That is a known rough edge rather than a considered choice: "this project has no
+	// connection configured" is permanent, and 503 invites a retry that cannot succeed. Adding
+	// the arm is a behaviour change with its own ticket (LFXV2-3065), not part of the
+	// classification fix this comment documents.
 	//
 	// The manager-id check is the newest of the five and was for a while NOT reachable here:
 	// it sat inline in the discovery resolver, so a malformed stored value reached this path
