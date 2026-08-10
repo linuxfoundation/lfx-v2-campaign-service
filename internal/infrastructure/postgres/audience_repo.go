@@ -127,9 +127,13 @@ const ambiguousCommitReconcileTimeout = 5 * time.Second
 func reconcileAmbiguousAudienceCommit(ctx context.Context, pool *Pool, row *model.CampaignAudience) {
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ambiguousCommitReconcileTimeout)
 	defer cancel()
+	// Scoped by brief_id and project_id too, matching UpdateAudience's predicate — id alone
+	// would still be correct (it's the primary key), but every other write to this table
+	// carries the tenant scope, and this is a write path, not a read: worth keeping the
+	// pattern uniform rather than carving out a silent exception here.
 	q := `UPDATE campaign_audiences SET status='failed', version=version+1, updated_at=now()
-		WHERE id=$1 AND version=$2`
-	if _, err := pool.Exec(rctx, q, row.ID, row.Version); err != nil {
+		WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND version=$4`
+	if _, err := pool.Exec(rctx, q, row.ID, row.BriefID, row.ProjectID, row.Version); err != nil {
 		slog.ErrorContext(ctx, "failed to reconcile an audience build row after an ambiguous commit error",
 			"audience_id", row.ID, "error", err)
 	}

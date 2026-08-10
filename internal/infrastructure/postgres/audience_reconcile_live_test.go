@@ -136,11 +136,54 @@ func TestReconcileAmbiguousAudienceCommit_NoOpWhenTheCommitReallyRolledBack(t *t
 	ctx := context.Background()
 
 	row := &model.CampaignAudience{
-		ID:      "00000000-0000-0000-0000-000000000000",
-		Version: 1,
+		// A plausible id/brief_id — matching the shape the real caller always has, from the
+		// INSERT's RETURNING clause — that was never actually committed.
+		ID:        "00000000-0000-0000-0000-000000000000",
+		BriefID:   "00000000-0000-0000-0000-000000000001",
+		ProjectID: reconcileUniqueID(t, "never-committed"),
+		Version:   1,
 	}
 
 	// Must not panic and must not block past its own bounded timeout; a zero-row UPDATE
 	// is the expected, harmless outcome.
 	reconcileAmbiguousAudienceCommit(ctx, pool, row)
+}
+
+// TestReconcileAmbiguousAudienceCommit_ScopesByTenant covers the bugbot finding on PR #106:
+// a row with the right id but the WRONG project_id/brief_id must not be reconciled. id alone
+// is the primary key and would be sufficient for correctness today, but every other write to
+// this table (UpdateAudience) scopes by (id, brief_id, project_id) — this pins that the
+// reconcile path holds the same tenant-isolation invariant rather than silently exempting
+// itself from it.
+func TestReconcileAmbiguousAudienceCommit_ScopesByTenant(t *testing.T) {
+	pool := reconcileTestPool(t)
+	ctx := context.Background()
+
+	briefID, projectID := insertReconcileTestBrief(ctx, t, pool)
+
+	var row model.CampaignAudience
+	err := pool.QueryRow(ctx, `
+		INSERT INTO campaign_audiences (project_id, brief_id, platform, status)
+		VALUES ($1, $2, $3, 'building')
+		RETURNING id, version`, projectID, briefID, string(model.ProviderHubSpot)).
+		Scan(&row.ID, &row.Version)
+	if err != nil {
+		t.Fatalf("insert building audience row: %v", err)
+	}
+
+	// Same id, wrong project — the (id, version) predicate the finding objected to would
+	// still reconcile this; the tenant-scoped predicate must not.
+	wrong := row
+	wrong.BriefID = briefID
+	wrong.ProjectID = reconcileUniqueID(t, "wrong-project")
+	reconcileAmbiguousAudienceCommit(ctx, pool, &wrong)
+
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM campaign_audiences WHERE id = $1`, row.ID).
+		Scan(&status); err != nil {
+		t.Fatalf("read back row: %v", err)
+	}
+	if status != "building" {
+		t.Errorf("status = %q, want %q — reconcile touched a row outside the caller's tenant scope", status, "building")
+	}
 }
