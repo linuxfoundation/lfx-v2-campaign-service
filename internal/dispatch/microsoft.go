@@ -196,13 +196,9 @@ func validateMicrosoftConnection(projectID string, res *resolved) (creds microso
 			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
 	}
 	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		// The unmarshal error is DROPPED, not wrapped — the same rule as
-		// validateGoogleAdsCredentials. It is the one error on this path derived from the
-		// DECRYPTED credential blob, and encoding/json quotes its input: a *json.SyntaxError
-		// names the offending character, a *json.UnmarshalTypeError names the field. Wrapping
-		// it put credential-derived bytes into every log line and error chain downstream, for
-		// exactly the connection whose credentials are malformed. Nothing actionable is lost —
-		// the remedy is "re-save the credential", not "fix byte 41".
+		// The unmarshal error is DROPPED, not wrapped: it is derived from the DECRYPTED
+		// credential blob and encoding/json quotes its input. Full rationale on
+		// validateGoogleAdsCredentials, which this follows.
 		return creds, "", fmt.Errorf("%w: %w: microsoft credentials for project %s are not valid JSON",
 			domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, projectID)
 	}

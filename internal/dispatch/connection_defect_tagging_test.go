@@ -16,10 +16,11 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
-// The three stored-connection defects every adapter detects, expressed once. Each mutation
-// takes an otherwise-good active connection and breaks exactly one thing.
+// The stored-connection defects every adapter detects, expressed once. Each mutation takes an
+// otherwise-good active connection and breaks exactly one thing.
 //
 // The account-id case is deliberately in the same table rather than in a separate one: it
 // reaches the caller through the same untagged path and produced the same wrong 503, and
@@ -31,11 +32,24 @@ type connDefectCase struct {
 	want   error
 }
 
-func connDefectCases(incompleteCreds string) []connDefectCase {
+// badCreds carries the two malformed credential blobs a defect table needs. They are separate
+// cases, not one: `{` produces only a *json.SyntaxError, so a table with just that fixture never
+// exercises the *json.UnmarshalTypeError assertion, and a regression that dropped syntax errors
+// while still wrapping TYPE errors — the ones that name the credential FIELD — would stay green.
+type badCreds struct {
+	// incomplete parses cleanly but omits one required field.
+	incomplete string
+	// wrongType is syntactically valid JSON with a number where a required string belongs, so
+	// encoding/json returns a *json.UnmarshalTypeError naming that field.
+	wrongType string
+}
+
+func connDefectCases(bad badCreds) []connDefectCase {
 	return []connDefectCase{
 		{"inactive", func(c *model.Connection) { c.Status = model.StatusInactive }, domain.ErrConnectionInactive},
 		{"undecodable blob", func(c *model.Connection) { c.EncryptedCredentials = []byte(`{`) }, domain.ErrCredentialsUndecodable},
-		{"incomplete credentials", func(c *model.Connection) { c.EncryptedCredentials = []byte(incompleteCreds) }, domain.ErrCredentialsIncomplete},
+		{"wrong-typed credential field", func(c *model.Connection) { c.EncryptedCredentials = []byte(bad.wrongType) }, domain.ErrCredentialsUndecodable},
+		{"incomplete credentials", func(c *model.Connection) { c.EncryptedCredentials = []byte(bad.incomplete) }, domain.ErrCredentialsIncomplete},
 		{"no account selected", func(c *model.Connection) { c.AccountID = "" }, domain.ErrAccountNotSelected},
 	}
 }
@@ -49,13 +63,19 @@ func connDefectCases(incompleteCreds string) []connDefectCase {
 //     amount of waiting can satisfy, since only a human editing the connection can clear it.
 //   - The reason sentinel is what the handler logs (unusableConnectionReason's fixed
 //     vocabulary), so it has to survive ALONGSIDE the status marker, not instead of it.
-//   - No *json.SyntaxError anywhere in the chain. This is checked with errors.As rather than
-//     a substring match on Error(): a cause still in the chain is reachable by any
-//     errors.As-walking logger even when the top-level string looks clean, and the 503 arm
-//     logs the chain through safeErrSummary. The bytes it would carry are derived from the
-//     DECRYPTED credential blob — encoding/json quotes its input, so *json.SyntaxError names
-//     the offending character and *json.UnmarshalTypeError names the field.
-func assertConnectionDefectTagged(t *testing.T, err error, want error) {
+//   - ErrSystemConnectionNotUsable iff the credentials came from the LF system fallback. This
+//     is what the deferred systemScoped in each helper produces, and it decides whether the
+//     caller is told to repair its OWN connection (409) or the operator is told to repair the
+//     LF row. Asserted in BOTH directions: a project-owned defect that carried the system
+//     marker would send a project chasing a row it cannot see.
+//   - No *json.SyntaxError and no *json.UnmarshalTypeError anywhere in the chain. Checked with
+//     errors.As rather than a substring match on Error(): a cause still in the chain is
+//     reachable by any errors.As-walking logger even when the top-level string looks clean,
+//     and the 503 arm logs the chain through safeErrSummary. The bytes it would carry are
+//     derived from the DECRYPTED credential blob — encoding/json quotes its input, so
+//     *json.SyntaxError names the offending character and *json.UnmarshalTypeError names the
+//     field.
+func assertConnectionDefectTagged(t *testing.T, err error, want error, fromSystem bool) {
 	t.Helper()
 	if err == nil {
 		t.Fatal("expected a connection error, got nil")
@@ -68,6 +88,16 @@ func assertConnectionDefectTagged(t *testing.T, err error, want error) {
 	if !errors.Is(err, want) {
 		t.Errorf("error = %v, want errors.Is(err, %v): the reason sentinel is what the handler "+
 			"logs, and it must survive alongside the status marker", err, want)
+	}
+	if got := errors.Is(err, domain.ErrSystemConnectionNotUsable); got != fromSystem {
+		if fromSystem {
+			t.Errorf("error = %v, want errors.Is(err, domain.ErrSystemConnectionNotUsable): these "+
+				"credentials came from the LF system row, so dropping the deferred systemScoped "+
+				"would tell the project to repair a connection it does not own", err)
+		} else {
+			t.Errorf("error = %v carries domain.ErrSystemConnectionNotUsable for a PROJECT-owned "+
+				"row: the project's own connection is the thing to repair", err)
+		}
 	}
 	var syntaxErr *json.SyntaxError
 	if errors.As(err, &syntaxErr) {
@@ -95,53 +125,128 @@ func unreachablePlatform(t *testing.T) *httptest.Server {
 	return srv
 }
 
-func TestReddit_UnusableConnectionIsTaggedOnToggle(t *testing.T) {
-	srv := unreachablePlatform(t)
-	for _, tc := range connDefectCases(`{"ClientID":"cid","ClientSecret":"sec"}`) {
-		t.Run(tc.name, func(t *testing.T) {
-			conn := activeRedditConn(goodRedditCreds)
-			tc.mutate(conn)
-			d := NewRedditDispatcher(
-				fakeConnReader{conn: conn}, identityEncryptor{},
-				reddit.WithBaseURL(srv.URL),
-			)
-			camp := &model.Campaign{Platform: model.ProviderRedditAds, PlatformCampaignID: "t2_c"}
-			err := d.ToggleStatus(context.Background(), "proj", model.ProviderRedditAds, camp, model.CampaignRunPaused)
-			assertConnectionDefectTagged(t, err, tc.want)
+// runConnDefectSuite drives every exported entry point of one adapter, over every defect, in
+// both credential scopes.
+//
+// Driving EVERY entry point rather than just ToggleStatus is what turns "the tagging lives in
+// the shared helper" from a claim in the commit message into something a test enforces: inline
+// the helper into one path and the other paths go red.
+func runConnDefectSuite(
+	t *testing.T,
+	bad badCreds,
+	newConn func() *model.Connection,
+	calls func(repo connReader) map[string]func() error,
+) {
+	t.Helper()
+	scopes := map[string]struct {
+		fromSystem bool
+		repo       func(*model.Connection) connReader
+	}{
+		"project-owned row": {false, func(c *model.Connection) connReader { return fakeConnReader{conn: c} }},
+		"lf system fallback": {true, func(c *model.Connection) connReader {
+			// No row under "proj", so resolve falls back to the reserved system scope.
+			return &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: c}}
+		}},
+	}
+	for scopeName, scope := range scopes {
+		t.Run(scopeName, func(t *testing.T) {
+			for _, tc := range connDefectCases(bad) {
+				t.Run(tc.name, func(t *testing.T) {
+					conn := newConn()
+					tc.mutate(conn)
+					for callName, call := range calls(scope.repo(conn)) {
+						t.Run(callName, func(t *testing.T) {
+							assertConnectionDefectTagged(t, call(), tc.want, scope.fromSystem)
+						})
+					}
+				})
+			}
 		})
 	}
 }
 
-func TestTwitter_UnusableConnectionIsTaggedOnToggle(t *testing.T) {
+func TestReddit_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
+	// Reddit's metrics read is env-gated ahead of the resolve; without this the ReadMetrics
+	// call would return ErrMetricsUnsupported and never reach the helper under test.
+	t.Setenv(constants.EnvRedditMetricsEnabled, "true")
 	srv := unreachablePlatform(t)
-	for _, tc := range connDefectCases(`{"ConsumerKey":"ck","ConsumerSecret":"cs","AccessToken":"at"}`) {
-		t.Run(tc.name, func(t *testing.T) {
-			conn := activeTwitterConn(goodTwitterCreds)
-			tc.mutate(conn)
-			d := NewTwitterDispatcher(
-				fakeConnReader{conn: conn}, identityEncryptor{},
-				twitter.WithBaseURL(srv.URL),
-			)
-			camp := &model.Campaign{Platform: model.ProviderTwitterAds, PlatformCampaignID: "abc"}
-			err := d.ToggleStatus(context.Background(), "proj", model.ProviderTwitterAds, camp, model.CampaignRunPaused)
-			assertConnectionDefectTagged(t, err, tc.want)
-		})
-	}
+	camp := &model.Campaign{Platform: model.ProviderRedditAds, PlatformCampaignID: "t2_c"}
+	runConnDefectSuite(t,
+		badCreds{
+			incomplete: `{"ClientID":"cid","ClientSecret":"sec"}`,
+			wrongType:  `{"ClientID":123,"ClientSecret":"sec","RefreshToken":"rt"}`,
+		},
+		func() *model.Connection { return activeRedditConn(goodRedditCreds) },
+		func(repo connReader) map[string]func() error {
+			d := NewRedditDispatcher(repo, identityEncryptor{}, reddit.WithBaseURL(srv.URL))
+			return map[string]func() error{
+				"Dispatch": func() error {
+					_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderRedditAds, nil)
+					return err
+				},
+				"ToggleStatus": func() error {
+					return d.ToggleStatus(context.Background(), "proj", model.ProviderRedditAds, camp, model.CampaignRunPaused)
+				},
+				"ReadMetrics": func() error {
+					_, err := d.ReadMetrics(context.Background(), "proj", model.ProviderRedditAds, camp, model.MetricsWindowLast7Days)
+					return err
+				},
+			}
+		},
+	)
 }
 
-func TestMicrosoft_UnusableConnectionIsTaggedOnToggle(t *testing.T) {
+func TestTwitter_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
 	srv := unreachablePlatform(t)
-	for _, tc := range connDefectCases(`{"ClientID":"cid","ClientSecret":"csec","DeveloperToken":"dev"}`) {
-		t.Run(tc.name, func(t *testing.T) {
-			conn := activeMicrosoftConn(goodMicrosoftCreds)
-			tc.mutate(conn)
-			d := NewMicrosoftDispatcher(
-				fakeConnReader{conn: conn}, identityEncryptor{},
-				microsoft.WithBaseURL(srv.URL),
-			)
-			camp := &model.Campaign{Platform: model.ProviderMicrosoftAds, PlatformCampaignID: "999"}
-			err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.CampaignRunPaused)
-			assertConnectionDefectTagged(t, err, tc.want)
-		})
-	}
+	camp := &model.Campaign{Platform: model.ProviderTwitterAds, PlatformCampaignID: "abc"}
+	runConnDefectSuite(t,
+		badCreds{
+			incomplete: `{"ConsumerKey":"ck","ConsumerSecret":"cs","AccessToken":"at"}`,
+			wrongType:  `{"ConsumerKey":123,"ConsumerSecret":"cs","AccessToken":"at","AccessTokenSecret":"ats"}`,
+		},
+		func() *model.Connection { return activeTwitterConn(goodTwitterCreds) },
+		func(repo connReader) map[string]func() error {
+			d := NewTwitterDispatcher(repo, identityEncryptor{}, twitter.WithBaseURL(srv.URL))
+			return map[string]func() error{
+				"Dispatch": func() error {
+					_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds, nil)
+					return err
+				},
+				"ToggleStatus": func() error {
+					return d.ToggleStatus(context.Background(), "proj", model.ProviderTwitterAds, camp, model.CampaignRunPaused)
+				},
+				"ReadMetrics": func() error {
+					_, err := d.ReadMetrics(context.Background(), "proj", model.ProviderTwitterAds, camp, model.MetricsWindowLast7Days)
+					return err
+				},
+			}
+		},
+	)
+}
+
+// Microsoft has no ReadMetrics: campaign performance lives in the Reporting API v13, which is
+// asynchronous (submit → poll → download), so the adapter exposes only the two synchronous
+// paths. See docs/api-catalog.md.
+func TestMicrosoft_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
+	srv := unreachablePlatform(t)
+	camp := &model.Campaign{Platform: model.ProviderMicrosoftAds, PlatformCampaignID: "999"}
+	runConnDefectSuite(t,
+		badCreds{
+			incomplete: `{"ClientID":"cid","ClientSecret":"csec","DeveloperToken":"dev"}`,
+			wrongType:  `{"ClientID":123,"ClientSecret":"csec","DeveloperToken":"dev","RefreshToken":"rt"}`,
+		},
+		func() *model.Connection { return activeMicrosoftConn(goodMicrosoftCreds) },
+		func(repo connReader) map[string]func() error {
+			d := NewMicrosoftDispatcher(repo, identityEncryptor{}, microsoft.WithBaseURL(srv.URL))
+			return map[string]func() error{
+				"Dispatch": func() error {
+					_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMicrosoftAds, nil)
+					return err
+				},
+				"ToggleStatus": func() error {
+					return d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.CampaignRunPaused)
+				},
+			}
+		},
+	)
 }

@@ -147,10 +147,12 @@ Two properties of this pattern are easy to lose and worth stating outright:
   character, `*json.UnmarshalTypeError` names the field. Keeping it in the chain puts
   credential-derived bytes within reach of anything that renders or `errors.As`-walks the error.
   Nothing actionable is lost: the remedy is "re-save the credential", not "fix byte 41".
-- **The tagging belongs in the SHARED resolve/validate helper, not at each call site.** Every
-  adapter routes Dispatch, `ToggleStatus` and (where wired) `ReadMetrics` through one helper, so
-  tagging it once covers every path. Tagging per-path is how Google Ads ended up correct on
-  discovery while its other callers were still bare, before the helper absorbed it.
+- **The tagging belongs in the SHARED resolve/validate helper, not at each call site.** Where an
+  adapter HAS one — Google Ads, Reddit, X/Twitter and Microsoft Ads each route Dispatch,
+  `ToggleStatus` and (where wired) `ReadMetrics` through a single helper — tagging it once covers
+  every path. Meta and LinkedIn have no such helper yet; see below. Tagging per-path is how Google
+  Ads ended up correct on discovery while its other callers were still bare, before the helper
+  absorbed it.
 
 Which adapters honour it today:
 

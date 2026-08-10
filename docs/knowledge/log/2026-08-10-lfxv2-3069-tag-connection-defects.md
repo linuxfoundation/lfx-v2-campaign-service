@@ -65,10 +65,25 @@ Two ordering constraints, both easy to get wrong:
 
 ## Verification
 
-Twelve cases — four defects × three adapters — driven through `ToggleStatus`, the exported path
-that reaches each helper. Each asserts `errors.Is` on BOTH sentinels and `errors.As` against
-neither JSON error type, and the `httptest` server fails the test if the adapter reaches the
-network at all: rejecting locally is the property, not merely returning the right error.
+116 subtests: five defect fixtures × two credential scopes × every exported entry point of each
+adapter (Dispatch, `ToggleStatus`, and `ReadMetrics` where wired). Each asserts `errors.Is` on both
+sentinels and `errors.As` against neither JSON error type, and the `httptest` server fails the test
+if the adapter reaches the network at all: rejecting locally is the property, not merely returning
+the right error.
 
-All twelve were revert-verified against `origin/main` and all twelve fail there, including the
-`*json.SyntaxError` leak, which is real on main and not a hypothetical.
+Three dimensions of the suite exist because a narrower one would have been vacuous:
+
+- **Every entry point, not just the toggle.** "The tagging lives in the shared helper" is the whole
+  design claim; driving one path leaves it unenforced. Inline the helper into a single caller now
+  and the others go red.
+- **Both credential scopes.** A project-owned fixture never sets `fromSystem`, so the deferred
+  `systemScoped` is a no-op for it: all the project-scope cases stay green with the defer deleted.
+  The LF-fallback scope is what pins it, and the project scope asserts the marker's ABSENCE, since
+  a project told to repair the LF row is chasing something it cannot see. Deleting one defer fails
+  22 subtests.
+- **A wrong-TYPED credential field as well as `{`.** Malformed-brace input produces only a
+  `*json.SyntaxError`, so a table with just that fixture never exercises the
+  `*json.UnmarshalTypeError` assertion — and the type error is the one that names the credential
+  FIELD.
+
+Revert-verified against `origin/main`: every case fails there, including both leak classes.
