@@ -8668,7 +8668,7 @@ components:
             properties:
                 account_id:
                     type: string
-                    description: 'Meta ad account ID. Optional: omit it to create the connection with credentials only, then choose one from GET .../connection-meta-ads/accounts and set it with PUT.'
+                    description: 'Meta ad account ID. Optional: omit it (while still supplying credentials and page_id) to defer account selection, then set the chosen id with PUT (discovery endpoint planned in follow-up).'
                     example: act_193556282970417
                     pattern: ^act_[0-9]+$
                     maxLength: 64

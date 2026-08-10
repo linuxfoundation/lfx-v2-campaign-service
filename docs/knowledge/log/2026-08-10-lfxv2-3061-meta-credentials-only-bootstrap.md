@@ -40,8 +40,7 @@ have the id in hand — which is exactly what Google Ads' own discovery endpoint
 `defer func() { err = res.systemScoped(err) }()` so every return path is scoped without needing
 to remember it individually. It does NOT check `account_id`. That split is deliberate, not an
 oversight: `Dispatch` needs both `account_id` and `page_id` to create a campaign, but
-`ToggleStatus` and `ReadMetrics` target a campaign that already exists by id and need only the
-account. Folding the account check into the credentials helper would make every caller pay for
+`ToggleStatus` and `ReadMetrics` target an existing campaign by id and do not require the account id — they need only the credentials. Folding the account check into the credentials helper would make every caller pay for
 Dispatch's extra requirement. `requireMetaAccountID` is the second, separately-called helper —
 same wrapping shape as Google Ads' equivalent: `domain.ErrConnectionNotUsable` picks the status,
 `domain.ErrAccountNotSelected` supplies the `account_not_selected` reason token, matched ahead of

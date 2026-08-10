@@ -419,8 +419,9 @@ var MetaAdsCredentials = Type("meta-ads-credentials", func() {
 
 // MetaAdsConnectionConfig is the second provider config where account_id is optional,
 // for the same reason as GoogleAdsConnectionConfig above: a caller can create the
-// connection with credentials only, discover the reachable ad accounts via
-// GET .../connection-meta-ads/accounts, and set the chosen id afterwards with PUT.
+// connection with credentials only, defer account selection, and set the chosen id
+// afterwards with PUT (discovery via GET .../connection-meta-ads/accounts is planned
+// in a follow-up PR, same pattern as Google Ads' list-google-ads-accounts).
 // page_id stays Required — it names a Facebook page the operator already controls,
 // not something the token's reachable-account list resolves, so there is nothing for
 // discovery to do about it.
@@ -438,7 +439,7 @@ var MetaAdsConnectionConfig = Type("meta-ads-connection-config", func() {
 	// rejects anything else before dispatch, so a non-conforming value (e.g. "foo",
 	// whitespace, or a bare number) stored on an active connection could never create a
 	// campaign. Validating the same Pattern here rejects it as a 4xx at creation.
-	Attribute("account_id", String, "Meta ad account ID. Optional: omit it (while still supplying credentials and page_id) to defer account selection, then choose one from GET .../connection-meta-ads/accounts and set it with PUT.", func() {
+	Attribute("account_id", String, "Meta ad account ID. Optional: omit it (while still supplying credentials and page_id) to defer account selection, then set the chosen id with PUT (discovery endpoint planned in follow-up).", func() {
 		Example("act_193556282970417")
 		Pattern(`^act_[0-9]+$`)
 		// The pattern bounds shape but not length; cap the stored size so an arbitrarily

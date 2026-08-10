@@ -555,9 +555,9 @@ type MetaAdsConnection struct {
 type MetaAdsConnectionConfig struct {
 	// Optional friendly name
 	Label *string
-	// Meta ad account ID. Optional: omit it to create the connection with
-	// credentials only, then choose one from GET .../connection-meta-ads/accounts
-	// and set it with PUT.
+	// Meta ad account ID. Optional: omit it (while still supplying credentials and
+	// page_id) to defer account selection, then set the chosen id with PUT
+	// (discovery endpoint planned in follow-up).
 	AccountID *string
 	// Facebook page ID
 	PageID string

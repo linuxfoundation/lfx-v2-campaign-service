@@ -536,3 +536,80 @@ func TestUpdateGoogleAds_OmittedAccountIDClearsTheSelection(t *testing.T) {
 		t.Errorf("expected version passed to Update = %d, want 7 from If-Match", repo.gotUpdateVersion)
 	}
 }
+
+// TestUpdateMetaAds_BindsDiscoveredAccountToCredentialsOnlyRow is the second half of the
+// Meta credentials-first bootstrap, and the step the existing update tests never exercised: they
+// only cover missing and stale If-Match. Here the stored row is the state a POST-with-
+// credentials leaves behind — active, credentials present, account_id empty — and the PUT
+// carries the id the operator picked from the accounts endpoint.
+//
+// The credential assertion is on the ARGUMENT, not the stored row: preserving the column is
+// the repository's job in SQL, and the fake reproduces that, so asserting the stored value
+// would pass against a handler that overwrote it. What the service layer owns is not SENDING
+// a credential — PUT deliberately does not accept one (set-credential is separately
+// permissioned) — and a handler that populated the field with the payload's zero value would
+// blank the very credentials that made discovery possible, dead-ending the bootstrap one step
+// from the end.
+func TestUpdateMetaAds_BindsDiscoveredAccountToCredentialsOnlyRow(t *testing.T) {
+	repo := newFakeRepo()
+	repo.store[repoKey("cncf", model.ProviderMetaAds)] = &model.Connection{
+		ProjectID: "cncf", Provider: model.ProviderMetaAds, Status: model.StatusActive,
+		AccountID: "", Version: 4, EncryptedCredentials: []byte("ciphertext"),
+	}
+	s := newTestService(t, repo)
+	ifMatch := "4"
+
+	res, err := s.UpdateMetaAds(context.Background(), &conn.UpdateMetaAdsPayload{
+		ProjectID: "cncf",
+		Config:    &conn.MetaAdsConnectionConfig{AccountID: strPtr("act_123456789")},
+		IfMatch:   &ifMatch,
+	})
+	if err != nil {
+		t.Fatalf("UpdateMetaAds: %v", err)
+	}
+	if res.AccountID != "act_123456789" {
+		t.Errorf("account_id = %q, want the discovered id to be bound", res.AccountID)
+	}
+	if repo.gotUpdateCreds != nil {
+		t.Errorf("Update was passed credentials %q; a config-only PUT must leave the column to the repository",
+			repo.gotUpdateCreds)
+	}
+	if repo.gotUpdateVersion != 4 {
+		t.Errorf("expected version passed to Update = %d, want 4 from If-Match", repo.gotUpdateVersion)
+	}
+}
+
+// TestUpdateMetaAds_OmittedAccountIDClearsTheSelection pins the other direction, which the
+// handler documents as intentional: PUT is a full replace, so omitting account_id UN-selects
+// the account rather than leaving the previous one in place. That is the only way to undo a
+// selection, and it is easy to "fix" into a merge by someone who reads the omission as
+// "unchanged" — hence a test rather than only a comment. The credential and version
+// assertions are on the Update ARGUMENT, for the reason given above.
+func TestUpdateMetaAds_OmittedAccountIDClearsTheSelection(t *testing.T) {
+	repo := newFakeRepo()
+	repo.store[repoKey("cncf", model.ProviderMetaAds)] = &model.Connection{
+		ProjectID: "cncf", Provider: model.ProviderMetaAds, Status: model.StatusActive,
+		AccountID: "act_123456789", Version: 7, EncryptedCredentials: []byte("ciphertext"),
+	}
+	s := newTestService(t, repo)
+	ifMatch := "7"
+
+	res, err := s.UpdateMetaAds(context.Background(), &conn.UpdateMetaAdsPayload{
+		ProjectID: "cncf",
+		Config:    &conn.MetaAdsConnectionConfig{Label: strPtr("relabelled")},
+		IfMatch:   &ifMatch,
+	})
+	if err != nil {
+		t.Fatalf("UpdateMetaAds: %v", err)
+	}
+	if res.AccountID != "" {
+		t.Errorf("account_id = %q, want an omitted account_id to clear the selection", res.AccountID)
+	}
+	if repo.gotUpdateCreds != nil {
+		t.Errorf("Update was passed credentials %q; a config-only PUT must leave the column alone",
+			repo.gotUpdateCreds)
+	}
+	if repo.gotUpdateVersion != 7 {
+		t.Errorf("expected version passed to Update = %d, want 7 from If-Match", repo.gotUpdateVersion)
+	}
+}
