@@ -199,7 +199,7 @@ func precomputeAdGroupAdInputs(in CampaignInput) (finalURL string, headlines, de
 	if err != nil {
 		return "", nil, nil, "", nil, nil, fmt.Errorf("google-ads ad group/ad creation aborted before any request (invalid ad copy): %w", err)
 	}
-	adGroupName = composeName("Ad Group", in)
+	adGroupName = ComposeName("Ad Group", in)
 	if err := validateEntityName("ad group", adGroupName, utf8.RuneCountInString(adGroupName), maxAdGroupNameRunes, "characters"); err != nil {
 		return "", nil, nil, "", nil, nil, err
 	}
