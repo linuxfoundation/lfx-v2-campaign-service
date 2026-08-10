@@ -758,3 +758,37 @@ machinery that discharged the obligation (`TestMigrations_AllowedVersionGapsAreS
 fails the moment a sibling lands) has no reach into prose. Anything stated as a current
 constraint has to be re-derived from the thing that enforces it, and a document mixing the two
 kinds of section makes it easy to inherit the append-only habit for both.
+
+## The lease-release assertions were tautologies
+
+`fakeAudienceRepo.CreateAudience` stored the caller's pointer and returned that same pointer, so
+the service and the store shared one struct. `releaseUnstartedClaim` sets `row.Status = FAILED`
+BEFORE it calls `UpdateAudience` — with a shared pointer that assignment alone made
+`rows()[0].Status == AudienceFailed` true, and every "the lease must be released" assertion in
+`audience_build_test.go` passed whether the persist happened or not. Four sub-tests plus three
+top-level tests were pinning nothing.
+
+`GetAudience` already returned a copy, with a comment explaining exactly this hazard for the
+load-then-merge path. The same discipline now applies to `CreateAudience`, `UpdateAudience`,
+`ListAudiences` and the `rows()` helper: store a copy, return a distinct copy, which is what
+PostgreSQL does and the only shape a fake can honestly claim to model. Verified by stubbing out
+the `UpdateAudience` call inside `releaseUnstartedClaim` — the assertions now fail with
+`expected "failed", actual "building"`, and before the fix they stayed green.
+
+The class: **a fake that aliases the row under test cannot observe whether a write happened.**
+It is not enough for one accessor to copy; any accessor that hands back a stored pointer
+reintroduces the alias for every test downstream of it.
+
+## The shared 409's example was one endpoint's vocabulary on 29 responses
+
+`ConflictError` is deliberately shared by every 409 in the API, and its `reason` attribute
+carried `Example("audience_build_in_flight")`. Goa copies an attribute-level example into the
+schema of every response that uses the type, so an audience-build value appeared on the 409 for
+"a connection already exists for this provider" and 12 others it has nothing to do with — which
+reads as a contract rather than an illustration. The `Enum` already publishes the whole
+vocabulary, which is the part clients may rely on; the example is dropped. A per-endpoint
+example would need a per-endpoint type, and the type is shared on purpose.
+
+Removing an explicit example makes Goa draw one more value from its example RNG, which shifts
+every generated placeholder after it — hence the wide `gen/` diff. It is deterministic
+(`make apigen` twice is byte-identical) and confined to generated files.

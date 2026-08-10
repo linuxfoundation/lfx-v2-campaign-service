@@ -109,11 +109,18 @@ var NotFoundError = Type("not-found-error", func() {
 // one kind of conflict populate it, and adding it to the rest would imply a taxonomy
 // nobody maintains. A client must treat an absent reason as "unspecified conflict",
 // which is what the message already says.
+//
+// No Example on `reason`, and that is deliberate. This type is shared by every 409 in the
+// API, so an attribute-level example is not documentation of one endpoint — Goa copies it
+// into the schema of all of them. Pinning "audience_build_in_flight" put an audience-build
+// value on the 409 for "a connection already exists", among 28 others it has nothing to do
+// with, which reads as a contract rather than an illustration. The Enum already publishes
+// the whole vocabulary, which is the part clients are entitled to rely on; a per-endpoint
+// example would need a per-endpoint type, and the type is shared on purpose.
 var ConflictError = Type("conflict-error", func() {
 	errorAttrs("409", "A connection for this provider already exists on the project.")
 	Attribute("reason", String, "Stable machine-readable discriminator, present only where an endpoint returns more than one kind of conflict. Absent means unspecified.", func() {
 		Enum("stale_approval", "audience_build_in_flight", "already_exists")
-		Example("audience_build_in_flight")
 	})
 })
 

@@ -522,10 +522,14 @@ func TestBuildAudience_UnavailableWithoutDeps(t *testing.T) {
 }
 
 // rows returns the stored audiences, so a test can inspect what survived a partial build.
+// rows returns COPIES of what is STORED. A test that reads through the stored pointer would
+// see a row the service mutated in memory and never persisted — which is exactly the bug the
+// lease-release assertions exist to catch.
 func (r *fakeAudienceRepo) rows() []*model.CampaignAudience {
 	out := make([]*model.CampaignAudience, 0, len(r.items))
 	for _, a := range r.items {
-		out = append(out, a)
+		cp := *a
+		out = append(out, &cp)
 	}
 	return out
 }

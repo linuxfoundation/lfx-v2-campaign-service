@@ -47,6 +47,12 @@ func newFakeAudienceRepo() *fakeAudienceRepo {
 	return &fakeAudienceRepo{items: map[string]*model.CampaignAudience{}}
 }
 
+// CreateAudience stores a COPY and returns a SECOND copy, for the same reason GetAudience
+// does. Handing the caller the stored pointer makes every later in-place mutation of the
+// returned row visible in the store without any repository call, and that silently converts
+// the lease tests into tautologies: releaseUnstartedClaim sets row.Status = FAILED before it
+// calls UpdateAudience, so a shared pointer makes `rows()[0].Status == AudienceFailed` true
+// whether or not the release is ever persisted. PostgreSQL cannot do that; neither may this.
 func (r *fakeAudienceRepo) CreateAudience(_ context.Context, a *model.CampaignAudience) (*model.CampaignAudience, error) {
 	if r.createE != nil {
 		return nil, r.createE
@@ -54,8 +60,10 @@ func (r *fakeAudienceRepo) CreateAudience(_ context.Context, a *model.CampaignAu
 	r.seq++
 	a.ID = "aud-" + string(rune('a'+r.seq))
 	a.Version = 1
-	r.items[a.ID] = a
-	return a, nil
+	stored := *a
+	r.items[a.ID] = &stored
+	out := stored
+	return &out, nil
 }
 
 // CreateAudienceForApprovedBrief models the real repo's two gates in the real repo's order:
@@ -115,7 +123,8 @@ func (r *fakeAudienceRepo) GetAudience(_ context.Context, _, _, id string) (*mod
 func (r *fakeAudienceRepo) ListAudiences(_ context.Context, _, _ string) ([]*model.CampaignAudience, error) {
 	out := make([]*model.CampaignAudience, 0, len(r.items))
 	for _, a := range r.items {
-		out = append(out, a)
+		cp := *a
+		out = append(out, &cp)
 	}
 	return out, nil
 }
@@ -132,8 +141,10 @@ func (r *fakeAudienceRepo) UpdateAudience(_ context.Context, a *model.CampaignAu
 		return nil, domain.ErrPreconditionFailed
 	}
 	a.Version = cur.Version + 1
-	r.items[a.ID] = a
-	return a, nil
+	stored := *a
+	r.items[a.ID] = &stored
+	out := stored
+	return &out, nil
 }
 
 func strptr(s string) *string { return &s }
