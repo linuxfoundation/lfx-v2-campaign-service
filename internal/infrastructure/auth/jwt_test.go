@@ -830,6 +830,79 @@ func TestJWKSStatusGuard_UpstreamBodiesNeverReachTheLog(t *testing.T) {
 // credentialedJWKSURL rewrites a test server's URL into the shape an operator can legally
 // configure: HTTP basic userinfo plus a query-string credential, both of which some
 // gateways require to serve their key set.
+// TestVerifyActor_FollowsAJWKSRedirectWithoutForwardingCredentials pins both halves of the
+// redirect behaviour, because each one alone is satisfied by a broken implementation.
+//
+// FOLLOWING: an http.RoundTripper sits below http.Client's redirect handling, so returning an
+// error for a 3xx means the Client never sees the response and never follows. An ordinary
+// http->https upgrade or a CDN hop then becomes a permanent ErrKeyUnavailable on every refresh.
+//
+// NOT FORWARDING: the operator's credentials belong to the host they configured. net/http drops
+// Authorization across hosts on its own, so the guard must be the thing that withholds it from
+// the redirect target — and it must also withhold the query, which net/http would carry along
+// were the guard still rewriting req.URL to the configured endpoint on every hop.
+func TestVerifyActor_FollowsAJWKSRedirectWithoutForwardingCredentials(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	var targetHits atomic.Int32
+	var sawAuth, sawQuery atomic.Bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHits.Add(1)
+		if r.Header.Get("Authorization") != "" {
+			sawAuth.Store(true)
+		}
+		if r.URL.RawQuery != "" {
+			sawQuery.Store(true)
+		}
+		writeKeySet(w, key)
+	}))
+	defer target.Close()
+
+	// The configured endpoint authenticates the FIRST hop and then redirects elsewhere: the
+	// credentials must reach it, and must stop there.
+	var firstHopAuthed atomic.Bool
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if user, pass, ok := r.BasicAuth(); ok && user == "svc" && pass == "pw" &&
+			r.URL.Query().Get("access_token") == "s3cret" {
+			firstHopAuthed.Store(true)
+		}
+		http.Redirect(w, r, target.URL+"/elsewhere/jwks", http.StatusFound)
+	}))
+	defer origin.Close()
+
+	s := &signer{key: key, jwksURL: origin.URL}
+	token := s.sign(t, nil)
+
+	v, err := New(Config{JWKSURL: credentialedJWKSURL(t, origin.URL), Audience: testAudience, Issuer: testIssuer})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	actor, err := v.VerifyActor(context.Background(), token)
+	if err != nil {
+		t.Fatalf("VerifyActor: %v — a redirected JWKS endpoint must still resolve", err)
+	}
+	if actor.Username != "ada" {
+		t.Errorf("username = %q, want %q", actor.Username, "ada")
+	}
+	if !firstHopAuthed.Load() {
+		t.Error("the configured endpoint did not receive the operator's credentials")
+	}
+	if got := targetHits.Load(); got != 1 {
+		t.Fatalf("redirect target served %d times, want 1", got)
+	}
+	if sawAuth.Load() {
+		t.Error("the redirect target received an Authorization header: the operator's credential " +
+			"belongs to the host they configured, not to wherever it points")
+	}
+	if sawQuery.Load() {
+		t.Error("the redirect target received the operator's query: the guard must not rewrite a " +
+			"redirect hop's URL back to the configured endpoint")
+	}
+}
+
 func credentialedJWKSURL(t *testing.T, base string) string {
 	t.Helper()
 	u, err := url.Parse(base)

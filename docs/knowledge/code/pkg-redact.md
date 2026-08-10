@@ -118,6 +118,34 @@ Both halves of that condition are load-bearing, and each was learned by leaking:
   the `?` along with the prefix, so the query trim finds nothing to cut and every parameter
   after that `@` survives. One JWKS URL of that shape printed an `access_token` in full.
 
+The fallback's own `@` search is bounded at the first `?` for the same reason the single-URL
+path bounds it: an `@` inside a query is not userinfo, and rebuilding around it deletes the `?`
+and everything before, leaving the query trim nothing to cut. Bounding it re-opened the mirror
+image, though — with no `@` before the bound the value falls through to the query trim, which
+cuts at the `?`, and for `nats://u:p?x@a,nats://b` that prints `nats://u:p`. So the fallback
+refuses that shape too, on narrower terms than the single-URL path: refusing there costs one
+host, refusing here costs every host in the list, so it additionally requires a `:` in the
+segment that owns the `?` — a password is what makes truncation dangerous, and userinfo
+carrying one must have a `:` before the delimiter. `nats://b?access_token=x@secret,nats://c`
+has none and keeps its hosts.
+
+**Which segment owns the `?` is not the first one.** In a list only the LAST segment can, since
+every comma from the query onward belongs to it, so the scan for the deciding `/` starts at the
+comma before the delimiter. Scanning from the start of the value finds the `/` in an earlier
+segment's path — `https://a/b,nats://u:p?x@host` — and calls the query genuine, which is exactly
+the fallthrough that leaked.
+
+### Opaque URIs collapse to their scheme
+
+`URL(*url.URL)` clears `User` and the query, which does nothing for an opaque URI: with no `//`
+after the scheme, `net/url` puts EVERYTHING after the colon in `Opaque` and never populates
+`User`, `Host` or `Path`, so `ftp:svc:s3cret@idp/jwks` rendered verbatim. It is reachable —
+`auth.New` refuses a JWKS URL whose scheme is not http(s) and formats the refused value with
+this function, so the value being rejected is the one logged. Such a URI now renders as
+`scheme:***`. Nothing is preserved because there is nothing to preserve: host and path survive
+elsewhere because they are a URL's diagnostic value, and an opaque URI has neither as far as
+`net/url` is concerned. For the case that motivates it, the scheme *is* the diagnosis.
+
 ## Callers
 
 `internal/infrastructure/config` (`Config.String`/`GoString`, for `JWKS_URL` and `NATS_URL`)

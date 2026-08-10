@@ -186,6 +186,9 @@ func New(cfg Config) (*Verifier, error) {
 	safeURL.ForceQuery = false
 	safeURL.Fragment = ""
 	safeURL.RawFragment = ""
+	// The URL the provider will actually request, and therefore the URL of the first hop.
+	// credentialed uses it to tell that hop from a redirected one.
+	guard.sanitized = safeURL.String()
 
 	// WithCustomJWKSURI is required: "heimdall" is a bare name, not an OIDC discovery URL.
 	provider := jwks.NewCachingProvider(issuer, jwksCacheTTL, jwks.WithCustomJWKSURI(&safeURL),
@@ -262,6 +265,10 @@ type jwksStatusGuard struct {
 	// provider was given a stripped copy, so this is where the two are rejoined. nil in the
 	// tests that exercise RoundTrip directly, which pass through unchanged.
 	outbound *url.URL
+	// sanitized is the stripped URL handed to the provider, and therefore the URL of the
+	// FIRST hop. It is how credentialed tells that hop from a redirect target. Empty in the
+	// tests that exercise RoundTrip directly, which also leave outbound nil.
+	sanitized string
 	// basic is the Authorization header value derived from the URL's userinfo, or empty.
 	basic string
 }
@@ -284,8 +291,17 @@ type jwksStatusGuard struct {
 // header, and it has already run by the time RoundTrip is called.
 //
 // It clones rather than mutating: a RoundTripper must not modify the request it is given.
+//
+// It dresses the FIRST hop only. RoundTrip is called once per redirect hop, so a guard that
+// swapped unconditionally would rewrite every hop's URL back to the configured endpoint — an
+// immediate loop to the Client's redirect limit, re-sending the credential each time. Matching
+// on the sanitized URL confines both the swap and the header to the request the provider
+// actually built. That also means a redirect target never receives the operator's credential:
+// net/http drops Authorization across HOSTS on its own, and withholding it here covers the
+// same-host, different-path redirect it would otherwise forward. The credential belongs to the
+// endpoint the operator configured, not to wherever that endpoint points next.
 func (g *jwksStatusGuard) credentialed(req *http.Request) *http.Request {
-	if g.outbound == nil {
+	if g.outbound == nil || req.URL.String() != g.sanitized {
 		return req
 	}
 	out := req.Clone(req.Context())
@@ -308,6 +324,18 @@ func (g *jwksStatusGuard) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return g.checkKeys(shown, resp)
+	}
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		// A RoundTripper sits BELOW http.Client's redirect handling: the Client only follows a
+		// 3xx it is handed, and an error returned here means it never sees one. Treating a
+		// redirect as a failure would turn an ordinary http->https upgrade or a CDN hop into a
+		// permanent auth outage, since every refresh takes the same path. Hand it back instead.
+		//
+		// Following is safe. credentialed dresses the first hop only, so the operator's
+		// credential does not travel to the redirect target; the Client's own 10-hop limit
+		// bounds the chain; and whatever finally answers 2xx still comes back through this
+		// method and is gated by checkKeys.
+		return resp, nil
 	}
 	// We are returning an error instead of the response, so nothing downstream will close
 	// this body. Drain a bounded prefix for the diagnostic, then close: draining also lets

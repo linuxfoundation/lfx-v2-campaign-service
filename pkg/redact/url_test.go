@@ -65,6 +65,37 @@ func TestURL_DoesNotMutateTheCaller(t *testing.T) {
 	}
 }
 
+// TestURL_OpaqueURIIsCollapsedToItsScheme covers the shape that walks past every other rule in
+// this function. An opaque URI — no `//` after the scheme — keeps EVERYTHING after the colon in
+// u.Opaque, credentials included, and net/url never populates User, Host or Path from it. So
+// clearing User touches nothing and String() renders the value verbatim.
+//
+// It is reachable: auth.New refuses a JWKS URL whose scheme is not http(s) and formats the
+// refused value with this function, so the very value being rejected is the one logged.
+func TestURL_OpaqueURIIsCollapsedToItsScheme(t *testing.T) {
+	for _, in := range []string{
+		"ftp:svc:s3cret@idp.example.com/jwks", // secretlint-disable-line
+		"mailto:svc:s3cret@idp.example.com",   // secretlint-disable-line
+	} {
+		u, err := url.Parse(in)
+		if err != nil {
+			t.Fatalf("parse %q: %v", in, err)
+		}
+		if u.Opaque == "" {
+			t.Fatalf("%q did not parse as opaque; the test no longer covers what it claims", in)
+		}
+		got := URL(u)
+		if want := u.Scheme + ":***"; got != want {
+			t.Errorf("URL(%q) = %q, want %q", in, got, want)
+		}
+		for _, secret := range []string{"svc", "s3cret"} {
+			if strings.Contains(got, secret) {
+				t.Errorf("URL(%q) = %q, which still carries %q", in, got, secret)
+			}
+		}
+	}
+}
+
 func TestURL_NilIsEmptyNotAPanic(t *testing.T) {
 	if got := URL(nil); got != "" {
 		t.Errorf("URL(nil) = %q, want \"\"", got)
@@ -229,6 +260,37 @@ func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
 			in:      "nats://a,nats://b?access_token=prefix@live-secret,nats://c", // secretlint-disable-line
 			want:    "nats://a,nats://b",
 			secrets: []string{"live-secret", "access_token", "prefix"},
+		},
+		{
+			// Bounding the multi-URL search at the `?` closed the case above and opened its
+			// mirror image. With no `@` before the bound the value fell through to
+			// trimQueryAndFragment, which cuts at the `?` — and here the `?` is INSIDE the
+			// password, so the cut printed `nats://u:p`. The single-URL path already refuses
+			// this shape; a comma in the password is not a reason to stop refusing it.
+			name:    "multi-URL fallback refuses a password containing a ?",
+			in:      "nats://u:p?x@a:4222,nats://b:4222", // secretlint-disable-line
+			want:    "nats://***",
+			secrets: []string{"u:p", "p?x"},
+		},
+		{
+			// Which authority owns the `?` is what decides whether it begins a query, and in a
+			// list only the LAST segment can own it. Scanning from the start of the value finds
+			// the `/` in an EARLIER segment's path — here `https://a/b` — and calls the query
+			// genuine, which is the fallthrough the case above exists to prevent. The scan
+			// starts at the comma before the delimiter for exactly this input.
+			name:    "an earlier segment's slash does not make a later query genuine",
+			in:      "https://a/b,nats://u:p?x@host:4222", // secretlint-disable-line
+			want:    "https://***",
+			secrets: []string{"u:p", "p?x"},
+		},
+		{
+			// The other side of the same rule: when the last segment DOES have a path, the `?`
+			// really is a query and both hosts are worth keeping. Without this the fix above
+			// would be indistinguishable from refusing every multi-URL query outright.
+			name:    "a list whose last segment has a path keeps its hosts",
+			in:      "nats://a:4222,https://idp.example/jwks?contact=ops@b.example&access_token=s3cret", // secretlint-disable-line
+			want:    "nats://a:4222,https://idp.example/jwks",
+			secrets: []string{"s3cret", "access_token"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

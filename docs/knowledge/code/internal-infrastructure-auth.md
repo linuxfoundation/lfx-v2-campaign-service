@@ -126,6 +126,36 @@ only say "no signing keys", which describes a healthy issuer mid-rotation just a
 it describes a wrong URL. `TestVerifyActor_UndecodableSuccessBodyIsUnavailable` and
 `TestVerifyActor_OversizeKeySetIsRefused` cover the other two 2xx shapes.
 
+## Redirects are followed; credentials are not
+
+Everything that is not 2xx used to become an error, and a 3xx is not a failure. **An
+`http.RoundTripper` sits below `http.Client`'s redirect handling**: the Client only follows a
+3xx it is handed, so returning an error means it never sees one and never follows. An ordinary
+http→https upgrade or a CDN hop then becomes a permanent `ErrKeyUnavailable` — every refresh
+takes the same path. A 3xx is passed straight back instead.
+
+Following is safe because the credential does not travel with it. `credentialed` dresses the
+**first hop only**, matching `req.URL` against the sanitized URL handed to the provider. Two
+things depend on that gate:
+
+- `RoundTrip` runs once per hop, so a guard that swapped unconditionally would rewrite every
+  hop's URL back to the configured endpoint — an immediate loop to the Client's redirect limit,
+  re-sending the credential each time.
+- The operator's credentials belong to the host they configured. `net/http` drops
+  `Authorization` across hosts on its own; the gate additionally withholds it (and the
+  operator's query, which `net/http` does not drop) from a same-host redirect to a different
+  path.
+
+The chain is bounded by the Client's own 10-hop limit, and whatever finally answers 2xx still
+comes back through `RoundTrip` and is gated by `checkKeys`.
+
+`TestVerifyActor_FollowsAJWKSRedirectWithoutForwardingCredentials` pins both halves — each
+alone is satisfied by a broken version. It asserts the configured endpoint *does* receive the
+credentials, the redirect target is hit exactly once, resolution succeeds, and the target sees
+neither an `Authorization` header nor the operator's query. Reverting the 3xx pass-through
+fails it with `returned HTTP 302`; removing the first-hop gate fails it with
+`stopped after 10 redirects`.
+
 ## Empty config defaults; a wrong one fails the pod
 
 `New` substitutes `constants.DefaultJWKSURL`/`DefaultAudience`/`DefaultIssuer` for empty

@@ -209,6 +209,15 @@ func redactOne(u string) string {
 		if last := strings.LastIndexByte(u[:preQueryMulti], '@'); last >= 0 {
 			return trimQueryAndFragment(u[:authStart] + "***@" + u[last+1:])
 		}
+		// Bounding the search closed the query-`@` leak but opened its mirror image: with no
+		// `@` before the bound, the value fell through to trimQueryAndFragment, which cuts at
+		// the `?`. For `nats://u:p?x@a,nats://b` — a password containing a `?` — that prints
+		// `nats://u:p` and the password with it. The single-URL path already refuses this
+		// shape; this branch has to refuse it too, on the same terms.
+		if preQueryMulti < len(u) && strings.ContainsRune(u[preQueryMulti:], '@') &&
+			passwordCouldSpanQuery(u, preQueryMulti) {
+			return u[:authStart] + "***"
+		}
 		return trimQueryAndFragment(u)
 	}
 	// Everything before the query: userinfo can only live in here, and an `@` beyond it is the
@@ -221,12 +230,60 @@ func redactOne(u string) string {
 		at += authStart
 		return trimQueryAndFragment(u[:authStart] + "***@" + u[at+1:])
 	}
-	if strings.ContainsRune(u[preQuery:], '@') && !strings.ContainsRune(u[authStart:preQuery], '/') {
+	if strings.ContainsRune(u[preQuery:], '@') && !queryIsGenuine(u, preQuery) {
 		// Path-less, and the only `@` is past the `?`. Either the query holds it or the `?` is
 		// inside a password; the value cannot say, so print nothing that could be half of one.
 		return u[:authStart] + "***"
 	}
 	return trimQueryAndFragment(u) // no userinfo, but a query can still carry a token
+}
+
+// queryIsGenuine reports whether the `?` or `#` at index q really begins a query, rather than
+// being an ordinary character inside a password.
+//
+// The tell is a `/` in the authority that OWNS the delimiter. A path closes the authority
+// (RFC 3986 §3.2, §3.3), and an authority a path has already closed cannot extend past the
+// `?`. With no `/`, nothing in the value decides between `https://idp?contact=a@b` — a
+// harmless query `@` whose host and path are worth keeping — and `nats://u:p?x@host`, where
+// the `?` is inside the password and cutting at it logs half a secret. The two want opposite
+// handling, so the undecidable case is refused rather than guessed.
+//
+// Which authority is asked is owningAuthority's problem, and in a list it is not the first one.
+func queryIsGenuine(u string, q int) bool {
+	return strings.ContainsRune(owningAuthority(u, q), '/')
+}
+
+// owningAuthority returns the part of the value between the `://` of the segment that owns the
+// delimiter at q and q itself.
+//
+// Which segment owns it matters in a comma-separated list: only the LAST one can, because every
+// comma from the query onward belongs to it (see splitBeforeQuery), so the scan starts at the
+// comma before the delimiter. Scanning from the start of the value instead would find the `/` in
+// an EARLIER segment's path and call every multi-URL query genuine — which is exactly the
+// fallthrough that leaked.
+func owningAuthority(u string, q int) string {
+	seg := u[:q]
+	if c := strings.LastIndexByte(seg, ','); c >= 0 {
+		seg = seg[c+1:]
+	}
+	if i := strings.Index(seg, "://"); i >= 0 {
+		seg = seg[i+3:]
+	}
+	return seg
+}
+
+// passwordCouldSpanQuery reports whether refusing the value at the delimiter q is warranted
+// because a PASSWORD might be what the delimiter sits inside.
+//
+// It is the multi-URL branch's test, and it is narrower than the single-URL branch's plain
+// `!queryIsGenuine` on purpose: refusing there costs one host, while refusing here costs every
+// host in the list, so this branch pays for a sharper discriminator. A password is what makes
+// truncation dangerous, and userinfo carrying a password must contain a `:` before the
+// delimiter. `nats://b?access_token=x@live-secret,nats://c` has none — `b` could only ever be a
+// bare username — so its hosts are kept, while `nats://u:p?x@a,nats://b` is refused.
+func passwordCouldSpanQuery(u string, q int) bool {
+	seg := owningAuthority(u, q)
+	return !strings.ContainsRune(seg, '/') && strings.ContainsRune(seg, ':')
 }
 
 // trimQueryAndFragment drops everything from the first `?` or `#`.
@@ -264,6 +321,22 @@ func URL(u *url.URL) string {
 		return ""
 	}
 	c := *u
+	if c.Opaque != "" {
+		// An opaque URI (no `//` after the scheme) keeps EVERYTHING after the colon in
+		// Opaque — `user:pass@host` included — and `net/url` never populates User, Host or
+		// Path from it, so clearing User below touches nothing. `ftp:svc:secret@idp/jwks`
+		// renders verbatim. This is reachable: auth.New rejects a non-http(s) JWKS URL and
+		// formats the rejected value with this function, so the very value being refused is
+		// the one logged.
+		//
+		// Nothing is preserved because there is nothing this package promises to preserve.
+		// Host and path survive elsewhere because they are the diagnostic value of a URL; an
+		// opaque URI has neither as far as net/url is concerned, and the string rules in
+		// URLUserinfo are all anchored on `://`, which it does not have. The scheme is the
+		// whole of what can be shown without guessing at structure — and for the case that
+		// motivates this, the scheme IS the diagnosis.
+		return c.Scheme + ":***"
+	}
 	c.User = nil
 	c.RawQuery = ""
 	c.ForceQuery = false
