@@ -238,17 +238,45 @@ deliberately does NOT call `validateAccountIDs` and does NOT send `CustomerAccou
 id would make discovery unreachable exactly when it is needed, which is the state it
 exists to resolve. The header is OMITTED rather than sent empty: an empty
 `CustomerAccountId` is still a claim about an account, and the connections making this
-call have none. `CustomerId` is likewise omitted from the body unless the connection
-carries one, because Microsoft documents the credentials as determining the customer
-only when the element is absent — sending 0 would request customer zero. `attempt`
-takes an explicit `accountScoped` flag rather than inferring this, and a test pins that
-the campaign path still sends its account header.
+call have none. `attempt` takes an explicit `accountScoped` flag rather than inferring
+this, and a test pins that the campaign path still sends its account header.
 
-`OnlyParentAccounts` is sent **false** so accounts LINKED under other customers are
-included; sending true would silently narrow the picker to one customer's own accounts
-and answer "no accounts" for an agency-style setup. The call is marked idempotent — it
-creates nothing, so retrying a 429 cannot double-create, and without the retry a
-transient rate limit fails a user's first attempt to connect an account.
+**"Every account" needs one query per customer.** `AccountsInfo/Query` is scoped to ONE
+customer whichever way it is called: Microsoft documents it as returning the accounts
+"accessible from the specified customer", and omitting `CustomerId` does not widen it —
+"if not set, the user's credentials are used to determine **the** customer", still
+singular. So a user who administers several customers used to get one customer's
+accounts and no sign the rest existed. `ListAdAccounts` therefore runs
+`discoveryCustomerIDs` first: `POST CustomerManagement/v13/User/Query` with `UserId`
+omitted returns the authenticated user's `CustomerRoles`, one entry per customer the
+credentials reach, and each id gets its own `AccountsInfo/Query`. A configured
+`customer_id` short-circuits that — the operator scoped the connection deliberately, and
+widening it back out would undo the scoping and pay for a `User/Query` it cannot use.
+
+`OnlyParentAccounts=false` is **not** a substitute for the loop, and the distinction is
+easy to lose: a linked account is one attached to the customer BEING QUERIED, which is a
+different relationship from a second customer the same user administers. Only
+`User/Query` names the latter. It is still sent false, because otherwise the picker
+narrows to the accounts that customer owns outright.
+
+Only the `CustomerRoles` field of the `User/Query` envelope is decoded. The `User` object
+carries a password field, a secret answer and an authentication token, and none of them
+are needed here — so a malformed body is reported without ever echoing it, and a test
+pins that the marker text in the response never reaches the error string.
+
+The union is deduplicated by account id (first occurrence wins): the same account is
+reachable under more than one customer whenever it is linked, which is exactly what
+`OnlyParentAccounts=false` asks for, and offering it twice makes a user wonder which
+entry is real. One customer erroring fails the WHOLE call — a partial union is the
+false-absence bug this loop exists to remove, and it is indistinguishable from a complete
+one at the boundary. `CustomerRoles` absent, `null` or `[]` is likewise an error, not zero
+accounts: Microsoft documents at minimum one entry, so none of those is the answer "these
+credentials reach no customers", and an unusable role id fails for the same reason a bad
+account id does.
+
+The call is marked idempotent — it creates nothing, so retrying a 429 cannot
+double-create, and without the retry a transient rate limit fails a user's first attempt
+to connect an account.
 
 **Two health axes, kept apart.** `AccountLifeCycleStatus` (Active, Draft, Inactive,
 Pause, Pending, Suspended) and `PauseReason` answer different questions and can

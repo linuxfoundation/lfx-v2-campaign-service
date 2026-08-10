@@ -125,20 +125,121 @@ type accountInfo struct {
 	PauseReason *int        `json:"PauseReason"`
 }
 
+// userQueryResponse is the User/Query envelope, decoded only for its CustomerRoles.
+//
+// CustomerRoles is a POINTER for the same reason accountsInfoResponse.AccountsInfo is:
+// absent (the response did not answer) has to stay distinguishable from present-and-empty,
+// and Microsoft documents that at minimum one item is returned — so an EMPTY list is
+// already a contract violation, and an absent one says nothing at all. The User object
+// itself is deliberately not decoded: it carries a password field, a secret answer and an
+// authentication token, and this code needs none of them.
+type userQueryResponse struct {
+	CustomerRoles *[]customerRole `json:"CustomerRoles"`
+}
+
+// customerRole is one CustomerRole entry, decoded only for its CustomerId.
+//
+// AccountIds and LinkedAccountIds are deliberately NOT used even though they list account
+// ids directly: they are ids without names, numbers or lifecycle status, so a picker built
+// from them could not show a user which account is which or why one is unusable. They are
+// the wrong source for this; the customer ids are what this call is for.
+type customerRole struct {
+	CustomerID json.Number `json:"CustomerId"`
+}
+
+// discoveryCustomerIDs resolves which customers to enumerate accounts under.
+//
+// A configured CustomerID is taken as the answer: the connection has been scoped on
+// purpose, and widening it here would offer accounts the operator deliberately excluded.
+//
+// With no configured customer the credentials are the whole question, and one
+// AccountsInfo/Query cannot answer it. Microsoft documents that operation as returning
+// accounts "accessible from the specified customer" and CustomerId as optional only in the
+// sense that "if not set, the user's credentials are used to determine THE customer" —
+// singular either way. A user whose credentials reach several customers gets one
+// CustomerRole per customer from User/Query, and only enumerating each of them covers the
+// set. OnlyParentAccounts=false does not close this: it adds accounts LINKED to the
+// customer being queried, which is a different relationship from a second customer the
+// same user administers.
+//
+// The list is returned in Microsoft's own order, and the caller keeps the first entry for
+// a duplicated account id, so the result is deterministic for a given response.
+func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]string, error) {
+	if c.account.CustomerID != "" {
+		return []string{c.account.CustomerID}, nil
+	}
+
+	// idempotent: a read, so a 429 retry cannot create anything. UserId is omitted
+	// entirely, which Microsoft documents as "details for the authenticated user" —
+	// exactly the question being asked. An empty JSON object, not a null body: the
+	// operation takes a request object.
+	body, err := c.doCustomerRequest(ctx, "POST", "User/Query", map[string]any{}, true)
+	if err != nil {
+		return nil, fmt.Errorf("list microsoft customers: %w", err)
+	}
+	var resp userQueryResponse
+	if uerr := json.Unmarshal(body, &resp); uerr != nil {
+		// Not quoted, for the same reason as the AccountsInfo body below: this is a
+		// response the code has just failed to understand, so nothing is known about
+		// what is in it — and a User/Query body is the one most likely to carry
+		// personal data.
+		return nil, fmt.Errorf("microsoft customer discovery returned a 2xx body that could not be decoded")
+	}
+	// Absent AND empty both fail. Microsoft documents "at minimum one list item will be
+	// returned", so zero roles is not the answer "no customers" — it is a response that
+	// does not match the contract, and treating it as an empty account list would report
+	// a protocol change as a permissions problem.
+	if resp.CustomerRoles == nil || len(*resp.CustomerRoles) == 0 {
+		return nil, fmt.Errorf("microsoft customer discovery returned a 2xx response with no CustomerRoles; cannot confirm which customers these credentials reach")
+	}
+
+	ids := make([]string, 0, len(*resp.CustomerRoles))
+	seen := make(map[string]struct{}, len(*resp.CustomerRoles))
+	for _, role := range *resp.CustomerRoles {
+		id := strings.TrimSpace(role.CustomerID.String())
+		// Same regexp doCustomerRequest validates a configured customer id against, for
+		// the same reason ListAdAccounts reuses it for account ids: an id this code is
+		// about to put in a request must be one the client would accept, and it rejects
+		// the shapes a json.Number can hold but a customer id cannot ("1.5e3", "-1", "").
+		if !accountIDRE.MatchString(id) {
+			// The whole call, not this role: a response this far from the documented
+			// shape is not the response we think it is, so skipping the row would turn
+			// a protocol mismatch into a silently short account list.
+			return nil, fmt.Errorf("microsoft customer discovery returned a role with an unusable customer id")
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
 // ListAdAccounts enumerates every Microsoft Advertising account these credentials can
 // reach.
 //
-// It asks about the CREDENTIALS, not about any one account. The request is
-// `POST CustomerManagement/v13/AccountsInfo/Query` with CustomerId omitted unless the
-// connection already carries one — Microsoft documents that as "the user's credentials
-// are used to determine the customer" — and no ad-account id appears in the path, the
-// body, or the headers. That is what lets a connection holding only credentials, or one
-// being re-pointed at a different account, ask which accounts are available; a call that
-// required an account id could never run in the state discovery exists to resolve.
+// It asks about the CREDENTIALS, not about any one account: no ad-account id appears in
+// the path, the body, or the headers. That is what lets a connection holding only
+// credentials, or one being re-pointed at a different account, ask which accounts are
+// available; a call that required an account id could never run in the state discovery
+// exists to resolve.
 //
-// OnlyParentAccounts is sent false so accounts LINKED under other customers are included.
-// Sending true would silently narrow the picker to one customer's own accounts and, for
-// an agency-style setup, answer "no accounts" about accounts the credentials manage.
+// "Every" needs one AccountsInfo/Query PER CUSTOMER, not one call. That operation is
+// scoped to a single customer whether or not CustomerId is sent — omitting it makes the
+// credentials determine THE customer, singular — so a user administering several
+// customers would have had the other customers' accounts silently missing from the
+// picker, with no signal that anything was left out. See discoveryCustomerIDs.
+//
+// OnlyParentAccounts is sent false so accounts LINKED to the customer being queried are
+// included. Sending true would narrow each query to that customer's own accounts and, for
+// an agency-style setup, answer "no accounts" about accounts the credentials manage. It
+// is not a substitute for the per-customer loop: a linked account is one attached to THIS
+// customer, not one belonging to a second customer the same user administers.
+//
+// Duplicates are dropped by account id, first occurrence wins. The same account can be
+// reachable under more than one customer — that is precisely what a link is — and a
+// picker offering it twice invites a user to wonder which one is real.
 //
 // Accounts that are draft, inactive, suspended or paused are all RETURNED, each carrying
 // the reason it is unusable. This is a picker: a user whose only account is suspended
@@ -151,16 +252,45 @@ type accountInfo struct {
 // dropping a row. A truncated account list is indistinguishable from a complete one at
 // the boundary, and the caller acts on the absence.
 func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
-	// CustomerId is omitted (not sent as 0 or null) when the connection has none, which
-	// is what makes the credentials themselves determine the customer. Sending 0 would
-	// be a request for customer zero, not a request to infer one.
-	req := map[string]any{"OnlyParentAccounts": false}
-	if c.account.CustomerID != "" {
-		// Kept as the string it is stored as. doCustomerRequest validates it
-		// digits-only before building the request below, and parsing it to a number
-		// here would introduce a second representation that can disagree with the
-		// header that call sets from the same field.
-		req["CustomerId"] = json.Number(c.account.CustomerID)
+	customerIDs, err := c.discoveryCustomerIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Non-nil for the same reason the per-customer slice below is: zero accounts is an
+	// ANSWER and has to stay distinguishable from "no answer", including on the wire
+	// where nil serializes as null.
+	accounts := make([]AdAccount, 0)
+	seen := make(map[string]struct{})
+	for _, customerID := range customerIDs {
+		batch, berr := c.accountsInfoForCustomer(ctx, customerID)
+		if berr != nil {
+			// One customer failing fails the whole call. A partial union is the failure
+			// mode this function exists to remove: it is indistinguishable from a
+			// complete one at the boundary, and the caller acts on the absence.
+			return nil, berr
+		}
+		for _, a := range batch {
+			if _, dup := seen[a.ID]; dup {
+				continue
+			}
+			seen[a.ID] = struct{}{}
+			accounts = append(accounts, a)
+		}
+	}
+	return accounts, nil
+}
+
+// accountsInfoForCustomer enumerates the accounts reachable under one customer.
+func (c *Client) accountsInfoForCustomer(ctx context.Context, customerID string) ([]AdAccount, error) {
+	// CustomerId is always sent here: discoveryCustomerIDs resolved a concrete customer,
+	// either the configured one or one of the credentials' own roles. It is kept as the
+	// string it was stored or decoded as rather than parsed to a number, so there is one
+	// representation and it cannot disagree with the header doCustomerRequest's caller
+	// sets from the configured field.
+	req := map[string]any{
+		"OnlyParentAccounts": false,
+		"CustomerId":         json.Number(customerID),
 	}
 
 	// idempotent: this is a read. It creates nothing, so a 429 retry cannot

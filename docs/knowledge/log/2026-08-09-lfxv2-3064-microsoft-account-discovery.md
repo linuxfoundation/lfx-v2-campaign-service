@@ -117,3 +117,52 @@ concept now say so in those terms. The same clause was corrected in the LinkedIn
 same sweep; it had been copied from there.
 
 Nothing about the pointer changes: it is still legibility rather than mechanism.
+
+## Round 4: "every account" was one customer's accounts
+
+Copilot flagged that `AccountsInfo/Query` cannot enumerate accounts across more than one
+`CustomerRole`. Verified against Microsoft's own docs rather than from the finding text, and it
+is true — twice over:
+
+- `GetAccountsInfo` returns the accounts "accessible from the specified customer". Singular.
+- Omitting `CustomerId` does not widen it. The doc reads "if not set, the user's credentials
+  are used to determine **the** customer" — also singular. The previous code read that sentence
+  as "the credentials' accounts" when it means "one customer, chosen for you".
+
+So a user administering several customers got one customer's accounts and no indication the
+rest existed. That is the same false-absence shape this file already fails closed against
+everywhere else: a picker that quietly omits an account is worse than one that errors, because
+the user concludes the account is not connectable and goes hunting for a permissions problem
+that is not there.
+
+**The trap in the fix is `OnlyParentAccounts`.** It looks like it already covers this, and the
+doc's own phrasing ("linked accounts") encourages the reading. It does not: a LINKED account is
+attached to the customer being queried. A second customer the same user administers is a
+different relationship entirely, and only `User/Query` — `UserId` omitted, returning one
+`CustomerRole` per reachable customer — names it. The general rule: when a parameter widens a
+query along one axis, check it is the axis you need widened before concluding the query is
+already complete.
+
+`ListAdAccounts` now discovers customer ids first and queries each. A configured `customer_id`
+skips discovery: the operator scoped that connection on purpose, and re-widening it would undo
+the scoping. The union dedupes by account id — a linked account legitimately appears under two
+customers — and one customer failing fails the whole call, since a partial union is exactly the
+bug being removed and reads identically to a complete one at the boundary. Absent, `null` or
+empty `CustomerRoles` errors too: Microsoft documents at minimum one entry, so none of those
+means "no customers".
+
+Only `CustomerRoles` is decoded off the `User/Query` envelope. The `User` object carries a
+password field, a secret answer and an authentication token; a test pins that a malformed body
+never reaches the error string, which travels further than the response does.
+
+`TestListAdAccounts_EnumeratesEveryCustomerTheCredentialsReach` was revert-verified against the
+pre-fix single-customer behaviour and fails naming both halves — the customers queried and the
+accounts returned. `TestListAdAccounts_OneCustomerFailingFailsTheWholeCall` fails with it.
+
+One test-side lesson worth keeping: adapting the existing tests surfaced that the recorder
+decoded request bodies with a plain `Unmarshal`, so every JSON number arrived as a `float64`.
+The assertion on a customer id compared against `5.550001e+06` — and above 2^53 it would have
+compared against a DIFFERENT id than the client sent, which is precisely the precision loss the
+PRODUCTION decode uses `json.Number` to avoid. A test harness that does not share the
+production decode's care can pass an id the production code would have caught. The recorder now
+uses `UseNumber`, which also keeps a quoted `"9988776"` distinguishable from the number.

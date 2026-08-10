@@ -76,7 +76,13 @@ func (a *acctRecorder) capture(r *http.Request) {
 	if len(raw) == 0 {
 		return
 	}
-	if err := json.Unmarshal(raw, &a.body); err != nil {
+	// UseNumber, not a plain Unmarshal: into `any` a JSON number becomes a float64, so a
+	// test asserting on a customer or account id in the body would compare against
+	// "5.550001e+06" and, above 2^53, against a DIFFERENT id than the client sent —
+	// exactly the precision loss the production decode uses json.Number to avoid.
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec.UseNumber()
+	if err := dec.Decode(&a.body); err != nil {
 		a.bodyErr = fmt.Errorf("body is not JSON: %w (%s)", err, raw)
 	}
 }
@@ -96,17 +102,38 @@ func (a *acctRecorder) read(t *testing.T) acctRecorder {
 	}
 }
 
+// withCustomerRoles answers User/Query with one CustomerRole per id and delegates every
+// other path to next. Discovery on a connection with no configured customer now makes two
+// different calls, and a helper that served one canned body to both would let a test pass
+// against a client that sent the account query to the wrong path.
+func withCustomerRoles(ids []string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/User/Query") {
+			roles := make([]string, 0, len(ids))
+			for _, id := range ids {
+				roles = append(roles, `{"CustomerId":`+id+`}`)
+			}
+			_, _ = io.WriteString(w, `{"CustomerRoles":[`+strings.Join(roles, ",")+`]}`)
+			return
+		}
+		next(w, r)
+	}
+}
+
 // TestListAdAccounts_AsksAboutTheCredentialsNotAnAccount pins the property the whole
 // feature rests on: discovery must work for a connection that has NO account id, since
-// that is the state it exists to resolve. It asserts the request carries no account
-// identity at all — not the header, not a CustomerId — and lands on the Customer
-// Management path rather than Campaign Management.
+// that is the state it exists to resolve. It asserts the request carries no ACCOUNT
+// identity — neither the CustomerAccountId header nor the CustomerId one — and lands on
+// the Customer Management path rather than Campaign Management. The customer id in the
+// BODY is a different thing: it is discovered from the credentials, not asserted by the
+// connection.
 func TestListAdAccounts_AsksAboutTheCredentialsNotAnAccount(t *testing.T) {
 	rec := &acctRecorder{}
-	c := newCustomerClient(t, AccountConfig{}, func(w http.ResponseWriter, r *http.Request) {
-		rec.capture(r)
-		_, _ = io.WriteString(w, `{"AccountsInfo":[]}`)
-	})
+	c := newCustomerClient(t, AccountConfig{}, withCustomerRoles([]string{"5550001"},
+		func(w http.ResponseWriter, r *http.Request) {
+			rec.capture(r)
+			_, _ = io.WriteString(w, `{"AccountsInfo":[]}`)
+		}))
 
 	got, err := c.ListAdAccounts(context.Background())
 	if err != nil {
@@ -134,11 +161,15 @@ func TestListAdAccounts_AsksAboutTheCredentialsNotAnAccount(t *testing.T) {
 	if saw.dev != "devtok" {
 		t.Errorf("DeveloperToken = %q, want it still sent", saw.dev)
 	}
-	if _, present := saw.body["CustomerId"]; present {
-		t.Error("CustomerId must be ABSENT from the body, not null or 0: Microsoft infers the customer from the credentials only when the element is omitted")
+	// The BODY does carry a customer id, and it is not the connection's — the connection
+	// has none. It is the one the credentials' own CustomerRole named. Sending nothing
+	// would make Microsoft pick a single customer for us, which is the narrowing this
+	// call exists to avoid; sending 0 or null would be a request for customer zero.
+	if v, _ := saw.body["CustomerId"].(json.Number); v.String() != "5550001" {
+		t.Errorf("body CustomerId = %v, want the customer id discovered from the credentials' own role", saw.body["CustomerId"])
 	}
 	if v, ok := saw.body["OnlyParentAccounts"].(bool); !ok || v {
-		t.Errorf("OnlyParentAccounts = %v, want false so linked accounts under other customers are included", saw.body["OnlyParentAccounts"])
+		t.Errorf("OnlyParentAccounts = %v, want false so accounts LINKED to this customer are included alongside the ones it owns", saw.body["OnlyParentAccounts"])
 	}
 }
 
@@ -159,9 +190,200 @@ func TestListAdAccounts_SendsAConfiguredCustomerID(t *testing.T) {
 		t.Errorf("CustomerId header = %q, want 9988776", saw.cust)
 	}
 	// json.Number must reach the wire as a NUMBER; Microsoft types CustomerId as long,
-	// and a quoted string is a different request.
-	if v, ok := saw.body["CustomerId"].(float64); !ok || v != 9988776 {
+	// and a quoted string is a different request. The recorder decodes with UseNumber,
+	// so a JSON number lands as json.Number and a quoted one as a Go string — this
+	// assertion fails on the quoted form rather than accepting it.
+	if v, ok := saw.body["CustomerId"].(json.Number); !ok || v.String() != "9988776" {
 		t.Errorf("body CustomerId = %#v, want the number 9988776", saw.body["CustomerId"])
+	}
+}
+
+// TestListAdAccounts_AConfiguredCustomerIDSkipsRoleDiscovery pins the other half of that
+// decision. A connection scoped to a customer on purpose must not be widened back out to
+// every customer the credentials reach — the operator excluded them — and it must not pay
+// for a User/Query it cannot use.
+func TestListAdAccounts_AConfiguredCustomerIDSkipsRoleDiscovery(t *testing.T) {
+	var userQueries, accountQueries int32
+	c := newCustomerClient(t, AccountConfig{CustomerID: "9988776"}, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/User/Query") {
+			atomic.AddInt32(&userQueries, 1)
+			// Two roles, neither of them the configured one: if role discovery ran,
+			// the accounts below would be fetched twice and for the wrong customers.
+			_, _ = io.WriteString(w, `{"CustomerRoles":[{"CustomerId":1111111},{"CustomerId":2222222}]}`)
+			return
+		}
+		atomic.AddInt32(&accountQueries, 1)
+		_, _ = io.WriteString(w, `{"AccountsInfo":[{"Id":1234567,"AccountLifeCycleStatus":"Active"}]}`)
+	})
+	got, err := c.ListAdAccounts(context.Background())
+	if err != nil {
+		t.Fatalf("ListAdAccounts: %v", err)
+	}
+	if n := atomic.LoadInt32(&userQueries); n != 0 {
+		t.Errorf("User/Query calls = %d, want 0: the customer is already known", n)
+	}
+	if n := atomic.LoadInt32(&accountQueries); n != 1 {
+		t.Errorf("AccountsInfo/Query calls = %d, want exactly 1", n)
+	}
+	if len(got) != 1 {
+		t.Errorf("got %d accounts, want 1", len(got))
+	}
+}
+
+// TestListAdAccounts_EnumeratesEveryCustomerTheCredentialsReach is the finding this
+// method was rewritten for.
+//
+// AccountsInfo/Query is scoped to ONE customer whichever way it is called: Microsoft
+// documents it as returning accounts "accessible from the specified customer", and
+// omitting CustomerId only means "the user's credentials are used to determine THE
+// customer" — still singular. A user administering several customers therefore got one
+// customer's accounts and no indication the rest existed. A picker that quietly omits an
+// account is worse than one that fails: the user concludes the account is not connectable
+// and goes looking for a permissions problem that is not there.
+//
+// OnlyParentAccounts=false does not cover it. A linked account is one attached to the
+// customer being queried; a second customer the same user administers is a different
+// relationship, and only User/Query names it.
+func TestListAdAccounts_EnumeratesEveryCustomerTheCredentialsReach(t *testing.T) {
+	var mu sync.Mutex
+	var queried []string
+	c := newCustomerClient(t, AccountConfig{}, withCustomerRoles([]string{"1111111", "2222222"},
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				CustomerID json.Number `json:"CustomerId"`
+			}
+			dec := json.NewDecoder(r.Body)
+			dec.UseNumber()
+			if err := dec.Decode(&req); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			mu.Lock()
+			queried = append(queried, req.CustomerID.String())
+			mu.Unlock()
+			switch req.CustomerID.String() {
+			case "1111111":
+				_, _ = io.WriteString(w, `{"AccountsInfo":[{"Id":1000001,"Name":"First","AccountLifeCycleStatus":"Active"}]}`)
+			case "2222222":
+				_, _ = io.WriteString(w, `{"AccountsInfo":[{"Id":2000002,"Name":"Second","AccountLifeCycleStatus":"Active"}]}`)
+			default:
+				_, _ = io.WriteString(w, `{"AccountsInfo":[]}`)
+			}
+		}))
+
+	got, err := c.ListAdAccounts(context.Background())
+	if err != nil {
+		t.Fatalf("ListAdAccounts: %v", err)
+	}
+	mu.Lock()
+	sawQueried := strings.Join(queried, ",")
+	mu.Unlock()
+	if sawQueried != "1111111,2222222" {
+		t.Errorf("customers queried = %q, want both roles enumerated in Microsoft's order", sawQueried)
+	}
+	if len(got) != 2 || got[0].ID != "1000001" || got[1].ID != "2000002" {
+		t.Fatalf("accounts = %+v, want the union of both customers' accounts", got)
+	}
+}
+
+// TestListAdAccounts_DeduplicatesALinkedAccount: the same account is reachable under more
+// than one customer — that is what a link IS, and OnlyParentAccounts=false asks for them
+// deliberately. Offering it twice makes a user wonder which entry is the real one.
+func TestListAdAccounts_DeduplicatesALinkedAccount(t *testing.T) {
+	c := newCustomerClient(t, AccountConfig{}, withCustomerRoles([]string{"1111111", "2222222"},
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"AccountsInfo":[{"Id":1000001,"Name":"Shared","AccountLifeCycleStatus":"Active"}]}`)
+		}))
+	got, err := c.ListAdAccounts(context.Background())
+	if err != nil {
+		t.Fatalf("ListAdAccounts: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d accounts, want the linked account offered once", len(got))
+	}
+}
+
+// TestListAdAccounts_OneCustomerFailingFailsTheWholeCall. A partial union is exactly the
+// bug this rewrite removes, and it is indistinguishable from a complete one at the
+// boundary — so the second customer erroring must not degrade into the first customer's
+// accounts.
+func TestListAdAccounts_OneCustomerFailingFailsTheWholeCall(t *testing.T) {
+	c := newCustomerClient(t, AccountConfig{}, withCustomerRoles([]string{"1111111", "2222222"},
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				CustomerID json.Number `json:"CustomerId"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req.CustomerID.String() == "2222222" {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			_, _ = io.WriteString(w, `{"AccountsInfo":[{"Id":1000001,"AccountLifeCycleStatus":"Active"}]}`)
+		}))
+	got, err := c.ListAdAccounts(context.Background())
+	if err == nil {
+		t.Fatalf("want an error, got %d accounts — a short list reads as a complete one", len(got))
+	}
+	if got != nil {
+		t.Errorf("accounts = %+v, want nil alongside the error", got)
+	}
+}
+
+// TestListAdAccounts_RoleDiscoveryFailsClosed. Microsoft documents "at minimum one list
+// item will be returned", so an absent OR empty CustomerRoles is a response that does not
+// match the contract — not the answer "these credentials reach no customers". Reporting
+// it as zero accounts would send the user to look for a permissions problem when the
+// protocol changed underneath us. An unusable customer id fails for the same reason it
+// does on the account side: a response that far from the documented shape is not the
+// response we think it is.
+func TestListAdAccounts_RoleDiscoveryFailsClosed(t *testing.T) {
+	for name, body := range map[string]string{
+		"absent":            `{}`,
+		"empty":             `{"CustomerRoles":[]}`,
+		"null":              `{"CustomerRoles":null}`,
+		"non-integer id":    `{"CustomerRoles":[{"CustomerId":1.5e3}]}`,
+		"negative id":       `{"CustomerRoles":[{"CustomerId":-1}]}`,
+		"undecodable":       `not json`,
+		"missing id":        `{"CustomerRoles":[{}]}`,
+		"one bad among two": `{"CustomerRoles":[{"CustomerId":1111111},{"CustomerId":-1}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := newCustomerClient(t, AccountConfig{}, func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/User/Query") {
+					_, _ = io.WriteString(w, body)
+					return
+				}
+				_, _ = io.WriteString(w, `{"AccountsInfo":[{"Id":1000001,"AccountLifeCycleStatus":"Active"}]}`)
+			})
+			got, err := c.ListAdAccounts(context.Background())
+			if err == nil {
+				t.Fatalf("want an error, got %d accounts", len(got))
+			}
+			if got != nil {
+				t.Errorf("accounts = %+v, want nil alongside the error", got)
+			}
+		})
+	}
+}
+
+// TestListAdAccounts_RoleDiscoveryNeverEchoesTheBody. A User/Query body is the one most
+// likely to carry personal data — Microsoft's User object has a contact block, a password
+// field and a secret answer — and an error travels further than the response does.
+func TestListAdAccounts_RoleDiscoveryNeverEchoesTheBody(t *testing.T) {
+	const marker = "s3cret-user-marker"
+	c := newCustomerClient(t, AccountConfig{}, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/User/Query") {
+			_, _ = io.WriteString(w, `not json `+marker)
+			return
+		}
+		_, _ = io.WriteString(w, `{"AccountsInfo":[]}`)
+	})
+	_, err := c.ListAdAccounts(context.Background())
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if strings.Contains(err.Error(), marker) {
+		t.Errorf("error echoed the User/Query body: %q", err.Error())
 	}
 }
 
@@ -211,15 +433,16 @@ func TestListAdAccounts_RejectsAMalformedCustomerID(t *testing.T) {
 // about an account sitting right there, sending the user to look for a permissions
 // problem that does not exist.
 func TestListAdAccounts_ReturnsUnusableAccountsWithTheirReason(t *testing.T) {
-	c := newCustomerClient(t, AccountConfig{}, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `{"AccountsInfo":[
+	c := newCustomerClient(t, AccountConfig{}, withCustomerRoles([]string{"5550001"},
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"AccountsInfo":[
 			{"Id":1234567,"Name":" Good Account ","Number":"X1234567","AccountLifeCycleStatus":"Active"},
 			{"Id":2222222,"Name":"Suspended One","Number":"X2222222","AccountLifeCycleStatus":"Suspended"},
 			{"Id":3333333,"Name":"Billing Paused","Number":"X3333333","AccountLifeCycleStatus":"Active","PauseReason":2},
 			{"Id":4444444,"Name":"Draft One","Number":"X4444444","AccountLifeCycleStatus":"Draft"},
 			{"Id":5555555,"Name":"Odd One","Number":"X5555555","AccountLifeCycleStatus":"Nebulous","PauseReason":9}
 		]}`)
-	})
+		}))
 	got, err := c.ListAdAccounts(context.Background())
 	if err != nil {
 		t.Fatalf("ListAdAccounts: %v", err)
@@ -326,9 +549,10 @@ func TestListAdAccounts_UnusableIDFailsTheWholeCall(t *testing.T) {
 // connection and fails, or worse succeeds, against someone else's account.
 func TestListAdAccounts_PreservesALargeID(t *testing.T) {
 	const big = "9007199254740993" // 2^53 + 1: the smallest integer float64 cannot hold
-	c := newCustomerClient(t, AccountConfig{}, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `{"AccountsInfo":[{"Id":`+big+`,"AccountLifeCycleStatus":"Active"}]}`)
-	})
+	c := newCustomerClient(t, AccountConfig{}, withCustomerRoles([]string{"5550001"},
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"AccountsInfo":[{"Id":`+big+`,"AccountLifeCycleStatus":"Active"}]}`)
+		}))
 	got, err := c.ListAdAccounts(context.Background())
 	if err != nil {
 		t.Fatalf("ListAdAccounts: %v", err)
@@ -360,14 +584,15 @@ func TestListAdAccounts_NeverEchoesTheResponseBody(t *testing.T) {
 // rate limit fails a user's first attempt to connect an account.
 func TestListAdAccounts_RetriesA429(t *testing.T) {
 	var calls int32
-	c := newCustomerClient(t, AccountConfig{}, func(w http.ResponseWriter, _ *http.Request) {
-		if atomic.AddInt32(&calls, 1) == 1 {
-			w.Header().Set("Retry-After", "0")
-			w.WriteHeader(http.StatusTooManyRequests)
-			return
-		}
-		_, _ = io.WriteString(w, `{"AccountsInfo":[{"Id":1234567,"AccountLifeCycleStatus":"Active"}]}`)
-	})
+	c := newCustomerClient(t, AccountConfig{}, withCustomerRoles([]string{"5550001"},
+		func(w http.ResponseWriter, _ *http.Request) {
+			if atomic.AddInt32(&calls, 1) == 1 {
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			_, _ = io.WriteString(w, `{"AccountsInfo":[{"Id":1234567,"AccountLifeCycleStatus":"Active"}]}`)
+		}))
 	got, err := c.ListAdAccounts(context.Background())
 	if err != nil {
 		t.Fatalf("ListAdAccounts: %v", err)
