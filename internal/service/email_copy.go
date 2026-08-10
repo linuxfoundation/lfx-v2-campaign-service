@@ -45,7 +45,7 @@ func decodeEmailCopyEventDetails(blob json.RawMessage) (emailCopyEventDetails, e
 	}
 	eventName := strings.TrimSpace(details.EventName)
 	if eventName == "" {
-		return details, errors.New("event details have no event_name; copy generation requires it")
+		return details, errors.New("event details have no eventName; copy generation requires it")
 	}
 	return details, nil
 }
@@ -196,7 +196,7 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 			"project_id", p.ProjectID, "brief_id", p.BriefID, "error", derr)
 		return nil, &briefs.BadRequestError{
 			Code:    "400",
-			Message: "brief's event details are incomplete or invalid; provide at least event_name before generating copy",
+			Message: "brief's event details are incomplete or invalid; provide at least eventName before generating copy",
 		}
 	}
 
