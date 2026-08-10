@@ -256,6 +256,20 @@ func checkBulletDescription(bundleDir, indexPath, link, bulletDesc string) error
 // (macOS /var/folders temp dirs), so resolving only one side would report
 // every target as an escape.
 func withinBundle(root, target string) bool {
+	// Absolute BEFORE resolving, because EvalSymlinks preserves the relativeness of
+	// what it is given only until a symlink points somewhere absolute — and then the
+	// two sides disagree and filepath.Rel errors outright. The bundle root really is
+	// relative in normal use ("go run ./cmd/okfvalidate ./docs/knowledge"), so an
+	// in-bundle concept reached through an absolute symlink would otherwise be
+	// classified as an escape and silently skipped.
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	target, err = filepath.Abs(target)
+	if err != nil {
+		return false
+	}
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return false

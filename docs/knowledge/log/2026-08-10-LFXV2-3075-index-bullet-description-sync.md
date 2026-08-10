@@ -38,7 +38,12 @@ pointed at, partly disclosed by it. Containment is now checked against the
 bundle root with symlinks resolved on both sides, because a lexical
 `..`-scan is defeated by a symlink inside the bundle pointing out of it, and
 because temp-dir roots are themselves symlinked (macOS `/var/folders`), so
-resolving only one side reports every target as an escape.
+resolving only one side reports every target as an escape. Both sides are made
+absolute BEFORE they are resolved, too: the bundle root is relative in normal
+use (`go run ./cmd/okfvalidate ./docs/knowledge`), and `EvalSymlinks` keeps a
+relative path relative only until a symlink points somewhere absolute — at
+which point `filepath.Rel` refuses to compare the two and a real in-bundle
+concept is written off as an escape and silently left unchecked.
 
 The comparison is also raw rather than trimmed. Trimming was the one tolerance
 the check claimed not to have: a frontmatter description of `" Summary. "`

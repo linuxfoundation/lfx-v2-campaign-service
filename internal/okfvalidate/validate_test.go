@@ -330,6 +330,38 @@ func TestValidateIndexBulletDescriptionSkipsSymlinkOutOfBundle(t *testing.T) {
 	}
 }
 
+// The containment check has to hold for a RELATIVE bundle root, which is how the
+// command is actually invoked ("go run ./cmd/okfvalidate ./docs/knowledge").
+// EvalSymlinks keeps a relative path relative only until a symlink points somewhere
+// absolute; filepath.Rel then refuses to compare the two and the concept — a real,
+// in-bundle file — is written off as an escape and never checked. That failure is
+// silent, which is what makes it worth a test: the drift this whole check exists to
+// catch simply stops being reported.
+func TestValidateIndexBulletDescriptionRelativeRootWithAbsoluteSymlink(t *testing.T) {
+	root := t.TempDir()
+	bundle := filepath.Join(root, "bundle")
+	if err := os.MkdirAll(bundle, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	writeConcept(t, filepath.Join(bundle, "real.md"), "Does the thing.")
+	// An ABSOLUTE link target, pointing back inside the bundle — legitimate, and the
+	// thing that makes EvalSymlinks hand back an absolute path for a relative input.
+	if err := os.Symlink(filepath.Join(bundle, "real.md"), filepath.Join(bundle, "thing.md")); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+	writeFile(t, filepath.Join(bundle, "index.md"), "# Bundle\n\n* [Thing](thing.md) - Stale description.\n")
+
+	t.Chdir(root)
+
+	errs := Validate("bundle")
+	if len(errs) != 1 {
+		t.Fatalf("Validate() = %v, want the in-bundle concept to be checked like any other", errs)
+	}
+	if !strings.Contains(errs[0].Error(), "must match verbatim") {
+		t.Errorf("Validate() error = %q, want the verbatim-mismatch diagnostic", errs[0])
+	}
+}
+
 // "Verbatim" has to include whitespace or it is not verbatim. This fixture pads
 // only the FRONTMATTER, which is the asymmetry the check has to catch: trimming
 // it would let " Does the thing. " satisfy a bullet reading "Does the thing.",
