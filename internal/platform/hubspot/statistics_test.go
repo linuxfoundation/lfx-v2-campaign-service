@@ -350,6 +350,35 @@ func TestGetEmailMetrics_NegativeCounterIsAnError(t *testing.T) {
 	}
 }
 
+// The redaction half of the negative-counter guard. Every key in the table above is in
+// knownCounterVocabulary — including `spamreport` — so all of them take the branch that
+// NAMES the key, and the branch that refuses to name one never ran. That branch is the
+// log-safety one: an unrecognized key is arbitrary upstream content, and this error is
+// rendered into a server log.
+//
+// The marker is chosen so the assertion cannot pass vacuously: it is long, unique, and
+// would appear verbatim in `%q` output if the known-key branch were taken by mistake.
+func TestGetEmailMetrics_NegativeUnrecognizedCounterIsNotNamed(t *testing.T) {
+	const marker = "zz_unrecognized_counter_918273645509"
+
+	// All six mapped keys stay present and non-negative, so the only thing wrong with
+	// this response is the foreign key's sign — otherwise ErrRenamedCounter or
+	// ErrUnrecognizedCounters could fire first and the negative branch would be skipped.
+	body := fmt.Sprintf(
+		`{"sent":1000,"delivered":900,"open":5,"click":10,"bounce":0,"unsubscribed":0,%q:-3}`, marker)
+
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, statsBody(t, `[4242]`, body))
+	})
+	_, err := fixedClock(t, c).GetEmailMetrics(context.Background(), "4242", model.MetricsWindowToday)
+	if !errors.Is(err, ErrNegativeCounter) {
+		t.Fatalf("err = %v, want ErrNegativeCounter", err)
+	}
+	if strings.Contains(err.Error(), marker) {
+		t.Errorf("err = %v, want the upstream key absent — this string reaches the server log", err)
+	}
+}
+
 // The fail-closed guard. `counters` is an OPEN map in HubSpot's v3 schema, so a renamed
 // key set decodes cleanly and every lookup returns 0 — an email that really sent would
 // report as having sent nothing. That is indistinguishable from a dead campaign, so it
@@ -365,8 +394,11 @@ func TestGetEmailMetrics_UnrecognizedCounterVocabularyIsAnErrorNotZeros(t *testi
 }
 
 // The companion to the guard above, and the reason the probe set is wider than the six
-// mapped keys: an email created but never sent can come back carrying only counters this
-// client does not map. That is a real zero, not a vocabulary change.
+// mapped keys: an email that WAS sent can come back carrying only counters this client
+// does not map — every recipient still `pending`, or suppressed as `notsent` — with the
+// six mapped counters zero and omitted. That is a real zero, not a vocabulary change.
+// (An email never sent at all does not arrive here: `emails` would be empty and the call
+// returns ErrNoSentEmailInWindow long before any counter is read.)
 func TestGetEmailMetrics_UnmappedButKnownCountersAreARealZero(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, statsBody(t, `[4242]`, `{"notsent":12,"pending":3}`))

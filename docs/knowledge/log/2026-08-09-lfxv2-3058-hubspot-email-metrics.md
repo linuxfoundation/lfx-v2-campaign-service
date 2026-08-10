@@ -254,3 +254,38 @@ Two smaller corrections in the same push:
   now says the fixture is deliberately unremarkable, and the knowledge doc no longer describes
   all six email counters as having no ad-platform analogue: `Opens` and `Clicks` deliberately
   overlap the shared fields.
+
+## Round N+1: a justification for the right code, describing an unreachable case
+
+Two findings, and the first is the more interesting one because the code it defends is
+correct.
+
+`knownCounterVocabulary` is deliberately wider than the six counters this client maps, and
+the comment justified that with "a window in which an email was created but never sent can
+come back carrying only `notsent`/`pending`". Copilot pointed out that case cannot reach the
+guard: a never-sent email has an EMPTY `emails` list, and `GetEmailMetrics` returns
+`ErrNoSentEmailInWindow` some two hundred lines above any counter is read. Checked, and it
+is right.
+
+The widening is still necessary — the real case is an email that WAS sent whose recipients
+are all still `pending`, or suppressed per-recipient as `notsent`, with the six mapped
+counters zero and therefore omitted. So nothing about the code changed; the comment, the
+test's doc, and the knowledge doc each named the wrong case, in the same words, because the
+second and third were written from the first.
+
+**A wrong justification for correct code is not a cosmetic defect.** It is the thing a future
+reader checks the code against, and the next person to notice that "created but never sent"
+is unreachable has two conclusions available: the comment is wrong, or the widening is dead
+and can be narrowed. The second one is a real regression, and the comment was the only
+evidence pointing at it.
+
+The second finding: the negative-counter table used `spamreport` as its "unrecognized" key —
+but `spamreport` is IN the probe set, so every row took the branch that NAMES the key, and
+the branch that deliberately refuses to name one had never run. That branch exists for log
+safety: an unrecognized key is arbitrary upstream content rendered into a server log.
+`TestGetEmailMetrics_NegativeUnrecognizedCounterIsNotNamed` covers it now, with all six
+mapped keys present and non-negative so the earlier guards cannot fire first and skip it.
+Revert-verified: naming the key makes it fail with the marker in the diagnostic.
+
+**A fixture drawn from the same list the code checks against tests the branch you did not
+mean.** Nothing about the test's name or its passing said so.

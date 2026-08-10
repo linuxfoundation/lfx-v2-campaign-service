@@ -118,10 +118,16 @@ const (
 )
 
 // knownCounterVocabulary is the PROBE set for the ErrUnrecognizedCounters guard, and is
-// deliberately WIDER than the six keys above. A window in which an email was created but
-// never sent can legitimately come back carrying only counters this client does not map
-// (`notsent`, `pending`), and treating that as a vocabulary change would turn an ordinary
-// empty result into an error. The guard's job is to distinguish "HubSpot's vocabulary is
+// deliberately WIDER than the six keys above. An email that WAS sent in the window can
+// legitimately come back carrying only counters this client does not map — every
+// recipient still `pending`, or the send suppressed per-recipient as `notsent`, with the
+// six mapped counters all zero and therefore omitted — and treating that as a vocabulary
+// change would turn an ordinary all-zero result into an error.
+//
+// Note what this case is NOT. An email that was never sent at all cannot reach here:
+// `emails` would be empty and GetEmailMetrics returns ErrNoSentEmailInWindow well above
+// this guard. Reaching the counters means HubSpot matched a SENT email; the question the
+// probe set answers is only whether its counters are zero or its vocabulary moved. The guard's job is to distinguish "HubSpot's vocabulary is
 // intact and these numbers are zero" from "HubSpot's vocabulary changed and we are reading
 // nothing at all", so it must recognize the whole vocabulary while mapping only part of it.
 //

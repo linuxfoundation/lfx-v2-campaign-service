@@ -167,9 +167,12 @@ VERIFY must be an error, never a clean zero.
   counter vocabulary. Because the map is open, a renamed key set decodes cleanly to
   zeros: an email that really sent would report as having sent nothing. The probe set
   (`knownCounterVocabulary`) is deliberately WIDER than the six keys this client maps.
-  An email created but never sent in the window can legitimately return only
-  `notsent`/`pending`, and treating that as a vocabulary change would turn an ordinary
-  empty result into an error. The guard distinguishes "the vocabulary is intact and
+  An email that WAS sent in the window can legitimately return only `notsent`/`pending`
+  — every recipient still pending, or suppressed per-recipient — with the six mapped
+  counters zero and therefore omitted, and treating that as a vocabulary change would
+  turn an ordinary all-zero result into an error. (Not the never-sent case: that one has
+  an empty `emails` list and returns `ErrNoSentEmailInWindow` well above this guard, as
+  the paragraph below says.) The guard distinguishes "the vocabulary is intact and
   these numbers are zero" from "the vocabulary changed and we are reading nothing" — so
   it must recognize the whole vocabulary while mapping only part of it.
   The guard is **not** conditioned on the map being non-empty. A renamed or dropped
