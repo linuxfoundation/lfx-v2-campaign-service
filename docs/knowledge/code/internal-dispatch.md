@@ -518,12 +518,10 @@ acts on a 404 by creating a duplicate paid campaign. Never reduce an unverifiabl
 a clean absence (the `continue`-on-mismatch shape: skipping every non-matching row yields zero
 matches, exactly the licence-to-create answer the check existed to prevent).
 
-`GoogleAdsDispatcher.LookupCampaign` resolves the ORDINARY client via
-`resolveGoogleAdsClient`, not the discovery client, on purpose: discovery credentials see every
-account the login customer administers, so adoption through them could bind a campaign
-belonging to a different project. Scoping to the project's own connection is what makes the
-returned campaign the project's to adopt. It also drops the platform's `ENABLED`/`PAUSED`
-rather than passing it up — reaching the mapping already means the campaign is live, since
-`googleads.GetCampaign` filters `REMOVED` server-side and errors on any status outside its
-known set, so adoptability is decided here, in Google's vocabulary.
+`GoogleAdsDispatcher.LookupCampaign` resolves the ORDINARY client via `resolveGoogleAdsClient`,
+not the discovery client, on purpose: discovery credentials see every account the login
+customer administers, so adoption through them could bind a campaign belonging to a different
+project. It also drops the platform's `ENABLED`/`PAUSED` rather than passing it up — reaching
+the mapping already means the campaign is live, since `googleads.GetCampaign` filters `REMOVED`
+server-side and errors on any status outside its known set.
 

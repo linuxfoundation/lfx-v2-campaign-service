@@ -225,15 +225,23 @@ func TestAdoptCampaign_UnsupportedPlatformIs400(t *testing.T) {
 	}
 }
 
-// An unusable connection is a 409 naming what to fix. ErrAccountNotSelected is wrapped
-// ALONGSIDE ErrConnectionNotUsable, so a broad match placed first swallows it and sends an
-// operator whose credentials are fine to go repair them.
+// Each of these sentinels is WRAPPED ALONGSIDE the more general one below it, so the arms are
+// ordered narrowest-first and a broad match placed first silently swallows the narrow case.
+// The system row is the sharp one: it is a 500 for an operator, not a 409 telling a project
+// with no connection of its own to go repair one. Asserting the TYPE, not just the message, is
+// what makes a deleted arm fail here instead of falling through to a plausible neighbour.
 func TestAdoptCampaign_ConnectionDefectsAreDistinguished(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		err       error
 		wantInMsg string
+		want500   bool
 	}{
+		{
+			name:    "the shared LF system connection, which the caller cannot repair",
+			err:     fmt.Errorf("%w: %w: %w", domain.ErrSystemConnectionNotUsable, domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete),
+			want500: true,
+		},
 		{
 			name:      "no account selected",
 			err:       fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected),
@@ -250,6 +258,14 @@ func TestAdoptCampaign_ConnectionDefectsAreDistinguished(t *testing.T) {
 			s, _ := newAdoptService(t, model.ProviderGoogleAds, disp)
 
 			_, err := s.AdoptCampaign(context.Background(), adoptPayload())
+			if tc.want500 {
+				var ise *briefs.InternalServerError
+				if !errors.As(err, &ise) {
+					t.Fatalf("got %T (%v), want *briefs.InternalServerError — a defect in the LF system "+
+						"row is an operator page, not a repair instruction for this project", err, err)
+				}
+				return
+			}
 			var conflict *briefs.ConflictError
 			if !errors.As(err, &conflict) {
 				t.Fatalf("got %T (%v), want *briefs.ConflictError", err, err)

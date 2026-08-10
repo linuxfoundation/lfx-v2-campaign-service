@@ -186,17 +186,14 @@ campaign fail with a guaranteed 400.
 
 ## Campaign adoption
 
-`BriefService.AdoptCampaign` (backing `POST .../campaigns/adopt`) binds a campaign that
-ALREADY exists on the ad platform to an approved brief; the one platform call it makes is a
-read. This is the path for campaigns launched in a platform's own console before onboarding,
-or during an outage — without it they are unreachable by the metrics read, the status toggle
+`BriefService.AdoptCampaign` (backing `POST .../campaigns/adopt`) binds a campaign that ALREADY
+exists on the ad platform to an approved brief; its one platform call is a read. Without it,
+campaigns launched in a platform's own console are unreachable by the metrics read, the toggle
 and delete, all of which resolve a campaign through its stored row.
 
-`Orchestrator.LookupPlatformCampaign` type-asserts the dispatcher for the optional
-`CampaignAdopter` capability, the same discovery pattern as `MetricsReader`, `StatusToggler`
-and `AccountLister`: adoption is NOT part of `PlatformDispatcher`, so platforms gain it one
-at a time and an unwired platform answers `ErrAdoptionUnsupported` (400) with no network
-call. Bounded by `adoptLookupTimeout` (20s, matching `metricsCallTimeout`).
+`Orchestrator.LookupPlatformCampaign` discovers the optional `CampaignAdopter` capability by
+type assertion (see `internal-dispatch.md`) and bounds the call with `adoptLookupTimeout`
+(20s, matching `metricsCallTimeout`).
 
 **Absence and unverifiability are distinct, and that is the whole design.** The
 `CampaignAdopter` contract says `(nil, nil)` means the platform ANSWERED and there is no such
@@ -210,29 +207,27 @@ Every check that can be made locally precedes the platform call: project slug, p
 validity, a `TrimSpace` re-check of `platform_campaign_id` (the design's `MinLength(1)`
 rejects `""` but not `" "`, and an effectively-empty filter on a lenient client returns
 somebody else's campaign as the adoption target), then the brief load and its approved gate.
-Loading the brief first stops adoption being an oracle for which campaign ids exist on an ad
-account the caller cannot otherwise see, and stops an unapproved brief acquiring campaigns by
-a route that bypasses approval.
+Loading the brief first stops adoption being an oracle for campaign ids on an ad account the
+caller cannot otherwise see, and stops approval being bypassed.
 
 Two details of what gets persisted:
 
-- **The id bound is `ref.ID`, the one the platform echoed, never the one requested.** They
-  are equal on every correct response — the Google Ads lookup errors when its own filter comes
-  back unhonoured — so persisting the echo means a platform that ever answers with a different
-  campaign cannot have the requested id written against its record.
+- **The id bound is `ref.ID`, the one the platform echoed, never the one requested.** They are
+  equal on every correct response — the Google Ads lookup errors when its own filter comes back
+  unhonoured — so a platform that ever answers with a different campaign cannot have the
+  requested id written against its record.
 - **`Status` is `model.CampaignStatusCreated`, never the platform's run state.** That column is
   this service's lifecycle vocabulary, which `CampaignStatusDeletable` and
   `CampaignStatusNeedsReconciliation` switch on; both default-deny an unknown value, so a stored
-  `ENABLED` would be undeletable AND never reconciled. `created` is exactly true of an adopted
-  campaign; the upstream ENABLED/PAUSED axis is served by the metrics read.
-  `model.PlatformCampaignRef` therefore carries no status: adoptability is the ADAPTER's
-  decision, in the platform's own vocabulary.
+  `ENABLED` would be undeletable AND never reconciled. `model.PlatformCampaignRef` therefore
+  carries no status: adoptability is the ADAPTER's decision, in the platform's own vocabulary.
 
-Persistence goes through `CampaignRepository.AdoptCampaign`, deliberately not
-`UpsertCampaign` — see `internal-infrastructure-postgres.md`. An already-live
-`(brief, platform)` pair is a 409; `ErrAccountNotSelected` is matched ABOVE the broad
-`ErrConnectionNotUsable` arm, because it is wrapped alongside it and a broad match first
-would tell an operator whose credentials are fine to go repair them.
+Persistence goes through `CampaignRepository.AdoptCampaign`, deliberately not `UpsertCampaign`
+— see `internal-infrastructure-postgres.md`. An already-live `(brief, platform)` pair is a 409.
+The connection arms are ordered exactly as in the metrics and toggle switches, and for the same
+reason: `ErrSystemConnectionNotUsable` (500, page an operator) then `ErrAccountNotSelected`
+(409) then the broad `ErrConnectionNotUsable` (409). Each is WRAPPED alongside the next, so a
+broad match placed first wins and names a scope the caller cannot address.
 
 ## Account discovery
 

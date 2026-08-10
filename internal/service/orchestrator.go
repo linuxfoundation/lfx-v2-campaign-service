@@ -146,11 +146,9 @@ const metricsCallTimeout = 20 * time.Second
 // with no cascade, so it can use the same ceiling as metrics reads.
 const accountsCallTimeout = 20 * time.Second
 
-// adoptLookupTimeout bounds the SYNCHRONOUS pre-bind platform lookup. It matches the metrics
-// and account-discovery budgets because it is the same kind of call: one bounded read issued
-// inside a request the caller is waiting on. It is deliberately far below the dispatch budget
-// — nothing here creates anything upstream, so there is no partially-completed paid work that
-// a longer wait could still resolve.
+// adoptLookupTimeout bounds the SYNCHRONOUS pre-bind platform lookup: the same kind of call as
+// metrics and account discovery, so the same ceiling. Far below the dispatch budget because
+// nothing here creates anything upstream for a longer wait to resolve.
 const adoptLookupTimeout = 20 * time.Second
 
 // jobFinalizeTimeout bounds the terminal job-status write, which runs on a
@@ -228,24 +226,19 @@ type AccountLister interface {
 	ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error)
 }
 
-// CampaignAdopter is an OPTIONAL dispatcher capability: look a campaign up BY ITS PLATFORM
-// ID, so an existing campaign can be bound to a brief without creating anything. Like
-// StatusToggler, MetricsReader and AccountLister, the orchestrator type-asserts for it
-// rather than adding it to PlatformDispatcher; a dispatcher that doesn't implement it
-// yields a clean "not supported" error (ErrAdoptionUnsupported -> 400).
-//
-// This is a pure read. It MUST NOT create, mutate or resurrect anything upstream: adoption's
-// safety argument is that the campaign already existed and this service merely confirmed it.
+// CampaignAdopter is an OPTIONAL dispatcher capability: look a campaign up BY ITS PLATFORM ID,
+// so an existing one can be bound to a brief without creating anything. Type-asserted like
+// StatusToggler, MetricsReader and AccountLister, so a dispatcher without it yields a clean
+// ErrAdoptionUnsupported -> 400. It MUST NOT create, mutate or resurrect anything upstream:
+// adoption's safety argument is that the campaign already existed and this service confirmed it.
 type CampaignAdopter interface {
 	// LookupCampaign reports what the platform holds for platformCampaignID under the
 	// project's connection.
 	//
-	// The (nil, nil) return is MEANINGFUL here — "the platform answered, and no such
-	// campaign exists" — unlike MetricsReader and AccountLister, where it is a contract
-	// violation. Absence is a 404 the caller acts on; an unverifiable answer must be an
-	// ERROR, never a nil ref. An implementation that cannot tell the two apart must return
-	// an error, because a false absence tells an operator "your campaign isn't there"
-	// about a campaign sitting on the platform spending money.
+	// The (nil, nil) return is MEANINGFUL here — "the platform answered, and no such campaign
+	// exists" — unlike MetricsReader and AccountLister, where it is a contract violation. An
+	// unverifiable answer must be an ERROR, never a nil ref: a false absence tells an operator
+	// "your campaign isn't there" about a campaign sitting on the platform spending money.
 	LookupCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) (*model.PlatformCampaignRef, error)
 }
 
@@ -1152,19 +1145,15 @@ func (o *Orchestrator) ReadCampaignMetrics(ctx context.Context, projectID string
 	return m, nil
 }
 
-// LookupPlatformCampaign confirms that platformCampaignID names a real campaign on the
-// platform, under the project's own connection. It never mutates the platform or the DB.
-//
-// It returns ErrPlatformCampaignAbsent — not (nil, nil) — when the platform answers that no
-// such campaign exists, so a caller cannot reach a nil ref on a nil error and there is no
-// shape in which "absent" and "we could not tell" look alike to the handler.
+// LookupPlatformCampaign confirms that platformCampaignID names a real campaign under the
+// project's own connection. It never mutates the platform or the DB, and returns
+// ErrPlatformCampaignAbsent — not (nil, nil) — when the platform answers that no such campaign
+// exists, so "absent" never looks like "we could not tell".
 func (o *Orchestrator) LookupPlatformCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) (*model.PlatformCampaignRef, error) {
-	// Guarded here as well as at the transport layer (where the design rejects it with a
-	// 400): an empty id is a lookup for "any campaign", and on a platform whose filter
-	// degrades to "unfiltered" that returns SOMEBODY ELSE'S campaign as the adoption
-	// target. Unreachable over HTTP today; it exists so a future in-process caller cannot
-	// reach the platform with no id. A bare error is deliberate — this is a programming
-	// fault, and a client-facing 400 sentinel would advertise it as caller-provokable.
+	// Guarded here as well as at the transport layer: an empty id is a lookup for "any
+	// campaign", and on a platform whose filter degrades to "unfiltered" that returns SOMEBODY
+	// ELSE'S campaign as the adoption target. Unreachable over HTTP today, so a bare error
+	// rather than a 400 sentinel — a programming fault, not something callers can provoke.
 	if strings.TrimSpace(platformCampaignID) == "" {
 		return nil, fmt.Errorf("lookup platform campaign: no platform campaign id given for %s", platform)
 	}
@@ -1185,9 +1174,8 @@ func (o *Orchestrator) LookupPlatformCampaign(ctx context.Context, projectID str
 	if ref == nil {
 		return nil, fmt.Errorf("%w: %s campaign %s", ErrPlatformCampaignAbsent, platform, platformCampaignID)
 	}
-	// A ref with no id cannot be bound to anything: persisting it yields a row that claims
-	// an upstream campaign while carrying no way to reach it, and every later read treats
-	// that row as provisioned. An unverifiable answer, not an absence.
+	// A ref with no id cannot be bound to anything: the row would claim an upstream campaign
+	// with no way to reach it, and every later read treats it as provisioned. Unverifiable.
 	if strings.TrimSpace(ref.ID) == "" {
 		return nil, fmt.Errorf("%s campaign lookup returned a campaign with no id for %s", platform, platformCampaignID)
 	}

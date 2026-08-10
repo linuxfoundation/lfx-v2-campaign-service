@@ -8,50 +8,51 @@ added in [LFXV2-3054](2026-08-08-lfxv2-3054-googleads-get-campaign.md). The mech
 
 ## The gap it closes
 
-Every campaign operation this service offers — the metrics read, the status toggle, delete —
-resolves the campaign through its stored row. A campaign launched in the Google Ads console
-before a foundation onboarded, or during an outage, has no row, so none of them can reach it.
-The only previous route to a row was `POST .../campaigns`, which CREATES upstream; using it to
-register an existing campaign would produce a second paid campaign beside the first.
+Every campaign operation this service offers — metrics, toggle, delete — resolves the campaign
+through its stored row. A campaign launched in the Google Ads console before a foundation
+onboarded, or during an outage, has no row. The only previous route to a row was `POST
+.../campaigns`, which CREATES upstream; using it to register an existing campaign would produce
+a second paid campaign beside the first.
 
 ## Why not `UpsertCampaign`
 
-Reaching for the existing upsert would have been the small change, and it is the wrong one.
-Its `DO UPDATE` arm is correct where it is used: the row it overwrites describes the same
-campaign this service is provisioning, which is how a retried dispatch converges. Adoption's
-caller names an **arbitrary** upstream campaign, so the same arm silently repoints a live
-binding, orphaning the campaign it used to name — still running, still spending, no longer
-reachable from here, and this service never pauses or deletes upstream on its own. Freeing a
-wrong binding is already an explicit operation (`DELETE`); adoption must not become a second,
-implicit one.
+Reaching for the existing upsert would have been the small change, and it is the wrong one. Its
+`DO UPDATE` arm is correct where it is used: the row it overwrites describes the same campaign
+this service is provisioning, which is how a retried dispatch converges. Adoption's caller names
+an **arbitrary** upstream campaign, so the same arm silently repoints a live binding, orphaning
+the campaign it used to name — still running, still spending, and this service never pauses or
+deletes upstream on its own. Freeing a wrong binding is already an explicit operation
+(`DELETE`); adoption must not become a second, implicit one.
 
 ## Why 404 and 503 are not two flavours of failure
 
-An operator told **"no such campaign"** concludes it is not there and creates one. If the
-real situation was "we could not reach Google Ads", they now have two campaigns spending
-against one budget. A false absence costs money; a false 503 costs a retry. That asymmetry
-is why the fail-closed contract runs through all three layers rather than being a convention
-at one of them, and why `TestAdoptCampaign_UnverifiableIsNeverReportedAsAbsent` exists.
+An operator told **"no such campaign"** concludes it is not there and creates one. If the real
+situation was "we could not reach Google Ads", they now have two campaigns spending against
+one budget. A false absence costs money; a false 503 costs a retry. That asymmetry is why the
+fail-closed contract runs through all three layers rather than being a convention at one of
+them, and why `TestAdoptCampaign_UnverifiableIsNeverReportedAsAbsent` exists.
 
 ## The status field was a real defect, caught before commit
 
-The first version stored `ref.Status` — `"ENABLED"` — into `Campaign.Status`, and it looked
-right. `Campaign.Status` is this service's LIFECYCLE vocabulary, and both
-`CampaignStatusDeletable` and `CampaignStatusNeedsReconciliation` default-DENY an unknown
-value, so an adopted row reading `ENABLED` would have been undeletable *and* never
-reconciled — outside both predicates rather than covered by one.
+The first version stored `ref.Status` — `"ENABLED"` — into `Campaign.Status`, this service's
+LIFECYCLE vocabulary, where both `CampaignStatusDeletable` and
+`CampaignStatusNeedsReconciliation` default-DENY an unknown value: the row would have been
+undeletable *and* never reconciled. The fix went a level deeper than the assignment —
+`model.PlatformCampaignRef` now carries no status at all, because adoptability is the
+ADAPTER's decision, in the platform's own vocabulary. It surfaced only because the test
+asserted `res.Status == "ENABLED"`, which is what asking "what would break if this were
+wrong" buys over "does this pass".
 
-The fix went one level deeper than the assignment: `model.PlatformCampaignRef` no longer
-carries a status at all. Adoptability is the ADAPTER's decision, in the platform's own
-vocabulary; passing a platform literal up would oblige the service layer to learn every
-platform's dialect, and the only place it was consumed was the one field that must not
-contain it. It surfaced because the test written alongside the handler asserted
-`res.Status == "ENABLED"` — it pinned the bug, which is what asking "what would break if
-this were wrong" buys over "does this pass".
+## Round N+1: the arm a copied switch left out
 
-## Capability, not contract
+The error switch was written against the metrics and toggle switches and is one arm short:
+`domain.ErrSystemConnectionNotUsable` was missing. It is reachable — `LookupCampaign` resolves
+through `resolveGoogleAdsClient`, whose deferred `systemScoped` **wraps rather than replaces**
+— so `errors.Is` still reported `ErrConnectionNotUsable` and the general arm answered a 409
+telling the caller to repair a connection their project does not have. The sentinel exists to
+prevent exactly that misdirection, so omitting the arm made the tag decorative.
 
-`CampaignAdopter` is an optional dispatcher interface discovered by type assertion, like
-`StatusToggler`, `MetricsReader` and `AccountLister` before it. Keeping it out of
-`PlatformDispatcher` means platforms gain adoption one at a time and an unwired platform
-answers 400 with no network call — Google Ads is the only implementation today.
+The generalisable part is WHICH arm went missing. Copying a switch reproduces the arms that fire
+in ordinary testing and drops the one for a condition nothing local produces; both remaining arms
+returned a `ConflictError`, so the code did not look incomplete. The new test asserts the response
+TYPE rather than its message, which is what makes the deleted arm fail rather than fall through.
