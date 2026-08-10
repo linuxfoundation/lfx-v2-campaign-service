@@ -294,7 +294,14 @@ var (
 	ErrPlatformCampaignAlreadyBound = errors.New("this platform campaign is already bound to another brief")
 
 	// ErrAdoptionRequiresOwnConnection indicates the project has no ad-platform connection of
-	// its own, so its credentials resolved to the shared LF system account. Maps to 409.
+	// its own. Maps to 409.
+	//
+	// It does NOT mean the credentials resolved to the shared LF system account: adoption calls
+	// credsSource.resolveOwned, which consults the project scope alone, so the LF row is never
+	// loaded on this path. The sentinel means the project-scoped lookup found nothing, and the
+	// fallback that every other platform call would have taken was declined rather than taken
+	// and rejected — see internal/dispatch for why resolving it first would misreport a broken
+	// LF row as this project's problem.
 	//
 	// Every other platform call names a campaign the project already has a ROW for, and the
 	// row is the authorization. Adoption's caller names an ARBITRARY upstream id, so under the

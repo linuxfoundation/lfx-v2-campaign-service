@@ -346,9 +346,14 @@ Each of the four sub-tests is bound to a different way the definition can be wro
 `brief_id` in the key (the shape 000013 uses, and so the mistake most likely to be copied) lets
 the second brief bind; dropping `status <> 'deleted'` makes deletion permanently reserve the
 upstream campaign; dropping `platform_campaign_id IS NOT NULL` makes unprovisioned dispatch
-claims collide with each other; keying globally instead of per-project lets one project's
-numeric id lock another out of adopting its own campaign. All four were verified by making each
-of those edits to the migration and watching the corresponding sub-test fail.
+claims collide with each other; and ADDING `project_id` to the key lets a second project bind a
+campaign the first already holds. That last one is the edit that reads as the careful choice — a
+bare platform id is unique only within the account that minted it — and it is wrong for exactly the
+provider adoption supports: Google Ads is ONE shared customer across every foundation, with a
+connection row per project pointing at it, so a project-scoped key inserts both rows cleanly and
+they then toggle the same live campaign against each other. 000020 keys globally on purpose. All
+four were verified by making each of those edits to the migration and watching the corresponding
+sub-test fail.
 
 `ConnectionRepo.Disconnected` is here for a sharper version of the same reason. Its whole job
 is to tell a deliberate disconnect apart from never having connected, and the two are

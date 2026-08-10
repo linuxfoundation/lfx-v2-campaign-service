@@ -260,3 +260,44 @@ project column was defensible reasoning applied to an account model this repo do
 and does not have. Adding a dimension to a uniqueness key always looks conservative — it can
 only reject less — which is precisely why the direction of "less" has to be checked against
 the deployment, not the design.
+
+## The service was trimming an id the adapter refuses on purpose
+
+`AdoptCampaign` normalised the caller's `platform_campaign_id` with `strings.TrimSpace` and
+forwarded the trimmed value. Google Ads' `canonicalCampaignID` deliberately has NO `TrimSpace`,
+with a comment saying why: `" 123 "` is not a spelling that API produces, so accepting it turns
+"this row is malformed" into "this row is campaign 123" — the substitution a fail-closed lookup
+exists to refuse. `GetCampaign` answers `ErrNotACampaignID` → 400 for such a value.
+
+Trimming one layer up silently undid that refusal: `" 555 "` became adoptable, binding a live
+paid campaign off an id the adapter had already judged unsafe to resolve. The trim now only
+DETECTS the blank — `strings.TrimSpace(p.PlatformCampaignID) == ""` — and the value forwarded is
+the caller's, verbatim. `TestAdoptCampaign_APaddedIDIsNotNormalisedIntoAValidOne` asserts the
+adapter receives the padding; revert the trim and it fails naming the id it actually saw.
+
+The class: **a normalisation inherited from the first caller redefines the contract for the
+second.** It was a no-op for every id this service mints and could only ever change behaviour for
+the adoption caller, which is the one caller whose ids come from outside.
+
+## Three claims of ownership the code does not establish
+
+The same premise the account-column round corrected was still asserted in three other places, and
+all three now say what `resolveOwned` actually proves — that the connection ROW is project-scoped:
+
+- The `ErrAdoptionRequiresOwnConnection` 409 said adoption binds "a campaign from an ad account
+  this project owns". It binds one through the project's own CONNECTION; inside a shared customer
+  that is not the same thing.
+- `internal/domain/errors.go` described the sentinel as "credentials resolved to the shared LF
+  system account". They never resolve there — `credsSource.resolveOwned` consults the project
+  scope alone, and the whole point of declining the fallback rather than rejecting it after the
+  fact is that the LF row is never loaded. The sentinel means the project lookup was absent.
+- `internal/dispatch`'s concept file still carried "the only check that holds", the same phrasing
+  already corrected in the source comment.
+
+## The test inventory described the correct index as the defect
+
+`internal/infrastructure/postgres.md` listed the four ways migration 000020's key can be wrong and
+named "keying globally instead of per-project" as one of them. That is what 000020 does, on
+purpose, for a full screen of recorded reasoning: Google Ads is ONE shared customer across every
+foundation, so a project-scoped key lets two projects bind one campaign and toggle it against each
+other. The edit that fails the fourth sub-test is ADDING `project_id`, not removing it.

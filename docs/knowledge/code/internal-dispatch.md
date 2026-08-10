@@ -529,8 +529,15 @@ projects inside ONE LF-owned ad account, where an endpoint that takes a caller-s
 campaign id lets project A bind, meter and pause a campaign project B created there; the
 account-mismatch guard cannot see it, because both projects resolve to the same customer id.
 No upstream metadata settles ownership either — a campaign's name, labels and budget are set by
-whoever created it. Requiring a project-owned connection is the only check that holds, and it
-forbids nothing real: a project with no ad account of its own has no campaign to adopt. Every
+whoever created it. Requiring a project-owned connection is what this layer can enforce, and it
+forbids nothing real: a project with no ad account of its own has no campaign to adopt. It is not
+an ownership PROOF, and must not be read as one — inside a shared customer, a project holding its
+own connection can still name a campaign another project created. Nothing here can prevent that,
+because the project's credential already confers read and pause on every campaign in that customer
+straight through the provider's API, and adoption cannot be more restrictive than the credential it
+uses; account tenancy is where that boundary lives (see migration 000020). What the gate does
+guarantee is narrower and still worth having: adoption never borrows the LF fallback, so it can
+never reach an account the project has no credential of its own for. Every
 OTHER platform call keeps the fallback, because each names a campaign this service already has a
 project-scoped row for, and that row is the authorization.
 

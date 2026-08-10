@@ -506,3 +506,29 @@ func TestAdoptCampaign_MalformedPlatformIDIs400(t *testing.T) {
 		t.Errorf("persisted %d campaigns for a malformed id, want 0", len(camps.adopted))
 	}
 }
+
+// A padded id reaches the adapter verbatim. The service trims only to DETECT a blank; it must
+// not rewrite the value, because the Google Ads adapter refuses padding on purpose
+// (canonicalCampaignID has no TrimSpace: " 123 " is not a spelling that API produces, so
+// accepting it converts "this id is malformed" into "this id is campaign 123"). Trimming one
+// layer up silently undoes that refusal and adopts a live paid campaign off an id the adapter
+// had already judged unsafe to resolve.
+func TestAdoptCampaign_APaddedIDIsNotNormalisedIntoAValidOne(t *testing.T) {
+	disp := &adopterDispatcher{err: fmt.Errorf("%w: %w", domain.ErrInvalidPlatformCampaignID, errors.New(`" 1234567890 " is not a campaign id`))}
+	s, camps := newAdoptService(t, model.ProviderGoogleAds, disp)
+
+	p := adoptPayload()
+	p.PlatformCampaignID = " 1234567890 "
+	_, err := s.AdoptCampaign(context.Background(), p)
+
+	if disp.gotID != " 1234567890 " {
+		t.Errorf("adapter received %q, want the caller's id verbatim (%q): normalising here overrides the adapter's deliberate refusal of padded ids", disp.gotID, " 1234567890 ")
+	}
+	var bad *briefs.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("got %T (%v), want *briefs.BadRequestError — a padded id is malformed, not adoptable", err, err)
+	}
+	if len(camps.adopted) != 0 {
+		t.Errorf("persisted %d campaigns for a padded id, want 0", len(camps.adopted))
+	}
+}

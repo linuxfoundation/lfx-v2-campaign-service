@@ -521,8 +521,15 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 	}
 	// MinLength(1) rejects "" but not " ", and a whitespace-only id reaches the platform as an
 	// effectively empty filter — see LookupPlatformCampaign for why that is dangerous.
-	platformCampaignID := strings.TrimSpace(p.PlatformCampaignID)
-	if platformCampaignID == "" {
+	//
+	// TrimSpace DETECTS the blank; it does not rewrite the id. The value forwarded is the
+	// caller's, verbatim. Google Ads treats padding as malformed on purpose
+	// (canonicalCampaignID has no TrimSpace, deliberately: " 123 " is not a spelling that
+	// API produces, and accepting it turns "this id is malformed" into "this id is campaign
+	// 123"). Trimming here would silently undo that refusal one layer up and adopt a campaign
+	// off an id the adapter had already judged unsafe to resolve.
+	platformCampaignID := p.PlatformCampaignID
+	if strings.TrimSpace(platformCampaignID) == "" {
 		return nil, &briefs.BadRequestError{Code: "400", Message: "platform_campaign_id is required"}
 	}
 	// Load the brief first: one that does not exist, or belongs to another project, must 404
@@ -568,7 +575,7 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 			// ad account" with a 500 about a row the caller does not own and adoption would have
 			// refused in perfect health. Any adopter added later must resolve the same way; see
 			// service.CampaignAdopter.
-			return nil, &briefs.ConflictError{Code: "409", Message: "this project has no ad-platform connection of its own — adoption can only bind a campaign from an ad account this project owns; connect the project's own ad account first"}
+			return nil, &briefs.ConflictError{Code: "409", Message: "this project has no ad-platform connection of its own — adoption can only bind a campaign through the project's own connection, not the shared LF account; connect the project's own ad account first"}
 		case errors.Is(lerr, domain.ErrAccountNotSelected):
 			// ABOVE the general arm, and wrapped ALONGSIDE it: a broad match placed first
 			// swallows this and tells an operator whose credentials are fine to repair them.
