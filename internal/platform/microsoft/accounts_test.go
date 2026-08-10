@@ -496,6 +496,69 @@ func TestListAdAccounts_ReturnsUnusableAccountsWithTheirReason(t *testing.T) {
 	}
 }
 
+// TestListAdAccounts_ViewerRoleIsNotUsable ensures that accounts discovered through
+// a Viewer role (RoleId 100, read-only) are not marked as usable, even if the account
+// status is Active and pause reason is 0.
+func TestListAdAccounts_ViewerRoleIsNotUsable(t *testing.T) {
+	// Custom handler that returns User/Query with a Viewer role (RoleId 100)
+	c := newCustomerClient(t, AccountConfig{}, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/User/Query") {
+			// Viewer role has RoleId 100 (read-only)
+			_, _ = io.WriteString(w, `{"CustomerRoles":[{"CustomerId":"5550001","RoleId":100}]}`)
+			return
+		}
+		if r.URL.Path != "/CustomerManagement/v13/AccountsInfo/Query" {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return
+		}
+		// Return an active, unpaused account
+		_, _ = io.WriteString(w, `{"AccountsInfo":[
+			{"Id":"1234567","Name":"Active Account","Number":"X1234567","AccountLifeCycleStatus":"Active","PauseReason":0}
+		]}`)
+	})
+
+	got, err := c.ListAdAccounts(context.Background())
+	if err != nil {
+		t.Fatalf("ListAdAccounts: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d accounts, want 1", len(got))
+	}
+
+	// Even though status is Active and PauseReason is 0, Usable() should return false
+	// because the Viewer role is read-only
+	if got[0].Usable() {
+		t.Errorf("Usable() = true, want false for Viewer role (read-only)")
+	}
+}
+
+// TestListAdAccounts_TooManyCustomersFails ensures that discovery fails when the User/Query
+// response contains more than the maximum number of customers (1000), preventing unbounded
+// request quota and time consumption.
+func TestListAdAccounts_TooManyCustomersFails(t *testing.T) {
+	c := newCustomerClient(t, AccountConfig{}, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/User/Query") {
+			// Return 1001 customer roles, exceeding the 1000 limit
+			roles := make([]string, 1001)
+			for i := range roles {
+				id := 5550001 + i
+				roles[i] = fmt.Sprintf(`{"CustomerId":%d,"RoleId":1}`, id)
+			}
+			_, _ = io.WriteString(w, `{"CustomerRoles":[`+strings.Join(roles, ",")+`]}`)
+			return
+		}
+		http.Error(w, "unexpected path", http.StatusNotFound)
+	})
+
+	_, err := c.ListAdAccounts(context.Background())
+	if err == nil {
+		t.Fatalf("ListAdAccounts: got no error, want error for >1000 customers")
+	}
+	if !strings.Contains(err.Error(), "exceeding the maximum of 1000") {
+		t.Errorf("error = %v, want message about exceeding 1000 customer limit", err)
+	}
+}
+
 // TestListAdAccounts_AbsentEnvelopeIsNotZeroAccounts is the false-absence guard. `{}`
 // and `{"AccountsInfo":[]}` mean different things, and only the second is an answer.
 func TestListAdAccounts_AbsentEnvelopeIsNotZeroAccounts(t *testing.T) {

@@ -66,14 +66,30 @@ type AdAccount struct {
 	// Retained raw rather than reduced to a bool so an undocumented value survives to
 	// the caller instead of being flattened into "paused, reason unknown".
 	PauseReason int
+	// RoleID is Microsoft's role id for the role used to discover this account. Role
+	// 100 is Viewer (read-only); other roles may have write permission. 0 means the
+	// role was not available (e.g., when the connection was pre-configured with an
+	// account id).
+	RoleID int
 }
 
 // Usable reports whether the account is one a campaign can be bound to and expected to
-// run: status exactly "Active" AND no pause reason. It is an ALLOW-LIST, not an
-// exclusion — an absent or unrecognized status returns false, because an unknown status
-// is not evidence the account can spend. It is deliberately NOT used to filter
+// run: status exactly "Active" AND no pause reason AND reachable with write permission.
+// It is an ALLOW-LIST, not an exclusion — an absent or unrecognized status returns false,
+// because an unknown status is not evidence the account can spend. Viewer role (100) is
+// read-only and cannot create campaigns. It is deliberately NOT used to filter
 // ListAdAccounts.
-func (a AdAccount) Usable() bool { return a.Status == "Active" && a.PauseReason == 0 }
+func (a AdAccount) Usable() bool {
+	if a.Status != "Active" || a.PauseReason != 0 {
+		return false
+	}
+	// RoleID 100 is Viewer (read-only); other roles and 0 (no role, pre-configured account)
+	// are assumedto have write permission.
+	if a.RoleID == 100 {
+		return false
+	}
+	return true
+}
 
 // StatusLabel returns a human-readable reason for a KNOWN-BAD lifecycle status, and ""
 // for Active, absent, or unrecognized ones. An empty label is not a claim that the
@@ -145,6 +161,13 @@ type userQueryResponse struct {
 // the wrong source for this; the customer ids are what this call is for.
 type customerRole struct {
 	CustomerID json.Number `json:"CustomerId"`
+	RoleID     json.Number `json:"RoleId"`
+}
+
+// discoveredCustomer is a customer id with its associated role id.
+type discoveredCustomer struct {
+	id     string
+	roleID int64
 }
 
 // discoveryCustomerIDs resolves which customers to enumerate accounts under.
@@ -165,7 +188,7 @@ type customerRole struct {
 //
 // The list is returned in Microsoft's own order, and the caller keeps the first entry for
 // a duplicated account id, so the result is deterministic for a given response.
-func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]string, error) {
+func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]discoveredCustomer, error) {
 	if c.account.CustomerID != "" {
 		// The SAME identity check the discovered roles below get, and for the same
 		// reason. doCustomerRequest already rejects a non-digit CustomerID, but that is
@@ -186,7 +209,8 @@ func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]string, error) {
 		if id == "" {
 			return nil, fmt.Errorf("invalid Microsoft Advertising customer id %q on this connection: must be a positive integer", clipID(c.account.CustomerID))
 		}
-		return []string{id}, nil
+		// Configured customers have no role information; use 0 to indicate unknown role.
+		return []discoveredCustomer{{id: id, roleID: 0}}, nil
 	}
 
 	// idempotent: a read, so a 429 retry cannot create anything. UserId is omitted
@@ -213,7 +237,14 @@ func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("microsoft customer discovery returned a 2xx response with no CustomerRoles; cannot confirm which customers these credentials reach")
 	}
 
-	ids := make([]string, 0, len(*resp.CustomerRoles))
+	// Define a maximum customer count to prevent unbounded request quota consumption.
+	// This preserves the fail-not-truncate contract without allowing response amplification.
+	const maxCustomers = 1000
+	if len(*resp.CustomerRoles) > maxCustomers {
+		return nil, fmt.Errorf("microsoft customer discovery returned %d CustomerRoles, exceeding the maximum of %d; cannot confirm which customers these credentials reach", len(*resp.CustomerRoles), maxCustomers)
+	}
+
+	customers := make([]discoveredCustomer, 0, len(*resp.CustomerRoles))
 	seen := make(map[string]struct{}, len(*resp.CustomerRoles))
 	for _, role := range *resp.CustomerRoles {
 		// numberID, not accountIDRE. The two differ on exactly the values that matter
@@ -235,9 +266,17 @@ func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]string, error) {
 			continue
 		}
 		seen[id] = struct{}{}
-		ids = append(ids, id)
+		// Extract role id from the role; default to 0 if absent or unparseable.
+		var roleID int64
+		if role.RoleID != "" {
+			// Try to parse as int64; if it fails, use 0 (unknown).
+			if rid, err := strconv.ParseInt(string(role.RoleID), 10, 64); err == nil {
+				roleID = rid
+			}
+		}
+		customers = append(customers, discoveredCustomer{id: id, roleID: roleID})
 	}
-	return ids, nil
+	return customers, nil
 }
 
 // ListAdAccounts enumerates every Microsoft Advertising account these credentials can
@@ -276,7 +315,7 @@ func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]string, error) {
 // dropping a row. A truncated account list is indistinguishable from a complete one at
 // the boundary, and the caller acts on the absence.
 func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
-	customerIDs, err := c.discoveryCustomerIDs(ctx)
+	customers, err := c.discoveryCustomerIDs(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -286,8 +325,8 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 	// where nil serializes as null.
 	accounts := make([]AdAccount, 0)
 	seen := make(map[string]struct{})
-	for _, customerID := range customerIDs {
-		batch, berr := c.accountsInfoForCustomer(ctx, customerID)
+	for _, customer := range customers {
+		batch, berr := c.accountsInfoForCustomer(ctx, customer.id, int(customer.roleID))
 		if berr != nil {
 			// One customer failing fails the whole call. A partial union is the failure
 			// mode this function exists to remove: it is indistinguishable from a
@@ -306,7 +345,8 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 }
 
 // accountsInfoForCustomer enumerates the accounts reachable under one customer.
-func (c *Client) accountsInfoForCustomer(ctx context.Context, customerID string) ([]AdAccount, error) {
+// roleID is the Microsoft role id for the role used to discover this customer (0 for unknown).
+func (c *Client) accountsInfoForCustomer(ctx context.Context, customerID string, roleID int) ([]AdAccount, error) {
 	// CustomerId is always sent here: discoveryCustomerIDs resolved a concrete customer,
 	// either the configured one or one of the credentials' own roles. It is kept as the
 	// string it was stored or decoded as rather than parsed to a number, so there is one
@@ -372,6 +412,7 @@ func (c *Client) accountsInfoForCustomer(ctx context.Context, customerID string)
 			Number:      strings.TrimSpace(ai.Number),
 			Status:      ai.Status,
 			PauseReason: pause,
+			RoleID:      roleID,
 		})
 	}
 	return accounts, nil
