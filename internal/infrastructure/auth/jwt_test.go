@@ -4,6 +4,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -250,13 +251,13 @@ func TestVerifyActor_JWKSErrorBodyIsNotMistakenForAKeySet(t *testing.T) {
 	if errors.Is(err, ErrUnauthenticated) {
 		t.Errorf("err = %v, want NOT ErrUnauthenticated: the token was never checked", err)
 	}
-	// The status has to reach the operator. requireKeys ALSO catches this case, which is
-	// why the sentinel above cannot distinguish the two guards — but it can only say "no
-	// signing keys", which describes a healthy issuer mid-rotation just as well as it
-	// describes a 404 on a mistyped path. The status and the URL are what name the actual
-	// fault, and only the transport guard has them. Without it this assertion is the one
-	// that fails, and the operator is left diagnosing a wrong URL from a message about
-	// key rotation.
+	// The status has to reach the operator. The empty-key-set check ALSO catches this
+	// case, which is why the sentinel above cannot distinguish the two — but it can only
+	// say "no signing keys", which describes a healthy issuer mid-rotation just as well
+	// as it describes a 404 on a mistyped path. The status is what names the actual
+	// fault, and only the status arm has it. Without it this assertion is the one that
+	// fails, and the operator is left diagnosing a wrong URL from a message about key
+	// rotation.
 	if !strings.Contains(err.Error(), "HTTP 404") {
 		t.Errorf("err = %v, want the HTTP status in the message: it is what identifies the "+
 			"misconfiguration as a wrong JWKS endpoint rather than an issuer with no keys", err)
@@ -269,32 +270,38 @@ func TestVerifyActor_JWKSErrorBodyIsNotMistakenForAKeySet(t *testing.T) {
 	}
 }
 
-// TestVerifyActor_EmptyKeySetIsUnavailable drives requireKeys through the REAL provider
-// rather than calling it with a constructed value, and that is the whole design of the
-// test: requireKeys type-asserts the key set, and the middleware decodes into
-// gopkg.in/go-jose/go-jose.v2 (jwks/provider.go:13). An assertion written against a
-// different go-jose major compiles, vets, lints, and never matches — a guard that passes
-// everything through. A test that builds the value itself would assert against whichever
-// version the TEST imported and pass just as vacuously. Only the provider's own value
-// can tell the two apart.
+// TestVerifyActor_EmptyKeySetIsUnavailable covers the 200-shaped failure with no status
+// anomaly at all: `{"keys":[]}` is what an issuer mid-rotation with nothing published
+// returns. A key set with no keys cannot verify anything, so returning it as a success
+// means every token that arrives is refused as bad — 400 for what is squarely a 503.
 //
-// The condition is reachable without any status anomaly: a 200 serving `{"keys":[]}` is
-// what an issuer mid-rotation with nothing published returns. A key set with no keys
-// cannot verify anything, so returning it as a success means every token that arrives is
-// refused as bad — 400 for what is squarely a 503.
+// The recovery half is the load-bearing assertion, and it is what forced the check down
+// into the transport. CachingProvider.refreshKey STORES the decoded set before returning
+// it (jwks/provider.go:207-221), so a check wrapped around provider.KeyFunc rejects an
+// empty set only AFTER it is cached: every request answers 503 for the full TTL even
+// though the endpoint recovered seconds later. Rejecting inside the RoundTripper makes
+// the fetch an error, and an error is never cached. Move the check back up and this test
+// hangs on the jwksCacheTTL rather than passing.
 func TestVerifyActor_EmptyKeySetIsUnavailable(t *testing.T) {
-	s := newSigner(t)
-	token := s.sign(t, nil)
-
-	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	var healthy atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if healthy.Load() {
+			writeKeySet(w, key)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"keys":[]}`))
 	}))
-	defer empty.Close()
-	v, err := New(Config{JWKSURL: empty.URL + "/.well-known/jwks", Audience: testAudience, Issuer: testIssuer})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	defer srv.Close()
+
+	s := &signer{key: key, jwksURL: srv.URL + "/.well-known/jwks"}
+	token := s.sign(t, nil)
+	v := s.verifier(t)
+
 	_, err = v.VerifyActor(context.Background(), token)
 	if !errors.Is(err, ErrKeyUnavailable) {
 		t.Fatalf("err = %v, want ErrKeyUnavailable: a key set with no keys cannot verify a token, "+
@@ -302,6 +309,69 @@ func TestVerifyActor_EmptyKeySetIsUnavailable(t *testing.T) {
 	}
 	if errors.Is(err, ErrUnauthenticated) {
 		t.Errorf("err = %v, want NOT ErrUnauthenticated", err)
+	}
+
+	healthy.Store(true)
+	if _, err = v.VerifyActor(context.Background(), token); err != nil {
+		t.Fatalf("VerifyActor after the issuer published keys: %v — the empty set must not "+
+			"have been cached, or recovery waits out the %s TTL", err, jwksCacheTTL)
+	}
+}
+
+// TestVerifyActor_UndecodableSuccessBodyIsUnavailable is the other 2xx shape: a 200 whose
+// body is not a key-set object at all — an HTML sign-in page from a proxy that intercepted
+// the request, say. The middleware's own decode would fail on it too, but with a JSON
+// syntax error attributed to nothing in particular; naming the endpoint is what makes it
+// diagnosable, and doing it here is what keeps the 2xx path's failures uniform.
+func TestVerifyActor_UndecodableSuccessBodyIsUnavailable(t *testing.T) {
+	s := newSigner(t)
+	token := s.sign(t, nil)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`<html>sign in</html>`))
+	}))
+	defer srv.Close()
+	v, err := New(Config{JWKSURL: srv.URL + "/.well-known/jwks", Audience: testAudience, Issuer: testIssuer})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, err = v.VerifyActor(context.Background(), token)
+	if !errors.Is(err, ErrKeyUnavailable) {
+		t.Fatalf("err = %v, want ErrKeyUnavailable for a 2xx body that is not a key set", err)
+	}
+	if strings.Contains(err.Error(), "sign in") {
+		t.Errorf("err = %v, must not quote the upstream body: it is untrusted text bound for logs", err)
+	}
+}
+
+// TestVerifyActor_OversizeKeySetIsRefused pins the bound rather than a truncation. A
+// truncated key set decodes to FEWER keys, which is the empty-set failure in slow motion —
+// so the read is capped at jwksMaxBody+1 and one byte over is an error, not a short read.
+func TestVerifyActor_OversizeKeySetIsRefused(t *testing.T) {
+	s := newSigner(t)
+	token := s.sign(t, nil)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"keys":[],"pad":"`))
+		pad := bytes.Repeat([]byte("a"), 64*1024)
+		for range 17 {
+			_, _ = w.Write(pad)
+		}
+		_, _ = w.Write([]byte(`"}`))
+	}))
+	defer srv.Close()
+	v, err := New(Config{JWKSURL: srv.URL + "/.well-known/jwks", Audience: testAudience, Issuer: testIssuer})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, err = v.VerifyActor(context.Background(), token)
+	if !errors.Is(err, ErrKeyUnavailable) {
+		t.Fatalf("err = %v, want ErrKeyUnavailable for an oversize JWKS body", err)
+	}
+	if !strings.Contains(err.Error(), "more than") {
+		t.Errorf("err = %v, want the size bound named: a body refused for its LENGTH and one "+
+			"refused for having no keys are different faults", err)
 	}
 }
 

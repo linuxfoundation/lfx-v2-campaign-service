@@ -13,7 +13,9 @@
 package auth
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,7 +28,6 @@ import (
 	"github.com/auth0/go-jwt-middleware/v2/jwks"
 	"github.com/auth0/go-jwt-middleware/v2/validator"
 	"golang.org/x/sync/singleflight"
-	jose "gopkg.in/go-jose/go-jose.v2"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -157,7 +158,7 @@ func New(cfg Config) (*Verifier, error) {
 		}))
 
 	v, err := validator.New(
-		coalesceKeyFunc(requireKeys(provider.KeyFunc)),
+		coalesceKeyFunc(provider.KeyFunc),
 		signatureAlgorithm,
 		issuer.String(),
 		[]string{audience},
@@ -175,6 +176,15 @@ func New(cfg Config) (*Verifier, error) {
 // or runaway endpoint cannot make the read itself the outage.
 const jwksErrorBodyPeek = 512
 
+// jwksMaxBody bounds a 2xx JWKS body, which — unlike the error peek — has to be read in
+// FULL and replayed, because the provider still needs to decode it. A real key set is a
+// few keys of a few hundred bytes; a megabyte is already three orders of magnitude past
+// anything Heimdall publishes, and reading without a bound would let a runaway endpoint
+// turn every token verification into an allocation the process cannot refuse. Exceeding it
+// is an error rather than a truncation: a truncated key set decodes to FEWER keys, which is
+// the empty-set failure in slow motion.
+const jwksMaxBody = 1 << 20
+
 // jwksStatusGuard rejects a non-2xx JWKS response BEFORE the provider decodes it.
 //
 // go-jwt-middleware v2.3.1 does not check the status: jwks.Provider.KeyFunc goes straight
@@ -191,12 +201,33 @@ const jwksErrorBodyPeek = 512
 // coalesceKeyFunc tags it ErrKeyUnavailable and the service answers 503. It also means
 // nothing is cached: CachingProvider stores only successful fetches, so the next request
 // retries rather than waiting out a TTL on poisoned data.
+//
+// # Why the empty-key-set check lives HERE and not around KeyFunc
+//
+// A key set with no keys in it cannot verify any token, so returning it as a success means
+// every token that arrives is refused as bad — the same 400-for-our-misconfiguration
+// outcome, reached by a 200 carrying `{}` or `{"keys":[]}`, by an issuer mid-rotation with
+// nothing published, or by a future provider version that drops the status check some other
+// way. The obvious place to catch it is a wrapper around provider.KeyFunc, and that place
+// is WRONG: CachingProvider.refreshKey stores the decoded set BEFORE returning it
+// (jwks/provider.go:207-221), so a wrapper runs after the empty set is already in the cache
+// and every request answers 503 for the full TTL even after Heimdall recovers seconds
+// later. Rejecting at the transport means refreshKey's Provider.KeyFunc returns an error,
+// nothing is cached, and the very next request retries.
+//
+// That placement is also why this package no longer imports go-jose. A KeyFunc wrapper has
+// to type-assert the provider's decoded value, and an assertion against the wrong jose
+// MAJOR compiles, vets, lints and never matches — a check with nothing to show for it.
+// Reading `keys` off the raw body has no version to get wrong.
 type jwksStatusGuard struct{ next http.RoundTripper }
 
 func (g *jwksStatusGuard) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := g.next.RoundTrip(req)
-	if err != nil || (resp.StatusCode >= 200 && resp.StatusCode < 300) {
-		return resp, err
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return g.checkKeys(req, resp)
 	}
 	// We are returning an error instead of the response, so nothing downstream will close
 	// this body. Drain a bounded prefix for the diagnostic, then close: draining also lets
@@ -212,32 +243,44 @@ func (g *jwksStatusGuard) RoundTrip(req *http.Request) (*http.Response, error) {
 	return nil, fmt.Errorf("JWKS endpoint %s returned HTTP %d", req.URL.Redacted(), resp.StatusCode)
 }
 
-// requireKeys refuses a key set with no keys in it.
+// checkKeys reads a 2xx JWKS body, refuses one with no keys in it, and replays the bytes
+// so the provider can still decode them.
 //
-// The assertion is against gopkg.in/go-jose/go-jose.v2, which is the version
-// go-jwt-middleware v2.3.1 decodes into (jwks/provider.go:13). Asserting the wrong jose
-// major here would compile, never match, and pass everything through — the check would be
-// vacuous with nothing to show for it, which is why
-// TestRequireKeys_EmptyKeySetFromTheRealProviderIsUnavailable drives it through the actual
-// provider rather than constructing the type itself.
+// The body must be replayed rather than consumed: this is a RoundTripper, and the provider
+// downstream is the thing that actually builds the key set. Reading it here and handing
+// back an exhausted reader would turn every fetch into an empty decode — the failure this
+// is here to prevent.
 //
-// jwksStatusGuard closes the reachable path to one (a decoded error object), but the
-// INVARIANT is what this states: a key set with nothing in it cannot verify any token, so
-// returning it as a success means every token that arrives is refused as bad. That is a
-// 503 in every case that produces it — a 200 carrying `{}` or `{"keys":[]}`, an issuer
-// mid-rotation with nothing published, a future provider version that drops the status
-// check some other way. The guard above prevents one cause; this prevents the outcome.
-func requireKeys(inner func(context.Context) (any, error)) func(context.Context) (any, error) {
-	return func(ctx context.Context) (any, error) {
-		val, err := inner(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if set, ok := val.(*jose.JSONWebKeySet); ok && len(set.Keys) == 0 {
-			return nil, errors.New("JWKS endpoint returned no signing keys")
-		}
-		return val, nil
+// Only `keys` is decoded, as raw messages. Counting them needs no knowledge of what a key
+// looks like, so this cannot drift with go-jose's shape the way a typed assertion would.
+// A body that is not an object, or whose `keys` is not an array, fails the decode and is
+// an error for the same reason a zero-length array is: nothing usable came back.
+func (g *jwksStatusGuard) checkKeys(req *http.Request, resp *http.Response) (*http.Response, error) {
+	// jwksMaxBody+1 so a body exactly at the bound reads short of the limit and one byte
+	// over reads to it — the difference between "large but fine" and "refuse".
+	buf, err := io.ReadAll(io.LimitReader(resp.Body, jwksMaxBody+1))
+	_ = resp.Body.Close()
+	if err != nil {
+		return nil, fmt.Errorf("read JWKS response from %s: %w", req.URL.Redacted(), err)
 	}
+	if len(buf) > jwksMaxBody {
+		return nil, fmt.Errorf("JWKS endpoint %s returned more than %d bytes", req.URL.Redacted(), jwksMaxBody)
+	}
+	var doc struct {
+		Keys []json.RawMessage `json:"keys"`
+	}
+	if err := json.Unmarshal(buf, &doc); err != nil {
+		// The body is not quoted into the error: untrusted upstream text that would travel
+		// into logs. It goes to a bounded debug line instead, as the non-2xx path does.
+		slog.Debug("JWKS endpoint returned an undecodable 2xx body",
+			"url", req.URL.Redacted(), "body_prefix", string(buf[:min(len(buf), jwksErrorBodyPeek)]))
+		return nil, fmt.Errorf("JWKS endpoint %s returned a 2xx body that is not a key set", req.URL.Redacted())
+	}
+	if len(doc.Keys) == 0 {
+		return nil, fmt.Errorf("JWKS endpoint %s returned no signing keys", req.URL.Redacted())
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(buf))
+	return resp, nil
 }
 
 // coalesceKeyFunc collapses concurrent COLD-cache JWKS fetches into one.
@@ -246,10 +289,19 @@ func requireKeys(inner func(context.Context) (any, error)) func(context.Context)
 // which takes the write lock and then fetches WITHOUT re-checking the cache — so N
 // callers that all miss produce N serialized HTTP fetches rather than one, each bounded
 // by jwksFetchTimeout, and each holding the write lock for its full duration. The Nth
-// caller therefore waits roughly N × fetch, not one fetch. That is reachable twice: the
-// startup burst before anything is cached, and a TTL expiry that coincides with the JWKS
-// endpoint being slow or down. Authentication is on every request, so the queue is the
-// whole request load.
+// caller therefore waits roughly N × fetch, not one fetch. Authentication is on every
+// request, so the queue is the whole request load.
+//
+// COLD cache is the whole of it, and the distinction matters because the obvious wider
+// claim is false: an ordinary TTL EXPIRY does not stampede. CachingProvider holds a
+// semaphore, admits exactly one refresher, and returns the STALE cached set to everyone
+// else while that one runs (jwks/provider.go:166-186) — no caller blocks and no second
+// fetch starts. What reaches the cold path is (a) startup, before anything is cached, and
+// (b) the second-order case: when that lone background refresh FAILS, its goroutine does
+// `delete(c.cache, issuer)`, discarding the stale entry that was serving everyone. The
+// next N callers find an empty cache and serialize on refreshKey's write lock — so an
+// endpoint that is down produces the stampede a TTL expiry alone would not, which is
+// exactly when the service can least afford it.
 //
 // DoChan rather than Do so each caller keeps its OWN deadline. Do returns only when the
 // shared call returns, which would let one caller's slow fetch outlive a later caller's

@@ -291,3 +291,57 @@ endpoint returned no signing keys", which describes a healthy issuer mid-rotatio
 well as it describes a mistyped URL. So the test asserts the HTTP status reaches the error
 message, and revert-verifying confirms that is the assertion that breaks. Where two guards
 overlap on the outcome, the binding assertion is on what each one uniquely contributes.
+
+## Round N: a validity check outside the cache cannot keep the value out of the cache
+
+Copilot filed two suppressed findings against the round above. Adjudicating them meant
+reading `go-jwt-middleware` v2.3.1's `jwks/provider.go` out of the module cache rather
+than reasoning from its docs, and both turned on the same twenty lines.
+
+**The empty-key-set check was in the wrong place, and the previous round's reasoning had
+been about the wrong thing.** `requireKeys` wrapped `provider.KeyFunc`, so the last round
+worried at length about which go-jose major it asserted against — a real hazard, but
+downstream of a larger one. `CachingProvider.refreshKey` stores the decoded value *before*
+returning it (`jwks/provider.go:207-221`):
+
+```go
+jwks, err := c.Provider.KeyFunc(ctx)
+if err != nil { return nil, err }
+c.cache[issuer] = cachedJWKS{jwks: jwks.(*jose.JSONWebKeySet), expiresAt: time.Now().Add(c.CacheTTL)}
+return jwks, nil
+```
+
+A wrapper *around* `KeyFunc` therefore rejects an empty set only after it is cached for
+the full five-minute TTL. Heimdall finishing a rotation two seconds later changes nothing;
+every request 503s until the entry expires. The general property: **a validity check
+placed outside a caching layer cannot keep an invalid value out of the cache — it has to
+run on the side the value arrives from.** The check moved into `jwksStatusGuard.RoundTrip`,
+where a rejection is a transport *error* and `refreshKey` returns before it writes.
+
+The move deleted `requireKeys`, the `go-jose` import, and with them the entire
+wrong-major-assertion hazard the previous round documented. Counting `json.RawMessage`
+entries off the raw body has no dependency type to get wrong. It also forced a bound
+(`jwksMaxBody`): a 2xx body now has to be read in full and replayed, and an unbounded read
+of an endpoint we do not control is an allocation the process cannot refuse. Exceeding it
+is an error rather than a truncation — a truncated key set decodes to *fewer* keys, which
+is the empty-set failure in slow motion.
+
+The test is what pins the placement, and the previous version could not have. It asserted
+`ErrKeyUnavailable` and stopped; the wrapper produced that too. The rewrite flips the
+handler to a healthy key set and asserts the **next** call succeeds. Revert-verified by
+restoring `requireKeys` and dropping the transport arm: it fails on the recovery
+assertion, `... — the empty set must not have been cached, or recovery waits out the 5m0s
+TTL`. **When a fix is about *where* a check runs, the assertion has to be about a
+consequence only that location produces.** Sentinel equality was true of both.
+
+**The second finding corrected a claim, not code.** `coalesceKeyFunc`'s godoc said the
+stampede it prevents is reachable "at startup and on a TTL expiry that coincides with the
+endpoint being slow". The expiry half is false: `CachingProvider` holds a semaphore, admits
+exactly one refresher, and hands the **stale** set to every concurrent caller
+(`jwks/provider.go:166-186`) — nobody blocks. But Copilot's version, "only an empty cold
+cache", is incomplete in a way that matters. When that lone background refresh *fails*, the
+goroutine runs `delete(c.cache, issuer)`, discarding the stale entry that was serving
+everyone; the next N callers find a cold cache and serialize on `refreshKey`'s write lock.
+So a *down* endpoint does produce the stampede that expiry alone does not — precisely when
+the service can least afford it. The comment now says that. Neither party's summary was
+right, and the mechanism was only visible by reading the source.

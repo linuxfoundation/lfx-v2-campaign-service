@@ -75,31 +75,47 @@ decodes **cleanly** into a key set with zero keys and is returned as a success.
 `CachingProvider` then stores it for the full five-minute TTL, and for those five minutes
 every caller holding a good token is told their credential is bad.
 
-Two guards, at two different levels:
+Both checks live in **`jwksStatusGuard`**, a `RoundTripper` that runs *before* the
+provider decodes anything:
 
-- **`jwksStatusGuard`** is a `RoundTripper` that turns a non-2xx into a transport error
-  before anything decodes it. Because the fetch then *fails*, nothing is cached and the
-  next request recovers the moment the endpoint does. It drains a bounded prefix of the
-  body (`jwksErrorBodyPeek`) to a debug log — never into the error, which travels
-  further — and closes it, which also keeps the connection poolable on an endpoint that
-  fails on every refresh.
-- **`requireKeys`** refuses a key set with no keys in it, whatever produced it: a 200
-  carrying `{"keys":[]}`, an issuer mid-rotation with nothing published, a future
-  middleware version that drops the status check some other way. The status guard
-  prevents one cause; this prevents the *outcome*.
+- A **non-2xx** becomes a transport error. It drains a bounded prefix of the body
+  (`jwksErrorBodyPeek`) to a debug log — never into the error, which travels further —
+  and closes it, which also keeps the connection poolable on an endpoint that fails on
+  every refresh.
+- A **2xx** is read in full (bounded by `jwksMaxBody`), its `keys` array counted, and the
+  bytes replayed on the response so the provider can still decode them. Zero keys is an
+  error, whatever produced it: a 200 carrying `{"keys":[]}`, an issuer mid-rotation with
+  nothing published, a future middleware version that drops the status check some other
+  way. So is a body that will not decode as an object with a `keys` array at all. The
+  size bound is enforced as a *refusal*, not a truncation — a truncated key set decodes
+  to fewer keys, which is the empty-set failure in slow motion.
 
-`requireKeys` type-asserts against **`gopkg.in/go-jose/go-jose.v2`**, which is the version
-the middleware decodes into (`jwks/provider.go:13`) — and the general rule worth carrying
-past this file: **a type assertion against a dependency's type is only a check if it is
-the same major version the dependency returns.** Assert a different major and it compiles,
-vets and lints clean, never matches, and silently passes everything through. A test that
-constructs the key set itself asserts against whichever version the *test* imported and
-passes just as vacuously, which is why
-`TestVerifyActor_EmptyKeySetIsUnavailable` drives the real provider against a real
-`{"keys":[]}` endpoint. `TestVerifyActor_JWKSErrorBodyIsNotMistakenForAKeySet` covers the
-404 case, and asserts the HTTP status reaches the operator: `requireKeys` catches that
-case too, but can only say "no signing keys", which describes a healthy issuer
-mid-rotation just as well as it describes a wrong URL.
+**Why both are at the transport and not around `KeyFunc`.** The empty-set check used to
+be a `requireKeys` wrapper around `provider.KeyFunc`, and that placement was wrong for a
+reason worth carrying past this file: `CachingProvider.refreshKey` **stores the decoded
+value before returning it** (`jwks/provider.go:207-221`). A wrapper therefore rejects the
+empty set only after it is already cached, so every request answers 503 for the full
+five-minute TTL even though Heimdall recovered seconds later. **A validity check outside
+a caching layer cannot keep an invalid value out of the cache** — it has to run on the
+side of the cache the value arrives from. Failing inside the `RoundTripper` makes the
+fetch an *error*, and `refreshKey` caches only successes.
+
+The move also removed this package's `go-jose` import, which closes a second hazard: the
+old wrapper type-asserted against `gopkg.in/go-jose/go-jose.v2`, the version the
+middleware decodes into (`jwks/provider.go:13`), and **a type assertion against a
+dependency's type is only a check if it is the same major version the dependency
+returns** — assert a different major and it compiles, vets and lints clean, never
+matches, and silently passes everything through. Counting `json.RawMessage` entries off
+the raw body has no version to get wrong.
+
+`TestVerifyActor_EmptyKeySetIsUnavailable` serves `{"keys":[]}`, then flips the handler
+to a real key set and asserts the **next** call succeeds; that recovery assertion is what
+pins the placement — move the check back up and it hangs on the TTL instead of passing.
+`TestVerifyActor_JWKSErrorBodyIsNotMistakenForAKeySet` covers the 404 case and asserts
+the HTTP status reaches the operator: the empty-set arm catches that case too, but can
+only say "no signing keys", which describes a healthy issuer mid-rotation just as well as
+it describes a wrong URL. `TestVerifyActor_UndecodableSuccessBodyIsUnavailable` and
+`TestVerifyActor_OversizeKeySetIsRefused` cover the other two 2xx shapes.
 
 ## Empty config defaults; a wrong one fails the pod
 
