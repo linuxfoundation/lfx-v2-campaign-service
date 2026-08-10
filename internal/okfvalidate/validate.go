@@ -80,11 +80,12 @@ func validateConcept(path string) error {
 	return nil
 }
 
-var indexBulletPattern = regexp.MustCompile(`^\* \[[^\]]+\]\([^)]+\) - .+$`)
+var indexBulletPattern = regexp.MustCompile(`^\* \[([^\]]+)\]\(([^)]+)\) - (.+)$`)
 
 // validateIndex checks OKF §9 rule 3 & the §6 bullet format: no
-// frontmatter (except an optional okf_version at the bundle root), and any
-// "* " line matches "* [Title](url) - description".
+// frontmatter (except an optional okf_version at the bundle root), any
+// "* " line matches "* [Title](url) - description", and each bullet's
+// description is verbatim the linked concept's frontmatter description.
 func validateIndex(path string, isRoot bool) []error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -118,11 +119,75 @@ func validateIndex(path string, isRoot bool) []error {
 		if !strings.HasPrefix(trimmed, "* ") {
 			continue
 		}
-		if !indexBulletPattern.MatchString(trimmed) {
+		m := indexBulletPattern.FindStringSubmatch(trimmed)
+		if m == nil {
 			errs = append(errs, fmt.Errorf("%s: bullet %q does not match \"* [Title](url) - description\"", path, trimmed))
+			continue
+		}
+		if e := checkBulletDescription(path, m[2], m[3]); e != nil {
+			errs = append(errs, e)
 		}
 	}
 	return errs
+}
+
+// checkBulletDescription requires an index bullet's description to be
+// verbatim the linked concept's frontmatter "description".
+//
+// The two are written at different times — a concept file is edited by the PR
+// that changes the behaviour it documents, its index bullet by whoever
+// remembers step 2 of the CLAUDE.md checklist — so they drift silently, and
+// the index is the surface an agent reads FIRST to decide which concept file
+// is worth opening. A stale bullet is therefore worse than a stale concept:
+// it does not merely say something out of date, it routes the reader away
+// from the file that would have corrected it. Twelve of this bundle's 47 bullets
+// had drifted by the time this check was written, in both directions —
+// sometimes the bullet was the current text and the frontmatter the stale one.
+//
+// Equality is required rather than some looser containment, because any
+// tolerance is a place drift can hide, and the cost of exactness is one
+// mechanical edit in the same PR that changed the description.
+//
+// A bullet is only checked when it resolves to a readable .md file inside the
+// bundle that declares a frontmatter description. That deliberately excludes
+// links to directories, to a sub-index (index.md carries no frontmatter at
+// all, by rule 3 above), and to anything outside the bundle. It does NOT
+// excuse a concept file that simply omits its description: this bundle's 47
+// concept files all declare one, and adding the "description" key to the
+// required set belongs with "type" in validateConcept rather than here, where
+// it would only be enforced for files that happen to be linked.
+func checkBulletDescription(indexPath, link, bulletDesc string) error {
+	// Anchors and query strings are not part of the path; a bare fragment
+	// ("#section") points inside this same index, which has no frontmatter.
+	target := link
+	if i := strings.IndexAny(target, "#?"); i >= 0 {
+		target = target[:i]
+	}
+	if target == "" || !strings.HasSuffix(target, ".md") || strings.Contains(target, "://") {
+		return nil
+	}
+
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(indexPath), filepath.FromSlash(target)))
+	if err != nil {
+		// A broken link is a real defect, but it is not this check's, and
+		// reporting it here would fire a second time for the same bullet
+		// once link checking lands. Silence keeps one defect to one error.
+		return nil
+	}
+	fm, _, err := okf.ParseFrontmatter(data)
+	if err != nil {
+		// Unparseable frontmatter is already reported against the concept
+		// file itself by validateConcept.
+		return nil
+	}
+	conceptDesc, ok := fm["description"].(string)
+	if !ok || strings.TrimSpace(conceptDesc) == "" {
+		return nil
+	}
+	if strings.TrimSpace(conceptDesc) != bulletDesc {
+		return fmt.Errorf("%s: bullet for %q describes it as %q, but the file's frontmatter description is %q — the two must match verbatim", indexPath, target, bulletDesc, strings.TrimSpace(conceptDesc))
+	}
+	return nil
 }
 
 var logFragmentNamePattern = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})-[A-Za-z0-9][A-Za-z0-9._-]*\.md$`)

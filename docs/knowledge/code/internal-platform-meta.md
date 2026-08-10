@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/meta"
-description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, campaign status toggle, live campaign metrics reads, and ad-account discovery."
+description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, campaign status toggle cascade over ad set and ads, live campaign metrics reads, and ad-account discovery — a paginated `/me/adaccounts` walk that asks about the TOKEN rather than any one account, returns known-bad accounts with their reason instead of filtering them, and fails rather than truncating when the walk cannot be completed."
 resource: "internal/platform/meta"
 tags:
   - platform-client
