@@ -147,30 +147,6 @@ func (d *HubSpotDispatcher) ReadMetrics(ctx context.Context, projectID string, p
 		return nil, err
 	}
 
-	// The stored PlatformCampaignID is a bare numeric HubSpot email id, unique only within the
-	// portal it was minted in, while the connection just resolved is the project's CURRENT one
-	// — UpdateHubspot / SetCredentialHubspot can re-point it between create and read. Reading
-	// across a re-point is worse than an error either way: if the new portal happens to hold an
-	// email with the same numeric id, this reports ANOTHER portal's opens and clicks as this
-	// campaign's, and if it does not, the read comes back as ErrNoSentEmailInWindow — "not sent
-	// yet", the most ordinary state this channel has — for an email that was sent and is fine.
-	// Neither outcome is distinguishable downstream from the truth. Fail before contacting
-	// HubSpot, exactly as the Google Ads adapter does before a toggle.
-	//
-	// BOTH sides must be known, which is where this departs from the Google Ads guard it
-	// copies. Google Ads requires account_id, so client.CustomerID() is never empty and only
-	// the stored side can be unknown. portal_id is OPTIONAL here — the client needs it solely
-	// to build app URLs — so an empty CURRENT portal is an ordinary configuration, not evidence
-	// of a re-point. Refusing on it would block every read for a project that simply never
-	// filled the field in, which is a regression against behaviour that works today, in
-	// exchange for no proof of harm. The residual gap is deliberate and is a reason to record
-	// portal_id, not a reason to fail closed on its absence.
-	created, current := hubSpotCreationPortalID(campaign), client.PortalID()
-	if created != "" && current != "" && created != current {
-		return nil, fmt.Errorf("get email metrics from hubspot: email %s was created in portal %s but the project's current connection resolves to portal %s: %w",
-			campaign.PlatformCampaignID, created, current, domain.ErrCampaignAccountMismatch)
-	}
-
 	metrics, err := client.GetEmailMetrics(ctx, campaign.PlatformCampaignID, window)
 	if err != nil {
 		if errors.Is(err, hubspot.ErrUnsupportedWindow) {
@@ -259,7 +235,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// the clone id) so the orchestrator retains the claim and the email is reconcilable, and
 	// surface the error so the caller verifies rather than reporting a clean success.
 	if _, serr := client.SetSendList(ctx, email.ID, masterListID, suppressionIDs); serr != nil {
-		camp := campaignFromHubSpot(ctx, email, cfg, client.PortalID())
+		camp := campaignFromHubSpot(ctx, email, cfg)
 		return camp, fmt.Errorf("hubspot email %s cloned but setting its send list failed (verify before retrying): %w", email.ID, serr)
 	}
 
@@ -270,7 +246,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// and leave a configured draft behind anyway.
 	tagEmailLinks(ctx, client, email.ID, cloneName, cfg.UTMCampaign)
 
-	return campaignFromHubSpot(ctx, email, cfg, client.PortalID()), nil
+	return campaignFromHubSpot(ctx, email, cfg), nil
 }
 
 // tagEmailLinks rewrites the cloned draft's links to carry UTM parameters. Best-effort by
@@ -442,14 +418,7 @@ func emailPartial(ctx context.Context, name string) *model.Campaign {
 
 // campaignFromHubSpot maps the cloned email to the persistence model. The email's HubSpot id is
 // the campaign's PlatformCampaignID.
-//
-// portalID is the portal the clone was created in, and it is recorded in Result alongside the
-// email. PlatformCampaignID is a bare numeric that is unique only WITHIN a portal, so without
-// this the row does not say which portal it belongs to — see hubSpotCreationPortalID for what
-// depends on it. It is stored on the sibling wrapper rather than inside the marshalled
-// hubspot.Email because the portal is a property of the connection that made the call, not a
-// field HubSpot returns.
-func campaignFromHubSpot(ctx context.Context, e *hubspot.Email, cfg hubspotConfig, portalID string) *model.Campaign {
+func campaignFromHubSpot(ctx context.Context, e *hubspot.Email, cfg hubspotConfig) *model.Campaign {
 	c := &model.Campaign{
 		PlatformCampaignID: e.ID,
 		CampaignName:       e.Name,
@@ -458,35 +427,11 @@ func campaignFromHubSpot(ctx context.Context, e *hubspot.Email, cfg hubspotConfi
 	// The email channel has no numeric budget/schedule config; ConfigSnapshot still captures the
 	// validated hubspotConfig (the cloned template id) for provenance/reconcile.
 	applyCampaignConfig(ctx, c, 0, false, "", "", cfg)
-	if raw, err := json.Marshal(struct {
-		*hubspot.Email
-		PortalID string `json:"portalId,omitempty"`
-	}{Email: e, PortalID: portalID}); err != nil {
+	if raw, err := json.Marshal(e); err != nil {
 		slog.WarnContext(ctx, "failed to marshal hubspot email result blob (Result left empty)",
 			"campaign_id", c.PlatformCampaignID, "error", err)
 	} else {
 		c.Result = raw
 	}
 	return c
-}
-
-// hubSpotCreationPortalID recovers the portal the campaign's email was CREATED in from the
-// persisted Result blob, mirroring googleAdsCreationCustomerID.
-//
-// An empty return means UNKNOWN, and the caller must treat that as permission to proceed. Two
-// ordinary cases produce it: a row written before Result carried portalId, and a connection
-// that never configured portal_id at all (it is optional — the client only needs it to build
-// app URLs). Refusing either would break reads that work today, and a row that cannot prove a
-// mismatch has not demonstrated one.
-func hubSpotCreationPortalID(campaign *model.Campaign) string {
-	if campaign == nil || len(campaign.Result) == 0 {
-		return ""
-	}
-	var blob struct {
-		PortalID string `json:"portalId"`
-	}
-	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(blob.PortalID)
 }

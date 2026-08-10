@@ -217,15 +217,6 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 	return c
 }
 
-// PortalID returns the configured HubSpot portal (hub) id, already trimmed, or "" when the
-// connection did not carry one. Mirrors googleads.Client.CustomerID.
-//
-// Exposed so a caller can compare the portal it is ABOUT to read against the one a stored
-// record was created under. Email ids are portal-scoped numerics, so that comparison is the
-// only thing distinguishing "the email this campaign refers to" from "an unrelated email that
-// happens to share a numeric id in whatever portal the connection now points at".
-func (c *Client) PortalID() string { return c.account.PortalID }
-
 // ---------------------------------------------------------------------------
 // Typed errors (mirror the sibling clients: bodies/secrets never surfaced)
 // ---------------------------------------------------------------------------
