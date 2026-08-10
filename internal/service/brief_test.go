@@ -618,6 +618,13 @@ func (r *campaignEditRepo) recordIndex(c *model.Campaign, indexPayload domain.Ca
 	r.indexPayloads = append(r.indexPayloads, payload)
 	return nil
 }
+func (r *campaignEditRepo) VerifyClaimedVersion(_ context.Context, _, _, campaignID string, expectedVersion int64, _ domain.CampaignLockToken) (*model.Campaign, error) {
+	if r.cur.Version != expectedVersion {
+		return nil, domain.ErrPreconditionFailed
+	}
+	cp := *r.cur
+	return &cp, nil
+}
 func (r *campaignEditRepo) ClaimCampaignVersion(_ context.Context, _, _, campaignID string, expectedVersion int64) (*model.Campaign, domain.CampaignLockToken, error) {
 	r.claims++
 	if r.claimErr != nil {
@@ -1036,6 +1043,18 @@ func (r *toggleCampaignRepo) ClaimCampaignVersion(_ context.Context, _, _, campa
 func (r *toggleCampaignRepo) ReleaseCampaignLock(context.Context, domain.CampaignLockToken) error {
 	r.claimMu.Unlock()
 	return nil
+}
+
+// VerifyClaimedVersion mirrors the real implementation: it checks that the version
+// still matches without modifying it, using the same dataMu protection as ClaimCampaignVersion.
+func (r *toggleCampaignRepo) VerifyClaimedVersion(_ context.Context, _, _, _ string, expectedVersion int64, _ domain.CampaignLockToken) (*model.Campaign, error) {
+	r.dataMu.Lock()
+	defer r.dataMu.Unlock()
+	if r.got.Version != expectedVersion {
+		return nil, domain.ErrPreconditionFailed
+	}
+	cp := *r.got
+	return &cp, nil
 }
 
 // ReleaseCampaignLockAfterCooldown overrides the embedded fakeCampaignRepo's

@@ -208,6 +208,20 @@ func (r *fakeCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int
 	return nil, errors.New("unused")
 }
 
+func (r *fakeCampaignRepo) VerifyClaimedVersion(_ context.Context, _, _, campaignID string, expectedVersion int64, _ domain.CampaignLockToken) (*model.Campaign, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c, ok := r.byID[campaignID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	if c.Version != expectedVersion {
+		return nil, domain.ErrPreconditionFailed
+	}
+	cp := *c
+	return &cp, nil
+}
+
 // ClaimCampaignVersion mirrors CampaignRepo.ClaimCampaignVersion: it gates on the expected
 // version and reports precondition-failed / not-found, and it returns the row's snapshot
 // UNCHANGED.

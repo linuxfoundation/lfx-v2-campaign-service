@@ -983,11 +983,49 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 		// here; the campaign comes back at its unchanged status and version because that is
 		// what the row now says. The platform call is declarative, so a repeat pause is a
 		// no-op upstream and this stays idempotent without a version to compare.
+		//
+		// DURABILITY: before returning success with the platform changed, verify that the
+		// row version has not changed since we claimed it. If the claimed connection died
+		// and a successor modified the row, surface the platform/DB divergence instead of
+		// returning stale data. Use the live context (not persistCtx) for the verification:
+		// the claim was also acquired on the live context, so the two share a consistent
+		// view and this check can tell if the row was modified during this request.
+		verified, verifyErr := s.campaigns.VerifyClaimedVersion(
+			ctx, p.ProjectID, p.BriefID, p.CampaignID, version, lockToken)
+		if verifyErr != nil {
+			if errors.Is(verifyErr, domain.ErrPreconditionFailed) {
+				// The row's version changed since we claimed it. The platform was updated
+				// but the local row was modified by someone else — a divergence that should
+				// not happen under normal operation, but must be surfaced (it is NOT a 409
+				// retry; the caller got the platform change but has a stale row).
+				slog.ErrorContext(ctx, "campaign status changed on the platform but the DB row was modified by another writer (platform/DB diverged)",
+					"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+					"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,
+					"requested_status", p.Status, "expected_version", version)
+				return nil, &briefs.ConflictError{Code: "409", Message: "this campaign was modified by another request while its status was being changed on the ad platform; verify the campaign status before retrying"}
+			}
+			if errors.Is(verifyErr, domain.ErrNotFound) {
+				// The row was deleted between claim and now. The platform was changed but
+				// the local row is gone — another kind of divergence.
+				slog.ErrorContext(ctx, "campaign status changed on the platform but the DB row was deleted (platform/DB diverged)",
+					"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+					"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,
+					"requested_status", p.Status, "error", verifyErr)
+				return nil, &briefs.ConflictError{Code: "409", Message: "this campaign was deleted while its status was being changed on the ad platform; verify the campaign status before retrying"}
+			}
+			// A read error (transient DB failure, etc). Surface it so the caller retries
+			// after backoff, not immediately.
+			slog.ErrorContext(ctx, "failed to verify row version after platform pause (platform/DB divergence detection failed)",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,
+				"error", verifyErr)
+			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the campaign status was changed on the ad platform, but verifying the local row failed; verify in the platform and retry"}
+		}
 		slog.InfoContext(ctx, "paused a campaign that still needs reconciliation; the reconciliation marker is preserved",
 			"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 			"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,
 			"status", existing.Status)
-		return campaignResult(existing), nil
+		return campaignResult(verified), nil
 	}
 	existing.Status = p.Status
 	// Resolve the actor from the LIVE ctx, before persistCtx replaces it below. A
