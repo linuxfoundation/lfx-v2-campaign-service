@@ -490,10 +490,16 @@ exceeds them fails the platform job pre-create (async — not a synchronous 4xx)
 composed ad-creative NAME (`<eventName> - Variant N`) is also capped at 255 runes and
 rejected pre-create, so keep `eventName` well short of that so the suffix fits.
 
-Connection prerequisites (from the Meta connection, not this config): a valid `account_id`
-(`act_<digits>`) and a numeric `page_id` — both REQUIRED, format-validated, and length-bounded
-(`MaxLength 64`) at connection creation (a missing/malformed/over-long value is a 4xx there, not
-a runtime dispatch failure).
+Connection prerequisites (from the Meta connection, not this config): `page_id` is REQUIRED,
+format-validated (numeric), and length-bounded (`MaxLength 64`) at connection creation (a
+missing/malformed/over-long value is a 4xx there, not a runtime dispatch failure). `account_id`
+(`act_<digits>`, same format/length rules when present) is OPTIONAL at connection creation —
+mirroring the Google Ads bootstrap (see the Platform Connections section) — so a connection can
+be created with credentials only, then have an account chosen via `GET
+.../connection-meta-ads/accounts` and set with `PUT`. An active connection with no account
+selected answers **409** on the status toggle and the metrics read, and its create job fails
+async (202, then the polled result), all with `reason=account_not_selected` — never a 503, since
+waiting cannot fix a choice only a human can make.
 
 Destination URL: the ad points at the brief's registration URL. The Meta client validates it
 before any upstream create — it must be an absolute **HTTPS** URL with a real hostname, carry NO

@@ -391,7 +391,10 @@ func (s *ConnectionService) CreateMetaAds(ctx context.Context, p *conn.CreateMet
 		ProjectID: p.ProjectID,
 		Provider:  model.ProviderMetaAds,
 		Label:     strVal(cfg.Label),
-		AccountID: cfg.AccountID,
+		// Optional for Meta too (design/connection.go explains why): omitting it stores
+		// "" and creates a credentials-only connection, the first step of the discovery
+		// bootstrap — same semantics as Google Ads' AccountID above.
+		AccountID: strVal(cfg.AccountID),
 		ProviderConfig: map[string]string{
 			"page_id": cfg.PageID, // required by the design
 			"app_id":  strVal(cfg.AppID),
@@ -419,7 +422,10 @@ func (s *ConnectionService) UpdateMetaAds(ctx context.Context, p *conn.UpdateMet
 		ProjectID: p.ProjectID,
 		Provider:  model.ProviderMetaAds,
 		Label:     strVal(cfg.Label),
-		AccountID: cfg.AccountID,
+		// PUT is a full replace, so omitting account_id CLEARS a previously chosen one —
+		// same semantics as Google Ads' AccountID above, and the second half of the
+		// bootstrap: the caller PUTs back the id chosen from discovery.
+		AccountID: strVal(cfg.AccountID),
 		ProviderConfig: map[string]string{
 			"page_id": cfg.PageID, // required by the design
 			"app_id":  strVal(cfg.AppID),

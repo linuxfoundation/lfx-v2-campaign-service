@@ -8668,7 +8668,7 @@ components:
             properties:
                 account_id:
                     type: string
-                    description: Meta ad account ID
+                    description: 'Meta ad account ID. Optional: omit it to create the connection with credentials only, then choose one from GET .../connection-meta-ads/accounts and set it with PUT.'
                     example: act_193556282970417
                     pattern: ^act_[0-9]+$
                     maxLength: 64
@@ -8692,7 +8692,6 @@ components:
                 label: Impedit deleniti omnis doloribus eius molestias.
                 page_id: "123456789012345"
             required:
-                - account_id
                 - page_id
         MetaAdsCredentials:
             type: object

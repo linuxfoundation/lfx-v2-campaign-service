@@ -417,13 +417,26 @@ var MetaAdsCredentials = Type("meta-ads-credentials", func() {
 	Required("access_token", "app_secret")
 })
 
+// MetaAdsConnectionConfig is the second provider config where account_id is optional,
+// for the same reason as GoogleAdsConnectionConfig above: a caller can create the
+// connection with credentials only, discover the reachable ad accounts via
+// GET .../connection-meta-ads/accounts, and set the chosen id afterwards with PUT.
+// page_id stays Required — it names a Facebook page the operator already controls,
+// not something the token's reachable-account list resolves, so there is nothing for
+// discovery to do about it.
+//
+// A connection in this state stays status=active with account_id "", same caveat as
+// Google Ads: "active" means enabled for credential-based operations (discovery), not
+// that the credentials were verified. Readiness to run a campaign is account_id being
+// non-empty; the dispatch, status-toggle, and metrics paths say so with
+// reason=account_not_selected.
 var MetaAdsConnectionConfig = Type("meta-ads-connection-config", func() {
 	Attribute("label", String, "Optional friendly name")
 	// account_id must be the canonical Meta format act_<digits>: the Meta client
 	// rejects anything else before dispatch, so a non-conforming value (e.g. "foo",
 	// whitespace, or a bare number) stored on an active connection could never create a
 	// campaign. Validating the same Pattern here rejects it as a 4xx at creation.
-	Attribute("account_id", String, "Meta ad account ID", func() {
+	Attribute("account_id", String, "Meta ad account ID. Optional: omit it to create the connection with credentials only, then choose one from GET .../connection-meta-ads/accounts and set it with PUT.", func() {
 		Example("act_193556282970417")
 		Pattern(`^act_[0-9]+$`)
 		// The pattern bounds shape but not length; cap the stored size so an arbitrarily
@@ -445,8 +458,9 @@ var MetaAdsConnectionConfig = Type("meta-ads-connection-config", func() {
 	// page_id is required at connection time: the Meta dispatcher needs it to attach
 	// the promoted-object page, so an active connection without it would always fail
 	// dispatch. Requiring it here surfaces the error as a 4xx at connection creation
-	// rather than a silent runtime dispatch failure.
-	Required("account_id", "page_id")
+	// rather than a silent runtime dispatch failure. account_id is deliberately NOT
+	// required — see the type comment above.
+	Required("page_id")
 })
 
 var MetaAdsConnection = Type("meta-ads-connection", func() {

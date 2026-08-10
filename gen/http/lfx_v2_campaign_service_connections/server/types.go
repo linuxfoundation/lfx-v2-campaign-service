@@ -2437,7 +2437,9 @@ type LinkedinAdsCredentialsRequestBody struct {
 type MetaAdsConnectionConfigRequestBody struct {
 	// Optional friendly name
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
-	// Meta ad account ID
+	// Meta ad account ID. Optional: omit it to create the connection with
+	// credentials only, then choose one from GET .../connection-meta-ads/accounts
+	// and set it with PUT.
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
 	// Facebook page ID
 	PageID *string `form:"page_id,omitempty" json:"page_id,omitempty" xml:"page_id,omitempty"`
@@ -5690,9 +5692,6 @@ func ValidateLinkedinAdsCredentialsRequestBody(body *LinkedinAdsCredentialsReque
 // ValidateMetaAdsConnectionConfigRequestBody runs the validations defined on
 // meta-ads-connection-configRequestBody
 func ValidateMetaAdsConnectionConfigRequestBody(body *MetaAdsConnectionConfigRequestBody) (err error) {
-	if body.AccountID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
-	}
 	if body.PageID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("page_id", "body"))
 	}

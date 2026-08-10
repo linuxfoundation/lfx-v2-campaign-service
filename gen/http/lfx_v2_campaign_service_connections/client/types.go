@@ -2428,8 +2428,10 @@ type LinkedinAdsCredentialsRequestBody struct {
 type MetaAdsConnectionConfigRequestBody struct {
 	// Optional friendly name
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
-	// Meta ad account ID
-	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Meta ad account ID. Optional: omit it to create the connection with
+	// credentials only, then choose one from GET .../connection-meta-ads/accounts
+	// and set it with PUT.
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
 	// Facebook page ID
 	PageID string `form:"page_id" json:"page_id" xml:"page_id"`
 	// Meta app ID
@@ -7934,9 +7936,13 @@ func ValidateLinkedinAdsConnectionConfigRequestBody(body *LinkedinAdsConnectionC
 // ValidateMetaAdsConnectionConfigRequestBody runs the validations defined on
 // meta-ads-connection-configRequestBody
 func ValidateMetaAdsConnectionConfigRequestBody(body *MetaAdsConnectionConfigRequestBody) (err error) {
-	err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", body.AccountID, "^act_[0-9]+$"))
-	if utf8.RuneCountInString(body.AccountID) > 64 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", body.AccountID, utf8.RuneCountInString(body.AccountID), 64, false))
+	if body.AccountID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", *body.AccountID, "^act_[0-9]+$"))
+	}
+	if body.AccountID != nil {
+		if utf8.RuneCountInString(*body.AccountID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", *body.AccountID, utf8.RuneCountInString(*body.AccountID), 64, false))
+		}
 	}
 	err = goa.MergeErrors(err, goa.ValidatePattern("body.page_id", body.PageID, "^[0-9]+$"))
 	if utf8.RuneCountInString(body.PageID) > 64 {

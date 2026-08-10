@@ -401,6 +401,33 @@ stored value, which is why the design change above was all that bootstrap additi
   set, body bounding, retry gating, and `apiError`/`transportError` classification. The
   `login-customer-id` header is still attached and still validated (`validateLoginCustomerID`).
 
+**Meta shares the same bootstrap shape as of LFXV2-3061**, now that its own account-picker
+endpoint (`GET .../connection-meta-ads/accounts`, LFXV2-3062) exists to complete it:
+`MetaAdsConnectionConfig` no longer declares `Required("account_id")` either (`page_id` stays
+required — it names a Facebook page the operator already controls, not something discovery
+resolves). The credential-state checks that used to be inlined at each of `Dispatch`,
+`ToggleStatus`, and `ReadMetrics` are now `resolveMetaCredentials`, a single helper mirroring
+`resolveRedditClient`'s shape — active status, decodable blob, non-empty access token, each
+tagged with `domain.ErrConnectionNotUsable` plus its reason sentinel, and a named-return
+`defer` that runs every return path through `res.systemScoped`. It deliberately does not check
+`account_id`: that is `requireMetaAccountID`, called separately by all three callers right after
+credential resolution, because `Dispatch` additionally needs `page_id` (Meta has no discovery
+for that field) while `ToggleStatus`/`ReadMetrics` target an existing campaign by id and need
+only the account. `requireMetaAccountID` wraps an empty account the same way Google Ads does:
+`ErrConnectionNotUsable` selects the status, `domain.ErrAccountNotSelected` supplies the
+`account_not_selected` reason token, and it is matched before the general unusable-connection
+arm.
+
+**A CONFIRMED default is the reason to reject this without discovery, not just the goal to
+build toward it.** The Google Ads log entry documenting its own bootstrap states the general
+rule as "an optional `account_id` and a discovery endpoint ship together or not at all" — the
+worry being a connection an operator cannot finish from inside this API. For Meta specifically
+that risk did not materialize: LFXV2-3062 (the discovery endpoint) was built as the deliberate
+first half of this same two-PR sequence, so by the time `Required("account_id")` was dropped
+here, the completion path already existed in review, and a generic `PUT
+/connection-meta-ads` (every provider gets one via `connectionMethods`) lets an operator set
+`account_id` manually even on a day the discovery PR is still queued behind reviewer bandwidth.
+
 **A manager credential needs the hierarchy walked, because the flat list does not do it.**
 `customers:listAccessibleCustomers` returns the accounts the authenticated user can act on
 DIRECTLY; a `login-customer-id` header does not make it enumerate that manager's children. On an

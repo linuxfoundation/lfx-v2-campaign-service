@@ -62,28 +62,66 @@ func NewMetaDispatcher(repo connReader, enc domain.Encryptor, opts ...meta.Optio
 	return &MetaDispatcher{creds: newCredsSource(repo, enc), opts: opts}
 }
 
-// Dispatch implements service.PlatformDispatcher for Meta.
-func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
-	res, err := d.creds.resolve(ctx, brief.ProjectID, platform)
+// resolveMetaCredentials fetches the project's Meta connection and validates it is usable
+// for ANY Meta operation — active status, decodable credentials, non-empty access token —
+// tagging each defect with domain.ErrConnectionNotUsable plus a reason sentinel, mirroring
+// resolveRedditClient. It deliberately does NOT check account_id: Dispatch additionally
+// requires a non-empty account id (and page id) to create a campaign, while ToggleStatus and
+// ReadMetrics target an existing campaign by id — each checks account_id separately, via
+// requireMetaAccountID, right after calling this.
+func (d *MetaDispatcher) resolveMetaCredentials(ctx context.Context, projectID string, platform model.Provider) (res *resolved, creds metaCreds, err error) {
+	res, err = d.creds.resolve(ctx, projectID, platform)
 	if err != nil {
-		return nil, err // preCreateError
+		return nil, metaCreds{}, err
 	}
+	defer func() { err = res.systemScoped(err) }()
 	if res.status != model.StatusActive {
-		return nil, notCreated(fmt.Errorf("meta connection for project %s is %s, not active", brief.ProjectID, res.status))
+		return nil, metaCreds{}, fmt.Errorf("%w: %w: meta connection for project %s is %s, not active",
+			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
 	}
-
-	var creds metaCreds
-	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return nil, notCreated(fmt.Errorf("decode meta credentials: %w", err))
+	if uerr := json.Unmarshal(res.plaintext, &creds); uerr != nil {
+		// The cause is dropped, not wrapped: it derives from the DECRYPTED credential
+		// blob, and encoding/json quotes its input in *json.SyntaxError /
+		// *json.UnmarshalTypeError. Matches resolveRedditClient's decode error.
+		return nil, metaCreds{}, fmt.Errorf("%w: %w: meta credentials for project %s are not valid JSON",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, projectID)
 	}
 	if strings.TrimSpace(creds.AccessToken) == "" {
-		return nil, notCreated(fmt.Errorf("meta credentials are incomplete (need accessToken)"))
+		return nil, metaCreds{}, fmt.Errorf("%w: %w: meta credentials are incomplete (need accessToken)",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
 	}
+	return res, creds, nil
+}
 
+// requireMetaAccountID returns res.accountID trimmed, or a tagged 409 naming the missing
+// choice — domain.ErrAccountNotSelected, which unusableConnectionReason reports as
+// "account_not_selected" — when it is empty. Mirrors validateGoogleAdsConnection: an
+// account-id-less connection (the credentials-only bootstrap state — see
+// MetaAdsConnectionConfig in design/connection.go) is refused HERE, before an empty
+// AccountConfig.AccountID can reach the Meta client and fail opaquely upstream instead of
+// with a clear, actionable 409.
+func requireMetaAccountID(res *resolved, projectID string) (string, error) {
 	accountID := strings.TrimSpace(res.accountID)
+	if accountID == "" {
+		return "", res.systemScoped(fmt.Errorf("%w: %w: meta connection for project %s has no account id selected",
+			domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected, projectID))
+	}
+	return accountID, nil
+}
+
+// Dispatch implements service.PlatformDispatcher for Meta.
+func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
+	res, creds, err := d.resolveMetaCredentials(ctx, brief.ProjectID, platform)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	accountID, err := requireMetaAccountID(res, brief.ProjectID)
+	if err != nil {
+		return nil, notCreated(err)
+	}
 	pageID := strings.TrimSpace(res.providerConfig["page_id"])
-	if accountID == "" || pageID == "" {
-		return nil, notCreated(fmt.Errorf("meta connection for project %s is missing account id or page id", brief.ProjectID))
+	if pageID == "" {
+		return nil, notCreated(fmt.Errorf("meta connection for project %s is missing page id", brief.ProjectID))
 	}
 
 	var cfg metaConfig
@@ -162,7 +200,8 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 }
 
 // ToggleStatus pauses or resumes an existing Meta campaign on the platform. It resolves the
-// connection (an inactive/undecryptable/incomplete connection is a clean error), builds the
+// connection (an inactive/undecryptable/incomplete/account-not-selected connection is a
+// clean 409, not a 503 — see resolveMetaCredentials and requireMetaAccountID), builds the
 // client, and CASCADES the status to the campaign, its ad set, and every ad — Meta's create
 // PAUSES all three, so toggling only the campaign to ACTIVE would not serve. campaign is the
 // persisted row; the ad set id is read from its CampaignResult (Meta persists the ad set id
@@ -175,23 +214,18 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	if err != nil {
 		return err
 	}
-	res, err := d.creds.resolve(ctx, projectID, platform)
+	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform)
 	if err != nil {
 		return err
 	}
-	if res.status != model.StatusActive {
-		return fmt.Errorf("meta connection for project %s is %s, not active", projectID, res.status)
-	}
-	var creds metaCreds
-	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return fmt.Errorf("decode meta credentials: %w", err)
-	}
-	if strings.TrimSpace(creds.AccessToken) == "" {
-		return fmt.Errorf("meta credentials are incomplete (need accessToken)")
+	accountID, err := requireMetaAccountID(res, projectID)
+	if err != nil {
+		return err
 	}
 	// A status update targets the campaign node by id (POST /{campaignID}); it needs no
-	// account id or page id, so those are not required here (unlike Dispatch).
-	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: strings.TrimSpace(res.accountID), Label: res.label}, d.opts...)
+	// page id (unlike Dispatch), but does need a chosen account id — see
+	// requireMetaAccountID.
+	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: accountID, Label: res.label}, d.opts...)
 	// Cascade to the ad set (and its ads) as well as the campaign: CreateCampaign PAUSES the
 	// campaign, ad set, and every ad, so toggling only the campaign to ACTIVE would not serve.
 	// The ad set id is read from the persisted CampaignResult (Meta stores it, but not the
@@ -246,30 +280,25 @@ func metaMetricsWindow(w model.MetricsWindow) (meta.MetricsWindow, error) {
 }
 
 // ReadMetrics implements service.MetricsReader for Meta. It resolves the same connection
-// ToggleStatus does (no account id or page id required — a metrics read targets the
-// campaign node by id, like the status update) and reads the campaign's live Insights
+// ToggleStatus does (no page id required — a metrics read targets the campaign node by id,
+// like the status update — but a chosen account id IS required, same as the toggle; see
+// resolveMetaCredentials and requireMetaAccountID) and reads the campaign's live Insights
 // metrics, mapping the platform-agnostic window to Meta's own vocabulary via
 // metaMetricsWindow before calling the client.
 func (d *MetaDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
-	res, err := d.creds.resolve(ctx, projectID, platform)
+	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}
-	if res.status != model.StatusActive {
-		return nil, fmt.Errorf("meta connection for project %s is %s, not active", projectID, res.status)
-	}
-	var creds metaCreds
-	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return nil, fmt.Errorf("decode meta credentials: %w", err)
-	}
-	if strings.TrimSpace(creds.AccessToken) == "" {
-		return nil, fmt.Errorf("meta credentials are incomplete (need accessToken)")
+	accountID, err := requireMetaAccountID(res, projectID)
+	if err != nil {
+		return nil, err
 	}
 	metaWindow, err := metaMetricsWindow(window)
 	if err != nil {
 		return nil, err
 	}
-	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: strings.TrimSpace(res.accountID), Label: res.label}, d.opts...)
+	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: accountID, Label: res.label}, d.opts...)
 	m, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, metaWindow)
 	if err != nil {
 		return nil, err
