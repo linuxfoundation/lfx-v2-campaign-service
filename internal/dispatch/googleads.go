@@ -871,6 +871,15 @@ func (d *GoogleAdsDispatcher) ReadMetrics(ctx context.Context, projectID string,
 // googleads.GetCampaign's contract, and it distinguishes absence from every unverifiable
 // answer, each of which it returns as an error rather than an empty result.
 func (d *GoogleAdsDispatcher) LookupCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) (*model.PlatformCampaignRef, error) {
+	// Validate the platform campaign ID BEFORE resolving the connection. A malformed id is
+	// a permanent input fault regardless of connection state, so it should produce the same
+	// 400 error either way. Validating first avoids decrypting credentials for a request
+	// that can never succeed and guarantees the permanent fault masks any contingent one
+	// (like a missing or unusable connection).
+	if err := googleads.ValidateCampaignID(platformCampaignID); err != nil {
+		return nil, fmt.Errorf("%w: %w", domain.ErrInvalidPlatformCampaignID, err)
+	}
+
 	client, err := d.resolveOwnedGoogleAdsClient(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
@@ -878,7 +887,8 @@ func (d *GoogleAdsDispatcher) LookupCampaign(ctx context.Context, projectID stri
 	ref, err := client.GetCampaign(ctx, platformCampaignID)
 	if err != nil {
 		// A malformed id never reached the network, so it is a 400 rather than the
-		// default "the platform could not be reached" 503 the caller would retry.
+		// default "the platform could not be reached" 503 the caller would retry. This
+		// should no longer happen since we validate above, but keep it for defense in depth.
 		if errors.Is(err, googleads.ErrNotACampaignID) {
 			return nil, fmt.Errorf("%w: %w", domain.ErrInvalidPlatformCampaignID, err)
 		}

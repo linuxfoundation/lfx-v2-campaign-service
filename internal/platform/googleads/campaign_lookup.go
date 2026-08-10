@@ -126,6 +126,19 @@ func canonicalCampaignID(s string) string {
 	return s
 }
 
+// ValidateCampaignID reports whether the provided campaign ID is valid in the
+// canonical base-10 spelling of a positive int64. A malformed id should be rejected
+// before credentials are resolved or queries are issued, because it is a permanent
+// input fault regardless of connection state.
+//
+// This function returns nil when the id is valid, and ErrNotACampaignID when it is not.
+func ValidateCampaignID(campaignID string) error {
+	if canonicalCampaignID(campaignID) == "" {
+		return fmt.Errorf("%w: %q (want the canonical base-10 spelling of a positive int64)", ErrNotACampaignID, campaignID)
+	}
+	return nil
+}
+
 // FindCampaignByName returns the numeric id of the single live campaign in this
 // account whose name is exactly name.
 //
@@ -402,8 +415,8 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 	// not just an optimisation: "007" would match campaign 7 server-side and then fail the
 	// echo check below as a disagreement, reporting a confusing conflict for what is really
 	// a malformed request.
-	if canonicalCampaignID(campaignID) == "" {
-		return nil, fmt.Errorf("%w: %q (want the canonical base-10 spelling of a positive int64)", ErrNotACampaignID, campaignID)
+	if err := ValidateCampaignID(campaignID); err != nil {
+		return nil, err
 	}
 
 	// campaign.id is an int64 in GAQL, so it is compared UNQUOTED — quoting it would make

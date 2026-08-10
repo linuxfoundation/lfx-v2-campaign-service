@@ -598,4 +598,6 @@ customer id, so the adopted row records the account it was verified under and th
 `googleAdsCreationCustomerID` mismatch guards keep working for adopted rows. A
 `googleads.ErrNotACampaignID` is re-tagged `domain.ErrInvalidPlatformCampaignID` (400): it was
 rejected locally with no network call, so it is permanent input, not an unreachable platform.
+**Campaign ID validation happens before resolving the connection, so a malformed ID always returns
+400 regardless of connection state — the permanent input fault masks any contingent connection fault.**
 
