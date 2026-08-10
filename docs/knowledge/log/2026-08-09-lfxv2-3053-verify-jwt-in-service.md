@@ -383,3 +383,31 @@ equivalent. Verifying the signature buys one thing: the actor stamped on a write
 actor the token names. And `docs/knowledge/code/internal-infrastructure-auth.md` still
 preserved the TTL-expiry stampede claim that the previous round had already deleted from
 `jwt.go`'s godoc — a concept doc outliving the source it describes.
+
+## Round N+1: a test whose comment claimed a third of the coverage it had
+
+`TestJWTAuth_UnverifiableIsUnavailableOnEveryService` opened with "pins the disposition at all
+three boundaries" and went on to name the exact risk — "a split that only the brief service
+honours is a split two thirds of the API does not have." It then ran `connections` and
+`audiences`. The brief service, the one the comment singles out by name, had no subtest.
+
+The generalisation is not "keep comments in sync." It is that **a test's doc comment is the
+only place its SCOPE is written down, and scope is the one property no assertion checks.** A
+missing assertion inside a subtest usually shows up eventually — the subtest exists, someone
+reads it. A missing subtest leaves nothing behind at all; the coverage claim survives in prose
+and reads, to anyone auditing by reading, exactly like coverage. That is a worse failure than
+a wrong assertion, because the reader has been given a reason not to look.
+
+The tell was available without running anything: the comment enumerated ("all three"), and an
+enumeration in a comment above a table-or-subtest test is a countable claim. When a comment
+counts, count.
+
+Added the `briefs` subtest. Revert check: flipping `brief.go`'s unverifiable arm from
+`ConnServiceUnavailableError` to `BadRequestError` fails it with the concrete type printed;
+the other two stay green, which is the split the comment warned about, reproduced.
+
+Also corrected `README.md` on `JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL`. It read "Never set it
+in a deployed environment," which is advice. The chart refuses to render it and the in-cluster
+check refuses to boot, so the real behaviour is a crash-loop. Understating an enforced
+constraint as a guideline costs an operator the one sentence that would explain a rollout that
+never comes up.

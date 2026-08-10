@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	audiences "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audiences"
+	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -164,6 +165,19 @@ func TestJWTAuth_UnverifiableIsUnavailableOnEveryService(t *testing.T) {
 		_, err := s.JWTAuth(context.Background(), "a-perfectly-good-token", nil)
 		if _, ok := err.(*audiences.ConnServiceUnavailableError); !ok {
 			t.Fatalf("err = %T (%v), want *audiences.ConnServiceUnavailableError", err, err)
+		}
+	})
+	// The third boundary, and the one the comment above singles out. It was missing while
+	// the comment claimed "all three" — which is the failure this whole test exists to
+	// prevent, one level up: a guarantee asserted in prose and checked in two thirds of the
+	// places it is asserted about reads, to anyone auditing coverage by reading, exactly
+	// like a guarantee that holds.
+	t.Run("briefs", func(t *testing.T) {
+		s := NewBriefService(nil, nil, nil, nil)
+		s.SetTokenVerifier(keysDown)
+		_, err := s.JWTAuth(context.Background(), "a-perfectly-good-token", nil)
+		if _, ok := err.(*briefs.ConnServiceUnavailableError); !ok {
+			t.Fatalf("err = %T (%v), want *briefs.ConnServiceUnavailableError", err, err)
 		}
 	})
 }
