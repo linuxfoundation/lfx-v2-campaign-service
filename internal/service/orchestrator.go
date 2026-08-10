@@ -1077,7 +1077,9 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// Meta and LinkedIn still return bare errors that fall through to the caller's default
 	// 503 arm. Tagging theirs is LFXV2-3069 part 2, and it is an extraction rather than an
 	// annotation: neither adapter has a shared resolve/validate helper to put the tagging in,
-	// so the defects are detected at each call site. Bound the
+	// so the defects are detected at each call site.
+	//
+	// Bound the
 	// whole (possibly multi-PATCH, each with its own retry budget) cascade with a total
 	// deadline UNDER the HTTP write timeout, so a slow toggle is cancelled and returned to the
 	// caller as an error rather than mutating the platform after the response can no longer be
