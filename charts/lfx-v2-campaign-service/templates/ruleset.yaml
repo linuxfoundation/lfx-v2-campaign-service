@@ -77,8 +77,8 @@ spec:
           - path: /projects/:projectId/connection-google-ads/test
           - path: /projects/:projectId/connection-google-ads/set-credential
           # Account discovery — a live, credential-scoped read of the ad accounts
-          # reachable upstream. Google Ads only for now; other providers get theirs
-          # in follow-ups, and each must be ruled here AND admitted by the
+          # reachable upstream. Google Ads and Meta Ads only for now; other providers
+          # get theirs in follow-ups, and each must be ruled here AND admitted by the
           # HTTPRoute regex or the path is unreachable through the gateway.
           - path: /projects/:projectId/connection-google-ads/accounts
           - path: /projects/:projectId/connection-linkedin-ads
@@ -87,6 +87,7 @@ spec:
           - path: /projects/:projectId/connection-meta-ads
           - path: /projects/:projectId/connection-meta-ads/test
           - path: /projects/:projectId/connection-meta-ads/set-credential
+          - path: /projects/:projectId/connection-meta-ads/accounts
           - path: /projects/:projectId/connection-reddit-ads
           - path: /projects/:projectId/connection-reddit-ads/test
           - path: /projects/:projectId/connection-reddit-ads/set-credential

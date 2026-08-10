@@ -2990,6 +2990,63 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/connection-meta-ads/accounts:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-meta-ads-accounts lfx-v2-campaign-service-connections
+            description: Enumerate the Meta ad accounts accessible via the stored connection credential. Returns act_-prefixed account ids, ready to store as the connection's account_id. Accounts Meta reports as disabled, unsettled or closed are included with the reason in their label rather than filtered out, so the caller can see why an account they expected cannot be used.
+            operationId: lfx-v2-campaign-service-connections#list-meta-ads-accounts
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/LfxV2CampaignServiceConnectionsListMetaAdsAccountsResponseBody'
+                        required:
+                            - accounts
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/connection-meta-ads/set-credential:
         post:
             tags:
@@ -4391,15 +4448,15 @@ definitions:
         properties:
             id:
                 type: string
-                description: Account identifier in the ad platform's namespace
-                example: "8666746580"
+                description: 'Account identifier in the ad platform''s own namespace, ready to store as the connection''s account_id. Google Ads: bare digits (8666746580). Meta: act_-prefixed (act_8666746580).'
+                example: Ipsa quis animi aliquam sunt.
             label:
                 type: string
                 description: Human-readable account name or label
-                example: Ipsa quis animi aliquam sunt.
+                example: Aliquam perspiciatis libero est ratione pariatur.
         example:
-            id: "8666746580"
-            label: Aliquam perspiciatis libero est ratione pariatur.
+            id: Et qui quos corrupti quam unde.
+            label: Ipsum et illum.
         required:
             - id
     Audience:
@@ -4409,15 +4466,15 @@ definitions:
             brief_id:
                 type: string
                 description: Owning brief
-                example: Sint voluptas maxime non illo ab.
+                example: Voluptatem minus est magnam molestiae.
             id:
                 type: string
                 description: Audience UUID
-                example: Commodi consequuntur.
+                example: Ea sunt debitis enim voluptas qui voluptas.
             inclusion_summary:
                 type: string
                 description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
-                example: Aspernatur culpa sed non qui ad.
+                example: Voluptas qui.
             platform:
                 type: string
                 description: Platform the audience is built on
@@ -4427,15 +4484,15 @@ definitions:
             platform_master_list_id:
                 type: string
                 description: Pointer to the built master list in the platform (empty until built)
-                example: Minus est magnam molestiae soluta vel ad.
+                example: Ad et in voluptatem et perspiciatis.
             project_id:
                 type: string
                 description: Owning project
-                example: Ea sunt debitis enim voluptas qui voluptas.
+                example: Sint voluptas maxime non illo ab.
             status:
                 type: string
                 description: Build lifecycle status
-                example: building
+                example: failed
                 enum:
                     - building
                     - built
@@ -4444,23 +4501,23 @@ definitions:
                 type: array
                 items:
                     type: string
-                    example: In voluptatem et perspiciatis ea.
+                    example: Dolor cumque dolores.
                 description: Platform suppression list ids applied to the master
                 example:
-                    - Dolores qui.
                     - Ratione dicta.
+                    - Aspernatur culpa sed non qui ad.
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 1905073879386313651
+                example: 5163375666896567619
                 format: int64
         example:
             brief_id: Deleniti reprehenderit saepe quas commodi qui qui.
-            id: Facere rerum voluptatem saepe eligendi.
+            id: Saepe eligendi eum non minima possimus totam.
             inclusion_summary: Eos repudiandae voluptate est enim aut laborum.
             platform: hubspot
             platform_master_list_id: Recusandae voluptates.
-            project_id: Non minima possimus totam occaecati enim eaque.
+            project_id: Enim eaque.
             status: failed
             suppression_list_ids:
                 - Numquam consequatur amet dolorem qui.
@@ -5461,13 +5518,14 @@ definitions:
                 $ref: '#/definitions/AudienceInput'
         example:
             audience:
-                inclusion_summary: Ab voluptatem esse.
+                inclusion_summary: Esse et qui et voluptatibus tempore.
                 platform: hubspot
-                platform_master_list_id: Est iste.
-                status: building
+                platform_master_list_id: Dignissimos voluptate iste.
+                status: built
                 suppression_list_ids:
-                    - Esse neque earum modi.
-                    - Quis possimus placeat.
+                    - Qui est.
+                    - Aliquid ad esse neque earum.
+                    - Esse quis possimus placeat enim ab.
         required:
             - audience
     LfxV2CampaignServiceAudiencesListAudiencesResponseBody:
@@ -5479,120 +5537,104 @@ definitions:
                 items:
                     $ref: '#/definitions/Audience'
                 example:
-                    - brief_id: Distinctio ipsum ab.
-                      etag: Laudantium ullam omnis autem.
-                      id: Aut qui.
-                      inclusion_summary: Ut alias quis nihil dolore suscipit reprehenderit.
+                    - brief_id: Id ipsa perspiciatis sunt ut velit.
+                      etag: Nihil ea quod et aut.
+                      id: Explicabo doloremque.
+                      inclusion_summary: Ullam omnis autem.
                       platform: hubspot
-                      platform_master_list_id: Placeat esse est in deserunt aliquid.
-                      project_id: Placeat cumque iure veritatis cumque nisi.
+                      platform_master_list_id: Mollitia aut molestiae exercitationem et impedit at.
+                      project_id: Sed et odio sunt totam incidunt.
                       status: built
                       suppression_list_ids:
-                        - Doloremque et sed et odio sunt totam.
-                        - Sunt id ipsa perspiciatis sunt.
-                        - Velit voluptatibus aut mollitia aut molestiae exercitationem.
-                        - Impedit at perspiciatis quisquam perferendis.
-                      version: 215504208095819726
-                    - brief_id: Distinctio ipsum ab.
-                      etag: Laudantium ullam omnis autem.
-                      id: Aut qui.
-                      inclusion_summary: Ut alias quis nihil dolore suscipit reprehenderit.
+                        - Perferendis autem ut alias quis nihil dolore.
+                        - Reprehenderit et aut animi.
+                      version: 6634039373982400492
+                    - brief_id: Id ipsa perspiciatis sunt ut velit.
+                      etag: Nihil ea quod et aut.
+                      id: Explicabo doloremque.
+                      inclusion_summary: Ullam omnis autem.
                       platform: hubspot
-                      platform_master_list_id: Placeat esse est in deserunt aliquid.
-                      project_id: Placeat cumque iure veritatis cumque nisi.
+                      platform_master_list_id: Mollitia aut molestiae exercitationem et impedit at.
+                      project_id: Sed et odio sunt totam incidunt.
                       status: built
                       suppression_list_ids:
-                        - Doloremque et sed et odio sunt totam.
-                        - Sunt id ipsa perspiciatis sunt.
-                        - Velit voluptatibus aut mollitia aut molestiae exercitationem.
-                        - Impedit at perspiciatis quisquam perferendis.
-                      version: 215504208095819726
-                    - brief_id: Distinctio ipsum ab.
-                      etag: Laudantium ullam omnis autem.
-                      id: Aut qui.
-                      inclusion_summary: Ut alias quis nihil dolore suscipit reprehenderit.
+                        - Perferendis autem ut alias quis nihil dolore.
+                        - Reprehenderit et aut animi.
+                      version: 6634039373982400492
+                    - brief_id: Id ipsa perspiciatis sunt ut velit.
+                      etag: Nihil ea quod et aut.
+                      id: Explicabo doloremque.
+                      inclusion_summary: Ullam omnis autem.
                       platform: hubspot
-                      platform_master_list_id: Placeat esse est in deserunt aliquid.
-                      project_id: Placeat cumque iure veritatis cumque nisi.
+                      platform_master_list_id: Mollitia aut molestiae exercitationem et impedit at.
+                      project_id: Sed et odio sunt totam incidunt.
                       status: built
                       suppression_list_ids:
-                        - Doloremque et sed et odio sunt totam.
-                        - Sunt id ipsa perspiciatis sunt.
-                        - Velit voluptatibus aut mollitia aut molestiae exercitationem.
-                        - Impedit at perspiciatis quisquam perferendis.
-                      version: 215504208095819726
-                    - brief_id: Distinctio ipsum ab.
-                      etag: Laudantium ullam omnis autem.
-                      id: Aut qui.
-                      inclusion_summary: Ut alias quis nihil dolore suscipit reprehenderit.
+                        - Perferendis autem ut alias quis nihil dolore.
+                        - Reprehenderit et aut animi.
+                      version: 6634039373982400492
+                    - brief_id: Id ipsa perspiciatis sunt ut velit.
+                      etag: Nihil ea quod et aut.
+                      id: Explicabo doloremque.
+                      inclusion_summary: Ullam omnis autem.
                       platform: hubspot
-                      platform_master_list_id: Placeat esse est in deserunt aliquid.
-                      project_id: Placeat cumque iure veritatis cumque nisi.
+                      platform_master_list_id: Mollitia aut molestiae exercitationem et impedit at.
+                      project_id: Sed et odio sunt totam incidunt.
                       status: built
                       suppression_list_ids:
-                        - Doloremque et sed et odio sunt totam.
-                        - Sunt id ipsa perspiciatis sunt.
-                        - Velit voluptatibus aut mollitia aut molestiae exercitationem.
-                        - Impedit at perspiciatis quisquam perferendis.
-                      version: 215504208095819726
+                        - Perferendis autem ut alias quis nihil dolore.
+                        - Reprehenderit et aut animi.
+                      version: 6634039373982400492
         example:
             audiences:
-                - brief_id: Distinctio ipsum ab.
-                  etag: Laudantium ullam omnis autem.
-                  id: Aut qui.
-                  inclusion_summary: Ut alias quis nihil dolore suscipit reprehenderit.
+                - brief_id: Id ipsa perspiciatis sunt ut velit.
+                  etag: Nihil ea quod et aut.
+                  id: Explicabo doloremque.
+                  inclusion_summary: Ullam omnis autem.
                   platform: hubspot
-                  platform_master_list_id: Placeat esse est in deserunt aliquid.
-                  project_id: Placeat cumque iure veritatis cumque nisi.
+                  platform_master_list_id: Mollitia aut molestiae exercitationem et impedit at.
+                  project_id: Sed et odio sunt totam incidunt.
                   status: built
                   suppression_list_ids:
-                    - Doloremque et sed et odio sunt totam.
-                    - Sunt id ipsa perspiciatis sunt.
-                    - Velit voluptatibus aut mollitia aut molestiae exercitationem.
-                    - Impedit at perspiciatis quisquam perferendis.
-                  version: 215504208095819726
-                - brief_id: Distinctio ipsum ab.
-                  etag: Laudantium ullam omnis autem.
-                  id: Aut qui.
-                  inclusion_summary: Ut alias quis nihil dolore suscipit reprehenderit.
+                    - Perferendis autem ut alias quis nihil dolore.
+                    - Reprehenderit et aut animi.
+                  version: 6634039373982400492
+                - brief_id: Id ipsa perspiciatis sunt ut velit.
+                  etag: Nihil ea quod et aut.
+                  id: Explicabo doloremque.
+                  inclusion_summary: Ullam omnis autem.
                   platform: hubspot
-                  platform_master_list_id: Placeat esse est in deserunt aliquid.
-                  project_id: Placeat cumque iure veritatis cumque nisi.
+                  platform_master_list_id: Mollitia aut molestiae exercitationem et impedit at.
+                  project_id: Sed et odio sunt totam incidunt.
                   status: built
                   suppression_list_ids:
-                    - Doloremque et sed et odio sunt totam.
-                    - Sunt id ipsa perspiciatis sunt.
-                    - Velit voluptatibus aut mollitia aut molestiae exercitationem.
-                    - Impedit at perspiciatis quisquam perferendis.
-                  version: 215504208095819726
-                - brief_id: Distinctio ipsum ab.
-                  etag: Laudantium ullam omnis autem.
-                  id: Aut qui.
-                  inclusion_summary: Ut alias quis nihil dolore suscipit reprehenderit.
+                    - Perferendis autem ut alias quis nihil dolore.
+                    - Reprehenderit et aut animi.
+                  version: 6634039373982400492
+                - brief_id: Id ipsa perspiciatis sunt ut velit.
+                  etag: Nihil ea quod et aut.
+                  id: Explicabo doloremque.
+                  inclusion_summary: Ullam omnis autem.
                   platform: hubspot
-                  platform_master_list_id: Placeat esse est in deserunt aliquid.
-                  project_id: Placeat cumque iure veritatis cumque nisi.
+                  platform_master_list_id: Mollitia aut molestiae exercitationem et impedit at.
+                  project_id: Sed et odio sunt totam incidunt.
                   status: built
                   suppression_list_ids:
-                    - Doloremque et sed et odio sunt totam.
-                    - Sunt id ipsa perspiciatis sunt.
-                    - Velit voluptatibus aut mollitia aut molestiae exercitationem.
-                    - Impedit at perspiciatis quisquam perferendis.
-                  version: 215504208095819726
-                - brief_id: Distinctio ipsum ab.
-                  etag: Laudantium ullam omnis autem.
-                  id: Aut qui.
-                  inclusion_summary: Ut alias quis nihil dolore suscipit reprehenderit.
+                    - Perferendis autem ut alias quis nihil dolore.
+                    - Reprehenderit et aut animi.
+                  version: 6634039373982400492
+                - brief_id: Id ipsa perspiciatis sunt ut velit.
+                  etag: Nihil ea quod et aut.
+                  id: Explicabo doloremque.
+                  inclusion_summary: Ullam omnis autem.
                   platform: hubspot
-                  platform_master_list_id: Placeat esse est in deserunt aliquid.
-                  project_id: Placeat cumque iure veritatis cumque nisi.
+                  platform_master_list_id: Mollitia aut molestiae exercitationem et impedit at.
+                  project_id: Sed et odio sunt totam incidunt.
                   status: built
                   suppression_list_ids:
-                    - Doloremque et sed et odio sunt totam.
-                    - Sunt id ipsa perspiciatis sunt.
-                    - Velit voluptatibus aut mollitia aut molestiae exercitationem.
-                    - Impedit at perspiciatis quisquam perferendis.
-                  version: 215504208095819726
+                    - Perferendis autem ut alias quis nihil dolore.
+                    - Reprehenderit et aut animi.
+                  version: 6634039373982400492
         required:
             - audiences
     LfxV2CampaignServiceAudiencesUpdateAudienceRequestBody:
@@ -5604,12 +5646,12 @@ definitions:
         example:
             audience:
                 clear_suppression_lists: false
-                inclusion_summary: Sed rerum dicta distinctio voluptas ut ut.
-                platform_master_list_id: Itaque doloribus.
-                status: built
+                inclusion_summary: Omnis reprehenderit distinctio quos ut unde.
+                platform_master_list_id: Deleniti accusamus et atque enim.
+                status: failed
                 suppression_list_ids:
-                    - Quis fugiat expedita recusandae qui culpa.
-                    - Accusamus et atque enim.
+                    - Rerum dicta distinctio.
+                    - Ut ut nisi fuga nostrum velit hic.
         required:
             - audience
     LfxV2CampaignServiceBriefsCreateBriefRequestBody:
@@ -5620,18 +5662,17 @@ definitions:
                 $ref: '#/definitions/BriefInput'
         example:
             brief:
-                copy: Ad inventore voluptatum eligendi quasi.
-                event_details: Porro voluptate.
-                event_slug: ec
-                keywords: Ipsa et dolore.
+                copy: Expedita dignissimos non sed omnis officiis et.
+                event_details: Dolores omnis placeat unde distinctio ducimus.
+                event_slug: ld
+                keywords: Laboriosam qui id enim.
                 platforms:
-                    - Dolor et consectetur sint error.
-                    - Maiores et maiores laudantium aut.
-                    - Deleniti voluptates non sint inventore.
-                    - Iure ut nostrum facilis suscipit.
-                program_type: membership
-                targeting: Velit dolores omnis placeat unde distinctio ducimus.
-                url: Illo mollitia.
+                    - Suscipit veritatis porro.
+                    - Non ad inventore voluptatum eligendi quasi eos.
+                    - Et dolore aperiam.
+                program_type: education
+                targeting: Magni repudiandae.
+                url: Non sint inventore iste iure ut.
         required:
             - brief
     LfxV2CampaignServiceBriefsCreateCampaignsRequestBody:
@@ -5704,18 +5745,17 @@ definitions:
                 $ref: '#/definitions/BriefInput'
         example:
             brief:
-                copy: Ad inventore voluptatum eligendi quasi.
-                event_details: Porro voluptate.
-                event_slug: ec
-                keywords: Ipsa et dolore.
+                copy: Expedita dignissimos non sed omnis officiis et.
+                event_details: Dolores omnis placeat unde distinctio ducimus.
+                event_slug: ld
+                keywords: Laboriosam qui id enim.
                 platforms:
-                    - Dolor et consectetur sint error.
-                    - Maiores et maiores laudantium aut.
-                    - Deleniti voluptates non sint inventore.
-                    - Iure ut nostrum facilis suscipit.
-                program_type: membership
-                targeting: Velit dolores omnis placeat unde distinctio ducimus.
-                url: Illo mollitia.
+                    - Suscipit veritatis porro.
+                    - Non ad inventore voluptatum eligendi quasi eos.
+                    - Et dolore aperiam.
+                program_type: education
+                targeting: Magni repudiandae.
+                url: Non sint inventore iste iure ut.
         required:
             - brief
     LfxV2CampaignServiceBriefsUpdateCampaignRequestBody:
@@ -5882,19 +5922,36 @@ definitions:
                     $ref: '#/definitions/AccessibleAccount'
                 example:
                     - id: "8666746580"
-                      label: Qui eveniet aliquid quia aut impedit.
-                    - id: "8666746580"
-                      label: Qui eveniet aliquid quia aut impedit.
-                    - id: "8666746580"
-                      label: Qui eveniet aliquid quia aut impedit.
+                      label: Linux Foundation
+                    - id: "1234567890"
+                      label: CNCF
         example:
             accounts:
                 - id: "8666746580"
-                  label: Qui eveniet aliquid quia aut impedit.
-                - id: "8666746580"
-                  label: Qui eveniet aliquid quia aut impedit.
-                - id: "8666746580"
-                  label: Qui eveniet aliquid quia aut impedit.
+                  label: Linux Foundation
+                - id: "1234567890"
+                  label: CNCF
+        required:
+            - accounts
+    LfxV2CampaignServiceConnectionsListMetaAdsAccountsResponseBody:
+        title: LfxV2CampaignServiceConnectionsListMetaAdsAccountsResponseBody
+        type: object
+        properties:
+            accounts:
+                type: array
+                items:
+                    $ref: '#/definitions/AccessibleAccount'
+                example:
+                    - id: act_8666746580
+                      label: Linux Foundation
+                    - id: act_1234567890
+                      label: CNCF (unsettled)
+        example:
+            accounts:
+                - id: act_8666746580
+                  label: Linux Foundation
+                - id: act_1234567890
+                  label: CNCF (unsettled)
         required:
             - accounts
     LfxV2CampaignServiceConnectionsSetCredentialGoogleAdsRequestBody:

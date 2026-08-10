@@ -219,8 +219,20 @@ campaign fail with a guaranteed 400.
 ## Account discovery
 
 `ConnectionService.ListGoogleAdsAccounts` (backing `GET .../connection-google-ads/accounts`)
-enumerates the ad accounts reachable UPSTREAM with the connection's stored credential, so an
-operator can pick one instead of pasting a customer id by hand. It is a live read on the same
+and `ListMetaAdsAccounts` (`GET .../connection-meta-ads/accounts`) enumerate the ad accounts
+reachable UPSTREAM with the connection's stored credential, so an operator can pick one instead
+of pasting an account id by hand.
+
+**Both handlers are three lines over one `listAccounts` helper**, parameterized by an
+`accountDiscovery{provider, displayName, notUsableRemedy}` value. The mapping below encodes
+several judgements that are individually easy to get wrong — 404 rather than 503 for a missing
+connection, a 500 that logs but never echoes a decryption failure, a 400 rather than 503 for a
+connection no waiting will fix — and a second copy is where one of them quietly diverges. What
+IS per-provider is the caller-facing text: Meta's remedy names `access_token`, Google's names
+`login_customer_id`, and pointing the second handler at the first's `accountDiscovery` would
+tell a Meta operator to check a field their connection does not have.
+`TestListMetaAdsAccounts_MessagesNameMetaNotGoogleAds` is the test for exactly that, because
+every status-code assertion passes with the wiring wrong. It is a live read on the same
 never-persisted discipline as `GetCampaignMetrics`, and `Orchestrator.ReadAccounts` uses the
 same optional-capability pattern: it type-asserts the platform's dispatcher for `AccountLister`
 at call time and returns `ErrAccountsUnsupported` (400) without contacting the platform when
@@ -251,8 +263,12 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   value such as a dashed `login_customer_id`. The platform is never contacted. This arm is what
   keeps the 503 below honest: a 503 promises that waiting might help, and none of these conditions
   change until a human edits the connection. The distinction cannot be made here — a setup failure
-  and an upstream one arrive as the same type — so `internal/dispatch/googleads.go` wraps the
-  pre-send failures with the sentinel and this arm reads it. The wrap has three owners:
+  and an upstream one arrive as the same type — so the dispatch layer wraps the pre-send failures
+  with the sentinel and this arm reads it. Four adapters do:
+  `internal/dispatch/{googleads,reddit,twitter,microsoft}.go`, each in its own shared
+  resolve/validate helper, so every path through an adapter is covered rather than just the one
+  that happened to be fixed. Meta and LinkedIn do NOT yet — their equivalent checks are still bare
+  and still fall to the 503 arm below (LFXV2-3069 part 2). In Google Ads the wrap has three owners:
   `validateGoogleAdsCredentials` tags the credential-state three (inactive, undecodable,
   incomplete), which is why they reach callers beyond discovery — but the SHAPE they reach them in
   depends on whether the caller is synchronous. The **status toggle** and the **metrics read**
@@ -323,6 +339,13 @@ The distinction is carried in the response **message**, not a field. `ConflictEr
 Goa type with exactly `code` and `message`, so exposing a machine-readable `reason` would mean
 changing a type every 409 in this service returns; the reason token reaches operators through
 the log instead.
+
+**The message names no accounts endpoint**, and that constraint is load-bearing rather than
+stylistic. Only Google Ads has one (`design/connection.go`, `list-google-ads-accounts`), and
+since Reddit, X/Twitter and Microsoft Ads tag this defect too they reach the same arm — a
+message pointing them at `.../accounts` would prescribe a route that 404s, which reads as a
+service bug rather than a value the caller has to supply. "Save an ad account id on the
+connection" is true of every provider. `assertNoAccountsEndpointPromised` pins it.
 
 Two DIFFERENT guards protect the empty-vs-nil distinction, and they fail in opposite directions —
 document them separately so a future change preserves each for its own reason:
