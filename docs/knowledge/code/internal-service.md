@@ -88,11 +88,27 @@ cannot be safely resumed without provider idempotency keys).
 {active|paused}) pauses/resumes a campaign ON THE PLATFORM, then persists. Unlike
 `UpdateCampaign` (DB-only), the platform call happens FIRST via
 `Orchestrator.ToggleCampaignStatus` → the platform's `StatusToggler`; the DB row is written
-only after the platform confirms. Only a fully-created campaign (`created`, or one already `active`/`paused`) may be toggled
-(`model.CampaignStatusToggleable`); a `pending` ambiguous orphan or a `created_degraded`
-campaign is rejected 409 — toggling one would activate an incomplete campaign and/or
-overwrite its reconciliation marker with the run state (a non-empty `PlatformCampaignID`
-alone is not sufficient, since a partial/degraded campaign can carry an upstream id).
+only after the platform confirms. Only a fully-created campaign (`created`, or one already
+`active`/`paused`) may be toggled FREELY (`model.CampaignStatusToggleable`); a `pending`
+ambiguous orphan or a `created_degraded` campaign is rejected 409 on ACTIVATE — activating one
+would put an incomplete campaign in front of an audience and overwrite its reconciliation
+marker with the run state (a non-empty `PlatformCampaignID` alone is not sufficient, since a
+partial/degraded campaign can carry an upstream id).
+
+**PAUSE is the one exception, and only for `created_degraded`.** That status means the campaign
+definitely EXISTS upstream while the service does not know its full wiring — and an ADOPTED
+campaign (LFXV2-3042) reaches it by binding a campaign the lookup found, where `ENABLED` and
+`PAUSED` are alike live. So an adopted campaign can already be serving and spending, and
+refusing every toggle made the campaign most likely to need stopping the one campaign the
+service could not stop, even though the dispatchers explicitly support pausing a campaign with
+no child ids. A pause costs the guard nothing: it cannot activate anything. **The marker is
+preserved rather than written over** — pausing reconciles nothing, so the row keeps
+`created_degraded` (no version bump, no index event) and the response reports that unchanged
+status. The exception lives at the call site, not inside `CampaignStatusToggleable`, which
+stays direction-blind: a `toggleable(status, direction)` shape would invite an unrelated caller
+to pass the wrong direction and silently gain the exception. `pending` and the partial-orphan
+statuses stay refused in BOTH directions — they do not mean "exists upstream", so there is
+nothing for a pause to act on.
 Write ownership of the row is claimed via `CampaignRepo.ClaimCampaignVersion` BEFORE the
 paid platform call, not by comparing the read-time version in memory (LFXV2-2901): an
 in-memory comparison only rejects a stale caller, it does nothing to stop a SECOND
@@ -187,8 +203,20 @@ campaign fail with a guaranteed 400.
 ## Account discovery
 
 `ConnectionService.ListGoogleAdsAccounts` (backing `GET .../connection-google-ads/accounts`)
-enumerates the ad accounts reachable UPSTREAM with the connection's stored credential, so an
-operator can pick one instead of pasting a customer id by hand. It is a live read on the same
+and `ListMetaAdsAccounts` (`GET .../connection-meta-ads/accounts`) enumerate the ad accounts
+reachable UPSTREAM with the connection's stored credential, so an operator can pick one instead
+of pasting an account id by hand.
+
+**Both handlers are three lines over one `listAccounts` helper**, parameterized by an
+`accountDiscovery{provider, displayName, notUsableRemedy}` value. The mapping below encodes
+several judgements that are individually easy to get wrong — 404 rather than 503 for a missing
+connection, a 500 that logs but never echoes a decryption failure, a 400 rather than 503 for a
+connection no waiting will fix — and a second copy is where one of them quietly diverges. What
+IS per-provider is the caller-facing text: Meta's remedy names `access_token`, Google's names
+`login_customer_id`, and pointing the second handler at the first's `accountDiscovery` would
+tell a Meta operator to check a field their connection does not have.
+`TestListMetaAdsAccounts_MessagesNameMetaNotGoogleAds` is the test for exactly that, because
+every status-code assertion passes with the wiring wrong. It is a live read on the same
 never-persisted discipline as `GetCampaignMetrics`, and `Orchestrator.ReadAccounts` uses the
 same optional-capability pattern: it type-asserts the platform's dispatcher for `AccountLister`
 at call time and returns `ErrAccountsUnsupported` (400) without contacting the platform when
@@ -219,8 +247,12 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   value such as a dashed `login_customer_id`. The platform is never contacted. This arm is what
   keeps the 503 below honest: a 503 promises that waiting might help, and none of these conditions
   change until a human edits the connection. The distinction cannot be made here — a setup failure
-  and an upstream one arrive as the same type — so `internal/dispatch/googleads.go` wraps the
-  pre-send failures with the sentinel and this arm reads it. The wrap has two owners:
+  and an upstream one arrive as the same type — so the dispatch layer wraps the pre-send failures
+  with the sentinel and this arm reads it. Four adapters do:
+  `internal/dispatch/{googleads,reddit,twitter,microsoft}.go`, each in its own shared
+  resolve/validate helper, so every path through an adapter is covered rather than just the one
+  that happened to be fixed. Meta and LinkedIn do NOT yet — their equivalent checks are still bare
+  and still fall to the 503 arm below (LFXV2-3069 part 2). In Google Ads the wrap has three owners:
   `validateGoogleAdsCredentials` tags the credential-state three (inactive, undecodable,
   incomplete), which is why they reach callers beyond discovery — but the SHAPE they reach them in
   depends on whether the caller is synchronous. The **status toggle** and the **metrics read**
@@ -229,7 +261,9 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   polled job result, never as a 409 — see `docs/api-catalog.md`. Do not describe "campaign
   dispatch" as receiving a 409; the dispatch layer produces the error, and only the two
   synchronous readers turn it into a status code.
-  `resolveGoogleAdsDiscoveryClient` tags the dashed `login_customer_id`. Neither the cause NOR its text leaves this function — not in the response and not in
+  `validatedLoginCustomerID` in `internal/dispatch/googleads.go` tags the dashed `login_customer_id`,
+  and it is now called by all three readers (toggle resolver, discovery resolver, and create dispatcher).
+  Neither the cause NOR its text leaves the dispatch layer — not in the response and not in
   the log line. One of the wrapped errors is computed over the decrypted credential blob, and
   `encoding/json` quotes its input, so logging the cause would put credential-derived bytes into
   centralized logs for exactly the connection whose credentials are malformed. What the log line
@@ -289,6 +323,13 @@ The distinction is carried in the response **message**, not a field. `ConflictEr
 Goa type with exactly `code` and `message`, so exposing a machine-readable `reason` would mean
 changing a type every 409 in this service returns; the reason token reaches operators through
 the log instead.
+
+**The message names no accounts endpoint**, and that constraint is load-bearing rather than
+stylistic. Only Google Ads has one (`design/connection.go`, `list-google-ads-accounts`), and
+since Reddit, X/Twitter and Microsoft Ads tag this defect too they reach the same arm — a
+message pointing them at `.../accounts` would prescribe a route that 404s, which reads as a
+service bug rather than a value the caller has to supply. "Save an ad account id on the
+connection" is true of every provider. `assertNoAccountsEndpointPromised` pins it.
 
 Two DIFFERENT guards protect the empty-vs-nil distinction, and they fail in opposite directions —
 document them separately so a future change preserves each for its own reason:

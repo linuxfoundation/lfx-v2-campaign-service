@@ -1058,25 +1058,47 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// undecodable or incomplete credentials, missing account id) — the ad platform is never
 	// contacted for the last group.
 	//
-	// The classification of that last group is NO LONGER uniform across dispatchers, and this
-	// comment used to say it was. Google Ads tags the preflight failures REACHABLE HERE with
-	// domain.ErrConnectionNotUsable (internal/dispatch/googleads.go): the three in
-	// validateGoogleAdsCredentials and the missing-account guard in
-	// validateGoogleAdsConnection, both of which resolveGoogleAdsClient runs. The caller maps
-	// them to 409 — correct, because none of them improves with time.
+	// The classification of that last group is NOT yet uniform across dispatchers. Google Ads,
+	// Reddit, X/Twitter and Microsoft Ads tag the preflight failures REACHABLE HERE with
+	// domain.ErrConnectionNotUsable plus a reason sentinel. Google Ads tags every one of its
+	// CONNECTION-STATE checks (internal/dispatch/googleads.go): the three in
+	// validateGoogleAdsCredentials, the missing-account guard in validateGoogleAdsConnection —
+	// both of which resolveGoogleAdsClient runs — and the stored-login_customer_id check in
+	// validatedLoginCustomerID; all five run on this path. The other three adapters tag the
+	// same four defects in each one's shared resolve/validate helper (LFXV2-3069 part 1). The
+	// caller maps them to 409 — correct, because none of them improves with time.
 	//
-	// The stored-login_customer_id check is NOT among them, though it is tagged: it lives in
-	// resolveGoogleAdsDiscoveryClient, which only the discovery endpoint calls. A malformed
-	// manager id therefore reaches this path unclassified, fails inside the client at
-	// validateLoginCustomerID, and falls through to 503 — retryable, for a stored value that
-	// no amount of retrying will fix. Hoisting the check into the shared validation is the
-	// fix; it is a behaviour change with its own test and lands separately.
+	// The middle group — cred RESOLUTION, credsSource.resolve — is deliberately not covered by
+	// that statement, on Google Ads or anywhere else. Three of its returns carry no
+	// ErrConnectionNotUsable at all (internal/dispatch/creds.go): a missing connection row keeps
+	// domain.ErrNotFound, a repository failure keeps only the wrapped repo error, and a GCM
+	// AUTHENTICATION failure carries domain.ErrCredentialDecryptionFailed. Only the
+	// row-is-provably-bad returns (no stored credentials, ErrCredentialsMalformed) are tagged.
 	//
-	// Reddit, Meta, LinkedIn, X AND Microsoft still return bare
-	// errors that fall through to the caller's default 503 arm; Microsoft is wired for
-	// toggles and runs the same active/incomplete preflight, so leaving it out of this list
-	// would hide a provider that is actually reachable here. Tagging
-	// theirs is the outstanding half of that work, tracked with the adapters. Bound the
+	// What the TOGGLE CALLER does with those three today is a single thing: nothing special.
+	// ToggleCampaignStatus's switch (internal/service/brief.go) does have several typed arms,
+	// but NONE of them matches these three: there is no ErrNotFound arm, no arm for a bare
+	// repository error, and no ErrCredentialDecryptionFailed arm. So all three untagged
+	// returns land in default, get logged, and return 503. Their distinct classifications are
+	// honoured by the read-only DISCOVERY handlers, not here. Do not read the sentinel names
+	// off this paragraph and assume this endpoint already answers 404 or 500; it does not.
+	//
+	// That is a known rough edge rather than a considered choice: "this project has no
+	// connection configured" is permanent, and 503 invites a retry that cannot succeed. Adding
+	// the arm is a behaviour change with its own ticket (LFXV2-3065), not part of the
+	// classification fix this comment documents.
+	//
+	// The manager-id check is the newest of the five and was for a while NOT reachable here:
+	// it sat inline in the discovery resolver, so a malformed stored value reached this path
+	// unclassified and fell through to 503. LFXV2-3052 hoisted it into a helper both resolvers
+	// call, which is why the list above is once again the whole list rather than a subset.
+	//
+	// Meta and LinkedIn still return bare errors that fall through to the caller's default
+	// 503 arm. Tagging theirs is LFXV2-3069 part 2, and it is an extraction rather than an
+	// annotation: neither adapter has a shared resolve/validate helper to put the tagging in,
+	// so the defects are detected at each call site.
+	//
+	// Bound the
 	// whole (possibly multi-PATCH, each with its own retry budget) cascade with a total
 	// deadline UNDER the HTTP write timeout, so a slow toggle is cancelled and returned to the
 	// caller as an error rather than mutating the platform after the response can no longer be

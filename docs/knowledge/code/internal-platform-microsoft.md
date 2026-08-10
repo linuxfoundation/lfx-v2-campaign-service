@@ -32,8 +32,17 @@ Like Google Ads, Microsoft auth is richer than a single Bearer token. `Credentia
 carries the OAuth2 `client_id`/`client_secret` + `developer_token` + `refresh_token`;
 `AccountConfig` carries the `account_id` (digits only, sent as `CustomerAccountId`)
 and an optional `customer_id` (digits only, sent as `CustomerId` when set). Every
-call sends the bearer access token, the `DeveloperToken` header, `CustomerAccountId`,
-and — when set — `CustomerId`. The refresh-token→access-token exchange runs against
+call sends the bearer access token and the `DeveloperToken` header, and — when set —
+`CustomerId`.
+
+`CustomerAccountId` is **not** universal, and neither is the account id itself.
+Campaign Management calls are account-scoped and send it; **Customer Management**
+calls (ad-account discovery) do not, and do not validate `account_id` either. An
+empty header is a claim about an account, so it is omitted entirely rather than sent
+blank. This is what makes discovery reachable from a connection that holds
+credentials and no account id at all — the exact state discovery exists to resolve —
+and it is why "one client, one ad account" describes the Campaign Management surface
+rather than a construction invariant of `Client`. The refresh-token→access-token exchange runs against
 the Microsoft identity platform (`login.microsoftonline.com/common/oauth2/v2.0/token`,
 scope `https://ads.microsoft.com/msads.manage offline_access`) and is coalesced with a
 single-flight leader/follower (the token mutex is never held across the network call,
@@ -205,6 +214,130 @@ ad's `FinalUrls` is the registration URL with LFX `utm_*` params SET (`buildAdFi
 preserves every other query param). `AlreadyExisted` is true only when the campaign, ad
 group, AND ad ALL pre-existed (this run created nothing); creating any level makes it false.
 
+## Ad-account discovery
+
+`ListAdAccounts` (`accounts.go`) enumerates every Microsoft Advertising account these
+credentials can reach, so a connection that holds only credentials — or one being
+re-pointed at a different account — can ask which accounts are available.
+
+**A second service, on a second host.** Unlike every other call in this package,
+discovery is not a Campaign Management call. It is
+`POST clientcenter.api.bingads.microsoft.com/CustomerManagement/v13/AccountsInfo/Query`.
+Microsoft splits its API by service across DIFFERENT hosts, so `msCustomerBaseURL` and
+`WithCustomerBaseURL` sit alongside the campaign base rather than replacing it, and the
+tests point the two at different servers — a call routed to the wrong service would
+otherwise look correct. (This is still the synchronous REST/JSON surface; the SOAP,
+submit-and-poll Reporting API that tabled Microsoft metrics reads is a third service
+again.) The version segment is NOT a second knob: `WithAPIVersion` sets `c.apiVersion`
+for both hosts, because Microsoft versions the two services in lockstep — a caller
+pinning a version is pinning the client, not one of its halves.
+
+**The request asks about the CREDENTIALS, not about an account.** `doCustomerRequest`
+deliberately does NOT call `validateAccountIDs` and does NOT send `CustomerAccountId`
+— it validates only `customer_id`, and only when one is set. Requiring a valid account
+id would make discovery unreachable exactly when it is needed, which is the state it
+exists to resolve. The header is OMITTED rather than sent empty: an empty
+`CustomerAccountId` is still a claim about an account.
+
+Which calls omit it is decided by the **operation's scope**, not by whether the connection
+happens to hold an account — discovery omits it even when `AccountID` is set. That is not
+a detail: discovery exists partly to RE-POINT a connection that already has an account, so
+the configured-account case is half the traffic. A client that sent the header "whenever
+there is one to send" would look reasonable, pass the empty-config assertion, and scope
+every re-point to the account the user is trying to move away from, returning that account
+and hiding the rest. `attempt` takes an explicit `accountScoped` flag rather than inferring
+this; `TestListAdAccounts_OmitsTheAccountHeaderEvenWhenOneIsConfigured` pins the case, and
+a separate test pins that the campaign path still sends its account header.
+
+**"Every account" needs one query per customer.** `AccountsInfo/Query` is scoped to ONE
+customer whichever way it is called: Microsoft documents it as returning the accounts
+"accessible from the specified customer", and omitting `CustomerId` does not widen it —
+"if not set, the user's credentials are used to determine **the** customer", still
+singular. So a user who administers several customers used to get one customer's
+accounts and no sign the rest existed. `ListAdAccounts` therefore runs
+`discoveryCustomerIDs` first: `POST CustomerManagement/v13/User/Query` with `UserId`
+omitted returns the authenticated user's `CustomerRoles`, one entry per customer the
+credentials reach, and each id gets its own `AccountsInfo/Query`. A configured
+`customer_id` short-circuits that — the operator scoped the connection deliberately, and
+widening it back out would undo the scoping and pay for a `User/Query` it cannot use.
+
+`OnlyParentAccounts=false` is **not** a substitute for the loop, and the distinction is
+easy to lose: a linked account is one attached to the customer BEING QUERIED, which is a
+different relationship from a second customer the same user administers. Only
+`User/Query` names the latter. It is still sent false, because otherwise the picker
+narrows to the accounts that customer owns outright.
+
+Only the `CustomerRoles` field of the `User/Query` envelope is decoded. The `User` object
+carries a password field, a secret answer and an authentication token, and none of them
+are needed here — so a malformed body is reported without ever echoing it, and a test
+pins that the marker text in the response never reaches the error string.
+
+The union is deduplicated by account id (first occurrence wins): the same account is
+reachable under more than one customer whenever it is linked, which is exactly what
+`OnlyParentAccounts=false` asks for, and offering it twice makes a user wonder which
+entry is real. One customer erroring fails the WHOLE call — a partial union is the
+false-absence bug this loop exists to remove, and it is indistinguishable from a complete
+one at the boundary. `CustomerRoles` absent, `null` or `[]` is likewise an error, not zero
+accounts: Microsoft documents at minimum one entry, so none of those is the answer "these
+credentials reach no customers", and an unusable role id fails for the same reason a bad
+account id does.
+
+The call is marked idempotent — it creates nothing, so retrying a 429 cannot
+double-create, and without the retry a transient rate limit fails a user's first attempt
+to connect an account.
+
+**Two health axes, kept apart.** `AccountLifeCycleStatus` (Active, Draft, Inactive,
+Pause, Pending, Suspended) and `PauseReason` answer different questions and can
+disagree — Microsoft returns a pause reason alongside a status that is not itself
+"Pause", so an account can read as bindable and still not spend. `Usable()` is an
+ALLOW-LIST (status exactly "Active" AND no pause reason), so an absent or unrecognized
+status reads as "not confirmed usable" rather than as healthy. `StatusLabel()` is empty
+for Active and for anything this package does not recognize; an empty label is not a
+claim that the account is fine. `PauseLabel()` renders an undocumented flag value
+verbatim ("paused (unrecognized reason 9)") rather than flattening it to "paused" —
+that raw value is the only detail distinguishing a Microsoft-side change from a bug
+here. Draft, suspended and paused accounts are all RETURNED with their reason, not
+filtered: this feeds a picker, and dropping a user's only account answers "your
+credentials reach no ad accounts" about an account sitting right there.
+
+**Fail, do not truncate.** The endpoint is unpaginated, so there is no cursor walk to
+bound; the two remaining modes both fail the whole call. `{}` (no answer) must stay
+distinguishable from `{"AccountsInfo": []}` (zero accounts) — collapsing them is the
+false-absence shape that sends a user looking for a permissions problem that does not
+exist. The DECODER already preserves that distinction on its own: `encoding/json` leaves
+a field whose key is ABSENT untouched and SETS a present `null` to nil — two different
+operations, agreeing here only because the envelope is declared fresh per response — while
+a present `[]` decodes to a non-nil empty slice. `AccountsInfo` is a POINTER to a slice for a reason
+that is about the next reader rather than the mechanism: a plain slice invites a
+`len(x) == 0` check that silently merges the two cases, while a nil pointer must be
+dereferenced and the compiler makes that choice explicit. Do not "simplify" it away
+without replacing the nil guard. And an id that `numberID` rejects errors rather
+than skipping the row, because a response shape that far from the documented one is not
+the response we think it is.
+
+**`numberID`, not `accountIDRE`, and the distinction generalises.** `accountIDRE`
+(`^[0-9]+$`) is a **transport** check: is this string safe to put in a header. It
+therefore admits `0` and a forty-digit number, neither of which can name a Microsoft
+entity — ids there are positive `int64`s. Discovery is an **identity** check: the id *is*
+the answer, and the account it names gets bound to a connection and spends money.
+`numberID` (`campaign.go`) enforces positivity and signed-64-bit range on top of the digit
+shape, which is why the create path already uses it on returned ids. Everything `numberID`
+accepts `accountIDRE` accepts too, so reusing the stricter one keeps the original property
+— a discovered account cannot fail at bind time — while closing the gap. **A validation
+borrowed from a transport concern is not automatically the right one for an identity
+claim; check which question it was written to answer.**
+
+The same rule reaches the CONFIGURED customer id, which is the easier half to miss.
+`doCustomerRequest` validates it, so it looks covered — but that check is the transport one
+again, and `discoveryCustomerIDs` does not use the value as a header: it returns it as the
+answer to "whose accounts are these", to be enumerated under and offered as a picker.
+Trusting a configured id more than a discovered one is backwards. A discovered id arrived
+seconds ago from the API; a configured one has been sitting in a connection record since
+whenever it was written. `discoveryCustomerIDs` therefore runs `numberID` over it and fails
+the call rather than querying under an id that cannot name a customer. `Id` is decoded as a `json.Number`, not through `any`: Microsoft types
+it as a `long`, and float64 silently loses precision above 2^53, producing a WRONG
+account id that still looks like one (a test pins 2^53+1 round-tripping exactly).
+
 ## Scope
 
 MS-1 is the scaffold (auth + request layer + error classification). MS-2 adds PAUSED
@@ -213,7 +346,9 @@ find-or-create campaign creation (`campaign.go`); MS-2.5 completes the ad group 
 `connection-microsoft-ads` credential into the orchestrator dispatcher
 (`internal/dispatch/microsoft.go`). The **status toggle** (LFXV2-2810) adds
 `UpdateCampaignAndChildrenStatus` on top: a three-level cascade whose ordering, child-id guard and
-outcome classification are described under Status toggle below.
+outcome classification are described under Status toggle below. **Ad-account discovery**
+(LFXV2-3064) adds `ListAdAccounts` against the separate Customer Management service, the
+one call in this package that is NOT account-scoped.
 
 ## Dispatch adapter (internal/dispatch)
 
