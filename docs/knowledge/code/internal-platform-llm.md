@@ -179,6 +179,14 @@ half an email reads like an email, and the caller landing in part 2 would send i
 separate sentinels because a caller may reasonably fall back to the cloned template's own body
 on a truncation while treating an empty completion as a proxy defect.
 
+The two sentinels OVERLAP on one response shape — empty content plus a stopped reason — and
+the order of the two checks is what decides which the caller sees. A content filter can leave
+the content empty as well as truncated, so the reason is read FIRST: `ErrEmptyCompletion` says
+"the model returned nothing", which would send a caller to retry the same prompt against a
+response that told it, in a field it had discarded, that something stopped the model. Only a
+`stop` or absent reason leaves "returned nothing" as the accurate description, and the content
+check runs after, for exactly that case.
+
 `stop` and an EMPTY reason are accepted — the field is optional in practice, and absence is not
 evidence of truncation. `length`, `content_filter`, `tool_calls`/`function_call` and anything
 UNRECOGNISED are rejected; failing closed on the unrecognised case is the cheap direction,

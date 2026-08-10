@@ -389,6 +389,40 @@ func TestComplete_EmptyChoicesIsDistinctFromTransportFailure(t *testing.T) {
 	}
 }
 
+// The two sentinels overlap on one response shape, and only the ORDER of the two checks
+// decides which one a caller sees. A content filter (or a max_tokens cut) can leave the
+// content empty as well as truncated, and ErrEmptyCompletion says "the model returned
+// nothing" — which sends a caller to retry the same prompt against a response that told
+// it, in the field it discarded, that something stopped the model. The reason is the more
+// specific answer, so it wins.
+//
+// The stop/absent rows are the other half: with nothing claiming the model was stopped,
+// "returned nothing" IS the accurate description, and the reorder must not have quietly
+// turned those into ErrIncompleteCompletion.
+func TestComplete_AStoppedModelIsIncompleteNotEmpty(t *testing.T) {
+	for _, tc := range []struct {
+		reason string
+		want   error
+	}{
+		{"content_filter", ErrIncompleteCompletion},
+		{"length", ErrIncompleteCompletion},
+		{"tool_calls", ErrIncompleteCompletion},
+		{"stop", ErrEmptyCompletion},
+		{"", ErrEmptyCompletion},
+	} {
+		t.Run("reason="+tc.reason, func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = fmt.Fprintf(w,
+					`{"choices":[{"message":{"content":""},"finish_reason":%q}]}`, tc.reason)
+			})
+			_, err := c.Complete(context.Background(), "s", "u")
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("finish_reason %q: err = %v, want %v", tc.reason, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestComplete_RetriesOn429ThenSucceeds(t *testing.T) {
 	var calls int32
 	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {

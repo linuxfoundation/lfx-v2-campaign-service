@@ -238,9 +238,12 @@ func TestConfigString_RedactsSecrets(t *testing.T) {
 		// Every secret-bearing field belongs in this fixture, not just the ones that
 		// existed when it was written: the contract this test pins is "no configured
 		// secret reaches a log", and a field added without a line here is a contract
-		// nobody is checking. AIProxyURL/AIModel are populated too, so the assertions
-		// below can show they are deliberately NOT masked — a masked URL would make
-		// "is the proxy wired?" undiagnosable from a log.
+		// nobody is checking. AIProxyURL and AIModel are populated too, but for opposite
+		// reasons: the URL IS masked (the host is operator input and can itself be the
+		// secret) down to a scheme-only `https://xxxxx`, which still answers "is copy
+		// generation wired, and is the hop TLS?"; the model id is NOT masked, because it
+		// is not a credential and an operator diagnosing bad copy needs it. The
+		// assertions below pin both halves.
 		AIProxyURL:      "https://litellm.example.com",
 		AIAPIKey:        "sk-ai-s3cret-value", // secretlint-disable-line -- intentional fake key
 		AIModel:         "us.anthropic.claude-sonnet-4-20250514-v1:0",

@@ -408,11 +408,22 @@ func (c *Client) Complete(ctx context.Context, systemPrompt, userPrompt string) 
 		// envelope, and those have been observed to echo request context back.
 		return "", fmt.Errorf("llm: decode response: %w", uerr)
 	}
-	if len(resp.Choices) == 0 || strings.TrimSpace(resp.Choices[0].Message.Content) == "" {
+	if len(resp.Choices) == 0 {
 		return "", ErrEmptyCompletion
 	}
+
+	// The finish reason is read BEFORE the content is checked non-empty, because the two
+	// sentinels carry different remedies and the reason is the more specific answer. A
+	// content filter or a max_tokens cut can leave the content empty as well as truncated,
+	// and reporting that as ErrEmptyCompletion tells the caller the model said nothing —
+	// when in fact something stopped it, which is what a caller deciding whether to retry
+	// (and with what) needs to know. Only a stop/absent reason leaves "the model returned
+	// nothing" as the accurate description.
 	if ferr := finishReasonErr(resp.Choices[0].FinishReason); ferr != nil {
 		return "", ferr
+	}
+	if strings.TrimSpace(resp.Choices[0].Message.Content) == "" {
+		return "", ErrEmptyCompletion
 	}
 	return resp.Choices[0].Message.Content, nil
 }
@@ -429,9 +440,11 @@ func (c *Client) Complete(ctx context.Context, systemPrompt, userPrompt string) 
 // today.
 //
 // An EMPTY reason is accepted. The field is optional in practice — OpenAI-compatible
-// proxies fronting other providers do omit it — and the content has already been checked
-// non-empty, so rejecting on absence would make this client unusable against a working
-// deployment to protect against a case it cannot detect anyway.
+// proxies fronting other providers do omit it — so rejecting on absence would make this
+// client unusable against a working deployment to protect against a case it cannot detect
+// anyway. An absent reason with empty content is not lost: Complete checks the content
+// immediately after this returns nil, and ErrEmptyCompletion is the accurate answer there,
+// because nothing in the response claims anything stopped the model.
 //
 // A reason this function does not recognise is named as unrecognised rather than quoted.
 // It is model-adjacent text arriving over the wire, and the rule this package holds is
