@@ -427,6 +427,70 @@ func TestGenerateEmailCopy_HappyPath(t *testing.T) {
 	}
 }
 
+// TestGenerateEmailCopy_RejectsIncompleteCopy covers the last guard in GenerateEmailCopy: a
+// response that parses cleanly but leaves a required field blank.
+//
+// The tests above it cover transport failure and unparseable output — both cases where
+// something is visibly wrong. This one is the case where nothing is: `{"subject":""}` is valid
+// JSON, `parseEmailCopyResponse` returns no error, and every length limit is satisfied. Without
+// the emptiness check the endpoint would answer 200 with a subject-less email, and the failure
+// would surface as a send with a blank subject line rather than as an error anyone could act on.
+// A prompt edit or a parsing change is exactly what would regress it.
+//
+// Each field is exercised separately: an `||` chain is easy to narrow to one field by accident,
+// and a test that only blanks the subject would still pass if the other three checks were lost.
+func TestGenerateEmailCopy_RejectsIncompleteCopy(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		content string
+	}{
+		{"subject", `{"subject":"","preheader":"x","body":"<p>x</p>","cta":"Register"}`},
+		{"preheader", `{"subject":"Join us","preheader":"","body":"<p>x</p>","cta":"Register"}`},
+		{"body", `{"subject":"Join us","preheader":"x","body":"","cta":"Register"}`},
+		{"cta", `{"subject":"Join us","preheader":"x","body":"<p>x</p>","cta":""}`},
+	} {
+		t.Run("blank "+tc.name, func(t *testing.T) {
+			repo := newFakeBriefRepo()
+			repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
+				ID:           "brief-456",
+				ProjectID:    "proj-123",
+				EventDetails: json.RawMessage(`{"eventName":"KubeCon EU 2026"}`),
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				encoded, err := json.Marshal(tc.content)
+				if err != nil {
+					t.Errorf("marshal fake LLM content: %v", err)
+					return
+				}
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(encoded) + `},"finish_reason":"stop"}]}`))
+			}))
+			defer srv.Close()
+
+			svc := newTestBriefService(repo)
+			svc.SetLLMClient(newTestLLMClient(t, srv))
+
+			result, err := svc.GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+				ProjectID:   "proj-123",
+				BriefID:     "brief-456",
+				BearerToken: strPtr("token"),
+			})
+			if result != nil {
+				t.Errorf("result = %+v, want nil — copy with a blank %s was returned to the caller", result, tc.name)
+			}
+			var unavail *briefs.ConnServiceUnavailableError
+			if !errors.As(err, &unavail) {
+				t.Fatalf("err = %T (%v), want *briefs.ConnServiceUnavailableError", err, err)
+			}
+			// The message is what tells an operator which of the three 503s this is —
+			// unreachable model, unreadable response, or incomplete copy.
+			if unavail.Message != "the AI platform generated incomplete copy" {
+				t.Errorf("Message = %q, want %q", unavail.Message, "the AI platform generated incomplete copy")
+			}
+		})
+	}
+}
+
 // TestDecodeEmailCopyEventDetails_FailsWithoutName verifies that decoding fails
 // when event_name is missing, even if other fields are present.
 func TestDecodeEmailCopyEventDetails_FailsWithoutName(t *testing.T) {

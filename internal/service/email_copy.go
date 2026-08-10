@@ -53,6 +53,15 @@ func decodeEmailCopyEventDetails(blob json.RawMessage) (emailCopyEventDetails, e
 // composeEmailCopyPrompt builds the system and user prompts for email copy generation.
 // Follows the lfx-one reference implementation's principle of composing from fixed blocks
 // rather than branching on prompt variants.
+// The subject and preheader limits stated to the model — 60 and 100 — are DELIBERATELY tighter
+// than the enforced ones. `design/brief.go` caps them at 200 and 150 and `parseEmailCopyResponse`
+// truncates to the same, but those are the backstop, not the target: a subject line is cut off
+// around 60 characters in most inbox listings and a preheader around 100, so copy written to the
+// schema's limit is copy the recipient never sees the end of. Aiming the model at the useful
+// length and keeping headroom above it means an overrun is trimmed rather than rejected.
+//
+// Do not "fix" the mismatch by raising these numbers to 200/150. If they should ever move, the
+// question is what renders in an inbox, not what the type allows.
 func composeEmailCopyPrompt(vars emailCopyPromptVars) (systemPrompt, userPrompt string) {
 	// System prompt: role instruction + constraints + factual grounding.
 	systemPrompt = `You are an expert email copywriter for technology events and communities.
