@@ -11,15 +11,15 @@ import (
 	"strings"
 )
 
-// Role ID constants for Microsoft Advertising roles.
-const (
-	// RoleNotDiscovered represents a pre-configured account where the role was not discovered.
-	// This is distinct from 0 (unparseable role) to maintain the allow-through semantics
-	// for pre-configured accounts while defaulting to deny for genuinely unknown roles.
-	RoleNotDiscovered = -1
-	// RoleViewer is the read-only Viewer role (value 100) which cannot create campaigns.
-	RoleViewer = 100
-)
+// RoleViewer is the read-only Viewer role (value 100) which cannot create campaigns.
+//
+// There is deliberately no sentinel for "role not discovered". A pre-configured
+// connection carries no role information, and the honest encoding of that is 0 —
+// the same value an unparseable role gets — because both mean the same thing to a
+// caller: this client has no evidence of write permission. An earlier revision used
+// -1 for the pre-configured case and treated it as write-capable, which advertised
+// viewer-only connections as writable.
+const RoleViewer = 100
 
 // lifecycleStatusLabels maps a KNOWN-BAD AccountLifeCycleStatus to a short reason.
 // "Active" is absent deliberately: the map answers "why can this account not be used",
@@ -77,9 +77,10 @@ type AdAccount struct {
 	// the caller instead of being flattened into "paused, reason unknown".
 	PauseReason int
 	// RoleID is Microsoft's role id for the role used to discover this account.
-	// Values: RoleViewer (100) = read-only; RoleNotDiscovered (-1) = pre-configured account,
-	// role not discovered; 0 = role was present but unparseable/absent; other positive values
-	// may have write permission. See Usable() for how roles are interpreted.
+	// Values: RoleViewer (100) = read-only; 0 = no role evidence, either because the
+	// connection was pre-configured with an account id or because the discovered role
+	// was absent/unparseable; other positive values may have write permission. See
+	// Usable() for how roles are interpreted.
 	RoleID int
 }
 
@@ -92,29 +93,24 @@ type AdAccount struct {
 // account can spend. It is deliberately NOT used to filter ListAdAccounts.
 //
 // Role semantics (DENY-LIST):
-// - RoleNotDiscovered (-1): Pre-configured account, role not discovered. Allowed (assume write).
 // - RoleViewer (100): Read-only. Denied.
-// - 0: Role unparseable/absent during discovery. Denied (fail closed).
+// - 0: No role evidence — pre-configured, absent, or unparseable. Denied (fail closed).
 // - Other positive values: Unknown write capability. Allowed (assume write, pending Microsoft documentation).
-// - Other negative values: Invalid. Denied.
+// - Negative values: Invalid. Denied.
 func (a AdAccount) Usable() bool {
 	if a.Status != "Active" || a.PauseReason != 0 {
 		return false
 	}
-	// DENY-LIST: deny only roles known to be read-only or invalid.
-	// RoleViewer (100) and 0 (unparseable) are denied; all other positive and RoleNotDiscovered are allowed.
+	// DENY-LIST: deny only roles known to be read-only or to carry no evidence of write.
 	switch a.RoleID {
 	case RoleViewer:
 		return false
 	case 0:
-		// Unparseable role discovered during account enumeration. Deny (fail closed).
+		// No role evidence. Deny (fail closed).
 		return false
-	case RoleNotDiscovered:
-		// Pre-configured account. Allow through (assume write permission).
-		return true
 	default:
-		// Allow positive roles (unknown write capability). All negative roles except those
-		// handled above are denied. RoleNotDiscovered is impossible here (handled by its case).
+		// Allow positive roles (unknown write capability); deny negatives, which Microsoft
+		// does not issue and so can only be a parse or plumbing fault.
 		return a.RoleID > 0
 	}
 }
@@ -200,22 +196,18 @@ type discoveredCustomer struct {
 
 // roleIsStrong reports whether a role is likely to grant write permission (is "strong").
 // This is a DENY-LIST: a role is weak only if it is known to be read-only (RoleViewer 100)
-// or invalid (0, unparseable). The full set of write-granting RoleIds from Microsoft's
-// Customer Management API is not documented here, so all other values are assumed strong.
-// RoleNotDiscovered (-1) is strong (pre-configured accounts assume write).
+// or carries no evidence of write (0). The full set of write-granting RoleIds from
+// Microsoft's Customer Management API is not documented here, so all other positive values
+// are assumed strong. It is the same predicate Usable() applies to the role, kept separate
+// only because the dedup below compares two roles rather than judging one account.
 func roleIsStrong(roleID int64) bool {
 	switch roleID {
 	case RoleViewer:
 		return false
 	case 0:
-		// Unparseable role. Weak (fail closed).
+		// No role evidence. Weak (fail closed).
 		return false
-	case RoleNotDiscovered:
-		// Pre-configured account. Strong (assume write).
-		return true
 	default:
-		// Other positive and negative (except -1) roles: allow positive (unknown capability),
-		// deny other negatives.
 		return roleID > 0
 	}
 }
@@ -263,11 +255,15 @@ func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]discoveredCustomer
 		}
 		// Configured customers have no role information: we cannot determine their write
 		// permission without querying User/Query, and scoping that query to the configured
-		// customer is not straightforward. Assign role 0 (unparseable, fail closed) so these
-		// accounts appear in the picker but are marked not usable, allowing the operator to
-		// recognize the permission issue. Do NOT use RoleNotDiscovered (-1), which assumes
-		// write permission we do not have: that would advertise viewer-only connections as
-		// writable, the exact failure the role validation exists to prevent.
+		// customer is not straightforward. Assign role 0 (no role evidence, fail closed) so
+		// these accounts still appear in the picker — Usable() does not filter
+		// ListAdAccounts — but are marked not usable, letting the operator see the
+		// permission gap rather than discovering it when a campaign create fails.
+		//
+		// Do NOT reintroduce a distinct "pre-configured" sentinel that is treated as
+		// write-capable. An earlier revision used -1 for exactly that, which asserted write
+		// permission this client has no evidence of and advertised viewer-only connections
+		// as writable — the precise failure the role validation exists to prevent.
 		return []discoveredCustomer{{id: id, roleID: 0}}, nil
 	}
 

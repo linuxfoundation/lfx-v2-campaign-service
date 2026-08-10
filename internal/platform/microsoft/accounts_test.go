@@ -463,8 +463,8 @@ func TestListAdAccounts_ReturnsUnusableAccountsWithTheirReason(t *testing.T) {
 		pauseLabel  string
 	}{
 		// Account 0: Active, no pause, but RoleID=0 (role not discovered in User/Query).
-		// Usable() must be false because RoleID=0 is treated as unknown/unparseable,
-		// which fails closed. Pre-configured accounts use RoleNotDiscovered (-1) instead.
+		// Usable() must be false because RoleID=0 carries no evidence of write permission,
+		// which fails closed. Pre-configured connections land on this same value.
 		{0, false, "", ""},
 		{1, false, "suspended", ""},
 		// Active but paused: the two fields disagree, which is exactly why they are
