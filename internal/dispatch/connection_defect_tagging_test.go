@@ -178,7 +178,14 @@ func TestReddit_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
 		},
 		func() *model.Connection { return activeRedditConn(goodRedditCreds) },
 		func(repo connReader) map[string]func() error {
-			d := NewRedditDispatcher(repo, identityEncryptor{}, reddit.WithBaseURL(srv.URL))
+			// Both endpoints, not just the API one. Reddit authenticates with an OAuth
+			// refresh against a SEPARATE host, so WithBaseURL alone leaves a regression
+			// that got as far as building a client free to reach www.reddit.com — the
+			// suite would then depend on external networking instead of tripping
+			// unreachablePlatform, and "it never touches the network" is the property
+			// under test, not a side effect of it.
+			d := NewRedditDispatcher(repo, identityEncryptor{},
+				reddit.WithBaseURL(srv.URL), reddit.WithTokenURL(srv.URL))
 			return map[string]func() error{
 				"Dispatch": func() error {
 					_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderRedditAds, nil)
@@ -206,6 +213,9 @@ func TestTwitter_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
 		},
 		func() *model.Connection { return activeTwitterConn(goodTwitterCreds) },
 		func(repo connReader) map[string]func() error {
+			// X/Twitter needs no token-endpoint override: it signs each request with
+			// OAuth 1.0a rather than exchanging a refresh token, so there is no second
+			// host for a regression to reach.
 			d := NewTwitterDispatcher(repo, identityEncryptor{}, twitter.WithBaseURL(srv.URL))
 			return map[string]func() error{
 				"Dispatch": func() error {
@@ -237,7 +247,10 @@ func TestMicrosoft_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
 		},
 		func() *model.Connection { return activeMicrosoftConn(goodMicrosoftCreds) },
 		func(repo connReader) map[string]func() error {
-			d := NewMicrosoftDispatcher(repo, identityEncryptor{}, microsoft.WithBaseURL(srv.URL))
+			// As with Reddit above: login.microsoftonline.com is a different host from
+			// the Campaign Management base URL and needs its own override.
+			d := NewMicrosoftDispatcher(repo, identityEncryptor{},
+				microsoft.WithBaseURL(srv.URL), microsoft.WithTokenURL(srv.URL))
 			return map[string]func() error{
 				"Dispatch": func() error {
 					_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMicrosoftAds, nil)

@@ -107,3 +107,26 @@ Three dimensions of the suite exist because a narrower one would have been vacuo
   FIELD.
 
 Revert-verified against `origin/main`: every case fails there, including both leak classes.
+
+## The no-network property was not actually enforced for two of the three
+
+`unreachablePlatform` fails the test if the adapter reaches the network, and each dispatcher was
+pointed at it with `WithBaseURL`. That covers the API host only. Reddit refreshes its OAuth token
+against `www.reddit.com` and Microsoft against `login.microsoftonline.com` — different hosts,
+separate `WithTokenURL` options — so a guard regressing far enough to build a client would have
+sent fixture credentials to the real provider rather than tripping the server. The suite would
+have depended on external networking to fail, which is the opposite of what it asserts. Both now
+override the token endpoint too. X/Twitter needs no equivalent: it signs each request with
+OAuth 1.0a and never exchanges a token, so there is no second host, and the test now says so
+rather than leaving the asymmetry to look like an oversight.
+
+## The pre-flight section claimed a scope one adapter does not share
+
+"Every adapter runs the same pre-flight" stopped being true once HubSpot was registered. Its
+checks are bare and it has no ad-account check at all, and it was absent from the honours-it
+table, so a reader arrived at "every adapter follows this contract" with a counterexample sitting
+in the adapter list six lines above. The section is now scoped to the six paid-ads adapters and
+HubSpot appears in the table as `n/a` with its reason: its checks are wrapped in `notCreated`,
+the pre-create classification for the ASYNC dispatch path, so they are not choosing between 409
+and 503 the way the rest are. That distinction matters more than the missing row did — an empty
+cell reads as work queued behind part 2, and this is not that.

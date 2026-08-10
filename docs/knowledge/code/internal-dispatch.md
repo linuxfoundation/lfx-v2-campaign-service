@@ -127,10 +127,13 @@ Each adapter interprets its own credential + config shape; see the "Dispatch ada
 
 ## Stored-connection defects are tagged where they are detected
 
-Every adapter runs the same pre-flight before it contacts a platform: the connection row must be
-`active`, its decrypted blob must be valid JSON, the decoded credentials must have every required
-field, and (for the paths that need one) an ad account must have been selected. All four are
-STORED-STATE defects — a human has to edit the connection, and no amount of retrying helps.
+This section is about the six PAID-ADS adapters. HubSpot is a registered dispatcher too and it
+is deliberately outside the scope; the table below says why.
+
+Every paid-ads adapter runs the same pre-flight before it contacts a platform: the connection row
+must be `active`, its decrypted blob must be valid JSON, the decoded credentials must have every
+required field, and (for the paths that need one) an ad account must have been selected. All four
+are STORED-STATE defects — a human has to edit the connection, and no amount of retrying helps.
 
 The service layer has exactly one default arm for an error it does not recognize, and it answers
 **503**. So an untagged defect is not merely mislabelled: it tells the caller a platform did not
@@ -164,6 +167,16 @@ Which adapters honour it today:
 | Microsoft Ads | yes | `validateMicrosoftConnection` — dispatch, toggle (no metrics; async Reporting API) |
 | Meta | **no** | still bare, still 503 — LFXV2-3069 part 2 |
 | LinkedIn | **no** | still bare, still 503 — LFXV2-3069 part 2 |
+| HubSpot (email) | **n/a** | out of scope — see below |
+
+HubSpot is listed for completeness, not as a gap. Its checks in `internal/dispatch/hubspot.go`
+are bare — inactive row, JSON decode, empty `privateAppToken`, and no ad-account check at all,
+because an email connection has no ad account to select. But they are bare on a DIFFERENT axis:
+they are wrapped in `notCreated(...)`, the pre-create classification the orchestrator uses to
+release the dispatch claim, and campaign create is asynchronous, so none of them is choosing
+between a 409 and a 503 the way the six above are. Tagging them would change what a polled job
+result says, which is worth doing, but it is a separate question from the status mapping this
+section is about — do not read the empty cell as work queued behind LFXV2-3069 part 2.
 
 Meta and LinkedIn each inline `d.creds.resolve(...)` at more than one call site with no shared
 helper, so tagging them is an extraction rather than an annotation, and it collides with open work
