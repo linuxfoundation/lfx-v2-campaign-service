@@ -196,10 +196,18 @@ func IsValidMetricsWindow(w MetricsWindow) bool {
 }
 
 // CampaignMetrics is a platform-agnostic, live read-through performance
-// snapshot for one campaign over one window. It is never persisted — a
-// MetricsReader dispatcher call populates it fresh on every read, the same
-// way StatusToggler's ToggleStatus call is always live rather than
-// DB-cached.
+// snapshot for one campaign. It is never persisted — a MetricsReader
+// dispatcher call populates it fresh on every read, the same way
+// StatusToggler's ToggleStatus call is always live rather than DB-cached.
+//
+// Window records what was ASKED FOR, and what a platform does with it is the
+// platform's business. Most ad platforms scope the counters to it. HubSpot does
+// not: the span selects which email is in scope BY SEND DATE and then returns
+// that email's totals to date, so `today` and `last_30_days` on an email sent
+// this morning return identical numbers. A consumer that renders these as
+// "opens during <Window>" is therefore wrong for at least one channel — the
+// honest label is the window that was requested, not a period the counters
+// cover.
 type CampaignMetrics struct {
 	CampaignID  string
 	Window      MetricsWindow
@@ -208,6 +216,44 @@ type CampaignMetrics struct {
 	CostMicros  int64
 	// Ctr is Clicks/Impressions, 0 when Impressions is 0 (never divides by zero).
 	Ctr float64
+	// Email carries the counters that only an email channel has, and is nil for every ad
+	// platform. It exists because the four fields above cannot express an email send
+	// without lying: delivery, bounces and unsubscribes have no ad-platform analogue at
+	// all, and a consumer that needs them would otherwise have to infer them from numbers
+	// that do not contain them.
+	//
+	// "Only an email channel has" is about the fields inside EmailMetrics, not about the
+	// four above: an email send also populates Impressions and Clicks, deliberately, so a
+	// cross-channel view can total them without special-casing the channel. Email is the
+	// overflow for what does not fit, not a separate parallel result.
+	Email *EmailMetrics
+}
+
+// EmailMetrics is the email-channel counter set, carried alongside CampaignMetrics'
+// platform-agnostic fields rather than replacing them.
+//
+// The two overlapping fields are mapped deliberately. Opens populate Impressions because
+// an open is the same event an ad impression is — the recipient rendered the creative —
+// and Clicks is a click in both channels, so a cross-channel click total is genuinely
+// correct. CostMicros is where the analogy STOPS: HubSpot charges nothing per send, so an
+// email campaign reports 0, and 0 here means "this platform bills no per-send cost", NOT
+// "this campaign was free". Dividing a blended cost by a blended conversion count across
+// email and paid channels therefore produces a cost-per-acquisition that is wrong in a
+// direction that always flatters the campaign.
+type EmailMetrics struct {
+	// Sent is emails handed to the delivery pipeline; Delivered is those the receiving
+	// server accepted. Sent-minus-Delivered is not the same as Bounces (a message can be
+	// dropped or suppressed before it is ever attempted), so both are reported rather than
+	// leaving a consumer to subtract.
+	Sent      int64
+	Delivered int64
+	// Opens and Clicks duplicate CampaignMetrics.Impressions and .Clicks. The duplication
+	// is intentional: a consumer reading this struct should not have to know which
+	// ad-shaped field the email channel happens to have been mapped onto.
+	Opens        int64
+	Clicks       int64
+	Bounces      int64
+	Unsubscribes int64
 }
 
 // JobStatus is the status vocabulary shared by campaign_jobs and the API's
