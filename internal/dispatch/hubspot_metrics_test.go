@@ -55,9 +55,11 @@ func statsServer(t *testing.T) (*httptest.Server, *statsRec) {
 }
 
 const (
-	accountDetailsPath = "/account-info/v3/details"
+	// The wire path is the private-apps token-info endpoint, NOT /account-info/v3/details:
+	// the latter needs the `oauth` scope, which no private app can hold.
+	accountDetailsPath = hubSpotTokenInfoPath
 	testPortalID       = "8112310"
-	testPortalResponse = `{"portalId":8112310}`
+	testPortalResponse = `{"hubId":8112310}`
 )
 
 // stagedEmail is a campaign whose Result records the portal the token authenticates against,
@@ -297,7 +299,7 @@ func portalServer(t *testing.T, accountBody string) (*httptest.Server, *statsRec
 // collision reports "not sent yet" for an email that was sent. Neither is distinguishable
 // downstream from the truth, so refuse before the request goes out.
 func TestHubSpot_ReadMetricsRefusesWhenTheTokenReachesADifferentPortal(t *testing.T) {
-	srv, rec := portalServer(t, `{"portalId":9999999}`)
+	srv, rec := portalServer(t, `{"hubId":9999999}`)
 	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
 		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
 
@@ -346,11 +348,12 @@ func TestHubSpot_ReadMetricsRefusesWhenTheRowRecordsNoPortal(t *testing.T) {
 	}
 }
 
-// The lookup itself failing is also an unestablished identity — a private app need not be
-// scoped for account-info. Dispatch treats that as best-effort and sends anyway; the read must
-// not, for the same reason as the case above.
+// The lookup itself failing is also an unestablished identity. It should be rare now that the
+// call uses an endpoint private-app tokens can actually reach, but a throttled or unreachable
+// HubSpot still produces it. Dispatch treats that as best-effort and sends anyway; the read
+// must not, for the same reason as the case above.
 func TestHubSpot_ReadMetricsRefusesWhenThePortalCannotBeResolved(t *testing.T) {
-	srv, rec := portalServer(t, `{"portalId":0}`)
+	srv, rec := portalServer(t, `{"hubId":0}`)
 	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
 		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
 

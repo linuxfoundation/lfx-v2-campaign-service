@@ -264,11 +264,18 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	}
 
 	// Resolve the portal this token authenticates against BEFORE anything is created, so the
-	// row can record where its email id means something. Deliberately BEST-EFFORT: it is a
-	// read on an endpoint a private app may not be scoped for, and a send that is otherwise
-	// ready should not be blocked by a provenance lookup. The cost of an empty value lands
-	// entirely on ReadMetrics, which refuses rather than guessing — a campaign that sends and
-	// cannot be measured beats one that does not send.
+	// row can record where its email id means something. Deliberately BEST-EFFORT: it is one
+	// more network round trip before a send that is otherwise ready, and a provenance lookup
+	// is not worth failing a campaign over. The cost of an empty value lands entirely on
+	// ReadMetrics, which refuses rather than guessing — a campaign that sends and cannot be
+	// measured beats one that does not send.
+	//
+	// "Best-effort" here does NOT mean the lookup is expected to fail. It reads the
+	// private-apps token-info endpoint, which a private-app token can always call; an earlier
+	// version read /account-info/v3/details, which requires the `oauth` scope no private app
+	// can hold, so it failed in EVERY account and this warning would have been the steady
+	// state rather than the exception. If this warning is common in the logs, that is a real
+	// problem to investigate, not background noise.
 	//
 	// Bounded with its OWN short deadline, separate from providerCallTimeout: the client's
 	// retry policy alone can wait up to retryMax*maxRetryWait (180s) on sustained throttling,

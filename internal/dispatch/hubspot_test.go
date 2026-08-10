@@ -100,10 +100,10 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/account-info/v3/details":
+		case r.Method == http.MethodPost && r.URL.Path == hubSpotTokenInfoPath:
 			// The provenance lookup Dispatch makes before it creates anything: the portal
 			// the TOKEN authenticates against, which is what gets recorded in Result.
-			_, _ = io.WriteString(w, `{"portalId":8112310}`)
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/marketing/v3/emails/clone":
 			rec.markClone()
 			_, _ = io.WriteString(w, `{"id":"999","name":"KubeCon NA 2026 — brief-1","state":"DRAFT"}`)
@@ -132,6 +132,12 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 }
 
 // ---- pre-create paths: must release the claim -----------------------------
+
+// hubSpotTokenInfoPath mirrors the platform client's private-apps token-info endpoint.
+// Duplicated rather than exported: these tests assert the wire path this dispatcher
+// actually causes, and reading the constant from the package under test would make
+// that assertion vacuous.
+const hubSpotTokenInfoPath = "/oauth/v2/private-apps/get/access-token-info"
 
 func TestHubSpot_PreCreateErrorsReleaseClaim(t *testing.T) {
 	builtAuds := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
@@ -372,8 +378,8 @@ func TestHubSpot_TaggingFailureDoesNotFailTheDispatch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/account-info/v3/details":
-			_, _ = io.WriteString(w, `{"portalId":8112310}`)
+		case r.Method == http.MethodPost && r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/marketing/v3/emails/clone":
 			_, _ = io.WriteString(w, `{"id":"999","name":"n","state":"DRAFT"}`)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/draft"):
@@ -405,16 +411,16 @@ func TestHubSpot_TaggingFailureDoesNotFailTheDispatch(t *testing.T) {
 
 // TestHubSpot_DispatchBoundsThePortalLookupBelowProviderCallTimeout: the best-effort provenance
 // lookup must carry its OWN short deadline (portalLookupTimeout), not the caller's context —
-// otherwise sustained throttling on the account-info endpoint (the client's own retry policy can
+// otherwise sustained throttling on the token-info endpoint (the client's own retry policy can
 // wait up to retryMax*maxRetryWait = 180s) could burn the entire 2-minute providerCallTimeout
 // before CloneEmail ever runs, handing it an already-cancelled context. Asserted by reading the
-// deadline the account-info REQUEST actually carried, not by waiting one out.
+// deadline the token-info REQUEST actually carried, not by waiting one out.
 func TestHubSpot_DispatchBoundsThePortalLookupBelowProviderCallTimeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/account-info/v3/details":
-			_, _ = io.WriteString(w, `{"portalId":8112310}`)
+		case r.Method == http.MethodPost && r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/marketing/v3/emails/clone":
 			_, _ = io.WriteString(w, `{"id":"999","name":"n","state":"DRAFT"}`)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/draft"):
@@ -448,12 +454,12 @@ func TestHubSpot_DispatchBoundsThePortalLookupBelowProviderCallTimeout(t *testin
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
-	portalDeadline, ok := deadlines["/account-info/v3/details"]
+	portalDeadline, ok := deadlines[hubSpotTokenInfoPath]
 	if !ok {
-		t.Fatal("the account-info request must carry a deadline, not the caller's un-timeboxed context")
+		t.Fatal("the token-info request must carry a deadline, not the caller's un-timeboxed context")
 	}
 	if d := portalDeadline.Sub(before); d <= 0 || d > portalLookupTimeout+time.Second {
-		t.Errorf("account-info deadline was %v out from Dispatch start, want within (0, portalLookupTimeout=%v]", d, portalLookupTimeout)
+		t.Errorf("token-info deadline was %v out from Dispatch start, want within (0, portalLookupTimeout=%v]", d, portalLookupTimeout)
 	}
 	// The clone call, by contrast, is a MUTATING step and must NOT be truncated to the short
 	// provenance-lookup budget. It still carries A deadline — every attempt gets its own

@@ -284,8 +284,9 @@ oversight.
 
 ## Authenticated portal resolution (LFXV2-3058)
 
-`AuthenticatedPortalID` reads `/account-info/v3/details` to resolve the HubSpot hub
-(portal) id that the private-app bearer token actually authenticates against. This is
+`AuthenticatedPortalID` resolves the HubSpot hub (portal) id that the private-app
+bearer token actually authenticates against, by POSTing the token as `tokenKey` to
+`/oauth/v2/private-apps/get/access-token-info` and reading `hubId` from the reply. This is
 deliberately NOT `AccountConfig.PortalID`, which is an optional operator-supplied string
 used only to build app URLs; nothing keeps it in step with the token, so a credential
 swap can leave the configured value pointing to one portal while the token reaches
@@ -300,12 +301,31 @@ or false "no data". Both are wrong, so the dispatcher records the authenticated 
 at dispatch time and refuses a metrics read when the token has moved to a different
 portal.
 
-This call is sent by both code paths: `Dispatch.cloneEmail` (best-effort, wrapped in
-a short timeout and logged as a warning if it fails, because account-info may be
-outside the private app's scopes) and `ReadMetrics` (fail-closed, so a token
-credential problem is discovered at metrics time, not at send time).
+**Why not `/account-info/v3/details`.** That endpoint returns the same id as
+`portalId` and was the first implementation, but HubSpot documents it as requiring
+the `oauth` scope, and `oauth` is not a scope a private app can hold — it does not
+appear in the private-app scope picker, being the implicit scope of an
+OAuth-installed public app. A private-app token is rejected there in every account,
+not merely under-scoped ones. Because both callers treat a failed lookup as "portal
+unknown", shipping it would have meant `Dispatch` never recording a portal and
+`ReadMetrics` fail-closing on `ErrCampaignProvenanceUnknown` permanently: a guard
+correct in every test, wired end to end, returning nothing in production. Caught in
+review on PR #113 before it shipped.
 
-Malformed responses (non-JSON or missing/non-numeric `portalId`) do not leak upstream
+The token travels in the request BODY rather than only the `Authorization` header.
+That is safe here because this client's errors are typed (`preSendError`,
+`transportError`, `apiError`) and render method and path only — no request body
+reaches an error string. Re-check that property before putting any other secret in
+a body.
+
+This call is sent by both code paths: `Dispatch.cloneEmail` (best-effort, wrapped in
+a short timeout and logged as a warning if it fails, so a provenance lookup cannot
+block an otherwise-ready send) and `ReadMetrics` (fail-closed, so a token credential
+problem is discovered at metrics time, not at send time). Best-effort does not mean
+expected to fail: with the correct endpoint that warning should be rare, and a
+steady stream of it is a real signal.
+
+Malformed responses (non-JSON or missing/non-numeric `hubId`) do not leak upstream
 data into logs; the error message is fixed text + response length.
 
 ## Scope
