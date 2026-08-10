@@ -659,6 +659,11 @@ func (d *GoogleAdsDispatcher) LookupCampaign(ctx context.Context, projectID stri
 	}
 	ref, err := client.GetCampaign(ctx, platformCampaignID)
 	if err != nil {
+		// A malformed id never reached the network, so it is a 400 rather than the
+		// default "the platform could not be reached" 503 the caller would retry.
+		if errors.Is(err, googleads.ErrNotACampaignID) {
+			return nil, fmt.Errorf("%w: %w", domain.ErrInvalidPlatformCampaignID, err)
+		}
 		return nil, fmt.Errorf("look up google ads campaign: %w", err)
 	}
 	if ref == nil {
@@ -669,7 +674,17 @@ func (d *GoogleAdsDispatcher) LookupCampaign(ctx context.Context, projectID stri
 	// server-side and errors on any status outside its known set rather than passing it
 	// on. Adoptability is decided here, in Google's vocabulary; the service layer never
 	// sees it. See model.PlatformCampaignRef.
-	return &model.PlatformCampaignRef{ID: ref.ID, Name: ref.Name}, nil
+	// The resolved customer id travels with the ref so the adopted row records the account
+	// it was verified under, exactly as a created row does. googleAdsCreationCustomerID
+	// reads this back; without it every adopted row answers "unknown" and the
+	// account-mismatch guards in ReadMetrics and ToggleStatus wave it through.
+	scope, merr := json.Marshal(struct {
+		CustomerID string `json:"customerId"`
+	}{CustomerID: client.CustomerID()})
+	if merr != nil {
+		return nil, fmt.Errorf("look up google ads campaign: record account scope: %w", merr)
+	}
+	return &model.PlatformCampaignRef{ID: ref.ID, Name: ref.Name, Result: scope}, nil
 }
 
 // googleAdsCreationCustomerID recovers the ad account the campaign was CREATED under from

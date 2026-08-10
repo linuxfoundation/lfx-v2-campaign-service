@@ -210,24 +210,30 @@ somebody else's campaign as the adoption target), then the brief load and its ap
 Loading the brief first stops adoption being an oracle for campaign ids on an ad account the
 caller cannot otherwise see, and stops approval being bypassed.
 
-Two details of what gets persisted:
+What gets persisted:
 
-- **The id bound is `ref.ID`, the one the platform echoed, never the one requested.** They are
-  equal on every correct response — the Google Ads lookup errors when its own filter comes back
-  unhonoured — so a platform that ever answers with a different campaign cannot have the
-  requested id written against its record.
+- **`ref.ID`, the id the platform echoed, never the one requested.** They are equal on every
+  correct response — the Google Ads lookup errors when its own filter comes back unhonoured —
+  so a platform answering with a different campaign cannot have the requested id recorded.
 - **`Status` is `model.CampaignStatusCreated`, never the platform's run state.** That column is
   this service's lifecycle vocabulary, which `CampaignStatusDeletable` and
-  `CampaignStatusNeedsReconciliation` switch on; both default-deny an unknown value, so a stored
+  `CampaignStatusNeedsReconciliation` both default-deny on an unknown value, so a stored
   `ENABLED` would be undeletable AND never reconciled. `model.PlatformCampaignRef` therefore
-  carries no status: adoptability is the ADAPTER's decision, in the platform's own vocabulary.
+  carries no status: adoptability is the ADAPTER's decision, in its own vocabulary.
+- **`ref.Result`, the adapter's provenance blob, and the adopting actor.** Google Ads puts the
+  resolved customer id in `Result`; `googleAdsCreationCustomerID` reads it back on every later
+  toggle and metrics read, and an empty `Result` reads there as "unknown", which those guards
+  treat as permission to proceed. `created_by`/`updated_by` are stamped from
+  `attributedActor`, as on every other campaign write.
 
 Persistence goes through `CampaignRepository.AdoptCampaign`, deliberately not `UpsertCampaign`
 — see `internal-infrastructure-postgres.md`. An already-live `(brief, platform)` pair is a 409.
-The connection arms are ordered exactly as in the metrics and toggle switches, and for the same
-reason: `ErrSystemConnectionNotUsable` (500, page an operator) then `ErrAccountNotSelected`
-(409) then the broad `ErrConnectionNotUsable` (409). Each is WRAPPED alongside the next, so a
-broad match placed first wins and names a scope the caller cannot address.
+The connection arms are ordered as in the metrics and toggle switches, and for the same reason:
+`ErrSystemConnectionNotUsable` (500, page an operator) then `ErrAccountNotSelected` (409) then
+the broad `ErrConnectionNotUsable` (409) — each WRAPPED alongside the next, so a broad match
+placed first wins and names a scope the caller cannot address. `ErrInvalidPlatformCampaignID`
+is a 400: the adapter rejected the id locally and issued no query, so the 503 would invite a
+retry of input that can never succeed.
 
 ## Account discovery
 

@@ -512,5 +512,10 @@ upstream, so that orphan keeps spending with nothing here pointing at it. `RETUR
 load-bearing for the same reason the classification is: "no rows came back" IS the conflict
 signal, so dropping it makes a refused adoption indistinguishable from a successful one.
 
+The statement also names `result`, `created_by` and `updated_by` (both actor columns from one
+parameter — adoption creates the row and is the last thing to have touched it). Omitting them
+would leave an adopted row with no audit trail and, because `result` is where the Google Ads
+customer id lives, no account provenance for the mismatch guards to check.
+
 The insert and its outbox index row are co-committed in one transaction, as every campaign
 write is — see `enqueueCampaignIndex`.

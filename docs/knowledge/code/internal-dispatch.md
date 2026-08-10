@@ -521,7 +521,11 @@ matches, exactly the licence-to-create answer the check existed to prevent).
 `GoogleAdsDispatcher.LookupCampaign` resolves the ORDINARY client via `resolveGoogleAdsClient`,
 not the discovery client, on purpose: discovery credentials see every account the login
 customer administers, so adoption through them could bind a campaign belonging to a different
-project. It also drops the platform's `ENABLED`/`PAUSED` rather than passing it up — reaching
-the mapping already means the campaign is live, since `googleads.GetCampaign` filters `REMOVED`
-server-side and errors on any status outside its known set.
+project. It drops the platform's `ENABLED`/`PAUSED` — reaching the mapping already means the
+campaign is live, since `googleads.GetCampaign` filters `REMOVED` server-side and errors on any
+status outside its known set — and it fills `PlatformCampaignRef.Result` with the resolved
+customer id, so the adopted row records the account it was verified under and the existing
+`googleAdsCreationCustomerID` mismatch guards keep working for adopted rows. A
+`googleads.ErrNotACampaignID` is re-tagged `domain.ErrInvalidPlatformCampaignID` (400): it was
+rejected locally with no network call, so it is permanent input, not an unreachable platform.
 

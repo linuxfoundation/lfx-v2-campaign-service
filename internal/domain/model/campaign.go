@@ -318,4 +318,11 @@ type PlatformCampaignRef struct {
 	ID string
 	// Name is the campaign name as the platform holds it.
 	Name string
+	// Result is the platform-shaped provenance blob to persist on the adopted row, built
+	// by the ADAPTER because only it knows the shape its own guards read back. Google Ads
+	// puts the resolved customer id here, which is what keeps googleAdsCreationCustomerID's
+	// account-mismatch check effective for adopted rows: without it the row's Result is
+	// empty, the guard reads "unknown", and a later repointing of the project's connection
+	// would let the same numeric id address a DIFFERENT customer's campaign.
+	Result json.RawMessage
 }

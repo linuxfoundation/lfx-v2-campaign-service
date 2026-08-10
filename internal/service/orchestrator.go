@@ -270,6 +270,8 @@ var (
 	ErrAdoptionUnsupported = domain.ErrAdoptionUnsupported
 	// ErrPlatformCampaignAbsent: the platform answered and holds no such campaign.
 	ErrPlatformCampaignAbsent = domain.ErrPlatformCampaignAbsent
+	// ErrInvalidPlatformCampaignID: the id cannot name a campaign on that platform.
+	ErrInvalidPlatformCampaignID = domain.ErrInvalidPlatformCampaignID
 )
 
 // noUpstreamCreator lets a dispatcher signal that a returned error occurred

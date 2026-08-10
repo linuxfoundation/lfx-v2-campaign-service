@@ -276,4 +276,9 @@ var (
 	// error (503), because binding is a claim about upstream reality and an unanswered
 	// question is not evidence. Only this sentinel means "we asked, and the answer was no".
 	ErrPlatformCampaignAbsent = errors.New("no such campaign exists on the ad platform")
+
+	// ErrInvalidPlatformCampaignID indicates the id could not name a campaign on that
+	// platform at all, so no query was issued. A PERMANENT input fault (400), never the
+	// "could not verify" 503 — retrying malformed input can only fail the same way.
+	ErrInvalidPlatformCampaignID = errors.New("not a valid platform campaign id")
 )

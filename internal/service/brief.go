@@ -542,6 +542,11 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 		switch {
 		case errors.Is(lerr, ErrAdoptionUnsupported):
 			return nil, &briefs.BadRequestError{Code: "400", Message: "campaign adoption is not supported for this platform"}
+		case errors.Is(lerr, ErrInvalidPlatformCampaignID):
+			// A permanent input fault, not an unreachable platform: the adapter rejected the
+			// id locally and issued no query, so the 503 below would tell the caller to retry
+			// something that can only ever fail. Not a 404 either — nothing was looked up.
+			return nil, &briefs.BadRequestError{Code: "400", Message: "platform_campaign_id is not a valid campaign id for this platform"}
 		case errors.Is(lerr, ErrPlatformCampaignAbsent):
 			return nil, &briefs.NotFoundError{Code: "404", Message: "no such campaign exists on the ad platform under this project's connection"}
 		case errors.Is(lerr, domain.ErrSystemConnectionNotUsable):
@@ -589,6 +594,13 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 		Platform:           platform,
 		PlatformCampaignID: ref.ID,
 		CampaignName:       ref.Name,
+		// The adapter's provenance blob — for Google Ads, the customer id the campaign was
+		// verified under, which the account-mismatch guards read back on every later toggle
+		// and metrics read. An empty Result reads as "unknown" there and is waved through.
+		Result: ref.Result,
+		// Adoption is a write like any other, so it records who made it. Same nil handling
+		// as CreateBrief: no decodable actor stores NULL rather than refusing the write.
+		CreatedBy: attributedActor(ctx, "adopt campaign"),
 		// The row's LIFECYCLE state, never the platform's ENABLED/PAUSED. "created" is exactly
 		// true of an adopted campaign — it exists upstream, fully provisioned. A platform
 		// literal would land outside every status predicate, and both default-deny.

@@ -425,8 +425,8 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 // A soft-deleted row sits outside the partial index, so a pair whose campaign was deleted
 // can be adopted afresh, exactly as it can be re-dispatched.
 const adoptCampaignQuery = `INSERT INTO campaigns
-	(project_id, brief_id, platform, platform_campaign_id, campaign_name, status)
-	VALUES ($1,$2,$3,$4,$5,$6)
+	(project_id, brief_id, platform, platform_campaign_id, campaign_name, status, result, created_by, updated_by)
+	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
 	ON CONFLICT (brief_id, platform) WHERE status <> 'deleted' DO NOTHING
 	RETURNING ` + campaignCols
 
@@ -439,9 +439,16 @@ func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, ind
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Both actor columns from ONE value: adoption creates the row and is also the last
+	// thing to have touched it, so created_by and updated_by are the same actor. nil is an
+	// ordinary outcome and stores NULL — see ClaimCampaignDispatch for why.
+	adoptedBy, aerr := marshalActor(c.CreatedBy)
+	if aerr != nil {
+		return nil, fmt.Errorf("adopt campaign: %w", aerr)
+	}
 	row := tx.QueryRow(ctx, adoptCampaignQuery,
 		c.ProjectID, c.BriefID, string(c.Platform), nullStr(c.PlatformCampaignID),
-		c.CampaignName, c.Status,
+		c.CampaignName, c.Status, nullJSON(c.Result), adoptedBy,
 	)
 	adopted, err := scanCampaign(row)
 	if err != nil {

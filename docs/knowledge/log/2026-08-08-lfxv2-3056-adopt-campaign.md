@@ -52,6 +52,16 @@ through `resolveGoogleAdsClient`, whose deferred `systemScoped` **wraps rather t
 telling the caller to repair a connection their project does not have. The sentinel exists to
 prevent exactly that misdirection, so omitting the arm made the tag decorative.
 
+Three more of the same shape came out of the bot pass, and all three are about what a NEW write
+path forgets rather than what it gets wrong. The adopted row did not carry the account it was
+verified under, so `googleAdsCreationCustomerID` read "unknown" and the mismatch guards — which
+treat unknown as permission to proceed — stopped protecting it. It did not stamp `created_by`
+or `updated_by`, so an adopted campaign had no audit trail. And a locally-rejected malformed id
+fell through to the 503 default, telling the caller to retry input that can never succeed. Each
+is a column or an arm that every SIBLING path already has; none is visible from the new code
+alone. The lesson is the same one twice over: diff a new write against the existing writes for
+the same table, and a new error switch against the existing switches, field by field.
+
 The generalisable part is WHICH arm went missing. Copying a switch reproduces the arms that fire
 in ordinary testing and drops the one for a condition nothing local produces; both remaining arms
 returned a `ConflictError`, so the code did not look incomplete. The new test asserts the response

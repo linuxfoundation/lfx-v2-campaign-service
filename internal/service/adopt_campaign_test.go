@@ -16,8 +16,8 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// adopterDispatcher implements ONLY CampaignAdopter, so a test that reaches Dispatch (i.e.
-// creates upstream) fails loudly. calls pins how often the platform was contacted.
+// adopterDispatcher implements ONLY CampaignAdopter, so a test that reaches Dispatch — i.e.
+// creates upstream — fails loudly. calls pins how often the platform was contacted.
 type adopterDispatcher struct {
 	ref    *model.PlatformCampaignRef
 	err    error
@@ -85,14 +85,12 @@ func TestAdoptCampaign_BindsThePlatformsOwnAnswer(t *testing.T) {
 	if res.PlatformCampaignID == nil || *res.PlatformCampaignID != "1234567890" {
 		t.Errorf("platform_campaign_id = %v, want 1234567890", res.PlatformCampaignID)
 	}
-	// The name comes from the platform read: the caller never sends one, and a local
-	// default would make the row disagree with its campaign from the moment it was written.
+	// The name comes from the platform read; the caller never sends one.
 	if res.CampaignName != "KubeCon EU 2026 — Search" {
 		t.Errorf("campaign_name = %q, want the platform's name", res.CampaignName)
 	}
-	// Status is this service's LIFECYCLE vocabulary, never the platform's run state: an
-	// adopted row must look like a created one to every status predicate, or it lands
-	// outside all of them — both default-deny, leaving it undeletable and never reconciled.
+	// LIFECYCLE vocabulary, never the platform's run state: a row outside every status
+	// predicate is undeletable AND never reconciled, because both default-deny.
 	if res.Status != model.CampaignStatusCreated {
 		t.Errorf("status = %q, want %q", res.Status, model.CampaignStatusCreated)
 	}
@@ -400,4 +398,50 @@ func (d deadlineRecordingAdopter) LookupCampaign(ctx context.Context, _ string, 
 	_, ok := ctx.Deadline()
 	*d.seen = ok
 	return &model.PlatformCampaignRef{ID: "1234567890"}, nil
+}
+
+// The adopted row must record its provenance exactly as a created row does — the account it
+// was verified under, and who bound it. Without the account, googleAdsCreationCustomerID reads
+// "unknown", the account-mismatch guards treat that as permission to proceed, and once the
+// project's connection is repointed the same numeric id addresses a different customer's
+// campaign. Without the actor, an adopted campaign has no audit trail at all.
+func TestAdoptCampaign_RecordsItsProvenance(t *testing.T) {
+	disp := &adopterDispatcher{ref: &model.PlatformCampaignRef{
+		ID: "1234567890", Name: "KubeCon EU 2026 — Search",
+		Result: json.RawMessage(`{"customerId":"1112223333"}`),
+	}}
+	s, camps := newAdoptService(t, model.ProviderGoogleAds, disp)
+	ctx := ctxWithActor(&model.Actor{Username: "mrautela"})
+
+	if _, err := s.AdoptCampaign(ctx, adoptPayload()); err != nil {
+		t.Fatalf("AdoptCampaign: %v", err)
+	}
+	var got struct {
+		CustomerID string `json:"customerId"`
+	}
+	if err := json.Unmarshal(camps.adopted[0].Result, &got); err != nil {
+		t.Fatalf("the adopted row has no readable provenance blob (%q): %v", camps.adopted[0].Result, err)
+	}
+	if got.CustomerID != "1112223333" {
+		t.Errorf("persisted customerId = %q, want 1112223333 — the account-mismatch guards read this back", got.CustomerID)
+	}
+	if by := camps.adopted[0].CreatedBy; by == nil || by.Username != "mrautela" {
+		t.Errorf("created_by = %v, want the authenticated actor", by)
+	}
+}
+
+// A malformed id is rejected by the adapter locally, before any query. Reporting that as 503
+// tells the caller to retry input that can only ever fail; it is a 400.
+func TestAdoptCampaign_MalformedPlatformIDIs400(t *testing.T) {
+	disp := &adopterDispatcher{err: fmt.Errorf("%w: %w", domain.ErrInvalidPlatformCampaignID, errors.New(`"007" is not a campaign id`))}
+	s, camps := newAdoptService(t, model.ProviderGoogleAds, disp)
+
+	_, err := s.AdoptCampaign(context.Background(), adoptPayload())
+	var bad *briefs.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("got %T (%v), want *briefs.BadRequestError — a permanently invalid id is not an unreachable platform", err, err)
+	}
+	if len(camps.adopted) != 0 {
+		t.Errorf("persisted %d campaigns for a malformed id, want 0", len(camps.adopted))
+	}
 }
