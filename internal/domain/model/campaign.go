@@ -177,10 +177,18 @@ func IsValidMetricsWindow(w MetricsWindow) bool {
 }
 
 // CampaignMetrics is a platform-agnostic, live read-through performance
-// snapshot for one campaign over one window. It is never persisted — a
-// MetricsReader dispatcher call populates it fresh on every read, the same
-// way StatusToggler's ToggleStatus call is always live rather than
-// DB-cached.
+// snapshot for one campaign. It is never persisted — a MetricsReader
+// dispatcher call populates it fresh on every read, the same way
+// StatusToggler's ToggleStatus call is always live rather than DB-cached.
+//
+// Window records what was ASKED FOR, and what a platform does with it is the
+// platform's business. Most ad platforms scope the counters to it. HubSpot does
+// not: the span selects which email is in scope BY SEND DATE and then returns
+// that email's totals to date, so `today` and `last_30_days` on an email sent
+// this morning return identical numbers. A consumer that renders these as
+// "opens during <Window>" is therefore wrong for at least one channel — the
+// honest label is the window that was requested, not a period the counters
+// cover.
 type CampaignMetrics struct {
 	CampaignID  string
 	Window      MetricsWindow
@@ -194,6 +202,11 @@ type CampaignMetrics struct {
 	// without lying: delivery, bounces and unsubscribes have no ad-platform analogue at
 	// all, and a consumer that needs them would otherwise have to infer them from numbers
 	// that do not contain them.
+	//
+	// "Only an email channel has" is about the fields inside EmailMetrics, not about the
+	// four above: an email send also populates Impressions and Clicks, deliberately, so a
+	// cross-channel view can total them without special-casing the channel. Email is the
+	// overflow for what does not fit, not a separate parallel result.
 	Email *EmailMetrics
 }
 

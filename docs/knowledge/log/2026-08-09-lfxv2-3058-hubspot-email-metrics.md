@@ -32,8 +32,9 @@ So both are errors rather than values:
 
 A third joined them once the span's real semantics were read (see below):
 
-- `ErrNoSentEmailInWindow` — an empty `emails` list, meaning the span did not contain this
-  email's send date.
+- `ErrNoSentEmailInWindow` — an empty `emails` list, meaning no SENT email with this id
+  matched the span. Deliberately not narrowed further: a send outside the span, a staged
+  draft, and a nonexistent id are indistinguishable in this shape (see below).
 
 And two more once the guards were re-read against what they actually admit:
 

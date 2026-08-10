@@ -217,16 +217,18 @@ func TestGetEmailMetrics_MissingCountersForACoveredEmailIsAnErrorNotZeros(t *tes
 	}
 }
 
-// An EMPTY emails list means HubSpot did not include this email in the span, and the
-// contract says why: the span selects emails by SEND time, so a window that does not
-// contain the send date matches nothing.
+// An EMPTY emails list means HubSpot matched no SENT email with this id in the span. That
+// is all it establishes: the span selects by SEND time, so a send outside it, a staged
+// draft that has never been sent, and an id that does not exist all arrive in this one
+// shape and the response cannot tell them apart. The assertions below hold the message to
+// that weakest claim.
 //
 // Zeros are the wrong answer, and this test exists because the obvious reading — "empty
 // means no activity" — gets it backwards. The email that really had no activity comes back
 // PRESENT (see TestGetEmailMetrics_UnmappedButKnownCountersAreARealZero, where `[4242]`
-// arrives carrying only `notsent`). So zeroing the empty case would make "you picked a
-// window that predates the send" and "nobody opened it" the same answer, which is exactly
-// the case where a live campaign reads as a dead one.
+// arrives carrying only `notsent`). So zeroing the empty case would make "no sent email
+// matched" and "nobody opened it" the same answer, which is exactly the case where a live
+// campaign reads as a dead one.
 func TestGetEmailMetrics_EmptyEmailsListIsNotAZero(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, statsBody(t, `[]`, `{}`))
