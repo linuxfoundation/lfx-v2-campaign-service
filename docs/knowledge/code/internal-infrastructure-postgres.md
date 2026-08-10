@@ -172,24 +172,22 @@ leaving headroom over reusing a number a sibling branch might renumber into.
 
 - `000019` — `updated_by` JSONB on `campaign_audiences`. Only the one column: that table
   has carried `created_by` since `000005`, and `000015` recorded the missing half as a
-  known gap. At the time this branch was written one version was missing between here and
-  `000015` — `000018`, the audience build lease, then open as PR #106 — which is a statement
-  about merge order and stops being true the moment #106 lands. The durable form of the claim
-  is the rule, not the census: a gap in this sequence is expected only while the PR that
-  claims the version is unmerged, and `TestMigrations_AllowedVersionGapsAreStillOpen` is what
-  enforces that, failing as soon as an excused gap closes. `000016` (campaigns actor columns)
-  and `000017` (the disconnected probe index) are both present, having merged with #95 and #93 — an earlier
-  draft of this bullet called `000017` skipped while the next clause said it had merged,
-  which is the sort of contradiction a numbering note can least afford. This column was
-  numbered `000017` until #93 merged and made it a silent duplicate, then `000018` until
-  that collided with #106 — golang-migrate applies one file per version and skips the other
-  with no error, so a collision surfaces only as a missing column. It moved rather than
-  #106's on the reference count, which is the rule: #106's version is named in `pool.go`'s
-  version-forcing recovery path and in three of its tests (`migration 000018: force 17`),
-  whereas this one is named in a single test and two documentation lines. **Renumber the
-  branch with the fewest references to the number, not the branch you happen to be in** — a
-  migration version leaks into prose and recovery code, and the leak, not the file name, is
-  the cost. See *Migration numbering* below.
+  known gap. When multiple PRs are open, migrations are numbered against a snapshot of `main`
+  that concurrent branches can invalidate, so a gap in the sequence may exist during open PRs
+  and should vanish when they land. `000018`, the audience build lease, exists in PR #106;
+  golang-migrate records only the HIGHEST applied version and skips lower numbers silently
+  forever if they arrive later, so both PRs picking the next free number against their `main`
+  snapshot led to a collision (see *Migration numbering* below). `000016` (campaigns actor
+  columns) and `000017` (the disconnected probe index) are both present, having merged with
+  #95 and #93. This version was numbered `000017` until #93 merged and made it a silent
+  duplicate, then `000018` until that collided with #106 — golang-migrate applies one file
+  per version and skips the other with no error, so a collision surfaces only as a missing
+  column. It moved rather than #106's on the reference count, which is the rule: #106's
+  version is named in `pool.go`'s version-forcing recovery path and in three of its tests
+  (`migration 000018: force 17`), whereas this one is named in a single test and two
+  documentation lines. **Renumber the branch with the fewest references to the number, not
+  the branch you happen to be in** — a migration version leaks into prose and recovery code,
+  and the leak, not the file name, is the cost. See *Migration numbering* below.
 
 ### Version gaps are exempted, then the exemption is retired
 

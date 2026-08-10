@@ -120,11 +120,11 @@ func (r *AudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *mo
 	// wrong row. nullJSON's guard is `len(j) == 0`, which covers nil and empty alike.
 	//
 	// No caller produces an empty non-nil value today, so this is a guard against a future
-	// one rather than a live defect. It is worth having because of what it removes: this
-	// path used to be the one that omitted the wrapper, and with it added the two inserts
-	// are identical in how they bind every column. An unexplained difference between two
-	// near-identical inserts is the kind that gets copied in one direction or normalised
-	// away in the other, and either way nobody reconstructs which of them was deliberate.
+	// one rather than a live defect. It is worth having for what it removes: this
+	// path previously omitted the wrapper, creating an asymmetry between two near-identical
+	// inserts. Adding it here restores consistency. An unexplained difference between two
+	// similar inserts is the kind that gets copied in one direction or normalised away in
+	// the other, and either way nobody reconstructs which of them was deliberate.
 	out, serr := scanAudience(tx.QueryRow(ctx, createAudienceForApprovedBriefQuery,
 		a.ProjectID, a.BriefID, string(a.Platform), nullStr(a.PlatformMasterListID),
 		nullJSON(a.SuppressionListIDs), nullStr(a.InclusionSummary), string(a.StatusOrDefault()),

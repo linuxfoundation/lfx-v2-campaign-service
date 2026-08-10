@@ -61,10 +61,10 @@ func insertApprovedBriefVersioned(ctx context.Context, t *testing.T, pool *pgxpo
 // which assert placeholder positions and cannot see the bound Go value at all.
 //
 // No caller passes an empty non-nil value today, so this pins a guard rather than a live bug.
-// It is still worth pinning, and the reason is what the wrapper removes rather than what it
-// adds: CreateAudienceForApprovedBrief was the path that omitted it, and now that it does not,
-// the two inserts bind every column identically. An unexplained difference between two
-// near-identical inserts is the kind that gets normalised away by whoever touches them next.
+// It is still worth pinning: CreateAudienceForApprovedBrief previously omitted the wrapper
+// (unlike CreateAudience), creating an asymmetry. Adding it here makes the two inserts bind
+// every column identically. An unexplained difference between two near-identical inserts is
+// the kind that gets normalised away by whoever touches them next.
 //
 // Revert check: drop the nullJSON wrappers and the empty-value subtest fails with the 22P02
 // insert error. The nil subtest passes either way, deliberately — it records that the nil
