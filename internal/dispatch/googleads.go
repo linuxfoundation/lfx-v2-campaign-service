@@ -312,8 +312,11 @@ func campaignFromGoogleAdsAdoption(ctx context.Context, campaignID, campaignName
 	// What adoption does NOT do is push this config upstream. The campaign already exists
 	// with whatever budget and settings it was created with, and this path deliberately
 	// creates no budget and no ad group (see the Steps below). So the row records the
-	// request while the platform keeps its own state — reconciling the two is the job of
-	// a metrics read, not of this mapper.
+	// request while the platform keeps its own state, and the two can legitimately
+	// disagree. Nothing reconciles them today: ReadMetrics returns impressions, clicks,
+	// cost and CTR, none of which describe the campaign's configuration, so it cannot
+	// close this gap however it is read. A readback of the upstream settings is a
+	// separate capability and is not in this service (LFXV2-3067).
 	applyCampaignConfig(ctx, c, cfg.Budget, false, "", "", cfg)
 	// The blob must carry CustomerID: googleAdsCreationCustomerID reads it to detect a
 	// later read/toggle against a DIFFERENT customer, and treats an absent one as

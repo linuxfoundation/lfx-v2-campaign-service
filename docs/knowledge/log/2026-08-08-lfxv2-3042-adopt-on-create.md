@@ -48,8 +48,12 @@ sibling adapter's for no recoverable reason.
 
 What adoption does not do is push that config upstream: the campaign keeps whatever budget
 and settings it was created with, and this path creates no budget and no ad group. The row
-records the request; the platform keeps its state. Reconciling the two is a metrics read's
-job, not the mapper's.
+records the request; the platform keeps its state; the two can legitimately disagree and
+nothing in this service reconciles them. That last part is worth stating plainly rather than
+gesturing at a metrics read, which was the first draft of this paragraph and was wrong:
+`ReadMetrics` returns impressions, clicks, cost and CTR — performance, not configuration — so
+no amount of reading it tells you the upstream budget. Closing the gap needs a settings
+readback this service does not have, tracked as LFXV2-3067.
 
 ## Follow-on (review round 1) — adoption had to become opt-in
 
