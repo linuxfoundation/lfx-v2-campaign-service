@@ -188,6 +188,72 @@ func TestReconcileAmbiguousAudienceCommit_ScopesByTenant(t *testing.T) {
 	}
 }
 
+// TestReconcileAmbiguousAudienceCommit_ReleasesTheLeaseAfterAConcurrentVersionBump is the
+// binding test for the TOCTOU that Cursor Bugbot and Copilot BOTH reported on PR #106 — two
+// bots independently reporting the same thing, which is the strongest signal there is.
+//
+// The previous implementation read the status in one statement and wrote in another, keyed on
+// the version the caller had captured. A concurrent PATCH that edits any other field while
+// LEAVING the status 'building' bumps the version without changing what reconcile cares about.
+// The SELECT then observed 'building' (still true), the UPDATE's `version=$4` matched zero rows,
+// pgx reported no error, and the row kept the (brief_id, platform) build lease forever — the
+// exact failure the reconcile path exists to prevent, reintroduced by the guard added to fix a
+// different one.
+//
+// Predicating the write on `status='building'` instead is what makes it correct: the condition
+// that decides the outcome is evaluated by the same statement that performs it.
+func TestReconcileAmbiguousAudienceCommit_ReleasesTheLeaseAfterAConcurrentVersionBump(t *testing.T) {
+	pool := reconcileTestPool(t)
+	ctx := context.Background()
+
+	briefID, projectID := insertReconcileTestBrief(ctx, t, pool)
+
+	var row model.CampaignAudience
+	row.ProjectID = projectID
+	row.BriefID = briefID
+	row.Platform = model.ProviderHubSpot
+	err := pool.QueryRow(ctx, `
+		INSERT INTO campaign_audiences (project_id, brief_id, platform, status)
+		VALUES ($1, $2, $3, 'building')
+		RETURNING id, version`, projectID, briefID, string(model.ProviderHubSpot)).
+		Scan(&row.ID, &row.Version)
+	if err != nil {
+		t.Fatalf("insert building audience row: %v", err)
+	}
+
+	// A concurrent PATCH lands: it edits another column and bumps the version, but the row
+	// is STILL 'building' and still holds the lease. The caller's captured row.Version is now
+	// stale — which is the whole point.
+	if _, err := pool.Exec(ctx, `
+		UPDATE campaign_audiences SET inclusion_summary='touched by a concurrent patch',
+			version=version+1, updated_at=now()
+		WHERE id=$1`, row.ID); err != nil {
+		t.Fatalf("simulate a concurrent patch: %v", err)
+	}
+
+	reconcileAmbiguousAudienceCommit(ctx, pool, &row)
+
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM campaign_audiences WHERE id = $1`, row.ID).
+		Scan(&status); err != nil {
+		t.Fatalf("read back reconciled row: %v", err)
+	}
+	if status != "failed" {
+		t.Errorf("status = %q, want %q — a concurrent version bump made reconcile a silent no-op, "+
+			"so the build lease is held forever", status, "failed")
+	}
+
+	// The lease is the thing that actually matters: prove a fresh build can take it.
+	var newID string
+	err = pool.QueryRow(ctx, `
+		INSERT INTO campaign_audiences (project_id, brief_id, platform, status)
+		VALUES ($1, $2, $3, 'building')
+		RETURNING id`, projectID, briefID, string(model.ProviderHubSpot)).Scan(&newID)
+	if err != nil {
+		t.Errorf("lease still held after reconcile: rebuild insert failed: %v", err)
+	}
+}
+
 // TestReconcileAmbiguousAudienceCommit_LeaveBuiltRowsUnchanged covers the fix for the Cursor
 // Bugbot finding on PR #106: reconcileAmbiguousAudienceCommit must not downgrade a successfully
 // built row to 'failed'. The reconcile path is called when tx.Commit returns an error that does

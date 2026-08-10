@@ -134,36 +134,30 @@ func reconcileAmbiguousAudienceCommit(ctx context.Context, pool *Pool, row *mode
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ambiguousCommitReconcileTimeout)
 	defer cancel()
 
-	// First, query the row's current status scoped by tenant (project_id, brief_id).
-	// If the row exists, we determine whether to move it to 'failed' based on its current
-	// status. If it does not exist, the commit rolled back and there's nothing to do.
-	var currentStatus string
-	q := `SELECT status FROM campaign_audiences WHERE id=$1 AND brief_id=$2 AND project_id=$3`
-	err := pool.QueryRow(rctx, q, row.ID, row.BriefID, row.ProjectID).Scan(&currentStatus)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			// The commit rolled back: no row at that id for this tenant. This is expected in
-			// some commit-error cases and is not itself an error — reconciliation is complete.
-			return
-		}
-		slog.ErrorContext(ctx, "failed to query audience status for reconciliation after an ambiguous commit error",
-			"audience_id", row.ID, "error", err)
-		return
-	}
-
-	// The row exists. Only move it to 'failed' if it is currently 'building'. If it is
-	// 'built' or 'failed', it is in a stable end state and must not be corrupted.
-	if currentStatus != string(model.AudienceBuilding) {
-		return
-	}
-
+	// ONE statement, not a SELECT followed by an UPDATE. The `status='building'` predicate
+	// is what enforces the do-not-downgrade invariant, and it has to be part of the write to
+	// enforce it at all: a separate status read is a TOCTOU window in which a concurrent
+	// PATCH can land, and a version predicate does not close it — a PATCH that edits another
+	// field while leaving the status 'building' still bumps the version, so the UPDATE would
+	// match zero rows, report no error, and abandon the row holding the lease forever.
+	// Predicating on the status instead of the version is also what makes the write
+	// idempotent under retry.
+	//
+	// Every outcome is already correct without a prior read:
+	//   - no such row      -> 0 rows. The commit rolled back; nothing to reconcile.
+	//   - status 'building'-> 1 row.  Released, which is the whole point of this function.
+	//   - 'built'/'failed' -> 0 rows. A stable end state, left untouched.
+	// The old SELECT could only ADD a failure mode: this function runs precisely when the
+	// connection is already known to be unreliable, and any non-ErrNoRows error from that
+	// extra query returned early, skipping the lease-releasing UPDATE entirely.
+	//
 	// Scoped by brief_id and project_id too, matching UpdateAudience's predicate — id alone
 	// would still be correct (it's the primary key), but every other write to this table
-	// carries the tenant scope, and this is a write path, not a read: worth keeping the
-	// pattern uniform rather than carving out a silent exception here.
+	// carries the tenant scope, and this is a write path: worth keeping the pattern uniform
+	// rather than carving out a silent exception here.
 	updateQ := `UPDATE campaign_audiences SET status='failed', version=version+1, updated_at=now()
-		WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND version=$4`
-	if _, err := pool.Exec(rctx, updateQ, row.ID, row.BriefID, row.ProjectID, row.Version); err != nil {
+		WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND status=$4`
+	if _, err := pool.Exec(rctx, updateQ, row.ID, row.BriefID, row.ProjectID, string(model.AudienceBuilding)); err != nil {
 		slog.ErrorContext(ctx, "failed to reconcile an audience build row after an ambiguous commit error",
 			"audience_id", row.ID, "error", err)
 	}

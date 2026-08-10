@@ -176,16 +176,20 @@ var ErrInvalidIndex = errors.New("schema carries an INVALID index")
 // ErrMissingRequiredIndex reports that an index the schema RELIES ON for correctness is
 // absent (or present-but-invalid, which is the same fact). Like ErrInvalidIndex it is
 // PERMANENT: golang-migrate has already recorded the migration that creates it as clean,
-// so no re-run will rebuild it — the version has to be forced back first. It exists
-// because the recovery for ErrInvalidIndex, done halfway, produces exactly this state.
+// so no re-run will rebuild it. The remedy is the rebuild statement the error carries
+// (`requiredIndex.createSQL`) — run it directly and leave the recorded version alone, which
+// is already correct; the schema drifted underneath it. Forcing the version back was the
+// original advice and is NOT safe here: see createSQL's comment for why replaying this
+// migration range can leave the version dirty. It exists because the recovery for
+// ErrInvalidIndex, done halfway, produces exactly this state.
 var ErrMissingRequiredIndex = errors.New("schema is missing an index it relies on for correctness")
 
 // ErrRequiredIndexMismatch reports an index that carries a required index's NAME while
 // enforcing something else — non-unique, different keys, different predicate, different
 // table. It is a separate sentinel from ErrMissingRequiredIndex because the recovery is
 // different in a way an operator cannot guess: the impostor has to be DROPPED before the
-// version is forced, since the migration's CREATE ... IF NOT EXISTS matches on the name
-// alone and would skip again. Permanent for the same reason as its siblings.
+// rebuild statement is run, since the migration's CREATE ... IF NOT EXISTS matches on the
+// name alone and would skip again. Permanent for the same reason as its siblings.
 var ErrRequiredIndexMismatch = errors.New("an index required for correctness exists under the right name with the wrong definition")
 
 // invalidIndexQuery lists indexes in the connection's schema that Postgres has marked
