@@ -37,7 +37,7 @@ GOA_VERSION := v3.25.3
 clean: ## Remove temporary build artifacts (binaries, coverage)
 	@echo "Cleaning build artifacts..."
 	rm -rf bin/
-	rm -f coverage.out
+	rm -f coverage.out coverage-postgres.out
 
 .PHONY: all
 all: clean apigen fmt lint test build ## Clean, generate, format, lint, test, and build
@@ -92,7 +92,22 @@ lint: ## Run golangci-lint (local Go linting)
 .PHONY: test
 test: ## Run tests
 	@echo "Running tests..."
-	go test -v -race -coverprofile=coverage.out ./...
+	# internal/infrastructure/postgres and its dbtest subpackage each run live-database
+	# migrations against the SAME TEST_DATABASE_URL from their own package-scoped
+	# sync.Once (dbtest.Pool cannot be reused from the postgres package's own live tests —
+	# it would be an import cycle, see audience_reconcile_live_test.go). `go test ./...`
+	# builds and runs packages as separate binaries/processes, so with the default
+	# parallelism these two can call Migrate() at the same moment. golang-migrate's
+	# advisory lock serializes the two Up() calls, but 000018's CREATE INDEX CONCURRENTLY
+	# still has to wait out every OTHER session's open transaction against the table —
+	# including one held by the OTHER package's own live tests — which is exactly the
+	# shape of Postgres's documented CONCURRENTLY-vs-concurrent-transaction deadlock.
+	# `-p 1` forces every package under internal/infrastructure/postgres/... to run
+	# strictly one at a time, closing the race at its source instead of retrying past it
+	# (a retry after a failed CONCURRENTLY build risks finding the index already present
+	# and INVALID under IF NOT EXISTS, which checkNoInvalidIndexes then fails permanently).
+	go test -v -race -p 1 -coverprofile=coverage-postgres.out ./internal/infrastructure/postgres/...
+	go test -v -race -coverprofile=coverage.out $$(go list ./... | grep -v -E '/internal/infrastructure/postgres(/|$$)')
 
 .PHONY: build
 build: ## Build the application for local OS
