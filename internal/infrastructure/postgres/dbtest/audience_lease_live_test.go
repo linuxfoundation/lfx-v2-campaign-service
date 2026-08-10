@@ -313,16 +313,15 @@ func TestConfirmBriefApprovedWaitsForAnInFlightWithdrawal(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- repo.ConfirmBriefApproved(ctx, projectID, briefID, version) }()
 
-	// A plain SELECT would answer immediately, and answer "approved" — so returning at all
-	// here is the failure. The wait is one-sided: it can only produce a false PASS if the
-	// machine is slow, never a false failure.
-	select {
-	case cerr := <-done:
-		t.Fatalf("ConfirmBriefApproved returned %v while a withdrawal was in flight; it read "+
-			"around the uncommitted writer instead of locking behind it, which is how a build "+
-			"creates HubSpot lists from an approval that is already being withdrawn", cerr)
-	case <-time.After(250 * time.Millisecond):
-	}
+	// Wait for PostgreSQL to SHOW the confirmation blocked on the writer's row lock, rather
+	// than inferring it from "the call has not returned yet". The inference is not sound: if
+	// the goroutine is simply not scheduled into ConfirmBriefApproved before the deadline
+	// expires, the test commits, a plain SELECT then reads the committed draft, and
+	// ErrStaleApproval comes back — so a non-locking implementation passes both assertions on
+	// a slow machine. `pg_blocking_pids` turns the first assertion into positive evidence: a
+	// backend in this database is waiting on another backend, which only `FOR UPDATE` against
+	// the open transaction produces here.
+	waitForBlockedBackend(ctx, t, pool, done)
 
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit the withdrawal: %v", err)
@@ -336,5 +335,40 @@ func TestConfirmBriefApprovedWaitsForAnInFlightWithdrawal(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("ConfirmBriefApproved never returned after the withdrawal committed")
+	}
+}
+
+// waitForBlockedBackend blocks until PostgreSQL reports a backend in this database waiting on
+// another backend's lock, failing the test if that never happens or if the call under test
+// returns first. `done` is polled alongside so a non-locking implementation is reported as the
+// specific defect it is rather than as a generic timeout.
+func waitForBlockedBackend(ctx context.Context, t *testing.T, pool *pgxpool.Pool, done <-chan error) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		select {
+		case cerr := <-done:
+			t.Fatalf("ConfirmBriefApproved returned %v while a withdrawal was in flight; it read "+
+				"around the uncommitted writer instead of locking behind it, which is how a build "+
+				"creates HubSpot lists from an approval that is already being withdrawn", cerr)
+		default:
+		}
+		var blocked int
+		err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM pg_stat_activity a
+			WHERE a.datname = current_database()
+			  AND a.pid <> pg_backend_pid()
+			  AND cardinality(pg_blocking_pids(a.pid)) > 0`).Scan(&blocked)
+		if err != nil {
+			t.Fatalf("inspect pg_stat_activity for a blocked backend: %v", err)
+		}
+		if blocked > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no backend ever blocked on the withdrawing transaction's row lock; " +
+				"ConfirmBriefApproved is not taking FOR UPDATE against the brief row")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

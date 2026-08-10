@@ -4,7 +4,10 @@
 `uq_campaign_audiences_brief_platform_building` on
 `campaign_audiences (brief_id, platform) WHERE status = 'building'`. The repository maps the
 resulting 23505 to a new `domain.ErrAudienceBuildInFlight`, and `mapAudienceErr` gives it a 409
-with its own message. No Goa change was needed: `build-audience` already declares Conflict.
+with its own message. `build-audience` already declared Conflict, so no new response was
+needed, but the design DID change: the shared `ConflictError` gains a `reason` discriminator
+(`stale_approval`, `audience_build_in_flight`, `already_exists`) and all three services were
+regenerated. The section on the reason slug below is the detail.
 
 **Why this exists.** `BuildAudience` creates real, billable HubSpot lists and then records them.
 Two calls for the same brief could run that whole sequence concurrently, and nothing stopped
@@ -786,9 +789,42 @@ carried `Example("audience_build_in_flight")`. Goa copies an attribute-level exa
 schema of every response that uses the type, so an audience-build value appeared on the 409 for
 "a connection already exists for this provider" and 12 others it has nothing to do with — which
 reads as a contract rather than an illustration. The `Enum` already publishes the whole
-vocabulary, which is the part clients may rely on; the example is dropped. A per-endpoint
-example would need a per-endpoint type, and the type is shared on purpose.
+vocabulary, which is the part clients may rely on. A per-endpoint example would need a
+per-endpoint type, and the type is shared on purpose, so the fix is not a per-endpoint value but
+an internally consistent one — see the section below on why deleting it outright did not work.
 
-Removing an explicit example makes Goa draw one more value from its example RNG, which shifts
+Re-pointing the example makes Goa draw its placeholder values in a different order, which shifts
 every generated placeholder after it — hence the wide `gen/` diff. It is deterministic
 (`make apigen` twice is byte-identical) and confined to generated files.
+
+## Dropping the example did not produce an example-free schema
+
+Goa does not leave an attribute blank when the design gives it no `Example` — it fabricates one,
+and for an enum-typed attribute it fabricates it FROM the enum. It picked `audience_build_in_flight`,
+so the published object example paired that reason with the type's message example, "A connection
+for this provider already exists on the project": the same cross-endpoint claim the deletion was
+meant to remove, now with nothing in the design pointing at it. Deleting a wrong example is not
+the same as publishing no example.
+
+There is no shape here that makes the published instance right for all 29 endpoints — the object
+example is ONE instance and the type is shared on purpose. What is achievable is INTERNAL
+consistency: `reason` now carries `Example("already_exists")`, which is the reason that actually
+accompanies that message, so the single instance clients see describes a real 409 rather than a
+mapping between two unrelated ones. The `Enum` remains the full vocabulary, and it is the part
+clients are entitled to rely on.
+
+## A 250 ms deadline was not evidence of a lock
+
+`TestConfirmBriefApprovedWaitsForAnInFlightWithdrawal` asserted the lock by starting the
+confirmation in a goroutine and requiring it NOT to return within 250 ms. That admits exactly the
+implementation it exists to reject: if the goroutine is never scheduled into `ConfirmBriefApproved`
+before the deadline, the test commits, a plain SELECT then reads the committed draft, and
+`ErrStaleApproval` comes back — both assertions green against a repo with no `FOR UPDATE` in it.
+The absence of a return is not the presence of a wait.
+
+`waitForBlockedBackend` replaces it with positive evidence: poll `pg_stat_activity` for a backend
+in this database with a non-empty `pg_blocking_pids()`, which only a row lock held by the open
+withdrawing transaction produces here. It polls `done` alongside, so a non-locking implementation
+is reported as that specific defect rather than as a generic timeout. Revert-verified by removing
+`FOR UPDATE` from `brief_repo.go`: the suite fails on the `done` arm with "read around the
+uncommitted writer instead of locking behind it", and passes with it restored.

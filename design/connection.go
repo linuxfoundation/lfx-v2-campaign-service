@@ -117,10 +117,23 @@ var NotFoundError = Type("not-found-error", func() {
 // with, which reads as a contract rather than an illustration. The Enum already publishes
 // the whole vocabulary, which is the part clients are entitled to rely on; a per-endpoint
 // example would need a per-endpoint type, and the type is shared on purpose.
+// ConflictError is the 409 body for every endpoint in the API, which is what makes its
+// example awkward: the object-level example Goa publishes is ONE instance, and this type
+// describes twenty-nine different conflicts.
+//
+// `reason` therefore carries an example chosen to AGREE with the message example already on
+// the type, rather than no example at all. Leaving it off does not produce an example-free
+// schema — Goa fills the gap from the enum, and it picked `audience_build_in_flight`, which
+// the generated contract then paired with "A connection for this provider already exists".
+// That reads as a mapping between two unrelated endpoints, which is worse than a value
+// belonging to one of them. `already_exists` is the reason that actually accompanies this
+// message, so the published instance is at least internally true. The Enum above is what
+// publishes the full vocabulary, and that is the part clients are entitled to rely on.
 var ConflictError = Type("conflict-error", func() {
 	errorAttrs("409", "A connection for this provider already exists on the project.")
 	Attribute("reason", String, "Stable machine-readable discriminator, present only where an endpoint returns more than one kind of conflict. Absent means unspecified.", func() {
 		Enum("stale_approval", "audience_build_in_flight", "already_exists")
+		Example("already_exists")
 	})
 })
 
