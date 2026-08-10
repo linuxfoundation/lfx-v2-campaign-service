@@ -1,0 +1,57 @@
+-- Copyright The Linux Foundation and each contributor to LFX.
+-- SPDX-License-Identifier: MIT
+
+-- Actor attribution on campaigns. The follow-up 000015 forecast.
+--
+-- Campaigns run under SYSTEM accounts: the ad platform sees one shared LF-owned
+-- identity, so it cannot tell us which person launched or edited a campaign. If this
+-- service does not record it, that information exists nowhere. campaigns is the table
+-- where that matters most — these rows are what SPEND MONEY.
+--
+-- Same column type and shape as connections (000001), campaign_audiences (000005) and
+-- campaign_briefs (000015), so marshalActor / unmarshalActor apply unchanged.
+--
+-- Why this is a SEPARATE migration from 000015 rather than the same one: the write
+-- paths differ in kind, not just in table. A brief write happens ON the request
+-- goroutine, so the actor is read from the request context at the point of the write.
+-- Campaign creation does not: dispatch runs on the orchestrator's ROOT context, in a
+-- goroutine that outlives the request, so `actorFromCtx` at the point of the INSERT
+-- would return nil for every campaign ever created. The actor has to be captured at
+-- Orchestrator.Start, while the request context is still in hand, and threaded down
+-- through run → dispatchPlatform → ClaimCampaignDispatch/UpsertCampaign. That is a
+-- signature change across the dispatch path, and it deserved its own review.
+--
+-- What is captured is the DECODED actor value (name, email, principal), never the
+-- bearer token. A token captured for asynchronous use may be expired by the time the
+-- work runs and there is no retry; a decoded value has no expiry and is the exact
+-- thing being recorded.
+--
+-- Nullable by necessity, not by preference. Every row that already exists predates this
+-- migration and has no actor to backfill. Beyond that, NULL arises from exactly one
+-- live source: attributedActor returns nil (and logs a warning) whenever the request
+-- context carries no decodable principal — no bearer token, a token that is not three
+-- dot-separated segments, or claims with no name/email/username/sub. That covers a
+-- machine-to-machine caller and any request that reaches the service without the
+-- gateway's token.
+--
+-- It does NOT include a recovery sweeper: StartRecoverySweeper only calls FailStuckJobs
+-- and writes no campaign row, so there is no background re-persist path here. (An
+-- earlier draft of this comment said there was; the COALESCE on updated_by in the upsert
+-- and update statements is still correct, but its job is narrower than that claim made
+-- it sound — it keeps a nil-actor write from erasing a recorded one, rather than
+-- accommodating a sweeper that does not exist.)
+--
+-- NULL means "not recorded", never "nobody".
+--
+-- These columns hold personal data (name, email). Nothing prunes them: the record
+-- lives as long as the campaign, because an audit trail that expires answers "who
+-- spent this money" only for recent writes. Adding a deletion path is a compliance
+-- decision.
+--
+-- campaign_audiences still carries created_by ONLY, so an audience edit records no
+-- actor. That remains open (LFXV2-3038 follow-up); it is not closed here because
+-- update-audience is a published PATCH with its own handler and its own tests.
+
+ALTER TABLE campaigns
+    ADD COLUMN IF NOT EXISTS created_by JSONB,
+    ADD COLUMN IF NOT EXISTS updated_by JSONB;

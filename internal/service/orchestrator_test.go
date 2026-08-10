@@ -114,6 +114,10 @@ type fakeCampaignRepo struct {
 	byID map[string]*model.Campaign
 	// claimVersionErr, when set, is returned by ClaimCampaignVersion.
 	claimVersionErr error
+	// claimActors records the `by` argument of every ClaimCampaignDispatch call, so a
+	// test can assert the DISPATCHING actor reached the claim INSERT — which is the
+	// only INSERT this row ever gets — rather than only checking the model field.
+	claimActors []*model.Actor
 }
 
 func (r *fakeCampaignRepo) GetCampaign(_ context.Context, _, _, campaignID string) (*model.Campaign, error) {
@@ -141,9 +145,12 @@ func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, _ string, br
 // ClaimCampaignDispatch simulates INSERT ... ON CONFLICT DO NOTHING: if an entry
 // for (brief, platform) already exists it's a conflict (not claimed) returning
 // the existing row; otherwise it inserts a pending placeholder and claims.
-func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, briefID string, platform model.Provider, jobID string) (bool, *model.Campaign, error) {
+func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, briefID string, platform model.Provider, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Recorded BEFORE the error and conflict returns: the question the binding test asks
+	// is what the orchestrator PASSED, which it did on every one of these paths.
+	r.claimActors = append(r.claimActors, by)
 	if r.claimErr != nil {
 		return false, nil, r.claimErr
 	}
@@ -151,7 +158,11 @@ func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, b
 	if c, ok := r.existing[key]; ok {
 		return false, c, nil
 	}
-	pending := &model.Campaign{ProjectID: projectID, BriefID: briefID, Platform: platform, JobID: &jobID, Status: "pending"}
+	// Both actor columns, because claimCampaignDispatchQuery inserts `created_by, updated_by`
+	// from the SAME $5. A fake that stamped only CreatedBy would hand every orchestrator test
+	// a claimed row production cannot create, and the creation-time updated_by invariant would
+	// have no fake capable of catching a regression in it.
+	pending := &model.Campaign{ProjectID: projectID, BriefID: briefID, Platform: platform, JobID: &jobID, Status: "pending", CreatedBy: by, UpdatedBy: by}
 	if r.existing == nil {
 		r.existing = map[string]*model.Campaign{}
 	}
@@ -233,7 +244,7 @@ func (r *fakeCampaignRepo) ReleaseCampaignLockAfterCooldown(domain.CampaignLockT
 // missing/already-deleted → ErrNotFound, mid-dispatch 'pending' → ErrConflict, then
 // the version check, and finally a status flip to 'deleted' that leaves the row in
 // place (so a re-dispatch to the same pair can claim the freed slot).
-func (r *fakeCampaignRepo) DeleteCampaign(_ context.Context, _, _, campaignID string, expectedVersion int64, _ domain.CampaignIndexPayloadFunc) error {
+func (r *fakeCampaignRepo) DeleteCampaign(_ context.Context, _, _, campaignID string, expectedVersion int64, _ *model.Actor, _ domain.CampaignIndexPayloadFunc) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c, ok := r.byID[campaignID]
@@ -764,7 +775,7 @@ func TestClaimCampaignDispatch_ConcurrentSingleWinner(t *testing.T) {
 			defer wg.Done()
 			<-start // release all goroutines at once to maximize contention
 			claimed, row, err := repo.ClaimCampaignDispatch(
-				context.Background(), "cncf", "b1", model.ProviderGoogleAds, "job1")
+				context.Background(), "cncf", "b1", model.ProviderGoogleAds, "job1", nil)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -960,11 +971,11 @@ type claimCountingCampaignRepo struct {
 	claims int
 }
 
-func (r *claimCountingCampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, p model.Provider, jobID string) (bool, *model.Campaign, error) {
+func (r *claimCountingCampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, p model.Provider, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
 	r.cmu.Lock()
 	r.claims++
 	r.cmu.Unlock()
-	return r.fakeCampaignRepo.ClaimCampaignDispatch(ctx, projectID, briefID, p, jobID)
+	return r.fakeCampaignRepo.ClaimCampaignDispatch(ctx, projectID, briefID, p, jobID, by)
 }
 
 // TestOrchestrator_DispatchGoesThroughClaim verifies each per-platform dispatch

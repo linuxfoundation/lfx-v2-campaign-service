@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/meta"
-description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, campaign status toggle, and live campaign metrics reads."
+description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, campaign status toggle, live campaign metrics reads, and ad-account discovery."
 resource: "internal/platform/meta"
 tags:
   - platform-client
@@ -280,6 +280,44 @@ body can carry credentials this client never held, such as a Meta-constructed
 `paging.next` URL with its own `access_token`. It keeps the KEY and drops the VALUE,
 and decides which alternative fired by scheme prefix rather than by delimiter search,
 because base64 padding puts `=` inside a bearer token.
+
+## Ad-account discovery (accounts.go)
+
+`Client.ListAdAccounts` walks `GET /me/adaccounts?fields=id,name,account_status&limit=100`
+and returns every ad account the access token reaches. It asks about the TOKEN, so
+`AccountConfig` is not consulted — that is what lets it answer "which account should this
+connection use?" for a connection that has not chosen one.
+
+**An incomplete walk is an ERROR, never a short list.** Every one of the failure modes —
+a 2xx body with no `data` field, a `next` link whose cursor is empty, a repeated cursor, an
+id that is not `act_<digits>`, and the 20-page cap — returns `nil, error` rather than what
+was collected so far. At the boundary a truncated list is indistinguishable from a complete
+one, and the caller acts on the absence: the account they wanted is simply not offered, and
+they conclude their token cannot reach it. That is the same false-absence discipline the
+find-by-name lookups follow.
+
+The `data` guard rests on a property of `encoding/json` that is easy to state backwards: a
+PRESENT empty array decodes into a **non-nil** empty slice, while an absent or null field
+leaves the slice **nil**. A plain slice therefore already separates `{"data":[]}` from `{}`,
+as long as it starts nil — which is why the response struct is declared inside the page loop
+rather than reused. `Data == nil` then means "this body carried no result set", so a
+malformed `{}` cannot read as "fully enumerated, zero accounts". The
+accumulator is `make([]AdAccount, 0, n)` for the mirror-image reason: a token that
+legitimately reaches zero accounts is an ANSWER, and it has to stay distinguishable from
+"no answer" all the way up to the HTTP body, where nil serializes as `null` instead of `[]`.
+
+**`paging.next` is never followed.** Meta's own next-page URL carries `access_token` and
+`appsecret_proof` as query parameters, so following it would put the credential into the
+request URL and from there into `apiError`/`transportError` text that the discovery handler
+logs. Each page's path is rebuilt locally from the opaque `after` cursor instead — the same
+rule `listAdIDs` follows.
+
+Known-bad accounts are RETURNED with their reason (`StatusLabel`, reading the same
+`inactiveAccountStatusLabels` map `CreateCampaign`'s preflight refuses on), not filtered. This
+feeds a picker, and a user whose only account is unsettled needs to see it and see why —
+dropping it answers "your token reaches no ad accounts" about an account sitting right there.
+The decision to REFUSE a campaign on such an account stays in that preflight, where it
+already is. `Status == 0` means Meta omitted the field, not that the account is disabled.
 
 ## Dispatch adapter (internal/dispatch)
 
