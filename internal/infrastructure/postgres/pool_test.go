@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -171,56 +172,99 @@ func TestCheckReady_PassesContextToPing(t *testing.T) {
 	assert.True(t, sawCanceled)
 }
 
-// A requiredIndex's `migration` is reported to an operator as the version to force back
-// to, so a wrong number is worse than no number: it replays unrelated DDL. Nothing else
-// checks it — the live test drops the index by NAME and never reads this field — so the
-// number is pinned against the embedded migration files here, where it costs no database.
+// migrationIndexOwners is what the invalid-index remedy turns into "force N", so a wrong
+// answer is worse than no answer: it replays unrelated DDL, or — the case this replaced —
+// tells an operator to DROP an index a migration owns and leave the version alone.
 //
-// Both halves matter. A version naming no file is a typo. A version whose file does not
-// mention the index name means the annotation points at the wrong migration, which is the
-// failure that survives a rename.
-func TestRequiredIndexMigrationsExistAndCreateTheirIndex(t *testing.T) {
+// The parser is pinned against the real embedded migrations rather than a fixture, because
+// the thing that can break it is the SQL this repo actually writes: a CONCURRENTLY, an
+// IF NOT EXISTS, a quoted name, a UNIQUE. Every index the migrations create must be found.
+func TestMigrationIndexOwners_FindsEveryCreatedIndex(t *testing.T) {
 	entries, err := fs.Glob(migrations.FS, "*.up.sql")
-	if err != nil {
-		t.Fatalf("glob migrations: %v", err)
-	}
-	for _, ri := range requiredIndexes {
-		prefix := fmt.Sprintf("%06d_", ri.migration)
-		var found string
-		for _, e := range entries {
-			if strings.HasPrefix(e, prefix) {
-				found = e
-				break
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+
+	owners := migrationIndexOwners()
+
+	// Independent of createIndexRe: find the names a different way (the token following
+	// "INDEX", after the optional modifiers) and require the map to know each one. A regex
+	// checked against itself proves nothing.
+	for _, e := range entries {
+		body, rerr := migrations.FS.ReadFile(e)
+		require.NoError(t, rerr)
+		for _, line := range strings.Split(string(body), "\n") {
+			u := strings.ToUpper(strings.TrimSpace(line))
+			if !strings.HasPrefix(u, "CREATE INDEX") && !strings.HasPrefix(u, "CREATE UNIQUE INDEX") {
+				continue
 			}
-		}
-		if found == "" {
-			t.Errorf("%s: migration %d has no *.up.sql; an operator forcing %d would "+
-				"replay something else", ri.name, ri.migration, ri.migration-1)
-			continue
-		}
-		body, rerr := migrations.FS.ReadFile(found)
-		if rerr != nil {
-			t.Fatalf("read %s: %v", found, rerr)
-		}
-		if !strings.Contains(string(body), ri.name) {
-			t.Errorf("%s: migration %s does not mention it, so forcing %d would not "+
-				"recreate it", ri.name, found, ri.migration-1)
+			fields := strings.Fields(strings.TrimSpace(line))
+			var name string
+			for i, f := range fields {
+				if strings.EqualFold(f, "INDEX") {
+					rest := fields[i+1:]
+					for len(rest) > 0 && (strings.EqualFold(rest[0], "CONCURRENTLY") ||
+						strings.EqualFold(rest[0], "IF") || strings.EqualFold(rest[0], "NOT") ||
+						strings.EqualFold(rest[0], "EXISTS")) {
+						rest = rest[1:]
+					}
+					if len(rest) > 0 {
+						name = strings.Trim(rest[0], `"`)
+					}
+					break
+				}
+			}
+			if name == "" {
+				continue
+			}
+			v, ok := owners[name]
+			assert.Truef(t, ok, "%s creates index %q but migrationIndexOwners does not know it; "+
+				"an invalid copy would be reported as owned by no migration and an operator told "+
+				"to drop it permanently", e, name)
+			if ok {
+				want, cerr := strconv.Atoi(strings.SplitN(e, "_", 2)[0])
+				require.NoError(t, cerr)
+				assert.GreaterOrEqualf(t, v, want,
+					"index %q is created by %s but attributed to migration %06d", name, e, v)
+			}
 		}
 	}
 }
 
-// The invalid-index scan is schema-wide, so it turns up names no migration owns. Those
-// must NOT carry force advice: the operator would replay unrelated DDL to fix an index
-// nothing will recreate. The live test builds exactly such an index by hand.
-func TestDescribeInvalid_AnnotatesOnlyMigrationOwnedIndexes(t *testing.T) {
+// The specific index that motivated deriving ownership from the migrations instead of from
+// requiredIndexes. It is the sole arbiter of dispatch uniqueness once 000014 drops the old
+// constraint, and it is deliberately NOT in requiredIndexes — so the previous form told an
+// operator holding an invalid copy to drop it and leave the schema version alone, which
+// removes (brief_id, platform) uniqueness permanently and lets concurrent claims
+// double-create paid campaigns.
+func TestDescribeInvalid_AnnotatesIndexesOutsideRequiredIndexes(t *testing.T) {
+	const dispatchUnique = "uq_campaigns_brief_platform_live"
+	require.NotContains(t,
+		func() []string {
+			var n []string
+			for _, ri := range requiredIndexes {
+				n = append(n, ri.name)
+			}
+			return n
+		}(), dispatchUnique,
+		"this test is only meaningful while the index is outside requiredIndexes")
+
+	got := describeInvalid([]string{dispatchUnique})
+	assert.Containsf(t, got, dispatchUnique+" (migration 000013: force 12)",
+		"describeInvalid = %q, want the dispatch unique index annotated with the migration "+
+			"that creates it", got)
+	assert.NotContains(t, got, "no migration creates this")
+}
+
+// The scan is schema-wide, so it does also turn up names no migration owns — a hand-built
+// index, an operator's experiment. Those must NOT carry force advice: the operator would
+// replay unrelated DDL to fix an index nothing will recreate. The live test builds exactly
+// such an index by hand.
+func TestDescribeInvalid_LeavesTrulyUnownedIndexesAlone(t *testing.T) {
 	owned := requiredIndexes[0].name
 	got := describeInvalid([]string{owned, "zz_hand_built_idx"})
 
-	if !strings.Contains(got, fmt.Sprintf("%s (migration %06d: force %d)",
-		owned, requiredIndexes[0].migration, requiredIndexes[0].migration-1)) {
-		t.Errorf("describeInvalid = %q, want the owned index annotated with its version", got)
-	}
-	if !strings.Contains(got, "zz_hand_built_idx (no migration creates this") {
-		t.Errorf("describeInvalid = %q, want the unowned index told to leave the version alone", got)
-	}
+	assert.Containsf(t, got, owned+" (migration 000018: force 17)",
+		"describeInvalid = %q, want the owned index annotated with its version", got)
+	assert.Containsf(t, got, "zz_hand_built_idx (no migration creates this",
+		"describeInvalid = %q, want the unowned index told to leave the version alone", got)
 }

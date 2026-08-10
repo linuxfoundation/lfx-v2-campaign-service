@@ -9,8 +9,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/exaring/otelpgx"
@@ -302,11 +305,10 @@ func checkNoInvalidIndexes(dsn string) error {
 // the runner, for the index 000018 creates.
 var requiredIndexes = []requiredIndex{{
 	// at most one audience per (brief, platform) in `building`.
-	name:      "uq_campaign_audiences_brief_platform_building",
-	table:     "campaign_audiences",
-	migration: 18,
-	unique:    true,
-	keys:      []string{"brief_id", "platform"},
+	name:   "uq_campaign_audiences_brief_platform_building",
+	table:  "campaign_audiences",
+	unique: true,
+	keys:   []string{"brief_id", "platform"},
 	// As Postgres DEPARSES `WHERE status = 'building'`. Comparing against the deparsed
 	// form rather than the source text is what makes an equivalent spelling — an
 	// explicit ::text cast, extra whitespace — compare equal instead of tripping a
@@ -317,18 +319,53 @@ var requiredIndexes = []requiredIndex{{
 // requiredIndex is an index whose absence — or silent replacement by something of the
 // same name — leaves an invariant unenforced with no other symptom.
 type requiredIndex struct {
-	name  string
-	table string
-	// migration is the version that CREATES this index, and it is here to be reported
-	// rather than checked: the invalid-index remedy needs a version to force back to,
-	// and the scan that produces it is schema-wide, so it also turns up indexes no
-	// migration owns. One `<version-1>` for the whole list would be wrong for those
-	// and wrong again for a list spanning two migrations. See describeInvalid.
-	migration int
+	name      string
+	table     string
 	unique    bool
 	keys      []string
 	predicate string // deparsed; "" means the index must NOT be partial
 }
+
+// createIndexRe matches the CREATE statement for a named index in a migration file.
+//
+// It matches the CREATE specifically, not the name anywhere in the file: a migration that
+// DROPs an index also contains its name, and reporting the dropping migration as the one to
+// force back to would replay the drop. Where two migrations create the same name (a drop and
+// a rebuild), the HIGHEST wins — that is the definition currently in force.
+var createIndexRe = regexp.MustCompile(
+	`(?is)CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?"?([a-zA-Z0-9_]+)"?`)
+
+// migrationIndexOwners maps an index name to the highest migration version whose up-file
+// CREATEs it, read once from the embedded migrations.
+var migrationIndexOwners = sync.OnceValue(func() map[string]int {
+	owners := map[string]int{}
+	entries, err := migrations.FS.ReadDir(".")
+	if err != nil {
+		// Cannot happen for an embed.FS root, and this feeds an error MESSAGE — a boot
+		// that already failed must not be turned into a panic by its own diagnostics.
+		return owners
+	}
+	for _, e := range entries {
+		base := e.Name()
+		if !strings.HasSuffix(base, ".up.sql") {
+			continue
+		}
+		v, cerr := strconv.Atoi(strings.SplitN(base, "_", 2)[0])
+		if cerr != nil {
+			continue
+		}
+		body, rerr := migrations.FS.ReadFile(base)
+		if rerr != nil {
+			continue
+		}
+		for _, m := range createIndexRe.FindAllStringSubmatch(string(body), -1) {
+			if v > owners[m[1]] {
+				owners[m[1]] = v
+			}
+		}
+	}
+	return owners
+})
 
 // describeInvalid renders the invalid index names, annotating each one this repo's
 // migrations create with the version to force back to.
@@ -339,11 +376,19 @@ type requiredIndex struct {
 // hand-built index, an operator's experiment, another tool's. Telling that operator to
 // force a version would replay unrelated DDL to fix an index no migration will recreate.
 // So the version is attached per NAME, not to the sentence.
+//
+// Ownership is read from the MIGRATIONS, not from requiredIndexes, and the difference is
+// load-bearing rather than stylistic. requiredIndexes is deliberately narrow — it lists only
+// indexes whose ABSENCE is silent — so most migration-created indexes are legitimately
+// missing from it: `uq_campaigns_brief_platform_live` (000013), the sole arbiter of dispatch
+// uniqueness once 000014 drops the old constraint, and `idx_campaigns_stuck_claims` (000008)
+// among them. Deriving ownership from that list would hand an operator holding an invalid
+// copy of the dispatch unique index the "drop it, leave the schema version alone" advice,
+// which drops (brief_id, platform) uniqueness permanently, boots clean, and lets concurrent
+// claims double-create PAID campaigns. Any list narrower than "every index a migration
+// creates" produces that class of answer; the migrations are the only set that is not.
 func describeInvalid(names []string) string {
-	owner := make(map[string]int, len(requiredIndexes))
-	for _, ri := range requiredIndexes {
-		owner[ri.name] = ri.migration
-	}
+	owner := migrationIndexOwners()
 	out := make([]string, 0, len(names))
 	for _, n := range names {
 		if v, ok := owner[n]; ok {

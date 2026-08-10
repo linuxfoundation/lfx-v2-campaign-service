@@ -214,10 +214,24 @@ advice is attached per NAME rather than to the sentence. Dropping the debris is 
 step one, but "then force `<version-1>`" is only right for an index a migration creates —
 a hand-built index, another tool's, or two hits from different migrations each make one
 blanket version wrong, and forcing an unrelated version replays unrelated DDL.
-`describeInvalid` therefore annotates each name from `requiredIndexes` with its owning
-migration and tells the operator to leave the version alone for anything else.
-`TestRequiredIndexMigrationsExistAndCreateTheirIndex` keeps those numbers honest — it
-fails if a version names no migration file, or names one that does not mention the index.
+`describeInvalid` therefore annotates each name with its owning migration and tells the
+operator to leave the version alone for anything else.
+
+Ownership comes from the MIGRATIONS themselves — `migrationIndexOwners` parses every
+`*.up.sql` in the embedded FS for its `CREATE … INDEX` statements — and not from
+`requiredIndexes`. That distinction is the whole safety of the advice, not a style
+preference. `requiredIndexes` is deliberately narrow: it lists only indexes whose ABSENCE
+is silent, so most migration-created indexes are legitimately absent from it, including
+`uq_campaigns_brief_platform_live` (000013), the sole arbiter of dispatch uniqueness once
+000014 drops the old constraint. Derive ownership from that list and an operator holding
+an invalid copy of it is told to drop it and leave the schema version alone — which
+removes `(brief_id, platform)` uniqueness permanently, boots clean, and lets concurrent
+claims double-create PAID campaigns. **Any list narrower than "every index a migration
+creates" produces that class of answer; the migrations are the only set that is not.**
+The parser matches the CREATE, not the name anywhere in the file, so a migration that
+DROPs an index is not reported as the version to force back to; where two migrations
+create one name, the highest wins. `TestMigrationIndexOwners_FindsEveryCreatedIndex`
+re-derives the names a different way and fails if the map misses any.
 
 Any hit returns `ErrInvalidIndex`,
 which `IsPermanentMigrationErr` reports as permanent — and "permanent" here means the

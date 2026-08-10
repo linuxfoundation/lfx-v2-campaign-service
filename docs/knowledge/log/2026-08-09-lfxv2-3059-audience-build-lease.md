@@ -394,3 +394,41 @@ revert-verified.
 **When a check is deliberately broader than the case it was written for, its ERROR MESSAGE
 inherits that breadth and usually does not deserve it.** The scan was general; the remedy
 was specific; nothing connected the two until an operator followed it.
+
+## Round N+1: the registry I used for ownership was the wrong registry
+
+Both bots flagged the same thing about last round's fix, independently, which is very strong
+signal — and they were right. `describeInvalid` derived "which migration creates this index"
+from `requiredIndexes`, and treated every name absent from that list as one no migration
+creates: *"drop it, leave the schema version alone."*
+
+`requiredIndexes` cannot serve as that registry, and the reason is written into its own
+doc comment: membership is **deliberately narrow**, restricted to indexes whose ABSENCE is
+silent. Most migration-created indexes are correctly excluded — `idx_campaigns_stuck_claims`
+(000008) among them, and worse, `uq_campaigns_brief_platform_live` (000013), which after
+000014 drops the old constraint is the ONLY thing enforcing `(brief_id, platform)`
+uniqueness. An operator with an invalid copy of that index was being told to drop it and
+leave the version alone. Follow that and the uniqueness is gone permanently, the next boot
+succeeds clean, and concurrent `ClaimCampaignDispatch` calls double-create PAID campaigns.
+
+The fix is not to add the two missing entries. Adding entries fixes today's list and leaves
+the mechanism that produced the bug: the next `CREATE INDEX CONCURRENTLY` migration written
+by someone who has never read this file inherits the same wrong advice. Ownership now comes
+from the migrations themselves — `migrationIndexOwners` parses `CREATE … INDEX` out of every
+embedded `*.up.sql`. The CREATE specifically, not the name anywhere in the file, so a
+migration that DROPs an index is not offered as the version to force back to.
+
+The general rule, and it is the one I should have applied a round earlier: **a list curated
+for one predicate is not a registry for a different one.** `requiredIndexes` answers "whose
+absence is silent?". `describeInvalid` asks "who creates this?". The two sets overlap, which
+is exactly why the substitution looked fine and why it produced a High-severity answer for
+the most important index in the schema. When a lookup needs a set, derive it from the thing
+that defines it, or state in the doc why the narrower set is complete — and if you cannot,
+it is not.
+
+`TestMigrationIndexOwners_FindsEveryCreatedIndex` re-derives the index names by a different
+parse and requires the map to know each one, so the parser cannot be checked against itself.
+`TestDescribeInvalid_AnnotatesIndexesOutsideRequiredIndexes` pins the specific case,
+asserting first that the index is still outside `requiredIndexes` so the test cannot quietly
+stop testing anything. Revert-verified: restoring the `requiredIndexes`-derived map fails it
+with the literal wrong advice in the diagnostic.
