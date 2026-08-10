@@ -158,7 +158,11 @@ func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, b
 	if c, ok := r.existing[key]; ok {
 		return false, c, nil
 	}
-	pending := &model.Campaign{ProjectID: projectID, BriefID: briefID, Platform: platform, JobID: &jobID, Status: "pending", CreatedBy: by}
+	// Both actor columns, because claimCampaignDispatchQuery inserts `created_by, updated_by`
+	// from the SAME $5. A fake that stamped only CreatedBy would hand every orchestrator test
+	// a claimed row production cannot create, and the creation-time updated_by invariant would
+	// have no fake capable of catching a regression in it.
+	pending := &model.Campaign{ProjectID: projectID, BriefID: briefID, Platform: platform, JobID: &jobID, Status: "pending", CreatedBy: by, UpdatedBy: by}
 	if r.existing == nil {
 		r.existing = map[string]*model.Campaign{}
 	}

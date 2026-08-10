@@ -155,3 +155,23 @@ guard is unnecessary. Second, the correct account was already sitting in the nei
 `ClaimCampaignDispatch` godoc ("A retry claims again first, so the row is back and the conflict
 arm takes it") — two comments about one mechanism, written at different times, and only one of
 them re-derived. Same shape as this round's `pool.go` finding on #106.
+
+## Round N+2: the fake modelled a claimed row production cannot create
+
+`claimCampaignDispatchQuery` inserts `created_by, updated_by` from the **same** `$5` — one
+actor, both columns, on the row's first INSERT. `TestClaimCampaignDispatchStampsBothActorColumns`
+pins that against a live Postgres. But `fakeCampaignRepo.ClaimCampaignDispatch` in
+`internal/service/orchestrator_test.go` built its pending row with `CreatedBy: by` and left
+`UpdatedBy` nil.
+
+Nothing failed, which is the point. The fake is what every orchestrator-level test observes
+after a successful claim, so from the service layer's side of the boundary a freshly claimed
+row appeared to have no `updated_by` — a state the database cannot produce. Any future
+regression in the creation-time `updated_by` invariant would have had no service-level test
+capable of noticing, because the fake had already normalised the broken state into the
+expected one.
+
+The general shape: **a fake is a claim about the real component's post-conditions, and it is
+the only such claim the tests above it can check.** A fake that under-populates is not
+"minimal" — it silently narrows what every test built on it can ever detect. When a production
+statement writes two columns from one value, the fake writes two columns from one value.
