@@ -12,10 +12,13 @@ import (
 )
 
 const (
-	// adAccountPageSize is the per-page limit for the adAccounts search. LinkedIn caps
-	// pageSize at 1000 here; a smaller page only means more round trips, and this walk
-	// feeds a picker rather than a hot path.
-	adAccountPageSize = 100
+	// adAccountPageSize is the per-page limit for the adAccounts search, set to the
+	// documented LinkedIn maximum. A smaller page is not merely more round trips: paired
+	// with the hard page cap below it lowers the number of accounts this walk can
+	// enumerate at all, and the walk's contract is that it returns EVERY account or an
+	// error. At 100 it refused a legitimate 2,001-account token; at the maximum the same
+	// runaway guard covers 20,000. findByName already requests 1000 for this reason.
+	adAccountPageSize = 1000
 	// adAccountMaxPages bounds the walk at adAccountPageSize*adAccountMaxPages accounts.
 	// Exceeding it is an ERROR, never a truncated list — see ListAdAccounts. This is a
 	// far tighter cap than maxListPages because that one exists to survive a server-side
@@ -196,6 +199,13 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 		// guards exist to prevent, arriving through the pagination door. The two existing
 		// cursor walks (client.go findCreatives, findByName) preserve the exact value;
 		// trimming belongs on human-entered fields, not on server-minted ones.
+		// An ABSENT metadata block is not an exhausted cursor. Without this the zero value
+		// reads as "no more pages" and a malformed intermediate response truncates the
+		// picker silently — the same false absence the elements guard above prevents,
+		// arriving through the pagination door instead.
+		if resp.Metadata == nil {
+			return nil, fmt.Errorf("linkedin ad-account discovery returned a response with no metadata; cannot confirm the token's accounts were enumerated")
+		}
 		next := resp.Metadata.NextPageToken
 		if next == "" {
 			return accounts, nil // fully enumerated

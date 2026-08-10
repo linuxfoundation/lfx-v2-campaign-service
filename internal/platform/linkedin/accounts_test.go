@@ -80,7 +80,7 @@ func TestListAdAccounts_ReturnsEveryAccountWithItsHealth(t *testing.T) {
 		{"id":507404994,"name":"LF Events","status":"ACTIVE","type":"BUSINESS","currency":"EUR","servingStatuses":["BILLING_HOLD"]},
 		{"id":507404995,"name":"LF Draft","status":"DRAFT","type":"ENTERPRISE","currency":"USD","test":true},
 		{"id":507404996}
-	]}`)
+	],"metadata":{}}`)
 	got, err := newAccountsClient(t, srv.URL).ListAdAccounts(context.Background())
 	if err != nil {
 		t.Fatalf("ListAdAccounts: %v", err)
@@ -241,7 +241,7 @@ func TestListAdAccounts_CursorIsEchoedVerbatim(t *testing.T) {
 }
 
 func TestListAdAccounts_EmptyIsAnAnswer(t *testing.T) {
-	srv, _ := adAccountsServer(t, `{"elements":[]}`)
+	srv, _ := adAccountsServer(t, `{"elements":[],"metadata":{}}`)
 	got, err := newAccountsClient(t, srv.URL).ListAdAccounts(context.Background())
 	if err != nil {
 		t.Fatalf("ListAdAccounts: %v", err)
@@ -253,6 +253,31 @@ func TestListAdAccounts_EmptyIsAnAnswer(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("got %d accounts, want 0", len(got))
+	}
+}
+
+func TestListAdAccounts_AbsentMetadataIsNotExhaustion(t *testing.T) {
+	// A response carrying elements but no cursor envelope cannot say whether more accounts
+	// follow. Reading the missing block as an empty nextPageToken would report a truncated
+	// walk as a complete one — the same false-absence outcome the repeated-token and
+	// page-bound guards below exist to prevent, and the one that would silently hide a
+	// project's real ad account from the picker.
+	srv, _ := adAccountsServer(t, `{"elements":[{"id":507404993,"name":"LF Core","status":"ACTIVE"}]}`)
+	_, err := newAccountsClient(t, srv.URL).ListAdAccounts(context.Background())
+	if err == nil {
+		t.Fatal("a response with no metadata block was accepted as a fully enumerated result")
+	}
+	if !strings.Contains(err.Error(), "metadata") {
+		t.Errorf("error %q does not say the metadata block was missing", err)
+	}
+}
+
+// The per-page size is part of the contract, not a tuning knob: adAccountMaxPages bounds
+// the walk in PAGES, so a smaller page lowers the account ceiling with it. At 100 the walk
+// refused a legitimate 2,001-account token.
+func TestListAdAccounts_RequestsTheDocumentedPageMaximum(t *testing.T) {
+	if adAccountPageSize != 1000 {
+		t.Fatalf("adAccountPageSize is %d, want the documented LinkedIn maximum of 1000", adAccountPageSize)
 	}
 }
 
@@ -275,7 +300,7 @@ func TestListAdAccounts_FailsRatherThanTruncating(t *testing.T) {
 		// it could never be stored on the connection. The whole walk fails rather than the
 		// row being skipped: a shape this far from the documented one means the response is
 		// not what we think it is, and the rest of it is not trustworthy either.
-		srv, _ := adAccountsServer(t, `{"elements":[{"id":1},{"id":"urn:li:sponsoredAccount:5"}]}`)
+		srv, _ := adAccountsServer(t, `{"elements":[{"id":1},{"id":"urn:li:sponsoredAccount:5"}],"metadata":{}}`)
 		_, err := newAccountsClient(t, srv.URL).ListAdAccounts(context.Background())
 		if err == nil {
 			t.Fatal("an account with a non-numeric id was offered to the picker")

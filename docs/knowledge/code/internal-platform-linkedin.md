@@ -153,10 +153,14 @@ as servable. Same reasoning applies to
 canceled, draft and held accounts: this feeds a picker, and dropping a user's only account
 answers "your token reaches no ad accounts" about an account sitting right there.
 
-**Fail, do not truncate.** A repeated page cursor and the page cap (`adAccountPageSize` x
-`adAccountMaxPages`) both return an error rather than the accounts collected so far, because a
-short list is indistinguishable from a complete one at the boundary and the caller acts on the
-absence. The cap is 20 pages, far tighter than `maxListPages`: that constant exists so a
+**Fail, do not truncate.** A repeated page cursor, an ABSENT `metadata` block, and the page cap
+(`adAccountPageSize` x `adAccountMaxPages`) all return an error rather than the accounts
+collected so far, because a short list is indistinguishable from a complete one at the boundary
+and the caller acts on the absence. The metadata case is the least obvious of the three: a
+response carrying `elements` but no cursor envelope decodes to an empty `nextPageToken`, which
+reads exactly like exhaustion, so the walk stops and reports a partial enumeration as complete.
+The field is therefore a POINTER — absence has to be representable before it can be rejected.
+The cap is 20 pages, far tighter than `maxListPages`: that constant exists so a
 find-by-name survives a server-side filter the API may ignore, and discovery has no filter to
 be ignored, so a walk that long means something is wrong rather than that the collection is
 large.

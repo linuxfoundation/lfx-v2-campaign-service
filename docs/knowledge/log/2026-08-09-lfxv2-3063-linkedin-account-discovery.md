@@ -92,3 +92,34 @@ them. Only the reason given for the absent/null pair changed.
 
 Worth stating generally: **"the outcome is the same" is not the same claim as "the decoder does
 the same thing", and a comment that exists to explain a decoder has to make the second one.**
+
+## Round N+1: the page size was a correctness constant, and absence had no representation
+
+Two findings, and the interesting thing is that both are cases where a value that LOOKS like a
+tuning choice is actually part of the contract.
+
+`adAccountPageSize` was 100 against a documented maximum of 1000. That is not "more round
+trips": the runaway guard bounds the walk in PAGES, so the page size sets the account ceiling
+with it, and at 100 the walk refused any token reaching 2,001 accounts — a legitimate result
+turned into an error by a number chosen for politeness. The neighbouring `findByName` already
+requested 1000 for exactly this reason, which is the tell: the same file disagreed with itself.
+The regression test asserts the constant rather than the behaviour, because the failure it
+guards against only shows up on a token nobody has in a test.
+
+The second is subtler. `metadata` was a VALUE-typed struct, so a response with `elements` and no
+cursor envelope decoded to a zero-value `nextPageToken` — indistinguishable from the server
+saying "that was the last page". Every other guard in this walk exists to stop a truncated
+enumeration being reported as a complete one, and this path walked straight past all of them.
+Absence cannot be rejected until it is representable, so the fix is the pointer, and the
+rejection follows from it.
+
+That pointer is shared with two older walks in `client.go`, which the same reasoning condemns.
+They are deliberately left as they were, with the nil case now written out explicitly and a
+comment naming the exposure: closing them means asserting a `metadata` block in roughly fifty
+existing fixtures, which is a change with its own review surface and does not belong in a review
+round on ad-account discovery. Tracked as LFXV2-3066.
+
+The generalisable part: **a zero value that is also a meaningful value erases the difference
+between "the server said nothing" and "the server said none".** Any decoded field whose zero
+value terminates a loop should be a pointer, and the question to ask of a new response struct is
+which of its fields the server is allowed to omit.
