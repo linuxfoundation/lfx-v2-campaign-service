@@ -208,6 +208,20 @@ func (r *fakeCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int
 	return nil, errors.New("unused")
 }
 
+func (r *fakeCampaignRepo) VerifyClaimedVersion(_ context.Context, _, _, campaignID string, expectedVersion int64, _ domain.CampaignLockToken) (*model.Campaign, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c, ok := r.byID[campaignID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	if c.Version != expectedVersion {
+		return nil, domain.ErrPreconditionFailed
+	}
+	cp := *c
+	return &cp, nil
+}
+
 // ClaimCampaignVersion mirrors CampaignRepo.ClaimCampaignVersion: it gates on the expected
 // version and reports precondition-failed / not-found, and it returns the row's snapshot
 // UNCHANGED.
@@ -1463,10 +1477,15 @@ func (r *ctxAssertingCampaignRepo) UpsertCampaign(ctx context.Context, c *model.
 	r.mu.Lock()
 	r.upsertCtxErr = ctx.Err()
 	r.mu.Unlock()
-	close(r.upsertCalled)
 	// Pass the builder THROUGH rather than dropping it: swallowing it here would hide whether
 	// a shutdown-window persist still co-commits its index message.
-	return r.fakeCampaignRepo.UpsertCampaign(ctx, c, indexPayload)
+	got, err := r.fakeCampaignRepo.UpsertCampaign(ctx, c, indexPayload)
+	// Signalled AFTER the embedded repo has recorded the row, not before. The waiting test
+	// reads len(upserted) the moment this fires; closing first made that a race it usually
+	// won on an idle laptop and lost on a loaded CI runner, reporting "persisted 0 campaigns"
+	// against an implementation that was persisting correctly.
+	close(r.upsertCalled)
+	return got, err
 }
 
 // TestOrchestrator_PersistSurvivesDispatchCancel verifies that a provider result
