@@ -662,3 +662,34 @@ func TestDoRequest_StillSendsTheAccountHeader(t *testing.T) {
 		t.Errorf("path = %q, want the campaign service unchanged", saw.path)
 	}
 }
+
+// TestListAdAccounts_RejectsAnUnusableConfiguredCustomer covers the asymmetry Copilot
+// found: the configured customer id was being trusted more than a discovered one.
+//
+// doCustomerRequest does validate CustomerID, but as HEADER BYTES — accountIDRE is
+// `^[0-9]+$`, so `0` and anything past MaxInt64 pass. On the discovery path that value is
+// not a header, it is the answer to "whose accounts are these", enumerated under and
+// offered as a picker. The two cases below are exactly the ones the transport check
+// cannot see, and both are inert as bytes and impossible as identities.
+func TestListAdAccounts_RejectsAnUnusableConfiguredCustomer(t *testing.T) {
+	for _, tc := range []struct{ name, customer string }{
+		{"zero", "0"},
+		{"overflows int64", "9223372036854775808"},
+		{"leading zero", "0123456"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newCustomerClient(t, AccountConfig{CustomerID: tc.customer},
+				func(_ http.ResponseWriter, _ *http.Request) {
+					t.Error("a request was made; an unusable configured customer must fail " +
+						"before anything is enumerated under it")
+				})
+			_, err := c.ListAdAccounts(context.Background())
+			if err == nil {
+				t.Fatalf("customer %q was accepted; it cannot name a real customer", tc.customer)
+			}
+			if !strings.Contains(err.Error(), "customer id") {
+				t.Errorf("error does not say which value is wrong: %v", err)
+			}
+		})
+	}
+}

@@ -14,9 +14,11 @@
 //
 // Like the Google Ads client, Microsoft Advertising auth requires an OAuth2
 // refresh-token exchange (against the Microsoft identity platform) plus a
-// developer token and account/customer-id headers on every call. Credentials and
-// account configuration are injected via NewClient; the client never reads the
-// process environment.
+// developer token on every call. The account/customer-id headers go on
+// ACCOUNT-SCOPED calls only: customer-management discovery omits CustomerAccountId
+// whether or not the connection has an account, since it asks about the credentials
+// rather than about one account. Credentials and account configuration are injected
+// via NewClient; the client never reads the process environment.
 //
 // This file is the client scaffold: auth, the request layer. Campaign creation
 // lands in campaign.go.
@@ -761,8 +763,11 @@ func (c *Client) attempt(ctx context.Context, method, fullURL, path, token strin
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("DeveloperToken", c.creds.DeveloperToken)
 	// CustomerAccountId is omitted entirely on a non-account-scoped call rather than
-	// sent empty: an empty header is a claim about an account, and the calls that skip
-	// it are the ones made by a connection that has no account yet.
+	// sent empty: an empty header is a claim about an account. Which calls skip it is
+	// decided by the OPERATION's scope, not by whether this connection happens to have
+	// an account — customer-management discovery omits it even when AccountID is set,
+	// because the question it asks is about the credentials, and a connection being
+	// re-pointed at a different account must not have the old one narrow the answer.
 	if accountScoped {
 		req.Header.Set("CustomerAccountId", c.account.AccountID)
 	}

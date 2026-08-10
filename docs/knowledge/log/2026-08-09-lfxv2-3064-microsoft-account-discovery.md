@@ -232,3 +232,37 @@ they did not catch this.
 The third finding was about the PR description, not the code: it still described
 `CustomerId` as omitted unless the connection carries one, which Round 4 replaced with
 two-stage role discovery. Description rewritten.
+
+## Round 7: the configured id was trusted more than the discovered one
+
+Round 6 swapped `accountIDRE` for `numberID` on the DISCOVERED customer and account ids.
+Copilot's next pass pointed at the branch above it: a configured `CustomerID` is returned from
+`discoveryCustomerIDs` unchanged, so `0`, a leading-zero literal, and anything past `MaxInt64`
+are enumerated under and reported as the customer whose accounts these are.
+
+It looked covered, which is why it survived a round. `doCustomerRequest` does validate
+`CustomerID` — but with `accountIDRE`, which is the transport check Round 6 had just finished
+arguing is the wrong question for an identity claim. The configured branch returns before that
+check anyway, and even after it the value is an answer, not a header.
+
+The asymmetry is the part worth keeping: a discovered id arrived from the API seconds ago; a
+configured one has been in a connection record since whenever it was written, possibly by an
+earlier version of this code. Validating the fresher one more strictly is backwards. Fixed by
+running the configured value through the same `numberID`, failing the call with a message that
+names the value rather than silently querying under it.
+`TestListAdAccounts_RejectsAnUnusableConfiguredCustomer` covers zero, int64 overflow and a
+leading zero; revert-verified, and the leading-zero case is instructive — without the fix it
+reaches `json.Marshal` and dies on `invalid number literal "0123456"`, i.e. the value really was
+going out on the wire.
+
+Copilot's second finding was a comment that had gone stale under Round 6's own test. The
+`CustomerAccountId` omission rationale said the calls that skip the header "are the ones made by
+a connection that has no account yet" — but
+`TestListAdAccounts_OmitsTheAccountHeaderEvenWhenOneIsConfigured`, added the same round, pins
+the opposite: omission follows the OPERATION's scope, and discovery skips the header even with
+an account configured, because re-pointing is half of what discovery is for. Corrected there and
+in the package overview, which still claimed account headers go on every call.
+
+General shape: **a check that exists somewhere is not a check that answers your question.** Both
+findings this round are the same mistake seen from two sides — reusing a validator, and reusing
+a rationale, without re-deriving either from the caller that now depends on it.

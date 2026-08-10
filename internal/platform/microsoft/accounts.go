@@ -151,6 +151,7 @@ type customerRole struct {
 //
 // A configured CustomerID is taken as the answer: the connection has been scoped on
 // purpose, and widening it here would offer accounts the operator deliberately excluded.
+// It is still validated as an identity, not merely as header bytes — see below.
 //
 // With no configured customer the credentials are the whole question, and one
 // AccountsInfo/Query cannot answer it. Microsoft documents that operation as returning
@@ -166,7 +167,20 @@ type customerRole struct {
 // a duplicated account id, so the result is deterministic for a given response.
 func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]string, error) {
 	if c.account.CustomerID != "" {
-		return []string{c.account.CustomerID}, nil
+		// The SAME identity check the discovered roles below get, and for the same
+		// reason. doCustomerRequest already rejects a non-digit CustomerID, but that is
+		// a transport check on a header value: `0` and anything past MaxInt64 pass it,
+		// because as header bytes they are harmless. Here the value is not a header —
+		// it is the answer to "which customer's accounts are these", returned to a
+		// caller that enumerates under it and offers the results as a picker. A
+		// configured id being trusted more than a discovered one is backwards: both are
+		// identity claims, and the configured one has been sitting in a connection
+		// record since whenever it was written.
+		id := numberID((*json.Number)(&c.account.CustomerID))
+		if id == "" {
+			return nil, fmt.Errorf("invalid Microsoft Advertising customer id %q on this connection: must be a positive integer", clipID(c.account.CustomerID))
+		}
+		return []string{id}, nil
 	}
 
 	// idempotent: a read, so a 429 retry cannot create anything. UserId is omitted

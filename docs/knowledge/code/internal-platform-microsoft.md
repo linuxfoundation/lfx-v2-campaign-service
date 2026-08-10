@@ -237,9 +237,17 @@ deliberately does NOT call `validateAccountIDs` and does NOT send `CustomerAccou
 — it validates only `customer_id`, and only when one is set. Requiring a valid account
 id would make discovery unreachable exactly when it is needed, which is the state it
 exists to resolve. The header is OMITTED rather than sent empty: an empty
-`CustomerAccountId` is still a claim about an account, and the connections making this
-call have none. `attempt` takes an explicit `accountScoped` flag rather than inferring
-this, and a test pins that the campaign path still sends its account header.
+`CustomerAccountId` is still a claim about an account.
+
+Which calls omit it is decided by the **operation's scope**, not by whether the connection
+happens to hold an account — discovery omits it even when `AccountID` is set. That is not
+a detail: discovery exists partly to RE-POINT a connection that already has an account, so
+the configured-account case is half the traffic. A client that sent the header "whenever
+there is one to send" would look reasonable, pass the empty-config assertion, and scope
+every re-point to the account the user is trying to move away from, returning that account
+and hiding the rest. `attempt` takes an explicit `accountScoped` flag rather than inferring
+this; `TestListAdAccounts_OmitsTheAccountHeaderEvenWhenOneIsConfigured` pins the case, and
+a separate test pins that the campaign path still sends its account header.
 
 **"Every account" needs one query per customer.** `AccountsInfo/Query` is scoped to ONE
 customer whichever way it is called: Microsoft documents it as returning the accounts
@@ -317,7 +325,16 @@ shape, which is why the create path already uses it on returned ids. Everything 
 accepts `accountIDRE` accepts too, so reusing the stricter one keeps the original property
 — a discovered account cannot fail at bind time — while closing the gap. **A validation
 borrowed from a transport concern is not automatically the right one for an identity
-claim; check which question it was written to answer.** `Id` is decoded as a `json.Number`, not through `any`: Microsoft types
+claim; check which question it was written to answer.**
+
+The same rule reaches the CONFIGURED customer id, which is the easier half to miss.
+`doCustomerRequest` validates it, so it looks covered — but that check is the transport one
+again, and `discoveryCustomerIDs` does not use the value as a header: it returns it as the
+answer to "whose accounts are these", to be enumerated under and offered as a picker.
+Trusting a configured id more than a discovered one is backwards. A discovered id arrived
+seconds ago from the API; a configured one has been sitting in a connection record since
+whenever it was written. `discoveryCustomerIDs` therefore runs `numberID` over it and fails
+the call rather than querying under an id that cannot name a customer. `Id` is decoded as a `json.Number`, not through `any`: Microsoft types
 it as a `long`, and float64 silently loses precision above 2^53, producing a WRONG
 account id that still looks like one (a test pins 2^53+1 round-tripping exactly).
 
