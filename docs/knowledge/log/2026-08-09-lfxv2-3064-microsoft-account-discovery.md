@@ -266,3 +266,34 @@ in the package overview, which still claimed account headers go on every call.
 General shape: **a check that exists somewhere is not a check that answers your question.** Both
 findings this round are the same mistake seen from two sides — reusing a validator, and reusing
 a rationale, without re-deriving either from the caller that now depends on it.
+
+## Round 8: "the account headers" was two headers with different rules
+
+Both Copilot findings this round were the same defect in two places, and Copilot said so
+("this issue also appears on line 658"). Both were real, and both were comments — the code
+and the tests were already correct, which is exactly why they survived.
+
+`doCustomerRequest`'s godoc opened with *"The account headers are NOT sent"*, plural, and the
+package overview said *"the account/customer-id headers go on ACCOUNT-SCOPED calls only"*.
+Neither is true of `CustomerId`: `attempt` sends it whenever `c.account.CustomerID != ""`,
+regardless of `accountScoped`, so a Customer Management discovery call carries it. The
+behaviour is right and deliberate — `CustomerId` names the manager account the CREDENTIALS
+act under, not the account being asked about, so it narrows nothing discovery needs — and
+`accounts_test.go` already pins it (`CustomerId header = 9988776` on a discovery call). Only
+the prose was wrong.
+
+The tell was sitting inside the same comment. Its last sentence read *"CustomerID is still
+validated when set, because it does reach a header"* — which contradicts the opening sentence
+three lines above it. A comment that refutes itself is a strong signal that a two-element
+concept got collapsed into a plural noun: "the account headers" reads as one thing, and the
+two headers it names have opposite scoping rules. Both comments now name `CustomerAccountId`
+specifically and state the `CustomerId` case as its own clause, with the reason it is not
+gated.
+
+Worth generalising, because the mechanism is not Microsoft-specific: **a plural noun covering
+two items with different rules will eventually be written as though the rules were shared.**
+The cost here was contained — a reader would be misled about which headers a discovery call
+carries — but the same collapse in a security or scoping comment is how a later change gets
+made "consistent" with a rule that never applied to both halves. No code change; the docs
+bundle (`internal-platform-microsoft.md`) already described the split correctly, which is
+what made the drift visible once it was pointed at.

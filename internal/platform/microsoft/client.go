@@ -14,10 +14,12 @@
 //
 // Like the Google Ads client, Microsoft Advertising auth requires an OAuth2
 // refresh-token exchange (against the Microsoft identity platform) plus a
-// developer token on every call. The account/customer-id headers go on
-// ACCOUNT-SCOPED calls only: customer-management discovery omits CustomerAccountId
-// whether or not the connection has an account, since it asks about the credentials
-// rather than about one account. Credentials and account configuration are injected
+// developer token on every call. Of the two account-identifying headers, only
+// CustomerAccountId is scope-gated: customer-management discovery omits it whether
+// or not the connection has an account, since it asks about the credentials rather
+// than about one account. CustomerId is NOT gated — it names the manager account the
+// credentials act under, which is as true of a discovery call as of a campaign call,
+// so it is sent on both whenever configured. Credentials and account configuration are injected
 // via NewClient; the client never reads the process environment.
 //
 // This file is the client scaffold: auth, the request layer. Campaign creation
@@ -655,12 +657,18 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 // customer-management call at it would either hit the wrong host or require overriding
 // the base URL for every campaign call too.
 //
-// The account headers are NOT sent, and validateAccountIDs is NOT called, because this
+// CustomerAccountId is NOT sent, and validateAccountIDs is NOT called, because this
 // service answers questions about the CREDENTIALS rather than about one account —
 // including for a connection that holds credentials and no account id at all, which is
 // precisely the state ad-account discovery exists to resolve. Requiring a valid account
-// id here would make discovery unreachable exactly when it is needed. CustomerID is
-// still validated when set, because it does reach a header.
+// id here would make discovery unreachable exactly when it is needed.
+//
+// CustomerId is a separate matter and IS still sent when configured: it names the manager
+// account the credentials act under, not the account being asked about, so it narrows
+// nothing that discovery needs. That is why this method validates it inline rather than
+// skipping validation wholesale with validateAccountIDs — a header that reaches the wire
+// is a header whose contents must be checked, and the AccountID half of that helper is the
+// only part this path can afford to drop.
 func (c *Client) doCustomerRequest(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, error) {
 	if c.account.CustomerID != "" && !accountIDRE.MatchString(c.account.CustomerID) {
 		return nil, fmt.Errorf("invalid Microsoft Advertising customer id %q: must be digits only", clipID(c.account.CustomerID))
