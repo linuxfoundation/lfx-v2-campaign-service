@@ -148,8 +148,15 @@ func parseEmailCopyResponse(raw string) (*briefs.EmailCopy, error) {
 		// the body cannot be silently truncated: truncating HTML at an arbitrary rune
 		// boundary corrupts markup (cuts inside tags/attributes/entities, drops closing tags).
 		// Oversized bodies are rejected outright as unusable responses.
-		if len([]rune(parsed.Body)) > 8000 {
-			return nil, errors.New("email body exceeds maximum length of 8000 characters; model response is unusable")
+		//
+		// maxBodyRunes MIRRORS MaxLength(8000) on email-copy's `body` attribute in
+		// design/brief.go, and the two have to move together. Goa validates the response
+		// against that MaxLength, so a body this function let through would fail there
+		// instead — turning a bad model response into a 500 that names nothing actionable,
+		// rather than the 503 "the model returned something unusable" it actually is.
+		const maxBodyRunes = 8000
+		if len([]rune(parsed.Body)) > maxBodyRunes {
+			return nil, fmt.Errorf("email body exceeds maximum length of %d characters; model response is unusable", maxBodyRunes)
 		}
 
 		// JSON parse succeeded; enforce truncation limits on plain-text fields only.
@@ -222,11 +229,17 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	}
 	systemPrompt, userPrompt := composeEmailCopyPrompt(promptVars)
 
-	// Enforce a bound on the composed prompt size to prevent unbounded input-token cost
-	// and large allocations from oversized event_details (which carries `Any` type with no
-	// schema constraints in design/brief.go). The bound is set conservatively above typical
-	// prompts (system ~320 + user ~150-300 chars) to allow headroom while catching pathological
-	// event details. Oversized prompts are rejected as 400 BadRequest.
+	// Enforce a bound on the composed prompt size to prevent unbounded input-token cost and
+	// large allocations. Only three strings from event_details reach the prompt — eventName,
+	// location and the formatted dates — but `event_details` is declared `Any` in
+	// design/brief.go, so none of the three carries a length constraint of its own and a
+	// single one of them can be arbitrarily large.
+	//
+	// MEASURED, not estimated: the fixed system prompt is 962 chars and a realistic user
+	// prompt ("KubeCon + CloudNativeCon North America 2026", "Salt Lake City, Utah",
+	// "November 10-13, 2026") is 245, for 1207 total. 3000 leaves roughly 1800 chars of
+	// headroom across the three fields — far above any real event name, far below a payload
+	// worth paying input tokens for. Oversized prompts are rejected as 400 BadRequest.
 	const maxPromptSize = 3000 // chars
 	totalPromptSize := len(systemPrompt) + len(userPrompt)
 	if totalPromptSize > maxPromptSize {
