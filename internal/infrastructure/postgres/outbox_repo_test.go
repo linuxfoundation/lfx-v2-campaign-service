@@ -262,11 +262,18 @@ func TestMigrations_UniqueNumbering(t *testing.T) {
 // sibling PR that has not merged yet. A gap listed here is a merge-ORDERING obligation, not a
 // numbering bug — this branch must not merge before the PR that fills it, or those migrations
 // are skipped forever. The list must shrink to empty as siblings land.
-// Empty is the resting state. The 000016 entry that lived here was deleted when #95 merged
-// and brought the migration into the tree — deleted by obligation, not by memory:
-// TestMigrations_AllowedVersionGapsAreStillOpen fails on a stale entry, so the merge that
-// closes a gap cannot be green while its excuse survives.
-var allowedVersionGaps = map[int]string{}
+var allowedVersionGaps = map[int]string{
+	// 16 — REMOVED (LFXV2-3068). 000016_campaign_actor_columns was claimed by PR #95
+	// (LFXV2-3038) while it was unmerged, and this entry excused the gap so #93 could stay
+	// green. #95 has merged, so 000016 exists in the tree, the ordering obligation is
+	// discharged, and TestMigrations_AllowedVersionGapsAreStillOpen correctly refused to keep
+	// tolerating it — an entry that outlives its gap re-permits, at that exact version, the
+	// silent-skip hazard TestMigrations_NoVersionGaps exists to catch.
+	//
+	// The map is left declared and empty on purpose: a gap is a legitimate transitional state
+	// and the next sibling PR to need one should add an entry here rather than re-deriving why
+	// the mechanism exists. The comments in this body are the record of what has been retired.
+}
 
 // TestMigrations_NoVersionGaps guards against numbering a migration ABOVE versions that do not
 // exist yet in this tree.
