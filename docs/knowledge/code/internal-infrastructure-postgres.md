@@ -532,7 +532,14 @@ Two guards live in the same transaction as the insert, and neither can be enforc
   other. It is scoped by project because a bare platform id is unique only within the account
   that minted it. The `ON CONFLICT` clause names 000013's index, so this one raises an ordinary
   unique violation — classified separately as `domain.ErrPlatformCampaignAlreadyBound`, because
-  a 409 naming the wrong brief sends the operator to inspect one that has no campaign.
+  a 409 naming the wrong brief sends the operator to inspect one that has no campaign. It is
+  also the ONLY index in the chain built without `IF NOT EXISTS`, which is a correctness
+  choice rather than an oversight: a failed `CONCURRENTLY` build leaves an INVALID index
+  holding the name, and the recovery for the resulting dirty version — force back and re-run —
+  would then skip the build and record the version clean over an index that enforces nothing.
+  000013 carries the clause and is safe only because 000014 follows it with an explicit
+  `indisvalid` guard; nothing follows 000020, so the absence of the clause is the guard.
+  `TestMigration000020_HasNoIfNotExists` keeps it absent.
 
 The insert and its outbox index row are co-committed in one transaction, as every campaign
 write is — see `enqueueCampaignIndex`.

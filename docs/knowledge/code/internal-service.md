@@ -212,9 +212,16 @@ caller cannot otherwise see, and stops approval being bypassed.
 
 What gets persisted:
 
-- **`ref.ID`, the id the platform echoed, never the one requested.** They are equal on every
-  correct response — the Google Ads lookup errors when its own filter comes back unhonoured —
-  so a platform answering with a different campaign cannot have the requested id recorded.
+- **`ref.ID`, which `LookupPlatformCampaign` has already proven equal to the requested id.**
+  The first version of this rule was "record what the platform echoed, not what was asked for",
+  which sounds like faithfulness and is not: a lookup answering with a DIFFERENT campaign then
+  produced a 201 binding a real paid campaign nobody named. A mismatch is refused, and refused
+  as UNVERIFIABLE rather than as a 404 — nothing in that response establishes the requested
+  campaign is missing, and 404 is the answer an operator resolves by creating a duplicate. The
+  Google Ads lookup already errors when its own id filter comes back unhonoured, so this is the
+  second of two checks on the same hazard, in the layer that owns the contract rather than in
+  one adapter. The comparison is `TrimSpace` on both sides and nothing else: any looser rule
+  would be this service inventing an equivalence between two ids in the platform's vocabulary.
 - **`Status` is `model.CampaignStatusCreated`, never the platform's run state.** That column is
   this service's lifecycle vocabulary, which `CampaignStatusDeletable` and
   `CampaignStatusNeedsReconciliation` both default-deny on an unknown value, so a stored

@@ -258,6 +258,39 @@ func TestMigrations_UniqueNumbering(t *testing.T) {
 	require.NotEmpty(t, versions)
 }
 
+// TestMigration000020_HasNoIfNotExists pins the one index in this chain built WITHOUT
+// `IF NOT EXISTS`, because the clause looks like an omission and the next person to touch
+// this file will want to add it back.
+//
+// A failed CONCURRENTLY build leaves an INVALID index holding the name. The version is then
+// dirty, so the recovery is to force back to 19 and re-run — and with `IF NOT EXISTS` that
+// re-run sees the name, skips the build, and records version 20 CLEAN over an index that
+// enforces nothing. 000013 has the same clause and survives only because 000014 follows it
+// with an explicit indisvalid + definition guard. Nothing follows 000020, so its protection
+// has to be the absence of the clause: the retry fails with 42P07 until the debris is
+// dropped. golang-migrate runs each version exactly once, so there is no legitimate re-run
+// the clause would be protecting.
+func TestMigration000020_HasNoIfNotExists(t *testing.T) {
+	const name = "000020_campaigns_unique_platform_campaign.up.sql"
+	b, err := os.ReadFile(filepath.Join("migrations", name))
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	// Only the statement, not the comment above it that explains the choice.
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "--") {
+			continue
+		}
+		if strings.Contains(strings.ToUpper(line), "IF NOT EXISTS") {
+			t.Fatalf("%s uses IF NOT EXISTS: %q\n"+
+				"That makes a retry after a failed CONCURRENTLY build record version 20 clean "+
+				"over an INVALID index, leaving adoption's uniqueness guard unenforced. Either "+
+				"drop the clause or add a follow-up migration that checks indisvalid, as 000014 "+
+				"does for 000013.", name, strings.TrimSpace(line))
+		}
+	}
+}
+
 // allowedVersionGaps records gaps that are KNOWN and transitional: versions claimed by a
 // sibling PR that has not merged yet. A gap listed here is a merge-ORDERING obligation, not a
 // numbering bug — this branch must not merge before the PR that fills it, or those migrations

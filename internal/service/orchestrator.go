@@ -1176,10 +1176,24 @@ func (o *Orchestrator) LookupPlatformCampaign(ctx context.Context, projectID str
 	if ref == nil {
 		return nil, fmt.Errorf("%w: %s campaign %s", ErrPlatformCampaignAbsent, platform, platformCampaignID)
 	}
-	// A ref with no id cannot be bound to anything: the row would claim an upstream campaign
-	// with no way to reach it, and every later read treats it as provisioned. Unverifiable.
-	if strings.TrimSpace(ref.ID) == "" {
-		return nil, fmt.Errorf("%s campaign lookup returned a campaign with no id for %s", platform, platformCampaignID)
+	// The returned identity must be the requested one. An empty id is the obvious case — the
+	// row would claim an upstream campaign with no way to reach it — but a DIFFERENT non-empty
+	// id is the dangerous one: binding it means the caller asked to adopt campaign X and this
+	// service bound campaign Y, a real paid campaign nobody named, under a 201. That is the
+	// exact outcome verify-before-bind exists to prevent, and it is reachable from the ordinary
+	// failure of an id filter that degrades to unfiltered — the adapter is expected to catch
+	// that, and this is the check that holds if the adapter's does not. A mismatch is not an
+	// absence: nothing here establishes that campaign X is missing, so it must be unverifiable
+	// rather than a 404 that invites the caller to create a duplicate.
+	//
+	// Compared after TrimSpace on both sides and nothing else. Any looser comparison would be
+	// this service inventing an equivalence between two platform ids, which is the platform's
+	// vocabulary, not ours.
+	if got := strings.TrimSpace(ref.ID); got != strings.TrimSpace(platformCampaignID) {
+		if got == "" {
+			return nil, fmt.Errorf("%s campaign lookup returned a campaign with no id for %s", platform, platformCampaignID)
+		}
+		return nil, fmt.Errorf("%s campaign lookup for %s returned campaign %s; the id filter was not honoured, so nothing about this response can be trusted", platform, platformCampaignID, got)
 	}
 	return ref, nil
 }

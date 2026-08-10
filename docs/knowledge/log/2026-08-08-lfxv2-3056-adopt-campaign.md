@@ -116,3 +116,38 @@ The generalisable part is WHICH arm went missing. Copying a switch reproduces th
 in ordinary testing and drops the one for a condition nothing local produces; both remaining arms
 returned a `ConflictError`, so the code did not look incomplete. The new test asserts the response
 TYPE rather than its message, which is what makes the deleted arm fail rather than fall through.
+
+## Round N+4: three ways a guard can be present and still not guard
+
+All three findings this round are the same shape — a protection that exists, reads as
+sufficient, and is not.
+
+**The echoed id.** The persistence rule was "record the id the platform returned, never the one
+requested", and there was a test named for it. The reasoning was that recording the response
+faithfully beats recording the request, which is true and beside the point: when the two
+DISAGREE, faithfully recording the response means binding a brief to a real paid campaign
+nobody named, and answering 201. The mismatch case had been reasoned about as a storage
+question when it is an authorization question. `LookupPlatformCampaign` now refuses it, as
+UNVERIFIABLE rather than absent — nothing in a response about campaign Y establishes that
+campaign X is missing, and 404 is the answer an operator resolves by creating a duplicate. The
+adapter already errors on an unhonoured id filter; this is the same check in the layer that
+owns the contract, which is where it survives an adapter being added or rewritten.
+
+**`IF NOT EXISTS` on 000020.** Every other index in this chain carries the clause, which is
+exactly why it was written without a thought. A failed `CONCURRENTLY` build leaves an INVALID
+index holding the name; the version goes dirty; the operator forces back and re-runs; the
+clause sees the name and skips; version 20 records CLEAN over an index that enforces nothing,
+and adoption starts binding one upstream campaign to two briefs silently. 000013 has the same
+clause and is safe — but only because 000014 follows it with an `indisvalid` guard. Copying the
+clause copied half a mechanism. Nothing follows 000020, so its guard has to be the ABSENCE of
+the clause, and a test now keeps it absent, because the next person to read that line will
+want to add it back.
+
+**"No migration, so no ordering constraint."** The PR's own merge note, contradicted by the
+`allowedVersionGaps` entries in the same PR — which exist precisely because 000020 sits above
+two versions that are still on unmerged branches. Merge order is #106, then #103, then this.
+
+The class: **a guard copied from a sibling inherits the sibling's context, not its safety.**
+Each of these three was correct where it came from. The question to ask of a copied line is not
+"is this what the neighbours do" but "what made it sufficient there, and is that thing here".
+

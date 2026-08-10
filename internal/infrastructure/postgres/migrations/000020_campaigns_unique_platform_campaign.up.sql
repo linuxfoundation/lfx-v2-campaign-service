@@ -30,6 +30,19 @@
 -- all three are required by this runner. A failed build leaves the index INVALID
 -- rather than rolling back; the deploy fails loudly instead of silently running
 -- without the guard.
-CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_campaigns_project_platform_campaign_live
+--
+-- NO `IF NOT EXISTS`, unlike 000013 and every other index in this chain, and the
+-- difference is deliberate. A failed CONCURRENTLY build leaves an INVALID index
+-- occupying this name. The recorded version is then DIRTY, so an operator forces
+-- back to 19 and re-runs -- and `IF NOT EXISTS` sees the name, skips the build,
+-- and records version 20 clean with an index Postgres will not use and that
+-- enforces nothing. Adoption then binds the same upstream campaign to two briefs
+-- with no error anywhere. 000013 survives that hole only because 000014 follows
+-- it with an explicit `indisvalid` + definition guard; nothing follows this
+-- migration, so the protection has to be in the statement itself. Without the
+-- clause the retry fails with 42P07 until the invalid index is dropped, which is
+-- the loud failure this whole file is arguing for. There is no legitimate re-run
+-- to protect: golang-migrate executes each version exactly once.
+CREATE UNIQUE INDEX CONCURRENTLY uq_campaigns_project_platform_campaign_live
     ON campaigns (project_id, platform, platform_campaign_id)
     WHERE status <> 'deleted' AND platform_campaign_id IS NOT NULL;

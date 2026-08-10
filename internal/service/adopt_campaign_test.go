@@ -110,17 +110,31 @@ func TestAdoptCampaign_BindsThePlatformsOwnAnswer(t *testing.T) {
 }
 
 // A platform reporting a DIFFERENT id must not have the requested id written against it.
-func TestAdoptCampaign_PersistsTheEchoedIDNotTheRequestedOne(t *testing.T) {
+// A lookup that answers with a DIFFERENT campaign is not an adoption of that campaign. The
+// earlier version of this test asserted the opposite — that the row carries whatever id the
+// platform echoed — on the reasoning that recording the response faithfully beats recording
+// the request. Both halves of that are wrong at once: binding campaign Y when the caller
+// named campaign X hands a brief a real paid campaign nobody asked for, under a 201, and the
+// only way the mismatch arises is an id filter that degraded to unfiltered, which means
+// nothing else in the response is trustworthy either.
+func TestAdoptCampaign_AMismatchedIDIsRefusedNotBound(t *testing.T) {
 	disp := &adopterDispatcher{ref: &model.PlatformCampaignRef{
 		ID: "9999999999", Name: "Someone else's campaign",
 	}}
 	s, camps := newAdoptService(t, model.ProviderGoogleAds, disp)
 
-	if _, err := s.AdoptCampaign(context.Background(), adoptPayload()); err != nil {
-		t.Fatalf("AdoptCampaign: %v", err)
+	_, err := s.AdoptCampaign(context.Background(), adoptPayload())
+	if err == nil {
+		t.Fatal("a lookup that returned a different campaign was bound anyway")
 	}
-	if got := camps.adopted[0].PlatformCampaignID; got != "9999999999" {
-		t.Errorf("persisted platform_campaign_id %q; the row must carry the id the PLATFORM returned, so a mismatched response cannot be recorded under the requested id", got)
+	// Unverifiable, never absent: nothing here shows the REQUESTED campaign is missing, and
+	// a 404 is the answer an operator resolves by creating a duplicate.
+	var nf *briefs.NotFoundError
+	if errors.As(err, &nf) {
+		t.Errorf("an unhonoured id filter was reported as a 404; that invites a duplicate paid campaign")
+	}
+	if len(camps.adopted) != 0 {
+		t.Errorf("persisted %d campaign rows for a mismatched lookup; want 0", len(camps.adopted))
 	}
 }
 
