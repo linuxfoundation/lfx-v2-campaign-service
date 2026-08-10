@@ -113,8 +113,9 @@ func (a AdAccount) Usable() bool {
 		// Pre-configured account. Allow through (assume write permission).
 		return true
 	default:
-		// Allow positive roles (unknown write capability) and deny other negatives (except -1).
-		return a.RoleID > 0 || a.RoleID == RoleNotDiscovered
+		// Allow positive roles (unknown write capability). All negative roles except those
+		// handled above are denied. RoleNotDiscovered is impossible here (handled by its case).
+		return a.RoleID > 0
 	}
 }
 
@@ -260,9 +261,14 @@ func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]discoveredCustomer
 		if id == "" {
 			return nil, fmt.Errorf("invalid Microsoft Advertising customer id %q on this connection: must be a positive integer", clipID(c.account.CustomerID))
 		}
-		// Configured customers have no role information; use RoleNotDiscovered to indicate
-		// that the role was not discovered (distinct from 0, which means unparseable).
-		return []discoveredCustomer{{id: id, roleID: int64(RoleNotDiscovered)}}, nil
+		// Configured customers have no role information: we cannot determine their write
+		// permission without querying User/Query, and scoping that query to the configured
+		// customer is not straightforward. Assign role 0 (unparseable, fail closed) so these
+		// accounts appear in the picker but are marked not usable, allowing the operator to
+		// recognize the permission issue. Do NOT use RoleNotDiscovered (-1), which assumes
+		// write permission we do not have: that would advertise viewer-only connections as
+		// writable, the exact failure the role validation exists to prevent.
+		return []discoveredCustomer{{id: id, roleID: 0}}, nil
 	}
 
 	// idempotent: a read, so a 429 retry cannot create anything. UserId is omitted
@@ -297,7 +303,6 @@ func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]discoveredCustomer
 	}
 
 	customers := make([]discoveredCustomer, 0, len(*resp.CustomerRoles))
-	seen := make(map[string]struct{}, len(*resp.CustomerRoles))
 	for _, role := range *resp.CustomerRoles {
 		// numberID, not accountIDRE. The two differ on exactly the values that matter
 		// here: accountIDRE is `^[0-9]+$`, which is a TRANSPORT check — it asks whether
@@ -314,10 +319,6 @@ func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]discoveredCustomer
 			// a protocol mismatch into a silently short account list.
 			return nil, fmt.Errorf("microsoft customer discovery returned a role with an unusable customer id")
 		}
-		if _, dup := seen[id]; dup {
-			continue
-		}
-		seen[id] = struct{}{}
 		// Extract role id from the role; default to 0 if absent or unparseable.
 		// Parse with the bit size of the destination int type to avoid truncation on 32-bit systems.
 		var roleID int64
@@ -327,6 +328,10 @@ func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]discoveredCustomer
 				roleID = int64(rid)
 			}
 		}
+		// NOTE: Do NOT deduplicate by customer ID here. Microsoft may return multiple
+		// CustomerRole entries for one customer with different RoleIds. Each role grants
+		// different permission and must be queried separately. Deduplication is handled in
+		// ListAdAccounts by account ID after consolidating all accessible accounts.
 		customers = append(customers, discoveredCustomer{id: id, roleID: roleID})
 	}
 	return customers, nil

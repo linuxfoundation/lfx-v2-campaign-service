@@ -739,10 +739,11 @@ func TestListAdAccounts_RejectsAnUnusableConfiguredCustomer(t *testing.T) {
 	}
 }
 
-// TestListAdAccounts_PreConfiguredAccountIsUsable ensures that pre-configured accounts
-// (with RoleNotDiscovered = -1) are marked as usable when status is Active and pause reason is 0,
-// even though the role was not discovered.
-func TestListAdAccounts_PreConfiguredAccountIsUsable(t *testing.T) {
+// TestListAdAccounts_PreConfiguredAccountWithUnknownRoleFails ensures that pre-configured
+// accounts where we cannot determine the role are not marked as usable. We assign them
+// RoleID=0 (unparseable, fail closed) because assuming write permission on a pre-configured
+// connection without evidence would enable viewer-only connections to appear writable.
+func TestListAdAccounts_PreConfiguredAccountWithUnknownRoleFails(t *testing.T) {
 	c := newCustomerClient(t, AccountConfig{CustomerID: "9988776"},
 		func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, `{"AccountsInfo":[
@@ -758,12 +759,13 @@ func TestListAdAccounts_PreConfiguredAccountIsUsable(t *testing.T) {
 		t.Fatalf("got %d accounts, want 1", len(got))
 	}
 
-	// Pre-configured accounts should be usable (role was not discovered, so Usable() should allow through)
-	if !got[0].Usable() {
-		t.Errorf("Usable() = false, want true for pre-configured account with Active status")
+	// Pre-configured accounts with unknown role should NOT be usable (fail closed).
+	// RoleID=0 represents "unparseable/unknown role", which denies write access.
+	if got[0].Usable() {
+		t.Errorf("Usable() = true, want false for pre-configured account with unknown role")
 	}
-	if got[0].RoleID != -1 {
-		t.Errorf("RoleID = %d, want %d (RoleNotDiscovered)", got[0].RoleID, -1)
+	if got[0].RoleID != 0 {
+		t.Errorf("RoleID = %d, want 0 (unparseable/unknown)", got[0].RoleID)
 	}
 }
 
@@ -859,5 +861,41 @@ func TestListAdAccounts_IntegerConversionSafety(t *testing.T) {
 	// Verify the role ID is correctly preserved
 	if got[0].RoleID != 2147483647 {
 		t.Errorf("RoleID = %d, want 2147483647 (role ID should be preserved without truncation)", got[0].RoleID)
+	}
+}
+
+// TestListAdAccounts_MultipleRolesPerCustomer ensures that when Microsoft returns
+// multiple CustomerRole entries for one customer with different RoleIds, we process
+// each role separately and accounts are accessible with all roles.
+func TestListAdAccounts_MultipleRolesPerCustomer(t *testing.T) {
+	c := newCustomerClient(t, AccountConfig{}, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/User/Query") {
+			// Microsoft returns the same customer with two different roles
+			_, _ = io.WriteString(w, `{"CustomerRoles":[
+				{"CustomerId":"1111111","RoleId":"100"},
+				{"CustomerId":"1111111","RoleId":"1"}
+			]}`)
+			return
+		}
+		// Both queries (one for role 100, one for role 1) return the same account
+		_, _ = io.WriteString(w, `{"AccountsInfo":[
+			{"Id":"5555555","Name":"Dual-Role Account","Number":"X5555555","AccountLifeCycleStatus":"Active"}
+		]}`)
+	})
+
+	got, err := c.ListAdAccounts(context.Background())
+	if err != nil {
+		t.Fatalf("ListAdAccounts: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d accounts, want 1 (deduplicated by account ID)", len(got))
+	}
+
+	// The account should have the stronger role (1, not 100)
+	if got[0].RoleID != 1 {
+		t.Errorf("RoleID = %d, want 1 (the stronger role)", got[0].RoleID)
+	}
+	if !got[0].Usable() {
+		t.Errorf("Usable() = false, want true for account with strong role")
 	}
 }
