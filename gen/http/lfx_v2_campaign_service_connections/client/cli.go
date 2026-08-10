@@ -1428,3 +1428,24 @@ func BuildListGoogleAdsAccountsPayload(lfxV2CampaignServiceConnectionsListGoogle
 
 	return v, nil
 }
+
+// BuildListMetaAdsAccountsPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-meta-ads-accounts endpoint from CLI
+// flags.
+func BuildListMetaAdsAccountsPayload(lfxV2CampaignServiceConnectionsListMetaAdsAccountsProjectID string, lfxV2CampaignServiceConnectionsListMetaAdsAccountsBearerToken string) (*lfxv2campaignserviceconnections.ListMetaAdsAccountsPayload, error) {
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsListMetaAdsAccountsProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListMetaAdsAccountsBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsListMetaAdsAccountsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListMetaAdsAccountsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}

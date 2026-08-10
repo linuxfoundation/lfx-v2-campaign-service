@@ -248,10 +248,12 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/connection-google-ads/test", true},
 		{"/projects/p1/connection-google-ads/set-credential", true},
 		// Account discovery (LFXV2-2023). Unlike /test and /set-credential this is NOT
-		// shared by the whole connection-* family — it exists only for google-ads, so
-		// it needs its own route/rule entry on both sides. The linkedin row below pins
-		// that the alternation was not widened to every provider by accident.
+		// shared by the whole connection-* family — only google-ads (LFXV2-2023) and
+		// meta-ads (LFXV2-3062) have it, so each needs its own route/rule entry on both
+		// sides. The linkedin row below pins that the alternation was not widened to
+		// every provider by accident.
 		{"/projects/p1/connection-google-ads/accounts", true},
+		{"/projects/p1/connection-meta-ads/accounts", true},
 		{"/projects/abc-123/connection-linkedin-ads", true},
 		{"/projects/p1/connection-meta-ads/test", true},
 		{"/projects/p1/connection-reddit-ads/set-credential", true},

@@ -217,16 +217,27 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 	return nil
 }
 
-// accountDiscoveryProviders are the providers whose dispatcher can enumerate the accounts a
-// credential reaches (domain.AccountLister, wired only for Google Ads today). They are the
-// ONLY ones for which a credentials-first row is a real lifecycle state rather than a dead row.
+// accountDiscoveryProviders are the providers for which a credentials-first row is a real
+// lifecycle state rather than a dead row.
 //
 // The distinction is not cosmetic. Every other adapter refuses an empty account id outright —
-// internal/dispatch/{linkedin,meta,reddit,twitter,microsoft}.go each guard on it — and none of
-// them offers an endpoint that would tell an operator what to put there, so an account-less
-// LinkedIn or Meta system row is installable, reports success, and then fails every dispatch
-// with no path to completion. That is exactly the failure requiredConfigKeys above exists to
-// prevent, applied to the one column that is not part of ProviderConfig.
+// internal/dispatch/{linkedin,meta,reddit,twitter,microsoft}.go each guard on it — so an
+// account-less system row for one of them is installable, reports success, and then fails
+// every dispatch with no path to completion. That is exactly the failure requiredConfigKeys
+// above exists to prevent, applied to the one column that is not part of ProviderConfig.
+//
+// **Membership is NOT "the dispatcher implements the service-side AccountLister".** (The
+// interface lives in internal/service/orchestrator.go; internal/domain owns only the
+// ErrAccountsUnsupported sentinel it is paired with.) Meta implements it, as of the
+// discovery endpoint added in LFXV2-3062, and is deliberately still absent here. Discovery is
+// only half of a completable lifecycle: the other half is that the path which DOES need an
+// account id fails in a way that names the missing choice, and Meta's Dispatch still returns
+// a generic error for an empty id rather than tagging it with domain.ErrAccountNotSelected.
+// (Only Dispatch — Meta's ToggleStatus and ReadMetrics target the campaign node by id and
+// document that they need no account id, so there is nothing to tag there.) Until that lands
+// (LFXV2-3061), an account-less Meta row is still a dead row — it just has a way to find out
+// what it is missing that nothing tells the operator to go and use. Add Meta here in that
+// ticket, with the tagging, not before.
 var accountDiscoveryProviders = map[model.Provider]bool{
 	model.ProviderGoogleAds: true,
 }
@@ -239,7 +250,7 @@ func requireAccountID(provider model.Provider, effective string) error {
 		return nil
 	}
 	return fmt.Errorf("bootstrap: %s requires -account-id: its dispatcher refuses a connection without one and "+
-		"there is no account-discovery endpoint for this provider to finish the row later", provider)
+		"this provider has no credentials-first bootstrap to finish the row later", provider)
 }
 
 // mergeConfig overlays the supplied flags on what the row already holds. Update rewrites EVERY

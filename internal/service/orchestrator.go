@@ -1098,12 +1098,15 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// undecodable or incomplete credentials, missing account id) — the ad platform is never
 	// contacted for the last group.
 	//
-	// The classification of that last group is NO LONGER uniform across dispatchers, and this
-	// comment used to say it was. Google Ads tags every one of its CONNECTION-STATE checks
-	// with domain.ErrConnectionNotUsable (internal/dispatch/googleads.go): the three in
-	// validateGoogleAdsCredentials, the missing-account guard in validateGoogleAdsConnection,
-	// and the stored-login_customer_id check in validatedLoginCustomerID. All five run on this
-	// path. The caller maps them to 409 — correct, because none of them improves with time.
+	// The classification of that last group is NOT yet uniform across dispatchers. Google Ads,
+	// Reddit, X/Twitter and Microsoft Ads tag the preflight failures REACHABLE HERE with
+	// domain.ErrConnectionNotUsable plus a reason sentinel. Google Ads tags every one of its
+	// CONNECTION-STATE checks (internal/dispatch/googleads.go): the three in
+	// validateGoogleAdsCredentials, the missing-account guard in validateGoogleAdsConnection —
+	// both of which resolveGoogleAdsClient runs — and the stored-login_customer_id check in
+	// validatedLoginCustomerID; all five run on this path. The other three adapters tag the
+	// same four defects in each one's shared resolve/validate helper (LFXV2-3069 part 1). The
+	// caller maps them to 409 — correct, because none of them improves with time.
 	//
 	// The middle group — cred RESOLUTION, credsSource.resolve — is deliberately not covered by
 	// that statement, on Google Ads or anywhere else. Three of its returns carry no
@@ -1130,11 +1133,12 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// unclassified and fell through to 503. LFXV2-3052 hoisted it into a helper both resolvers
 	// call, which is why the list above is once again the whole list rather than a subset.
 	//
-	// Reddit, Meta, LinkedIn, X AND Microsoft still return bare
-	// errors that fall through to the caller's default 503 arm; Microsoft is wired for
-	// toggles and runs the same active/incomplete preflight, so leaving it out of this list
-	// would hide a provider that is actually reachable here. Tagging
-	// theirs is the outstanding half of that work, tracked with the adapters. Bound the
+	// Meta and LinkedIn still return bare errors that fall through to the caller's default
+	// 503 arm. Tagging theirs is LFXV2-3069 part 2, and it is an extraction rather than an
+	// annotation: neither adapter has a shared resolve/validate helper to put the tagging in,
+	// so the defects are detected at each call site.
+	//
+	// Bound the
 	// whole (possibly multi-PATCH, each with its own retry budget) cascade with a total
 	// deadline UNDER the HTTP write timeout, so a slow toggle is cancelled and returned to the
 	// caller as an error rather than mutating the platform after the response can no longer be

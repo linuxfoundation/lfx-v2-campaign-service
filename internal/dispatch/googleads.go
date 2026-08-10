@@ -887,8 +887,15 @@ func (d *GoogleAdsDispatcher) LookupCampaign(ctx context.Context, projectID stri
 	ref, err := client.GetCampaign(ctx, platformCampaignID)
 	if err != nil {
 		// A malformed id never reached the network, so it is a 400 rather than the
-		// default "the platform could not be reached" 503 the caller would retry. This
-		// should no longer happen since we validate above, but keep it for defense in depth.
+		// default "the platform could not be reached" 503 the caller would retry.
+		//
+		// This branch is UNREACHABLE as written: ValidateCampaignID above is the only
+		// producer of ErrNotACampaignID, GetCampaign reaches it by calling that same
+		// function on the same string, so anything the pre-check admits GetCampaign
+		// admits too. It stays because it is the mapping that keeps the two honest —
+		// if GetCampaign ever grows a validation the pre-check does not mirror, the
+		// result is still a 400 here rather than a retryable 503 for input that can
+		// never succeed. Deleting it would make that divergence silent.
 		if errors.Is(err, googleads.ErrNotACampaignID) {
 			return nil, fmt.Errorf("%w: %w", domain.ErrInvalidPlatformCampaignID, err)
 		}

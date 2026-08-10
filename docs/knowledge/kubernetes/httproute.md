@@ -21,14 +21,16 @@ the token that distinguishes a campaign-service path (`connection-*`, `briefs`,
 sits *after* the variable `{projectId}` — which a `PathPrefix`/`Exact` match cannot
 reach past.
 
-**`connection-google-ads` is spelled out as its own alternation branch**, separate
-from the rest of the `connection-*` family. The family shares `/test` and
-`/set-credential`, but google-ads carries one more ruled sub-path the others do not
-have yet: **`/accounts`** (ad-account discovery). Folding `/accounts` into the shared
-alternation would admit it for *every* provider, and a path the RuleSet does not rule
-is a route/rule parity violation — the `parity_test` exists to catch exactly that.
-As each further provider gains its own discovery endpoint, move it out of the shared
-branch rather than widening the shared one.
+**`connection-(google-ads|meta-ads)` is spelled out as its own alternation branch**,
+separate from the rest of the `connection-*` family. The family shares `/test` and
+`/set-credential`, but those two carry one more ruled sub-path the others do not have
+yet: **`/accounts`** (ad-account discovery — google-ads under LFXV2-2023, meta-ads
+under LFXV2-3062). Folding `/accounts` into the shared alternation would admit it for
+*every* provider, and a path the RuleSet does not rule is a route/rule parity
+violation — the `parity_test` exists to catch exactly that. As each further provider
+gains its own discovery endpoint, add it to the discovery branch rather than widening
+the shared one; collapsing the two branches back together is correct only once every
+provider has `/accounts` ruled.
 
 The route therefore uses a **`RegularExpression` path match** selecting
 exactly this service's project-nested subpaths; `project-service`'s `/projects/`
