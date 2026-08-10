@@ -652,8 +652,12 @@ func TestADisconnectedProjectDoesNotFallBackToTheLFAccount(t *testing.T) {
 // and pause it. Neither the account-mismatch guard nor the row-scoped guards on metrics/toggle
 // help, because both projects resolve to the SAME customer id and the row A creates is A's own.
 //
-// The test pins the boundary in both directions: refuse under the fallback, proceed on a
-// project-owned connection. Without the second half a blanket refusal would pass.
+// The refusal is implemented by declining to resolve the system scope at all (resolveOwned)
+// rather than by rejecting a resolved value that came from it, so the sub-tests below pin both
+// the outcome and the mechanism.
+//
+// The test pins the boundary in both directions: refuse when the project has no connection of
+// its own, proceed when it does. Without the second half a blanket refusal would pass.
 func TestAdoptionRefusesTheSystemFallback(t *testing.T) {
 	usable := func() *model.Connection { return usableConn(goodGoogleAdsCreds, "8666746580") }
 
@@ -669,12 +673,58 @@ func TestAdoptionRefusesTheSystemFallback(t *testing.T) {
 		}
 	})
 
-	// The case where NEITHER scope has a connection. It looks like the one above and is not:
-	// there is no fallback to refuse, so resolve returns a wrapped domain.ErrNotFound and the
-	// gate never sees a resolved value at all. Left untranslated, the adopt switch has no
-	// ErrNotFound arm and answers 503 "could not be reached" — for a platform that was never
-	// contacted, about a state no retry can change. The remedy is identical to the fallback
-	// case (connect the project's own ad account), so the sentinel must be too.
+	// The system row's HEALTH must not reach this path. resolve loads, validates and decrypts
+	// the fallback row before any caller can inspect where the credentials came from, so a
+	// system connection with no credential blob fails resolution outright — the caller gets
+	// ErrSystemConnectionNotUsable (a 500 paging whoever installed the LF credential) instead
+	// of the 409 above, and never sees a resolved value to reject. Two things are wrong with
+	// that: the reader's own remedy is unchanged (connect your own ad account), and the row
+	// being complained about is one adoption would have refused in perfect health. resolveOwned
+	// declines to look at all, which is what makes the refusal independent of the fallback.
+	t.Run("an unusable system row does not change the answer", func(t *testing.T) {
+		broken := usableConn(goodGoogleAdsCreds, "8666746580")
+		broken.EncryptedCredentials = nil // the shape resolveConn rejects as permanently unusable
+		d := NewGoogleAdsDispatcher(&scopedConnReader{
+			rows: map[string]*model.Connection{model.SystemProjectID: broken},
+		}, identityEncryptor{})
+
+		_, err := d.LookupCampaign(context.Background(), "cncf", model.ProviderGoogleAds, "1234567890")
+		if !errors.Is(err, domain.ErrAdoptionRequiresOwnConnection) {
+			t.Fatalf("err = %v, want ErrAdoptionRequiresOwnConnection — the caller's remedy does not "+
+				"depend on the state of an LF row adoption refuses either way", err)
+		}
+		if errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+			t.Errorf("err = %v: the system row's defect leaked onto a path that never uses it", err)
+		}
+	})
+
+	// Stronger than the assertions above, and the one that keeps them true: the fallback row is
+	// never READ. Every future failure mode of the system scope is covered by this, whereas each
+	// sentinel assertion only covers the one it names.
+	t.Run("the system scope is never consulted", func(t *testing.T) {
+		repo := &scopedConnReader{
+			rows: map[string]*model.Connection{model.SystemProjectID: usable()},
+		}
+		d := NewGoogleAdsDispatcher(repo, identityEncryptor{})
+
+		_, _ = d.LookupCampaign(context.Background(), "cncf", model.ProviderGoogleAds, "1234567890")
+		for _, got := range repo.gets {
+			if got == model.SystemProjectID {
+				t.Fatalf("Get(%q) was called; adoption must resolve the project scope only, so that "+
+					"no state of the LF row can reach this path", model.SystemProjectID)
+			}
+		}
+	})
+
+	// NEITHER scope has a connection. Under resolveOwned this is now the same code path as the
+	// cases above — which is the point, and is exactly why it stays: it pins that the answer is
+	// the presence or absence of the PROJECT's row and nothing else, so the three cases cannot
+	// drift apart again by someone reintroducing a fallback-shaped special case.
+	//
+	// What it pins on its own is the translation. resolveOwned reports the absence as a wrapped
+	// domain.ErrNotFound; left untranslated the adopt switch has no ErrNotFound arm and answers
+	// 503 "could not be reached" — for a platform that was never contacted, about a state no
+	// retry can change.
 	t.Run("a project with no connection anywhere gets the same permanent refusal", func(t *testing.T) {
 		d := NewGoogleAdsDispatcher(&scopedConnReader{rows: map[string]*model.Connection{}}, identityEncryptor{})
 

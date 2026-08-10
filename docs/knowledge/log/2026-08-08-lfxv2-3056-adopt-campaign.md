@@ -189,3 +189,33 @@ The class: **the first two findings are the same mistake as the third.** A 503 t
 never tried", a message that names connectivity for a response-shaped defect, and an index test
 that cannot fail — each is a signal that carries no information, and in all three cases the code
 looked complete precisely because something was present in the place the signal belonged.
+
+## Round N+6: a gate placed one step too late
+
+Copilot, on `resolveOwnedGoogleAdsClient`: adoption refused the LF system fallback by inspecting
+`resolved.fromSystem` on the value `creds.resolve` returned — but `resolve` LOADS, VALIDATES and
+DECRYPTS the system row before it returns anything. An LF connection missing its credential blob,
+or one that no longer decrypts, therefore comes back as `ErrSystemConnectionNotUsable` *instead
+of* a value, and the gate never runs. The caller gets a 500 blaming an LF row for a request whose
+remedy is "connect your own ad account", about a row adoption would have refused in perfect
+health. Verified by reverting to `resolve`: `err = credentials came from the LF system
+connection: … has no stored credentials`, where the 409 belongs.
+
+The fix is not another sentinel arm. `credsSource.resolveOwned` consults the project's scope and
+nothing else, so the refusal no longer depends on the fallback's state at all — and no future
+failure mode of the system scope can leak onto this path and need a new arm. The strongest new
+assertion is not about any sentinel: `Get(model.SystemProjectID)` must never be called. That one
+covers the failure modes nobody has enumerated; the sentinel assertions each cover only the case
+they name.
+
+Removing the fallback made the service's `ErrSystemConnectionNotUsable` arm unreachable, and it
+had a test — which passed, because `TestAdoptCampaign_ConnectionDefectsAreDistinguished` injects
+the error directly into the adopter fake. A table test over a switch asserts what the switch does
+with an input; it says nothing about whether anything can produce that input. Both the arm and
+its case are gone, with the reasoning recorded in the test's own comment so the case is not
+"restored" later as an apparent oversight.
+
+The class, and it is the same one as Round N+5 on #102: **a guard is only as strong as the point
+at which it runs.** There the redactor split before deciding whether splitting was safe; here the
+ownership check ran after the thing it was refusing had already been fetched and decrypted. In
+both cases the guard was present, correct in isolation, and one step too late to hold.

@@ -556,16 +556,19 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 			// one path where the shared LF account cannot stand in for one, because the
 			// caller names an arbitrary campaign inside it rather than one this service
 			// already has a project-scoped row for.
+			//
+			// There is deliberately NO domain.ErrSystemConnectionNotUsable arm on this switch,
+			// unlike the
+			// metrics and toggle paths above. Those resolve credentials with the LF system
+			// fallback, so a defect in the LF row reaches their callers and needs a 500 aimed at
+			// an operator. Adoption resolves the project scope ONLY (credsSource.resolveOwned),
+			// so the LF row is never loaded, never validated and never decrypted on this path —
+			// there is no such error to classify. An arm for it would be unreachable, and it
+			// would also be wrong: it would answer a request whose remedy is "connect your own
+			// ad account" with a 500 about a row the caller does not own and adoption would have
+			// refused in perfect health. Any adopter added later must resolve the same way; see
+			// service.CampaignAdopter.
 			return nil, &briefs.ConflictError{Code: "409", Message: "this project has no ad-platform connection of its own — adoption can only bind a campaign from an ad account this project owns; connect the project's own ad account first"}
-		case errors.Is(lerr, domain.ErrSystemConnectionNotUsable):
-			// Reachable for the same reason as in the metrics and toggle paths: systemScoped
-			// WRAPS rather than replaces, so a defect in the LF system row this project fell
-			// back to still reports ErrConnectionNotUsable, and an arm below would tell the
-			// caller to repair a connection they do not have. Only an operator can act.
-			slog.ErrorContext(ctx, "the LF system connection is not usable; campaign adoption is failing for every project without its own connection",
-				"project_id", p.ProjectID, "brief_id", p.BriefID, "platform", platform,
-				"reason", unusableConnectionReason(lerr))
-			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign could not be verified"}
 		case errors.Is(lerr, domain.ErrAccountNotSelected):
 			// ABOVE the general arm, and wrapped ALONGSIDE it: a broad match placed first
 			// swallows this and tells an operator whose credentials are fine to repair them.

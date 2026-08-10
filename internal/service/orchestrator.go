@@ -239,6 +239,18 @@ type CampaignAdopter interface {
 	// exists" — unlike MetricsReader and AccountLister, where it is a contract violation. An
 	// unverifiable answer must be an ERROR, never a nil ref: a false absence tells an operator
 	// "your campaign isn't there" about a campaign sitting on the platform spending money.
+	//
+	// It MUST resolve the PROJECT's own connection only — never the shared LF system account
+	// that every other path falls back to. Under that fallback all such projects share one ad
+	// account, so project A could name a campaign project B created there and bind it to its
+	// own brief; the account-mismatch guards do not help, because both resolve to the same
+	// customer id. A project with no connection of its own must be refused with
+	// domain.ErrAdoptionRequiresOwnConnection, which the service maps to an actionable 409.
+	//
+	// Declining to RESOLVE the fallback, rather than rejecting a value that came from it, is
+	// part of the contract: resolution validates and decrypts the LF row before the caller can
+	// see where it came from, so consulting it lets that row's defects surface as this call's
+	// failure. The service switch has no arm for them, deliberately.
 	LookupCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) (*model.PlatformCampaignRef, error)
 }
 

@@ -358,30 +358,33 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsClient(ctx context.Context, projec
 // its own brief, and thereafter read its spend and pause it. The account-mismatch guards do not
 // help: both projects resolve to the same customer id, which is the whole problem.
 //
+// It therefore calls resolveOwned, which does not consult the system scope, rather than calling
+// resolve and rejecting a result tagged fromSystem. The difference is not stylistic: resolve
+// loads, validates and DECRYPTS the LF row before returning, so an LF credential that is missing
+// or no longer decrypts comes back as an error INSTEAD of a resolved value — a 500 about a row
+// this path would have refused anyway, for a caller whose remedy is simply to connect their own
+// ad account. Not looking is the only version of the refusal that stays correct as the fallback
+// grows new failure modes.
+//
 // There is no upstream metadata that would fix this instead. A campaign's name, labels and
 // budget are all set by whoever created it, so none of them is evidence of which project owns
 // it. Requiring a project-owned connection is the only check that holds, and it costs nothing
 // real: a project with no ad account of its own has no campaign of its own to adopt.
 func (d *GoogleAdsDispatcher) resolveOwnedGoogleAdsClient(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, error) {
-	res, err := d.creds.resolve(ctx, projectID, platform)
+	res, err := d.creds.resolveOwned(ctx, projectID, platform)
 	if err != nil {
-		// A total absence — NEITHER the project nor the LF system scope has a connection —
-		// arrives as a wrapped domain.ErrNotFound, and returning it unchanged lands in the
-		// adopt switch's default arm: a 503 telling the caller the platform could not be
-		// reached. It was never contacted, and no amount of retrying will change that; the
-		// remedy is the same permanent one as the fromSystem case below, so it gets the same
-		// sentinel and the same 409. The distinction the fallback normally draws — "you have
-		// no connection, so use LF's" — has no meaning on this path, where LF's is refused
-		// anyway. Every OTHER resolve failure (a repo error, an unusable connection) is
-		// passed through, because those are genuinely different remedies.
+		// resolveOwned never consults the LF system scope, so an absence here means the
+		// PROJECT has no connection — the one thing adoption requires. Returned unchanged it
+		// would land in the adopt switch's default arm: a 503 telling the caller the platform
+		// could not be reached. It was never contacted, and no amount of retrying will change
+		// that; the remedy is permanent and actionable, so it gets the 409 sentinel. Every
+		// OTHER failure (a repo error, an unusable project connection) is passed through,
+		// because those are genuinely different remedies.
 		if errors.Is(err, domain.ErrNotFound) {
 			return nil, fmt.Errorf("%w: project %s has no %s connection, and adoption cannot fall back to the LF system account: %w",
 				domain.ErrAdoptionRequiresOwnConnection, projectID, platform, err)
 		}
 		return nil, err
-	}
-	if res.fromSystem {
-		return nil, fmt.Errorf("%w: project %s has no %s connection of its own", domain.ErrAdoptionRequiresOwnConnection, projectID, platform)
 	}
 	return d.googleAdsClientFor(projectID, res)
 }

@@ -246,21 +246,21 @@ func TestAdoptCampaign_UnsupportedPlatformIs400(t *testing.T) {
 
 // Each of these sentinels is WRAPPED ALONGSIDE the more general one below it, so the arms are
 // ordered narrowest-first and a broad match placed first silently swallows the narrow case.
-// The system row is the sharp one: it is a 500 for an operator, not a 409 telling a project
-// with no connection of its own to go repair one. Asserting the TYPE, not just the message, is
-// what makes a deleted arm fail here instead of falling through to a plausible neighbour.
+//
+// domain.ErrSystemConnectionNotUsable is deliberately NOT among them, and the reason is worth
+// recording because it used to be. This test injects the error straight into the adopter fake,
+// so a case for it passed while the arm it exercised had become unreachable: adoption resolves
+// the project scope only (credsSource.resolveOwned), so the LF system row is never loaded on
+// this path and cannot fail on it. A case here would have gone on asserting the behaviour of
+// dead code — and asserting the wrong behaviour at that, since a caller whose remedy is
+// "connect your own ad account" should not receive a 500 about a row they do not own. The
+// mechanism is pinned where it is real, in dispatch.TestAdoptionRefusesTheSystemFallback.
 func TestAdoptCampaign_ConnectionDefectsAreDistinguished(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		err       error
 		wantInMsg string
-		want500   bool
 	}{
-		{
-			name:    "the shared LF system connection, which the caller cannot repair",
-			err:     fmt.Errorf("%w: %w: %w", domain.ErrSystemConnectionNotUsable, domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete),
-			want500: true,
-		},
 		{
 			name:      "no account selected",
 			err:       fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected),
@@ -277,14 +277,6 @@ func TestAdoptCampaign_ConnectionDefectsAreDistinguished(t *testing.T) {
 			s, _ := newAdoptService(t, model.ProviderGoogleAds, disp)
 
 			_, err := s.AdoptCampaign(context.Background(), adoptPayload())
-			if tc.want500 {
-				var ise *briefs.InternalServerError
-				if !errors.As(err, &ise) {
-					t.Fatalf("got %T (%v), want *briefs.InternalServerError — a defect in the LF system "+
-						"row is an operator page, not a repair instruction for this project", err, err)
-				}
-				return
-			}
 			var conflict *briefs.ConflictError
 			if !errors.As(err, &conflict) {
 				t.Fatalf("got %T (%v), want *briefs.ConflictError", err, err)

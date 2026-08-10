@@ -236,13 +236,24 @@ What gets persisted:
 Persistence goes through `CampaignRepository.AdoptCampaign`, deliberately not `UpsertCampaign`
 — see `internal-infrastructure-postgres.md`. An already-live `(brief, platform)` pair is a 409.
 The connection arms are ordered as in the metrics and toggle switches, and for the same reason:
-`ErrSystemConnectionNotUsable` (500, page an operator) then `ErrAccountNotSelected` (409) then
-the broad `ErrConnectionNotUsable` (409) — each WRAPPED alongside the next, so a broad match
-placed first wins and names a scope the caller cannot address. Ahead of all three sits
-`ErrAdoptionRequiresOwnConnection` (409), which is not a defect at all: the project has no
-connection of its own and adoption alone cannot accept the shared LF account
+`ErrAccountNotSelected` (409) then the broad `ErrConnectionNotUsable` (409) — WRAPPED alongside
+each other, so a broad match placed first wins and names a scope the caller cannot address.
+Ahead of both sits `ErrAdoptionRequiresOwnConnection` (409), which is not a defect at all: the
+project has no connection of its own and adoption alone cannot accept the shared LF account
 (`internal-dispatch.md` has the isolation argument). Placing it first keeps the connection arms
 from sending an operator to repair something that is working as designed.
+
+This switch has NO `ErrSystemConnectionNotUsable` arm, and that is the one place it departs from
+the metrics and toggle switches. Those resolve with the LF system fallback, so a defect in the LF
+row genuinely reaches their callers and earns a 500 aimed at an operator. Adoption resolves the
+project scope only (`credsSource.resolveOwned`), so the LF row is never loaded on this path and
+cannot fail on it. An arm would be unreachable — and wrong even so, since it would answer a
+caller whose remedy is "connect your own ad account" with a 500 about a row they do not own.
+The arm existed until review caught it; it survived because
+`TestAdoptCampaign_ConnectionDefectsAreDistinguished` injects errors straight into the adopter
+fake, which asserts a switch's behaviour without establishing that anything can produce the
+input. The mechanism is now pinned where it is real, in
+`dispatch.TestAdoptionRefusesTheSystemFallback`, which asserts the system scope is never read.
 `ErrInvalidPlatformCampaignID`
 is a 400: the adapter rejected the id locally and issued no query, so the 503 would invite a
 retry of input that can never succeed. Two more 409s come back from the repository, which is
