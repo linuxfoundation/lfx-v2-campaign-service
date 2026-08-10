@@ -452,3 +452,20 @@ now occupies that role.
 `allowedVersionGaps[16]` was deleted: #95 merged 000016, so the excuse for the gap is gone
 and `TestMigrations_AllowedVersionGapsAreStillOpen` fails while it survives. That is the
 guard doing its job — the deletion did not have to be remembered.
+
+## Round N+3: the new field the log-safe formatter did not learn about
+
+`Config.String()` documents itself as safe for logs, and this branch added `JWKSUrl` to what it
+prints — verbatim. A JWKS URL is public *by convention*, not by construction: an issuer behind a
+gateway using basic auth is an ordinary deployment, and nothing here forbids configuring one.
+The formatter is exactly where a convention stops holding, because it runs on whatever the
+operator actually set.
+
+The fix generalised the helper rather than adding a second one. `redactNATSURL` already solved
+this shape — strip userinfo, keep the host, because the host is what makes an outage
+diagnosable — so it became `redactURLUserinfo` and now serves both fields.
+
+The class worth remembering: a redacting formatter is a **allow-list of fields someone decided
+were safe at the time**, and every field added later defaults into the safe list silently. A new
+config field with a URL or a credential in it has to be argued about at the formatter, not only
+at the place that reads it.

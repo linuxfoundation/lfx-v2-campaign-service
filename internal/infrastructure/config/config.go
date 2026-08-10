@@ -303,10 +303,10 @@ func (c *Config) String() string {
 		c.Debug,
 		c.Host,
 		c.Port,
-		c.JWKSUrl,
+		redactURLUserinfo(c.JWKSUrl),
 		c.Audience,
 		c.Issuer,
-		redactNATSURL(c.NATSUrl),
+		redactURLUserinfo(c.NATSUrl),
 		redactDatabaseURL(c.DatabaseURL),
 		redactSecret(c.CredentialEncryptionKey),
 		c.PGHost,
@@ -331,15 +331,20 @@ func redactDatabaseURL(dsn string) string {
 	return "[redacted]"
 }
 
-// redactNATSURL strips any credentials from a NATS URL while KEEPING the host.
+// redactURLUserinfo strips any credentials from a URL while KEEPING the host.
 //
-// A NATS URL may carry userinfo (nats://user:pass@host:4222), and String() promises a
-// log-safe representation — so printing it verbatim would put the broker password in the
-// pod logs of anything that logs the config. Unlike redactDatabaseURL this does not mask
-// wholesale: the broker host is genuinely useful when diagnosing an indexing outage, and
-// a NATS URL is always a parseable URL (there is no keyword-DSN form to worry about), so
-// the credential portion can be removed precisely.
-func redactNATSURL(u string) string {
+// Two fields need it. A NATS URL may carry userinfo (nats://user:pass@host:4222), and a JWKS
+// URL may too — an issuer behind a gateway that authenticates with basic auth is an ordinary
+// deployment, and nothing in this service forbids configuring one, so "a JWKS URL is public"
+// is a convention rather than a guarantee. String() promises a log-safe representation, so
+// printing either verbatim would put a credential in the pod logs of anything that logs the
+// config.
+//
+// Unlike redactDatabaseURL this does not mask wholesale: the host is exactly what an operator
+// needs when diagnosing an indexing outage or a failing JWKS fetch, and both values are always
+// parseable URLs (there is no keyword-DSN form to worry about), so the credential portion can
+// be removed precisely.
+func redactURLUserinfo(u string) string {
 	at := strings.LastIndexByte(u, '@')
 	if at < 0 {
 		return u // no userinfo: nothing to redact

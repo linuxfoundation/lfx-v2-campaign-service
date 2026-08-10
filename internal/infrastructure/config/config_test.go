@@ -317,18 +317,36 @@ func TestConfigString_RedactsNATSCredentials(t *testing.T) {
 	}
 }
 
-// TestRedactNATSURL_Shapes covers the forms a NATS URL actually takes, including the ones with
-// nothing to redact (where masking would needlessly hide the host).
-func TestRedactNATSURL_Shapes(t *testing.T) {
+// TestConfigString_RedactsJWKSCredentials: the JWKS URL was printed verbatim by a formatter
+// whose doc comment promises a log-safe representation. An issuer behind a gateway that
+// authenticates with basic auth is an ordinary deployment, and nothing in this service forbids
+// configuring one — so "a JWKS URL is public" is a convention, not a guarantee, and the
+// formatter is exactly where a convention stops holding. The host is KEPT, for the same reason
+// as the broker host: it is what makes a failing JWKS fetch diagnosable.
+func TestConfigString_RedactsJWKSCredentials(t *testing.T) {
+	cfg := &Config{JWKSUrl: "https://svcuser:sup3r-s3cret@auth.lfx.dev/.well-known/jwks.json"} // secretlint-disable-line -- fixture asserting the password is redacted
+
+	for _, formatted := range []string{cfg.String(), cfg.GoString(), fmt.Sprintf("%v", cfg), fmt.Sprintf("%+v", cfg)} {
+		assert.NotContains(t, formatted, "sup3r-s3cret", "the JWKS credential must never reach a log line")
+		assert.NotContains(t, formatted, "svcuser", "the username is part of the credential")
+		assert.Contains(t, formatted, "auth.lfx.dev/.well-known/jwks.json")
+	}
+}
+
+// TestRedactURLUserinfo_Shapes covers the forms these URLs actually take, including the ones
+// with nothing to redact (where masking would needlessly hide the host).
+func TestRedactURLUserinfo_Shapes(t *testing.T) {
 	cases := map[string]string{
 		"":                              "",
 		"nats://nats.lfx.svc:4222":      "nats://nats.lfx.svc:4222",
 		"nats://u:p@nats.lfx.svc:4222":  "nats://***@nats.lfx.svc:4222", // secretlint-disable-line -- fixture
 		"nats://token@nats.lfx.svc:422": "nats://***@nats.lfx.svc:422",
 		"u:p@host:4222":                 "***@host:4222", // secretlint-disable-line -- fixture: no scheme
+		"https://auth.lfx.dev/.well-known/jwks.json":     "https://auth.lfx.dev/.well-known/jwks.json",
+		"https://u:p@auth.lfx.dev/.well-known/jwks.json": "https://***@auth.lfx.dev/.well-known/jwks.json", // secretlint-disable-line -- fixture
 	}
 	for in, want := range cases {
-		assert.Equal(t, want, redactNATSURL(in), "input %q", in)
+		assert.Equal(t, want, redactURLUserinfo(in), "input %q", in)
 	}
 }
 
