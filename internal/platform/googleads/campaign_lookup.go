@@ -132,8 +132,9 @@ func canonicalCampaignID(s string) string {
 // findCampaignByName, linkedin's findMatch, twitter's and microsoft's) because callers
 // make the same decision from the result. It is the first one EXPORTED, though: the
 // others are called only from inside their own create path; this one is exported because
-// dispatch's adoption path is INTENDED to call it — that wiring is a follow-up, and no
-// production caller exists yet. The outcomes:
+// dispatch's adoption path calls it (GoogleAdsDispatcher.Dispatch, LFXV2-3042) — and only
+// when that dispatch set adoptExisting, so the caller is a deliberate act rather than
+// every create. The outcomes:
 //
 //   - exactly one live match  -> (id, nil)
 //   - no live match           -> ("", nil)   — a clean, trustworthy absence
@@ -141,10 +142,12 @@ func canonicalCampaignID(s string) string {
 //   - anything unverifiable   -> ("", error)
 //
 // The distinction between the second and third cases is the whole point, and why this errors
-// rather than taking the first hit. Both callers act destructively on an absence: create takes
-// ("", nil) as licence to create, adoption as licence to report nothing to adopt — so a false
-// absence produces a duplicate paid campaign, and an arbitrary pick among same-name campaigns
-// binds a brief to the wrong one. Real spend either way. Two live campaigns sharing a name is
+// rather than taking the first hit. The production caller acts destructively on an absence:
+// adopt-on-create takes ("", nil) as licence to fall through to CreateCampaign, so a false
+// absence produces a SECOND paid campaign next to the one that was already there — the exact
+// outcome adoption exists to prevent. (A future by-name adopt endpoint would read the same
+// value as "nothing to adopt"; the cost differs, the fail-closed rule does not.) An arbitrary
+// pick among same-name campaigns is the mirror fault: it binds a brief to the wrong one. Real spend either way. Two live campaigns sharing a name is
 // ANOMALOUS, not routine — v23 rejects a mutate whose name another ENABLED/PAUSED campaign
 // holds (DUPLICATE_CAMPAIGN_NAME) — so this branch fail-closes on a response that should not
 // be possible, which is exactly when guessing is least defensible.
