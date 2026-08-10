@@ -380,6 +380,49 @@ func TestValidateIndexBulletRejectsNonBareDestinations(t *testing.T) {
 	}
 }
 
+// TestValidateIndexBulletTrailingSpaceIsNotTolerated pins the symmetric half of the
+// verbatim invariant. Padded FRONTMATTER was already rejected; a padded BULLET was
+// not, because the line was trimmed on both sides before matching.
+func TestValidateIndexBulletTrailingSpaceIsNotTolerated(t *testing.T) {
+	dir := t.TempDir()
+	writeConcept(t, filepath.Join(dir, "thing.md"), "Does the thing.")
+	writeFile(t, filepath.Join(dir, "index.md"), "# Bundle\n\n* [Thing](thing.md) - Does the thing.   \n")
+
+	errs := Validate(dir)
+	if len(errs) != 1 {
+		t.Fatalf("Validate() = %v, want the padded bullet to be reported", errs)
+	}
+	if !strings.Contains(errs[0].Error(), "must match verbatim") {
+		t.Errorf("Validate() error = %q, want the verbatim-mismatch diagnostic", errs[0])
+	}
+}
+
+// TestValidateIndexBulletSkipsExternalDestinations covers the destinations that carry
+// no "://" yet are not bundle-relative paths. Each fixture writes a local file at the
+// name filepath.Join would produce, so a guard that lets one of these through resolves
+// to that file and reports a drift — the assertion below is what catches it.
+func TestValidateIndexBulletSkipsExternalDestinations(t *testing.T) {
+	for name, tc := range map[string]struct{ link, decoy string }{
+		"protocol-relative": {"//host/spec.md", filepath.Join("host", "spec.md")},
+		"site-root":         {"/spec.md", "spec.md"},
+		"scheme-no-slashes": {"mailto:notes.md", "mailto:notes.md"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			decoy := filepath.Join(dir, tc.decoy)
+			if err := os.MkdirAll(filepath.Dir(decoy), 0o755); err != nil {
+				t.Fatalf("MkdirAll: %v", err)
+			}
+			writeConcept(t, decoy, "The decoy the bullet never named.")
+			writeFile(t, filepath.Join(dir, "index.md"), "# Bundle\n\n* [Spec]("+tc.link+") - An external reference.\n")
+
+			if errs := Validate(dir); len(errs) != 0 {
+				t.Errorf("Validate() = %v, want an external destination to be skipped", errs)
+			}
+		})
+	}
+}
+
 func TestValidateRealBundle(t *testing.T) {
 	// Use relative path from package directory to the real bundle at repo root
 	bundleDir := filepath.Join("..", "..", "docs", "knowledge")

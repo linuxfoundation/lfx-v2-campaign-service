@@ -14,6 +14,7 @@ package okfvalidate
 import (
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -122,7 +123,14 @@ func validateIndex(bundleDir, path string, isRoot bool) []error {
 
 	var errs []error
 	for _, line := range strings.Split(content, "\n") {
-		trimmed := strings.TrimSpace(line)
+		// Only LEADING whitespace is stripped. Trimming the right-hand side too
+		// would let a bullet ending in "Summary.   " satisfy a frontmatter
+		// description of "Summary." — a tolerance in the direction the invariant
+		// claims not to have one, and the asymmetric twin of the padded
+		// frontmatter that checkBulletDescription already rejects. No bullet in
+		// this bundle carries trailing space (markdownlint forbids it), so the
+		// strict form costs nothing and closes the hole.
+		trimmed := strings.TrimLeft(line, " \t")
 		if !strings.HasPrefix(trimmed, "* ") {
 			continue
 		}
@@ -170,7 +178,19 @@ func checkBulletDescription(bundleDir, indexPath, link, bulletDesc string) error
 	if i := strings.IndexAny(target, "#?"); i >= 0 {
 		target = target[:i]
 	}
-	if target == "" || !strings.HasSuffix(target, ".md") || strings.Contains(target, "://") {
+	if target == "" || !strings.HasSuffix(target, ".md") {
+		return nil
+	}
+	// Only a bundle-relative destination names a concept file. A "://" test is
+	// not enough: "//host/spec.md" (protocol-relative), "/spec.md" (site-root)
+	// and "mailto:notes.md" (a scheme with no authority) all lack it, and
+	// filepath.Join then reinterprets each as a path under this index's
+	// directory. That does not read outside the bundle — withinBundle still
+	// holds — but it compares the WRONG local concept whenever such a path
+	// happens to exist, which is the failure this check is least able to
+	// notice: it reports a mismatch against a file the bullet never named.
+	u, err := url.Parse(target)
+	if err != nil || u.Scheme != "" || u.Host != "" || strings.HasPrefix(target, "/") {
 		return nil
 	}
 
@@ -206,8 +226,9 @@ func checkBulletDescription(bundleDir, indexPath, link, bulletDesc string) error
 	// satisfy a "Summary." bullet, and the diagnostic — printing both sides
 	// trimmed — would then show two identical strings as a mismatch, or hide a
 	// real one as a match. The padding is itself the drift to report, and %q
-	// makes it visible. A bullet cannot carry trailing space (the line is
-	// trimmed before matching), so the fix is always to unpad the frontmatter.
+	// makes it visible. A padded BULLET is rejected by the same comparison —
+	// validateIndex strips only leading whitespace — so neither side of the
+	// equality has a whitespace tolerance the other lacks.
 	if conceptDesc != bulletDesc {
 		return fmt.Errorf("%s: bullet for %q describes it as %q, but the file's frontmatter description is %q — the two must match verbatim", indexPath, target, bulletDesc, conceptDesc)
 	}
