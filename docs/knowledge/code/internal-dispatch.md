@@ -292,12 +292,50 @@ downstream can recover the distinction.
 
 Ownership of that wrap is SPLIT, and the split follows which function is in a position to know.
 `validateGoogleAdsCredentials` tags the three CREDENTIAL-STATE failures — a non-`active` status,
-a blob that is not valid JSON, a blob missing a required field — and it is used by every Google
-Ads path, so campaign dispatch and the metrics read get the classification too, not just
-discovery. `resolveGoogleAdsDiscoveryClient` tags the one that is not about the credential at
-all: a `login_customer_id` stored with dashes. Reading either as "the resolver wraps every
-pre-send failure" would suggest the campaign paths are unclassified, which is the opposite of
-what happens.
+a blob that is not valid JSON, a blob missing a required field. `validatedLoginCustomerID` tags
+the one that is not about the credential at all: a `login_customer_id` stored with dashes.
+
+**Both are called by EVERY path that reads the column, and that is the whole point of the second
+one being a function.** The manager-id check used to sit INLINE in
+`resolveGoogleAdsDiscoveryClient`, which meant only the discovery endpoint got it. The other paths
+read the same stored column, handed it to the same client, and classified the same defect
+differently: the value reached the client uninspected, failed there at `validateLoginCustomerID`,
+and arrived at the orchestrator indistinguishable from an upstream failure — same call, same error
+type. The default arm answered `503`, promising a retry would help, for a stored value only a
+human can repair. LFXV2-3052 hoisted it into a helper.
+
+There are **three** readers, not two, and the third is easy to miss: `resolveGoogleAdsClient`
+(toggle, metrics), `resolveGoogleAdsDiscoveryClient` (account discovery), and `Dispatch` — which
+builds its own client INLINE rather than through a resolver, because it predates both of them.
+Enumerating callers by the abstraction ("which resolvers call this?") does not find it;
+enumerating by the STORED KEY does — and, now that this PR has hoisted the read into one
+helper, so does enumerating by the helper. Both commands need `-F`, because the useful search
+strings contain regex metacharacters (`[`, `"`), and quoting, because an unquoted `[...]` is a
+shell glob:
+
+```bash
+grep -rn -F 'login_customer_id' internal/ | grep -v '_test\.go'   # the key, every reader
+grep -rn -F 'validatedLoginCustomerID' internal/                  # the helper: 3 call sites
+```
+
+Note that `grep -rn -F 'providerConfig["login_customer_id"]'` is now the WRONG enumeration even
+though it runs: after the hoist there is exactly one such expression, inside the helper itself.
+An enumeration keyed on an expression the refactor was designed to centralise reports one
+reader and reads as reassurance. `Dispatch` is also the
+path where the consequences are worst: it is the one that spends money, and the client's own
+validator renders the offending value with `%q`, which the orchestrator then writes to its
+dispatch-failure log line — so leaving it uninspected leaked account-identifying configuration
+into logs on top of misclassifying the failure. Its wrap is `notCreated`, preserving create-only
+claim semantics: nothing was sent, so the claim must be released rather than retained for
+reconciliation.
+
+A check that lives on one of several paths through the same column is not a check; it is a coin
+flip on which endpoint the caller happened to use.
+
+An empty `login_customer_id` is legal and means "no manager", so only a non-empty malformed value
+fails. The error names the field and the rule but never echoes the VALUE: a manager id is
+account-identifying configuration, this error reaches a log, and the rest of this path keeps
+error text to a fixed sentinel vocabulary with no payload attached.
 
 ### Meta
 
@@ -345,8 +383,8 @@ The manager-id check is duplicated on purpose. `Client.validateLoginCustomerID` 
 (the backstop for every other caller), but it does so inside the same call that talks to Google, so
 by the time it fires the error is indistinguishable at this boundary from a genuine upstream
 failure. `storedCustomerIDRE` in `internal/dispatch/googleads.go` therefore checks the STORED value
-where it is read — the check has to happen where the answer is still classifiable. The two regexps
-must stay in step.
+where it is READ, not where it is used — the check has to happen while the answer is still
+classifiable. The two regexps must stay in step.
 
 `creds.resolve` classifies each of its failure branches, and the splits are deliberate. A connection
 row with an EMPTY credential blob is permanently unusable as it stands, so it carries
