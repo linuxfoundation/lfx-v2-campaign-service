@@ -57,7 +57,7 @@ import (
 // without guessing: everything after the start of a query or fragment belongs to it
 // (RFC 3986 §3.4, §3.5), so no comma past that point can be a list delimiter.
 func URLUserinfo(u string) string {
-	if i := strings.IndexRune(u, ','); i >= 0 && strings.IndexAny(u[:i], "?#") < 0 {
+	if i := strings.IndexRune(u, ','); i >= 0 && !strings.ContainsAny(u[:i], "?#") {
 		if parts := strings.Split(u, ","); unambiguousList(parts) && allSchemed(parts) {
 			for i, p := range parts {
 				parts[i] = redactOne(p)
