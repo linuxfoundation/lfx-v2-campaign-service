@@ -48,24 +48,43 @@ import (
 // query is exactly where the other credential shape lives. `https://idp/jwks?access_token=a,b`
 // has no `@` in either piece, so the count rule calls it unambiguous, and the second piece is
 // then `b` — a bare fragment of the token with nothing to trim it, joined straight back into
-// the output. Every segment must therefore also carry its own `://`: a list of servers is a
-// list of URLs, and a comma that does not begin one is a character inside the value.
-// The `://` test is in turn not sufficient on its own, because a query can contain one:
-// `https://idp/jwks?access_token=a,secret://tail` passes both rules, and the first segment
-// trims at its `?` while the second is joined back in whole — the same leak the `://` rule
-// was added to close, one shape further out. A `?` or `#` BEFORE the first comma settles it
-// without guessing: everything after the start of a query or fragment belongs to it
-// (RFC 3986 §3.4, §3.5), so no comma past that point can be a list delimiter.
+// the output. Every segment must therefore also carry its own `scheme://` prefix: a list of
+// servers is a list of URLs, and a comma that does not begin one is a character inside the
+// value.
+//
+// The scheme test is in turn not sufficient on its own, because a token tail can look like a
+// scheme. `nats://a,nats://b?access_token=s3cret,secret://tail` splits into three segments that
+// each begin something scheme-shaped, so both rules pass; the middle segment then trims at its
+// `?` and the third — which is half a token — is joined straight back in. No test applied to a
+// SEGMENT can catch that, because by then the value has already been cut in the wrong place.
+//
+// So the cut itself is bounded instead: a comma is a delimiter only where it precedes any `?`
+// or `#` in the WHOLE value. Everything from the start of a query or fragment belongs to it
+// (RFC 3986 §3.4, §3.5), so no comma past that point can separate list entries, and whatever
+// follows stays attached to the last segment, where `redactOne` trims it as the query it is.
 func URLUserinfo(u string) string {
-	if i := strings.IndexRune(u, ','); i >= 0 && !strings.ContainsAny(u[:i], "?#") {
-		if parts := strings.Split(u, ","); unambiguousList(parts) && allSchemed(parts) {
-			for i, p := range parts {
-				parts[i] = redactOne(p)
-			}
-			return strings.Join(parts, ",")
+	if parts := splitBeforeQuery(u); len(parts) > 1 && unambiguousList(parts) && allSchemed(parts) {
+		for i, p := range parts {
+			parts[i] = redactOne(p)
 		}
+		return strings.Join(parts, ",")
 	}
 	return redactOne(u)
+}
+
+// splitBeforeQuery splits on the commas that appear before any `?` or `#`, leaving the query or
+// fragment — and every comma inside it — attached to the final segment.
+func splitBeforeQuery(u string) []string {
+	end := len(u)
+	if i := strings.IndexAny(u, "?#"); i >= 0 {
+		end = i
+	}
+	if !strings.ContainsRune(u[:end], ',') {
+		return []string{u}
+	}
+	parts := strings.Split(u[:end], ",")
+	parts[len(parts)-1] += u[end:]
+	return parts
 }
 
 // unambiguousList reports whether every segment has userinfo or none does — the only two
@@ -89,13 +108,33 @@ func unambiguousList(parts []string) bool {
 // unchanged and for a credential-bearing one is lossy without leaking. Both are correct
 // outcomes; admitting the form would mean deciding, from the value alone, whether `h2:4222`
 // is a server or the tail of a password.
+//
+// The scheme must be at the START of the segment, not merely present in it. A `://` anywhere
+// was the weaker form, and it admitted segments that are the tail of a value rather than the
+// head of a URL.
 func allSchemed(parts []string) bool {
 	for _, p := range parts {
-		if !strings.Contains(p, "://") {
+		i := strings.Index(p, "://")
+		if i <= 0 || !isScheme(p[:i]) {
 			return false
 		}
 	}
 	return true
+}
+
+// isScheme reports whether s is a syntactically valid URI scheme: ALPHA *( ALPHA / DIGIT / "+"
+// / "-" / "." ), per RFC 3986 §3.1.
+func isScheme(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
+		case i > 0 && (c >= '0' && c <= '9' || c == '+' || c == '-' || c == '.'):
+		default:
+			return false
+		}
+	}
+	return len(s) > 0
 }
 
 // redactOne is URLUserinfo for a value known to hold at most one URL.
@@ -108,16 +147,27 @@ func allSchemed(parts []string) bool {
 // prints `https://***@b.example`, discarding the host and path that are the only reason to log
 // the URL at all.
 //
-// The authority is bounded at the first `/` after `://`, and at nothing else. `/`, `?` and `#`
-// are all illegal unescaped in userinfo, so any of them would be a conforming bound — but a
-// value that reaches this function may be exactly the malformed one that failed to parse.
-// Bounding at `?` would cut `nats://u:p?x@host` down to `nats://u:p` and log half a password,
-// the same defect as splitting on a comma too eagerly. Bounding at `/` cannot: it leaves such
-// a value inside the authority region, where the `@` rule redacts it.
+// The `@` is looked for in everything before the first `?` or `#` — the authority AND the path,
+// not the authority alone. Two leaks pushed the bound out to there from the first `/`:
 //
-// The cost is over-redaction of a path-less URL whose query holds an `@` (`https://idp?q=a@b`
-// prints `https://***@b`). That is this package's stated preference throughout — lossy beats
-// leaky — and no credential escapes it.
+//   - `nats://u:p/x@host:4222` is malformed (a `/` inside userinfo, which is what makes it
+//     malformed input worth handling), and an authority bounded at that `/` sees `u:p`, finds no
+//     `@`, and returns the value untouched — password and all.
+//   - `https://idp.example?contact=a@b&access_token=s3cret` has no `/` at all, so the old bound
+//     was the end of the string; the last `@` is inside the QUERY, and rebuilding around it
+//     deletes the `?` with the prefix. `trimQueryAndFragment` then has nothing to cut and every
+//     parameter after that `@` — the token included — survives into the log.
+//
+// Stopping at the query is safe for the first and closes the second, and it keeps the case the
+// bound exists for: an `@` in a query (`https://idp/jwks?contact=a@b.example`) is not userinfo,
+// and treating it as such throws away the host and path that are the only reason to log a URL.
+//
+// What remains ambiguous is a value with NO path whose `@` sits after a `?`. It is either that
+// same harmless query `@`, or a malformed password containing a `?` (`nats://u:p?x@host`) —
+// nothing in the value decides which, and the two want opposite handling. A `/` before the
+// query settles it, because an authority that a path has already closed cannot extend past the
+// `?`. Without one, this prints the scheme and nothing else: lossy beats leaky, and the shapes
+// it costs diagnostics on are the rare ones.
 //
 // The authority bound is trusted only while the value holds ONE url. An ambiguous NATS list
 // that `URLUserinfo` declined to split arrives here whole, and its later servers' credentials
@@ -152,16 +202,22 @@ func redactOne(u string) string {
 		}
 		return trimQueryAndFragment(u)
 	}
-	authEnd := len(u)
-	if i := strings.IndexByte(u[authStart:], '/'); i >= 0 {
-		authEnd = authStart + i
+	// Everything before the query: userinfo can only live in here, and an `@` beyond it is the
+	// query's own (RFC 3986 §3.2, §3.4).
+	preQuery := len(u)
+	if i := strings.IndexAny(u[authStart:], "?#"); i >= 0 {
+		preQuery = authStart + i
 	}
-	at := strings.LastIndexByte(u[authStart:authEnd], '@')
-	if at < 0 {
-		return trimQueryAndFragment(u) // no userinfo, but a query can still carry a token
+	if at := strings.LastIndexByte(u[authStart:preQuery], '@'); at >= 0 {
+		at += authStart
+		return trimQueryAndFragment(u[:authStart] + "***@" + u[at+1:])
 	}
-	at += authStart
-	return trimQueryAndFragment(u[:authStart] + "***@" + u[at+1:])
+	if strings.ContainsRune(u[preQuery:], '@') && !strings.ContainsRune(u[authStart:preQuery], '/') {
+		// Path-less, and the only `@` is past the `?`. Either the query holds it or the `?` is
+		// inside a password; the value cannot say, so print nothing that could be half of one.
+		return u[:authStart] + "***"
+	}
+	return trimQueryAndFragment(u) // no userinfo, but a query can still carry a token
 }
 
 // trimQueryAndFragment drops everything from the first `?` or `#`.

@@ -62,12 +62,42 @@ rule: lossy, but incapable of leaking.
 That test alone still splits a token, because a comma is legal in a **query** too and a query
 is where the other credential shape lives: neither piece of
 `https://idp/jwks?access_token=a,b64tail` has an `@`, so the count rule calls it a list and
-`b64tail` is joined straight back into the output. Two further conditions close it. Every
-segment must begin its own `scheme://` — a list of servers is a list of URLs, and a comma that
-does not start one is a character inside a value. And no `?` or `#` may appear **before** the
-first comma: everything past the start of a query or fragment belongs to it (RFC 3986 §3.4,
-§3.5), so a comma there is never a delimiter. The second condition exists because the first is
-satisfiable by a token whose tail happens to contain `://`.
+`b64tail` is joined straight back into the output. Every segment must therefore begin its own
+`scheme://` — a list of servers is a list of URLs, and a comma that does not start one is a
+character inside a value. The scheme has to be at the **start**: merely containing a `://` was
+the weaker form, and it admitted the tail of a value as though it were the head of a URL.
+
+Even anchored, no test applied to a **segment** is enough, because a token tail can be
+scheme-shaped: `nats://a,nats://b?access_token=s3cret,secret://tail` yields three well-formed-
+looking entries, the middle one trims at its `?`, and the third — half a token — is joined
+straight back in. By the time segments exist the value has already been cut in the wrong place.
+So the **cut** is bounded instead: a comma delimits only where it precedes any `?` or `#` in the
+whole value. Everything from the start of a query or fragment belongs to it (RFC 3986 §3.4,
+§3.5), so no comma past that point separates entries, and the remainder stays attached to the
+last segment where the query trim reaches it.
+
+### Where userinfo is looked for
+
+`redactOne` searches for the `@` in everything before the first `?` or `#` — the authority
+**and** the path. Bounding at the first `/` instead, as it first did, leaked twice:
+
+- `nats://u:p/x@host:4222` is malformed (a `/` inside userinfo — which is the kind of input
+  this helper exists for), so the bound cut the region down to `u:p`, found no `@`, and
+  returned the value untouched, password included.
+- `https://idp.example?contact=a@b&access_token=s3cret` has no `/` at all, so the bound was the
+  end of the string and the last `@` — inside the query — was taken for userinfo. Rebuilding
+  around it deletes the `?` with the prefix, so the query trim finds nothing to cut and every
+  parameter after that `@` survives.
+
+Stopping at the query fixes the first and is what makes the second detectable, while keeping
+the case the bound exists for: an `@` in a query is not userinfo, and treating it as one throws
+away the host and path that are the only reason to log a URL.
+
+One shape stays undecidable — no path, and the only `@` past a `?`. That is either a harmless
+query `@` or a malformed password containing a `?` (`nats://u:p?x@host`), and the two want
+opposite handling. A `/` before the query settles it, since a path has already closed the
+authority; without one, nothing after the scheme is printed. `nats://u:p?x@host:4222` therefore
+renders as `nats://***`, losing the host. Lossy beats leaky, and the shapes it costs are rare.
 
 ### When the whole-value fallback runs
 

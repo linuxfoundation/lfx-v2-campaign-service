@@ -103,7 +103,11 @@ func TestURLUserinfo_Shapes(t *testing.T) {
 		// first would truncate the case below to 'nats://u:p' and log half a password.
 		{"https://idp.example.com/jwks?access_token=s3cret", "https://idp.example.com/jwks"},
 		{"https://svc:pw@idp.example.com/jwks?access_token=s3cret", "https://***@idp.example.com/jwks"}, // secretlint-disable-line
-		{"nats://u:p?x@host:4222", "nats://***@host:4222"},                                              // secretlint-disable-line
+		// Path-less, and its only '@' is past the '?'. This is either a password containing a
+		// '?' or an ordinary query '@', and the value cannot say which — so nothing after the
+		// scheme is printed. The host is lost; a password never is. The case below keeps its
+		// host because a '/' closed the authority before the query, which settles it.
+		{"nats://u:p?x@host:4222", "nats://***"}, // secretlint-disable-line
 		{"https://idp.example.com/jwks#s3cret", "https://idp.example.com/jwks"},
 		// A comma is legal in a QUERY too, and the query is where the other credential
 		// shape lives. Neither piece of this value carries an '@', so the every-or-none
@@ -120,6 +124,11 @@ func TestURLUserinfo_Shapes(t *testing.T) {
 		// it concludes the endpoint is misconfigured.
 		{"https://idp.example.com/jwks?contact=ops@b.example", "https://idp.example.com/jwks"},
 		{"https://svc:pw@idp.example.com/jwks?contact=ops@b.example", "https://***@idp.example.com/jwks"}, // secretlint-disable-line
+		// The scheme must START a segment, not merely appear in it — the narrowing that closes
+		// `allSchemed`'s hole directly. Here `x/y://b@c` carries a `://` but begins with a path
+		// character, so it is the tail of a value rather than the head of a URL: no split, and
+		// the whole-value rule loses the first host rather than treating the tail as an entry.
+		{"nats://u:p@a:4222,x/y://b@c", "nats://***@c"}, // secretlint-disable-line
 		{"", ""},
 	} {
 		if got := URLUserinfo(tc.in); got != tc.want {
@@ -159,6 +168,35 @@ func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
 			in:      "nats://u:p@a:4222,nats://u2:p2@b:4222,nats://c:4222", // secretlint-disable-line
 			want:    "nats://***@b:4222,nats://c:4222",
 			secrets: []string{"u:p", "u2:p2"},
+		},
+		{
+			// A token tail can be scheme-shaped, so no test applied to a SEGMENT catches this:
+			// by the time the segments exist the value has already been cut in the wrong place.
+			// The middle entry trimmed at its `?` and `secret://b64tail` — half a token — was
+			// joined straight back in. Bounding the CUT at the first `?` is what closes it.
+			name:    "a scheme-shaped token tail is not a list entry",
+			in:      "nats://a:4222,nats://b:4222?access_token=s3cret,secret://b64tail", // secretlint-disable-line
+			want:    "nats://a:4222,nats://b:4222",
+			secrets: []string{"s3cret", "b64tail"},
+		},
+		{
+			// No path, so the old authority bound ran to the end of the string and the last
+			// `@` — inside the query — was taken for userinfo. Rebuilding around it deleted the
+			// `?` along with the prefix, leaving trimQueryAndFragment nothing to cut, so the
+			// token rode out on `&access_token=`.
+			name:    "a pathless url with an @ in its query keeps no query",
+			in:      "https://idp.example.com?contact=ops@b.example&access_token=s3cret", // secretlint-disable-line
+			want:    "https://***",
+			secrets: []string{"s3cret", "access_token"},
+		},
+		{
+			// A `/` inside userinfo makes this malformed, which is exactly the input this
+			// helper exists for. An authority bounded at that `/` saw `u:p`, found no `@`, and
+			// returned the value — credential included. The search now runs to the query.
+			name:    "a slash inside userinfo does not hide the credential",
+			in:      "nats://u:p/x@host:4222", // secretlint-disable-line
+			want:    "nats://***@host:4222",
+			secrets: []string{"u:p"},
 		},
 		{
 			// Requiring every segment to carry its own `://` was meant to stop a token being
