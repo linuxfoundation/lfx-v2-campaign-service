@@ -500,10 +500,21 @@ func TestListAdAccounts_AbsentEnvelopeIsNotZeroAccounts(t *testing.T) {
 		{"not json", `<html>gateway</html>`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c := newCustomerClient(t, AccountConfig{}, func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = io.WriteString(w, tc.body)
-			})
+			// withCustomerRoles, not a bare handler: role discovery runs FIRST for a
+			// connection with no configured customer, so a handler that served tc.body to
+			// every path would fail in discoveryCustomerIDs and never reach the guard this
+			// test names. reached pins that — the assertions below are about the ACCOUNT
+			// response, and a test that errors one call earlier passes for the wrong reason.
+			var reached int32
+			c := newCustomerClient(t, AccountConfig{}, withCustomerRoles([]string{"5550001"},
+				func(w http.ResponseWriter, _ *http.Request) {
+					atomic.AddInt32(&reached, 1)
+					_, _ = io.WriteString(w, tc.body)
+				}))
 			got, err := c.ListAdAccounts(context.Background())
+			if atomic.LoadInt32(&reached) == 0 {
+				t.Fatal("AccountsInfo/Query was never reached; this test would pass on a role-discovery failure instead")
+			}
 			if err == nil {
 				t.Fatalf("want an error, got %d accounts — a body that cannot prove a result set must not read as zero accounts", len(got))
 			}
@@ -526,13 +537,22 @@ func TestListAdAccounts_UnusableIDFailsTheWholeCall(t *testing.T) {
 		{"empty string", `""`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c := newCustomerClient(t, AccountConfig{}, func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = io.WriteString(w, `{"AccountsInfo":[
+			// See TestListAdAccounts_AbsentEnvelopeIsNotZeroAccounts: without
+			// withCustomerRoles the rows below never reach the account decoder, and
+			// removing the id validation would not make this test fail.
+			var reached int32
+			c := newCustomerClient(t, AccountConfig{}, withCustomerRoles([]string{"5550001"},
+				func(w http.ResponseWriter, _ *http.Request) {
+					atomic.AddInt32(&reached, 1)
+					_, _ = io.WriteString(w, `{"AccountsInfo":[
 					{"Id":1234567,"AccountLifeCycleStatus":"Active"},
 					{"Id":`+tc.id+`,"AccountLifeCycleStatus":"Active"}
 				]}`)
-			})
+				}))
 			got, err := c.ListAdAccounts(context.Background())
+			if atomic.LoadInt32(&reached) == 0 {
+				t.Fatal("AccountsInfo/Query was never reached; the id validation under test never ran")
+			}
 			if err == nil {
 				t.Fatalf("want an error, got %d accounts", len(got))
 			}
@@ -564,13 +584,21 @@ func TestListAdAccounts_PreservesALargeID(t *testing.T) {
 
 // TestListAdAccounts_NeverEchoesTheResponseBody: an upstream body this code has failed
 // to parse is a body nothing is known about, and it travels in an error alongside the
-// credentials' account context.
+// credentials' account context. This covers the ACCOUNT response specifically —
+// TestListAdAccounts_RoleDiscoveryNeverEchoesTheBody covers the other call, and without
+// withCustomerRoles here the two would be the same test twice.
 func TestListAdAccounts_NeverEchoesTheResponseBody(t *testing.T) {
 	const marker = "s3cret-marker"
-	c := newCustomerClient(t, AccountConfig{}, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `not json `+marker)
-	})
+	var reached int32
+	c := newCustomerClient(t, AccountConfig{}, withCustomerRoles([]string{"5550001"},
+		func(w http.ResponseWriter, _ *http.Request) {
+			atomic.AddInt32(&reached, 1)
+			_, _ = io.WriteString(w, `not json `+marker)
+		}))
 	_, err := c.ListAdAccounts(context.Background())
+	if atomic.LoadInt32(&reached) == 0 {
+		t.Fatal("AccountsInfo/Query was never reached; this would duplicate the role-discovery redaction test")
+	}
 	if err == nil {
 		t.Fatal("want an error")
 	}

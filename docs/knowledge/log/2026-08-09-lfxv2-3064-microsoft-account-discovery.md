@@ -166,3 +166,35 @@ compared against a DIFFERENT id than the client sent, which is precisely the pre
 PRODUCTION decode uses `json.Number` to avoid. A test harness that does not share the
 production decode's care can pass an id the production code would have caught. The recorder now
 uses `UseNumber`, which also keeps a quoted `"9988776"` distinguishable from the number.
+
+## Round 5: adding a call ahead of another one made three tests vacuous
+
+Copilot, in suppressed comments on Round 4. Inserting `User/Query` in front of
+`AccountsInfo/Query` did not just add a step — it changed what every existing single-handler
+test was measuring. Three of them served one canned body to EVERY path, so the call now failed
+in `discoveryCustomerIDs` and never reached the guard the test was named for:
+
+- `AbsentEnvelopeIsNotZeroAccounts` — errored on missing `CustomerRoles`, not on `{}`.
+- `UnusableIDFailsTheWholeCall` — never decoded a row, so deleting `accountIDRE` entirely would
+  not have failed it.
+- `NeverEchoesTheResponseBody` — redacted the role-discovery body, duplicating the new
+  role-discovery test rather than covering the account decoder.
+
+All three still PASSED, and for a plausible-looking reason: the expected error appeared, just
+from one call earlier. That is the failure mode worth naming — **a test asserting only "an
+error occurred" cannot tell you WHICH error, and inserting an upstream call silently rewrites
+every such test to be about the new call.** Nothing in the build, the linter or the coverage
+number moves.
+
+Fixed by routing all three through `withCustomerRoles` and adding a `reached` counter on the
+account handler, so a test that never gets to `AccountsInfo/Query` fails on that fact rather
+than on the assertion after it. The counter is the durable part: wrapping alone would be
+correct today and silently undone by the next inserted call.
+
+Revert-verified individually — nil-envelope guard, `accountIDRE`, and the redaction each fail
+their own test now, and neutering the account decoder's redaction leaves
+`RoleDiscoveryNeverEchoesTheBody` green, which is how the two are known to be distinct.
+
+The general rule for this repo: **when a new call is added ahead of an existing one, every test
+of the later call needs a positive assertion that it was reached.** Order of assertions is not
+a substitute — the error arrives either way.
