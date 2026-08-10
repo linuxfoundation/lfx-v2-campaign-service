@@ -303,11 +303,21 @@ a present `[]` decodes to a non-nil empty slice. `AccountsInfo` is a POINTER to 
 that is about the next reader rather than the mechanism: a plain slice invites a
 `len(x) == 0` check that silently merges the two cases, while a nil pointer must be
 dereferenced and the compiler makes that choice explicit. Do not "simplify" it away
-without replacing the nil guard. And an id that does not match
-`accountIDRE` — the SAME regexp `validateAccountIDs` checks a configured id against,
-reused so a discovered account cannot fail at bind time — errors rather than skipping
-the row, because a response shape that far from the documented one is not the response
-we think it is. `Id` is decoded as a `json.Number`, not through `any`: Microsoft types
+without replacing the nil guard. And an id that `numberID` rejects errors rather
+than skipping the row, because a response shape that far from the documented one is not
+the response we think it is.
+
+**`numberID`, not `accountIDRE`, and the distinction generalises.** `accountIDRE`
+(`^[0-9]+$`) is a **transport** check: is this string safe to put in a header. It
+therefore admits `0` and a forty-digit number, neither of which can name a Microsoft
+entity — ids there are positive `int64`s. Discovery is an **identity** check: the id *is*
+the answer, and the account it names gets bound to a connection and spends money.
+`numberID` (`campaign.go`) enforces positivity and signed-64-bit range on top of the digit
+shape, which is why the create path already uses it on returned ids. Everything `numberID`
+accepts `accountIDRE` accepts too, so reusing the stricter one keeps the original property
+— a discovered account cannot fail at bind time — while closing the gap. **A validation
+borrowed from a transport concern is not automatically the right one for an identity
+claim; check which question it was written to answer.** `Id` is decoded as a `json.Number`, not through `any`: Microsoft types
 it as a `long`, and float64 silently loses precision above 2^53, producing a WRONG
 account id that still looks like one (a test pins 2^53+1 round-tripping exactly).
 

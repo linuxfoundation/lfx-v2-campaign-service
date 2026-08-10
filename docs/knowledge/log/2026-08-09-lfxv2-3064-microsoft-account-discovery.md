@@ -198,3 +198,37 @@ their own test now, and neutering the account decoder's redaction leaves
 The general rule for this repo: **when a new call is added ahead of an existing one, every test
 of the later call needs a positive assertion that it was reached.** Order of assertions is not
 a substitute — the error arrives either way.
+
+## Round 6: the reused validator was answering a different question
+
+Copilot filed three suppressed findings. Two were the same one on two lines, and it was
+right.
+
+Both discovery loops validated ids with `accountIDRE` (`^[0-9]+$`), and the comments were
+proud of the reuse: the same regexp `validateAccountIDs` applies to a *configured*
+account id, so a discovered account could not fail at bind time. That property is real.
+The problem is what the regexp was written for. It guards a value about to be placed in
+an HTTP header — a **transport** check, whose question is "is this safe to send" — and it
+answers that correctly while admitting `0` and values past `MaxInt64`.
+
+Discovery asks a different question. The id *is* the answer: it goes to the picker, gets
+bound to a connection, and spends money. That is an **identity** check, and this package
+already had one — `numberID`, used on ids returned by the create path, enforcing positive
+and int64-ranged on top of the digit shape. The fix is one line in each loop. Everything
+`numberID` accepts `accountIDRE` accepts too, so the bind-time property survives intact;
+the reuse argument was sound, it just pointed at the wrong one of two available checks.
+
+The general form, which is why this is worth a log entry rather than a diff: **a
+validation borrowed from a transport concern is not automatically the right one for an
+identity claim.** "Reused rather than restated" is a good instinct and it silenced the
+question of *which* check by making consistency the whole argument. Ask what question the
+borrowed check was written to answer before reusing it for a different one.
+
+Revert-verified with four new table cases — `0` and `9223372036854775808`, in both the
+customer-role and account-id tables. All four fail against `accountIDRE` and pass against
+`numberID`; the pre-existing `-1` and `1.5e3` cases pass either way, which is exactly why
+they did not catch this.
+
+The third finding was about the PR description, not the code: it still described
+`CustomerId` as omitted unless the connection carries one, which Round 4 replaced with
+two-stage role discovery. Description rewritten.

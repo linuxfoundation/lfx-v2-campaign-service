@@ -338,11 +338,16 @@ func TestListAdAccounts_OneCustomerFailingFailsTheWholeCall(t *testing.T) {
 // response we think it is.
 func TestListAdAccounts_RoleDiscoveryFailsClosed(t *testing.T) {
 	for name, body := range map[string]string{
-		"absent":            `{}`,
-		"empty":             `{"CustomerRoles":[]}`,
-		"null":              `{"CustomerRoles":null}`,
-		"non-integer id":    `{"CustomerRoles":[{"CustomerId":1.5e3}]}`,
-		"negative id":       `{"CustomerRoles":[{"CustomerId":-1}]}`,
+		"absent":         `{}`,
+		"empty":          `{"CustomerRoles":[]}`,
+		"null":           `{"CustomerRoles":null}`,
+		"non-integer id": `{"CustomerRoles":[{"CustomerId":1.5e3}]}`,
+		"negative id":    `{"CustomerRoles":[{"CustomerId":-1}]}`,
+		// Zero and an int64 overflow are digit strings, so a transport-shaped check
+		// (`^[0-9]+$`) passes them; a Microsoft customer id is a POSITIVE int64, so
+		// neither can name one and querying them would be a request about nothing.
+		"zero id":           `{"CustomerRoles":[{"CustomerId":0}]}`,
+		"overflows int64":   `{"CustomerRoles":[{"CustomerId":9223372036854775808}]}`,
 		"undecodable":       `not json`,
 		"missing id":        `{"CustomerRoles":[{}]}`,
 		"one bad among two": `{"CustomerRoles":[{"CustomerId":1111111},{"CustomerId":-1}]}`,
@@ -533,6 +538,10 @@ func TestListAdAccounts_UnusableIDFailsTheWholeCall(t *testing.T) {
 	for _, tc := range []struct{ name, id string }{
 		{"float", `1.5e3`},
 		{"negative", `-1`},
+		// Both pass a digits-only check and neither can be an account: an id is a
+		// positive int64, so 0 names nothing and 2^63 is past the domain entirely.
+		{"zero", `0`},
+		{"overflows int64", `9223372036854775808`},
 		{"string with letters", `"acct-7"`},
 		{"empty string", `""`},
 	} {

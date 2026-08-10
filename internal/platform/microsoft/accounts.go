@@ -196,12 +196,16 @@ func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]string, error) {
 	ids := make([]string, 0, len(*resp.CustomerRoles))
 	seen := make(map[string]struct{}, len(*resp.CustomerRoles))
 	for _, role := range *resp.CustomerRoles {
-		id := strings.TrimSpace(role.CustomerID.String())
-		// Same regexp doCustomerRequest validates a configured customer id against, for
-		// the same reason ListAdAccounts reuses it for account ids: an id this code is
-		// about to put in a request must be one the client would accept, and it rejects
-		// the shapes a json.Number can hold but a customer id cannot ("1.5e3", "-1", "").
-		if !accountIDRE.MatchString(id) {
+		// numberID, not accountIDRE. The two differ on exactly the values that matter
+		// here: accountIDRE is `^[0-9]+$`, which is a TRANSPORT check — it asks whether
+		// the string is safe to place in a header — and so it admits "0" and a
+		// forty-digit number. This is an IDENTITY check: the id names a customer we are
+		// about to query, and Microsoft customer ids are positive int64s, so "0" and
+		// anything past MaxInt64 cannot be one. numberID enforces both (campaign.go),
+		// and everything it accepts accountIDRE accepts too, so the ids reaching the
+		// request are still ones doCustomerRequest will pass.
+		id := numberID(&role.CustomerID)
+		if id == "" {
 			// The whole call, not this role: a response this far from the documented
 			// shape is not the response we think it is, so skipping the row would turn
 			// a protocol mismatch into a silently short account list.
@@ -323,15 +327,16 @@ func (c *Client) accountsInfoForCustomer(ctx context.Context, customerID string)
 	// as null.
 	accounts := make([]AdAccount, 0, len(*resp.AccountsInfo))
 	for _, ai := range *resp.AccountsInfo {
-		id := strings.TrimSpace(ai.ID.String())
-		// accountIDRE is the SAME regexp validateAccountIDs checks a configured account
-		// id against. Reused rather than restated: an account this call offers must be
-		// one the client will later accept, and two copies of that contract can drift
-		// into offering ids that fail at bind time. It also rejects the shapes a
-		// json.Number can legally hold but an id cannot — "1.5e3", "-1", "" — so a
-		// number that is not an integer id fails here rather than being rendered into
-		// something that merely looks like one.
-		if !accountIDRE.MatchString(id) {
+		// numberID, the same identity check the create path applies to a returned id, and
+		// for the same reason: this id is the whole answer. An account offered to the
+		// picker gets bound to a connection and spends money, so it has to be a
+		// Microsoft id and not merely a digit string. accountIDRE (`^[0-9]+$`) is the
+		// TRANSPORT check — is this safe in a header — and it admits "0" and values past
+		// MaxInt64, neither of which can name an account. numberID enforces positivity
+		// and int64 range on top, and everything it accepts accountIDRE accepts too, so
+		// an offered account is still one the client will bind without complaint.
+		id := numberID(&ai.ID)
+		if id == "" {
 			// A response shape this far from the documented one means it is not the
 			// response we think it is, so the rest of it is not trustworthy either —
 			// fail the whole call rather than skipping the row.
