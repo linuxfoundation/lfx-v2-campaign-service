@@ -290,6 +290,66 @@ func TestValidateIndexBulletDescriptionResolvesQueryStringLink(t *testing.T) {
 	}
 }
 
+// Nothing constrains a relative link, so a bullet can name a path that leaves
+// the bundle entirely — and reading it would put a file the checker was never
+// pointed at, and part of its contents, into validation output. The bullet is
+// skipped rather than reported: a link that escapes the bundle is a broken
+// link, and broken links are the link checker's error, not this one's (see the
+// ReadFile branch). Asserted on a file whose description DIFFERS from the
+// bullet, so that reading it at all is what the test would catch.
+func TestValidateIndexBulletDescriptionSkipsTargetOutsideBundle(t *testing.T) {
+	root := t.TempDir()
+	bundle := filepath.Join(root, "bundle")
+	if err := os.MkdirAll(bundle, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	writeConcept(t, filepath.Join(root, "outside.md"), "Does the thing.")
+	writeFile(t, filepath.Join(bundle, "index.md"), "# Bundle\n\n* [Outside](../outside.md) - Does something else.\n")
+
+	if errs := Validate(bundle); len(errs) != 0 {
+		t.Fatalf("Validate() = %v, want a target outside the bundle to be left alone", errs)
+	}
+}
+
+// A symlink inside the bundle is the same escape by another route, and it is
+// the one a purely lexical "does the path contain ..?" check misses.
+func TestValidateIndexBulletDescriptionSkipsSymlinkOutOfBundle(t *testing.T) {
+	root := t.TempDir()
+	bundle := filepath.Join(root, "bundle")
+	if err := os.MkdirAll(bundle, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	writeConcept(t, filepath.Join(root, "outside.md"), "Does the thing.")
+	if err := os.Symlink(filepath.Join(root, "outside.md"), filepath.Join(bundle, "thing.md")); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+	writeFile(t, filepath.Join(bundle, "index.md"), "# Bundle\n\n* [Thing](thing.md) - Does something else.\n")
+
+	if errs := Validate(bundle); len(errs) != 0 {
+		t.Fatalf("Validate() = %v, want a symlinked escape to be left alone", errs)
+	}
+}
+
+// "Verbatim" has to include whitespace or it is not verbatim. Padding in the
+// frontmatter is drift in its own right — the bullet can never carry matching
+// padding, because the index line is trimmed before it is matched — so
+// tolerating it would leave the two files permanently unequal in a way the
+// check reports as equal. Written by hand rather than through WriteConcept so
+// the padding is unambiguously what reaches the parser.
+func TestValidateIndexBulletDescriptionRejectsPaddedFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "thing.md"), "---\ntype: Go Package\ntitle: Thing\ndescription: ' Does the thing. '\n---\n\n# Thing\n")
+	writeFile(t, filepath.Join(dir, "index.md"), "# Bundle\n\n* [Thing](thing.md) - Does the thing.\n")
+
+	errs := Validate(dir)
+	if len(errs) != 1 {
+		t.Fatalf("Validate() = %v, want the padded frontmatter description to be caught", errs)
+	}
+	if !strings.Contains(errs[0].Error(), `" Does the thing. "`) {
+		t.Errorf("Validate() error = %q, want it to quote the padding it is complaining about", errs[0])
+	}
+}
+
 func TestValidateRealBundle(t *testing.T) {
 	// Use relative path from package directory to the real bundle at repo root
 	bundleDir := filepath.Join("..", "..", "docs", "knowledge")

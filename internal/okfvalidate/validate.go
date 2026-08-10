@@ -45,7 +45,7 @@ func Validate(bundleDir string) []error {
 		switch d.Name() {
 		case "index.md":
 			isRoot := filepath.Clean(filepath.Dir(path)) == filepath.Clean(bundleDir)
-			errs = append(errs, validateIndex(path, isRoot)...)
+			errs = append(errs, validateIndex(bundleDir, path, isRoot)...)
 		case "log.md":
 			errs = append(errs, validateLog(path)...)
 		default:
@@ -86,7 +86,7 @@ var indexBulletPattern = regexp.MustCompile(`^\* \[([^\]]+)\]\(([^)]+)\) - (.+)$
 // frontmatter (except an optional okf_version at the bundle root), any
 // "* " line matches "* [Title](url) - description", and each bullet's
 // description is verbatim the linked concept's frontmatter description.
-func validateIndex(path string, isRoot bool) []error {
+func validateIndex(bundleDir, path string, isRoot bool) []error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return []error{fmt.Errorf("%s: reading file: %w", path, err)}
@@ -124,7 +124,7 @@ func validateIndex(path string, isRoot bool) []error {
 			errs = append(errs, fmt.Errorf("%s: bullet %q does not match \"* [Title](url) - description\"", path, trimmed))
 			continue
 		}
-		if e := checkBulletDescription(path, m[2], m[3]); e != nil {
+		if e := checkBulletDescription(bundleDir, path, m[2], m[3]); e != nil {
 			errs = append(errs, e)
 		}
 	}
@@ -156,7 +156,7 @@ func validateIndex(path string, isRoot bool) []error {
 // concept files all declare one, and adding the "description" key to the
 // required set belongs with "type" in validateConcept rather than here, where
 // it would only be enforced for files that happen to be linked.
-func checkBulletDescription(indexPath, link, bulletDesc string) error {
+func checkBulletDescription(bundleDir, indexPath, link, bulletDesc string) error {
 	// Anchors and query strings are not part of the path; a bare fragment
 	// ("#section") points inside this same index, which has no frontmatter.
 	target := link
@@ -167,7 +167,17 @@ func checkBulletDescription(indexPath, link, bulletDesc string) error {
 		return nil
 	}
 
-	data, err := os.ReadFile(filepath.Join(filepath.Dir(indexPath), filepath.FromSlash(target)))
+	// "Inside the bundle" is a scope this check has to enforce, not assume:
+	// nothing upstream constrains a relative link, so "../../../etc/notes.md"
+	// resolves to a real file and its frontmatter description would be quoted
+	// back in a validation error — a file outside the bundle read, and partly
+	// disclosed, by a checker documented to stay within it.
+	resolved := filepath.Join(filepath.Dir(indexPath), filepath.FromSlash(target))
+	if !withinBundle(bundleDir, resolved) {
+		return nil
+	}
+
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		// A broken link is a real defect, but it is not this check's, and
 		// reporting it here would fire a second time for the same bullet
@@ -184,10 +194,42 @@ func checkBulletDescription(indexPath, link, bulletDesc string) error {
 	if !ok || strings.TrimSpace(conceptDesc) == "" {
 		return nil
 	}
-	if strings.TrimSpace(conceptDesc) != bulletDesc {
-		return fmt.Errorf("%s: bullet for %q describes it as %q, but the file's frontmatter description is %q — the two must match verbatim", indexPath, target, bulletDesc, strings.TrimSpace(conceptDesc))
+	// Compared raw, not trimmed. Trimming here would be the one tolerance this
+	// check claims not to have: a frontmatter description of " Summary. " would
+	// satisfy a "Summary." bullet, and the diagnostic — printing both sides
+	// trimmed — would then show two identical strings as a mismatch, or hide a
+	// real one as a match. The padding is itself the drift to report, and %q
+	// makes it visible. A bullet cannot carry trailing space (the line is
+	// trimmed before matching), so the fix is always to unpad the frontmatter.
+	if conceptDesc != bulletDesc {
+		return fmt.Errorf("%s: bullet for %q describes it as %q, but the file's frontmatter description is %q — the two must match verbatim", indexPath, target, bulletDesc, conceptDesc)
 	}
 	return nil
+}
+
+// withinBundle reports whether target resolves to a path at or inside root.
+//
+// Symlinks are resolved on BOTH sides before comparing, because a lexical
+// check alone is defeated by a symlink inside the bundle pointing out of it —
+// and because the roots this runs against are themselves often symlinked
+// (macOS /var/folders temp dirs), so resolving only one side would report
+// every target as an escape.
+func withinBundle(root, target string) bool {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false
+	}
+	// A target that does not exist fails here rather than at ReadFile, and is
+	// skipped for the same reason: a broken link is someone else's error.
+	realTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(realRoot, realTarget)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 var logFragmentNamePattern = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})-[A-Za-z0-9][A-Za-z0-9._-]*\.md$`)

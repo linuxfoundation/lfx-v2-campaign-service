@@ -29,3 +29,21 @@ The check compares only bullets that resolve to a readable `.md` file inside
 the bundle declaring a frontmatter description — not directories, sub-indexes
 (which carry no frontmatter by rule 3), external links, or broken links, whose
 defect belongs to a link check rather than this one.
+
+"Inside the bundle" turned out to be a scope the first cut described but did
+not enforce. Nothing constrains a relative link, so `../../notes.md` resolved
+to a real file outside the bundle, was read, and had its frontmatter
+description quoted back in the validation error — a file the checker was never
+pointed at, partly disclosed by it. Containment is now checked against the
+bundle root with symlinks resolved on both sides, because a lexical
+`..`-scan is defeated by a symlink inside the bundle pointing out of it, and
+because temp-dir roots are themselves symlinked (macOS `/var/folders`), so
+resolving only one side reports every target as an escape.
+
+The comparison is also raw rather than trimmed. Trimming was the one tolerance
+the check claimed not to have: a frontmatter description of `" Summary. "`
+satisfied a `Summary.` bullet, while the diagnostic printed both sides trimmed
+and so could show two identical strings as a mismatch. A bullet can never
+carry matching padding — the index line is trimmed before it is matched — so
+the padding is itself the drift, and the fix is always to unpad the
+frontmatter.
