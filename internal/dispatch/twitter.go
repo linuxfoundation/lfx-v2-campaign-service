@@ -192,20 +192,42 @@ func campaignFromTwitter(ctx context.Context, r *twitter.CampaignResult, cfg twi
 // accept EXACTLY the same connections; each caller applies its own error wrapping (Dispatch
 // wraps with notCreated for claim semantics, the toggle path does not). The funding
 // instrument is NOT checked here — it is a create-only field a toggle never uses.
-func validateTwitterConnection(projectID string, res *resolved) (twitterCreds, string, error) {
-	var creds twitterCreds
+//
+// Every defect below is tagged for its AUDIENCE here, at the point of detection, following
+// validateGoogleAdsCredentials. Untagged, all four fell to each handler's default arm and
+// answered 503 — "the platform did not respond" about a platform that was never contacted,
+// with a remedy (retry) that no amount of waiting can satisfy, since only a human editing
+// the connection can fix it. The 409 arm at internal/service/brief.go is the correct answer.
+// Tagging HERE rather than in each caller is what keeps Dispatch and ToggleStatus from
+// having to agree about it; the named return plus defer means a return site added later
+// cannot forget to re-attribute the error to the LF system row.
+func validateTwitterConnection(projectID string, res *resolved) (creds twitterCreds, accountID string, err error) {
+	defer func() { err = res.systemScoped(err) }()
 	if res.status != model.StatusActive {
-		return creds, "", fmt.Errorf("twitter connection for project %s is %s, not active", projectID, res.status)
+		return creds, "", fmt.Errorf("%w: %w: twitter connection for project %s is %s, not active",
+			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
 	}
 	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return creds, "", fmt.Errorf("decode twitter credentials: %w", err)
+		// The unmarshal error is DROPPED, not wrapped — the same rule as
+		// validateGoogleAdsCredentials. It is the one error on this path derived from the
+		// DECRYPTED credential blob, and encoding/json quotes its input: a *json.SyntaxError
+		// names the offending character, a *json.UnmarshalTypeError names the field. Wrapping
+		// it put credential-derived bytes into every log line and error chain downstream, for
+		// exactly the connection whose credentials are malformed. Nothing actionable is lost —
+		// the remedy is "re-save the credential", not "fix byte 41".
+		return creds, "", fmt.Errorf("%w: %w: twitter credentials for project %s are not valid JSON",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, projectID)
 	}
 	if creds.ConsumerKey == "" || creds.ConsumerSecret == "" || creds.AccessToken == "" || creds.AccessTokenSecret == "" {
-		return creds, "", fmt.Errorf("twitter credentials are incomplete (need consumerKey, consumerSecret, accessToken, accessTokenSecret)")
+		return creds, "", fmt.Errorf("%w: %w: twitter credentials are incomplete (need consumerKey, consumerSecret, accessToken, accessTokenSecret)",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
 	}
-	accountID := strings.TrimSpace(res.accountID)
+	accountID = strings.TrimSpace(res.accountID)
 	if accountID == "" {
-		return creds, "", fmt.Errorf("twitter connection for project %s is missing account id", projectID)
+		// BOTH sentinels: ErrConnectionNotUsable decides the HTTP status, ErrAccountNotSelected
+		// names the reason for the log line's fixed vocabulary (unusableConnectionReason).
+		return creds, "", fmt.Errorf("%w: %w: twitter connection for project %s is missing account id",
+			domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected, projectID)
 	}
 	return creds, accountID, nil
 }

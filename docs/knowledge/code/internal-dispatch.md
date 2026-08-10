@@ -125,6 +125,53 @@ Each adapter interprets its own credential + config shape; see the "Dispatch ada
 [googleads](internal-platform-googleads.md), [microsoft](internal-platform-microsoft.md),
 [hubspot](internal-platform-hubspot.md).
 
+## Stored-connection defects are tagged where they are detected
+
+Every adapter runs the same pre-flight before it contacts a platform: the connection row must be
+`active`, its decrypted blob must be valid JSON, the decoded credentials must have every required
+field, and (for the paths that need one) an ad account must have been selected. All four are
+STORED-STATE defects — a human has to edit the connection, and no amount of retrying helps.
+
+The service layer has exactly one default arm for an error it does not recognize, and it answers
+**503**. So an untagged defect is not merely mislabelled: it tells the caller a platform did not
+respond, about a platform that was never contacted, and prescribes a remedy (wait, retry) that
+cannot ever succeed. Each defect is therefore wrapped with `domain.ErrConnectionNotUsable` — which
+selects the status — PLUS a reason sentinel from the fixed vocabulary (`ErrConnectionInactive`,
+`ErrCredentialsUndecodable`, `ErrCredentialsIncomplete`, `ErrAccountNotSelected`), which is what
+the handler logs. Both are required: the status marker alone logs `reason=unclassified`.
+
+Two properties of this pattern are easy to lose and worth stating outright:
+
+- **The unmarshal error is DROPPED, not wrapped.** It is produced by decoding the DECRYPTED
+  credential blob, and `encoding/json` quotes its input — `*json.SyntaxError` names the offending
+  character, `*json.UnmarshalTypeError` names the field. Keeping it in the chain puts
+  credential-derived bytes within reach of anything that renders or `errors.As`-walks the error.
+  Nothing actionable is lost: the remedy is "re-save the credential", not "fix byte 41".
+- **The tagging belongs in the SHARED resolve/validate helper, not at each call site.** Every
+  adapter routes Dispatch, `ToggleStatus` and (where wired) `ReadMetrics` through one helper, so
+  tagging it once covers every path. Tagging per-path is how Google Ads ended up correct on
+  discovery while its other callers were still bare, before the helper absorbed it.
+
+Which adapters honour it today:
+
+| Adapter | Tagged | Paths covered |
+|---|---|---|
+| Google Ads | yes | `validateGoogleAdsCredentials` — dispatch, toggle, metrics, discovery |
+| Reddit | yes | `resolveRedditClient` — dispatch, toggle, metrics |
+| X/Twitter | yes | `validateTwitterConnection` — dispatch, toggle, metrics |
+| Microsoft Ads | yes | `validateMicrosoftConnection` — dispatch, toggle (no metrics; async Reporting API) |
+| Meta | **no** | still bare, still 503 — LFXV2-3069 part 2 |
+| LinkedIn | **no** | still bare, still 503 — LFXV2-3069 part 2 |
+
+Meta and LinkedIn each inline `d.creds.resolve(...)` at more than one call site with no shared
+helper, so tagging them is an extraction rather than an annotation, and it collides with open work
+on those files. Until it lands, their four defects continue to answer 503.
+
+The full rationale for the classification — including why a decrypt failure splits into two
+sentinels, and why an inactive row is refused rather than treated as "pending" — lives in the
+Google Ads discussion under *Account discovery* below, since that is where the pattern was first
+worked out.
+
 ## Status toggle (optional capability)
 
 `StatusToggler` is an OPTIONAL dispatcher interface (separate from `PlatformDispatcher`) —

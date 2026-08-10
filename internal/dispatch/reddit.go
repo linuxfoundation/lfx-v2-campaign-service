@@ -186,23 +186,46 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 // require an account id, and build the reddit client. Centralising it keeps the credential
 // shape / active-status rule in ONE place so a create and a toggle can never diverge on
 // which connections they accept (the block was previously duplicated).
-func (d *RedditDispatcher) resolveRedditClient(ctx context.Context, projectID string, platform model.Provider) (*reddit.Client, error) {
+//
+// Every defect below is tagged for its AUDIENCE here, at the point of detection, following
+// validateGoogleAdsCredentials. Untagged, all four fell to each handler's default arm and
+// answered 503 — "the platform did not respond" about a platform that was never contacted,
+// with a remedy (retry) that no amount of waiting can satisfy, since only a human editing
+// the connection can fix it. The 409 arm at internal/service/brief.go is the correct answer.
+// The named return plus defer means a return site added later cannot forget to re-attribute
+// the error to the LF system row; systemScoped is a no-op for project-owned rows and
+// idempotent, so a caller that also tags costs nothing.
+func (d *RedditDispatcher) resolveRedditClient(ctx context.Context, projectID string, platform model.Provider) (c *reddit.Client, err error) {
 	res, err := d.creds.resolve(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}
+	defer func() { err = res.systemScoped(err) }()
 	if res.status != model.StatusActive {
-		return nil, fmt.Errorf("reddit connection for project %s is %s, not active", projectID, res.status)
+		return nil, fmt.Errorf("%w: %w: reddit connection for project %s is %s, not active",
+			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
 	}
 	var creds redditCreds
 	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return nil, fmt.Errorf("decode reddit credentials: %w", err)
+		// The unmarshal error is DROPPED, not wrapped — the same rule as
+		// validateGoogleAdsCredentials. It is the one error on this path derived from the
+		// DECRYPTED credential blob, and encoding/json quotes its input: a *json.SyntaxError
+		// names the offending character, a *json.UnmarshalTypeError names the field. Wrapping
+		// it put credential-derived bytes into every log line and error chain downstream, for
+		// exactly the connection whose credentials are malformed. Nothing actionable is lost —
+		// the remedy is "re-save the credential", not "fix byte 41".
+		return nil, fmt.Errorf("%w: %w: reddit credentials for project %s are not valid JSON",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, projectID)
 	}
 	if creds.ClientID == "" || creds.ClientSecret == "" || creds.RefreshToken == "" {
-		return nil, fmt.Errorf("reddit credentials are incomplete (need clientId, clientSecret, refreshToken)")
+		return nil, fmt.Errorf("%w: %w: reddit credentials are incomplete (need clientId, clientSecret, refreshToken)",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
 	}
 	if strings.TrimSpace(res.accountID) == "" {
-		return nil, fmt.Errorf("reddit connection for project %s has no account id", projectID)
+		// BOTH sentinels: ErrConnectionNotUsable decides the HTTP status, ErrAccountNotSelected
+		// names the reason for the log line's fixed vocabulary (unusableConnectionReason).
+		return nil, fmt.Errorf("%w: %w: reddit connection for project %s has no account id",
+			domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected, projectID)
 	}
 	return reddit.NewClient(
 		reddit.Credentials{ClientID: creds.ClientID, ClientSecret: creds.ClientSecret, RefreshToken: creds.RefreshToken},

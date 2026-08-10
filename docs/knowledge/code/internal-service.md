@@ -219,8 +219,12 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   value such as a dashed `login_customer_id`. The platform is never contacted. This arm is what
   keeps the 503 below honest: a 503 promises that waiting might help, and none of these conditions
   change until a human edits the connection. The distinction cannot be made here — a setup failure
-  and an upstream one arrive as the same type — so `internal/dispatch/googleads.go` wraps the
-  pre-send failures with the sentinel and this arm reads it. The wrap has two owners:
+  and an upstream one arrive as the same type — so the dispatch layer wraps the pre-send failures
+  with the sentinel and this arm reads it. Four adapters do:
+  `internal/dispatch/{googleads,reddit,twitter,microsoft}.go`, each in its own shared
+  resolve/validate helper, so every path through an adapter is covered rather than just the one
+  that happened to be fixed. Meta and LinkedIn do NOT yet — their equivalent checks are still bare
+  and still fall to the 503 arm below (LFXV2-3069 part 2). In Google Ads the wrap has two owners:
   `validateGoogleAdsCredentials` tags the credential-state three (inactive, undecodable,
   incomplete), which is why they reach callers beyond discovery — but the SHAPE they reach them in
   depends on whether the caller is synchronous. The **status toggle** and the **metrics read**
