@@ -163,3 +163,26 @@ first, and they are not checked by anything.** Both this round's real findings w
 statements about coverage that no build could contradict — one in a test comment, two in
 docs. The mechanical fixes were minutes; noticing that the claim and the code had drifted is
 the whole cost.
+
+## Round N+2: a compile error neither branch can see
+
+Copilot noticed that PR #106 declares a package-level `insertApprovedBrief` in
+`internal/infrastructure/postgres/dbtest/audience_lease_live_test.go`, and this branch declares
+one of the same name — different signature — in `audience_actor_live_test.go`. Same
+`dbtest_test` package. This branch merges after #106, so the second one in is a redeclaration
+and the package stops compiling.
+
+Confirmed by grepping both worktrees; the two differ only in whether they return the brief's
+version. Renamed this branch's to `insertApprovedBriefVersioned`.
+
+**What makes this worth recording is that no test could have caught it.** Every gate on both
+branches is green, because neither tree contains both files — the defect exists only in a
+merged state that does not exist anywhere yet. It is the same class as the migration-number
+collisions this branch already hit three times, and the same lesson in a second form: a
+package-level name chosen against the `main` you can see is chosen against a snapshot a
+sibling PR can invalidate. Migration numbers at least have `TestMigrations_UniqueNumbering`
+watching them. Test-helper names have nothing, so the only defence is reading the sibling
+branch before adding one — which is what a bot did here and I did not.
+
+Folding the two into one belongs on whichever branch merges second; the rename is deliberately
+the smaller move, so the merge stays mechanical.
