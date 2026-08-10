@@ -2502,6 +2502,34 @@ func TestBriefService_GetCampaignMetrics_AccountMismatchIs409(t *testing.T) {
 	}
 }
 
+// A campaign whose row records NO creating tenant at all is an ABSENCE, not a mismatch, and
+// must get different remedy text: "reconnect the original account" (the mismatch arm's
+// message) tells the operator to point the connection back at a tenant this row never named,
+// which is not something they can do. The only fix is to re-dispatch the row.
+func TestBriefService_GetCampaignMetrics_ProvenanceUnknownIs409WithReDispatchRemedy(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderHubSpot,
+		PlatformCampaignID: "4242", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	disp := &metricsOnlyDispatcher{err: fmt.Errorf(
+		"campaign c1 does not record which portal email 4242 was created in, so its id cannot be resolved against portal 8112310: %w",
+		errors.Join(domain.ErrCampaignProvenanceUnknown, ErrCampaignAccountMismatch))}
+	s := newMetricsService(camp, disp)
+	_, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected a ConflictError (409) for a campaign with no recorded provenance, got %T: %v", err, err)
+	}
+	if strings.Contains(conflict.Message, "reconnect") {
+		t.Errorf("a row with no recorded provenance cannot be reconnected -- nothing was recorded to reconnect to; got %q", conflict.Message)
+	}
+	if !strings.Contains(conflict.Message, "re-dispatch") {
+		t.Errorf("expected the message to tell the operator to re-dispatch the campaign, got %q", conflict.Message)
+	}
+}
+
 func TestBriefService_GetCampaignMetrics_WindowUnsupportedIs400(t *testing.T) {
 	camp := &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderTwitterAds,

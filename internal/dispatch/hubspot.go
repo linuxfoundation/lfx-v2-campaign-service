@@ -11,12 +11,21 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/utm"
 )
+
+// portalLookupTimeout bounds the best-effort AuthenticatedPortalID call in Dispatch. It is
+// deliberately much shorter than providerCallTimeout (2m, see orchestrator.go): the HubSpot
+// client's own retry policy can wait up to retryMax*maxRetryWait (180s) under sustained
+// throttling, which alone exceeds the whole provider-call budget. A lookup whose failure is
+// only ever logged and shrugged off must not be able to consume the budget the mutating
+// CloneEmail/SetSendList calls need.
+const portalLookupTimeout = 10 * time.Second
 
 // hubspotCreds is the credential shape stored (encrypted) for a HubSpot connection. HubSpot
 // authenticates with a single private-app access token. The field name (no json tag) is the
@@ -178,7 +187,7 @@ func (d *HubSpotDispatcher) ReadMetrics(ctx context.Context, projectID string, p
 	created := hubSpotCreationPortalID(campaign)
 	if created == "" {
 		return nil, fmt.Errorf("get email metrics from hubspot: campaign %s does not record which portal email %s was created in, so its id cannot be resolved against portal %s: %w",
-			campaign.ID, campaign.PlatformCampaignID, current, domain.ErrCampaignAccountMismatch)
+			campaign.ID, campaign.PlatformCampaignID, current, errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
 	}
 	if created != current {
 		return nil, fmt.Errorf("get email metrics from hubspot: email %s was created in portal %s but this project's token authenticates against portal %s: %w",
@@ -260,7 +269,15 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// ready should not be blocked by a provenance lookup. The cost of an empty value lands
 	// entirely on ReadMetrics, which refuses rather than guessing — a campaign that sends and
 	// cannot be measured beats one that does not send.
-	portalID, perr := client.AuthenticatedPortalID(ctx)
+	//
+	// Bounded with its OWN short deadline, separate from providerCallTimeout: the client's
+	// retry policy alone can wait up to retryMax*maxRetryWait (180s) on sustained throttling,
+	// which exceeds the whole 2-minute provider-call budget and would hand CloneEmail a
+	// context that is already cancelled. A best-effort lookup is not worth spending the
+	// mutating calls' budget on.
+	portalCtx, cancelPortal := context.WithTimeout(ctx, portalLookupTimeout)
+	portalID, perr := client.AuthenticatedPortalID(portalCtx)
+	cancelPortal()
 	if perr != nil {
 		slog.WarnContext(ctx, "could not resolve the hubspot portal for this token; the campaign will be created without one and its metrics will not be readable",
 			"project_id", brief.ProjectID, "error", perr)

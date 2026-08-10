@@ -331,6 +331,16 @@ func TestHubSpot_ReadMetricsRefusesWhenTheRowRecordsNoPortal(t *testing.T) {
 	if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
 		t.Fatalf("err = %v, want it to wrap ErrCampaignAccountMismatch", err)
 	}
+	// This case is an ABSENCE, not a mismatch — the row never named a tenant to be
+	// mismatched against. A handler that tells the two apart (brief.go's status mapping)
+	// needs this sentinel to give "re-dispatch it" rather than "reconnect the account"
+	// remedy text, which the row cannot act on. Reverting the errors.Join in hubspot.go's
+	// created == "" branch back to the bare sentinel makes this assertion fail while the
+	// one above keeps passing — proof the two are actually distinguishable, not just two
+	// names for the same check.
+	if !errors.Is(err, domain.ErrCampaignProvenanceUnknown) {
+		t.Fatalf("err = %v, want it to wrap ErrCampaignProvenanceUnknown", err)
+	}
 	if rec.Called() {
 		t.Error("the statistics endpoint was contacted without established provenance")
 	}

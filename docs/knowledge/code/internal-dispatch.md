@@ -286,6 +286,23 @@ reports false numbers:
   unreadable until re-dispatched, and that is the honest outcome: nothing about such a row
   establishes which portal its id means.
 
+  A row with no recorded portal is an ABSENCE, not a MISMATCH, and the two need different
+  operator-facing remedy text: "reconnect the original account" (the mismatch case) tells the
+  operator to point the connection back at a tenant this row never named, which is not
+  something they can do. `ReadMetrics` returns `errors.Join(domain.ErrCampaignProvenanceUnknown,
+  domain.ErrCampaignAccountMismatch)` for the no-portal case — joined, not returned alone, so
+  every pre-existing `errors.Is(err, ErrCampaignAccountMismatch)` caller still matches — and
+  `brief.go`'s status mapping checks `ErrCampaignProvenanceUnknown` FIRST (case order matters
+  in that switch) to give the correct "must be re-dispatched" 409 message instead.
+
+  The best-effort portal lookup in `Dispatch` is bounded by its OWN `portalLookupTimeout` (10s),
+  not the caller's context: the HubSpot client's retry policy alone can wait up to
+  `retryMax*maxRetryWait` (180s) under sustained throttling, which exceeds the entire 2-minute
+  `providerCallTimeout` (`internal/service/orchestrator.go`) and would otherwise hand the
+  mutating `CloneEmail`/`SetSendList` calls that follow an already-cancelled context. A
+  provenance read whose failure is only ever logged must not be able to spend the budget those
+  calls need.
+
 - **The window does not scope the counters.** HubSpot's statistics span selects WHICH EMAILS
   are in scope by SEND date; the counters returned are that email's totals to date. `today`
   and `last_30_days` on an email sent this morning return the same numbers. `Window` records

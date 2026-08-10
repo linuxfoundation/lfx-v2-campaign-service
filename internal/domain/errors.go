@@ -90,6 +90,19 @@ var (
 	// go find one is a wrong instruction, not just an imprecise word.
 	ErrCampaignAccountMismatch = errors.New("the campaign belongs to a different platform account than the project's current connection")
 
+	// ErrCampaignProvenanceUnknown indicates a campaign row records NO creating tenant at
+	// all — not a mismatch, an absence. It is joined with ErrCampaignAccountMismatch (never
+	// returned alone) so existing errors.Is(err, ErrCampaignAccountMismatch) callers keep
+	// matching, while a handler that wants to tell the two apart can check this sentinel
+	// first.
+	//
+	// The remedy differs from an actual mismatch: "reconnect the original account" tells
+	// the operator to point the connection back at a tenant this row never named, which
+	// they cannot do — there is nothing recorded to reconnect to. The only way to give this
+	// row a provenance is to re-dispatch it, which is what a row written before provenance
+	// tracking existed, or under a connection with no tenant id at all, needs.
+	ErrCampaignProvenanceUnknown = errors.New("the campaign does not record which platform tenant it was created under")
+
 	// ErrCampaignWriteInProgress indicates another writer already holds the claim for this
 	// campaign, so this request did not acquire it. Maps to 409.
 	//

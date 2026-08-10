@@ -554,6 +554,18 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "window", string(window))
 			return nil, &briefs.ConflictError{Code: "409", Message: "the platform reported no data for this campaign in the requested window — it may not have run inside the window, may not have been sent or started yet, or may no longer exist upstream"}
+		case errors.Is(merr, domain.ErrCampaignProvenanceUnknown):
+			// Split out from the general mismatch arm below, and placed ABOVE it: this row
+			// does not name a tenant to be mismatched against, so "reconnect the original
+			// account" tells the operator to point the connection back at a tenant that was
+			// never recorded — an instruction they cannot follow, because there is nothing
+			// to reconnect to. The only way to give the row a provenance is to re-dispatch
+			// it, which is the state every campaign written before provenance tracking
+			// existed is in.
+			slog.WarnContext(ctx, "campaign metrics read blocked: campaign does not record which platform tenant it was created under",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "error", safeErrSummary(merr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "this campaign does not record which platform account it was created under, so its metrics cannot be resolved safely — it must be re-dispatched before it can be read"}
 		case errors.Is(merr, ErrCampaignAccountMismatch):
 			// The two customer ids stay server-side: which ad account a project is connected
 			// to is connection configuration, not something a metrics reader needs told.
