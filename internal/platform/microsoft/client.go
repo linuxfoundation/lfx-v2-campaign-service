@@ -14,9 +14,13 @@
 //
 // Like the Google Ads client, Microsoft Advertising auth requires an OAuth2
 // refresh-token exchange (against the Microsoft identity platform) plus a
-// developer token and account/customer-id headers on every call. Credentials and
-// account configuration are injected via NewClient; the client never reads the
-// process environment.
+// developer token on every call. Of the two account-identifying headers, only
+// CustomerAccountId is scope-gated: customer-management discovery omits it whether
+// or not the connection has an account, since it asks about the credentials rather
+// than about one account. CustomerId is NOT gated — it names the manager account the
+// credentials act under, which is as true of a discovery call as of a campaign call,
+// so it is sent on both whenever configured. Credentials and account configuration are injected
+// via NewClient; the client never reads the process environment.
 //
 // This file is the client scaffold: auth, the request layer. Campaign creation
 // lands in campaign.go.
@@ -59,6 +63,12 @@ const (
 	// msAdsBaseURL is the Microsoft Advertising REST base (version appended per
 	// request). The Campaign Management service is hosted under /CampaignManagement.
 	msAdsBaseURL = "https://campaign.api.bingads.microsoft.com"
+
+	// msCustomerBaseURL is the origin of the CUSTOMER MANAGEMENT service, which is a
+	// different host from campaign.api — hence a second field rather than a second path
+	// on msAdsBaseURL. Account discovery lives here (AccountsInfo/Query); the sandbox
+	// equivalent is clientcenter.api.sandbox.bingads.microsoft.com.
+	msCustomerBaseURL = "https://clientcenter.api.bingads.microsoft.com"
 
 	// msOAuthTokenURL is the Microsoft identity platform OAuth 2.0 token endpoint
 	// used to exchange a refresh token for a short-lived access token. The "common"
@@ -129,7 +139,10 @@ type Credentials struct {
 // AccountConfig identifies the ad account the client operates on.
 type AccountConfig struct {
 	// AccountID is the Microsoft Advertising ad account id, DIGITS ONLY, e.g.
-	// "1234567". Sent as the `CustomerAccountId` header on every call.
+	// "1234567". Sent as the `CustomerAccountId` header on every CAMPAIGN
+	// MANAGEMENT call. It is OPTIONAL: Customer Management calls (ad-account
+	// discovery) neither send nor validate it, so a credentials-only connection
+	// leaves it empty until an account is chosen.
 	AccountID string
 	// CustomerID is the OPTIONAL parent customer (manager) id, DIGITS ONLY. Sent as
 	// the `CustomerId` header when set. Empty omits the header (single-account
@@ -143,14 +156,24 @@ type AccountConfig struct {
 // Client
 // ---------------------------------------------------------------------------
 
-// Client is a Microsoft Advertising API client for one ad account.
+// Client is a Microsoft Advertising API client. It is USUALLY bound to one ad
+// account — every Campaign Management call is account-scoped and sends the
+// account id as a header — but the binding is not a construction invariant: the
+// Customer Management surface (ListAdAccounts) answers questions about the
+// CREDENTIALS, and a client built with an empty AccountConfig.AccountID is valid
+// for exactly those calls. That is the state a connection is in before an account
+// has been picked, which is what discovery exists to resolve.
 type Client struct {
 	creds   Credentials
 	account AccountConfig
 
-	baseURL    string
-	apiVersion string
-	tokenURL   string
+	baseURL string
+	// customerBaseURL is the Customer Management origin. Separate from baseURL because
+	// Microsoft splits its API across hosts by service; apiVersion is shared, since both
+	// services are versioned in lockstep at v13.
+	customerBaseURL string
+	apiVersion      string
+	tokenURL        string
 
 	httpClient *http.Client
 	now        func() time.Time
@@ -219,6 +242,18 @@ func WithBaseURL(u string) Option {
 	}
 }
 
+// WithCustomerBaseURL overrides the Customer Management base URL. Separate from
+// WithBaseURL because the two services live on different hosts, so a test pointing one
+// at an httptest.Server must be able to leave the other alone — and a deployment moving
+// to the sandbox has to move both, deliberately, rather than by one option's side effect.
+func WithCustomerBaseURL(u string) Option {
+	return func(c *Client) {
+		if u != "" {
+			c.customerBaseURL = strings.TrimRight(u, "/")
+		}
+	}
+}
+
 // WithTokenURL overrides the OAuth2 token endpoint. Primarily for tests.
 func WithTokenURL(u string) Option {
 	return func(c *Client) {
@@ -228,9 +263,11 @@ func WithTokenURL(u string) Option {
 	}
 }
 
-// WithAPIVersion overrides the Campaign Management API version segment. Lets a
-// deployment pin/bump the version without a code change, and lets tests assert
-// the version reaches the path.
+// WithAPIVersion overrides the API version segment for BOTH services this client
+// speaks to — Campaign Management and Customer Management (ad-account discovery). One
+// field serves both because Microsoft versions them in lockstep; a caller pinning a
+// version is pinning the client, not one of its two hosts. Lets a deployment pin/bump
+// without a code change, and lets tests assert the version reaches the path.
 func WithAPIVersion(v string) Option {
 	return func(c *Client) {
 		if v != "" {
@@ -259,19 +296,22 @@ func withRetryBaseDelay(d time.Duration) Option {
 }
 
 // NewClient builds a Microsoft Advertising client from injected credentials and
-// account config. Redirect following is force-disabled on whatever *http.Client is
+// account config. AccountConfig.AccountID may be empty; the id is validated at the
+// request choke point of the surface that needs it (Campaign Management) rather
+// than here, so a credentials-only client can still reach ad-account discovery. Redirect following is force-disabled on whatever *http.Client is
 // used, including one supplied via WithHTTPClient (applied to a shallow copy so the
 // caller's client is not mutated). Mirrors the google-ads/reddit clients.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
 	c := &Client{
-		creds:          creds,
-		account:        account,
-		baseURL:        msAdsBaseURL,
-		apiVersion:     msAdsAPIVersion,
-		tokenURL:       msOAuthTokenURL,
-		httpClient:     &http.Client{Timeout: msAdsRequestTimeout, CheckRedirect: noFollow},
-		now:            time.Now,
-		retryBaseDelay: retryBaseDelay,
+		creds:           creds,
+		account:         account,
+		baseURL:         msAdsBaseURL,
+		customerBaseURL: msCustomerBaseURL,
+		apiVersion:      msAdsAPIVersion,
+		tokenURL:        msOAuthTokenURL,
+		httpClient:      &http.Client{Timeout: msAdsRequestTimeout, CheckRedirect: noFollow},
+		now:             time.Now,
+		retryBaseDelay:  retryBaseDelay,
 	}
 	for _, o := range opts {
 		o(c)
@@ -605,7 +645,43 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 	if err := c.validateAccountIDs(); err != nil {
 		return nil, err
 	}
+	return c.do(ctx, method, c.baseURL+"/CampaignManagement/"+c.apiVersion+"/"+path, path, body, idempotent, true)
+}
 
+// doCustomerRequest performs one call against the CUSTOMER MANAGEMENT service —
+// {customerBaseURL}/CustomerManagement/{version}/{path} — reusing doRequest's token
+// refresh, 429 policy and outcome classification.
+//
+// It exists because Customer Management is a different service on a different host:
+// doRequest's URL is hardcoded to /CampaignManagement on c.baseURL, so pointing a
+// customer-management call at it would either hit the wrong host or require overriding
+// the base URL for every campaign call too.
+//
+// CustomerAccountId is NOT sent, and validateAccountIDs is NOT called, because this
+// service answers questions about the CREDENTIALS rather than about one account —
+// including for a connection that holds credentials and no account id at all, which is
+// precisely the state ad-account discovery exists to resolve. Requiring a valid account
+// id here would make discovery unreachable exactly when it is needed.
+//
+// CustomerId is a separate matter and IS still sent when configured: it names the manager
+// account the credentials act under, not the account being asked about, so it narrows
+// nothing that discovery needs. That is why this method validates it inline rather than
+// skipping validation wholesale with validateAccountIDs — a header that reaches the wire
+// is a header whose contents must be checked, and the AccountID half of that helper is the
+// only part this path can afford to drop.
+func (c *Client) doCustomerRequest(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, error) {
+	if c.account.CustomerID != "" && !accountIDRE.MatchString(c.account.CustomerID) {
+		return nil, fmt.Errorf("invalid Microsoft Advertising customer id %q: must be digits only", clipID(c.account.CustomerID))
+	}
+	return c.do(ctx, method, c.customerBaseURL+"/CustomerManagement/"+c.apiVersion+"/"+path, path, body, idempotent, false)
+}
+
+// do is the shared request loop behind doRequest and doCustomerRequest. fullURL is
+// built by the caller (the two services differ in host and path root); path is carried
+// separately because it is what error messages name, and a full URL in an error is both
+// noisier and a wider disclosure surface. accountScoped selects whether the per-account
+// headers are attached.
+func (c *Client) do(ctx context.Context, method, fullURL, path string, body any, idempotent, accountScoped bool) ([]byte, error) {
 	var payload []byte
 	if body != nil {
 		p, err := json.Marshal(body)
@@ -615,8 +691,6 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 		}
 		payload = p
 	}
-
-	fullURL := c.baseURL + "/CampaignManagement/" + c.apiVersion + "/" + path
 
 	for attempt := 0; ; attempt++ {
 		// Fetch the token INSIDE the loop: after a 429 backoff (up to maxRetryWait per
@@ -628,7 +702,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 			return nil, err
 		}
 
-		raw, retryAfter, retryable, aerr := c.attempt(ctx, method, fullURL, path, token, payload)
+		raw, retryAfter, retryable, aerr := c.attempt(ctx, method, fullURL, path, token, payload, accountScoped)
 		// retryable is set only for a 429. It is retried ONLY when the call is
 		// idempotent AND attempts remain — a non-idempotent 429 (a create that may
 		// have committed) is returned immediately so a blind retry can't double-create.
@@ -675,7 +749,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 //
 // Splitting the per-attempt work out keeps the retry loop readable and ensures the
 // response body is always closed via defer on every exit path.
-func (c *Client) attempt(ctx context.Context, method, fullURL, path, token string, payload []byte) (raw []byte, retryAfter time.Duration, retryable bool, err error) {
+func (c *Client) attempt(ctx context.Context, method, fullURL, path, token string, payload []byte, accountScoped bool) (raw []byte, retryAfter time.Duration, retryable bool, err error) {
 	var bodyReader io.Reader
 	if payload != nil {
 		bodyReader = bytes.NewReader(payload)
@@ -696,7 +770,15 @@ func (c *Client) attempt(ctx context.Context, method, fullURL, path, token strin
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("DeveloperToken", c.creds.DeveloperToken)
-	req.Header.Set("CustomerAccountId", c.account.AccountID)
+	// CustomerAccountId is omitted entirely on a non-account-scoped call rather than
+	// sent empty: an empty header is a claim about an account. Which calls skip it is
+	// decided by the OPERATION's scope, not by whether this connection happens to have
+	// an account — customer-management discovery omits it even when AccountID is set,
+	// because the question it asks is about the credentials, and a connection being
+	// re-pointed at a different account must not have the old one narrow the answer.
+	if accountScoped {
+		req.Header.Set("CustomerAccountId", c.account.AccountID)
+	}
 	if c.account.CustomerID != "" {
 		req.Header.Set("CustomerId", c.account.CustomerID)
 	}
