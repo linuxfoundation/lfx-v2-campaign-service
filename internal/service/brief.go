@@ -566,6 +566,23 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "error", safeErrSummary(merr))
 			return nil, &briefs.ConflictError{Code: "409", Message: "the campaign belongs to a different ad account than this project's current connection — reconnect the original account to read its metrics"}
+		case errors.Is(merr, domain.ErrSystemConnectionNotUsable):
+			// The project has no connection of its own and the LF system row it fell back to
+			// is unusable. This arm must sit ABOVE both arms below, because systemScoped
+			// WRAPS rather than replaces: errors.Is still reports ErrConnectionNotUsable (and
+			// ErrAccountNotSelected where that applies), so a broad match would win and hand
+			// back a 409 telling this caller to repair "this project's connection" — which
+			// they do not have, and which names a scope they cannot address. That misdirection
+			// is the entire reason the sentinel exists, so failing to inspect it here makes
+			// the tag decorative.
+			//
+			// Nobody but an operator can act, so page one and tell the caller nothing
+			// specific. The reason token is safe to log; the error itself is not, for the
+			// reason spelled out at unusableConnectionReason.
+			slog.ErrorContext(ctx, "the LF system connection is not usable; campaign metrics reads are failing for every project without its own connection",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "reason", unusableConnectionReason(merr))
+			return nil, &briefs.InternalServerError{Code: "500", Message: "campaign metrics could not be read"}
 		case errors.Is(merr, domain.ErrAccountNotSelected):
 			// Split out from the general unusable-connection arm below, and placed ABOVE it,
 			// because ErrAccountNotSelected is always wrapped alongside ErrConnectionNotUsable
@@ -863,6 +880,20 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "status", p.Status, "error", safeErrSummary(terr))
 			return nil, &briefs.ConflictError{Code: "409", Message: "the campaign belongs to a different ad account than this project's current connection — reconnect the original account to change its status"}
+		case errors.Is(terr, domain.ErrSystemConnectionNotUsable):
+			// Same placement and same reason as the metrics branch: systemScoped WRAPS the
+			// usability sentinels rather than replacing them, so either arm below would match
+			// first and tell a caller with no connection of their own to repair "this
+			// project's connection". Only an operator can act on the LF system row.
+			//
+			// Note this is reached BEFORE the unconfirmed check on purpose. Credential
+			// resolution refused the connection before the platform was contacted, so there is
+			// no ambiguous mutation to protect — nothing was sent, and the campaign's stored
+			// status is still correct.
+			slog.ErrorContext(ctx, "the LF system connection is not usable; campaign status toggles are failing for every project without its own connection",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "status", p.Status, "reason", unusableConnectionReason(terr))
+			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign status could not be changed"}
 		case errors.Is(terr, domain.ErrAccountNotSelected):
 			// Above the general arm for the reason given on the metrics branch: the sentinel is
 			// always wrapped alongside ErrConnectionNotUsable, so a broad match would swallow

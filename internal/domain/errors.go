@@ -132,6 +132,28 @@ var (
 	// platform package.
 	ErrConnectionNotUsable = errors.New("the stored connection is not usable as configured")
 
+	// ErrSystemConnectionNotUsable marks a defect in the LF-owned SYSTEM connection rather
+	// than in the project's own. It is wrapped alongside ErrConnectionNotUsable, not
+	// instead of it, so nothing that merely asks "was this refused before the platform?"
+	// has to learn about it.
+	//
+	// The two need separating because the remedy has a different owner. A project whose
+	// own connection is broken is told to edit it — correct, and it can. A project with NO
+	// connection falls back to the system scope, which no request can address
+	// (rejectSystemScope) and no project can edit, so the same 400 sends the caller to fix
+	// something that is neither theirs nor reachable, while the operator who could fix it
+	// hears nothing. This is the operator's page, so it is a 5xx and an ERROR log.
+	ErrSystemConnectionNotUsable = errors.New("the LF system connection is not usable as configured")
+
+	// ErrSystemConnectionOrigin records WHICH ROW the credentials came from, independently
+	// of how the failure is classified. ErrSystemConnectionNotUsable answers a different
+	// question — who has to fix it — and the two do not coincide: a blob that fails
+	// authenticated decryption is not a usability defect and gets neither marker, yet it
+	// is still the system row that failed. The operator log for that arm asks whether one
+	// row or every connection is broken, so naming the CALLER's project there sends whoever
+	// is paged to inspect a row that project does not have.
+	ErrSystemConnectionOrigin = errors.New("credentials came from the LF system connection")
+
 	// ErrCredentialsMalformed indicates the stored credential blob is structurally
 	// invalid — the Encryptor could not even ATTEMPT to authenticate it (for the
 	// AES-GCM implementation: shorter than a nonce PLUS the authentication tag, since

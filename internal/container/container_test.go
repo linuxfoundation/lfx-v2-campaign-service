@@ -1202,6 +1202,9 @@ func (fakeConnRepo) Update(context.Context, *model.Connection, int64) (*model.Co
 func (fakeConnRepo) SetCredential(context.Context, string, model.Provider, []byte, *model.Actor) (*model.Connection, error) {
 	return nil, domain.ErrNotFound
 }
+func (fakeConnRepo) UpdateWithCredential(context.Context, *model.Connection, []byte, int64) (*model.Connection, error) {
+	return nil, domain.ErrNotFound
+}
 func (fakeConnRepo) Delete(context.Context, string, model.Provider, *model.Actor) error {
 	return domain.ErrNotFound
 }

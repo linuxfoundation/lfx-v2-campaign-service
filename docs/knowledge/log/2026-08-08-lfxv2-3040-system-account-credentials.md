@@ -1,0 +1,355 @@
+# 2026-08-08 — LFXV2-3040: system account credentials
+
+**Update** — the LF-owned system ad-account credentials now have a way IN. `internal/bootstrap`
+installs and rotates the row for `model.SystemProjectID`, which no HTTP route can reach
+(`rejectSystemScope`), driven by the `bootstrap-system-account` subcommand; `resolved` carries
+whether credentials came from that fallback so a defect in it pages an operator instead of
+returning a 400 to a project that owns no connection to edit. Lessons below.
+
+**Green gates say nothing about reachability.** The first cut compiled, vetted, linted and tested,
+and could not READ the system credentials; the second could not WRITE them. An installer is part of
+the feature, and so are its artifact and its environment — a `cmd/` binary ko never publishes is
+unavailable, and one reading `DATABASE_URL` is dead in-cluster, where the chart injects `PG*`.
+
+**Absence and uncertainty are different answers, and a choke point covers only what passes through
+it.** Only a project with NO connection falls back to the LF account; a broken one must not. And
+`ListGoogleAdsAccounts` was a SEVENTH connection route the "all six go through
+`connection_handler.go`" count missed — the count came from the abstraction, not the routes.
+
+**Valid JSON is not the bar — the bar is what the reader matches, and what will be WRITTEN.**
+Untagged structs make `encoding/json` fall back to a case-insensitive match that cannot bridge an
+underscore, so a body in the documented snake_case decoded to an all-zero struct with the installer
+exiting 0. Then `Update` rewrites every config column, so *requiring* a key forced every rotation to
+re-state it and *replacing* rather than merging NULLed its siblings. See `code/internal-dispatch.md`.
+
+## Whose connection is broken decides who can fix it
+
+A project with no connection of its own runs on the LF system row, and until this round a
+defect in that row surfaced as `ErrConnectionNotUsable` alone — the same error a project's
+OWN broken connection produces. Discovery answered 400 and told the caller to edit "the
+stored connection": they have none, and the system scope is unaddressable by construction
+(`rejectSystemScope`), so the one party who could act heard nothing. `ErrSystemConnectionNotUsable`
+is wrapped ALONGSIDE the original, so nothing that merely asks "refused before the platform?"
+has to learn about it, and it is applied at both places a defect can be found — inside
+`resolveConn`, and later by an adapter's own validator, via `resolved.systemScoped`.
+
+**An error's HTTP status answers "what happened"; its ownership answers "who can fix it",
+and the two are not the same question.**
+
+## The installer writes past the API, so it must re-check what the API checks
+
+`bootstrap-system-account` speaks to the repository and encryptor directly, which is what
+makes it able to reach the reserved scope at all — and also what lets it write values
+`design/connection.go` would refuse with a 400. Three separate versions of one mistake:
+credential fields were checked for PRESENCE rather than decoded as non-empty STRINGS, so
+`"client_id": 123` installed and failed at dispatch; account ids and path-interpolated
+config values were not shape-checked at all, so Meta `account_id: "foo"` or an X id
+containing `/` landed on an ACTIVE row; and the rotation was TWO writes, so a failed second
+one paired a new credential with an old account. Reordering the two only chose which mixed
+state a failure left behind, so the port grew `UpdateWithCredential` instead: account,
+config and credential go in ONE statement gated on the row's version. A partial write is no
+longer reachable, and a concurrent rotation loses the version check — is told nothing was
+written and to rerun — rather than interleaving with the winner. The command stays
+idempotent, so a re-run converges.
+
+An account-less row is also no longer installable for a provider that cannot finish one.
+Credentials-first is a real state only where the dispatcher can enumerate the accounts a
+credential reaches, which today means Google Ads alone; the LinkedIn, Meta, Reddit, X and
+Microsoft adapters each refuse an empty account id and offer no discovery endpoint, so such
+a row would install, report success and fail every dispatch forever. `requireAccountID`
+gates it, checking the value about to be WRITTEN so a rotation may still omit the flag.
+
+**A tool that bypasses the API inherits every validation the API was doing for it.**
+
+**Follow-on (review round 3).** One documentation defect and three tests for boundaries that
+had none.
+
+The merge of `origin/main` left live conflict markers in `docs/api-catalog.md`'s account-discovery
+row, and the two sides were not a formatting clash: HEAD described the system-account fallback
+(404 only when NEITHER the project nor the LF row has a connection; 500 for a fallback onto an
+unusable system row), while main described the credentials-first bootstrap that #91 shipped
+(`account_id` no longer required, POST-creds → GET accounts → PUT selection, 409 on the toggle and
+metrics paths). Both are true of this branch, so taking either side would have deleted a shipped
+behaviour from the catalog. The row is now one description covering both, and it ends with the
+sentence that makes them compose: a project that has connected NOTHING falls back to the LF row,
+while a project that has connected credentials but selected no account is served by its own row
+and never falls back — its connection exists, so there is nothing to fall back from.
+
+The three tests all pin `if`s whose two branches are one keyword apart in the source and very far
+apart in consequence.
+
+`internal/dispatch/creds_test.go` gains
+`TestResolveDoesNotFallBackFromATransientProjectLookupFailure`. The fallback is gated on
+`errors.Is(err, domain.ErrNotFound)`; every other repository error must fail closed. Falling back
+on a genuine absence spends LF budget for a project that chose to have no account, which is the
+design. Falling back on a DB timeout spends it for a project that may have a perfectly good
+account of its own, on the strength of a lookup that never answered. The fake serves a USABLE
+system row, so the wrong behaviour is the silent, working one — revert-verified by widening the
+guard to `err != nil`, which resolves `sys-account` and fails the test.
+
+`internal/infrastructure/postgres/dbtest/connection_live_test.go` is new, and it exists because
+`TestClaimVersionIsBackedByACompareAndSwap`'s own doc comment says what changed: "asserted against
+the SQL text because this package has no live-database harness in CI". It has one now. The
+property under test is not that `AND version = $n` appears in a string — it is that a second
+writer holding the same expected version matches ZERO rows once the first commits, that the
+repository tells that apart from a missing row, and that the rejected write leaves nothing
+partially applied. Only a real `UPDATE` can answer any of the three. A third case pins what
+`UpdateWithCredential` is for: the losing rotation carries both a different account and a
+different credential, so a two-statement write could leave the row holding one run's account
+beside the other's credential — a state that authenticates against the wrong account, which is
+the worst available outcome because it is the one that does not fail.
+
+`internal/infrastructure/config/config_test.go` pins the `DATABASE_URL` / `PG*` precedence, and
+the second case is the one worth reading: a PARTIAL `PG*` set is REFUSED, not quietly ignored in
+favour of `DATABASE_URL`. That is the right answer precisely because the alternative reads as
+friendlier — a chart revision that drops `PGPASSWORD` would otherwise redirect the service to
+whatever `DATABASE_URL` happens to hold, and everything would start while the data went somewhere
+else. The server and `bootstrap-system-account` resolve the DSN through this same function; were
+they ever to disagree, the subcommand would install the LF credential in one database and the
+server would read from another, and the symptom would be a connection that is simply not there.
+
+
+## Follow-on (review round 2) — the audience tag had one caller, not four
+
+`systemScoped` re-attributes an unusable-connection defect to the LF system row so an operator
+is paged instead of a project being told to go edit a connection it does not own. It was applied
+at ONE call site — `resolveGoogleAdsDiscoveryClient` — on the reasoning that tagging at the
+caller avoids wrapping the sentinel twice.
+
+That reasoning held for the site it was written at and silently failed for every other one.
+`Dispatch` (create) and `resolveGoogleAdsClient` (toggle, metrics) resolve the same connection
+through the same validators and returned the identical LF-row defect **untagged**: a project
+running on the fallback got a 400 naming a connection it cannot reach, and nobody was paged.
+
+`resolve` itself was fine — it tags what it classifies, and `TestUnusableSystemConnectionKeepsItsOrigin`
+covers that. The gap was strictly the defects found AFTER resolve succeeds: inactive status,
+undecodable or incomplete credentials, and no account selected. An account-less system row
+resolves cleanly and fails in `validateGoogleAdsConnection`, which is exactly the window the
+caller-side arrangement left open.
+
+The fix moves the tagging from the callers into the two validators, as a named return plus
+`defer func() { err = res.systemScoped(err) }()`, so a return site added later cannot forget it.
+`systemScoped` gained an idempotence guard (it returns early when the error already carries
+`ErrSystemConnectionNotUsable`), which is what makes "callers can apply it unconditionally" —
+what its doc comment always claimed — actually true, and removes the duplicate-prefix objection
+that pushed the tagging up to the callers in the first place.
+
+`TestSystemScopedCoversEveryCallerNotJustDiscovery` runs both defect classes across all three
+callers, asserting the system row IS tagged and a project's own row is NOT. Reverting either
+`defer` fails it in five subtests.
+
+## Follow-on (review round 2) — a deleted connection does fall back
+
+Asked on review: does a soft-deleted project connection now silently run on the LF system
+account? At this point in the branch it did, and the answer given here was that it was intended.
+`Get` filters `status <> 'deleted'`, producing the same `domain.ErrNotFound` the fallback keys
+on, so a delete returned the project to the never-connected state — the state the fallback
+exists to serve. The reasoning was that the alternative would make deleting a connection a way
+to break campaigns rather than a way to disconnect an ad account.
+
+**That answer was wrong, and a later round reversed it — see "An explicit no, read as silence"
+below.** What it missed is that the two states are not equivalent to the person whose money is
+being spent: an owner who removes their ad account has said no, and only "never connected" is
+silence. The paragraph is kept rather than rewritten because the reasoning that produced it is
+the interesting part — the sentinel really is the same in both cases, and it took asking who the
+outcome happens TO, rather than what the code returns, to see that the sameness was the defect.
+
+The live pin remains, renamed to say what it now shows rather than what it was taken to justify:
+`TestSoftDeletedConnectionIsIndistinguishableFromGetsNotFound` creates a connection, deletes it,
+and asserts `Get` returns `ErrNotFound` while the row survives with `status = 'deleted'`. An
+in-memory fake returns `ErrNotFound` by construction and would pass against a `Get` that had
+lost its filter — which is exactly why the ambiguity had to be established against a real row
+before anything could be built on top of it.
+
+
+## Follow-on (review round 3) — the tag had one inspector, not three
+
+Round 2 gave `systemScoped` every CALLER. It did not give the sentinel every INSPECTOR, which
+is the same defect one layer up.
+
+`ErrSystemConnectionNotUsable` was matched in exactly one place — the account-discovery
+handler. The metrics and toggle handlers matched `ErrAccountNotSelected` and
+`ErrConnectionNotUsable`, and both still matched, because `systemScoped` **wraps** rather than
+replaces:
+
+    fmt.Errorf("%w: %w", domain.ErrSystemConnectionNotUsable, err)
+
+`errors.Is` therefore continues to report the usability sentinels, so the broad arm won on arm
+order alone. A project with no connection of its own, falling back to an unusable LF system
+row, was handed a 409 reading *"this project's ad-platform connection is not ready — repair the
+connection"*. They have no connection, and the system scope is not addressable by them. Telling
+the wrong owner to fix the wrong thing is the ONLY reason the sentinel exists, so on two of its
+three consumers the tag was decorative.
+
+Both handlers now inspect it first and return a 500 with an operator-facing `ErrorContext` log,
+mirroring the discovery arm. Nothing specific reaches the caller, because there is nothing they
+can act on.
+
+Two things make the tests binding. Each asserts the STATUS TYPE, not merely that an error
+occurred — the broad arm errors too, so a presence check passes against the bug. And a contrast
+test pins that a project-owned connection still gets the actionable 409: without it, hoisting
+the system arm to match every unusable connection would satisfy every other assertion while
+converting the common, fixable case into an opaque 500.
+
+The general lesson is the one this PR has now paid for twice: a sentinel added for its
+AUDIENCE is only worth what its arm order buys. Tagging every producer and inspecting one
+consumer leaves the same hole as tagging one producer did.
+
+## The fallback is scoped to paid ads, not to every provider
+
+Copilot caught that `credsSource` has consumers beyond campaign dispatch: `AudienceBuilder`
+resolves `ProviderHubSpot` through the same `resolve`, so the fallback as first written also
+applied to `/audiences/build`. A project with no HubSpot connection would have had its contact
+lists created in the LF's own portal — real contact data landing in the wrong tenant, silently,
+and against the documented behaviour that the build fails.
+
+The two cases are not the same trade. Running a project's campaign on the LF ad account spends
+LF budget on an LF-run campaign, which is the deliberate point of this change. Writing one
+tenant's contacts into another's CRM portal is a different thing entirely, and nobody chose it.
+
+`systemConn` now returns "no system connection" for any provider that is not paid ads, before
+the database is consulted at all. It asks `Kind()` rather than comparing against
+`ProviderHubSpot`, following that type's own guidance: a provider added later is unclassified
+until someone classifies it, so it is denied the LF credential by default rather than
+inheriting it. `TestSystemFallbackIsGatedByClassificationNotByName` walks `AllProviders()` and
+asserts both directions, so the classification and the gate cannot drift apart.
+
+## Two ways this installer was quietly not doing what it said
+
+Both came from the same review pass, and both are failures of an OMISSION meaning the wrong
+thing.
+
+**An unknown subcommand started the server.** `main` matched the exact string
+`bootstrap-system-account` and fell through on anything else. Because `flag.Parse` stops at the
+first positional argument, `bootstrap-system-acount` — one character short — parsed without
+complaint and the process began serving HTTP. The deployment Job that exists to install the
+credential would then run as a second, healthy, idle replica: nothing installed, nothing logged,
+no non-zero exit for the Job to fail on, and a fallback that stays empty while everything reports
+green. `runCommand` now refuses an unrecognised command with exit 2. It classifies only the FIRST
+argument, and only when it does not begin with `-`, because a subcommand has to come first and
+scanning further would mistake a flag VALUE for one: `-p 8080` leaves a bare `8080` in the
+argument list, and rejecting that would break ordinary server startup — a worse failure than the
+one being fixed. The decision is returned rather than exited on so a test can make it without a
+process.
+
+**Nothing could be removed.** `-account-id`'s help text described the create-time meaning of an
+omission ("install credentials first, discover the account afterwards") while on a rotation the
+same omission meant KEEP. Both behaviours are right; the gap was that there was no third thing to
+say. Rotating onto a credential for a DIFFERENT ad account without restating `-account-id` left
+the old account id on the row, so the new credential dispatched at the old account — two
+individually valid values, one wrong pairing, no error. And an optional config column that had
+become wrong could not be removed by anything, from anywhere: `mergeConfig` preserves what a run
+does not mention, and `rejectSystemScope` means this installer is the system scope's only writer.
+`login_customer_id` is the case that matters — it names the manager account requests are issued
+through, and a stale one is sent as a header on every dispatch.
+
+The flags are now tri-state: unmentioned keeps, `-account-id X` / `-config k=v` sets,
+`-clear-account-id` / `-config k=` removes. The clears deliberately land in values the existing
+rules already check rather than getting rules of their own — `requireConfig` sees the merged map,
+so clearing `org_id` is refused by the guard that already refuses omitting it, and
+`requireAccountID` sees the cleared account id, so returning a Meta row to credentials-first is
+refused for the same reason creating one that way is. Two additions were needed: `requireShapes`
+skips an empty value (an instruction is not a value, and without the skip every clear failed with
+a shape complaint about a value nobody supplied), and a clear before the row exists is REFUSED
+rather than dropped — obeying it and ignoring it produce the same row, so accepting it would
+report success for an instruction that never ran, and the likely cause is an operator who thought
+they were rotating a row that is not there.
+
+## A third way the installer exited 0 on a row nothing could use
+
+Both defects above were an omission meaning the wrong thing. Review found a third of the same
+family, one step subtler than the string-decoding check already recorded here.
+
+`canonicalCredentials` proved each required value was a non-blank string with
+`strings.TrimSpace(v) == ""`. That answers "is this blank?" and nothing else — and the value
+written is the ORIGINAL `json.RawMessage`, padding intact, since folding rebuilds the map from the
+raw messages rather than the decoded strings. So `{"access_token":" token "}` passed validation and
+was encrypted verbatim. LinkedIn's own preflight rejects an access token that differs from its
+trimmed form, so the install exited 0 having written the system row every unconnected project falls
+back to, in a state every LinkedIn dispatch refuses — the exact deferred failure the surrounding
+check exists to prevent, reached by a route the check did not cover.
+
+It is refused rather than trimmed. A credential is opaque to this command, so silently rewriting
+one would hide a truncated paste, and no provider issues a secret whose surrounding whitespace is
+significant. The diagnostic names every padded key, sorted, and is separate from the missing-keys
+one so an operator is not told a key they supplied is "missing".
+
+The narrowing matters as much: whitespace INSIDE a value is untouched (a secret's interior is not
+this command's business), and padding on a key the provider does not require is ignored. Seven
+sub-tests, revert-checked — with the guard removed, the padded values appear verbatim inside the
+written row's encrypted blob.
+
+## An explicit no, read as silence
+
+The fallback's safety argument is that only a GENUINE absence falls back — a repo error, an empty
+blob, a decrypt failure all mean the project has a connection needing attention, and running its
+campaign on the LF account would spend LF money on a request the project believed was its own.
+Review found the one absence that is not genuine and was being treated as though it were.
+
+`ConnectionRepo.Delete` soft-deletes: it sets `status = 'deleted'`, and `Get` filters those rows
+out and returns `domain.ErrNotFound`. So a project owner who deliberately disconnected their ad
+account produced exactly the sentinel the fallback reads as "never connected", and the next
+dispatch quietly moved their spend onto the Linux Foundation's account — with an INFO log for it
+and nothing else. The invariant this PR wrote down in its own comment was violated by the branch
+directly beneath it.
+
+`connReader.Disconnected` is the probe that separates the two states, backed by a one-bit
+`SELECT EXISTS(... status = 'deleted')`. Two decisions in it are worth keeping:
+
+- It is on the INTERFACE, not behind a type assertion. A reader that cannot answer now fails to
+  COMPILE. Behind an assertion, the else-branch would hand exactly the projects whose repo could
+  not answer the fallback this guard exists to withhold — the defect restored by the mechanism
+  meant to fix it.
+- A probe that ERRORS fails closed. An unanswered "was this disconnected?" is not a no, and
+  failing open would restore the whole defect on any database blip, which is the shape a fallback
+  fails in.
+
+The refusal keeps `ErrNotFound` wrapped, so read-only callers still answer 404 rather than 5xx —
+the project genuinely has no usable connection; what changed is which account does not get used.
+Three sub-tests, revert-checked: with the probe ignored, a disconnected project resolves with
+`fromSystem: true`.
+
+
+### The probe had an index that named the right column and covered the wrong rows
+
+A later review round found the query itself unindexed, and the way it was unindexed is the part
+worth keeping. Every connection table already carries a `project_id` index from migration 000001
+— but each is partial, `WHERE status <> 'deleted'`, because its real job is uniqueness among LIVE
+connections. That predicate is the exact complement of the probe's. So grepping for "is
+project_id indexed on this table" answers yes, and the answer is useless: the index covers every
+row except the ones this statement reads.
+
+The cost lands on the busiest path the fallback has. The probe runs after a project-connection
+MISS — that is, on every dispatch for a project relying on the system account — so the sequential
+scan is not an edge case, it is the normal case, and it grows with every project that ever
+connects.
+
+Migration 000017 adds the mirror-image partial index, `(project_id) WHERE status = 'deleted'`, on
+the six paid-ads tables. The two indexes then partition each table and neither pays for the
+other's rows; deleted rows are the small side and stay small. Not one-per-project, though —
+000001's uniqueness is partial (`WHERE status <> 'deleted'`), so it constrains live rows only
+and a project that connects and disconnects repeatedly leaves one tombstone per cycle. What
+bounds that side is the RATE: disconnecting is a deliberate operator action, not traffic. `hubspot_connections` is deliberately excluded: `credsSource` gates the
+probe behind `provider.IsPaidAds()`, so an index there would be write cost for a query that is
+never issued. If that gate widens, the migration widens with it.
+
+**It is numbered 000017, not 000016, and that is a merge-ORDERING obligation.** `main` ends at
+000015 and PR #95 (LFXV2-3038) claims 000016 for its campaign actor columns. `golang-migrate`
+records only the HIGHEST version it has applied and never applies a lower one afterwards, so if
+this branch lands first, #95's migration is skipped silently and permanently — `Up()` reports
+success and the columns simply are not there. The gap is therefore recorded in
+`allowedVersionGaps`, whose own contract is that an entry there is a promise about merge order
+rather than a numbering excuse: **#93 must not merge before #95.**
+`TestMigrations_AllowedVersionGapsAreStillOpen` deletes the excuse for us by failing once 000016
+exists in this tree.
+
+`TestDisconnectedProbeIsIndexed` binds it, and it has to assert on the PLAN rather than on
+behaviour or timing. The query returns the same answer with or without an index, so no
+correctness test can distinguish the two, and the live tables hold a handful of rows, so timing
+would be noise. It runs `EXPLAIN` with `enable_seqscan = off` and fails on a surviving `Seq
+Scan`. That setting does not conjure an index into use — if none applies, Postgres still scans —
+it only removes the reason the planner would decline a usable one at this table size. All six
+paid-ads tables are checked, not google_ads alone, because an index omitted from one table is a
+full scan on that one provider's dispatches, which is exactly the failure a single-table test
+would miss. Revert-checked by dropping the six indexes: all six sub-tests fail with the plan
+printed.
