@@ -564,8 +564,13 @@ type campaignLock struct {
 // platform call. The lock is therefore a CONTENTION guard (it makes the common case one
 // writer at a time), not durable ownership.
 //
-// What is durable is the compare-and-swap in replaceCampaignQuery: `WHERE ... version=$12`
-// with `version=version+1`. Whichever writer commits first bumps the version; the other's
+// What is durable is the compare-and-swap in replaceCampaignQuery: the `version=` term of its
+// WHERE clause, paired with `version=version+1` in the SET list. (Named by term rather than by
+// placeholder ordinal on purpose — this comment read `version=$12` until the actor parameter
+// shifted the CAS to `$13` and left `$12` binding `project_id`, so the load-bearing sentence
+// pointed at the wrong column. Ordinals renumber; the column name does not.)
+//
+// Whichever writer commits first bumps the version; the other's
 // ReplaceCampaign matches zero rows and surfaces ErrPreconditionFailed, so a lost lock can
 // never produce two persisted writes at the same version, two outbox rows, or a stale
 // overwrite. TestClaimVersionIsBackedByACompareAndSwap pins that predicate.

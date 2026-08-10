@@ -175,3 +175,21 @@ The general shape: **a fake is a claim about the real component's post-condition
 the only such claim the tests above it can check.** A fake that under-populates is not
 "minimal" — it silently narrows what every test built on it can ever detect. When a production
 statement writes two columns from one value, the fake writes two columns from one value.
+
+## Round N+3: a comment that cited a placeholder ordinal, and the ordinal moved
+
+The DURABILITY BOUNDARY comment above `ReplaceCampaign` explains that the advisory lock is a
+contention guard and that the compare-and-swap is what is actually durable. It named the CAS as
+`` `WHERE ... version=$12` ``. Adding the actor parameter shifted the CAS to `$13` — and left
+`$12` binding `project_id`. The single load-bearing sentence in a comment about correctness under
+lock loss was pointing at the wrong column.
+
+Nothing broke, because the SQL is right and `TestClaimVersionIsBackedByACompareAndSwap` pins the
+predicate. What broke is the comment's usefulness to the next person reasoning about concurrency
+here, who would have gone looking for a version check on `project_id`.
+
+The fix is not to write `$13`. It is to stop citing ordinals: **a positional placeholder is a
+property of the parameter LIST, not of the clause the prose is describing**, so any comment that
+names one acquires a dependency on every future parameter added anywhere earlier in the query.
+The comment now names the `version=` term by column, which renumbering cannot invalidate, and
+records why.
