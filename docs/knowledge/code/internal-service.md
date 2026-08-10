@@ -247,8 +247,12 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   value such as a dashed `login_customer_id`. The platform is never contacted. This arm is what
   keeps the 503 below honest: a 503 promises that waiting might help, and none of these conditions
   change until a human edits the connection. The distinction cannot be made here — a setup failure
-  and an upstream one arrive as the same type — so `internal/dispatch/googleads.go` wraps the
-  pre-send failures with the sentinel and this arm reads it. The wrap has three owners:
+  and an upstream one arrive as the same type — so the dispatch layer wraps the pre-send failures
+  with the sentinel and this arm reads it. Four adapters do:
+  `internal/dispatch/{googleads,reddit,twitter,microsoft}.go`, each in its own shared
+  resolve/validate helper, so every path through an adapter is covered rather than just the one
+  that happened to be fixed. Meta and LinkedIn do NOT yet — their equivalent checks are still bare
+  and still fall to the 503 arm below (LFXV2-3069 part 2). In Google Ads the wrap has three owners:
   `validateGoogleAdsCredentials` tags the credential-state three (inactive, undecodable,
   incomplete), which is why they reach callers beyond discovery — but the SHAPE they reach them in
   depends on whether the caller is synchronous. The **status toggle** and the **metrics read**
@@ -319,6 +323,13 @@ The distinction is carried in the response **message**, not a field. `ConflictEr
 Goa type with exactly `code` and `message`, so exposing a machine-readable `reason` would mean
 changing a type every 409 in this service returns; the reason token reaches operators through
 the log instead.
+
+**The message names no accounts endpoint**, and that constraint is load-bearing rather than
+stylistic. Only Google Ads has one (`design/connection.go`, `list-google-ads-accounts`), and
+since Reddit, X/Twitter and Microsoft Ads tag this defect too they reach the same arm — a
+message pointing them at `.../accounts` would prescribe a route that 404s, which reads as a
+service bug rather than a value the caller has to supply. "Save an ad account id on the
+connection" is true of every provider. `assertNoAccountsEndpointPromised` pins it.
 
 Two DIFFERENT guards protect the empty-vs-nil distinction, and they fail in opposite directions —
 document them separately so a future change preserves each for its own reason:

@@ -585,10 +585,15 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			// a shared Goa type with exactly code and message (design/brief.go), so there is no
 			// machine-readable reason to populate without changing a type every 409 in this
 			// service returns. The reason token still reaches operators through the log.
+			//
+			// The message names no accounts endpoint. Only Google Ads has one
+			// (design/connection.go, list-google-ads-accounts); every other provider reaching
+			// this arm would be sent to a route that does not exist, which is a worse remedy
+			// than none. Saving the id directly works on all of them, so that is what it says.
 			slog.WarnContext(ctx, "campaign metrics read blocked: no ad account selected on the project's connection",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "reason", unusableConnectionReason(merr))
-			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection has no ad account selected — choose one from the connection's accounts endpoint and save it before reading metrics"}
+			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection has no ad account selected — save an ad account id on the connection before reading metrics"}
 		case errors.Is(merr, domain.ErrConnectionNotUsable):
 			// Everything else that makes the connection unusable: inactive, credentials
 			// absent/incomplete/malformed, provider config invalid. The platform was never
@@ -909,11 +914,12 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			// always wrapped alongside ErrConnectionNotUsable, so a broad match would swallow
 			// it and hand back the ambiguous "or its credentials need attention" message for a
 			// connection whose credentials are fine. The distinction rides in the message
-			// because ConflictError carries only code and message.
+			// because ConflictError carries only code and message. The message names no
+			// accounts endpoint — see the metrics arm for why.
 			slog.WarnContext(ctx, "campaign status toggle blocked: no ad account selected on the project's connection",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "status", p.Status, "reason", unusableConnectionReason(terr))
-			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection has no ad account selected — choose one from the connection's accounts endpoint and save it before changing campaign status"}
+			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection has no ad account selected — save an ad account id on the connection before changing campaign status"}
 		case errors.Is(terr, domain.ErrConnectionNotUsable):
 			// Credential resolution refused the connection BEFORE the platform was contacted,
 			// so — like the branches above — nothing changed upstream and this is decidable
