@@ -3478,3 +3478,123 @@ func assertAccountNotSelectedLog(t *testing.T, logged string) {
 			"on this arm:\n%s", logged)
 	}
 }
+
+// TestSystemConnectionDefectsPageAnOperatorNotTheProject is the test the previous round
+// should have had. #93 moved the systemScoped TAG onto every caller; it did not give the tag
+// an INSPECTOR outside account discovery, so metrics and toggle still matched the broad
+// ErrConnectionNotUsable arm and answered a 409 reading "repair this project's connection"
+// — to a caller who has no connection of their own and cannot address the LF system scope.
+// That misdirection is the only reason the sentinel exists, so without this the tag was
+// decorative on two of its three consumers.
+//
+// The mechanism worth naming: systemScoped WRAPS
+// (`fmt.Errorf("%w: %w", ErrSystemConnectionNotUsable, err)`), so errors.Is still reports
+// ErrConnectionNotUsable and ErrAccountNotSelected. Arm ORDER is the whole fix, which is why
+// each case asserts the STATUS TYPE — a test that only checked "an error occurred" passes
+// against the bug, since the broad arm errors too.
+//
+// Both defect classes are covered because they reach different arms: account-not-selected
+// matches the specific arm, a credential fault the general one. Fixing only the arm your one
+// test happens to hit is exactly the partial fix this PR is already correcting once.
+func TestSystemConnectionDefectsPageAnOperatorNotTheProject(t *testing.T) {
+	// systemErr builds what the dispatcher now actually returns for a system-owned row:
+	// the origin tag wrapped AROUND the usability sentinels, not instead of them.
+	systemErr := func(cause error) error {
+		return fmt.Errorf("%w: %w", domain.ErrSystemConnectionNotUsable, cause)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		cause error
+	}{
+		{
+			"no account selected on the system row",
+			fmt.Errorf("no account id: %w: %w", domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected),
+		},
+		{
+			"system row credentials are unusable",
+			fmt.Errorf("bad blob: %w: %w", domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete),
+		},
+	} {
+		t.Run("metrics/"+tc.name, func(t *testing.T) {
+			camp := &model.Campaign{
+				ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+				PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+			}
+			disp := &metricsOnlyDispatcher{err: systemErr(tc.cause)}
+			s := newMetricsService(camp, disp)
+			_, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+				ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+			})
+
+			var conflict *briefs.ConflictError
+			if errors.As(err, &conflict) {
+				t.Fatalf("got a 409 telling the caller to repair a connection they do not own: %q", conflict.Message)
+			}
+			var ise *briefs.InternalServerError
+			if !errors.As(err, &ise) {
+				t.Fatalf("want a 500 InternalServerError so an operator is paged, got %T: %v", err, err)
+			}
+			if ise.Code != "500" {
+				t.Errorf("code = %q, want 500", ise.Code)
+			}
+			// The response must say nothing the caller could act on, because there is
+			// nothing they can act on. Leaking the system scope into a project-facing
+			// message would invite a support ticket against the wrong owner.
+			if strings.Contains(ise.Message, "connection") {
+				t.Errorf("message = %q, want it to point the caller at nothing they cannot fix", ise.Message)
+			}
+		})
+
+		t.Run("toggle/"+tc.name, func(t *testing.T) {
+			camp := &model.Campaign{
+				ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+				PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+			}
+			tog := &stubToggler{err: systemErr(tc.cause)}
+			s, _ := newToggleService(camp, tog)
+			im := "1"
+			_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+				ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+			})
+
+			var conflict *briefs.ConflictError
+			if errors.As(err, &conflict) {
+				t.Fatalf("got a 409 telling the caller to repair a connection they do not own: %q", conflict.Message)
+			}
+			var ise *briefs.InternalServerError
+			if !errors.As(err, &ise) {
+				t.Fatalf("want a 500 InternalServerError so an operator is paged, got %T: %v", err, err)
+			}
+			if ise.Code != "500" {
+				t.Errorf("code = %q, want 500", ise.Code)
+			}
+		})
+	}
+}
+
+// TestProjectOwnedConnectionDefectsStillReachTheProject is the contrast that makes the test
+// above binding. Without it, hoisting the system arm to match EVERY unusable connection would
+// pass every assertion there while silently converting the ordinary "your credentials need
+// attention" 409 — the actionable one, on the overwhelmingly common path — into an opaque 500.
+func TestProjectOwnedConnectionDefectsStillReachTheProject(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	// No systemScoped tag: this project owns its connection.
+	disp := &metricsOnlyDispatcher{err: fmt.Errorf("bad blob: %w: %w",
+		domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)}
+	s := newMetricsService(camp, disp)
+	_, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("want the actionable 409 for a connection the project owns, got %T: %v", err, err)
+	}
+	if !strings.Contains(conflict.Message, "repair the connection") {
+		t.Errorf("message = %q, want it to tell the owner to repair their connection", conflict.Message)
+	}
+}

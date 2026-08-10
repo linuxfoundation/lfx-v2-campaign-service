@@ -264,12 +264,15 @@ func TestMigrations_UniqueNumbering(t *testing.T) {
 // are skipped forever. The list must shrink to empty as siblings land.
 var allowedVersionGaps = map[int]string{
 	16: "000016_campaign_actor_columns is claimed by PR #95 (LFXV2-3038, " +
-		"feat/LFXV2-3038-campaign-actor-attribution).",
-	17: "000017_index_disconnected_probe is claimed by PR #93 (LFXV2-3040, " +
-		"feat/LFXV2-3040-system-account-credentials).",
-	// Both are merge-ORDERING obligations: golang-migrate records only the HIGHEST applied
-	// version, so if THIS tree deploys first, 000016 and 000017 are skipped silently and
-	// forever. #95 and #93 must both land before this branch. Delete each entry as it lands.
+		"feat/LFXV2-3038-campaign-actor-attribution), still open. A merge-ORDERING obligation: " +
+		"golang-migrate records only the HIGHEST applied version, so if THIS tree deploys " +
+		"first, 000016 is skipped silently and forever. #95 must land before this branch. " +
+		"Delete this entry once it does.",
+	// 000017 is no longer a gap: PR #93 merged it into main.
+	// 000018 is THIS branch's audience build lease, and is deliberately kept here rather
+	// than renumbered. PR #103 (LFXV2-3055) originally took 000017, collided with #93 on
+	// merge, and moved to 000019 — moving this one instead would have meant rewriting the
+	// version-forcing recovery path in pool.go and its tests, which name the number.
 }
 
 // TestMigrations_NoVersionGaps guards against numbering a migration ABOVE versions that do not
