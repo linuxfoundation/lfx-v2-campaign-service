@@ -1463,10 +1463,15 @@ func (r *ctxAssertingCampaignRepo) UpsertCampaign(ctx context.Context, c *model.
 	r.mu.Lock()
 	r.upsertCtxErr = ctx.Err()
 	r.mu.Unlock()
-	close(r.upsertCalled)
 	// Pass the builder THROUGH rather than dropping it: swallowing it here would hide whether
 	// a shutdown-window persist still co-commits its index message.
-	return r.fakeCampaignRepo.UpsertCampaign(ctx, c, indexPayload)
+	got, err := r.fakeCampaignRepo.UpsertCampaign(ctx, c, indexPayload)
+	// Signalled AFTER the embedded repo has recorded the row, not before. The waiting test
+	// reads len(upserted) the moment this fires; closing first made that a race it usually
+	// won on an idle laptop and lost on a loaded CI runner, reporting "persisted 0 campaigns"
+	// against an implementation that was persisting correctly.
+	close(r.upsertCalled)
+	return got, err
 }
 
 // TestOrchestrator_PersistSurvivesDispatchCancel verifies that a provider result

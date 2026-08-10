@@ -102,6 +102,22 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err != nil {
 		return nil, notCreated(err)
 	}
+	// The THIRD reader of the same stored login_customer_id, and the one that matters most:
+	// it is the path that spends money. Create differs from the toggle and discovery paths
+	// in what classification BUYS, and the difference is worth stating so this guard is not
+	// mistaken for a status-code fix. Create is queued work, not a request: dispatchOne
+	// reports every dispatcher error as the same "platform campaign creation failed"
+	// (internal/service/orchestrator.go), so there is no caller-facing 503 here to replace.
+	// What the check buys is log hygiene and prevention of unnecessary upstream calls.
+	// notCreated marks that nothing upstream was attempted. The old path would reach the
+	// client with an unvalidated ID, fail there inside CreateCampaign with result==nil, and
+	// be wrapped with notCreated anyway (so claim semantics were already correct). This check
+	// prevents the raw ID from reaching logs via the client's %q error formatting, and stops
+	// a pre-send failure from being reported as a failed create to Google.
+	loginCustomerID, err := validatedLoginCustomerID(res)
+	if err != nil {
+		return nil, notCreated(err)
+	}
 
 	var cfg googleAdsConfig
 	if err := unmarshalPlatformConfig(config, "googleAdsConfig", &cfg); err != nil {
@@ -135,7 +151,8 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	}
 
 	// login_customer_id is the OPTIONAL manager (MCC) account the ad account is accessed
-	// through; it lives in the connection's ProviderConfig (not the credential blob).
+	// through; it lives in the connection's ProviderConfig (not the credential blob) and
+	// has been shape-checked above.
 	client := googleads.NewClient(
 		googleads.Credentials{
 			ClientID:       creds.ClientID,
@@ -145,7 +162,7 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		},
 		googleads.AccountConfig{
 			CustomerID:      accountID,
-			LoginCustomerID: strings.TrimSpace(res.providerConfig["login_customer_id"]),
+			LoginCustomerID: loginCustomerID,
 			Label:           res.label,
 		},
 		d.opts...,
@@ -337,6 +354,49 @@ func validateGoogleAdsCredentials(projectID string, res *resolved) (creds google
 	return creds, nil
 }
 
+// validatedLoginCustomerID returns the trimmed manager id, having checked it is a shape the
+// client will accept.
+//
+// It is a separate helper, and called by THREE readers — the toggle and discovery
+// resolvers, and the create dispatcher — because it used to be inline in the discovery one.
+// Originally, the toggle path read the same stored column, passed it to the same client,
+// and classified the same defect differently. A malformed manager id reached the client
+// uninspected, failed there at validateLoginCustomerID, and arrived at the orchestrator
+// indistinguishable from an upstream failure: same call, same error type. The handler's
+// default arm answered 503, "the platform did not respond", for a stored value no amount
+// of retrying will repair. Checking the value where it is READ, rather than where it is
+// used, is what makes it classifiable; doing that in one place keeps all three paths
+// from drifting apart.
+//
+// The client keeps its own validateLoginCustomerID as the backstop for every other caller.
+// This is not a duplicate of it: by the time that one fires, the information needed to tell
+// a bad stored row from a bad upstream response is gone.
+//
+// An empty value is legal and means "no manager", so only a NON-empty malformed one fails.
+func validatedLoginCustomerID(res *resolved) (string, error) {
+	loginCustomerID := strings.TrimSpace(res.providerConfig["login_customer_id"])
+	if loginCustomerID != "" && !storedCustomerIDRE.MatchString(loginCustomerID) {
+		// The offending VALUE is deliberately not echoed. A manager id is
+		// account-identifying configuration, this error reaches the discovery
+		// endpoint's log, and the rest of this path keeps error text to a fixed
+		// sentinel vocabulary with no payload attached (see the unusable-reason
+		// vocabulary log fragment). Naming the field and the rule is everything an
+		// operator needs to go fix the row; the value adds nothing they do not
+		// already have and puts account data in a log line.
+		//
+		// systemScoped for the same reason as the credential defect in
+		// validateGoogleAdsCredentials: on the LF fallback row there is no project-owned
+		// connection to edit, so a bare 400 aims the remedy at someone who cannot apply
+		// it. EVERY stored-state defect on this path has to carry it, not just the first
+		// one. It lands here rather than at the call sites precisely because there are
+		// now three of them — tagging at the caller is what let the toggle path drift
+		// away from the discovery path in the first place.
+		return "", res.systemScoped(fmt.Errorf("%w: %w: stored login_customer_id is invalid (must be digits only, no dashes or spaces)",
+			domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid))
+	}
+	return loginCustomerID, nil
+}
+
 // resolveGoogleAdsClient resolves + validates the project's connection and builds a client
 // for the TOGGLE path (see validateGoogleAdsConnection for the shared rules).
 func (d *GoogleAdsDispatcher) resolveGoogleAdsClient(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, error) {
@@ -345,6 +405,10 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsClient(ctx context.Context, projec
 		return nil, err
 	}
 	creds, accountID, err := validateGoogleAdsConnection(projectID, res)
+	if err != nil {
+		return nil, err
+	}
+	loginCustomerID, err := validatedLoginCustomerID(res)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +421,7 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsClient(ctx context.Context, projec
 		},
 		googleads.AccountConfig{
 			CustomerID:      accountID,
-			LoginCustomerID: strings.TrimSpace(res.providerConfig["login_customer_id"]),
+			LoginCustomerID: loginCustomerID,
 			Label:           res.label,
 		},
 		d.opts...,
@@ -382,9 +446,9 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 	}
 	// Everything from here to NewClient inspects STORED state, before any request exists.
 	// A failure means the connection needs editing, not retrying, so each one carries
-	// domain.ErrConnectionNotUsable — the validator tags its own, this function tags the
-	// login_customer_id check below. Errors from creds.resolve above are deliberately NOT
-	// tagged: that layer distinguishes ErrNotFound (no connection — a 404) from a real
+	// domain.ErrConnectionNotUsable — the validator tags its own, and validatedLoginCustomerID
+	// tags the login_customer_id check below. Errors from creds.resolve above are deliberately
+	// NOT tagged: that layer distinguishes ErrNotFound (no connection — a 404) from a real
 	// storage failure (which IS transient and IS a 503), and flattening both into "not
 	// usable" would lose it.
 	creds, err := validateGoogleAdsCredentials(projectID, res)
@@ -397,27 +461,9 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 		// why only THIS path had it.
 		return nil, err
 	}
-	// login_customer_id is checked HERE, not only inside the client. The client validates
-	// it too (client.go validateLoginCustomerID, kept as the backstop for every other
-	// caller), but by then the failure is indistinguishable at this boundary from an
-	// upstream one — same call, same error type — and would be classified as retryable.
-	// Checking the stored value where it is read is what makes it classifiable.
-	loginCustomerID := strings.TrimSpace(res.providerConfig["login_customer_id"])
-	if loginCustomerID != "" && !storedCustomerIDRE.MatchString(loginCustomerID) {
-		// The offending VALUE is deliberately not echoed. A manager id is
-		// account-identifying configuration, this error reaches the discovery
-		// endpoint's log, and the rest of this path keeps error text to a fixed
-		// sentinel vocabulary with no payload attached (see the unusable-reason
-		// vocabulary log fragment). Naming the field and the rule is everything an
-		// operator needs to go fix the row; the value adds nothing they do not
-		// already have and puts account data in a log line.
-		//
-		// systemScoped for the same reason as the credential defect above: on the LF
-		// fallback row there is no project-owned connection to edit, so a bare 400 aims
-		// the remedy at someone who cannot apply it. EVERY stored-state defect on this
-		// path has to carry it, not just the first one.
-		return nil, res.systemScoped(fmt.Errorf("%w: %w: stored login_customer_id is invalid (must be digits only, no dashes or spaces)",
-			domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid))
+	loginCustomerID, err := validatedLoginCustomerID(res)
+	if err != nil {
+		return nil, err
 	}
 	return googleads.NewClient(
 		googleads.Credentials{
