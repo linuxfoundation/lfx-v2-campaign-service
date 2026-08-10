@@ -110,25 +110,20 @@ var NotFoundError = Type("not-found-error", func() {
 // nobody maintains. A client must treat an absent reason as "unspecified conflict",
 // which is what the message already says.
 //
-// No Example on `reason`, and that is deliberate. This type is shared by every 409 in the
-// API, so an attribute-level example is not documentation of one endpoint — Goa copies it
-// into the schema of all of them. Pinning "audience_build_in_flight" put an audience-build
-// value on the 409 for "a connection already exists", among 28 others it has nothing to do
-// with, which reads as a contract rather than an illustration. The Enum already publishes
-// the whole vocabulary, which is the part clients are entitled to rely on; a per-endpoint
-// example would need a per-endpoint type, and the type is shared on purpose.
-// ConflictError is the 409 body for every endpoint in the API, which is what makes its
-// example awkward: the object-level example Goa publishes is ONE instance, and this type
-// describes twenty-nine different conflicts.
+// The example on `reason` is chosen to AGREE with the message example already on the type.
+// ConflictError is the 409 body for every endpoint in the API, so the object-level example
+// Goa publishes is ONE instance standing in for twenty-nine different conflicts — which is
+// what makes the choice awkward, and why omitting it is not the safe option it looks like.
 //
-// `reason` therefore carries an example chosen to AGREE with the message example already on
-// the type, rather than no example at all. Leaving it off does not produce an example-free
-// schema — Goa fills the gap from the enum, and it picked `audience_build_in_flight`, which
-// the generated contract then paired with "A connection for this provider already exists".
-// That reads as a mapping between two unrelated endpoints, which is worse than a value
-// belonging to one of them. `already_exists` is the reason that actually accompanies this
-// message, so the published instance is at least internally true. The Enum above is what
-// publishes the full vocabulary, and that is the part clients are entitled to rely on.
+// Leaving `Example` off does not produce an example-free schema. Goa fills the gap from the
+// Enum, and it picks the first member: `audience_build_in_flight`, which the generated
+// contract then pairs with "A connection for this provider already exists". That publishes a
+// mapping between two unrelated endpoints, which is worse than a value belonging to one of
+// them. `already_exists` is the reason that actually accompanies this message, so the
+// published instance is at least internally true.
+//
+// The Enum is what publishes the full vocabulary, and that — not the example — is the part
+// clients are entitled to rely on.
 var ConflictError = Type("conflict-error", func() {
 	errorAttrs("409", "A connection for this provider already exists on the project.")
 	Attribute("reason", String, "Stable machine-readable discriminator, present only where an endpoint returns more than one kind of conflict. Absent means unspecified.", func() {
