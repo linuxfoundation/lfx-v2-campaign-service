@@ -108,10 +108,24 @@ func (r *AudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *mo
 		return nil, domain.ErrStaleApproval
 	}
 
+	// nullJSON on both raw-JSON operands, exactly as CreateAudience does.
+	//
+	// Not for the reason it looks like. A NIL json.RawMessage already binds as SQL NULL
+	// without the wrapper — pgx v5 checks nil-ness before its JSON codec runs, so the
+	// jsonb-null-instead-of-NULL failure this guards against on paper cannot happen, and
+	// the nil case (marshalActor returning nil for an unauthenticated build) was never at
+	// risk. What nullJSON actually catches is the EMPTY-but-non-nil value: `json.RawMessage{}`
+	// reaches the JSON codec, is sent as zero bytes, and PostgreSQL rejects it outright —
+	// SQLSTATE 22P02, invalid input syntax for type json. That is a failed insert, not a
+	// wrong row. nullJSON's guard is `len(j) == 0`, which covers nil and empty alike.
+	//
+	// No caller produces an empty non-nil value today, so this is a guard against a future
+	// one rather than a live defect — worth having because the two callers differ only in
+	// this wrapper, and a difference with no stated reason is the kind that gets copied.
 	out, serr := scanAudience(tx.QueryRow(ctx, createAudienceForApprovedBriefQuery,
 		a.ProjectID, a.BriefID, string(a.Platform), nullStr(a.PlatformMasterListID),
-		a.SuppressionListIDs, nullStr(a.InclusionSummary), string(a.StatusOrDefault()),
-		a.CreatedBy))
+		nullJSON(a.SuppressionListIDs), nullStr(a.InclusionSummary), string(a.StatusOrDefault()),
+		nullJSON(a.CreatedBy)))
 	if serr != nil {
 		return nil, fmt.Errorf("create audience for approved brief: insert: %w", serr)
 	}

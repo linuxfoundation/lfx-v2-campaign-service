@@ -88,3 +88,43 @@ Three numbers in one branch also says something about the numbering scheme itsel
 the number is only settled at merge. The `allowedVersionGaps` map plus
 `TestMigrations_UniqueNumbering` is what makes each invalidation loud instead of silent, which
 is the only property that actually matters here.
+
+## Round N+3: the right fix, arrived at through the wrong mechanism
+
+The review finding was that `CreateAudienceForApprovedBrief` binds `SuppressionListIDs` and
+`CreatedBy` raw where `CreateAudience` wraps both in `nullJSON`, and that the consequence is a
+JSONB literal `null` where SQL NULL belongs — the exact distinction this branch treats as
+load-bearing. The asymmetry is real and the wrapper belongs there. **The mechanism is not.**
+
+`pgx` v5 tests nil-ness before its JSON codec runs, so a nil `json.RawMessage` binds as SQL
+NULL with or without the wrapper. Probe, run against a live database rather than reasoned
+about:
+
+```
+untyped-nil  -> sql-null
+typed-nil    -> sql-null
+typed-empty  -> ERROR: invalid input syntax for type json (SQLSTATE 22P02)
+```
+
+So the nil case — `marshalActor(actorFromCtx(ctx))` on an unauthenticated build, the one the
+finding traced — was never at risk. What `nullJSON` actually catches is the third row: an
+EMPTY but non-nil `json.RawMessage` is sent as zero bytes and PostgreSQL rejects the statement.
+The failure mode is a FAILED INSERT, not a wrong row. No caller produces one today, so this is
+a guard rather than a live defect.
+
+The first test written for this passed with the fix REVERTED, which is what exposed the wrong
+mechanism. That is the whole value of the revert check and the reason it is not optional: a
+test written from a finding's stated cause inherits that cause's errors, and a green revert is
+the only signal that distinguishes "the fix works" from "the test cannot see the fix." Had it
+been committed as-is, the branch would carry a fix, a test, and a comment all asserting a
+mechanism that does not exist — three mutually corroborating wrong statements, each looking
+like evidence for the others.
+
+Generalised: **a fix and its justification are separately checkable, and reviewers supply both
+while only the first gets verified.** Accepting a correct patch does not accept its reasoning.
+Here the reasoning would have been the durable artefact — it was headed for a code comment,
+where the next reader takes it as established.
+
+Fix kept, comment and test retargeted at the empty-value case. Revert check now fails on the
+`empty` subtest with the 22P02 error quoted; the `nil` subtest passes either way on purpose, to
+record that the nil case is safe on its own so nobody re-derives the wrong reason.
