@@ -826,3 +826,120 @@ func TestJWKSStatusGuard_UpstreamBodiesNeverReachTheLog(t *testing.T) {
 		})
 	}
 }
+
+// credentialedJWKSURL rewrites a test server's URL into the shape an operator can legally
+// configure: HTTP basic userinfo plus a query-string credential, both of which some
+// gateways require to serve their key set.
+func credentialedJWKSURL(t *testing.T, base string) string {
+	t.Helper()
+	u, err := url.Parse(base)
+	if err != nil {
+		t.Fatalf("parse %q: %v", base, err)
+	}
+	u.User = url.UserPassword("svc", "pw")
+	u.Path = "/.well-known/jwks"
+	u.RawQuery = "access_token=s3cret"
+	return u.String()
+}
+
+// TestVerifyActor_JWKSURLCredentialsNeverReachTheError covers the leak end to end, through
+// VerifyActor, because that is the only vantage point from which it is visible.
+//
+// The transport already redacts every URL it formats itself. What it cannot reach is the
+// *url.Error http.Client.Do wraps around EVERY transport failure: Do builds that wrapper
+// from req.URL, and net/url's own masking replaces the password with *** while keeping the
+// username AND the whole query verbatim. A test that calls the guard's RoundTrip directly
+// never sees that wrapper, so it would pass against the leaking version — which is why this
+// one goes through the Verifier and asserts on the error the service actually logs
+// (internal/service/auth.go renders it with slog on the ErrKeyUnavailable path).
+//
+// A connection refused is used rather than a bad status because it is the failure mode with
+// no in-package error at all: everything about the message comes from net/http.
+func TestVerifyActor_JWKSURLCredentialsNeverReachTheError(t *testing.T) {
+	s := newSigner(t)
+	token := s.sign(t, nil)
+
+	// A server closed before use: the address is well-formed and nothing listens on it.
+	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+
+	v, err := New(Config{JWKSURL: credentialedJWKSURL(t, deadURL), Audience: testAudience, Issuer: testIssuer})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, err = v.VerifyActor(context.Background(), token)
+	if !errors.Is(err, ErrKeyUnavailable) {
+		t.Fatalf("err = %v, want ErrKeyUnavailable when the key set cannot be fetched", err)
+	}
+
+	// Walk every layer, not just the outermost Error(): the leak lives in a wrapper the
+	// outer text happens to quote today, and it must stay gone if that ever changes.
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		msg := e.Error()
+		for _, secret := range []string{"svc", "pw", "s3cret", "access_token"} {
+			if strings.Contains(msg, secret) {
+				t.Fatalf("error layer %T leaks %q from the JWKS URL: %s", e, secret, msg)
+			}
+		}
+	}
+	// Naming the endpoint is the point of the message; an error that leaked nothing because
+	// it said nothing would satisfy the assertions above and help no one.
+	host := strings.TrimPrefix(deadURL, "http://")
+	if !strings.Contains(err.Error(), host) {
+		t.Errorf("err = %v, want the JWKS host %s named: without it the operator cannot tell "+
+			"which endpoint is down", err, host)
+	}
+}
+
+// TestVerifyActor_JWKSURLCredentialsStillAuthenticate is the other half, and the reason the
+// fix is a swap rather than a strip.
+//
+// Removing the userinfo and query from the URL the http.Client sees is what keeps them out
+// of its *url.Error — but it would also stop authenticating the fetch, and the resulting
+// 401 is itself an ErrKeyUnavailable. Every assertion in the leak test above would still
+// pass against that version. This one fails against it: the endpoint refuses anything that
+// does not carry BOTH credentials, so a token verifies only if the guard put them back.
+//
+// The basic credential must be applied as a header rather than left on the URL because
+// http.Client.send is what turns URL userinfo into an Authorization header, and it runs
+// before the transport — a URL repaired inside RoundTrip would authenticate nothing.
+func TestVerifyActor_JWKSURLCredentialsStillAuthenticate(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	var served atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != "svc" || pass != "pw" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Query().Get("access_token") != "s3cret" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		served.Add(1)
+		writeKeySet(w, key)
+	}))
+	defer srv.Close()
+
+	s := &signer{key: key, jwksURL: srv.URL}
+	token := s.sign(t, nil)
+
+	v, err := New(Config{JWKSURL: credentialedJWKSURL(t, srv.URL), Audience: testAudience, Issuer: testIssuer})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	actor, err := v.VerifyActor(context.Background(), token)
+	if err != nil {
+		t.Fatalf("VerifyActor: %v — the key fetch must still carry the operator's credentials", err)
+	}
+	if actor.Username != "ada" {
+		t.Errorf("username = %q, want %q", actor.Username, "ada")
+	}
+	if got := served.Load(); got != 1 {
+		t.Errorf("key set served %d times, want 1", got)
+	}
+}

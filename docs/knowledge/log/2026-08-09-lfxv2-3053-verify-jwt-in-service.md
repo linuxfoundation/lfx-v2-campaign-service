@@ -542,3 +542,40 @@ four sites named the exact danger in prose and then did the dangerous thing on t
 The prose is what made them read as handled — including to me, twice, since the query strip and
 the comma guard fail the same way in the same function and I shipped the second one while
 fixing the first.
+
+## Round N+6: the string that leaks is the one this package does not write
+
+Every redaction added in rounds N+3 through N+5 protects a string this package formats. Copilot
+pointed at the one it does not: `http.Client.Do` wraps *every* transport failure in a
+`*url.Error` built from `req.URL`, after the guard has returned. Verified before touching
+anything, because the finding turns entirely on what Go's masking actually keeps:
+
+```
+ERR: Get "https://svc:***@idp.example.com/jwks?access_token=s3cret": boom
+```
+
+The password is masked. The **username and the whole query survive**, and
+`internal/service/auth.go:87-91` renders that chain with `slog` on the `ErrKeyUnavailable`
+path — a reachable site, not a hypothetical one.
+
+Two fixes were available. Sanitizing the error `KeyFunc` returns is the local one, and it is
+the weaker one: it has to keep pace with the chain's shape, and it only covers the errors that
+reach that call. Removing the credential from the URL `http.Client` ever sees covers refused
+connections, DNS misses and timeouts alike, because it removes the material rather than
+chasing the renderings of it. `New` now hands the provider a stripped copy of the URL and the
+guard puts the real one back on each outgoing request.
+
+The part that is easy to get wrong: the basic credential has to be re-applied as an explicit
+header. `http.Client.send` — not the transport — is what turns URL userinfo into
+`Authorization`, and it runs first, so a URL repaired inside `RoundTrip` authenticates
+nothing. Which is also why there are two tests. Stripping without swapping keeps every secret
+out of the error, and out of the endpoint's reach: the fetch 401s, and a 401 is an
+`ErrKeyUnavailable` that satisfies the leak test completely. Revert-verified in both
+directions — the leak test fails on the un-stripped URL, the auth test fails on the
+strip-only one.
+
+The class this round: **a redaction boundary drawn at the package's own format verbs.** Each
+earlier round asked "does this line print the URL safely?" and the answer was eventually yes
+at every site. The question that was never asked is who else formats it. The value was handed
+to a library that renders it into an error on a path with no format verb of ours anywhere in
+it — so the audit that walks your own `%s` sites reports clean, correctly, and misses the leak.

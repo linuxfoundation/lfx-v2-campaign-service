@@ -155,6 +155,35 @@ endpoint writes the same line on a loop.
 separately, because the leak is per-format-verb — fixing one and missing another leaves the
 credential in the logs just as often.
 
+**Redacting every string this package formats is still not enough, because one of the
+strings is not ours.** `http.Client.Do` wraps *every* transport failure — refused
+connection, DNS miss, timeout — in a `*url.Error` it builds from `req.URL`, and
+`net/url`'s own masking replaces the **password** while keeping the **username and the
+entire query** verbatim. A JWKS URL of the operator's shape
+`https://svc:pw@gw/jwks?access_token=…` therefore renders as
+`Get "https://svc:***@gw/jwks?access_token=s3cret"`, and `internal/service/auth.go` logs
+that whole chain on the `ErrKeyUnavailable` path. No amount of care at our own format
+sites reaches it.
+
+So the credential is removed from the URL `http.Client` ever sees. `New` hands
+`jwks.WithCustomJWKSURI` a copy with `User`, `RawQuery` and the fragment cleared, and
+`jwksStatusGuard` holds the operator's real URL in `outbound`; `credentialed` clones each
+outgoing request and swaps it back in. **The basic credential is re-applied as an explicit
+`Authorization` header, not left on the URL**, because the thing that turns URL userinfo
+into that header is `http.Client.send`, which runs *before* the transport — a URL repaired
+inside `RoundTrip` would authenticate nothing. Fixing it here rather than by sanitizing the
+error `KeyFunc` returns is what makes it cover every failure mode at once, with no
+dependence on the error chain's shape.
+
+The two tests are complements and each is binding against a different degenerate version.
+`TestVerifyActor_JWKSURLCredentialsNeverReachTheError` goes through `VerifyActor` — not the
+guard's `RoundTrip`, which never sees the wrapper — against a closed port, and walks every
+`errors.Unwrap` layer for `svc`, `pw`, `s3cret` and `access_token` while still requiring the
+host to be named. `TestVerifyActor_JWKSURLCredentialsStillAuthenticate` serves the key set
+only to a request carrying **both** credentials, so the leak cannot be "fixed" by quietly
+dropping them: a strip without the swap turns the fetch into a 401, which is itself an
+`ErrKeyUnavailable` and satisfies every assertion in the first test.
+
 The upstream **response body** is a second channel, and it was open for a while behind a
 comment that argued it was closed. Both guard paths logged a bounded prefix of the body at
 debug, reasoning that bounding the length and naming the origin made it safe. That conceded

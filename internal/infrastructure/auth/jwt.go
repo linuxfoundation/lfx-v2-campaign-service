@@ -15,6 +15,7 @@ package auth
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -164,11 +165,33 @@ func New(cfg Config) (*Verifier, error) {
 	}
 	audience := orDefault(cfg.Audience, constants.DefaultAudience)
 
+	// The provider — and therefore http.Client — is given a URL with the userinfo and query
+	// REMOVED. The guard holds the operator's real URL and puts it back on the outgoing
+	// request. See jwksStatusGuard.credentialed for why the swap has to happen there and not
+	// here; the short version is that http.Client renders req.URL into the *url.Error it
+	// wraps every transport failure in, and its own masking keeps the username and the whole
+	// query. Nothing this package writes can redact an error string it never sees.
+	fetchURL := *jwksURL
+	guard := &jwksStatusGuard{next: http.DefaultTransport, outbound: &fetchURL}
+	if u := jwksURL.User; u != nil {
+		// Applied as a header because the Client is the thing that turns URL userinfo into
+		// Authorization (net/http's send), and it runs BEFORE the transport — so a URL
+		// repaired inside RoundTrip would authenticate nothing.
+		pw, _ := u.Password()
+		guard.basic = "Basic " + base64.StdEncoding.EncodeToString([]byte(u.Username()+":"+pw))
+	}
+	safeURL := *jwksURL
+	safeURL.User = nil
+	safeURL.RawQuery = ""
+	safeURL.ForceQuery = false
+	safeURL.Fragment = ""
+	safeURL.RawFragment = ""
+
 	// WithCustomJWKSURI is required: "heimdall" is a bare name, not an OIDC discovery URL.
-	provider := jwks.NewCachingProvider(issuer, jwksCacheTTL, jwks.WithCustomJWKSURI(jwksURL),
+	provider := jwks.NewCachingProvider(issuer, jwksCacheTTL, jwks.WithCustomJWKSURI(&safeURL),
 		jwks.WithCustomClient(&http.Client{
 			Timeout:   jwksFetchTimeout,
-			Transport: &jwksStatusGuard{next: http.DefaultTransport},
+			Transport: guard,
 		}))
 
 	v, err := validator.New(
@@ -233,15 +256,58 @@ const jwksMaxBody = 1 << 20
 // to type-assert the provider's decoded value, and an assertion against the wrong jose
 // MAJOR compiles, vets, lints and never matches — a check with nothing to show for it.
 // Reading `keys` off the raw body has no version to get wrong.
-type jwksStatusGuard struct{ next http.RoundTripper }
+type jwksStatusGuard struct {
+	next http.RoundTripper
+	// outbound is the operator's real JWKS URL, complete with any userinfo and query. The
+	// provider was given a stripped copy, so this is where the two are rejoined. nil in the
+	// tests that exercise RoundTrip directly, which pass through unchanged.
+	outbound *url.URL
+	// basic is the Authorization header value derived from the URL's userinfo, or empty.
+	basic string
+}
+
+// credentialed returns the request that actually goes on the wire.
+//
+// The swap happens HERE, inside the transport, and the placement is the whole point.
+// http.Client.Do wraps every transport failure — a DNS miss, a refused connection, a
+// timeout, anything this guard returns — in a *url.Error built from the request URL, and it
+// sanitizes that URL with net/http's own stripPassword, which masks the PASSWORD and keeps
+// the username and the entire query. So `https://svc:pw@idp/jwks?access_token=s3cret` is
+// rendered `https://svc:***@idp/jwks?access_token=s3cret`, and the service logs the whole
+// error chain when the keys cannot be retrieved. Every redaction in this package runs on
+// values this package formats; none of them can reach a string net/http built.
+//
+// Removing the credential from what http.Client sees is the only fix that covers all of
+// those paths at once, and it needs no cooperation from the error chain: what is not in the
+// URL cannot be rendered out of it. The cost is that basic auth must be applied explicitly,
+// because the Client — not the transport — is what turns URL userinfo into an Authorization
+// header, and it has already run by the time RoundTrip is called.
+//
+// It clones rather than mutating: a RoundTripper must not modify the request it is given.
+func (g *jwksStatusGuard) credentialed(req *http.Request) *http.Request {
+	if g.outbound == nil {
+		return req
+	}
+	out := req.Clone(req.Context())
+	u := *g.outbound
+	out.URL = &u
+	if g.basic != "" && out.Header.Get("Authorization") == "" {
+		out.Header.Set("Authorization", g.basic)
+	}
+	return out
+}
 
 func (g *jwksStatusGuard) RoundTrip(req *http.Request) (*http.Response, error) {
-	resp, err := g.next.RoundTrip(req)
+	// Formatted from the request the PROVIDER built, which is already credential-free —
+	// redacted anyway so this line stays correct if that ever stops being true, and so the
+	// guard is safe when constructed without an outbound URL.
+	shown := redact.URL(req.URL)
+	resp, err := g.next.RoundTrip(g.credentialed(req))
 	if err != nil {
 		return nil, err
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return g.checkKeys(req, resp)
+		return g.checkKeys(shown, resp)
 	}
 	// We are returning an error instead of the response, so nothing downstream will close
 	// this body. Drain a bounded prefix for the diagnostic, then close: draining also lets
@@ -257,8 +323,8 @@ func (g *jwksStatusGuard) RoundTrip(req *http.Request) (*http.Response, error) {
 	// quote it. A debug level does not help either, since debug output lands in the same
 	// log store. The status and the redacted URL identify the misconfiguration on their own.
 	slog.Debug("JWKS endpoint returned a non-2xx response",
-		"url", redact.URL(req.URL), "status", resp.StatusCode)
-	return nil, fmt.Errorf("JWKS endpoint %s returned HTTP %d", redact.URL(req.URL), resp.StatusCode)
+		"url", shown, "status", resp.StatusCode)
+	return nil, fmt.Errorf("JWKS endpoint %s returned HTTP %d", shown, resp.StatusCode)
 }
 
 // checkKeys reads a 2xx JWKS body, refuses one with no keys in it, and replays the bytes
@@ -273,16 +339,16 @@ func (g *jwksStatusGuard) RoundTrip(req *http.Request) (*http.Response, error) {
 // looks like, so this cannot drift with go-jose's shape the way a typed assertion would.
 // A body that is not an object, or whose `keys` is not an array, fails the decode and is
 // an error for the same reason a zero-length array is: nothing usable came back.
-func (g *jwksStatusGuard) checkKeys(req *http.Request, resp *http.Response) (*http.Response, error) {
+func (g *jwksStatusGuard) checkKeys(shown string, resp *http.Response) (*http.Response, error) {
 	// jwksMaxBody+1 so a body exactly at the bound reads short of the limit and one byte
 	// over reads to it — the difference between "large but fine" and "refuse".
 	buf, err := io.ReadAll(io.LimitReader(resp.Body, jwksMaxBody+1))
 	_ = resp.Body.Close()
 	if err != nil {
-		return nil, fmt.Errorf("read JWKS response from %s: %w", redact.URL(req.URL), err)
+		return nil, fmt.Errorf("read JWKS response from %s: %w", shown, err)
 	}
 	if len(buf) > jwksMaxBody {
-		return nil, fmt.Errorf("JWKS endpoint %s returned more than %d bytes", redact.URL(req.URL), jwksMaxBody)
+		return nil, fmt.Errorf("JWKS endpoint %s returned more than %d bytes", shown, jwksMaxBody)
 	}
 	var doc struct {
 		Keys []json.RawMessage `json:"keys"`
@@ -292,11 +358,11 @@ func (g *jwksStatusGuard) checkKeys(req *http.Request, resp *http.Response) (*ht
 		// path above: a 2xx body that is not a key set is still untrusted upstream text,
 		// and "the body was undecodable" is the whole diagnostic. Its CONTENT would only
 		// tell an operator what a request to this URL already tells them.
-		slog.Debug("JWKS endpoint returned an undecodable 2xx body", "url", redact.URL(req.URL))
-		return nil, fmt.Errorf("JWKS endpoint %s returned a 2xx body that is not a key set", redact.URL(req.URL))
+		slog.Debug("JWKS endpoint returned an undecodable 2xx body", "url", shown)
+		return nil, fmt.Errorf("JWKS endpoint %s returned a 2xx body that is not a key set", shown)
 	}
 	if len(doc.Keys) == 0 {
-		return nil, fmt.Errorf("JWKS endpoint %s returned no signing keys", redact.URL(req.URL))
+		return nil, fmt.Errorf("JWKS endpoint %s returned no signing keys", shown)
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(buf))
 	return resp, nil
