@@ -587,7 +587,7 @@ func (r *campaignEditRepo) GetCampaign(context.Context, string, string, string) 
 func (r *campaignEditRepo) GetCampaignByPlatform(context.Context, string, string, model.Provider) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
-func (r *campaignEditRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string) (bool, *model.Campaign, error) {
+func (r *campaignEditRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string, *model.Actor) (bool, *model.Campaign, error) {
 	return true, nil, nil
 }
 func (r *campaignEditRepo) DeleteDispatchClaim(context.Context, string, model.Provider) error {
@@ -695,7 +695,7 @@ func TestBriefService_UpdateCampaign_StaleVersionIsPreconditionFailed(t *testing
 		t.Error("ReplaceCampaign must NOT be called when the If-Match version is stale")
 	}
 }
-func (r *campaignEditRepo) DeleteCampaign(_ context.Context, _ string, _ string, _ string, _ int64, indexPayload domain.CampaignIndexPayloadFunc) error {
+func (r *campaignEditRepo) DeleteCampaign(_ context.Context, _ string, _ string, _ string, _ int64, _ *model.Actor, indexPayload domain.CampaignIndexPayloadFunc) error {
 	if indexPayload != nil {
 		// Record that the deletion was indexed, matching the real repo's behavior.
 		payload, _ := indexPayload(&model.Campaign{})
@@ -2646,6 +2646,8 @@ type deleteCampaignRepo struct {
 	gotBrief        string
 	gotCampaign     string
 	gotExpectedVers int64
+	// gotActor is the actor stamped onto updated_by by the soft delete.
+	gotActor *model.Actor
 	// gotIndexPayload is the JSON the builder produced when invoked with the deleted
 	// row, mirroring what the real repo does before it commits (see
 	// CampaignRepo.DeleteCampaign's enqueueCampaignIndex call). nil if the builder
@@ -2653,9 +2655,10 @@ type deleteCampaignRepo struct {
 	gotIndexPayload []byte
 }
 
-func (r *deleteCampaignRepo) DeleteCampaign(_ context.Context, projectID, briefID, id string, expectedVersion int64, indexPayload domain.CampaignIndexPayloadFunc) error {
+func (r *deleteCampaignRepo) DeleteCampaign(_ context.Context, projectID, briefID, id string, expectedVersion int64, by *model.Actor, indexPayload domain.CampaignIndexPayloadFunc) error {
 	r.called = true
 	r.gotProject, r.gotBrief, r.gotCampaign, r.gotExpectedVers = projectID, briefID, id, expectedVersion
+	r.gotActor = by
 	if r.err == nil && indexPayload != nil {
 		payload, perr := indexPayload(&model.Campaign{
 			ID: id, BriefID: briefID, ProjectID: projectID, Status: model.CampaignStatusDeleted,
