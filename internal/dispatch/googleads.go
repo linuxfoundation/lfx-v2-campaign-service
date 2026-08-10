@@ -74,6 +74,20 @@ type googleAdsConfig struct {
 	// not created by this dispatcher. See googleads.validateAudienceSegments for the
 	// accepted shapes.
 	AudienceSegments []string `json:"audienceSegments"`
+	// AdoptExisting opts THIS dispatch in to adopting a campaign that already carries the
+	// composed name instead of creating one. It defaults to FALSE, and the default is the
+	// safety property, not a convenience: ComposeName is deterministic in
+	// Project/EventName/NameSuffix and does NOT change when the local campaign row is
+	// soft-deleted, while getCampaignByPlatformQuery excludes deleted rows — so after a
+	// delete the orchestrator reads the pair as "never dispatched" and takes the fresh-claim
+	// path. An unconditional lookup would then silently re-attach to the still-live upstream
+	// campaign the delete was meant to walk away from, and persist THIS request's
+	// budget/config against it while pushing nothing upstream. Requiring the caller to ask
+	// makes the one case where adoption is genuinely wanted — binding a campaign that
+	// already exists on the account — an explicit act, and leaves the delete/re-dispatch
+	// case to the create path, where a duplicate name surfaces as a visible
+	// reconciliation outcome rather than a silent rebind.
+	AdoptExisting bool `json:"adoptExisting"`
 }
 
 // GoogleAdsDispatcher creates Google Ads campaigns for the orchestrator.
@@ -144,8 +158,11 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		AudienceSegments: cfg.AudienceSegments,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: the
 		// GA client composes the budget/campaign/ad-group names from these, and a retry
-		// with the same suffix hits Google's DUPLICATE_NAME (reported
-		// UNCONFIRMED-already-exists) rather than creating a second paid campaign — a
+		// with the same suffix is rejected by whichever family it reaches first —
+		// CampaignBudgetError DUPLICATE_NAME for the budget, CampaignError
+		// DUPLICATE_CAMPAIGN_NAME for the campaign (two different codes; see
+		// errCodeDuplicateBudgetName / errCodeDuplicateCampaignName). Either is reported
+		// UNCONFIRMED-already-exists rather than creating a second paid campaign — a
 		// poor-man's idempotency key until LFXV2-2665 lands provider idempotency keys.
 		NameSuffix: brief.ID,
 	}
@@ -168,6 +185,37 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		d.opts...,
 	)
 
+	// Validate the input FIRST, and note this is not merely tidy ordering. Adoption
+	// returns before CreateCampaign runs its preflight, so without this call the same
+	// request would be rejected when no campaign exists and accepted when one does — a
+	// NaN budget or a malformed registration URL would fail on the first dispatch and
+	// silently succeed on the retry. Whether a request is well-formed cannot depend on
+	// what happens to be sitting in the ad account. Validating unconditionally (rather
+	// than only on the adoption branch) also keeps the two paths' acceptance identical
+	// whichever way cfg.AdoptExisting is set.
+	if err := client.ValidateCampaignInput(in); err != nil {
+		return nil, notCreated(err)
+	}
+	campaignName := googleads.ComposeName("Search Campaign", in)
+	// Adoption is OPT-IN (see googleAdsConfig.AdoptExisting for why the default must be
+	// off). When asked for: ComposeName is deterministic in the brief, so the caller is
+	// pointing at a campaign that already carries this exact name on this account. Adopt
+	// it rather than create a second PAID campaign. Only a verified absence licenses the
+	// create below: FindCampaignByName errors on anything it cannot verify (transport
+	// failure, a name that does not match the WHERE clause, a campaign in another
+	// customer), so the lookup never reduces an unverifiable response to a clean
+	// "not found".
+	if cfg.AdoptExisting {
+		adoptID, adoptErr := client.FindCampaignByName(ctx, campaignName)
+		if adoptErr != nil {
+			// notCreated: nothing was created upstream, so the orchestrator releases the
+			// claim. FindCampaignByName already wraps with its own context.
+			return nil, notCreated(adoptErr)
+		}
+		if adoptID != "" {
+			return campaignFromGoogleAdsAdoption(ctx, adoptID, campaignName, accountID, res.label, cfg), nil
+		}
+	}
 	// The GA client's contract (mirrors reddit/meta/twitter): (nil, err) ONLY when
 	// NOTHING was (or may have been) created — a validation/pre-send/definite failure.
 	// Otherwise it returns a NON-NIL partial result alongside the error (an ambiguous
@@ -239,6 +287,69 @@ func campaignFromGoogleAds(ctx context.Context, r *googleads.CampaignResult, cfg
 		// still persisted with its id/status/config). Mirrors the meta/twitter/linkedin adapters.
 		slog.WarnContext(ctx, "failed to marshal google ads campaign result blob (Result left empty)",
 			"campaign_id", c.PlatformCampaignID, "error", err)
+	} else {
+		c.Result = raw
+	}
+	return c
+}
+
+// campaignFromGoogleAdsAdoption builds the campaign model for an ADOPTED campaign. The lookup
+// answers only "a campaign with this name exists here" — it says nothing about the budget, ad
+// group and ad a create would also have made, so an adoption of a campaign whose previous
+// attempt died mid-sequence yields a campaign that will not serve. It is still the right
+// outcome: the alternative is a duplicate paid campaign, and the shell is now recorded and
+// visible for reconciliation rather than orphaned. Completing a partial adoption is
+// LFXV2-3042's follow-up, and needs an ad-group lookup this client does not yet have.
+func campaignFromGoogleAdsAdoption(ctx context.Context, campaignID, campaignName, accountID, accountLabel string, cfg googleAdsConfig) *model.Campaign {
+	c := &model.Campaign{
+		PlatformCampaignID: campaignID,
+		CampaignName:       campaignName,
+		// `created_degraded`, NOT `created` — the same status twitter.go stamps for its
+		// Reused case, and for the same reason: the campaign exists but this request's
+		// budget/config were never pushed to it, and no budget or ad group was created,
+		// so it may be serving under settings nobody here chose (or not serving at all).
+		// Both statuses are terminal to isReusableCampaign, so this does not invite a
+		// re-dispatch; what it does is make the row say what actually happened, which is
+		// what an operator reconciling against the platform has to go on. A clean
+		// `created` here would assert a wiring that this path deliberately never does.
+		Status: campaignStatusCreatedDegraded,
+	}
+	// The config is applied for the same reason as on the create path, and it is worth
+	// being precise about what these columns mean, because "adopted" invites the reading
+	// that they should be left NULL as unknown.
+	//
+	// budget_amount/budget_type/config_snapshot record the CALLER-SUPPLIED config for this
+	// dispatch — what was asked for — not a readback of platform state; the create path
+	// stamps them from the same cfg before anything is read back. Leaving them NULL here
+	// would not express "unknown", it would lose the request: the row would be the only
+	// record that this dispatch happened and would say nothing about what it asked for,
+	// and every sibling adapter's rows would disagree with it in shape for no reason a
+	// reader could recover.
+	//
+	// What adoption does NOT do is push this config upstream. The campaign already exists
+	// with whatever budget and settings it was created with, and this path deliberately
+	// creates no budget and no ad group (see the Steps below). So the row records the
+	// request while the platform keeps its own state, and the two can legitimately
+	// disagree. Nothing reconciles them today: ReadMetrics returns impressions, clicks,
+	// cost and CTR, none of which describe the campaign's configuration, so it cannot
+	// close this gap however it is read. A readback of the upstream settings is a
+	// separate capability and is not in this service (LFXV2-3067).
+	applyCampaignConfig(ctx, c, cfg.Budget, false, "", "", cfg)
+	// The blob must carry CustomerID: googleAdsCreationCustomerID reads it to detect a
+	// later read/toggle against a DIFFERENT customer, and treats an absent one as
+	// "unknown, proceed" — so omitting it would silently disable that check.
+	adoptionResult := &googleads.CampaignResult{
+		Platform:     "google-ads",
+		AccountLabel: accountLabel,
+		CustomerID:   accountID,
+		CampaignID:   campaignID,
+		CampaignName: campaignName,
+		GoogleAdsURL: "https://ads.google.com/aw/campaigns?ocid=" + accountID,
+		Steps:        []string{"Campaign adopted: " + campaignID + " (already exists on account, no budget/ad group created)"},
+	}
+	if raw, err := json.Marshal(adoptionResult); err != nil {
+		slog.WarnContext(ctx, "failed to marshal adoption result blob (Result left empty)",
+			"campaign_id", campaignID, "error", err)
 	} else {
 		c.Result = raw
 	}

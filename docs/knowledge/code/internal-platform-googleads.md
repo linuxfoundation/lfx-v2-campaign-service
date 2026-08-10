@@ -135,8 +135,22 @@ interpolating free text into GAQL must go through the helper.
 fail-closed logic mirrors the other clients' lookups (meta's `findCampaignByName`, linkedin's
 `findMatch`, twitter's and microsoft's) because callers make the same decision from the
 result. It is the first one **exported** — the others are called only from inside their own
-create path; this one is exported because dispatch's adoption path is intended to call it.
-That wiring is a follow-up — nothing in production calls it yet.
+create path; this one is exported because `GoogleAdsDispatcher.Dispatch` calls it before
+creating, to adopt a campaign that already carries the composed name rather than create a
+second paid one (LFXV2-3042).
+
+Adoption is **opt-in** — `googleAdsConfig.adoptExisting`, default `false` — and the default
+is a correctness property, not a convenience. `ComposeName` is deterministic in
+Project/EventName/NameSuffix and does not change when the local campaign row is soft-deleted,
+while `getCampaignByPlatformQuery` excludes deleted rows. So after a documented delete the
+orchestrator reads the pair as "never dispatched" and re-enters `Dispatch`; an unconditional
+lookup would there re-attach to the still-live upstream campaign the delete walked away from
+and persist the new request's budget/config against it while pushing nothing upstream. With
+the flag off, that dispatch goes down the create path, where Google's `DUPLICATE_NAME` is
+surfaced as a retained partial requiring reconciliation — visible, which the silent rebind
+is not. An adopted row is persisted `created_degraded`, never `created`: nothing was wired
+upstream (no budget, no ad group, no ad, and not this request's config), the same reason
+`twitter.go` degrades its `Reused` case.
 
 | outcome | result |
 |---|---|
@@ -147,10 +161,10 @@ That wiring is a follow-up — nothing in production calls it yet.
 | unrecognised status (`UNSPECIFIED`, `UNKNOWN`, empty) | `("", error)` |
 | unverifiable (undecodable row, no usable id, non-canonical id, malformed or cross-customer resource name, identity fields that disagree) | `("", error)` |
 
-**Why absence and ambiguity must differ.** Both callers act destructively on an absence:
-create takes `("", nil)` as licence to create, adoption as licence to report nothing to adopt.
-A false absence produces a **duplicate paid campaign**; an arbitrary pick binds a brief to the
-wrong one. Two live campaigns sharing a name is **anomalous, not routine** — v23 rejects a
+**Why absence and ambiguity must differ.** The one caller acts destructively on an absence.
+`("", nil)` is not reported upward as "nothing to adopt" — `Dispatch` **falls through to
+`CreateCampaign`** on it, so a verified absence is a licence to create and a false absence
+produces a **duplicate paid campaign**. An arbitrary pick binds a brief to the wrong one. Two live campaigns sharing a name is **anomalous, not routine** — v23 rejects a
 mutate whose name another `ENABLED`/`PAUSED` campaign holds (`DUPLICATE_CAMPAIGN_NAME`) — so
 this branch fail-closes on a response that should not be possible. Rows are deduplicated by id
 first, so one campaign on several rows is not ambiguous.

@@ -597,13 +597,13 @@ func TestIsDuplicateNameErr_GatedTo4xxAndFamily(t *testing.T) {
 
 func TestComposeName_DeterministicAndBounded(t *testing.T) {
 	in := CampaignInput{EventName: " KubeCon ", Project: " CNCF ", NameSuffix: " brief-1 "}
-	got := composeName("Budget", in)
+	got := ComposeName("Budget", in)
 	if got != "LFX | Budget | CNCF | KubeCon | brief-1" {
-		t.Errorf("composeName = %q", got)
+		t.Errorf("ComposeName = %q", got)
 	}
 	// Stable across calls (deterministic → retry collides on DUPLICATE_NAME).
-	if composeName("Budget", in) != got {
-		t.Error("composeName must be deterministic")
+	if ComposeName("Budget", in) != got {
+		t.Error("ComposeName must be deterministic")
 	}
 }
 
@@ -612,7 +612,7 @@ func TestComposeName_DeterministicAndBounded(t *testing.T) {
 // breaks the name-based attribution / reconciliation that splits on "|".
 func TestComposeName_StripsPipeInjection(t *testing.T) {
 	in := CampaignInput{Project: "A | B", EventName: "C||D", NameSuffix: "e"}
-	got := composeName("Budget", in)
+	got := ComposeName("Budget", in)
 	if got != "LFX | Budget | A B | C D | e" {
 		t.Errorf("composeName must strip injected pipes, got %q", got)
 	}
