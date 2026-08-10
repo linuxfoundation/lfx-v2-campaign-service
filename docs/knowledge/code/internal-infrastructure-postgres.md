@@ -180,8 +180,12 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   numbered `000017` until #93 merged and made it a silent duplicate, then `000018` until
   that collided with #106 — golang-migrate applies one file per version and skips the other
   with no error, so a collision surfaces only as a missing column. It moved rather than
-  #106's because #106's number is named only in its own migration, whereas moving it would
-  have been the larger edit at the time. See *Migration numbering* below.
+  #106's on the reference count, which is the rule: #106's version is named in `pool.go`'s
+  version-forcing recovery path and in three of its tests (`migration 000018: force 17`),
+  whereas this one is named in a single test and two documentation lines. **Renumber the
+  branch with the fewest references to the number, not the branch you happen to be in** — a
+  migration version leaks into prose and recovery code, and the leak, not the file name, is
+  the cost. See *Migration numbering* below.
 
 ## Actor attribution
 

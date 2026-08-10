@@ -186,3 +186,17 @@ branch before adding one — which is what a bot did here and I did not.
 
 Folding the two into one belongs on whichever branch merges second; the rename is deliberately
 the smaller move, so the merge stays mechanical.
+
+## Two documents still described the state this branch changed
+
+`docs/architecture.md`'s D5 row listed `campaign_audiences` as carrying `created_by` only and
+called it "a GAP rather than a design choice" — the exact gap `000019` closes here. The sibling
+statement in `docs/channel-connections-schema.md` had already been updated, so the two disagreed
+about the same table. D5 now matches, including the no-backfill decision and what a NULL means.
+
+`docs/knowledge/code/internal-infrastructure-postgres.md` explained the second renumber by saying
+#106's number "is named only in its own migration". That is the opposite of the reason recorded
+above: #106's version appears in `pool.go`'s version-forcing recovery path and in three of its
+tests, which is precisely why THIS branch moved instead. Left standing, the note taught the wrong
+rule for the next collision — renumber whichever branch you are in — rather than the one that was
+actually applied: renumber the branch with the fewest references to the number.
