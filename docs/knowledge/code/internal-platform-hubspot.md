@@ -334,8 +334,8 @@ data into logs; the error message is fixed text + response length.
 Auth + request layer + the email/list/event-def operations above, plus marketing-email
 statistics reads and authenticated portal resolution. Consumers: the audience-building
 logic (LFXV2-2774, uses lists + event-defs) and the email staging dispatcher
-(LFXV2-2777, uses the marketing-email ops) and metrics reader, the latter blocked on
-PR #11.
+(LFXV2-2777, uses the marketing-email ops) and the metrics reader (LFXV2-3058, uses the
+statistics read plus `AuthenticatedPortalID` for the portal-provenance guard).
 
 ## Dispatch adapter (internal/dispatch)
 

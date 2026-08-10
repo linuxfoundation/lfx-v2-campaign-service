@@ -139,10 +139,18 @@ func (d *HubSpotDispatcher) resolveHubSpotClient(ctx context.Context, projectID 
 // mutated upstream and nothing is persisted.
 //
 // The window is validated BEFORE credentials are resolved, and the order is load-bearing:
-// an unsupported window is a permanent 400 whatever the connection looks like, whereas
-// resolving first would report a project with an inactive connection as a 503 and tell the
-// caller to retry a request that can never succeed. Same order as the linkedin and X
-// adapters.
+// an unsupported window is a permanent 400 whatever the connection looks like, so it must
+// not be maskable by a fault that depends on connection state. Resolving first would let
+// the connection answer instead — 409 for the not-usable defects resolveHubSpotClient tags
+// below, 404 when the project has no connection at all, 500 when it fell back to an
+// unusable system row — none of which tells the caller the thing they actually have to fix,
+// which is the window they sent.
+//
+// Same ORDER as the linkedin and X adapters, but note the reason differs from linkedin's:
+// linkedin's resolve returns its inactive-connection error UNTAGGED, so there the masking
+// error really is a 503 telling the caller to retry something that can never succeed. This
+// adapter tags with domain.ErrConnectionNotUsable, which internal/service/brief.go
+// classifies as a 409. Do not copy linkedin's 503 wording back over here.
 func (d *HubSpotDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
 	if campaign.PlatformCampaignID == "" {
 		return nil, fmt.Errorf("campaign has no platform campaign ID")
