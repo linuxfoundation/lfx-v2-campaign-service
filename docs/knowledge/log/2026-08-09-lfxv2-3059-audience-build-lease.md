@@ -512,3 +512,56 @@ is the class that genuinely does not qualify.
 The general shape, worth keeping: **advice generated from a one-element set can be indefensibly
 generic and still read as correct.** The second element is what makes the message wrong, and
 nothing about adding it looks like an advice change.
+
+## Round 8: advice that names an annotation the message does not carry
+
+Three findings this round, from Cursor Bugbot (one unresolved thread) and Copilot (three
+suppressed comments). Two bots reported the first one independently, which is usually the
+signal that it is real, and it was.
+
+**The recovery clause reached one of the two paths that reference it.** Round 7 added
+`indexRecovery(name)` so each reported index carries the migration to force, and wired it into
+the missing-index path via `describeInvalid`. The wrong-definition path a hundred lines down
+kept building its entries as `name (defects)` — while the sentence closing that same message
+told the operator to "force the version annotated against it". The annotation was not there.
+This is my own previous round's fix leaving its sibling behind, which is the commonest way a
+partial fix ships: the path I was looking at got the improvement, the path I was not looking at
+got a message that now referred to something it did not have.
+
+Worth separating the two failure modes, because the second is the one that survives review.
+Wrong advice is caught by anyone who follows it once. Advice that points at an *absent*
+annotation reads as perfectly coherent in the diff — the sentence is well-formed and the
+mechanism it describes is real — and is discovered only by an operator at 2am who scans the
+error for a version number that is not in it. `defects = append(defects, indexRecovery(want.name))`
+before the join fixes it, and
+`TestMigrateRefusesARequiredIndexWithTheWrongDefinition` now asserts the literal
+`migration 000018: force 17`. Revert-verified against the live cluster: removing the append
+fails with the diagnostic naming the index that carries no annotation.
+
+**A status seen after a successful claim is a retraction, not a refusal.** The post-claim
+brief re-read returned `audienceValidationErr` — a 400 saying "approve the brief first" — for
+any non-approved status. But reaching that line means the claim succeeded, and the claim gates
+on approval; the brief WAS approved when the row was locked. The only thing a non-approved
+status can mean there is that somebody withdrew the approval in the interval, which is a
+mid-build change: 409, `ErrStaleApproval`. The 400 accused the caller of an input error they
+had not made, and sent them to re-approve a brief while the real event went unnamed. The two
+branches are complements — `refusedClaimErr` owns the genuinely-pre-claim case and keeps its
+400; this one is what is left over.
+
+**A 409 may only be made from a read that succeeded.** `refusedClaimErr` handled `ErrNotFound`
+from its diagnostic re-read and let every other read failure fall through to mapping the claim
+error, i.e. to `ErrStaleApproval`. So a pool exhaustion or an expired deadline between the two
+calls answered "the brief changed; refresh and rebuild" — a factual assertion about what a
+third party did, made on the strength of a read that failed to observe anything. The switch now
+returns `mapAudienceErr(berr)` first for any `berr != nil`. The rule generalises: a status code
+that describes someone else's action is evidence-bearing, and an error path that cannot produce
+the evidence must not produce the code.
+
+**Neither of the two audience fixes was bound by a test.** After making both changes
+`go test ./internal/service/` stayed green, which proved the branches were uncovered rather
+than that the fixes were right. Two hooks were needed to reach them: `afterClaim` on
+`fakeAudienceRepo`, which fires once after a SUCCESSFUL claim (the existing `onGet` cannot model
+this — it fires after the read and hands back the pre-mutation snapshot, so the service still
+sees an approved brief), and `getErr` on `fakeBriefRepo`, deliberately not `ErrNotFound`.
+`TestBuildAudience_RetractionAfterTheClaimIsA409` and
+`TestBuildAudience_UnreadableBriefIsNotAStaleApproval` were both revert-verified.

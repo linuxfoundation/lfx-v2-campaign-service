@@ -43,6 +43,11 @@ type fakeBriefRepo struct {
 	// createErr, when set, fails CreateBrief BEFORE it stores anything — the shape of a
 	// version conflict or a database error, where the handler ran but no row committed.
 	createErr error
+	// getErr, when set, fails every GetBrief. It is deliberately NOT ErrNotFound: it models
+	// the case where the service cannot tell what the brief's state is (pool exhausted,
+	// deadline expired), which must never be answered with a claim about what somebody else
+	// did to the brief.
+	getErr error
 }
 
 func newFakeBriefRepo() *fakeBriefRepo {
@@ -77,6 +82,9 @@ func (r *fakeBriefRepo) FindBriefByEventSlug(_ context.Context, projectID, event
 }
 
 func (r *fakeBriefRepo) GetBrief(_ context.Context, projectID, id string) (*model.CampaignBrief, error) {
+	if r.getErr != nil {
+		return nil, r.getErr
+	}
 	b, ok := r.briefs[briefKey(projectID, id)]
 	if !ok {
 		return nil, domain.ErrNotFound

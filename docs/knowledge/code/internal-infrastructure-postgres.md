@@ -322,6 +322,18 @@ wrong-definition) build from it, reusing the same migration-derived ownership
 if two entries ever resolve to the same version, which is the signal to re-derive the
 advice rather than assume it still holds.
 
+"Both messages" was, for one round, only one of them. The per-name clause landed on the
+missing-index path and the wrong-definition path kept building its entries as
+`name (defects)` — while its own closing sentence told the operator to force "the version
+annotated against it", naming an annotation that was nowhere in the message. That is the
+worse half of the failure mode this section exists to prevent: not advice that is wrong,
+but advice that cannot be followed at all. It survived because nothing asserted on it;
+`TestMigrateRefusesARequiredIndexWithTheWrongDefinition` now requires the literal
+`migration 000018: force 17` in the error, so the two paths can only drift again by
+failing a test. The rule generalises past these two: **any sentence that refers the reader
+to an annotation must be tested against a message that carries one**, because a reference
+to something absent reads as correct in review and is useless in an incident.
+
 ### The check is on the DEFINITION, because the name is what IF NOT EXISTS matches
 
 "Present and valid" under the right name is still not enough, and the reason is the same

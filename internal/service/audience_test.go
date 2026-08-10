@@ -35,6 +35,12 @@ type fakeAudienceRepo struct {
 	// rejects the insert because a concurrent build for this (brief, platform) already
 	// holds the lease.
 	leaseHeld bool
+	// afterClaim, when set, fires once immediately after a SUCCESSFUL claim. It models the
+	// only window the post-claim brief re-read can lose: the claim committed while the brief
+	// was approved, and a withdrawal commits before the service reads it back. onGet cannot
+	// express this — it fires after the read and returns the pre-mutation snapshot, so the
+	// service would still see an approved brief.
+	afterClaim func()
 }
 
 func newFakeAudienceRepo() *fakeAudienceRepo {
@@ -83,6 +89,11 @@ func (r *fakeAudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a
 	out, cerr := r.CreateAudience(ctx, a)
 	if cerr != nil {
 		return nil, 0, cerr
+	}
+	if r.afterClaim != nil {
+		hook := r.afterClaim
+		r.afterClaim = nil // one-shot
+		hook()
 	}
 	return out, version, nil
 }

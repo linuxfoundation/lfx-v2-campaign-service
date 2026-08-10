@@ -209,14 +209,22 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 
 	// Same lifecycle guard the campaign-creation path applies (brief.go). Building creates
 	// REAL HubSpot lists and makes the brief sendable, so a draft must not reach it — the
-	// event details it would be built from are still being edited. The claim already refused a
-	// brief that was not approved when it locked the row, so this can only fire if the brief
-	// was retracted in the moment since; it is kept because the alternative is a guard whose
-	// correctness depends on a second component's implementation.
+	// event details it would be built from are still being edited. It is kept even though the
+	// claim already gated on approval, because the alternative is a guard whose correctness
+	// depends on a second component's implementation.
+	//
+	// The status it reports is NOT the pre-claim one. Reaching here means the claim SUCCEEDED,
+	// so the brief was approved when the row was locked and has been retracted in the moment
+	// since — which is a mid-build change, the exact thing ErrStaleApproval names. Returning
+	// the "must be approved before building" 400 here would tell a caller their brief was never
+	// eligible, when what actually happened is that somebody withdrew it underneath them and a
+	// refresh-and-rebuild is the remedy. refusedClaimErr produces the 400 for the case that
+	// genuinely is pre-claim; this branch is its complement and must produce the 409.
 	if brief.Status != model.BriefApproved {
-		verr := fmt.Errorf("brief must be approved before building its audience (it is %s)", brief.Status)
+		verr := fmt.Errorf("%w: it was approved when the build was claimed and is now %s",
+			domain.ErrStaleApproval, brief.Status)
 		releaseUnstartedClaim(ctx, repo, created, verr)
-		return nil, audienceValidationErr(verr)
+		return nil, mapAudienceErr(verr)
 	}
 
 	details, derr := decodeEventDetails(brief)
@@ -388,17 +396,21 @@ func (s *AudienceService) BuildAudience(ctx context.Context, p *audiences.BuildA
 // that is not there. Before the claim moved ahead of the brief read this was a plain 404, and
 // it has to stay one.
 //
-// ErrNotFound is a DEFINITE answer, which is what makes it safe to act on here; a brief that
-// cannot be re-read at all still falls through to the generic mapping, because guessing would
-// blame the caller for the service's own inability to look.
+// Any re-read FAILURE is reported as itself, not as the stale-approval 409. That covers
+// ErrNotFound (the 404 above) but deliberately does not stop there: if the diagnostic read
+// fails for any other reason — the pool drops between the two calls, the deadline expires —
+// the honest answer is the service error, and mapping cerr instead would answer "the brief
+// changed; refresh and rebuild" on no evidence that anything about the brief changed. The
+// 409 is a claim about what somebody else did, and this function may only make it from a
+// read that actually succeeded.
 func refusedClaimErr(ctx context.Context, briefs domain.BriefRepository, p *audiences.BuildAudiencePayload, cerr error) error {
 	if errors.Is(cerr, domain.ErrStaleApproval) {
 		brief, berr := briefs.GetBrief(ctx, p.ProjectID, p.BriefID)
 		switch {
-		case berr == nil && brief.Status != model.BriefApproved:
-			return audienceValidationErr(fmt.Errorf("brief must be approved before building its audience (it is %s)", brief.Status))
-		case errors.Is(berr, domain.ErrNotFound):
+		case berr != nil:
 			return mapAudienceErr(berr)
+		case brief.Status != model.BriefApproved:
+			return audienceValidationErr(fmt.Errorf("brief must be approved before building its audience (it is %s)", brief.Status))
 		}
 	}
 	return mapAudienceErr(cerr)

@@ -887,3 +887,77 @@ func TestBuildAudience_SecondRequestIsRejectedWhileTheFirstReadsTheBrief(t *test
 		"exactly one build's worth of HubSpot lists — a second set is portal garbage nobody "+
 			"knows to delete")
 }
+
+// TestBuildAudience_RetractionAfterTheClaimIsA409 covers the branch between the two:
+// approved when the claim locked the row, withdrawn before the service read it back.
+//
+// The status the caller SEES is the same in both cases — a draft brief — and that is exactly
+// why the branch is easy to get wrong. What differs is what happened. A brief that was never
+// approved is the caller's own mistake, and "approve it first" is actionable. A brief that was
+// approved a moment ago and is not now was withdrawn out from under a request already in
+// flight; telling that caller their brief must be approved describes a state they did not
+// create and offers a remedy they may not be able to apply, while suppressing the one that
+// works — refresh and rebuild. The two are distinguished by WHERE the check fires, so the
+// claim succeeding is the whole of the evidence.
+func TestBuildAudience_RetractionAfterTheClaimIsA409(t *testing.T) {
+	b := &fakeBuilder{}
+	s, arepo, brepo := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+
+	brief := brepo.briefs[briefKey("cncf", "brief-1")]
+	arepo.afterClaim = func() { brief.Status = model.BriefDraft }
+
+	_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	require.Error(t, err)
+
+	var conflict *audiences.ConflictError
+	require.ErrorAs(t, err, &conflict,
+		"the claim succeeded, so the brief WAS approved and has since been withdrawn — that is "+
+			"a mid-build change (409), not a caller who never approved it (400)")
+
+	var badReq *audiences.BadRequestError
+	assert.NotErrorAs(t, err, &badReq,
+		"a 400 here tells the caller to approve a brief somebody else just withdrew")
+
+	assert.Empty(t, b.names(), "nothing may be created from a brief that is no longer approved")
+
+	rows := arepo.rows()
+	require.Len(t, rows, 1, "the claim committed before the withdrawal, so its row exists")
+	assert.Equal(t, model.AudienceFailed, rows[0].Status,
+		"the lease must be released; nothing reached HubSpot, so there is nothing to reconcile")
+}
+
+// TestBuildAudience_UnreadableBriefIsNotAStaleApproval pins the diagnostic re-read
+// in refusedClaimErr to evidence it actually has.
+//
+// The claim returns ErrStaleApproval for three different situations — moved brief, never
+// approved, missing brief — so refusedClaimErr re-reads to tell them apart. When that re-read
+// FAILS, it has learned nothing, and falling back to the claim's own sentinel answers "the
+// brief changed while its audience was being built; refresh and rebuild". That is a factual
+// claim about a third party, made on a read that never returned. The service's inability to
+// look is a service error, and reporting it as one is the only answer the evidence supports.
+func TestBuildAudience_UnreadableBriefIsNotAStaleApproval(t *testing.T) {
+	b := &fakeBuilder{}
+	s, arepo, brepo := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+
+	// Refuse the claim the way a never-approved brief does...
+	brepo.briefs[briefKey("cncf", "brief-1")].Status = model.BriefDraft
+	// ...and then make the diagnostic re-read impossible. Not ErrNotFound: "the brief is
+	// gone" is a definite answer and stays a 404.
+	brepo.getErr = errors.New("connection reset by peer")
+
+	_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	require.Error(t, err)
+
+	var conflict *audiences.ConflictError
+	assert.NotErrorAs(t, err, &conflict,
+		"a 409 asserts the brief changed; the read that would have shown that failed")
+	var badReq *audiences.BadRequestError
+	assert.NotErrorAs(t, err, &badReq,
+		"and a 400 blames the caller for a failure that is entirely the service's")
+
+	assert.Empty(t, arepo.rows(), "a refused claim inserts nothing")
+}

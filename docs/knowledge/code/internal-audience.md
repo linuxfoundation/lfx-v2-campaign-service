@@ -120,9 +120,10 @@ One more thing had to move with it. The claim gates on approval itself, so a bri
 never approved and a brief that moved mid-build both come back as `ErrStaleApproval` — a 409
 about versions, which is right for the race and wrong for the ordinary case of someone
 building a draft. `refusedClaimErr` re-reads the brief on the FAILURE path only and renders
-that case as the 400 it was before, naming the status. A brief that cannot be re-read falls
-through to the generic mapping: guessing 400 there would blame the caller for the service's
-own inability to look.
+that case as the 400 it was before, naming the status. A brief that cannot be re-read is
+reported as THE READ'S OWN failure — `mapAudienceErr(berr)`, not a mapping of the claim error:
+guessing 400 there would blame the caller for the service's own inability to look, and falling
+back to the 409 would be worse still (see below).
 
 A build that dies holding the lease keeps blocking rebuilds. That is intended: its lists exist
 upstream, so the old answer of building again is what duplicated them. An operator reconciles
@@ -178,6 +179,16 @@ approval. A read failure here is reported as-is and never treated as "probably s
 the caller is about to create real lists, and the only safe reading of "could not check" is
 that the check did not pass.
 
+**A non-approved status seen AFTER the claim is a 409, not the 400.** The two look like the
+same condition and are not, and the claim itself is what tells them apart: reaching this guard
+means the claim SUCCEEDED, and the claim gates on approval, so the brief was approved when the
+row was locked. Anything else observed now happened in the interval since — which is a
+retraction mid-build, exactly what `ErrStaleApproval` names. Answering 400 ("approve the brief
+first") would be a false accusation: the caller did approve it, and telling them to fix input
+they got right sends them looking in the wrong place while the actual event — somebody
+withdrawing an approval under a running build — goes unnamed. `refusedClaimErr` produces the
+400 for the case that genuinely is pre-claim; this branch is its complement.
+
 **The re-check has to LOCK, which is why it is a repository operation.** Its first form read
 the brief with `GetBrief` and compared in the service, and that cannot answer the question it
 was asked. `GetBrief` is a plain `SELECT`, so under READ COMMITTED it returns the last
@@ -196,8 +207,19 @@ find a missing or archived brief either, so it too refuses with `ErrStaleApprova
 to that mapping the caller is told to refresh and rebuild a brief that does not exist, about a
 race they were not in. Before the claim moved ahead of the brief read this was a plain 404, and
 `refusedClaimErr` keeps it one by re-reading and treating `ErrNotFound` as the definite answer
-it is. A brief that cannot be re-read AT ALL is different and still falls through to the
-generic mapping: "I could not look" must not be reported as "it is not there."
+it is. A brief that cannot be re-read AT ALL is different: "I could not look" must not be
+reported as "it is not there."
+
+And it must not be reported as the 409 either, which is the sharper version of the same rule
+and the one that was actually wrong. `ErrNotFound` was handled and every OTHER read failure —
+the pool drops between the two calls, the deadline expires — fell back to mapping the claim
+error, i.e. to `ErrStaleApproval`'s "the brief changed; refresh and rebuild". **A 409 here is a
+factual claim about what somebody ELSE did**, and this function was making it on no evidence:
+the read that would have shown a change is the read that failed. The switch now returns
+`mapAudienceErr(berr)` for any `berr != nil`, so the 409 can only be produced from a read that
+succeeded. `TestBuildAudience_UnreadableBriefIsNotAStaleApproval` pins it with a plain
+`connection reset by peer`, which is deliberately not `ErrNotFound` — the bug lived entirely in
+the errors that were not the one anybody thought about.
 
 ## Only approved briefs
 

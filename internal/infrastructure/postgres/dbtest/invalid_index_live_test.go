@@ -221,6 +221,15 @@ func TestMigrateRefusesARequiredIndexWithTheWrongDefinition(t *testing.T) {
 	if !strings.Contains(err.Error(), "DROPPING") {
 		t.Errorf("the error does not tell the operator to DROP the impostor first: %v", err)
 	}
+	// And the drop is only half the remedy. The message then says to force "the version
+	// annotated against" this name — which is unactionable unless the annotation is on the
+	// entry. The missing-index path got this via describeInvalid and this sibling path did
+	// not, so an operator here was told to follow an annotation that was never printed.
+	// 000018 owns this index, so the instruction is `force 17`.
+	if !strings.Contains(err.Error(), "migration 000018: force 17") {
+		t.Errorf("the error tells the operator to force the annotated version but carries no "+
+			"annotation for %s; they cannot know which migration to rewind: %v", idx, err)
+	}
 	if !postgres.IsPermanentMigrationErr(err) {
 		t.Errorf("ErrRequiredIndexMismatch is not permanent; boot would 503-loop instead of " +
 			"naming the one thing an operator has to do")

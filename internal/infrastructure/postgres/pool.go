@@ -551,6 +551,13 @@ func checkRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) (missing, wrong
 			defects = append(defects, fmt.Sprintf("predicate %q, want %q", predicate, want.predicate))
 		}
 		if len(defects) > 0 {
+			// The recovery clause goes in the SAME parenthesis as the defects, for the same
+			// reason describeInvalid puts it there: the message that follows tells the
+			// operator to force "the version annotated against" this name, and an
+			// annotation the entry does not carry is advice they cannot act on. Two
+			// impostors reported together need not share an owner any more than two
+			// missing indexes do.
+			defects = append(defects, indexRecovery(want.name))
 			wrong = append(wrong, want.name+" ("+strings.Join(defects, ", ")+")")
 		}
 	}
