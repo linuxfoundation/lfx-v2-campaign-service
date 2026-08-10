@@ -662,11 +662,12 @@ const requiredIndexQuery = `SELECT
 
 // checkRequiredIndexes splits the required indexes into those ABSENT and those present
 // under the right name with the wrong definition. The two are separated because their
-// recovery differs: an absent index needs the version forced so the CREATE runs, while an
-// impostor must be DROPPED first — force it without dropping and the CREATE finds the name
+// recovery differs: an absent index is rebuilt by running its own DDL
+// (`requiredIndex.createSQL`) with the recorded migration version left alone, while an
+// impostor must be DROPPED first — run the CREATE without dropping and it finds the name
 // again and skips, leaving the operator where they started. An index that exists but is
 // INVALID counts as absent: it enforces nothing, which is the same fact to a caller
-// deciding whether the invariant holds, and its recovery is the drop-then-force above.
+// deciding whether the invariant holds, and its recovery is the drop-then-create above.
 func checkRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) (missing, wrong []string, err error) {
 	for _, want := range requiredIndexes {
 		var unique, live, rightTable bool
@@ -720,7 +721,8 @@ func IsPermanentMigrationErr(err error) bool {
 	// which is worse than the dirty case, because the version reads CLEAN.
 	// ErrMissingRequiredIndex is permanent for the same reason and one step further along:
 	// the version is already clean, so Up() returns ErrNoChange forever and the index is
-	// never rebuilt. Only `migrate force` moves it.
+	// never rebuilt. Only running the index's own DDL does — which is why the error carries
+	// that statement (see createSQL) rather than telling the operator to force a version.
 	return errors.As(err, &dirty) ||
 		errors.Is(err, ErrInvalidIndex) ||
 		errors.Is(err, ErrMissingRequiredIndex) ||

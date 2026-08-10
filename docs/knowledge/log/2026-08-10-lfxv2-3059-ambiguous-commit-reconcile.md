@@ -1,5 +1,7 @@
 # 2026-08-10 — LFXV2-3059: reconcile an ambiguous audience-build commit error
 
+**Fix** — a lost commit acknowledgement could strand an audience-build lease forever.
+
 Review finding on PR #106 (dealako, CHANGES_REQUESTED): `CreateAudienceForApprovedBrief`
 returned a bare error on `tx.Commit(ctx)` failure with no attempt to reconcile state. A
 `Commit` error does not prove PostgreSQL rolled back — the server can commit the row before
@@ -12,10 +14,17 @@ service layer's `releaseUnstartedClaim` has no row to release it through.
 
 Added `reconcileAmbiguousAudienceCommit(ctx, pool, row)`, called from the `tx.Commit` error
 branch with the row already observed via the INSERT's `RETURNING` clause. It runs a bounded
-(5s), detached (`context.WithoutCancel`) `UPDATE ... WHERE id=$1 AND version=$2` that moves
+(5s), detached (`context.WithoutCancel`)
+`UPDATE ... WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND status='building'` that moves
 the row to `failed`. Genuinely rolled back ⇒ no row at that id ⇒ zero-row UPDATE, a harmless
 no-op. Best-effort: logs on failure rather than compounding the caller's already-in-flight
 error.
+
+**The predicate is the status, not the version** — the first cut gated on `version=$2` and
+that was wrong. A concurrent `PATCH` touching any other field bumps `version` while leaving
+the status at `building`, so the version-gated UPDATE matches zero rows, returns no error,
+and strands exactly the lease it was added to release. `status='building'` enforces the
+do-not-downgrade invariant inside the write itself and is idempotent under retry.
 
 ## Testing this required a new live-DB testing seam
 

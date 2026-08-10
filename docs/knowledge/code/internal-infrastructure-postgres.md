@@ -668,12 +668,26 @@ returns `nil` for the created row on this path, so the service layer's `releaseU
 (`internal/service/audience_build.go`) has no row to call `UpdateAudience` on. Nothing would
 ever release that lease.
 
-`reconcileAmbiguousAudienceCommit` closes the gap directly in the repo, using the id and
-version the INSERT's `RETURNING` clause already observed inside the (possibly-rolled-back)
-transaction: a bounded (`ambiguousCommitReconcileTimeout = 5s`), detached
-(`context.WithoutCancel`) `UPDATE ... WHERE id=$1 AND version=$2` that moves the row to
-`failed`. If the commit genuinely rolled back, no row exists at that id and the UPDATE
-affects zero rows — a harmless no-op, not an error. It is best-effort and only logs on
+`reconcileAmbiguousAudienceCommit` closes the gap directly in the repo, using the row the
+INSERT's `RETURNING` clause already observed inside the (possibly-rolled-back) transaction:
+a bounded (`ambiguousCommitReconcileTimeout = 5s`), detached (`context.WithoutCancel`)
+`UPDATE ... WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND status='building'` that moves
+the row to `failed`.
+
+**The predicate is the status, NOT the version.** A version predicate does not enforce the
+do-not-downgrade invariant it looks like it enforces: a concurrent `PATCH` that edits some
+other field while leaving the status at `building` still bumps `version`, so the UPDATE
+would match zero rows, report no error, and abandon the row holding the lease forever.
+Predicating on `status='building'` closes that hole and makes the write idempotent under
+retry. It is one statement rather than a SELECT-then-UPDATE for the same reason — a
+separate status read is a TOCTOU window, and it could only add a failure mode on a path
+that runs precisely when the connection is already known to be unreliable. The tenant
+columns match `UpdateAudience`'s predicate; `id` alone would be correct (it is the primary
+key) but every other write to this table carries the tenant scope.
+
+Every outcome is right without a prior read: no such row ⇒ 0 rows (the commit rolled back,
+nothing to reconcile); `building` ⇒ 1 row (released, the point of the function);
+`built`/`failed` ⇒ 0 rows (a stable end state, left untouched). It is best-effort and only logs on
 failure, matching `releaseUnstartedClaim`'s own error handling for the same reason: the
 caller is already returning an error from `CreateAudienceForApprovedBrief` and has no
 better path to report a second failure on top of the first.

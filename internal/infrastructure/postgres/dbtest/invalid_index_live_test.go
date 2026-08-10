@@ -125,7 +125,7 @@ func TestMigrateRefusesADroppedRequiredIndex(t *testing.T) {
 	}
 	if !postgres.IsPermanentMigrationErr(err) {
 		t.Errorf("ErrMissingRequiredIndex is not permanent; boot would 503-loop rather than " +
-			"telling the operator the version must be forced back")
+			"surfacing the CREATE INDEX statement the operator must run")
 	}
 }
 

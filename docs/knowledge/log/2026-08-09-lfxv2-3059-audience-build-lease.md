@@ -18,7 +18,7 @@ never adopts an earlier one's lists, and it is exactly what makes the duplicatio
 complete sets of groups appear in the portal, indistinguishable from one another, and every
 downstream reader sees a perfectly ordinary audience.
 
-**Why the predicate is `'building'` and not the campaigns shape.** `000010` constrains campaigns
+**Why the predicate is `'building'` and not the campaigns shape.** `000013` constrains campaigns
 with `WHERE status <> 'deleted'`, and copying that here would have been wrong. A brief has
 exactly one live campaign per platform; `000005` records that a brief may have MANY audiences
 over time, and `BuildRef = created.ID` exists in `BuildAudience` precisely because a later build

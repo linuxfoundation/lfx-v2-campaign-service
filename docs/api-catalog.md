@@ -78,8 +78,9 @@ enough — a client that keys on it will do the wrong thing for one of them.** K
 `reason` field of the error body, which is a stable slug: `stale_approval`,
 `audience_build_in_flight`, or `already_exists`. Do NOT key on the message text — it is
 reworded whenever an operator finds it unclear, and the wording below has already changed
-twice. `reason` is present only on endpoints that return more than one kind of conflict;
-absent means unspecified.
+twice. Today `reason` is populated by the audiences endpoints only — the briefs endpoints
+distinguish their conflicts in message prose and set no slug yet. Absent means unspecified:
+fall back to the message there.
 
 | `reason` | Message contains | Cause | Remedy |
 |---|---|---|---|

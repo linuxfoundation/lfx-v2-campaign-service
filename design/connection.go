@@ -105,10 +105,16 @@ var NotFoundError = Type("not-found-error", func() {
 // the first reworded message silently breaks it. `reason` is the part that is promised
 // not to change.
 //
-// It is deliberately NOT Required: only the endpoints that actually return more than
-// one kind of conflict populate it, and adding it to the rest would imply a taxonomy
-// nobody maintains. A client must treat an absent reason as "unspecified conflict",
-// which is what the message already says.
+// It is deliberately NOT Required, because ConflictError is shared by every endpoint in
+// the API and the slugs are being introduced group by group rather than all at once.
+// Today only the audiences group populates it: `mapAudienceErr` sets a reason on all
+// three of its 409s, which is where the need was sharpest — those three carry OPPOSITE
+// remedies. The briefs group also distinguishes many conflicts, but does so in message
+// prose only and sets no reason yet; that is a gap to close, not the intended end state.
+// Until it is closed a client must treat an absent reason as "unspecified conflict" and
+// fall back to the message, which is what the message already says. Making the field
+// Required now would force a slug onto every 409 in one change and invent a taxonomy
+// nobody has agreed to maintain.
 //
 // The example on `reason` is chosen to AGREE with the message example already on the type.
 // ConflictError is the 409 body for every endpoint in the API, so the object-level example

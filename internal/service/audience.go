@@ -335,8 +335,14 @@ func audienceValidationErr(err error) error {
 // wording change with no version bump and no failing test anywhere. The slug is the
 // contract; the message stays free to improve.
 //
-// Values are constrained by the Enum in design/connection.go, so a typo here fails
-// response validation rather than shipping a reason no client recognises.
+// The Enum in design/connection.go does NOT catch a typo here. Goa emits response-body
+// validation into the generated CLIENT decoder only — the server encoder validates
+// nothing — so a misspelled slug is serialized and sent, and the failure surfaces as a
+// generated client refusing to decode the 409 at all. The protection is in-repo instead:
+// TestMapAudienceErr_ConflictReasonsAreDistinctAndStable pins each slug literally and
+// asserts the three are pairwise distinct, so a typo or a silent rename fails a unit test
+// here. Keep that test's literals in step with the design Enum by hand — nothing checks
+// the two against each other.
 func conflictReason(slug string) *string { return &slug }
 
 // mapAudienceErr maps domain errors to the generated audiences API error types,

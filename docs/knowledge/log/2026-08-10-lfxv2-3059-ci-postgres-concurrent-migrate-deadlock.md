@@ -1,5 +1,7 @@
 # 2026-08-10 — LFXV2-3059: CI deadlock from two packages migrating the same live database
 
+**Fix** — two test packages ran `Migrate` concurrently against one database and deadlocked CI.
+
 `make test`'s Build and Test check failed on PR #106 with a real Postgres error, not a
 flaky one:
 
