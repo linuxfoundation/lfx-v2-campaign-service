@@ -544,7 +544,7 @@ func (r *CampaignRepo) VerifyClaimedVersion(ctx context.Context, projectID, brie
 		// Classify no-rows as 404 vs 412, matching ClaimCampaignVersion's behavior.
 		if errors.Is(err, pgx.ErrNoRows) {
 			var exists bool
-			probeErr := r.db.QueryRow(ctx, claimCampaignExistsQuery,
+			probeErr := conn.QueryRow(ctx, claimCampaignExistsQuery,
 				campaignID, briefID, projectID).Scan(&exists)
 			if probeErr != nil {
 				// Cannot tell the two apart; surface the probe failure.

@@ -990,7 +990,7 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 		// returning stale data. Use the live context (not persistCtx) for the verification:
 		// the claim was also acquired on the live context, so the two share a consistent
 		// view and this check can tell if the row was modified during this request.
-		verified, verifyErr := s.campaigns.VerifyClaimedVersion(
+		verified, verifyErr := campaignRepo.VerifyClaimedVersion(
 			ctx, p.ProjectID, p.BriefID, p.CampaignID, version, lockToken)
 		if verifyErr != nil {
 			if errors.Is(verifyErr, domain.ErrPreconditionFailed) {
