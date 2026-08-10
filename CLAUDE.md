@@ -25,8 +25,13 @@ Whenever you merge a PR, update a Helm manifest, or fix a bug:
    difference, because the index is what a reader consults before deciding
    whether to open the file at all.
 3. Add a new file `docs/knowledge/log/YYYY-MM-DD-<slug>.md` (slug = ticket +
-   short description) with a first H1 dated to match the filename, then
-   `**Update** — ...`. One file per entry — never edit another entry's file.
+   short description) with a first H1 dated to match the filename, then a
+   bold kind marker and an em dash: `**Update** — ...`. `**Update**` is the
+   default and covers most entries; the bundle also uses `**Fix**`,
+   `**Creation**`, `**Note**`, `**Verification**` and `**Docs**` where one of
+   those describes the entry better. Pick the accurate one — the marker is a
+   label, not a fixed literal. One file per entry — never edit another
+   entry's file.
 4. Validate locally: `go run ./cmd/okfvalidate ./docs/knowledge`.
 
 Do not re-run `go run ./cmd/okfgen` to do this — it regenerates the entire
