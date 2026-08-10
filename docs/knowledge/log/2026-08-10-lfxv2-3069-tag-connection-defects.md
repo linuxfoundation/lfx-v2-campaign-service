@@ -63,6 +63,16 @@ because the caller reads it as a service bug rather than a value they have to su
 messages now say to save an ad account id on the connection, which is true of every provider.
 A test asserts the string "accounts endpoint" appears in neither.
 
+## The orchestrator's own contract comment was the last place still saying "Google only"
+
+`internal/service/orchestrator.go` carries the reasoning for why the toggle's error switch looks
+the way it does, and it named Reddit, X and Microsoft among the adapters returning bare errors
+that fall through to 503 — the exact claim this change falsifies. A stale comment there is worse
+than one in a doc: it is what the next person reads before deciding whether a new adapter needs
+tagging. It now lists the four tagged adapters and leaves only Meta and LinkedIn outstanding, with
+a note that part 2 is an extraction rather than an annotation, because neither of those two has a
+shared resolve/validate helper to put the tagging in.
+
 ## Placement: after the resolve, and in the helper
 
 Two ordering constraints, both easy to get wrong:
