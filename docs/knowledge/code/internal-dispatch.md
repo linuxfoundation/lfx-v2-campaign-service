@@ -307,7 +307,20 @@ There are **three** readers, not two, and the third is easy to miss: `resolveGoo
 (toggle, metrics), `resolveGoogleAdsDiscoveryClient` (account discovery), and `Dispatch` — which
 builds its own client INLINE rather than through a resolver, because it predates both of them.
 Enumerating callers by the abstraction ("which resolvers call this?") does not find it;
-enumerating by the FIELD (`grep providerConfig["login_customer_id"]`) does. `Dispatch` is also the
+enumerating by the STORED KEY does — and, now that this PR has hoisted the read into one
+helper, so does enumerating by the helper. Both commands need `-F`, because the useful search
+strings contain regex metacharacters (`[`, `"`), and quoting, because an unquoted `[...]` is a
+shell glob:
+
+```bash
+grep -rn -F 'login_customer_id' internal/ | grep -v '_test\.go'   # the key, every reader
+grep -rn -F 'validatedLoginCustomerID' internal/                  # the helper: 3 call sites
+```
+
+Note that `grep -rn -F 'providerConfig["login_customer_id"]'` is now the WRONG enumeration even
+though it runs: after the hoist there is exactly one such expression, inside the helper itself.
+An enumeration keyed on an expression the refactor was designed to centralise reports one
+reader and reads as reassurance. `Dispatch` is also the
 path where the consequences are worst: it is the one that spends money, and the client's own
 validator renders the offending value with `%q`, which the orchestrator then writes to its
 dispatch-failure log line — so leaving it uninspected leaked account-identifying configuration

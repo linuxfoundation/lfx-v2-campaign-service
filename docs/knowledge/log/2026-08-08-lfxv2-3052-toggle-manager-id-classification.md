@@ -120,3 +120,28 @@ paragraph defined two sentences earlier. Swapping to the loose synonym silently 
 claim over a group the writer had explicitly excluded. **When a paragraph defines a partition,
 every later sentence must keep using the partition's names** — a synonym is how a claim about
 one half becomes a claim about the whole.
+
+## The documented review technique did not run, and would have lied if it had
+
+The `internal-dispatch.md` note recommending how to find all three readers offered
+`grep providerConfig["login_customer_id"]`. Two defects, and the second is the interesting one.
+
+It does not execute: unquoted `[...]` is a shell glob (zsh refuses outright with "no matches
+found"), and basic grep reads `[login_customer_id]` as a character class rather than literal
+brackets. Fixed by quoting and `-F`.
+
+But the corrected command is still the wrong enumeration, and now returns exactly ONE hit —
+inside `validatedLoginCustomerID`, because centralising that expression is precisely what this
+PR did. A technique keyed on an expression a refactor was designed to collapse reports one
+reader and reads as reassurance: the reviewer runs it, sees a single site, and concludes there
+is nothing to check.
+
+So the doc now gives two commands that survive the refactor — the stored KEY
+(`login_customer_id`, every reader including comments and tests) and the helper
+(`validatedLoginCustomerID`, three call sites) — and says explicitly why the expression-keyed
+form is no longer the one to use.
+
+Reusable: **a documented search command is executable documentation and rots the same way code
+does.** It has two failure modes, not one — it can fail to run, which is loud, or it can run and
+return a confidently wrong answer, which is not. Re-run any grep a doc recommends after the
+refactor that doc describes.
