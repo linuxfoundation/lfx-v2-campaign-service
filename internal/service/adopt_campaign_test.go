@@ -430,6 +430,54 @@ func TestAdoptCampaign_RecordsItsProvenance(t *testing.T) {
 	}
 }
 
+// Approval is read BEFORE a platform lookup bounded at 20 seconds, so a concurrent replace or
+// archive can land inside that window and the insert would bind paid spend to a brief that is no
+// longer approved — the approval gate routed around by latency alone. The version the service
+// verified must therefore reach the repository, which re-checks it under the row lock.
+func TestAdoptCampaign_ApprovalLostDuringTheLookupIsAConflict(t *testing.T) {
+	disp := &adopterDispatcher{ref: &model.PlatformCampaignRef{ID: "1234567890", Name: "n"}}
+	s, camps := newAdoptService(t, model.ProviderGoogleAds, disp)
+	// What the locked re-read finds: the brief moved on while the platform was being queried.
+	camps.adoptBriefVersion = 7
+
+	_, err := s.AdoptCampaign(context.Background(), adoptPayload())
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("got %T (%v), want *briefs.ConflictError — a brief that lost approval mid-lookup must not be bound", err, err)
+	}
+	if len(camps.adopted) != 0 {
+		t.Errorf("bound a campaign to a brief that is no longer approved at the verified version")
+	}
+}
+
+// One upstream campaign, one live binding. Two rows pointing at the same paid campaign each
+// think they own it: one brief's toggle pauses what the other just enabled, and no reader of
+// either row can see why. Neither row is malformed, so nothing detects it after the fact.
+func TestAdoptCampaign_SecondBriefCannotBindTheSameCampaign(t *testing.T) {
+	disp := &adopterDispatcher{ref: &model.PlatformCampaignRef{ID: "1234567890", Name: "n"}}
+	s, camps := newAdoptService(t, model.ProviderGoogleAds, disp)
+	camps.existing = map[string]*model.Campaign{
+		"b0|" + string(model.ProviderGoogleAds): {
+			ID: "c-first", ProjectID: "cncf", BriefID: "b0", Platform: model.ProviderGoogleAds,
+			PlatformCampaignID: "1234567890", Status: model.CampaignStatusCreated,
+		},
+	}
+
+	_, err := s.AdoptCampaign(context.Background(), adoptPayload())
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("got %T (%v), want *briefs.ConflictError", err, err)
+	}
+	// The message must name the OTHER binding. "this brief already has a campaign" sends the
+	// operator to inspect a brief that has none, and the real second binding goes unnoticed.
+	if !strings.Contains(conflict.Message, "another brief") {
+		t.Errorf("409 message %q does not say the campaign is bound elsewhere", conflict.Message)
+	}
+	if len(camps.adopted) != 0 {
+		t.Errorf("created a second live binding for one upstream campaign")
+	}
+}
+
 // A malformed id is rejected by the adapter locally, before any query. Reporting that as 503
 // tells the caller to retry input that can only ever fail; it is a 400.
 func TestAdoptCampaign_MalformedPlatformIDIs400(t *testing.T) {

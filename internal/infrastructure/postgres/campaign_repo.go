@@ -430,14 +430,45 @@ const adoptCampaignQuery = `INSERT INTO campaigns
 	ON CONFLICT (brief_id, platform) WHERE status <> 'deleted' DO NOTHING
 	RETURNING ` + campaignCols
 
+// lockAdoptBriefQuery re-reads the brief's CURRENT committed state under a row-level exclusive
+// lock. Identical in purpose to CreateJobForApprovedBrief's lock: see the long comment there for
+// why FOR UPDATE — not a plain re-read, and not the single-statement atomicity of the INSERT — is
+// what makes a check-then-write atomic against a concurrent replace or archive.
+const lockAdoptBriefQuery = `SELECT status, version FROM campaign_briefs WHERE id = $1 FOR UPDATE`
+
 // AdoptCampaign inserts the campaign row binding an existing upstream campaign to a brief.
-// It returns domain.ErrConflict when the (brief, platform) pair already has a live campaign.
-func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+//
+// It returns domain.ErrConflict when the (brief, platform) pair already has a live campaign,
+// domain.ErrPlatformCampaignAlreadyBound when a DIFFERENT live row in this project already binds
+// the same upstream campaign, and domain.ErrStaleApproval when the brief is no longer approved at
+// expectedVersion.
+func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("adopt campaign: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// The service checked approval BEFORE a platform lookup bounded at 20 seconds, so a
+	// ReplaceBrief or ArchiveBrief can commit inside that window and the insert below would
+	// bind a paid campaign to a brief that is no longer approved — the approval gate routed
+	// around by nothing more than latency. Re-check it here, under the lock, where the check
+	// and the insert are one transaction.
+	var (
+		status  string
+		version int64
+	)
+	if serr := tx.QueryRow(ctx, lockAdoptBriefQuery, c.BriefID).Scan(&status, &version); serr != nil {
+		if errors.Is(serr, pgx.ErrNoRows) {
+			// The brief was deleted between the service's read and this lock. There is
+			// nothing approved at expectedVersion to bind to, which is what stale means.
+			return nil, domain.ErrStaleApproval
+		}
+		return nil, fmt.Errorf("adopt campaign: lock brief: %w", serr)
+	}
+	if status != "approved" || version != expectedVersion {
+		return nil, domain.ErrStaleApproval
+	}
 
 	// Both actor columns from ONE value: adoption creates the row and is also the last
 	// thing to have touched it, so created_by and updated_by are the same actor. nil is an
@@ -452,6 +483,15 @@ func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, ind
 	)
 	adopted, err := scanCampaign(row)
 	if err != nil {
+		// The ON CONFLICT clause names ONE index, so uq_campaigns_project_platform_campaign_live
+		// is not swallowed by it — it raises an ordinary unique violation. That is the wanted
+		// behaviour and it must be classified separately: the DO NOTHING conflict means "this
+		// BRIEF is taken", the unique violation means "this upstream CAMPAIGN is taken", and
+		// reporting the second as the first sends the caller to look at the wrong brief.
+		if isUniqueViolation(err) {
+			return nil, fmt.Errorf("%w: %s campaign %s is bound to another brief in project %s",
+				domain.ErrPlatformCampaignAlreadyBound, c.Platform, c.PlatformCampaignID, c.ProjectID)
+		}
 		// DO NOTHING returns no row on conflict, which pgx reports as ErrNoRows. That is
 		// the ONLY way this statement declines: the pair is already bound. Every other
 		// scan failure is a real error and must not be reported as a conflict, or a

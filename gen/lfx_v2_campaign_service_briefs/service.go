@@ -39,8 +39,11 @@ type Service interface {
 	// platform is read, never written: the campaign must already exist under the
 	// project's connection, and nothing is created upstream. Returns 404 when the
 	// platform holds no such campaign, 409 when this brief already has a live
-	// campaign on that platform, and 400 when the platform has no adoption
-	// capability wired.
+	// campaign on that platform / that campaign is already bound to another brief
+	// / the brief lost approval during the read, and 400 when the platform has no
+	// adoption capability wired. An adopted campaign supports metrics, delete and
+	// pause; activation is refused, because adoption does not verify the targeting
+	// the activate guard requires.
 	AdoptCampaign(context.Context, *AdoptCampaignPayload) (res *Campaign, err error)
 	// Get one campaign under a brief; returns ETag.
 	GetCampaign(context.Context, *GetCampaignPayload) (res *Campaign, err error)

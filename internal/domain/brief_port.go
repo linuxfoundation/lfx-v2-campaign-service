@@ -149,8 +149,15 @@ type CampaignWriter interface {
 	//
 	// The check is the INSERT itself (ON CONFLICT DO NOTHING against the live partial
 	// unique index), not a preceding read, so two concurrent adopts of the same pair cannot
-	// both observe "no campaign yet" and race.
-	AdoptCampaign(ctx context.Context, c *model.Campaign, indexPayload CampaignIndexPayloadFunc) (*model.Campaign, error)
+	// both observe "no campaign yet" and race. A second live index rejects binding the same
+	// upstream campaign to a DIFFERENT brief in the project (ErrPlatformCampaignAlreadyBound).
+	//
+	// expectedVersion is the brief version the caller verified as approved. The implementation
+	// re-checks it under a row lock inside the same transaction and returns ErrStaleApproval on
+	// a mismatch: approval is read before a platform lookup bounded at 20 seconds, and without
+	// the re-check a concurrent replace or archive inside that window would leave a paid
+	// campaign bound to an unapproved brief.
+	AdoptCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64, indexPayload CampaignIndexPayloadFunc) (*model.Campaign, error)
 	// ReplaceCampaign replaces a campaign's mutable fields, gating on version. lockToken is the
 	// token returned by ClaimCampaignVersion when the caller holds the claim lock for this
 	// campaign (the zero CampaignLockToken otherwise) — implementations that reuse the lock

@@ -108,6 +108,9 @@ type fakeCampaignRepo struct {
 	// existing maps briefID+"|"+platform to a pre-existing campaign, letting a
 	// test simulate a brief already dispatched to a platform (idempotency guard).
 	existing map[string]*model.Campaign
+	// adoptBriefVersion, when non-zero, is the brief version AdoptCampaign's locked re-read
+	// would find. A mismatch against the caller's expectedVersion is ErrStaleApproval.
+	adoptBriefVersion int64
 	// byPlatformErr, when set, is returned by GetCampaignByPlatform to simulate a
 	// transient lookup failure.
 	byPlatformErr error
@@ -213,12 +216,25 @@ func (r *fakeCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, 
 // updating when the (brief, platform) pair already has a live row. Modelling the refusal is
 // the point — a fake that simply overwrote, as UpsertCampaign does, would let a handler that
 // clobbers an existing binding pass every adoption test.
-func (r *fakeCampaignRepo) AdoptCampaign(_ context.Context, c *model.Campaign, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+// It also models the two guards the real statement gets from the database and not from Go: the
+// second live unique index (one upstream campaign, one live binding per project) and the locked
+// re-read of the brief's approval. A fake missing either lets a handler that skips them pass.
+func (r *fakeCampaignRepo) AdoptCampaign(_ context.Context, c *model.Campaign, expectedVersion int64, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.adoptBriefVersion != 0 && r.adoptBriefVersion != expectedVersion {
+		return nil, domain.ErrStaleApproval
+	}
 	key := c.BriefID + "|" + string(c.Platform)
 	if existing, ok := r.existing[key]; ok && existing.Status != "deleted" {
 		return nil, fmt.Errorf("%w: brief %s already has a live %s campaign", domain.ErrConflict, c.BriefID, c.Platform)
+	}
+	for _, other := range r.existing {
+		if other.Status != "deleted" && other.ProjectID == c.ProjectID &&
+			other.Platform == c.Platform && other.PlatformCampaignID == c.PlatformCampaignID {
+			return nil, fmt.Errorf("%w: %s campaign %s is bound to brief %s",
+				domain.ErrPlatformCampaignAlreadyBound, c.Platform, c.PlatformCampaignID, other.BriefID)
+		}
 	}
 	c.Version = 1
 	if indexPayload != nil {

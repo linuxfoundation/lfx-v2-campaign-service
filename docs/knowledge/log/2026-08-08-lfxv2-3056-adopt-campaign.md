@@ -62,6 +62,32 @@ is a column or an arm that every SIBLING path already has; none is visible from 
 alone. The lesson is the same one twice over: diff a new write against the existing writes for
 the same table, and a new error switch against the existing switches, field by field.
 
+## Round N+2: the guards a new write inherits from the database, not from Go
+
+Three more, and they rhyme with the round above without being the same lesson. Two were about
+atomicity rather than a missing field. Approval was checked before a platform lookup bounded at
+20 seconds and never re-checked, so a concurrent replace or archive inside that window left paid
+spend bound to an unapproved brief — the approval gate beaten by latency alone. `job_repo.go`
+already carries a long comment explaining exactly this and the `SELECT … FOR UPDATE` that fixes
+it; the new path simply did not reach for it. And 000013's unique index answers "does this BRIEF
+have a campaign here", which is the whole question for dispatch and only half of it for
+adoption: the caller names an ARBITRARY upstream campaign, so a second brief could bind the same
+one and the two rows would toggle it against each other, each individually well-formed. That
+needed a second index (000020), scoped by project because a bare platform id is unique only
+within the account that minted it.
+
+The third was a claim, not a defect. The PR said an adopted campaign was "immediately toggleable
+like any other"; the Google Ads toggle refuses ACTIVATE without the ad-group, ad and keyword ids
+that prove targeting exists, and adoption never walks the campaign's children. The fix was to
+narrow the documented contract rather than to widen the code — chasing the children would mean
+verifying provisioning this service did not perform, and the guard is right to refuse. Worth
+recording because the instinct on a "your docs overstate this" finding is to make the code match
+the doc; here the doc was the thing that was wrong.
+
+The through-line for the round: when a new write path reuses an existing table, the invariants it
+must uphold are not all visible in Go. Some live in indexes and row locks that a sibling path
+established, and reading only the sibling's Go code will not find them.
+
 The generalisable part is WHICH arm went missing. Copying a switch reproduces the arms that fire
 in ordinary testing and drops the one for a condition nothing local produces; both remaining arms
 returned a `ConflictError`, so the code did not look incomplete. The new test asserts the response

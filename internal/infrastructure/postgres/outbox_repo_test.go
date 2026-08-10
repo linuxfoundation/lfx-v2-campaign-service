@@ -264,7 +264,10 @@ func TestMigrations_UniqueNumbering(t *testing.T) {
 // are skipped forever. The list must shrink to empty as siblings land.
 // Empty is the resting state: TestMigrations_AllowedVersionGapsAreStillOpen fails on a stale
 // entry, so the merge that closes a gap cannot be green while its excuse survives.
-var allowedVersionGaps = map[int]string{}
+var allowedVersionGaps = map[int]string{
+	18: "PR #106 (feat/LFXV2-3059-audience-build-lease) — 000018_audience_build_lease",
+	19: "PR #103 (feat/LFXV2-3055-audience-actor-attribution) — 000019_audience_actor_columns",
+}
 
 // TestMigrations_NoVersionGaps guards against numbering a migration ABOVE versions that do not
 // exist yet in this tree.

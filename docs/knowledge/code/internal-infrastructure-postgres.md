@@ -517,5 +517,22 @@ parameter — adoption creates the row and is the last thing to have touched it)
 would leave an adopted row with no audit trail and, because `result` is where the Google Ads
 customer id lives, no account provenance for the mismatch guards to check.
 
+Two guards live in the same transaction as the insert, and neither can be enforced in Go:
+
+- **A locked re-read of the brief.** `lockAdoptBriefQuery` takes the same `SELECT … FOR UPDATE`
+  as `CreateJobForApprovedBrief` and re-checks `status`/`version` against the caller's
+  `expectedVersion`, returning `domain.ErrStaleApproval` on a mismatch. The service reads
+  approval BEFORE a platform lookup bounded at 20 seconds, and a `ReplaceBrief` or
+  `ArchiveBrief` committing inside that window would otherwise leave paid spend bound to an
+  unapproved brief — the approval gate defeated by latency alone.
+- **`uq_campaigns_project_platform_campaign_live`** (migration 000020), keyed
+  `(project_id, platform, platform_campaign_id)` over live rows. 000013's index answers only
+  "does this BRIEF have a campaign here"; adoption names an arbitrary upstream campaign, so
+  without this a second brief can bind the same one and the two rows toggle it against each
+  other. It is scoped by project because a bare platform id is unique only within the account
+  that minted it. The `ON CONFLICT` clause names 000013's index, so this one raises an ordinary
+  unique violation — classified separately as `domain.ErrPlatformCampaignAlreadyBound`, because
+  a 409 naming the wrong brief sends the operator to inspect one that has no campaign.
+
 The insert and its outbox index row are co-committed in one transaction, as every campaign
 write is — see `enqueueCampaignIndex`.

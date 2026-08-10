@@ -233,7 +233,19 @@ The connection arms are ordered as in the metrics and toggle switches, and for t
 the broad `ErrConnectionNotUsable` (409) — each WRAPPED alongside the next, so a broad match
 placed first wins and names a scope the caller cannot address. `ErrInvalidPlatformCampaignID`
 is a 400: the adapter rejected the id locally and issued no query, so the 503 would invite a
-retry of input that can never succeed.
+retry of input that can never succeed. Two more 409s come back from the repository, which is
+where they can be checked atomically: `ErrPlatformCampaignAlreadyBound` (the campaign is bound
+to a different brief) and `ErrStaleApproval` (the brief lost approval during the platform read).
+The handler passes `brief.Version` down for the second, and answers the first ahead of the plain
+`ErrConflict` arm so the message names the OTHER binding rather than this brief.
+
+What adoption does NOT buy is activation. On Google Ads the toggle refuses `ACTIVATE` unless the
+row carries the ad-group, ad and keyword-criterion ids that prove targeting was provisioned, and
+adoption records only the campaign it was asked about — it does not walk that campaign's
+children. So an adopted row supports metrics, delete and pause, and answers
+`ErrCampaignNotProvisioned` on activate. That is the guard working, not a gap in it: this service
+has not verified the campaign can deliver, and reporting a successful activation of something
+that cannot serve is exactly what the sentinel exists to prevent.
 
 ## Account discovery
 

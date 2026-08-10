@@ -281,4 +281,10 @@ var (
 	// platform at all, so no query was issued. A PERMANENT input fault (400), never the
 	// "could not verify" 503 — retrying malformed input can only fail the same way.
 	ErrInvalidPlatformCampaignID = errors.New("not a valid platform campaign id")
+
+	// ErrPlatformCampaignAlreadyBound indicates ANOTHER live row in this project already
+	// binds the same upstream campaign. Distinct from the ordinary ErrConflict this brief
+	// gets for its own platform slot: the 409 has to name the OTHER brief's binding, or the
+	// caller reads "already has a campaign" about a brief that does not. Maps to 409.
+	ErrPlatformCampaignAlreadyBound = errors.New("this platform campaign is already bound to another brief")
 )

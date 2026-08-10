@@ -605,9 +605,17 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 		// true of an adopted campaign — it exists upstream, fully provisioned. A platform
 		// literal would land outside every status predicate, and both default-deny.
 		Status: model.CampaignStatusCreated,
-	}, s.campaignIndexPayload(indexer.ActionCreated))
+		// The version approval was verified at. Re-checked under a row lock inside the insert's
+		// transaction, because the check above happened before a 20-second platform lookup.
+	}, brief.Version, s.campaignIndexPayload(indexer.ActionCreated))
 	if aerr != nil {
-		if errors.Is(aerr, domain.ErrConflict) {
+		switch {
+		case errors.Is(aerr, domain.ErrPlatformCampaignAlreadyBound):
+			// Ahead of ErrConflict deliberately: naming the wrong resource here sends the
+			// operator to inspect a brief that has no campaign, and the real second binding —
+			// which can pause what this one enables — goes unnoticed.
+			return nil, &briefs.ConflictError{Code: "409", Message: "that campaign is already bound to another brief in this project; unbind it there before adopting it here"}
+		case errors.Is(aerr, domain.ErrConflict):
 			return nil, &briefs.ConflictError{Code: "409", Message: "this brief already has a live campaign on that platform"}
 		}
 		return nil, mapBriefErr(aerr)
