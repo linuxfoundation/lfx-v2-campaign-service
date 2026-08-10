@@ -208,6 +208,15 @@ func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
 			want:    "https://idp.example.com/jwks",
 			secrets: []string{"s3cret", "b64tail"},
 		},
+		{
+			// Multi-URL fallback must not mistake @ in a query for userinfo. The mix
+			// `URLUserinfo` refuses to split arrives here whole; searching the whole
+			// string for @ would find the query's @, delete the ?, and leave the token.
+			name:    "multi-URL fallback does not leak a query @ as userinfo",
+			in:      "https://idp/jwks?contact=ops@b.example,https://x&access_token=s3cret", // secretlint-disable-line
+			want:    "https://idp/jwks",
+			secrets: []string{"s3cret", "access_token"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := URLUserinfo(tc.in)

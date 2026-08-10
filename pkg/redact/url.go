@@ -9,8 +9,12 @@
 // credential-bearing URL this service accepts — a JWKS endpoint behind a basic-auth gateway,
 // a NATS URL with inline credentials — carries a username issued alongside the password as
 // half of one credential, so leaking it narrows an attacker's search rather than telling them
-// nothing. The contract here is therefore stricter: userinfo goes entirely, host and path
-// stay, because the host and path are the whole diagnostic value of printing the URL at all.
+// nothing. The contract here is therefore stricter: userinfo goes entirely, and host and
+// path survive when safe to do so, because they are the whole diagnostic value of a URL.
+// In rare cases — a pathless, ambiguous URL or a mixed-credential list the parser
+// deliberately declines to split — the host or path may be discarded to keep any part of
+// a credential from escaping; caller code should treat redaction as best-effort identity
+// rather than a promise of format preservation.
 //
 // One implementation, in one place, deliberately. The bug that produced this package was two
 // formatting sites in different packages disagreeing about what "redacted" meant.
@@ -196,8 +200,13 @@ func redactOne(u string) string {
 	}
 	if strings.ContainsRune(u, ',') && strings.Contains(u[authStart:], "://") {
 		// More than one URL in the value: the authority bound proves nothing about what
-		// follows, so fall back to the whole-string rule.
-		if last := strings.LastIndexByte(u, '@'); last >= 0 {
+		// follows, so fall back to the whole-string rule. Bound the search to the pre-query
+		// region to avoid mistaking an @ in a query parameter for userinfo.
+		preQueryMulti := len(u)
+		if i := strings.IndexAny(u, "?#"); i >= 0 {
+			preQueryMulti = i
+		}
+		if last := strings.LastIndexByte(u[:preQueryMulti], '@'); last >= 0 {
 			return trimQueryAndFragment(u[:authStart] + "***@" + u[last+1:])
 		}
 		return trimQueryAndFragment(u)
