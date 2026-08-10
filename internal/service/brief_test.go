@@ -644,6 +644,13 @@ func (r *campaignEditRepo) recordIndex(c *model.Campaign, indexPayload domain.Ca
 	r.indexPayloads = append(r.indexPayloads, payload)
 	return nil
 }
+func (r *campaignEditRepo) VerifyClaimedVersion(_ context.Context, _, _, campaignID string, expectedVersion int64, _ domain.CampaignLockToken) (*model.Campaign, error) {
+	if r.cur.Version != expectedVersion {
+		return nil, domain.ErrPreconditionFailed
+	}
+	cp := *r.cur
+	return &cp, nil
+}
 func (r *campaignEditRepo) ClaimCampaignVersion(_ context.Context, _, _, campaignID string, expectedVersion int64) (*model.Campaign, domain.CampaignLockToken, error) {
 	r.claims++
 	if r.claimErr != nil {
@@ -1064,6 +1071,18 @@ func (r *toggleCampaignRepo) ReleaseCampaignLock(context.Context, domain.Campaig
 	return nil
 }
 
+// VerifyClaimedVersion mirrors the real implementation: it checks that the version
+// still matches without modifying it, using the same dataMu protection as ClaimCampaignVersion.
+func (r *toggleCampaignRepo) VerifyClaimedVersion(_ context.Context, _, _, _ string, expectedVersion int64, _ domain.CampaignLockToken) (*model.Campaign, error) {
+	r.dataMu.Lock()
+	defer r.dataMu.Unlock()
+	if r.got.Version != expectedVersion {
+		return nil, domain.ErrPreconditionFailed
+	}
+	cp := *r.got
+	return &cp, nil
+}
+
 // ReleaseCampaignLockAfterCooldown overrides the embedded fakeCampaignRepo's
 // no-op: the real ToggleCampaignStatus UNCONFIRMED path calls this instead of
 // ReleaseCampaignLock, so without an override claimMu is never unlocked here
@@ -1373,10 +1392,11 @@ func TestBriefService_ToggleCampaignStatus_UnconfirmedIsSurfaced(t *testing.T) {
 	}
 }
 
-func TestBriefService_ToggleCampaignStatus_DegradedNotToggleable(t *testing.T) {
-	// A created_degraded campaign WITH a real upstream id must NOT be toggled: toggling
-	// would activate an incomplete campaign and overwrite the reconciliation marker. It is
-	// a 409, the platform is never called, and the row is untouched.
+func TestBriefService_ToggleCampaignStatus_DegradedNotActivatable(t *testing.T) {
+	// A created_degraded campaign WITH a real upstream id must NOT be ACTIVATED: doing so
+	// would put an incomplete campaign in front of an audience and overwrite the
+	// reconciliation marker. It is a 409, the platform is never called, and the row is
+	// untouched. (Pausing one IS allowed — see the test below.)
 	camp := &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
 		PlatformCampaignID: "t3_c", Status: model.CampaignStatusCreatedDegraded, Version: 1,
@@ -1385,17 +1405,88 @@ func TestBriefService_ToggleCampaignStatus_DegradedNotToggleable(t *testing.T) {
 	s, camps := newToggleService(camp, tog)
 	im := "1"
 	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
-		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunActive,
 	})
 	var conflict *briefs.ConflictError
 	if !errors.As(err, &conflict) {
-		t.Fatalf("expected a 409 ConflictError for a degraded campaign, got %T: %v", err, err)
+		t.Fatalf("expected a 409 ConflictError for activating a degraded campaign, got %T: %v", err, err)
+	}
+	// The message has to point at the one thing the caller CAN still do, or an operator
+	// watching a degraded campaign spend reads the 409 as "nothing to be done here".
+	if !strings.Contains(conflict.Message, "PAUSED") {
+		t.Errorf("409 message = %q; it must tell the caller the campaign can still be paused", conflict.Message)
 	}
 	if tog.gotID != "" {
-		t.Error("the platform must NOT be called for a non-toggleable (degraded) campaign")
+		t.Error("the platform must NOT be called to activate a degraded campaign")
 	}
 	if camps.replaced != nil {
 		t.Error("the row (and its degraded reconciliation marker) must NOT be overwritten")
+	}
+}
+
+// TestBriefService_ToggleCampaignStatus_DegradedCanStillBePaused pins the one direction the
+// reconciliation guard must not block.
+//
+// 'created_degraded' means the campaign definitely EXISTS upstream while this service does not
+// know its full wiring. Adoption (LFXV2-3042) reaches that status by binding a campaign the
+// lookup found, and that lookup treats ENABLED and PAUSED alike as live — so an adopted
+// campaign can already be serving and spending. Refusing every toggle made the campaign most
+// likely to need stopping the one campaign this service could not stop, even though the
+// dispatchers explicitly support pausing a campaign with no child ids.
+//
+// The marker is the other half: pausing reconciles nothing, so writing 'paused' over
+// 'created_degraded' would erase the only record that the wiring is unverified. The row is
+// therefore left alone and the campaign comes back at its unchanged status and version.
+func TestBriefService_ToggleCampaignStatus_DegradedCanStillBePaused(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", Status: model.CampaignStatusCreatedDegraded, Version: 4,
+	}
+	tog := &stubToggler{}
+	s, camps := newToggleService(camp, tog)
+	im := "4"
+	res, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+	if err != nil {
+		t.Fatalf("pausing a degraded campaign must be allowed, got %T: %v", err, err)
+	}
+	if tog.gotID != "t3_c" || tog.gotStat != model.CampaignRunPaused {
+		t.Errorf("platform toggle got (%q,%q), want (t3_c,paused) — the pause must actually reach the platform", tog.gotID, tog.gotStat)
+	}
+	if camps.replaced != nil {
+		t.Errorf("the row was rewritten to %+v; 'created_degraded' is the only record that this campaign's wiring is unverified, and a pause reconciles nothing", camps.replaced)
+	}
+	if res.Status != model.CampaignStatusCreatedDegraded {
+		t.Errorf("result status = %q, want %q — the response must report what the row actually says", res.Status, model.CampaignStatusCreatedDegraded)
+	}
+}
+
+// TestBriefService_ToggleCampaignStatus_PendingCannotBePausedEither is the boundary of the
+// exception above. 'pending' and the partial-orphan statuses do not mean "exists upstream" —
+// the create may never have completed — so there is nothing for a pause to act on, and a
+// pause that reached the platform would be a mutation against an id whose meaning is unknown.
+func TestBriefService_ToggleCampaignStatus_PendingCannotBePausedEither(t *testing.T) {
+	for _, status := range []string{model.CampaignStatusPending, model.CampaignStatusGroupCreated, model.CampaignStatusUnconfirmed} {
+		t.Run(status, func(t *testing.T) {
+			camp := &model.Campaign{
+				ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+				PlatformCampaignID: "t3_c", Status: status, Version: 1,
+			}
+			tog := &stubToggler{}
+			s, _ := newToggleService(camp, tog)
+			im := "1"
+			_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+				ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+			})
+			var conflict *briefs.ConflictError
+			if !errors.As(err, &conflict) {
+				t.Fatalf("expected a 409 pausing a %q campaign, got %T: %v", status, err, err)
+			}
+			if tog.gotID != "" {
+				t.Errorf("the platform must NOT be called to pause a %q campaign", status)
+			}
+		})
 	}
 }
 
