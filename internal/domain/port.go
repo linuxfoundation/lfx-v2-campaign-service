@@ -33,6 +33,16 @@ type ConnectionWriter interface {
 	// emit the new ETag (otherwise the client's next If-Match would be stale).
 	SetCredential(ctx context.Context, projectID string, provider model.Provider, ciphertext []byte, by *model.Actor) (*model.Connection, error)
 
+	// UpdateWithCredential writes the config AND the credential in ONE version-gated
+	// statement. It exists because doing it as Update-then-SetCredential leaves an
+	// observable row pairing one write's account with the other's credential whenever the
+	// second write fails, and lets two concurrent writers finish with one's account and
+	// the other's credential — SetCredential is not version-gated, so nothing detects the
+	// interleave. Only the system-account bootstrap rotates both at once; an ordinary
+	// connection edit and a credential rotation are separately permissioned, which is why
+	// the two-call form stays. Same errors as Update.
+	UpdateWithCredential(ctx context.Context, c *model.Connection, ciphertext []byte, expectedVersion int64) (*model.Connection, error)
+
 	// Delete soft-deletes the connection (status = deleted).
 	Delete(ctx context.Context, projectID string, provider model.Provider, by *model.Actor) error
 }

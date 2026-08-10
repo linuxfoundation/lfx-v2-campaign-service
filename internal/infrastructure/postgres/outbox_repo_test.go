@@ -263,8 +263,13 @@ func TestMigrations_UniqueNumbering(t *testing.T) {
 // numbering bug — this branch must not merge before the PR that fills it, or those migrations
 // are skipped forever. The list must shrink to empty as siblings land.
 var allowedVersionGaps = map[int]string{
-	16: "PR #95 (feat/LFXV2-3038-campaign-actor-attribution) claims 000016 for the campaigns " +
-		"actor columns. This branch MUST NOT merge before #95, or 000016 is skipped forever.",
+	16: "000016_campaign_actor_columns is claimed by PR #95 (LFXV2-3038, " +
+		"feat/LFXV2-3038-campaign-actor-attribution), which has NOT merged. #93 introduced " +
+		"000017 and has already merged, so main now carries the gap: the first environment to " +
+		"apply 000017 records it as the highest applied version, and #95's 000016 is thereafter " +
+		"skipped silently and forever. This is a live merge-ordering obligation on #95 (merge " +
+		"before the next deploy, or renumber above 000017), not something this branch can fix. " +
+		"Delete this entry once #95 is on main.",
 }
 
 // TestMigrations_NoVersionGaps guards against numbering a migration ABOVE versions that do not

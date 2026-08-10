@@ -170,21 +170,21 @@ func TestAudienceUpdate_NeverTouchesCreatedBy(t *testing.T) {
 		"updateAudienceQuery assigns created_by; that column is written once, at insert.")
 }
 
-// TestMigration000017_AddsAudienceUpdatedBy pins the DDL the statements above compile
+// TestMigration000018_AddsAudienceUpdatedBy pins the DDL the statements above compile
 // against. Only updated_by is added: campaign_audiences has carried created_by since 000005.
-func TestMigration000017_AddsAudienceUpdatedBy(t *testing.T) {
-	up, err := fs.ReadFile(migrations.FS, "000017_audience_actor_columns.up.sql")
+func TestMigration000018_AddsAudienceUpdatedBy(t *testing.T) {
+	up, err := fs.ReadFile(migrations.FS, "000018_audience_actor_columns.up.sql")
 	require.NoError(t, err)
 	upSQL := normalizeWS(string(up))
 	require.Contains(t, upSQL, "ALTER TABLE campaign_audiences")
 	require.Regexp(t, regexp.MustCompile(`(?i)ADD COLUMN IF NOT EXISTS updated_by JSONB`), upSQL,
-		"000017 must add updated_by as JSONB — marshalActor stores the actor as a JSONB "+
+		"000018 must add updated_by as JSONB — marshalActor stores the actor as a JSONB "+
 			"document, matching briefs and connections.")
 	require.NotRegexp(t, regexp.MustCompile(`(?i)UPDATE campaign_audiences SET updated_by`), upSQL,
-		"000017 backfills updated_by from existing data. NULL means \"not recorded\"; filling it "+
+		"000018 backfills updated_by from existing data. NULL means \"not recorded\"; filling it "+
 			"from created_by would assert an edit that never happened.")
 
-	down, err := fs.ReadFile(migrations.FS, "000017_audience_actor_columns.down.sql")
+	down, err := fs.ReadFile(migrations.FS, "000018_audience_actor_columns.down.sql")
 	require.NoError(t, err)
 	require.Regexp(t, regexp.MustCompile(`(?i)DROP COLUMN IF EXISTS updated_by`),
 		normalizeWS(string(down)),

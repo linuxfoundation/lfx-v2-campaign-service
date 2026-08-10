@@ -46,3 +46,26 @@ the invariant is that the stamp happens in the *same statement* as the write, an
 only be asserted without a live database if the SQL is reachable from a test. A follow-up
 `UPDATE` compiles and passes everything else while leaving a committed window in which the
 row had changed and the attribution had not.
+
+## Round N+1: the merge-order obligation came due, and the number had to move
+
+`#93` merged first, carrying `000017_index_disconnected_probe`. This branch's
+`000017_audience_actor_columns` then became a duplicate version the moment `origin/main`
+was merged in, and `TestMigrations_UniqueNumbering` caught it — which is the whole reason
+that test exists. Renumbered to `000018`.
+
+Worth stating plainly, because the earlier round in this file predicted the wrong failure:
+the obligation recorded here was "do not merge before the PR that fills the gap." That is
+the obligation for a GAP. A DUPLICATE is a different failure with a different remedy, and
+which of the two you get is decided by the merge order you do not control. Both branches
+picked the next free number against the `main` they could see; whichever merged second was
+always going to collide. Choosing a migration version by reading `main` is choosing against
+a snapshot that a sibling PR can invalidate between the choice and the merge — the number is
+only settled at merge time, so the test, not the reasoning, is what holds.
+
+The gap at `000016` (PR #95's campaigns actor columns) is now a live risk rather than a
+scheduled one: `main` already carries `000017`, so the first environment to apply it records
+`000017` as the highest applied version and `000016` is thereafter skipped silently and
+forever. `#95` must merge before the next deploy, or be renumbered above `000017`. That is
+`#95`'s obligation; nothing this branch does can discharge it, and the
+`allowedVersionGaps[16]` entry now says so in those terms.

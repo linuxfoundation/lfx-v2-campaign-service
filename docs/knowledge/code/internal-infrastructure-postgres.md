@@ -165,11 +165,14 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   write paths (dispatch claim, upsert, status toggle) are a distinct change with
   distinct failure modes.
 
-- `000017` — `updated_by` JSONB on `campaign_audiences`. Only the one column: that table
+- `000018` — `updated_by` JSONB on `campaign_audiences`. Only the one column: that table
   has carried `created_by` since `000005`, and `000015` recorded the missing half as a
-  known gap. Version `000016` is deliberately skipped here and reserved for the campaigns
-  columns; see *Migration numbering* below, because golang-migrate makes that ordering
-  irreversible rather than merely untidy.
+  known gap. Versions `000016` and `000017` are both skipped here: `000016` is reserved
+  for the campaigns actor columns (PR #95, still open) and `000017` is the disconnected
+  probe index, which merged with #93. This column was numbered `000017` until that merge
+  landed and it became a silent duplicate — golang-migrate applies one file per version
+  and skips the other with no error, so the collision surfaces only as a missing column.
+  See *Migration numbering* below.
 
 ## Actor attribution
 
@@ -293,12 +296,41 @@ name-derived id collides with the row the PREVIOUS run inserted against
 `uq_campaign_briefs_project_event`, which breaks `go test -count=2` and, worse, turns a
 failure at setup into a test that never reaches its own assertion.
 
-**What belongs here is a claim about the SERVER, not about the code.** The two tests present
-both pin migration 000013/000014: that the bare `ON CONFLICT (brief_id, platform)` raises
-SQLSTATE `42P10` now that the full unique constraint is gone, and that a `'deleted'` row stops
+**What belongs here is a claim about the SERVER, not about the code.** Two of the tests pin
+migration 000013/000014: that the bare `ON CONFLICT (brief_id, platform)` raises SQLSTATE
+`42P10` now that the full unique constraint is gone, and that a `'deleted'` row stops
 occupying its `(brief_id, platform)` slot. Restore the dropped constraint and both fail — that
 is the check the regex test cannot perform, and it is the reason to reach for this package
 rather than another source-text assertion.
+
+`ConnectionRepo.Disconnected` is here for a sharper version of the same reason. Its whole job
+is to tell a deliberate disconnect apart from never having connected, and the two are
+distinguished by ONE clause — `status = 'deleted'` — in one statement. Every other test of
+that distinction runs against a fake reader that answers the question by construction, so all
+of them stay green against a predicate that lost the clause and started reporting every
+project as disconnected. `TestDisconnectedTellsADeliberateDisconnectApartFromNeverConnected`
+writes the three real rows (never connected, tombstoned, live) and asserts the answer for
+each, so the clause has to survive in the SQL and not merely in the fake. It also asserts an
+unknown provider ERRORS rather than answering `false`: `false` here means "no deliberate
+disconnect", which would hand a typo'd provider the system-account fallback.
+
+**That probe also needed an index of its own, and the reason it did not have one is worth
+recording.** Every connection table indexes `project_id` — but under
+`WHERE status <> 'deleted'` (migration 000001), the exact complement of the rows this query
+reads. The index was present, named for the column, and covered none of the rows in question.
+Migration 000017 adds the mirror-image partial index on the six paid-ads tables, so the two
+partition the table between them and neither pays for the other's rows.
+
+Only paid-ads tables are indexed, because `credsSource` gates the probe behind
+`provider.IsPaidAds()` — the system account is an ad-ACCOUNT fallback and HubSpot never
+reaches it, so an index on `hubspot_connections` would be write cost for a query never issued.
+
+`TestDisconnectedProbeIsIndexed` binds it, and it is a PLAN assertion rather than a timing
+one: the query returns the same answer indexed or not, so no correctness test can see the
+difference. It runs `EXPLAIN` with `enable_seqscan = off` and fails on a surviving `Seq Scan`.
+Turning seqscan off does not force an index to be used — it cannot be, if none applies — it
+only removes the reason a usable index would be passed over on a table this small. Dropping the
+six indexes turns all six sub-tests red with the plan printed, which is the revert-check.
 
 ## DeleteCampaign's guards
 
