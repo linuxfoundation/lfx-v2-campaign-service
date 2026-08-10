@@ -290,3 +290,21 @@ Revert-verified: naming the key makes it fail with the marker in the diagnostic.
 
 **A fixture drawn from the same list the code checks against tests the branch you did not
 mean.** Nothing about the test's name or its passing said so.
+
+## Round N+2: a count that contradicted itself one clause later
+
+One Copilot suppressed comment, and it is real. The negative-counter guard's rationale reads
+"across the WHOLE map, not just the six mapped keys ... and the five keys read below would be
+no more trustworthy" — six and five, in consecutive clauses, about the same set. Six is right:
+`mappedCounters` and the `EmailMetrics` construction below both cover `sent`, `delivered`,
+`open`, `click`, `bounce`, `unsubscribed`.
+
+The interesting part is that the correct number was already in the same sentence. This is what
+a hand-maintained count looks like after the set grows: whichever mention the author's eye
+landed on gets updated and the other keeps the old value, and because both numbers are
+plausible neither reads as wrong in isolation. A reader who trusts "five" goes looking for
+which counter is decoded but not read, and finds nothing — a small waste, but the failure mode
+scales badly when the count is load-bearing rather than parenthetical.
+
+No behavioural change; the guard already iterated the whole map, which is what the sentence
+was defending. Prose fix only.

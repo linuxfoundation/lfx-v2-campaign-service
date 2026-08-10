@@ -335,7 +335,7 @@ func (c *Client) GetEmailMetrics(ctx context.Context, emailID string, window mod
 	}
 	// Counts, so a negative is malformed upstream data rather than a small number. Checked
 	// across the WHOLE map, not just the six mapped keys: a negative anywhere in the
-	// counter set is evidence the payload is wrong, and the five keys read below would be
+	// counter set is evidence the payload is wrong, and the six keys read below would be
 	// no more trustworthy for having stayed positive.
 	// Neither the key nor the value is interpolated when the key is not one this client
 	// knows: both are arbitrary response content, and this error reaches a log line. A key
