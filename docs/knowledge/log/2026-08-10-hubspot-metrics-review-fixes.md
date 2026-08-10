@@ -1,6 +1,7 @@
 # 2026-08-10 — HubSpot metrics: provenance remedy split + bounded portal lookup
 
-Two review findings on PR #113 (Cursor + Copilot), both in the HubSpot email-metrics path.
+**Fix** — Two review findings on PR #113 (Cursor + Copilot), both in the HubSpot email-metrics
+path.
 
 ## The remedy for a row with no recorded provenance was wrong
 

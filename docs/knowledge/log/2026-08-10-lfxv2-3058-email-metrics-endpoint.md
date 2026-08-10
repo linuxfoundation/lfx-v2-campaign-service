@@ -4,7 +4,9 @@
 `MetricsReader`, and `campaign-metrics` gains an optional `email` object. HubSpot is now the
 first non-ad-platform on
 `GET /projects/{p}/briefs/{b}/campaigns/{c}/metrics`. Part 1 (LFXV2-3058, PR #105) built the
-client and its contract; nothing in `internal/platform/hubspot` changes here.
+client and its contract. This PR does touch `internal/platform/hubspot` again, but only for the
+portal-provenance guard described under LFXV2-3073 below — the metrics contract itself is
+unchanged.
 
 ## The endpoint was shaped for ad platforms, and email breaks two of its assumptions
 
@@ -116,9 +118,11 @@ HubSpot has no toggle.)
 `docs/api-catalog.md`'s canonical metrics row said "Everything else here is Google-Ads-only" and
 that no other adapter emits the three `ErrConnectionNotUsable` reasons. `resolveHubSpotClient` in
 this change emits all three, so the row contradicted the endpoint's own behaviour. Corrected, with
-the part that IS still Google-only kept separate: only Google Ads verifies account identity, and
-there is no ad account in an email connection to mismatch, so HubSpot emits neither
-`account_not_selected` nor an account mismatch.
+the part that IS still Google-only kept separate: only Google Ads verifies AD ACCOUNT identity,
+and there is no ad account in an email connection to mismatch, so HubSpot emits no
+`account_not_selected`. HubSpot does verify identity of its own — against the token's
+**portal**, not an ad account — and does emit an account-mismatch-shaped 409 for it; see the
+LFXV2-3073 section below.
 
 ## Related
 

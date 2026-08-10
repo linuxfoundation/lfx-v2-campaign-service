@@ -625,13 +625,18 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			// would be a false promise — it tells the caller to retry a request that cannot
 			// succeed with time alone.
 			//
+			// "channel", not "ad platform": HubSpot's resolveHubSpotClient tags the same three
+			// reasons (inactive, credentials undecodable, credentials incomplete) with this
+			// sentinel, so an email connection reaches this arm too — naming an ad platform
+			// would send that caller to check a system they never connected.
+			//
 			// Logged with the fixed reason token rather than the error, for the reason
 			// spelled out at unusableConnectionReason: one of the conditions behind this
 			// sentinel is detected by decoding the DECRYPTED credential blob.
 			slog.WarnContext(ctx, "campaign metrics read blocked: the project's connection is not usable",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "reason", unusableConnectionReason(merr))
-			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection is not ready — its stored credentials or provider settings need attention; repair the connection before reading metrics"}
+			return nil, &briefs.ConflictError{Code: "409", Message: "this project's channel connection is not ready — its stored credentials or provider settings need attention; repair the connection before reading metrics"}
 		default:
 			// "channel", not "ad platform": HubSpot reaches this arm too, and a message
 			// naming an ad platform on an email read tells the caller to check a system

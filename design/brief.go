@@ -198,9 +198,11 @@ var Campaign = Type("campaign", func() {
 // Campaign (which reflects the stored row plus an ETag).
 var CampaignMetrics = Type("campaign-metrics", func() {
 	Attribute("campaign_id", String, "Campaign UUID", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
-	// No example on platform_campaign_id: its format is the CHANNEL's, and this one type
-	// serves all of them, so any single value would be a claim about the others.
-	Attribute("platform_campaign_id", String, "The id the CHANNEL returned when the campaign was created. On an ad platform that is its campaign id; on the email channel it is the HubSpot marketing-email id of the cloned draft, which is what the metrics read queries by.")
+	// The rest of this type's example is forced into an EMAIL-channel shape (see the
+	// comment on `impressions` below), so this example has to be one too: a bare-numeric
+	// HubSpot marketing-email id, matching what ReadMetrics actually queries by. It is not
+	// a claim about the ad platforms' own id formats.
+	Attribute("platform_campaign_id", String, "The id the CHANNEL returned when the campaign was created. On an ad platform that is its campaign id; on the email channel it is the HubSpot marketing-email id of the cloned draft, which is what the metrics read queries by.", func() { Example("104670127234") })
 	Attribute("window", String, "The reporting window that was REQUESTED. On the ad platforms it is also the period the counters cover. On the email channel it is not: it selects which emails are in scope by their send date, and the counters are then that email's totals to date — see the email object.", metricsWindowEnum)
 	// The counters below are examples of an EMAIL-channel response, not an ad-platform one,
 	// and that is forced rather than chosen: `email` is optional but Goa emits every attribute

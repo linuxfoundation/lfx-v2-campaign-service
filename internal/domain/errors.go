@@ -81,9 +81,12 @@ var (
 	// Platform campaign ids are unique only WITHIN a tenant, so a tenant-scoped request
 	// issued under the wrong one is not merely unauthorized — it is silently WRONG: the
 	// id most often matches nothing (indistinguishable from a campaign with genuinely
-	// zero activity) and, on a collision, matches somebody else's campaign. The platform
-	// is never contacted. It is a state error, not a transport one — a retry now fails
-	// identically — so it maps to 409, not 503.
+	// zero activity) and, on a collision, matches somebody else's campaign. On HubSpot the
+	// mismatch is caught only AFTER the token's own portal has been resolved via
+	// AuthenticatedPortalID, so "the platform is never contacted" no longer holds for
+	// every path to this sentinel — what is true of all of them is that the tenant-scoped
+	// campaign metrics read itself is never attempted. It is a state error, not a
+	// transport one — a retry now fails identically — so it maps to 409, not 503.
 	//
 	// "Tenant" rather than "ad account" deliberately: this sentinel reaches the email
 	// channel too, where the operator has no ad account to reconnect and being told to
