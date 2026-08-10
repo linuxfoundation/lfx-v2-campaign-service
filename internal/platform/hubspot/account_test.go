@@ -72,7 +72,7 @@ func TestAuthenticatedPortalID(t *testing.T) {
 					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 				}
 				w.Header().Set("Content-Type", "application/json")
-				fmt.Fprint(w, tt.serverResponse)
+				_, _ = fmt.Fprint(w, tt.serverResponse)
 			}))
 			defer server.Close()
 
@@ -122,7 +122,7 @@ func TestAuthenticatedPortalID_MalformedResponseIsRedacted(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		// Send response with marker bytes that should NOT appear in any error message
-		fmt.Fprint(w, `{"portalId": "SECRET_MARKER_12345"}`)
+		_, _ = fmt.Fprint(w, `{"portalId": "SECRET_MARKER_12345"}`)
 	}))
 	defer server.Close()
 
