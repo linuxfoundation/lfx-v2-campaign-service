@@ -230,6 +230,21 @@ creates" produces that class of answer; the migrations are the only set that is 
 narrowness is not incidental either: `requiredIndexes` grows only when an index's absence
 would be silent, and the invalid-index scan must keep annotating correctly for every index
 it does not list, both today's and the ones added after this code was written.
+
+**Narrow is not the same as short, and the first draft of the list confused the two.** It
+held one entry — the index the change at hand created — while the rule it stated ("a unique
+index standing in for a constraint") admits ten. The seven per-provider connection indexes
+from 000001 and `uq_campaign_briefs_project_event` from 000003 are exposed identically:
+000001 declares no table-level UNIQUE constraint at all, and 000003 DROPs
+`campaign_briefs_project_id_event_slug_key` before creating its replacement, so in each case
+the partial index IS the constraint. The failure mode this produces is worth naming, because
+it is invisible from inside the change that produces it: **a guard that covers one of ten
+identically-exposed cases reads, from the boot log, exactly like a guard that covers all
+ten.** The other nine were never judged less important — they were just not what anyone was
+looking at. The seven connection entries are therefore GENERATED from the table list rather
+than written out, so an eighth provider added to the schema and the list is covered without
+anyone remembering, and `TestMigrateRefusesEachDroppedSingletonIndex` drops each one against
+a live database and requires `Migrate` to refuse.
 The parser matches the CREATE, not the name anywhere in the file, so a migration that
 DROPs an index is not reported as the version to force back to; where two migrations
 create one name, the highest wins. `TestMigrationIndexOwners_FindsEveryCreatedIndex`

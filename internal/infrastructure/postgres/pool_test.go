@@ -300,31 +300,45 @@ func TestDescribeInvalid_LeavesTrulyUnownedIndexesAlone(t *testing.T) {
 		"describeInvalid = %q, want the unowned index told to leave the version alone", got)
 }
 
-// TestRequiredIndexes_AnnotateToDifferentMigrations pins the reason the missing-index error
-// annotates per NAME instead of ending in one `migrate force <version-1>` sentence.
+// TestRequiredIndexes_AnnotateToTheMigrationThatRebuildsThem pins the reason the
+// missing-index error annotates per NAME instead of ending in one
+// `migrate force <version-1>` sentence.
 //
 // The generic sentence was correct while requiredIndexes held a single entry and became
 // wrong the moment it held two, because the two are created by different migrations. An
 // operator holding a schema missing uq_campaigns_brief_platform_live who forces 17 replays
 // 000018, rebuilds the AUDIENCE index, and boots against a campaigns table that still has
 // nothing enforcing (brief_id, platform) uniqueness — having followed the message exactly.
-// This test fails the day a third entry lands whose owner collides with neither, which is
-// the moment to re-read the advice rather than trust it.
-func TestRequiredIndexes_AnnotateToDifferentMigrations(t *testing.T) {
-	seen := make(map[string]string, len(requiredIndexes))
+//
+// An earlier form of this test asserted the annotations were all DISTINCT, as a canary for
+// that hazard. That was the wrong invariant, and the seven connection indexes are the case
+// that shows why: all seven are created by 000001, so all seven annotate to "force 0" — and
+// forcing 0 really does replay 000001 and rebuild every one of them. Shared owners are not
+// the danger; they are the case the per-name annotation handles trivially. The danger is an
+// annotation that does NOT rebuild the index it is attached to, which is what this asserts:
+// every entry resolves to a migration, and that migration's CREATE really carries its name.
+func TestRequiredIndexes_AnnotateToTheMigrationThatRebuildsThem(t *testing.T) {
+	owners := migrationIndexOwners()
+	require.NotEmpty(t, requiredIndexes)
+
 	for _, idx := range requiredIndexes {
 		got := indexRecovery(idx.name)
 		require.NotContainsf(t, got, "no migration creates this",
 			"%s is in requiredIndexes but no migration creates it: the error would tell the "+
 				"operator to drop an index the service refuses to boot without", idx.name)
-		if other, dup := seen[got]; dup {
-			t.Fatalf("%s and %s both annotate to %q — if that is genuinely true the advice is "+
-				"fine, but verify it rather than assuming: forcing one version must rebuild "+
-				"BOTH indexes", idx.name, other, got)
+
+		// The annotation is only advice until the named migration is confirmed to contain
+		// a CREATE for THIS index. Deriving a name by convention — as the seven connection
+		// entries do — is exactly how an entry acquires a plausible name nothing creates.
+		version, ok := owners[idx.name]
+		assert.Truef(t, ok, "%s resolves to no owning migration", idx.name)
+		if !ok {
+			continue
 		}
-		seen[got] = idx.name
+		assert.Containsf(t, got, fmt.Sprintf("force %d", version-1),
+			"%s annotates to %q, but its CREATE is in migration %06d: forcing any other "+
+				"version replays a migration that does not rebuild it", idx.name, got, version)
 	}
-	require.Len(t, seen, len(requiredIndexes))
 }
 
 // TestMigrationIndexOwners_IgnoresAConditionalRebuild is the finding that a CREATE inside a

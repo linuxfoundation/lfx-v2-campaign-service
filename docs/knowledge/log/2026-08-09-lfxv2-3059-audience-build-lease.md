@@ -565,3 +565,61 @@ this — it fires after the read and hands back the pre-mutation snapshot, so th
 sees an approved brief), and `getErr` on `fakeBriefRepo`, deliberately not `ErrNotFound`.
 `TestBuildAudience_RetractionAfterTheClaimIsA409` and
 `TestBuildAudience_UnreadableBriefIsNotAStaleApproval` were both revert-verified.
+
+## Round N+1: the guard covered one of ten identically-exposed indexes
+
+Copilot, on `pool.go`: `requiredIndexes` is incomplete under its own rule. The seven partial
+UNIQUE connection indexes in 000001 and 000003's `uq_campaign_briefs_project_event` are each
+the sole enforcement behind their invariant, and dropping any of them leaves both scans
+passing and `Migrate` returning success.
+
+Verified rather than assumed, because the finding turns entirely on there being no other
+enforcement:
+
+- `grep -n UNIQUE 000001_create_connection_tables.up.sql` outside the `CREATE UNIQUE INDEX`
+  lines returns only the file header's prose. No table-level constraint exists.
+- 000003 opens with `ALTER TABLE campaign_briefs DROP CONSTRAINT IF EXISTS
+  campaign_briefs_project_id_event_slug_key;` and then creates the partial index. The
+  constraint is deliberately gone.
+
+So all eight qualify under the rule the list itself states, and the list held neither. Added
+them: the brief index written out, the seven connection indexes GENERATED from the table
+list, since seven near-identical literals are how the eighth provider gets added to the
+schema and forgotten here.
+
+Predicates confirmed by deparsing rather than transcribing — `WHERE status <> 'deleted'`
+comes back as `(status <> 'deleted'::text)`, `<> 'archived'` likewise. Comparing against the
+source text would false-alarm on an equivalent spelling.
+
+### The test that had to change, and why its old invariant was wrong
+
+`TestRequiredIndexes_AnnotateToDifferentMigrations` asserted every entry annotated to a
+DISTINCT migration, and would have failed outright on seven entries all owned by 000001.
+
+The temptation is to read that as the test catching something. It is not. The hazard the
+test was built for is an annotation that sends the operator to a version whose migration
+does not rebuild the index they are missing. Shared owners are the case where that hazard
+cannot arise: all seven connection indexes annotate to "force 0", and forcing 0 replays
+000001 and rebuilds every one of them. Distinctness was a proxy for the real property, and
+the proxy failed on the first input that separated them.
+
+Renamed to `TestRequiredIndexes_AnnotateToTheMigrationThatRebuildsThem` and made to assert
+the property directly: every entry resolves to an owning migration, and the annotation names
+that migration's version minus one. That also closes a hole the generated names opened —
+deriving `uq_<table>_project` by convention is exactly how an entry acquires a plausible
+name no migration creates.
+
+### Revert checks
+
+Coverage claimed in a doc comment is the failure this round is an instance of, so both
+additions were verified by removing them:
+
+- `requiredIndexes` without the seven generated entries → all seven subtests fail with
+  `got <nil>, want ErrMissingRequiredIndex`.
+- `requiredIndexes` without the brief entry → that subtest fails the same way.
+
+One probe was discarded as non-binding before it could be trusted. Renaming the brief entry
+to a `_DISABLED` name looks like a revert and is not: the renamed index never exists, so
+`Migrate` reports it missing on every run and the subtest passes for the wrong reason. **A
+revert that makes the guard fire unconditionally proves nothing** — the entry has to be
+removed from the list, not made unsatisfiable.

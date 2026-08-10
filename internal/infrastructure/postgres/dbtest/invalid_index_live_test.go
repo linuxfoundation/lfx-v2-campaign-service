@@ -303,3 +303,81 @@ func restoreRequiredIndex(t *testing.T, pool interface {
 		t.Errorf("restore %s: unique=%t valid=%t partial=%t, want all true", idx, unique, valid, partial)
 	}
 }
+
+// TestMigrateRefusesEachDroppedSingletonIndex is the binding check for the eight entries
+// that were NOT the subject of the change that built this guard.
+//
+// The two tests above cover the audience-lease and dispatch indexes — the ones under
+// active work when requiredIndexes was written. The seven per-provider connection indexes
+// and the live-brief slug index are exposed identically and were simply not what anyone was
+// looking at: 000001 declares no table-level UNIQUE constraint, and 000003 DROPs
+// campaign_briefs_project_id_event_slug_key before creating its replacement, so in every
+// one of these eight cases the partial index IS the constraint. Losing one lets a second
+// live row insert cleanly, and for the connection tables that means two sets of ad-account
+// credentials for one project with row order deciding which one spends money.
+//
+// Driving it off requiredIndexes rather than a hand-written list is deliberate: a ninth
+// provider added to the schema and to that list gets this coverage without anyone
+// remembering to extend a test, and one added to the schema ALONE fails
+// TestRequiredIndexes_AnnotateToTheMigrationThatRebuildsThem instead of passing quietly.
+//
+// Revert check: emptying the generated entries out of requiredIndexes makes every subtest
+// here fail with "Migrate succeeded", because Migrate reports success against a schema
+// missing the only thing enforcing the invariant.
+func TestMigrateRefusesEachDroppedSingletonIndex(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+
+	for _, idx := range []string{
+		"uq_google_ads_connections_project",
+		"uq_linkedin_ads_connections_project",
+		"uq_meta_ads_connections_project",
+		"uq_reddit_ads_connections_project",
+		"uq_twitter_ads_connections_project",
+		"uq_microsoft_ads_connections_project",
+		"uq_hubspot_connections_project",
+		"uq_campaign_briefs_project_event",
+	} {
+		t.Run(idx, func(t *testing.T) {
+			// Capture the definition Postgres itself reports, and restore from that
+			// rather than from a copy of the migration's SQL. A hand-copied CREATE here
+			// would drift from the migration silently and leave every LATER subtest
+			// running against a schema this one quietly changed.
+			var def string
+			if err := pool.QueryRow(ctx,
+				`SELECT pg_get_indexdef(c.oid) FROM pg_class c
+				 WHERE c.relname = $1 AND c.relnamespace = current_schema()::regnamespace`,
+				idx).Scan(&def); err != nil {
+				t.Fatalf("read the definition of %s (is it in the schema at all?): %v", idx, err)
+			}
+			t.Cleanup(func() {
+				if _, err := pool.Exec(context.Background(), def); err != nil {
+					t.Fatalf("restore %s: %v — later tests would run against a schema "+
+						"missing a constraint this test removed", idx, err)
+				}
+			})
+
+			if _, err := pool.Exec(ctx, "DROP INDEX IF EXISTS "+idx); err != nil {
+				t.Fatalf("drop %s: %v", idx, err)
+			}
+
+			// The version is already recorded clean, so Up() returns ErrNoChange and
+			// rebuilds nothing. Only the required-index scan stands between this schema
+			// and a service that boots with the constraint gone.
+			err := postgres.Migrate(dbtest.DSN())
+			if !errors.Is(err, postgres.ErrMissingRequiredIndex) {
+				t.Fatalf("Migrate after dropping %s: got %v, want ErrMissingRequiredIndex — "+
+					"succeeding here boots the service against a schema where a second live "+
+					"row for the same key inserts cleanly and nothing reports it", idx, err)
+			}
+			if !strings.Contains(err.Error(), idx) {
+				t.Errorf("the error does not name %s, so the operator cannot tell WHICH "+
+					"index to rebuild: %v", idx, err)
+			}
+			if !postgres.IsPermanentMigrationErr(err) {
+				t.Errorf("%s missing is not treated as permanent; boot would 503-loop "+
+					"rather than telling the operator to force the version back", idx)
+			}
+		})
+	}
+}

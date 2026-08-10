@@ -306,7 +306,14 @@ func checkNoInvalidIndexes(dsn string) error {
 // uniqueness, key count, key names, relation and predicate rather than the name
 // (TestMigration000014_GuardChecksIndexDefinition records the PostgreSQL 16.10 run where
 // a same-named NON-unique index passed the name-only form). This is that guard, moved to
-// the runner, for the index 000018 creates.
+// the runner and applied to every index in the schema that the rule above admits.
+//
+// "Every index the rule admits" is the whole membership test, and it is worth stating
+// because the first draft of this list held only the index 000018 creates — the one the
+// change at hand was about. That is the natural scope for a change and the wrong scope for
+// a guard: a check that covers one of eight identically-exposed indexes reads, from the
+// boot log, exactly like a check that covers all of them. The other seven-plus were not
+// judged less important; they were simply not what anyone was looking at.
 var requiredIndexes = []requiredIndex{{
 	// at most one audience per (brief, platform) in `building`.
 	name:   "uq_campaign_audiences_brief_platform_building",
@@ -335,7 +342,56 @@ var requiredIndexes = []requiredIndex{{
 	keys:   []string{"brief_id", "platform"},
 	// Deparsed, and character-identical to the form 000014's guard compares against.
 	predicate: "(status <> 'deleted'::text)",
+}, {
+	// at most one LIVE brief per (project, event slug). 000003 does not add this index
+	// alongside a constraint — it DROPs campaign_briefs_project_id_event_slug_key and
+	// replaces it, so from 000003 onward the index is the only thing there is. Absent, two
+	// briefs for the same event coexist and every later lookup that assumes one picks
+	// arbitrarily between them.
+	name:      "uq_campaign_briefs_project_event",
+	table:     "campaign_briefs",
+	unique:    true,
+	keys:      []string{"project_id", "event_slug"},
+	predicate: "(status <> 'archived'::text)",
 }}
+
+// connectionSingletonIndexes is the same guarantee for the seven per-provider connection
+// tables 000001 creates: one live connection per project, per provider.
+//
+// They are generated rather than written out because the seven differ in nothing but the
+// table and the name — and writing them out seven times is how the eighth provider gets
+// added to the schema and forgotten here. 000001 declares NO table-level UNIQUE constraint
+// (its header says so, and grepping it confirms it), so each partial index is the sole
+// enforcement behind ConnectionRepo.Create returning ErrConflict. With one gone, a second
+// `active` connection for that project inserts cleanly, and which credentials a dispatch
+// then resolves is decided by row order — against a table whose rows are ad-account
+// credentials that spend money.
+func connectionSingletonIndexes() []requiredIndex {
+	// Ordered, not a map range: the missing-index error lists names in this order, and a
+	// message whose contents reshuffle between boots is one an operator cannot diff.
+	tables := []string{
+		"google_ads_connections", "linkedin_ads_connections", "meta_ads_connections",
+		"reddit_ads_connections", "twitter_ads_connections", "microsoft_ads_connections",
+		"hubspot_connections",
+	}
+	out := make([]requiredIndex, 0, len(tables))
+	for _, t := range tables {
+		out = append(out, requiredIndex{
+			// 000001 names each index uq_<table>_project. The existing
+			// requiredIndexes test fails if this derivation ever stops matching what
+			// the migration actually creates, so the convention cannot rot into a name
+			// no migration owns.
+			name:      "uq_" + t + "_project",
+			table:     t,
+			unique:    true,
+			keys:      []string{"project_id"},
+			predicate: "(status <> 'deleted'::text)",
+		})
+	}
+	return out
+}
+
+func init() { requiredIndexes = append(requiredIndexes, connectionSingletonIndexes()...) }
 
 // requiredIndex is an index whose absence — or silent replacement by something of the
 // same name — leaves an invariant unenforced with no other symptom.
