@@ -4,4 +4,4 @@
 -- CONCURRENTLY here too: a plain DROP INDEX takes a lock that blocks writes to
 -- campaigns, and a down migration runs against a live rolling deployment for the
 -- same reason the up migration does.
-DROP INDEX CONCURRENTLY IF EXISTS uq_campaigns_project_platform_campaign_live;
+DROP INDEX CONCURRENTLY IF EXISTS uq_campaigns_platform_campaign_live;

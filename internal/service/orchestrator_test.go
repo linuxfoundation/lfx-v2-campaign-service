@@ -230,7 +230,10 @@ func (r *fakeCampaignRepo) AdoptCampaign(_ context.Context, c *model.Campaign, e
 		return nil, fmt.Errorf("%w: brief %s already has a live %s campaign", domain.ErrConflict, c.BriefID, c.Platform)
 	}
 	for _, other := range r.existing {
-		if other.Status != "deleted" && other.ProjectID == c.ProjectID &&
+		// No project comparison: 000020's index is keyed (platform, platform_campaign_id)
+		// only, and a fake that filtered by project would accept a binding the real schema
+		// rejects -- the exact cross-project collision the global key exists for.
+		if other.Status != "deleted" &&
 			other.Platform == c.Platform && other.PlatformCampaignID == c.PlatformCampaignID {
 			return nil, fmt.Errorf("%w: %s campaign %s is bound to brief %s",
 				domain.ErrPlatformCampaignAlreadyBound, c.Platform, c.PlatformCampaignID, other.BriefID)

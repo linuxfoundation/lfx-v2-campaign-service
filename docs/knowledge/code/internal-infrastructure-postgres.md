@@ -540,12 +540,22 @@ Two guards live in the same transaction as the insert, and neither can be enforc
   approval BEFORE a platform lookup bounded at 20 seconds, and a `ReplaceBrief` or
   `ArchiveBrief` committing inside that window would otherwise leave paid spend bound to an
   unapproved brief — the approval gate defeated by latency alone.
-- **`uq_campaigns_project_platform_campaign_live`** (migration 000020), keyed
-  `(project_id, platform, platform_campaign_id)` over live rows. 000013's index answers only
+- **`uq_campaigns_platform_campaign_live`** (migration 000020), keyed
+  `(platform, platform_campaign_id)` over live rows. 000013's index answers only
   "does this BRIEF have a campaign here"; adoption names an arbitrary upstream campaign, so
   without this a second brief can bind the same one and the two rows toggle it against each
-  other. It is scoped by project because a bare platform id is unique only within the account
-  that minted it. The `ON CONFLICT` clause names 000013's index, so this one raises an ordinary
+  other. **It is deliberately not scoped by project.** The scoped version reads as the careful
+  choice — a bare platform id is unique only within the account that minted it — but it assumes
+  each project has its own account, and for the provider adoption supports that is false:
+  Google Ads is one shared customer across every foundation, one connection row per project
+  pointing at it, so project-scoping lets two projects bind one live campaign. Keying globally
+  can in principle reject a legitimate binding if two per-foundation accounts mint the same
+  numeric id, which has not been observed on any provider here; the asymmetry decides it — a
+  false reject is a 409 someone reads, a false accept is two briefs silently fighting over paid
+  spend. Note what this is NOT: an ownership check. A project connected to the shared customer
+  can already read and pause anything in it through Google's API, so adoption cannot be more
+  restrictive than the credential it uses; the index enforces the service's own invariant, one
+  upstream campaign to one brief. The `ON CONFLICT` clause names 000013's index, so this one raises an ordinary
   unique violation — classified separately as `domain.ErrPlatformCampaignAlreadyBound`, because
   a 409 naming the wrong brief sends the operator to inspect one that has no campaign. It is
   also the ONLY index in the chain built without `IF NOT EXISTS`, which is a correctness

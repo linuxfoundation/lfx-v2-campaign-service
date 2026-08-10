@@ -6,18 +6,40 @@
 -- 000013's partial index keys (brief_id, platform), which answers "does this
 -- brief already have a live campaign here" and nothing else. Adoption asks the
 -- opposite question: the caller names an ARBITRARY upstream campaign, so two
--- different briefs in the same project can each adopt the SAME one. Both rows
--- then look provisioned, and the toggle and metrics reader on each act on the
--- same paid campaign independently -- one brief pauses what the other just
--- enabled, and neither operator can see why. Nothing in the service can detect
--- that after the fact: the two rows are individually well-formed.
+-- different briefs can each adopt the SAME one. Both rows then look provisioned,
+-- and the toggle and metrics reader on each act on the same paid campaign
+-- independently -- one brief pauses what the other just enabled, and neither
+-- operator can see why. Nothing in the service can detect that after the fact:
+-- the two rows are individually well-formed.
 --
--- Scoped by project_id, not global. A bare platform_campaign_id is unique only
--- within the customer it was created under (see the account-mismatch guards in
--- internal/dispatch/googleads.go, which exist precisely because of that), and a
--- project's connection pins one account. Keying globally would reject a
--- legitimate adoption in project B because project A's DIFFERENT account happens
--- to mint the same numeric id.
+-- Keyed WITHOUT project_id, and that is the whole of the reasoning worth reading.
+-- The obvious key is (project_id, platform, platform_campaign_id), on the theory
+-- that a bare platform id is unique only within the account that minted it and a
+-- project's connection pins one account. The second half of that is false for the
+-- providers it matters most for. Google Ads and HubSpot are ONE shared upstream
+-- account across every foundation (docs/channel-connections-schema.md, "Current
+-- Account Inventory"); each project stores its own connection row pointing at the
+-- same customer. So for exactly the platform adoption supports today, two projects
+-- ARE the same account, a project-scoped key permits both of them to bind one
+-- campaign, and the interference above is back with the guard reporting success.
+--
+-- Keying globally can in principle reject a legitimate binding: two per-foundation
+-- accounts on the same provider minting the same numeric id. That collision has
+-- never been observed on any provider here -- Google Ads, LinkedIn, Meta, Reddit
+-- and X all mint ids that are unique well beyond one account -- and the two
+-- failures are not symmetric. A false reject is a loud 409 naming the conflicting
+-- campaign, recoverable the moment anyone looks at it. A false ACCEPT is two briefs
+-- silently fighting over live paid spend, with no error anywhere and no way to tell
+-- from either row that the other exists. Prefer the failure that announces itself.
+--
+-- What this index does NOT do is make adoption an ownership check, and it should
+-- not be read as one. Within a shared account, a project holding a connection can
+-- name a campaign another project created -- but that project's credential already
+-- confers read and pause on every campaign in that customer, directly against the
+-- provider's API. Adoption cannot be more restrictive than the credential it uses;
+-- account tenancy is where that boundary lives. What IS this service's to enforce
+-- is its own invariant -- one upstream campaign, one brief -- and that is what this
+-- index enforces, for all projects rather than one at a time.
 --
 -- platform_campaign_id IS NOT NULL keeps the index off rows that have no upstream
 -- campaign yet -- a dispatch claim inserts before the platform mints an id, and
@@ -43,6 +65,6 @@
 -- clause the retry fails with 42P07 until the invalid index is dropped, which is
 -- the loud failure this whole file is arguing for. There is no legitimate re-run
 -- to protect: golang-migrate executes each version exactly once.
-CREATE UNIQUE INDEX CONCURRENTLY uq_campaigns_project_platform_campaign_live
-    ON campaigns (project_id, platform, platform_campaign_id)
+CREATE UNIQUE INDEX CONCURRENTLY uq_campaigns_platform_campaign_live
+    ON campaigns (platform, platform_campaign_id)
     WHERE status <> 'deleted' AND platform_campaign_id IS NOT NULL;

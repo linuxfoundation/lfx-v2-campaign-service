@@ -23,8 +23,9 @@ const sqlstateUniqueViolation = "23505"
 // insertBriefIn creates a brief in a CALLER-CHOSEN project.
 //
 // insertBrief (schema_live_test.go) derives the project from the test name, which is
-// exactly wrong here: the guard under test is scoped BY project, so every assertion below
-// turns on two briefs sharing one. event_slug still has to differ — campaign_briefs
+// exactly wrong here: the guard under test is keyed WITHOUT project, so the assertions
+// below have to place two briefs in one project and two briefs in different projects and
+// get the same refusal from both. event_slug still has to differ — campaign_briefs
 // carries its own partial-unique (project_id, event_slug) — so it is the only thing this
 // helper varies.
 func insertBriefIn(ctx context.Context, t *testing.T, pool *pgxpool.Pool, project, slug string) string {
@@ -65,7 +66,9 @@ func insertBinding(ctx context.Context, t *testing.T, pool *pgxpool.Pool, projec
 // campaign: one pauses what the other just enabled, and the rows are individually
 // well-formed, so nothing in the service can detect it afterwards.
 //
-// Each sub-test uses its own project, so an inserted row cannot leak into the next.
+// Each sub-test mints its own platform_campaign_id, which is what keeps the sub-tests
+// independent now that the index no longer includes project_id — a shared id would make
+// one sub-test's leftover row the cause of the next one's refusal.
 func TestLiveOneUpstreamCampaignBindsToOneBrief(t *testing.T) {
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
@@ -131,7 +134,19 @@ func TestLiveOneUpstreamCampaignBindsToOneBrief(t *testing.T) {
 		}
 	})
 
-	t.Run("a different project may bind the same id", func(t *testing.T) {
+	// A DIFFERENT project must be refused too, and this is the case the obvious key gets
+	// wrong. Scoping the index by project reads as the careful choice — a bare platform id
+	// is unique only within the account that minted it — but it assumes each project has
+	// its own account, and for the provider adoption actually supports that is false:
+	// Google Ads is ONE shared customer across every foundation, with a connection row per
+	// project pointing at it. Project-scoped, both rows insert cleanly and then toggle the
+	// same live campaign against each other.
+	//
+	// This does not make adoption an ownership check — a project holding a connection to
+	// the shared customer can already read and pause anything in it straight through
+	// Google's API. It enforces the invariant that IS this service's: one upstream
+	// campaign, one brief.
+	t.Run("a different project may not bind the same id", func(t *testing.T) {
 		platformID := dbtest.UniqueID(t, "gaid")
 		projectA := dbtest.UniqueID(t, "projectA")
 		projectB := dbtest.UniqueID(t, "projectB")
@@ -142,13 +157,15 @@ func TestLiveOneUpstreamCampaignBindsToOneBrief(t *testing.T) {
 			t.Fatalf("project A binding: %v", err)
 		}
 
-		// The id is unique only within the ad account that minted it, and a project's
-		// connection pins one account. A global key would reject this legitimate
-		// adoption because an unrelated project's account happened to mint the same
-		// number — see the migration's own reasoning.
-		if err := insertBinding(ctx, t, pool, projectB, briefB, &platformID, testCampaignStatus); err != nil {
-			t.Fatalf("project B binding: %v — the guard is keyed globally, so one project's "+
-				"numeric id can lock another project out of adopting its own campaign", err)
+		err := insertBinding(ctx, t, pool, projectB, briefB, &platformID, testCampaignStatus)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) {
+			t.Fatalf("err = %v, want a unique violation — two projects sharing one upstream "+
+				"ad account just bound the SAME campaign, and on Google Ads every project "+
+				"shares that account", err)
+		}
+		if pgErr.Code != sqlstateUniqueViolation {
+			t.Fatalf("SQLSTATE = %s (%s), want %s", pgErr.Code, pgErr.Message, sqlstateUniqueViolation)
 		}
 	})
 }

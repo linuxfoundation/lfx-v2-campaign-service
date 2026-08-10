@@ -219,3 +219,44 @@ The class, and it is the same one as Round N+5 on #102: **a guard is only as str
 at which it runs.** There the redactor split before deciding whether splitting was safe; here the
 ownership check ran after the thing it was refusing had already been fetched and decrypted. In
 both cases the guard was present, correct in isolation, and one step too late to hold.
+
+## Round N+7: the scoping that reads as careful and assumes the thing that is false
+
+000020's index was keyed `(project_id, platform, platform_campaign_id)`, and the migration
+argued for the project column at length: a bare platform campaign id is unique only within the
+account that minted it, a project's connection pins one account, so a global key would reject a
+legitimate adoption in project B because project A's *different* account happened to mint the
+same number.
+
+Every clause of that is true except the one it rests on. Copilot pointed at the repo's own
+docs, and they are unambiguous — `docs/channel-connections-schema.md` "Current Account
+Inventory" and `docs/architecture.md` "Account Tenancy" both say Google Ads is **one shared
+customer across all foundations**, with each project storing its own connection row pointing at
+it. For the only provider adoption supports today, two projects are the same account. So the
+project column did not narrow the key to an account; it widened the hole to one per project,
+and the interference the whole migration exists to stop — two briefs toggling one live campaign
+against each other, both rows individually well-formed, nothing able to detect it afterwards —
+came back with the guard reporting success.
+
+Keyed globally now. The theoretical false reject remains theoretical, and the two failures are
+not comparable: a false reject is a 409 someone reads within minutes, a false accept is silent
+and burns paid spend. Where the collision is real the fix is an account column on `campaigns`,
+not a project column standing in for one.
+
+The second half of the finding needed separating from the first, because conceding it whole
+would have produced a worse endpoint. Copilot also asked for "account-scoped campaign
+ownership/claiming, or reject shared customer accounts" before the lookup is safe — but
+rejecting the shared customer disables Google Ads adoption entirely, which is all the adoption
+there is, and no ownership check is available: a campaign's name, labels and budget are set by
+whoever created it. More to the point, none is needed for the reason implied. A project holding
+a connection to that customer can already read and pause every campaign in it directly through
+Google's API. **Adoption cannot be more restrictive than the credential it is made with**, so
+the cross-project reach is a property of the LF's account tenancy, not of this endpoint. The
+comment on `resolveOwnedGoogleAdsClient` claiming an owned connection was "the only check that
+holds" overstated it and now says what it actually establishes.
+
+The class this round: **a scope qualifier justified by a premise nobody re-read.** The
+project column was defensible reasoning applied to an account model this repo documents twice
+and does not have. Adding a dimension to a uniqueness key always looks conservative — it can
+only reject less — which is precisely why the direction of "less" has to be checked against
+the deployment, not the design.

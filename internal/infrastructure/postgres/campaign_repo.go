@@ -439,8 +439,8 @@ const lockAdoptBriefQuery = `SELECT status, version FROM campaign_briefs WHERE i
 // AdoptCampaign inserts the campaign row binding an existing upstream campaign to a brief.
 //
 // It returns domain.ErrConflict when the (brief, platform) pair already has a live campaign,
-// domain.ErrPlatformCampaignAlreadyBound when a DIFFERENT live row in this project already binds
-// the same upstream campaign, and domain.ErrStaleApproval when the brief is no longer approved at
+// domain.ErrPlatformCampaignAlreadyBound when a DIFFERENT live row already binds the same upstream
+// campaign -- in ANY project, since 000020's index is not project-scoped, and domain.ErrStaleApproval when the brief is no longer approved at
 // expectedVersion.
 func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	tx, err := r.db.Begin(ctx)
@@ -483,14 +483,20 @@ func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, exp
 	)
 	adopted, err := scanCampaign(row)
 	if err != nil {
-		// The ON CONFLICT clause names ONE index, so uq_campaigns_project_platform_campaign_live
+		// The ON CONFLICT clause names ONE index, so uq_campaigns_platform_campaign_live
 		// is not swallowed by it — it raises an ordinary unique violation. That is the wanted
 		// behaviour and it must be classified separately: the DO NOTHING conflict means "this
 		// BRIEF is taken", the unique violation means "this upstream CAMPAIGN is taken", and
 		// reporting the second as the first sends the caller to look at the wrong brief.
 		if isUniqueViolation(err) {
-			return nil, fmt.Errorf("%w: %s campaign %s is bound to another brief in project %s",
-				domain.ErrPlatformCampaignAlreadyBound, c.Platform, c.PlatformCampaignID, c.ProjectID)
+			// The other brief is deliberately not named, and neither is its project. The
+			// index is global (000020), so the conflicting row may belong to a project this
+			// caller cannot see — Google Ads is one shared upstream account across every
+			// foundation. Naming it would turn a 409 into a cross-project disclosure of
+			// which briefs exist elsewhere. The caller already knows the campaign id they
+			// asked for, which is the part they can act on.
+			return nil, fmt.Errorf("%w: %s campaign %s is already bound to a brief",
+				domain.ErrPlatformCampaignAlreadyBound, c.Platform, c.PlatformCampaignID)
 		}
 		// DO NOTHING returns no row on conflict, which pgx reports as ErrNoRows. That is
 		// the ONLY way this statement declines: the pair is already bound. Every other

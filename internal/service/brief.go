@@ -631,7 +631,7 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 			// Ahead of ErrConflict deliberately: naming the wrong resource here sends the
 			// operator to inspect a brief that has no campaign, and the real second binding —
 			// which can pause what this one enables — goes unnoticed.
-			return nil, &briefs.ConflictError{Code: "409", Message: "that campaign is already bound to another brief in this project; unbind it there before adopting it here"}
+			return nil, &briefs.ConflictError{Code: "409", Message: "that campaign is already bound to another brief; unbind it there before adopting it here"}
 		case errors.Is(aerr, domain.ErrConflict):
 			return nil, &briefs.ConflictError{Code: "409", Message: "this brief already has a live campaign on that platform"}
 		}

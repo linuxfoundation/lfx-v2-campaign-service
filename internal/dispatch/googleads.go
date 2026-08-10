@@ -368,8 +368,20 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsClient(ctx context.Context, projec
 //
 // There is no upstream metadata that would fix this instead. A campaign's name, labels and
 // budget are all set by whoever created it, so none of them is evidence of which project owns
-// it. Requiring a project-owned connection is the only check that holds, and it costs nothing
+// it. Requiring a project-owned connection is the check that holds here, and it costs nothing
 // real: a project with no ad account of its own has no campaign of its own to adopt.
+//
+// It is worth being exact about what that establishes, because it is less than it looks.
+// Google Ads is ONE shared customer across every foundation (docs/architecture.md, "Account
+// Tenancy"), so two projects with their own connections still resolve the same account, and
+// this check does not stop one from naming the other's campaign. It cannot: that project's
+// credential already grants read and pause on every campaign in the customer, straight
+// through Google's API, so no rule applied here can be more restrictive than the credential
+// the call is made with. Account tenancy is where that boundary lives. What this check
+// removes is the case where a project holds NO credential at all and the fallback would have
+// lent it one. The service's own invariant — one upstream campaign, one brief — is enforced
+// where it can be: migration 000020's index, keyed globally rather than per project for
+// exactly this reason.
 func (d *GoogleAdsDispatcher) resolveOwnedGoogleAdsClient(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, error) {
 	res, err := d.creds.resolveOwned(ctx, projectID, platform)
 	if err != nil {

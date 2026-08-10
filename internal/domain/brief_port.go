@@ -150,7 +150,9 @@ type CampaignWriter interface {
 	// The check is the INSERT itself (ON CONFLICT DO NOTHING against the live partial
 	// unique index), not a preceding read, so two concurrent adopts of the same pair cannot
 	// both observe "no campaign yet" and race. A second live index rejects binding the same
-	// upstream campaign to a DIFFERENT brief in the project (ErrPlatformCampaignAlreadyBound).
+	// upstream campaign to a DIFFERENT brief (ErrPlatformCampaignAlreadyBound) -- in any project,
+	// not just this one, because providers like Google Ads put every project on one shared
+	// upstream account, and a project-scoped rejection would miss the collisions that follow.
 	//
 	// expectedVersion is the brief version the caller verified as approved. The implementation
 	// re-checks it under a row lock inside the same transaction and returns ErrStaleApproval on
