@@ -263,11 +263,10 @@ func TestMigrations_UniqueNumbering(t *testing.T) {
 // numbering bug — this branch must not merge before the PR that fills it, or those migrations
 // are skipped forever. The list must shrink to empty as siblings land.
 var allowedVersionGaps = map[int]string{
-	16: "000016_campaign_actor_columns is claimed by PR #95 (LFXV2-3038, " +
-		"feat/LFXV2-3038-campaign-actor-attribution), still open. A merge-ORDERING obligation: " +
-		"golang-migrate records only the HIGHEST applied version, so if THIS tree deploys " +
-		"first, 000016 is skipped silently and forever. #95 must land before this branch. " +
-		"Delete this entry once it does.",
+	// 000016 is no longer a gap: PR #95 (LFXV2-3038) merged it into main, discharging the
+	// ordering obligation this entry recorded. TestMigrations_AllowedVersionGapsAreStillOpen
+	// is what forced its removal on the merge that brought 000016 in — an excuse nobody
+	// deletes is indistinguishable from a real gap the next time one appears here.
 	// 000017 is no longer a gap: PR #93 merged it into main.
 	// 000018 is THIS branch's audience build lease, and is deliberately kept here rather
 	// than renumbered. PR #103 (LFXV2-3055) originally took 000017, collided with #93 on

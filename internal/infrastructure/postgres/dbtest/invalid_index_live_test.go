@@ -160,14 +160,26 @@ func TestMigrateRefusesADroppedDispatchIndex(t *testing.T) {
 	if !strings.Contains(err.Error(), idx) {
 		t.Errorf("the error does not name %s: %v", idx, err)
 	}
-	// The remedy has to point at 000013, the migration that CREATES this index —
-	// forcing back to 17 replays 000018 and rebuilds the wrong one.
-	if !strings.Contains(err.Error(), "force 12") {
-		t.Errorf("the error does not tell the operator to force back to 12: %v", err)
+	// The remedy has to be the statement that rebuilds THIS index. It used to be
+	// `force 12` — 000013 creates it, and forcing back to 17 replays 000018 and rebuilds
+	// the wrong one. Per-name annotation fixed that and left a worse problem: Up() after a
+	// force replays every migration ABOVE the version, and 000006/000007's bare
+	// `ADD CONSTRAINT` (no IF NOT EXISTS form exists in PostgreSQL) fail with 42710 and
+	// leave the version dirty. The DDL replays nothing.
+	rebuild, ok := postgres.RequiredIndexRebuildSQL(idx)
+	if !ok {
+		t.Fatalf("no rebuild statement for %s", idx)
+	}
+	if !strings.Contains(err.Error(), rebuild) {
+		t.Errorf("the error does not print the statement that rebuilds %s: %v", idx, err)
+	}
+	if strings.Contains(err.Error(), "force ") {
+		t.Errorf("the error still tells the operator to force a version, which replays "+
+			"migrations that fail on replay: %v", err)
 	}
 	if !postgres.IsPermanentMigrationErr(err) {
 		t.Errorf("ErrMissingRequiredIndex is not permanent; boot would 503-loop rather than " +
-			"telling the operator the version must be forced back")
+			"printing the statement that rebuilds the index")
 	}
 }
 
@@ -217,18 +229,21 @@ func TestMigrateRefusesARequiredIndexWithTheWrongDefinition(t *testing.T) {
 		}
 	}
 	// Dropping is a required step here and not in the missing-index case, so the message
-	// has to say so: forcing the version alone re-runs a CREATE the impostor no-ops.
-	if !strings.Contains(err.Error(), "DROPPING") {
+	// has to say so: rebuilding alone cannot displace an index already holding the name.
+	if !strings.Contains(err.Error(), "DROP each index listed") {
 		t.Errorf("the error does not tell the operator to DROP the impostor first: %v", err)
 	}
-	// And the drop is only half the remedy. The message then says to force "the version
-	// annotated against" this name — which is unactionable unless the annotation is on the
-	// entry. The missing-index path got this via describeInvalid and this sibling path did
-	// not, so an operator here was told to follow an annotation that was never printed.
-	// 000018 owns this index, so the instruction is `force 17`.
-	if !strings.Contains(err.Error(), "migration 000018: force 17") {
-		t.Errorf("the error tells the operator to force the annotated version but carries no "+
-			"annotation for %s; they cannot know which migration to rewind: %v", idx, err)
+	// And the drop is only half the remedy. What follows it has to be actionable per NAME,
+	// because two impostors reported together need not share a remedy. It used to be a
+	// version to force, which was both unprinted on this path and unsafe once entries from
+	// 000001 joined the list; it is now the index's own DDL, printed beside its defects.
+	rebuild, ok := postgres.RequiredIndexRebuildSQL(idx)
+	if !ok {
+		t.Fatalf("no rebuild statement for %s", idx)
+	}
+	if !strings.Contains(err.Error(), rebuild) {
+		t.Errorf("the error tells the operator to drop %s but does not print the statement "+
+			"that rebuilds it, so they cannot finish the remedy: %v", idx, err)
 	}
 	if !postgres.IsPermanentMigrationErr(err) {
 		t.Errorf("ErrRequiredIndexMismatch is not permanent; boot would 503-loop instead of " +
@@ -304,8 +319,9 @@ func restoreRequiredIndex(t *testing.T, pool interface {
 	}
 }
 
-// TestMigrateRefusesEachDroppedSingletonIndex is the binding check for the eight entries
-// that were NOT the subject of the change that built this guard.
+// TestMigrateRefusesEachDroppedSingletonIndex is the binding check for EVERY entry in
+// requiredIndexes, and it exists because of the eight that were not the subject of the
+// change that built the guard.
 //
 // The two tests above cover the audience-lease and dispatch indexes — the ones under
 // active work when requiredIndexes was written. The seven per-provider connection indexes
@@ -319,7 +335,7 @@ func restoreRequiredIndex(t *testing.T, pool interface {
 // Driving it off requiredIndexes rather than a hand-written list is deliberate: a ninth
 // provider added to the schema and to that list gets this coverage without anyone
 // remembering to extend a test, and one added to the schema ALONE fails
-// TestRequiredIndexes_AnnotateToTheMigrationThatRebuildsThem instead of passing quietly.
+// TestRequiredIndexes_AreAllCreatedByAMigration instead of passing quietly.
 //
 // Revert check: emptying the generated entries out of requiredIndexes makes every subtest
 // here fail with "Migrate succeeded", because Migrate reports success against a schema
@@ -328,16 +344,13 @@ func TestMigrateRefusesEachDroppedSingletonIndex(t *testing.T) {
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
 
-	for _, idx := range []string{
-		"uq_google_ads_connections_project",
-		"uq_linkedin_ads_connections_project",
-		"uq_meta_ads_connections_project",
-		"uq_reddit_ads_connections_project",
-		"uq_twitter_ads_connections_project",
-		"uq_microsoft_ads_connections_project",
-		"uq_hubspot_connections_project",
-		"uq_campaign_briefs_project_event",
-	} {
+	names := postgres.RequiredIndexNames()
+	if len(names) < 8 {
+		t.Fatalf("RequiredIndexNames returned %d entries, want at least the eight "+
+			"singleton indexes this test exists for — a shrunken list makes every "+
+			"subtest below vacuous", len(names))
+	}
+	for _, idx := range names {
 		t.Run(idx, func(t *testing.T) {
 			// Capture the definition Postgres itself reports, and restore from that
 			// rather than from a copy of the migration's SQL. A hand-copied CREATE here
@@ -376,7 +389,68 @@ func TestMigrateRefusesEachDroppedSingletonIndex(t *testing.T) {
 			}
 			if !postgres.IsPermanentMigrationErr(err) {
 				t.Errorf("%s missing is not treated as permanent; boot would 503-loop "+
-					"rather than telling the operator to force the version back", idx)
+					"rather than printing the statement that rebuilds it", idx)
+			}
+		})
+	}
+}
+
+// TestRequiredIndexCreateSQL_RebuildsAnIndexTheCheckAccepts closes the loop between the
+// error message and the checker: the statement Migrate tells an operator to run must
+// produce an index the very next Migrate accepts.
+//
+// This is the assertion the old `migrate force <N>` advice could never carry. A version
+// number is not executable, so nothing could confirm it recovered anything — and it did
+// not: `Up()` after a force replays every migration above N, and 000006/000007's bare
+// `ADD CONSTRAINT` fail on replay with 42710 and dirty the schema. The DDL is checkable,
+// so it is checked, against the real deparser rather than against a copy of the string.
+//
+// Every field the checker compares — uniqueness, key list, partial predicate — has to
+// survive the round trip, and the predicate is the one that can silently not: it is stored
+// in its DEPARSED form precisely so pg_get_expr renders it back byte-identical. If someone
+// hand-writes a logically equivalent predicate into an entry, this fails.
+//
+// Revert check: change any entry's predicate to an equivalent-but-not-deparsed spelling
+// (`status != 'deleted'`) and this fails with ErrRequiredIndexMismatch on the rebuilt
+// index, while every other test in the package still passes.
+func TestRequiredIndexCreateSQL_RebuildsAnIndexTheCheckAccepts(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+
+	for _, idx := range postgres.RequiredIndexNames() {
+		t.Run(idx, func(t *testing.T) {
+			rebuild, ok := postgres.RequiredIndexRebuildSQL(idx)
+			if !ok {
+				t.Fatalf("no rebuild statement for %s, but the boot error promises one", idx)
+			}
+
+			var def string
+			if err := pool.QueryRow(ctx,
+				`SELECT pg_get_indexdef(c.oid) FROM pg_class c
+				 WHERE c.relname = $1 AND c.relnamespace = current_schema()::regnamespace`,
+				idx).Scan(&def); err != nil {
+				t.Fatalf("read the definition of %s: %v", idx, err)
+			}
+			t.Cleanup(func() {
+				if _, err := pool.Exec(context.Background(), "DROP INDEX IF EXISTS "+idx); err != nil {
+					t.Fatalf("drop the rebuilt %s: %v", idx, err)
+				}
+				if _, err := pool.Exec(context.Background(), def); err != nil {
+					t.Fatalf("restore %s: %v — later tests would run against a schema "+
+						"missing a constraint this test removed", idx, err)
+				}
+			})
+
+			if _, err := pool.Exec(ctx, "DROP INDEX IF EXISTS "+idx); err != nil {
+				t.Fatalf("drop %s: %v", idx, err)
+			}
+			if _, err := pool.Exec(ctx, rebuild); err != nil {
+				t.Fatalf("the rebuild statement the boot error prints does not run:\n  %s\n  %v",
+					rebuild, err)
+			}
+			if err := postgres.Migrate(dbtest.DSN()); err != nil {
+				t.Fatalf("Migrate after following the printed remedy for %s: %v — an "+
+					"operator who does exactly what the error says is still down", idx, err)
 			}
 		})
 	}

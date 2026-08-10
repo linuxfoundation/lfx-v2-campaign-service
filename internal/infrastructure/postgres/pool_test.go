@@ -291,53 +291,70 @@ func TestDescribeInvalid_AnnotatesIndexesOutsideRequiredIndexes(t *testing.T) {
 // replay unrelated DDL to fix an index nothing will recreate. The live test builds exactly
 // such an index by hand.
 func TestDescribeInvalid_LeavesTrulyUnownedIndexesAlone(t *testing.T) {
-	owned := requiredIndexes[0].name
+	// Deliberately an index OUTSIDE requiredIndexes: those now annotate to their own DDL,
+	// so they cannot witness the force branch this test is about.
+	const owned = "idx_campaigns_stuck_claims"
 	got := describeInvalid([]string{owned, "zz_hand_built_idx"})
 
-	assert.Containsf(t, got, owned+" (migration 000018: force 17)",
+	assert.Containsf(t, got, owned+" (migration 000008: force 7)",
 		"describeInvalid = %q, want the owned index annotated with its version", got)
 	assert.Containsf(t, got, "zz_hand_built_idx (no migration creates this",
 		"describeInvalid = %q, want the unowned index told to leave the version alone", got)
 }
 
-// TestRequiredIndexes_AnnotateToTheMigrationThatRebuildsThem pins the reason the
-// missing-index error annotates per NAME instead of ending in one
-// `migrate force <version-1>` sentence.
+// TestRequiredIndexes_RecoverByRebuildNotByForce pins that no entry in requiredIndexes is
+// ever answered with `migrate force`.
 //
-// The generic sentence was correct while requiredIndexes held a single entry and became
-// wrong the moment it held two, because the two are created by different migrations. An
-// operator holding a schema missing uq_campaigns_brief_platform_live who forces 17 replays
-// 000018, rebuilds the AUDIENCE index, and boots against a campaigns table that still has
-// nothing enforcing (brief_id, platform) uniqueness — having followed the message exactly.
+// Two earlier forms of this test were wrong, and both were wrong in the same direction —
+// asserting a property of the ADVICE rather than of the outcome the operator gets.
 //
-// An earlier form of this test asserted the annotations were all DISTINCT, as a canary for
-// that hazard. That was the wrong invariant, and the seven connection indexes are the case
-// that shows why: all seven are created by 000001, so all seven annotate to "force 0" — and
-// forcing 0 really does replay 000001 and rebuild every one of them. Shared owners are not
-// the danger; they are the case the per-name annotation handles trivially. The danger is an
-// annotation that does NOT rebuild the index it is attached to, which is what this asserts:
-// every entry resolves to a migration, and that migration's CREATE really carries its name.
-func TestRequiredIndexes_AnnotateToTheMigrationThatRebuildsThem(t *testing.T) {
-	owners := migrationIndexOwners()
+// The first asserted the per-name annotations were all DISTINCT, as a canary for a single
+// closing `force <version-1>` sentence being applied to entries from different migrations.
+// Distinctness was a proxy, and the seven connection indexes are the input that separated
+// proxy from property: all seven come from 000001, so all seven annotate identically, and
+// nothing is wrong with that.
+//
+// The second replaced it with "every entry annotates to force <its owner - 1>", on the
+// stated ground that forcing 0 replays 000001 and rebuilds all seven. That ground is FALSE,
+// and it is the finding that produced the shape being tested now: `Up()` after a force
+// replays every migration ABOVE the forced version, not just the one that owns the index.
+// 000006 and 000007 carry bare `ALTER TABLE … ADD CONSTRAINT` — PostgreSQL has no
+// `ADD CONSTRAINT IF NOT EXISTS` — so replaying them against a schema that already has
+// those constraints fails with 42710 and leaves the version DIRTY. An operator who follows
+// "force 0" to recover ONE missing index takes the whole schema down.
+//
+// The hazard is a property of the RANGE replayed, not of the index, so no amount of careful
+// per-name annotation fixes it. The fix is to stop naming a version at all: requiredIndexes
+// carries enough to emit the index's own DDL, which rebuilds exactly the missing thing and
+// replays nothing. That is what this asserts — and the live
+// TestRequiredIndexCreateSQL_RebuildsAnIndexTheCheckAccepts asserts the DDL actually works,
+// which no form of the force assertion could have done.
+func TestRequiredIndexes_RecoverByRebuildNotByForce(t *testing.T) {
 	require.NotEmpty(t, requiredIndexes)
 
 	for _, idx := range requiredIndexes {
 		got := indexRecovery(idx.name)
-		require.NotContainsf(t, got, "no migration creates this",
-			"%s is in requiredIndexes but no migration creates it: the error would tell the "+
-				"operator to drop an index the service refuses to boot without", idx.name)
+		assert.NotContainsf(t, got, "force ",
+			"%s recovers via %q. A force replays every migration above the version named, "+
+				"and 000006/000007's bare ADD CONSTRAINT fail on replay (42710) and dirty "+
+				"the schema — use the index's own DDL", idx.name, got)
+		assert.Containsf(t, got, idx.createSQL(),
+			"%s recovers via %q, which is not the statement that rebuilds it", idx.name, got)
+	}
+}
 
-		// The annotation is only advice until the named migration is confirmed to contain
-		// a CREATE for THIS index. Deriving a name by convention — as the seven connection
-		// entries do — is exactly how an entry acquires a plausible name nothing creates.
-		version, ok := owners[idx.name]
-		assert.Truef(t, ok, "%s resolves to no owning migration", idx.name)
-		if !ok {
-			continue
-		}
-		assert.Containsf(t, got, fmt.Sprintf("force %d", version-1),
-			"%s annotates to %q, but its CREATE is in migration %06d: forcing any other "+
-				"version replays a migration that does not rebuild it", idx.name, got, version)
+// The DDL still has to name a real migration's index — a derived name that nothing creates
+// would produce a statement that "works" and an index the migrations then never maintain.
+// This is the half of the old force test that was worth keeping.
+func TestRequiredIndexes_AreAllCreatedByAMigration(t *testing.T) {
+	owners := migrationIndexOwners()
+	for _, idx := range requiredIndexes {
+		// Deriving a name by convention — as the seven connection entries do — is exactly
+		// how an entry acquires a plausible name no migration owns.
+		_, ok := owners[idx.name]
+		assert.Truef(t, ok, "%s is in requiredIndexes but no migration CREATEs it: the "+
+			"service would refuse to boot on a schema the migrations consider complete",
+			idx.name)
 	}
 }
 

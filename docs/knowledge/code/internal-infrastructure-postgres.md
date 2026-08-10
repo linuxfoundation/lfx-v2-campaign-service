@@ -161,9 +161,15 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   decide whether a pair was already dispatched.
 
 - `000015` — `created_by` / `updated_by` JSONB on `campaign_briefs` (see *Actor
-  attribution* below). `campaigns` gets the same treatment in a separate version: its
-  write paths (dispatch claim, upsert, status toggle) are a distinct change with
-  distinct failure modes.
+  attribution* below).
+
+- `000016` — the same two columns on `campaigns`. Deliberately a separate version, not
+  a second `ALTER` inside `000015`: the write paths differ in KIND, not just in table
+  (see *Async attribution on campaigns* below), and that difference is a signature change
+  across the dispatch path. Ordering matters — `000016` must reach `main` AFTER `000015`,
+  because golang-migrate tracks a single version integer and would step straight past a
+  lower version that appeared later.
+
 - `000018` — the AUDIENCE BUILD LEASE: partial unique index
   `uq_campaign_audiences_brief_platform_building` on `(brief_id, platform)
   WHERE status = 'building'`. `BuildAudience` creates real HubSpot lists before it can
@@ -321,33 +327,63 @@ drop-guard pins that same definition — deliberately, not redundantly: the guar
 at migration time, and cannot speak for the schema a year of operations later. Two checks
 on one definition is the design.
 
-### The recovery version is annotated per NAME, never per message
+### A required index recovers by REBUILD, never by `migrate force`
 
-The missing-index error used to end in a single `migrate force <version-1>`. That was
-correct while the registry held one entry and became wrong the moment it held two, because
-the two are created by different migrations. An operator whose schema is missing
-`uq_campaigns_brief_platform_live`, following that sentence to force 17, replays 000018,
+The recovery advice in these errors has been wrong twice, in two different ways, and the
+second correction is the one that matters because it changed the KIND of advice rather than
+its accuracy.
+
+**Round one — per message.** The missing-index error ended in a single
+`migrate force <version-1>`. Correct while the registry held one entry, wrong the moment it
+held two, because the two are created by different migrations: an operator missing
+`uq_campaigns_brief_platform_live` who follows that sentence to force 17 replays 000018,
 rebuilds the *audience* index, and boots against a campaigns table that still enforces
-nothing — having done exactly what the message said. Advice that is right for the first
-name in a list and wrong for the second is worse than no advice, because it gets followed.
+nothing — having done exactly what the message said. Advice that is right for the first name
+in a list and wrong for the second is worse than no advice, because it gets followed.
 
-`indexRecovery` renders the clause for one name and both messages (missing and
-wrong-definition) build from it, reusing the same migration-derived ownership
-`describeInvalid` already used. `TestRequiredIndexes_AnnotateToDifferentMigrations` fails
-if two entries ever resolve to the same version, which is the signal to re-derive the
-advice rather than assume it still holds.
+**Round two — per name, and still unsafe.** Annotating each name with its own owning
+migration fixed the mis-targeting and left the real hazard untouched: `migrate force N`
+followed by `Up()` replays **every migration above N**, not just the one that owns the index.
+This chain is not uniformly replay-safe. `000006` and `000007` carry bare
+`ALTER TABLE … ADD CONSTRAINT`, and PostgreSQL has no `ADD CONSTRAINT IF NOT EXISTS`, so
+replaying them against a schema that already has those constraints fails with **42710** and
+leaves the version DIRTY. The hazard therefore scales with the DISTANCE forced back — which
+is precisely why it stayed invisible: while every annotated index came from 000013 or later,
+the replayed range was all `IF NOT EXISTS` DDL and the advice happened to work. It became
+unsound the moment the seven `000001` connection indexes and `000003`'s brief index joined
+the registry, because their annotation is "force 0" — replay everything.
 
-"Both messages" was, for one round, only one of them. The per-name clause landed on the
-missing-index path and the wrong-definition path kept building its entries as
-`name (defects)` — while its own closing sentence told the operator to force "the version
-annotated against it", naming an annotation that was nowhere in the message. That is the
-worse half of the failure mode this section exists to prevent: not advice that is wrong,
-but advice that cannot be followed at all. It survived because nothing asserted on it;
-`TestMigrateRefusesARequiredIndexWithTheWrongDefinition` now requires the literal
-`migration 000018: force 17` in the error, so the two paths can only drift again by
-failing a test. The rule generalises past these two: **any sentence that refers the reader
-to an annotation must be tested against a message that carries one**, because a reference
-to something absent reads as correct in review and is useless in an incident.
+That is a property of the RANGE, not of the index, so no amount of more careful annotation
+fixes it.
+
+**What it is now.** Every `requiredIndex` carries uniqueness, table, key order and deparsed
+predicate — enough to emit the index's own DDL. `createSQL` does, `indexRecovery` prefers it
+for any name in the registry, and both messages print it: the missing-index error says "run
+each statement below", the wrong-definition error says "DROP each index listed and then run
+the statement beside it". A rebuild restores exactly the missing thing, replays nothing, and
+needs no version change — the recorded version was never wrong, the schema drifted underneath
+it. The force branch survives only for a name the registry has no DDL for, which is what
+`describeInvalid` still needs: the invalid-index scan is schema-wide and turns up indexes like
+`idx_campaigns_stuck_claims` that no `requiredIndex` describes.
+
+**The advice is now checkable, and that is the actual win.** A version number is not
+executable, so nothing could ever confirm that following it recovered anything — and it did
+not. `TestRequiredIndexCreateSQL_RebuildsAnIndexTheCheckAccepts` drops each required index
+against a live database, runs the exact statement the error prints, and requires the next
+`Migrate` to succeed. `TestRequiredIndexes_RecoverByRebuildNotByForce` fails if any entry's
+recovery ever contains the word `force` again.
+
+Three generalisations worth keeping:
+
+- **Advice that names a version is advice about a RANGE.** Ask what else replays before
+  concluding a force is safe, and re-ask it whenever an entry from an older migration joins
+  the list — the answer is not a property of the entry.
+- **Prefer remedies that can be executed by a test.** The per-name annotation was defensible
+  in review for two rounds precisely because nothing could run it.
+- **Any sentence that refers the reader to an annotation must be tested against a message
+  that carries one.** The wrong-definition path spent a round telling operators to force "the
+  version annotated against it" while printing no annotation at all — advice that cannot be
+  followed, which reads as correct in review and is useless in an incident.
 
 ### The check is on the DEFINITION, because the name is what IF NOT EXISTS matches
 
@@ -369,9 +405,9 @@ a false alarm. `indisready` is checked alongside `indisvalid` because the two fa
 
 Absent and wrong-definition are **separate sentinels** (`ErrMissingRequiredIndex`,
 `ErrRequiredIndexMismatch`) because their recovery differs in a way an operator cannot
-guess. An absent index needs the version forced so the `CREATE` runs. An impostor must be
-DROPPED *first* — force the version without dropping and the `CREATE` matches the name
-again and skips, leaving the operator exactly where they started. The message names every
+guess. An absent index needs only its rebuild statement run. An impostor must be DROPPED
+*first* — rebuild without dropping and `CREATE` finds the name taken, leaving the operator
+exactly where they started. The message names every
 defect it found, not the first: told only "wrong definition", an operator rebuilds
 something that is still wrong.
 
@@ -425,6 +461,80 @@ Three properties are load-bearing, and each is pinned by a test in `brief_repo_t
 - **Insert stamps BOTH** (`VALUES … ,$11,$11`). Leaving `updated_by` NULL until the
   first edit makes "who touched this last" unanswerable without also consulting
   `created_by`; the two diverge from the first update onwards, which is when it matters.
+
+### Async attribution on campaigns
+
+Everything above describes a write on the REQUEST goroutine, where reading the actor at the
+point of the write is enough. Campaign creation is not one. `Orchestrator.Start` returns as
+soon as the job row exists; the dispatch runs on `o.rootCtx` in a goroutine that outlives the
+request. No context reachable from inside `dispatchPlatform` carries an actor, so an
+`actorFromCtx` at the INSERT would return nil for every campaign ever created — silently, with
+no error and no log line.
+
+So `Start` captures it while the request context is still in hand and threads it down through
+`run` → `dispatchPlatform` → `ClaimCampaignDispatch`. `by` is therefore a PARAMETER on that
+repository method rather than something the repo reads from its ctx. What is captured is the
+DECODED actor value, never the bearer token: a token captured for asynchronous use may be
+expired by the time the work runs and there is no retry, while a decoded value has no expiry
+and is the exact thing being recorded.
+
+Three consequences follow, and they are what the SQL encodes:
+
+- **The claim INSERT is the row's first INSERT.** `claimCampaignDispatchQuery` is where
+  `created_by` is stamped, and `upsertCampaignQuery`'s conflict arm then FINALIZES that same
+  claim rather than revisiting some earlier dispatch's row. `dispatchPlatform` reaches an
+  upsert only when the claim was WON: every `!claimed` branch returns first — a reusable
+  campaign is reported as a reuse, a retained partial as a reconcile, a bare pending claim as
+  a skip — so a later dispatch of the pair never reaches the upsert at all. A retry is not the
+  exception it looks like either: it re-claims first, and since the released row is gone the
+  INSERT wins and re-stamps `created_by` with the retrying actor. A
+  re-dispatch after a soft delete is NOT the exception it looks like: the deleted row falls
+  outside the partial unique index, so it is the CLAIM that inserts the fresh campaign and
+  stamps its `created_by`, and the upsert conflicts with that. (A `pending` row cannot be
+  soft-deleted in the first place — `CampaignStatusDeletable` is a whitelist of settled
+  statuses.) The upsert's INSERT arm stamps `created_by` too, but only for the case where the
+  claim row is gone by the time the upsert runs: an operator clearing an apparently-stuck
+  claim, or a concurrent `DeleteDispatchClaim`. Both arms setting it is what keeps the column
+  populated on every path that can create the row.
+- **The claim stamps BOTH actor columns from one placeholder** (`$5, $5`), matching
+  `createBriefQuery`. At creation the author IS the last mover, and leaving `updated_by` NULL
+  would make "untouched since it was made" indistinguishable from "we never recorded who" —
+  which the conflict arm cannot repair later, since it only moves `updated_by` when it has a
+  non-NULL actor to move. Pinned by `TestClaimCampaignDispatchStampsBothActorColumns`.
+- **`created_by` is absent from that conflict arm's SET list.** Given the reachability above,
+  this is not stopping an overwrite today's orchestrator would otherwise perform — it is
+  REPOSITORY SEMANTICS. `UpsertCampaign` is a general-purpose method, not a private half of
+  `dispatchPlatform`, and its conflict arm has to be safe for a caller that reaches it without
+  a claim in front of it. Such a caller, with `created_by` in the SET list, would rewrite the
+  original author with whoever triggered the latest write; under shared system accounts the ad
+  platform cannot supply that author again, so once gone it is gone. Being a property of the
+  SQL rather than of any Go path, no service-layer test can reach it, and it is asserted
+  against the statement text (`TestUpsertCampaignDoesNotRewriteCreatedBy`).
+- **`updated_by` moves via `COALESCE(EXCLUDED.updated_by, campaigns.updated_by)`**, not a
+  bare assignment. The actor threaded into a re-dispatch is whatever `attributedActor`
+  produced back in `Orchestrator.Start` — nil whenever that request carried no authenticated
+  principal — and letting that NULL land would turn "we know who" into "we do not".
+  `replaceCampaignQuery` and `deleteCampaignQuery` do the same for the update and delete paths.
+- **The soft delete stamps `updated_by`** (`TestDeleteCampaignStampsTheDeletingActor`). The
+  row is kept precisely because it may still point at a campaign spending upstream, so "who
+  retired this" is a question actually asked of it later; leaving the column alone would
+  answer with whoever last EDITED the campaign — worse than NULL, because it reads as
+  knowledge and names the wrong person.
+
+A campaign row therefore attributes to whoever asked for the DISPATCH: the person who
+authorized the spend, which is the question `created_by` exists to answer, and not the same
+question as "who was authenticated when some later goroutine got around to writing the row".
+A NULL is correct on an unattributed write, not a lost attribution.
+
+`scanCampaign` is covered directly (`TestScanCampaign_MapsEachColumnToItsField`,
+`TestCampaignCols_MatchesTheDeclaredOrder`) rather than only through the queries that call it.
+Both actor columns are JSONB and both timestamps are `time.Time`, so a swap in its destination
+list cannot fail at the type level: `created_by` and `updated_by` would simply trade places and
+every other test would stay green while the audit trail named the wrong person on every row.
+Distinct per-column values are what make the swap visible. A NULL actor decodes to nil
+(ordinary — every row predating `000016` has both NULL); actor JSON of the wrong SHAPE fails
+the scan with the column named, since a silently-nil actor is indistinguishable from "not
+recorded", which is the confusion the NULL semantics exist to avoid.
 
 `Approve` moves `updated_by` alongside `approved_by`, and the two then diverge:
 `ReplaceBrief` CLEARS `approved_by` (a modified brief must not stay approved) while

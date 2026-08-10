@@ -4,15 +4,20 @@
 package postgres
 
 import (
+	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/migrations"
 )
 
@@ -78,7 +83,12 @@ func TestClaimVersionIsBackedByACompareAndSwap(t *testing.T) {
 	assert.Contains(t, q, "version=version+1",
 		"without the bump, a second claimant at the same version also passes the version predicate "+
 			"and both writers persist — the advisory lock cannot prevent this, it is only session-scoped")
-	assert.Contains(t, q, "AND version=$12",
+	// Matched by shape, not by "$12": the placeholder number shifts whenever a column is added
+	// ahead of it in the SET list (adding updated_by moved it from $12 to $13), and a test that
+	// pins the literal number fails on a change that preserves the property it exists to
+	// protect — training the next person to "fix" it by editing the number rather than by
+	// checking the predicate is still there.
+	assert.Regexp(t, `AND version=\$\d+`, q,
 		"without the version predicate, a writer whose lock was lost mid-call overwrites a newer "+
 			"state rather than failing with ErrPreconditionFailed")
 	assert.Contains(t, claimCampaignVersionQuery, "version=$4",
@@ -260,4 +270,269 @@ func TestDeleteCampaign_ParticipatesInAdvisoryLockProtocol(t *testing.T) {
 	require.NotContains(t, body, "r.db.Begin(",
 		"beginning on the pool takes a SECOND connection while holding the lock, which self-deadlocks "+
 			"on a saturated pool")
+}
+
+// TestUpsertCampaignDoesNotRewriteCreatedBy pins the one property of the actor columns that
+// SQL alone decides and no service-layer test can reach.
+//
+// A campaign row is INSERTed by ClaimCampaignDispatch, and upsertCampaignQuery's conflict arm
+// FINALIZES that same claim: dispatchPlatform reaches an upsert only when the claim was won,
+// and every !claimed branch returns first (reuse, reconcile, skip). So no orchestrator path
+// takes this arm against a row some EARLIER dispatch created — a retry re-claims and re-stamps,
+// and a re-dispatch after a soft delete inserts a fresh row outside the partial unique index.
+//
+// The assertion is therefore about the repository's contract rather than about today's caller.
+// UpsertCampaign is a general-purpose method, and a future caller reaching this arm without a
+// claim in front of it would, if created_by were in the SET list, rewrite the original author
+// with whoever triggered the most recent write. That is precisely what updated_by is for, and
+// precisely what created_by is not: under shared system accounts the ad platform cannot supply
+// the original author, so once overwritten it is gone. Pinning it now costs one assertion;
+// discovering it later costs the column.
+//
+// The mistake is a one-word edit (copying the neighbouring EXCLUDED lines) and produces no
+// build error, no test failure elsewhere, and no wrong-looking data until someone asks who
+// authorized a campaign months later. This package has no live-database harness in CI, so the
+// assertion is against the SQL text.
+func TestUpsertCampaignDoesNotRewriteCreatedBy(t *testing.T) {
+	_, updateArm, found := strings.Cut(upsertCampaignQuery, "DO UPDATE SET")
+	require.True(t, found, "upsertCampaignQuery has no DO UPDATE SET arm; if the statement was "+
+		"restructured, update this test deliberately:\n%s", upsertCampaignQuery)
+
+	assert.NotContains(t, updateArm, "created_by=",
+		"created_by is assigned in the conflict arm: any caller reaching this arm without a "+
+			"claim in front of it would overwrite the original author with whoever triggered "+
+			"the latest write, and under system accounts nothing else records it")
+
+	assert.Contains(t, normalizeWS(updateArm), "updated_by=COALESCE(EXCLUDED.updated_by, campaigns.updated_by)",
+		"updated_by must move on the conflict arm, and must COALESCE: an unattributed "+
+			"re-dispatch passes NULL, and writing that over a real actor turns "+
+			"\"we know who\" into \"we do not\"")
+}
+
+// TestClaimCampaignDispatchStampsBothActorColumns pins that the row's first INSERT sets
+// updated_by alongside created_by, matching createBriefQuery's `$11,$11`.
+//
+// The two columns are written from the same placeholder, which is the point: at creation the
+// author IS the last mover. Setting only created_by would leave a freshly claimed campaign
+// with updated_by NULL, and NULL on that column already means "we never recorded who" — so a
+// reader could not tell an untouched-since-creation campaign from one whose attribution was
+// lost. The upsert that follows a successful claim takes the conflict arm and cannot repair
+// it, because that arm only moves updated_by when it has a non-NULL actor to move.
+func TestClaimCampaignDispatchStampsBothActorColumns(t *testing.T) {
+	q := normalizeWS(claimCampaignDispatchQuery)
+	require.Contains(t, q, "created_by, updated_by)",
+		"the claim INSERT must name both actor columns:\n%s", claimCampaignDispatchQuery)
+	assert.Contains(t, q, "$5, $5)",
+		"both actor columns must be written from the SAME placeholder; two placeholders would "+
+			"let a caller set them independently at creation time, when there is only one actor")
+}
+
+// TestDeleteCampaignStampsTheDeletingActor pins the actor on the soft delete.
+//
+// The row is KEPT on delete precisely because it may still point at a campaign spending real
+// money upstream, so "who retired this" is a question actually asked of it later. Leave
+// updated_by alone and the answer is whoever last EDITED the campaign — worse than NULL,
+// because it reads as knowledge and names the wrong person. COALESCE for the usual reason:
+// an unauthenticated delete records nothing rather than erasing the actor we do know.
+func TestDeleteCampaignStampsTheDeletingActor(t *testing.T) {
+	q := normalizeWS(deleteCampaignQuery)
+	assert.Contains(t, q, "updated_by=COALESCE($2, updated_by)",
+		"the soft delete must stamp updated_by, and must COALESCE so an unattributed delete "+
+			"does not clear a known actor:\n%s", deleteCampaignQuery)
+}
+
+// campaignColumnOrder mirrors campaignCols, in order. Same contract as briefColumnOrder:
+// changing one of campaignCols / scanCampaign's destination list without the other is a
+// silent data-corruption bug, and this constant makes the third edit deliberate.
+var campaignColumnOrder = []string{
+	"id", "project_id", "brief_id", "job_id", "platform", "platform_campaign_id",
+	"campaign_name", "status", "budget_amount", "budget_type", "start_date", "end_date",
+	"config_snapshot", "result", "version", "created_by", "updated_by", "created_at", "updated_at",
+}
+
+// fakeCampaignRow is a pgx.Row handing scanCampaign a fixed, positionally ordered result set.
+// Separate from brief_repo_test.go's fakeRow because the diagnostics name the campaign column
+// at each index.
+type fakeCampaignRow struct{ vals []any }
+
+func (r fakeCampaignRow) Scan(dest ...any) error {
+	if len(dest) != len(r.vals) {
+		return fmt.Errorf("scanCampaign requested %d destinations, row has %d columns: the "+
+			"destination list and campaignCols have drifted apart", len(dest), len(r.vals))
+	}
+	for i, d := range dest {
+		if r.vals[i] == nil {
+			continue // leave the destination at its zero value, as a SQL NULL would
+		}
+		dv := reflect.ValueOf(d).Elem()
+		sv := reflect.ValueOf(r.vals[i])
+		if !sv.Type().AssignableTo(dv.Type()) {
+			return fmt.Errorf("column %d (%s): cannot scan %s into %s — the destination at this "+
+				"position does not match the column campaignCols selects there",
+				i, campaignColumnOrder[i], sv.Type(), dv.Type())
+		}
+		dv.Set(sv)
+	}
+	return nil
+}
+
+// TestCampaignCols_MatchesTheDeclaredOrder proves the SELECT list is what campaignColumnOrder
+// says. On its own it says nothing about scanCampaign — that is what the next test is for.
+func TestCampaignCols_MatchesTheDeclaredOrder(t *testing.T) {
+	var got []string
+	for _, c := range strings.Split(normalizeWS(campaignCols), ",") {
+		c = strings.TrimSpace(c)
+		if i := strings.Index(c, "::"); i != -1 { // id::text and friends
+			c = c[:i]
+		}
+		got = append(got, c)
+	}
+	require.Equal(t, campaignColumnOrder, got,
+		"campaignCols and campaignColumnOrder disagree; if a column moved, move it in "+
+			"scanCampaign's destination list too")
+}
+
+// TestScanCampaign_MapsEachColumnToItsField drives the real scanCampaign and asserts every
+// column lands on the right field.
+//
+// The two actor columns are both JSONB and the two timestamps are both time.Time, so a
+// destination-order swap inside scanCampaign cannot fail at the type level: created_by and
+// updated_by would simply trade places and every existing test would stay green while the
+// audit trail named the wrong person on every campaign in the database. Distinct values per
+// column are what make the swap visible.
+func TestScanCampaign_MapsEachColumnToItsField(t *testing.T) {
+	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	updated := time.Date(2026, 6, 7, 8, 9, 10, 0, time.UTC)
+	start := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	jobID, pcID, budgetType := "j1", "gads-123", "daily"
+	amount := 250.5
+
+	c, err := scanCampaign(fakeCampaignRow{vals: []any{
+		"c1", "cncf", "b1", &jobID, "google-ads", &pcID, "Spring launch", "created",
+		&amount, &budgetType, &start, &end,
+		json.RawMessage(`{"cfg":1}`), json.RawMessage(`{"res":2}`), int64(9),
+		[]byte(`{"email":"ada@lf.dev"}`), []byte(`{"email":"grace@lf.dev"}`), created, updated,
+	}})
+	require.NoError(t, err)
+
+	assert.Equal(t, "c1", c.ID)
+	assert.Equal(t, "cncf", c.ProjectID)
+	assert.Equal(t, "b1", c.BriefID)
+	require.NotNil(t, c.JobID)
+	assert.Equal(t, "j1", *c.JobID)
+	assert.Equal(t, model.ProviderGoogleAds, c.Platform)
+	assert.Equal(t, "gads-123", c.PlatformCampaignID)
+	assert.Equal(t, "Spring launch", c.CampaignName)
+	assert.Equal(t, "created", c.Status)
+	require.NotNil(t, c.BudgetAmount)
+	assert.InDelta(t, 250.5, *c.BudgetAmount, 0.0001)
+	require.NotNil(t, c.BudgetType)
+	assert.Equal(t, model.BudgetType("daily"), *c.BudgetType)
+	assert.Equal(t, &start, c.StartDate)
+	assert.Equal(t, &end, c.EndDate)
+	assert.JSONEq(t, `{"cfg":1}`, string(c.ConfigSnapshot))
+	assert.JSONEq(t, `{"res":2}`, string(c.Result))
+	assert.Equal(t, int64(9), c.Version)
+	assert.Equal(t, created, c.CreatedAt)
+	assert.Equal(t, updated, c.UpdatedAt)
+
+	// The pair the type system cannot separate. Distinct emails are the only thing standing
+	// between a swapped destination list and a silently inverted audit trail.
+	require.NotNil(t, c.CreatedBy)
+	assert.Equal(t, "ada@lf.dev", c.CreatedBy.Email,
+		"created_by must come from the 16th column; a swap with updated_by would attribute "+
+			"every campaign to whoever last touched it")
+	require.NotNil(t, c.UpdatedBy)
+	assert.Equal(t, "grace@lf.dev", c.UpdatedBy.Email)
+}
+
+// TestScanCampaign_NullActorsDecodeToNil pins that a NULL actor column is an ordinary value,
+// not an error. Both columns are nullable by migration 000016 and every row written before it
+// has both NULL, so a scan that failed here would make every pre-migration campaign unreadable.
+func TestScanCampaign_NullActorsDecodeToNil(t *testing.T) {
+	c, err := scanCampaign(fakeCampaignRow{vals: []any{
+		"c1", "cncf", "b1", nil, "google-ads", nil, "n", "created",
+		nil, nil, nil, nil, nil, nil, int64(1),
+		nil, nil, time.Time{}, time.Time{},
+	}})
+	require.NoError(t, err)
+	assert.Nil(t, c.CreatedBy, "a NULL created_by means \"not recorded\", which is nil, not an error")
+	assert.Nil(t, c.UpdatedBy)
+	// The other nullable columns travel the same path and must not be invented either.
+	assert.Nil(t, c.JobID)
+	assert.Empty(t, c.PlatformCampaignID)
+	assert.Nil(t, c.BudgetType)
+}
+
+// TestScanCampaign_MalformedActorJSONIsAnError pins that undecodable actor JSON FAILS the scan
+// rather than yielding a zero actor.
+//
+// The column is JSONB, so Postgres will not store a non-JSON value — but it will happily store
+// a JSON value of the wrong SHAPE (an array, a bare string) if some future writer marshals the
+// wrong thing. Swallowing that would hand callers a campaign whose CreatedBy is silently nil,
+// i.e. indistinguishable from "not recorded", which is exactly the confusion the NULL semantics
+// exist to avoid. The error names the column so the bad writer is findable.
+func TestScanCampaign_MalformedActorJSONIsAnError(t *testing.T) {
+	base := func(createdBy, updatedBy []byte) []any {
+		return []any{
+			"c1", "cncf", "b1", nil, "google-ads", nil, "n", "created",
+			nil, nil, nil, nil, nil, nil, int64(1),
+			createdBy, updatedBy, time.Time{}, time.Time{},
+		}
+	}
+	_, err := scanCampaign(fakeCampaignRow{vals: base([]byte(`["not","an","actor"]`), nil)})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "created_by",
+		"the error must name the column so the writer that stored the wrong shape is findable")
+
+	_, err = scanCampaign(fakeCampaignRow{vals: base(nil, []byte(`"grace"`))})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "updated_by")
+}
+
+// TestMigration000016_AddsCampaignActorColumns is the campaigns-side counterpart of
+// TestMigration000015_AddsBriefActorColumns, and it exists for the same reason: every
+// statement above that names created_by or updated_by on campaigns compiles against
+// columns this migration is the ONLY thing that creates. A migration edited to add just
+// one of the pair leaves the scan and the upsert failing at runtime on the other, with
+// nothing in this package objecting first.
+//
+// It also pins the table. 000015 and 000016 are near-identical files touching different
+// tables; a copy-paste that leaves ALTER TABLE campaign_briefs here would apply cleanly,
+// be a no-op (000015 already added those columns IF NOT EXISTS), and leave campaigns
+// without the columns the repository writes to.
+func TestMigration000016_AddsCampaignActorColumns(t *testing.T) {
+	up, err := fs.ReadFile(migrations.FS, "000016_campaign_actor_columns.up.sql")
+	require.NoError(t, err)
+	upSQL := normalizeWS(string(up))
+
+	require.Contains(t, upSQL, "ALTER TABLE campaigns",
+		"migration 000016 must alter campaigns; campaign_briefs got its columns in 000015")
+	require.NotContains(t, upSQL, "ALTER TABLE campaign_briefs",
+		"000016 alters campaign_briefs, which is 000015's table — a copy-paste that keeps the "+
+			"sibling's target applies cleanly as a no-op and leaves campaigns without the columns")
+	for _, col := range []string{"created_by", "updated_by"} {
+		require.Regexp(t, regexp.MustCompile(`(?i)ADD COLUMN IF NOT EXISTS `+col+` JSONB`), upSQL,
+			"000016 does not add %s as JSONB. marshalActor writes a JSONB document, matching "+
+				"connections/campaign_audiences/campaign_briefs; a text column would round-trip "+
+				"but lose the ability to query into the actor.", col)
+	}
+	// NOT NULL would be unrunnable, not merely strict: every campaign row that predates
+	// this migration has no actor to backfill, so the ALTER would fail outright on any
+	// deployed database. Nullability is load-bearing, and nothing else asserts it.
+	require.NotRegexp(t, regexp.MustCompile(`(?i)(created_by|updated_by) JSONB[^,]*NOT NULL`), upSQL,
+		"000016 declares an actor column NOT NULL; pre-existing campaign rows have no actor "+
+			"to backfill, so the migration cannot run on a deployed database")
+
+	down, err := fs.ReadFile(migrations.FS, "000016_campaign_actor_columns.down.sql")
+	require.NoError(t, err)
+	downSQL := normalizeWS(string(down))
+	require.Contains(t, downSQL, "ALTER TABLE campaigns",
+		"the down migration must drop from campaigns, the table the up migration altered")
+	for _, col := range []string{"created_by", "updated_by"} {
+		require.Regexp(t, regexp.MustCompile(`(?i)DROP COLUMN IF EXISTS `+col), downSQL,
+			"down migration leaves %s behind, so a down-then-up cycle hits an already-present "+
+				"column and the pair drift apart", col)
+	}
 }

@@ -246,10 +246,12 @@ func checkNoInvalidIndexes(dsn string) error {
 		return fmt.Errorf("%w: %s. Left by a failed CREATE INDEX CONCURRENTLY: it "+
 			"enforces nothing and the planner will not use it, yet a re-run of the "+
 			"migration that creates it finds the NAME and reports success. DROP each "+
-			"index listed. Dropping is the whole remedy only for an index no migration "+
-			"creates; for the ones annotated above, dropping alone leaves the version "+
-			"recorded clean and the next boot then succeeds with the index absent "+
-			"entirely, so force the annotated version so its migration RUNS again",
+			"index listed, THEN do what its annotation says. Dropping is the whole remedy "+
+			"only for an index no migration creates; otherwise dropping alone leaves the "+
+			"version recorded clean and the next boot succeeds with the index absent "+
+			"entirely. Prefer a rebuild statement where one is given: it restores exactly "+
+			"that index. A force replays every migration above the version named, and this "+
+			"chain is not uniformly replay-safe",
 			ErrInvalidIndex, describeInvalid(names))
 	}
 
@@ -270,23 +272,18 @@ func checkNoInvalidIndexes(dsn string) error {
 		return err
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("%w: %s. Each index listed is the ONLY thing enforcing its "+
+		return fmt.Errorf("%w. Each index listed is the ONLY thing enforcing its "+
 			"invariant — without it the writes it serializes all succeed and the damage "+
-			"is silent. Force the version annotated against each NAME so the migration "+
-			"that creates that index runs again; the annotations differ per index and "+
-			"forcing one does not rebuild the other. Do not start the service against "+
-			"this schema",
-			ErrMissingRequiredIndex, describeInvalid(missing))
+			"is silent. Run each statement below; then restart. Do not start the service "+
+			"against this schema:\n%s",
+			ErrMissingRequiredIndex, describeMissing(missing))
 	}
 	if len(wrong) > 0 {
-		return fmt.Errorf("%w: %s. An index of the right NAME that enforces something else "+
+		return fmt.Errorf("%w. An index of the right NAME that enforces something else "+
 			"is worse than none: the migration's IF NOT EXISTS finds the name and skips, "+
 			"so the real constraint is never built and every name-based check passes. "+
-			"Recover by DROPPING the listed index and then forcing the version annotated "+
-			"against it — forcing alone re-runs a CREATE that the impostor makes a no-op, "+
-			"and forcing a version annotated against a DIFFERENT name rebuilds a "+
-			"different index",
-			ErrRequiredIndexMismatch, strings.Join(wrong, "; "))
+			"DROP each index listed and then run the statement beside it:\n%s",
+			ErrRequiredIndexMismatch, strings.Join(wrong, "\n"))
 	}
 	return nil
 }
@@ -392,6 +389,81 @@ func connectionSingletonIndexes() []requiredIndex {
 }
 
 func init() { requiredIndexes = append(requiredIndexes, connectionSingletonIndexes()...) }
+
+// createSQL renders the statement that rebuilds this index, which is the recovery advice
+// for a REQUIRED index — deliberately, instead of a version to force.
+//
+// Forcing was the original advice and it is not safe in general. `migrate force N` followed
+// by Up() replays every migration ABOVE N, not just the one that creates the index, and this
+// repo's migrations are not uniformly replay-safe: 000006 and 000007 carry bare
+// `ALTER TABLE … ADD CONSTRAINT`, and PostgreSQL has no `ADD CONSTRAINT IF NOT EXISTS`, so a
+// replay against a schema that already has the constraint fails with 42710 and leaves the
+// version DIRTY. The advice happened to be sound while the list held only indexes from
+// 000013 and 000018 — replaying 000014.. is all IF NOT EXISTS — and became unsound the
+// moment entries from 000001 and 000003 joined it, because "force 0" means replaying
+// everything. That is a property of the RANGE, not of the index, so it cannot be fixed by
+// annotating more carefully.
+//
+// The index's own DDL has none of that surface: it restores exactly the invariant that is
+// missing, touches nothing else, and needs no version change because the recorded version
+// is already correct — the schema drifted underneath it. It is also checkable, which the
+// force advice never was: TestRequiredIndexCreateSQL_RebuildsAnIndexTheCheckAccepts runs
+// each statement against a live database and re-runs the checker.
+func (r requiredIndex) createSQL() string {
+	var b strings.Builder
+	b.WriteString("CREATE ")
+	if r.unique {
+		b.WriteString("UNIQUE ")
+	}
+	fmt.Fprintf(&b, "INDEX %s ON %s (%s)", r.name, r.table, strings.Join(r.keys, ", "))
+	if r.predicate != "" {
+		// The stored predicate is the DEPARSED form, which is itself valid SQL — it is
+		// what pg_get_expr renders and what pg_get_indexdef embeds. Round-tripping it is
+		// what keeps this statement and the equality check in checkRequiredIndexes from
+		// drifting: an index built by this DDL necessarily deparses back to this string.
+		fmt.Fprintf(&b, " WHERE %s", r.predicate)
+	}
+	return b.String()
+}
+
+// RequiredIndexNames returns the names of every index Migrate refuses to boot without, in
+// the order the error reports them.
+//
+// It is exported for the live-database tests in the dbtest package, which are in a
+// different package and so cannot reach the unexported list — and driving them off the real
+// list is the whole point. A hand-written copy of these names in the test file is a claim of
+// coverage that stops being true the moment a ninth entry is added, and it reads identically
+// either way. RequiredIndexRebuildSQL is exported for the same reason.
+func RequiredIndexNames() []string {
+	out := make([]string, 0, len(requiredIndexes))
+	for _, r := range requiredIndexes {
+		out = append(out, r.name)
+	}
+	return out
+}
+
+// RequiredIndexRebuildSQL returns the statement that recreates the named required index,
+// which is the recovery the boot error prints. Reports false for a name not in the list.
+func RequiredIndexRebuildSQL(name string) (string, bool) {
+	if i := slices.IndexFunc(requiredIndexes, func(r requiredIndex) bool { return r.name == name }); i >= 0 {
+		return requiredIndexes[i].createSQL(), true
+	}
+	return "", false
+}
+
+// describeMissing renders one indented line per absent index: its name and the statement
+// that rebuilds it.
+func describeMissing(names []string) string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		line := "  " + n
+		if i := slices.IndexFunc(requiredIndexes, func(r requiredIndex) bool { return r.name == n }); i >= 0 {
+			line += ": " + requiredIndexes[i].createSQL()
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
 
 // requiredIndex is an index whose absence — or silent replacement by something of the
 // same name — leaves an invariant unenforced with no other symptom.
@@ -548,6 +620,17 @@ func describeInvalid(names []string) string {
 // that is right for the first name in a list and wrong for the second is worse than no
 // advice, because it is followed.
 func indexRecovery(name string) string {
+	// Where the DDL is known, it beats any force: it rebuilds THIS index and replays
+	// nothing else. Forcing back to V and running Up() re-executes every migration above
+	// V, and this chain is not uniformly replay-safe — 000006 and 000007 carry bare
+	// `ALTER TABLE … ADD CONSTRAINT`, which PostgreSQL has no IF NOT EXISTS form of, so
+	// they fail with 42710 and leave the version DIRTY. That hazard scales with the
+	// DISTANCE forced back, which is why it was invisible while every annotated index came
+	// from 000013 or later and became reachable the moment 000001's belonged here too.
+	// The force branch below survives only for names this package has no DDL for.
+	if i := slices.IndexFunc(requiredIndexes, func(r requiredIndex) bool { return r.name == name }); i >= 0 {
+		return "rebuild with: " + requiredIndexes[i].createSQL()
+	}
 	if v, ok := migrationIndexOwners()[name]; ok {
 		return fmt.Sprintf("migration %06d: force %d", v, v-1)
 	}
@@ -607,14 +690,11 @@ func checkRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) (missing, wrong
 			defects = append(defects, fmt.Sprintf("predicate %q, want %q", predicate, want.predicate))
 		}
 		if len(defects) > 0 {
-			// The recovery clause goes in the SAME parenthesis as the defects, for the same
-			// reason describeInvalid puts it there: the message that follows tells the
-			// operator to force "the version annotated against" this name, and an
-			// annotation the entry does not carry is advice they cannot act on. Two
-			// impostors reported together need not share an owner any more than two
-			// missing indexes do.
-			defects = append(defects, indexRecovery(want.name))
-			wrong = append(wrong, want.name+" ("+strings.Join(defects, ", ")+")")
+			// The remedy travels with the defects rather than in the message's closing
+			// sentence, because two impostors reported together need not have the same
+			// one. It is the index's own DDL, not a version to force — see createSQL.
+			wrong = append(wrong, fmt.Sprintf("  %s (%s)\n    then: %s",
+				want.name, strings.Join(defects, ", "), want.createSQL()))
 		}
 	}
 	return missing, wrong, nil

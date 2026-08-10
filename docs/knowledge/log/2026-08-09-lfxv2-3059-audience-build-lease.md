@@ -623,3 +623,78 @@ to a `_DISABLED` name looks like a revert and is not: the renamed index never ex
 `Migrate` reports it missing on every run and the subtest passes for the wrong reason. **A
 revert that makes the guard fire unconditionally proves nothing** — the entry has to be
 removed from the list, not made unsatisfiable.
+
+## Round N+2: the recovery advice was unsafe, and I had argued it was safe
+
+Cursor Bugbot filed two findings on the previous round. Both were correct, and the first
+falsifies a claim I made in that round's own test comment and in this log.
+
+### High — `force 0` is not a safe recovery
+
+I wrote, in `TestRequiredIndexes_AnnotateToTheMigrationThatRebuildsThem` and here, that
+"forcing 0 really does replay 000001 and rebuild every one of them", using it to justify
+retargeting the test away from its distinctness assertion. That is false.
+
+`migrate force N` followed by `Up()` replays **every migration above N**, not the one that
+owns the index. Verified against the tree:
+
+```
+$ grep -ln "ADD CONSTRAINT" internal/infrastructure/postgres/migrations/*.up.sql
+000006_campaign_audiences_built_check.up.sql
+000007_campaign_audiences_tenant_fk.up.sql
+```
+
+Both use the bare form. PostgreSQL has no `ADD CONSTRAINT IF NOT EXISTS`, so replaying
+either against a schema that already carries the constraint fails with SQLSTATE 42710 and
+leaves the version DIRTY. An operator recovering ONE missing connection index by following
+"force 0" takes the whole schema down.
+
+The advice was not newly broken by the previous round — it was newly REACHABLE. While every
+annotated index came from 000013 or later, the replayed range was all `IF NOT EXISTS` DDL
+and the force worked. Adding the 000001 and 000003 entries moved the annotation to "force 0"
+and "force 2", and the range those imply is the whole chain.
+
+**The hazard is a property of the RANGE replayed, not of the index.** That is why annotating
+more carefully — which is exactly what the previous round did, and congratulated itself for —
+could not have found it. The fix is to stop naming a version: `requiredIndex` already carries
+uniqueness, table, key order and deparsed predicate, so `createSQL()` emits the index's own
+DDL. `indexRecovery` prefers it for any registered name; both error messages print it.
+
+Two things follow that are worth more than the fix:
+
+- **A version number is not executable, so no test could ever confirm it recovered
+  anything.** The advice survived two rounds of review on plausibility alone. The DDL is
+  checkable, so it is checked: `TestRequiredIndexCreateSQL_RebuildsAnIndexTheCheckAccepts`
+  drops each required index on a live database, runs the exact statement the error prints,
+  and requires the next `Migrate` to succeed.
+- **The justification I gave was the failure, not the code.** I replaced a proxy invariant
+  (distinctness) with a real one and defended the swap with a claim about `Up()` semantics I
+  had not checked. The replacement assertion was fine; the reason was wrong, and the wrong
+  reason is what would have kept the force advice alive.
+
+Revert check: setting any entry's predicate to a logically-equivalent-but-not-deparsed
+spelling (`status != 'deleted'`) makes the new live test fail on the rebuilt index, while
+every other test in the package still passes. Confirmed.
+
+### Medium — the live test's doc comment claimed coverage it did not have
+
+`TestMigrateRefusesEachDroppedSingletonIndex` said "driving it off requiredIndexes rather
+than a hand-written list is deliberate: a ninth provider … gets this coverage without anyone
+remembering to extend a test". The loop iterated a hardcoded list of eight names.
+
+This is the same failure class the whole change exists to close — a claim of coverage that
+reads, from the file, exactly like the coverage itself — reintroduced in the test written to
+close it. `postgres.RequiredIndexNames()` and `RequiredIndexRebuildSQL()` are exported for
+the `dbtest` package (a different package, so it cannot reach the unexported list), and both
+live tests now iterate the real registry with a length floor so a shrunken list fails loudly
+instead of passing vacuously.
+
+### Also in this round
+
+- `allowedVersionGaps[16]` deleted: PR #95 merged, discharging the ordering obligation.
+  `TestMigrations_AllowedVersionGapsAreStillOpen` is what forced the deletion on the merge
+  that brought 000016 in — the entry did not have to be remembered.
+- Merged `origin/main` (#95, #101, #105, #107). One conflict, in
+  `docs/knowledge/code/internal-infrastructure-postgres.md`: main added the `000016` bullet
+  where this branch had a sentence promising it. Kept main's bullet, kept this branch's
+  `000018` section.
