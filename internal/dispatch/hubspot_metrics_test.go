@@ -42,16 +42,31 @@ func statsServer(t *testing.T) (*httptest.Server, *statsRec) {
 	t.Helper()
 	rec := &statsRec{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rec.mark(r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == accountDetailsPath {
+			_, _ = io.WriteString(w, testPortalResponse)
+			return
+		}
+		rec.mark(r.Header.Get("Authorization"))
 		_, _ = io.WriteString(w, statsResponse)
 	}))
 	t.Cleanup(srv.Close)
 	return srv, rec
 }
 
+const (
+	accountDetailsPath = "/account-info/v3/details"
+	testPortalID       = "8112310"
+	testPortalResponse = `{"portalId":8112310}`
+)
+
+// stagedEmail is a campaign whose Result records the portal the token authenticates against,
+// which is the ordinary state for anything created since the provenance lookup landed.
 func stagedEmail() *model.Campaign {
-	return &model.Campaign{ID: "camp-uuid-1", Platform: model.ProviderHubSpot, PlatformCampaignID: "4242"}
+	return &model.Campaign{
+		ID: "camp-uuid-1", Platform: model.ProviderHubSpot, PlatformCampaignID: "4242",
+		Result: json.RawMessage(`{"id":"4242","portalId":"` + testPortalID + `"}`),
+	}
 }
 
 func TestHubSpot_ReadMetricsReturnsEmailCounters(t *testing.T) {
@@ -230,8 +245,12 @@ var _ interface {
 // the service can answer 409; unmarked it takes the 503 default, which reports an outage for
 // the ordinary case — the staged draft nobody has sent yet.
 func TestHubSpot_ReadMetricsMarksAnEmptyWindowAsNoData(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == accountDetailsPath {
+			_, _ = io.WriteString(w, testPortalResponse)
+			return
+		}
 		_, _ = io.WriteString(w, `{"emails":[],"campaignAggregations":{},"aggregate":{"counters":{}}}`)
 	}))
 	t.Cleanup(srv.Close)
@@ -249,5 +268,90 @@ func TestHubSpot_ReadMetricsMarksAnEmptyWindowAsNoData(t *testing.T) {
 	// upstream condition produced it.
 	if !errors.Is(err, hubspot.ErrNoSentEmailInWindow) {
 		t.Error("the hubspot cause was dropped from the error chain")
+	}
+}
+
+// portalServer answers the provenance lookup with the given body and every other path with
+// ordinary statistics, so a test can vary the portal the TOKEN reports without disturbing
+// anything else.
+func portalServer(t *testing.T, accountBody string) (*httptest.Server, *statsRec) {
+	t.Helper()
+	rec := &statsRec{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == accountDetailsPath {
+			_, _ = io.WriteString(w, accountBody)
+			return
+		}
+		rec.mark(r.Header.Get("Authorization"))
+		_, _ = io.WriteString(w, statsResponse)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, rec
+}
+
+// The defect this guard exists for. PlatformCampaignID is a bare numeric that means something
+// only inside the portal that minted it, and a credential swap re-points the connection without
+// touching anything the row records. Reading across the swap is wrong in both directions: a
+// same-numeric collision reports ANOTHER portal's opens and clicks as this campaign's, and no
+// collision reports "not sent yet" for an email that was sent. Neither is distinguishable
+// downstream from the truth, so refuse before the request goes out.
+func TestHubSpot_ReadMetricsRefusesWhenTheTokenReachesADifferentPortal(t *testing.T) {
+	srv, rec := portalServer(t, `{"portalId":9999999}`)
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+
+	_, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, stagedEmail(), model.MetricsWindowLast30Days)
+	if err == nil {
+		t.Fatal("metrics were read from a portal the email was not created in")
+	}
+	if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+		t.Fatalf("err = %v, want it to wrap ErrCampaignAccountMismatch", err)
+	}
+	if rec.Called() {
+		t.Error("the statistics endpoint was contacted despite the mismatch")
+	}
+}
+
+// A row written before the portal was recorded. Unlike the Google Ads guard this copies, an
+// unknown stored side is NOT permission to proceed: nothing about such a row establishes which
+// portal its id means, and numbers that might belong to somebody else are not a better answer
+// than saying so. The cost — re-dispatch to become readable — is the honest one.
+func TestHubSpot_ReadMetricsRefusesWhenTheRowRecordsNoPortal(t *testing.T) {
+	srv, rec := portalServer(t, testPortalResponse)
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+	c := stagedEmail()
+	c.Result = json.RawMessage(`{"id":"4242"}`)
+
+	_, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, c, model.MetricsWindowLast30Days)
+	if err == nil {
+		t.Fatal("a row that names no portal was read anyway")
+	}
+	if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+		t.Fatalf("err = %v, want it to wrap ErrCampaignAccountMismatch", err)
+	}
+	if rec.Called() {
+		t.Error("the statistics endpoint was contacted without established provenance")
+	}
+}
+
+// The lookup itself failing is also an unestablished identity — a private app need not be
+// scoped for account-info. Dispatch treats that as best-effort and sends anyway; the read must
+// not, for the same reason as the case above.
+func TestHubSpot_ReadMetricsRefusesWhenThePortalCannotBeResolved(t *testing.T) {
+	srv, rec := portalServer(t, `{"portalId":0}`)
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+
+	_, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, stagedEmail(), model.MetricsWindowLast30Days)
+	if err == nil {
+		t.Fatal("metrics were read without establishing which portal the token reaches")
+	}
+	if !strings.Contains(err.Error(), "which portal this token authenticates against") {
+		t.Errorf("err = %v, want it to say the portal could not be established", err)
+	}
+	if rec.Called() {
+		t.Error("the statistics endpoint was contacted without established provenance")
 	}
 }

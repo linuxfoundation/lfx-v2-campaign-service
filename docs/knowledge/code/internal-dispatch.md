@@ -267,8 +267,24 @@ LinkedIn and for the same reason — then reads the staged email's statistics an
 `CampaignID` as the SERVICE's campaign UUID, which the platform client cannot know (it keyed
 its result by the HubSpot email id it queried).
 
-Three things about it differ from every ad adapter, and a consumer that assumes otherwise
+Four things about it differ from every ad adapter, and a consumer that assumes otherwise
 reports false numbers:
+
+- **Identity is bound to the PORTAL, and it is resolved from the token, not from config.** A
+  HubSpot email id is a bare numeric that is unique only inside the portal that minted it, so
+  `Dispatch` records the portal in the campaign's `Result` blob and `ReadMetrics` refuses
+  (`domain.ErrCampaignAccountMismatch`, 409) unless it still matches. Both sides come from
+  `Client.AuthenticatedPortalID`, which reads `/account-info/v3/details` — deliberately NOT
+  `providerConfig["portal_id"]`, an optional operator-supplied string used only for app URLs
+  that `SetCredentialHubspot` leaves untouched when it swaps the token. A config-on-config
+  comparison would fire only on the DECLARED change and stay silent on the undeclared token
+  swap, which is the actual risk; that version was written, found unsound and reverted before
+  this one. The asymmetry between the two callers is intentional: the `Dispatch` lookup is
+  BEST-EFFORT (account-info may be outside a private app's scopes, and a provenance read must
+  not block a send that is otherwise ready), while `ReadMetrics` FAILS CLOSED — including when
+  the row records no portal, which is every campaign staged before this landed. Those rows are
+  unreadable until re-dispatched, and that is the honest outcome: nothing about such a row
+  establishes which portal its id means.
 
 - **The window does not scope the counters.** HubSpot's statistics span selects WHICH EMAILS
   are in scope by SEND date; the counters returned are that email's totals to date. `today`

@@ -565,10 +565,16 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			// so the client's own validateAccountIDs has not executed for this instance yet.
 			// The value reaching this line is therefore arbitrary operator-supplied text, and
 			// safeErrSummary is what keeps it from being written verbatim into a log record.
-			slog.WarnContext(ctx, "campaign metrics read blocked: campaign belongs to a different ad account than the current connection",
+			//
+			// Worded "account" rather than "ad account" because this arm serves the EMAIL
+			// channel as well, where the mismatch is a HubSpot portal and the operator has no
+			// ad account to reconnect. Naming a thing they do not have turns a correct refusal
+			// into an instruction they cannot follow. The toggle arm below keeps "ad account":
+			// no email dispatcher implements a status toggle, so it genuinely is ads-only.
+			slog.WarnContext(ctx, "campaign metrics read blocked: campaign belongs to a different platform account than the current connection",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "error", safeErrSummary(merr))
-			return nil, &briefs.ConflictError{Code: "409", Message: "the campaign belongs to a different ad account than this project's current connection — reconnect the original account to read its metrics"}
+			return nil, &briefs.ConflictError{Code: "409", Message: "the campaign belongs to a different account than this project's current connection — reconnect the original account to read its metrics"}
 		case errors.Is(merr, domain.ErrSystemConnectionNotUsable):
 			// The project has no connection of its own and the LF system row it fell back to
 			// is unusable. This arm must sit ABOVE both arms below, because systemScoped

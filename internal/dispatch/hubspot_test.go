@@ -99,6 +99,10 @@ func hubspotServer(t *testing.T) (*httptest.Server, *hubspotRec) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/account-info/v3/details":
+			// The provenance lookup Dispatch makes before it creates anything: the portal
+			// the TOKEN authenticates against, which is what gets recorded in Result.
+			_, _ = io.WriteString(w, `{"portalId":8112310}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/marketing/v3/emails/clone":
 			rec.markClone()
 			_, _ = io.WriteString(w, `{"id":"999","name":"KubeCon NA 2026 — brief-1","state":"DRAFT"}`)
@@ -182,6 +186,18 @@ func TestHubSpot_DispatchClonesAndSetsSendList(t *testing.T) {
 	}
 	if len(camp.Result) == 0 {
 		t.Error("result blob should be populated with the cloned email")
+	}
+	// The portal the TOKEN authenticates against, recorded at create time. Without it the row
+	// cannot say which portal its bare-numeric email id means, and ReadMetrics — which refuses
+	// rather than guessing — can never read this campaign again.
+	var blob struct {
+		PortalID string `json:"portalId"`
+	}
+	if err := json.Unmarshal(camp.Result, &blob); err != nil {
+		t.Fatalf("result blob is not valid JSON: %v", err)
+	}
+	if blob.PortalID != "8112310" {
+		t.Errorf("result portalId = %q, want the portal the token resolves to (8112310)", blob.PortalID)
 	}
 	if !rec.SawClone() || !rec.SawSendList() {
 		t.Fatalf("expected both a clone (%v) and a set-send-list (%v) call", rec.SawClone(), rec.SawSendList())
@@ -355,6 +371,8 @@ func TestHubSpot_TaggingFailureDoesNotFailTheDispatch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/account-info/v3/details":
+			_, _ = io.WriteString(w, `{"portalId":8112310}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/marketing/v3/emails/clone":
 			_, _ = io.WriteString(w, `{"id":"999","name":"n","state":"DRAFT"}`)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/draft"):

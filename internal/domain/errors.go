@@ -75,15 +75,20 @@ var (
 	// the platform's health, is why there is nothing to return.
 	ErrNoMetricsInWindow = errors.New("the platform reported no data for this campaign in the requested window")
 
-	// ErrCampaignAccountMismatch indicates the campaign was created under one ad
-	// account but the project's CURRENT connection for that platform resolves to a
-	// different one. Platform campaign ids are unique only WITHIN an account, so an
-	// account-scoped request issued under the wrong account is not merely unauthorized —
-	// it is silently WRONG: the id most often matches nothing (indistinguishable from a
-	// campaign with genuinely zero activity) and, on a collision, matches somebody
-	// else's campaign. The platform is never contacted. It is a state error, not a
-	// transport one — a retry now fails identically — so it maps to 409, not 503.
-	ErrCampaignAccountMismatch = errors.New("the campaign belongs to a different ad account than the project's current connection")
+	// ErrCampaignAccountMismatch indicates the campaign was created under one platform
+	// tenant — a Google Ads customer, a HubSpot portal — but the project's CURRENT
+	// connection for that platform resolves to a different one, or records none at all.
+	// Platform campaign ids are unique only WITHIN a tenant, so a tenant-scoped request
+	// issued under the wrong one is not merely unauthorized — it is silently WRONG: the
+	// id most often matches nothing (indistinguishable from a campaign with genuinely
+	// zero activity) and, on a collision, matches somebody else's campaign. The platform
+	// is never contacted. It is a state error, not a transport one — a retry now fails
+	// identically — so it maps to 409, not 503.
+	//
+	// "Tenant" rather than "ad account" deliberately: this sentinel reaches the email
+	// channel too, where the operator has no ad account to reconnect and being told to
+	// go find one is a wrong instruction, not just an imprecise word.
+	ErrCampaignAccountMismatch = errors.New("the campaign belongs to a different platform account than the project's current connection")
 
 	// ErrCampaignWriteInProgress indicates another writer already holds the claim for this
 	// campaign, so this request did not acquire it. Maps to 409.

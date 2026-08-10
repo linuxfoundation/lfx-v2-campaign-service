@@ -147,3 +147,28 @@ With no explicit values Goa fabricated independent integers, and the result adve
 descriptions directly above it state and the adapter enforces. Both types now carry explicit
 examples that satisfy the mapping, and `sent = delivered + bounces` besides, so the example is
 a legible email response rather than six unrelated numbers.
+
+## LFXV2-3073 — the portal guard, done properly
+
+The first attempt shipped and was reverted the same day: it compared the portal in
+`Result` against `client.PortalID()`, and both are `providerConfig["portal_id"]` —
+an optional operator-supplied string used only for app URLs. The token decides
+which portal a request reaches, and `SetCredentialHubspot` swaps the token without
+touching `providerConfig`, so the guard fired on the DECLARED move and stayed
+silent on the undeclared swap it claimed to block.
+
+The sound version asks the token: `Client.AuthenticatedPortalID` reads
+`/account-info/v3/details`, `Dispatch` records it, `ReadMetrics` re-resolves and
+compares before contacting HubSpot. The two callers treat a failed lookup
+differently on purpose — `Dispatch` logs and proceeds (account-info may be outside
+a private app's scopes, and a campaign that sends and cannot be measured beats one
+that does not send), `ReadMetrics` refuses, since an unestablished identity is not
+permission to report numbers it cannot attribute. An unrecorded portal is refused
+for the same reason, which leaves every campaign staged before this change
+unreadable until re-dispatched — accepted rather than worked around, because
+nothing about such a row says which portal its bare-numeric email id means.
+
+`ErrCampaignAccountMismatch` was reworded off "ad account", the other half of the
+finding: the sentinel now reaches a channel whose operator has no ad account to
+reconnect. The status-toggle arm keeps the old wording — no email dispatcher
+implements a toggle, so there it really is ads-only.

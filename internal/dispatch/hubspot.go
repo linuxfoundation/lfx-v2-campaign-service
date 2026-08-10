@@ -147,6 +147,44 @@ func (d *HubSpotDispatcher) ReadMetrics(ctx context.Context, projectID string, p
 		return nil, err
 	}
 
+	// PlatformCampaignID is a bare numeric HubSpot email id, unique only within the portal
+	// that minted it, and the connection just resolved is the project's CURRENT one — a
+	// credential swap can re-point it between create and read. Reading across a re-point is
+	// worse than an error either way: on a same-id collision this reports ANOTHER portal's
+	// opens and clicks as this campaign's, and with no collision it comes back as
+	// ErrNoSentEmailInWindow — "not sent yet", the most ordinary state this channel has —
+	// for an email that was sent and is fine. Neither is distinguishable downstream from
+	// the truth.
+	//
+	// Both sides come from the TOKEN, not from providerConfig["portal_id"]. That is the
+	// whole correction over the first attempt at this guard: portal_id is an optional
+	// operator-supplied string the client uses only for app URLs, and a credential swap
+	// leaves it untouched, so a config-on-config comparison fires exactly when an operator
+	// DECLARES the change and stays silent on the undeclared token swap that is the actual
+	// risk.
+	current, perr := client.AuthenticatedPortalID(ctx)
+	if perr != nil {
+		return nil, fmt.Errorf("get email metrics from hubspot: cannot establish which portal this token authenticates against: %w", perr)
+	}
+	// An unrecorded creating portal is not permission to proceed. The id it would be
+	// compared against is meaningless outside its portal, so a row that cannot name one
+	// cannot be read safely at all — this refuses rather than guessing, which is the
+	// difference between a guard and a formality.
+	// The cost is that a row written before this recorded the portal — the email channel
+	// dispatched before this change — is not readable until it is re-dispatched. That is
+	// the honest outcome: nothing about such a row establishes which portal its id means,
+	// and reporting numbers that might belong to somebody else is not a better answer than
+	// saying so.
+	created := hubSpotCreationPortalID(campaign)
+	if created == "" {
+		return nil, fmt.Errorf("get email metrics from hubspot: campaign %s does not record which portal email %s was created in, so its id cannot be resolved against portal %s: %w",
+			campaign.ID, campaign.PlatformCampaignID, current, domain.ErrCampaignAccountMismatch)
+	}
+	if created != current {
+		return nil, fmt.Errorf("get email metrics from hubspot: email %s was created in portal %s but this project's token authenticates against portal %s: %w",
+			campaign.PlatformCampaignID, created, current, domain.ErrCampaignAccountMismatch)
+	}
+
 	metrics, err := client.GetEmailMetrics(ctx, campaign.PlatformCampaignID, window)
 	if err != nil {
 		if errors.Is(err, hubspot.ErrUnsupportedWindow) {
@@ -216,6 +254,18 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		}
 	}
 
+	// Resolve the portal this token authenticates against BEFORE anything is created, so the
+	// row can record where its email id means something. Deliberately BEST-EFFORT: it is a
+	// read on an endpoint a private app may not be scoped for, and a send that is otherwise
+	// ready should not be blocked by a provenance lookup. The cost of an empty value lands
+	// entirely on ReadMetrics, which refuses rather than guessing — a campaign that sends and
+	// cannot be measured beats one that does not send.
+	portalID, perr := client.AuthenticatedPortalID(ctx)
+	if perr != nil {
+		slog.WarnContext(ctx, "could not resolve the hubspot portal for this token; the campaign will be created without one and its metrics will not be readable",
+			"project_id", brief.ProjectID, "error", perr)
+	}
+
 	// STEP 1 (mutating): clone the template email. From here a failure MAY have created the
 	// clone upstream, so classify by whether the outcome is confirmable.
 	cloneName := composeEmailName(eventName, brief.EventSlug, brief.ID)
@@ -235,7 +285,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// the clone id) so the orchestrator retains the claim and the email is reconcilable, and
 	// surface the error so the caller verifies rather than reporting a clean success.
 	if _, serr := client.SetSendList(ctx, email.ID, masterListID, suppressionIDs); serr != nil {
-		camp := campaignFromHubSpot(ctx, email, cfg)
+		camp := campaignFromHubSpot(ctx, email, cfg, portalID)
 		return camp, fmt.Errorf("hubspot email %s cloned but setting its send list failed (verify before retrying): %w", email.ID, serr)
 	}
 
@@ -246,7 +296,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// and leave a configured draft behind anyway.
 	tagEmailLinks(ctx, client, email.ID, cloneName, cfg.UTMCampaign)
 
-	return campaignFromHubSpot(ctx, email, cfg), nil
+	return campaignFromHubSpot(ctx, email, cfg, portalID), nil
 }
 
 // tagEmailLinks rewrites the cloned draft's links to carry UTM parameters. Best-effort by
@@ -418,7 +468,14 @@ func emailPartial(ctx context.Context, name string) *model.Campaign {
 
 // campaignFromHubSpot maps the cloned email to the persistence model. The email's HubSpot id is
 // the campaign's PlatformCampaignID.
-func campaignFromHubSpot(ctx context.Context, e *hubspot.Email, cfg hubspotConfig) *model.Campaign {
+//
+// portalID is the hub the TOKEN authenticated against when the clone was made, recorded in
+// Result beside the email. PlatformCampaignID is a bare numeric that means nothing outside its
+// portal, so without this the row cannot say what its own id refers to — see
+// hubSpotCreationPortalID. It rides on a wrapper rather than inside the marshalled
+// hubspot.Email because it is a property of the connection that made the call, not a field
+// HubSpot returns. It may be empty: the lookup is best-effort at the call site.
+func campaignFromHubSpot(ctx context.Context, e *hubspot.Email, cfg hubspotConfig, portalID string) *model.Campaign {
 	c := &model.Campaign{
 		PlatformCampaignID: e.ID,
 		CampaignName:       e.Name,
@@ -427,11 +484,33 @@ func campaignFromHubSpot(ctx context.Context, e *hubspot.Email, cfg hubspotConfi
 	// The email channel has no numeric budget/schedule config; ConfigSnapshot still captures the
 	// validated hubspotConfig (the cloned template id) for provenance/reconcile.
 	applyCampaignConfig(ctx, c, 0, false, "", "", cfg)
-	if raw, err := json.Marshal(e); err != nil {
+	if raw, err := json.Marshal(struct {
+		*hubspot.Email
+		PortalID string `json:"portalId,omitempty"`
+	}{Email: e, PortalID: portalID}); err != nil {
 		slog.WarnContext(ctx, "failed to marshal hubspot email result blob (Result left empty)",
 			"campaign_id", c.PlatformCampaignID, "error", err)
 	} else {
 		c.Result = raw
 	}
 	return c
+}
+
+// hubSpotCreationPortalID recovers the portal the campaign's email was created in from the
+// persisted Result blob, mirroring googleAdsCreationCustomerID.
+//
+// An empty return means UNKNOWN, and unlike the Google Ads original the caller must NOT read
+// that as permission to proceed: a HubSpot email id is meaningless outside its portal, so a
+// row that cannot name one has nothing to check against.
+func hubSpotCreationPortalID(campaign *model.Campaign) string {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return ""
+	}
+	var blob struct {
+		PortalID string `json:"portalId"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(blob.PortalID)
 }
