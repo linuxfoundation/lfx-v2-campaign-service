@@ -176,7 +176,12 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 		// The body is NOT quoted. It is an upstream response this code has just failed
 		// to understand, so nothing is known about what it contains — and these
 		// credentials' accounts are exactly the context an error here travels with.
-		return nil, fmt.Errorf("microsoft ad-account discovery returned a 2xx body that is not valid JSON")
+		//
+		// "could not be decoded", not "is not valid JSON": Unmarshal also fails on
+		// syntactically perfect JSON whose field TYPES do not match — a string where
+		// AccountsInfo expects a list is the likelier upstream change of the two, and
+		// naming it a syntax error sends the reader to look for a truncated body.
+		return nil, fmt.Errorf("microsoft ad-account discovery returned a 2xx body that could not be decoded")
 	}
 	if resp.AccountsInfo == nil {
 		return nil, fmt.Errorf("microsoft ad-account discovery returned a 2xx response with no AccountsInfo field; cannot confirm the credentials' accounts were enumerated")

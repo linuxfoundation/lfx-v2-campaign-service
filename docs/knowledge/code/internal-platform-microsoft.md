@@ -228,7 +228,9 @@ Microsoft splits its API by service across DIFFERENT hosts, so `msCustomerBaseUR
 tests point the two at different servers — a call routed to the wrong service would
 otherwise look correct. (This is still the synchronous REST/JSON surface; the SOAP,
 submit-and-poll Reporting API that tabled Microsoft metrics reads is a third service
-again.)
+again.) The version segment is NOT a second knob: `WithAPIVersion` sets `c.apiVersion`
+for both hosts, because Microsoft versions the two services in lockstep — a caller
+pinning a version is pinning the client, not one of its halves.
 
 **The request asks about the CREDENTIALS, not about an account.** `doCustomerRequest`
 deliberately does NOT call `validateAccountIDs` and does NOT send `CustomerAccountId`
