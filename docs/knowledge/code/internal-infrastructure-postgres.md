@@ -170,6 +170,22 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   because golang-migrate tracks a single version integer and would step straight past a
   lower version that appeared later.
 
+### Version gaps are exempted, then the exemption is retired
+
+`TestMigrations_NoVersionGaps` refuses a migration numbered above a version that does not
+exist in the tree, for the reason just given: a tree that deploys with a gap skips whatever
+later fills it, silently and permanently. `allowedVersionGaps` (in `outbox_repo_test.go`)
+suspends that guard at one version so a branch can stay green while a sibling PR that claims
+the number is still open — a merge-ORDERING obligation recorded in code, not a numbering
+opinion.
+
+The obligation is discharged when the sibling lands, and the entry must come out with it:
+left behind, it is a hole in the guard at exactly the version most likely to be reused next.
+`TestMigrations_AllowedVersionGapsAreStillOpen` enforces that, failing as soon as an entry
+names a version that now exists. `000016`'s exemption (for PR #95) was retired that way in
+LFXV2-3068; the map is left declared and empty, with the retired entry's rationale as a
+comment, so the next PR to need a gap finds the mechanism rather than re-inventing it.
+
 ## Actor attribution
 
 Campaigns execute under **system accounts** — shared, LF-owned platform credentials —
