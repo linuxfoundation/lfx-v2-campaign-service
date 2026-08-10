@@ -12,16 +12,25 @@
 -- operator can see why. Nothing in the service can detect that after the fact:
 -- the two rows are individually well-formed.
 --
--- Keyed WITHOUT project_id, and that is the whole of the reasoning worth reading.
--- The obvious key is (project_id, platform, platform_campaign_id), on the theory
--- that a bare platform id is unique only within the account that minted it and a
--- project's connection pins one account. The second half of that is false for the
--- providers it matters most for. Google Ads and HubSpot are ONE shared upstream
--- account across every foundation (docs/channel-connections-schema.md, "Current
--- Account Inventory"); each project stores its own connection row pointing at the
--- same customer. So for exactly the platform adoption supports today, two projects
--- ARE the same account, a project-scoped key permits both of them to bind one
--- campaign, and the interference above is back with the guard reporting success.
+-- Keyed on (platform, platform_campaign_id) with a WHERE platform = 'google-ads' scope,
+-- and that is the whole of the reasoning worth reading.
+-- This index ONLY applies to adoption on google-ads, via the WHERE platform clause.
+-- The reasoning is multi-part. First, adoption is currently only implemented for
+-- Google Ads; when another provider joins, its adoption and any multiplicity
+-- requirement belong in a separate constraint. Second, Google Ads is one shared
+-- customer ID across every foundation (docs/channel-connections-schema.md);
+-- each project stores its own connection row pointing at the same customer. A
+-- global (platform, platform_campaign_id) index is therefore appropriate for
+-- Google Ads only: two projects ARE the same account, so two bindings would
+-- silently fight over the same paid campaign. Third, by contrast, Microsoft
+-- campaign IDs are account-scoped (not globally unique): the service supports
+-- separate per-project Microsoft connections (each account mints its own IDs),
+-- and a global index would false-reject a legitimate dispatch from account B
+-- because account A happened to mint the same ID — blocking normal campaign
+-- creation and retaining an UNCONFIRMED partial until an operator intervenes.
+-- Only AdoptCampaign classifies 23505 as adoption-specific 409; that error maps
+-- to a generic 409 on dispatch. The WHERE scope prevents a normal dispatch from
+-- ever seeing this index.
 --
 -- Keying globally can in principle reject a legitimate binding: two per-foundation
 -- accounts on the same provider minting the same numeric id. That collision has
@@ -67,4 +76,4 @@
 -- to protect: golang-migrate executes each version exactly once.
 CREATE UNIQUE INDEX CONCURRENTLY uq_campaigns_platform_campaign_live
     ON campaigns (platform, platform_campaign_id)
-    WHERE status <> 'deleted' AND platform_campaign_id IS NOT NULL;
+    WHERE status <> 'deleted' AND platform_campaign_id IS NOT NULL AND platform = 'google-ads';
