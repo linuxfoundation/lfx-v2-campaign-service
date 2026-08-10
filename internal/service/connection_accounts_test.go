@@ -370,7 +370,7 @@ func TestListGoogleAdsAccounts_UnusableConnectionLogsAReasonNotTheCause(t *testi
 	if !strings.Contains(line, "reason=credentials_undecodable") {
 		t.Errorf("log line does not carry the reason token, so the 400 is undiagnosable: %q", line)
 	}
-	if !strings.Contains(line, "project_id=p") {
+	if !strings.Contains(line, " project_id=p ") {
 		t.Errorf("log line does not carry project metadata: %q", line)
 	}
 	if strings.Contains(line, marker) {
@@ -508,6 +508,15 @@ func (m *mockConnectionRepo) SetCredential(ctx context.Context, projectID string
 	return nil, domain.ErrNotFound
 }
 
+func (m *mockConnectionRepo) UpdateWithCredential(ctx context.Context, c *model.Connection, ciphertext []byte, expectedVersion int64) (*model.Connection, error) {
+	upd, err := m.Update(ctx, c, expectedVersion)
+	if err != nil {
+		return nil, err
+	}
+	upd.EncryptedCredentials = ciphertext
+	return upd, nil
+}
+
 func (m *mockConnectionRepo) Delete(ctx context.Context, projectID string, provider model.Provider, actor *model.Actor) error {
 	return domain.ErrNotFound
 }
@@ -526,4 +535,65 @@ type mockDispatcher struct{}
 
 func (m *mockDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
 	return nil, nil
+}
+
+// TestListGoogleAdsAccounts_DecryptionFailureNamesTheRowThatFailed pins WHICH project id the
+// operator log carries when the credentials came from the LF system fallback.
+//
+// The line asks whether one row or every connection is broken — that is the whole question
+// separating a rotated application key from a single corrupted blob. Naming the caller's
+// project answers it wrongly in both directions: whoever is paged inspects a row that project
+// does not have, and N projects failing over one corrupt system row reads as N failing rows,
+// which is exactly the deployment-wide conclusion the arm is written not to assert.
+func TestListGoogleAdsAccounts_DecryptionFailureNamesTheRowThatFailed(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	// The shape the fallback produces: origin marker, then the classification.
+	cause := fmt.Errorf("%w: decrypt google_ads credentials: %w",
+		domain.ErrSystemConnectionOrigin, domain.ErrCredentialDecryptionFailed)
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	svc.SetOrchestrator(&Orchestrator{
+		dispatchers: map[model.Provider]PlatformDispatcher{
+			model.ProviderGoogleAds: &mockAccountListerDispatcher{err: cause},
+		},
+	})
+
+	if _, err := svc.ListGoogleAdsAccounts(context.Background(), &conn.ListGoogleAdsAccountsPayload{ProjectID: "cncf"}); err == nil {
+		t.Fatal("expected an error for an undecryptable blob, got nil")
+	}
+
+	line := buf.String()
+	// Leading space, as below: `project_id=` is a suffix of `requested_by_project_id=`, so
+	// the bare substring cannot tell the two attributes apart.
+	if !strings.Contains(line, " project_id="+model.SystemProjectID) {
+		t.Errorf("log names the caller instead of the system row that failed: %q", line)
+	}
+	if !strings.Contains(line, "requested_by_project_id=cncf") {
+		t.Errorf("log drops who was served, which is how the blast radius is counted: %q", line)
+	}
+
+	// A project's OWN row must still be named as itself, or every decryption failure points
+	// at the system account and the single-row cause becomes uninvestigable.
+	buf.Reset()
+	svc = NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	svc.SetOrchestrator(&Orchestrator{
+		dispatchers: map[model.Provider]PlatformDispatcher{
+			model.ProviderGoogleAds: &mockAccountListerDispatcher{
+				err: fmt.Errorf("decrypt google_ads credentials: %w", domain.ErrCredentialDecryptionFailed),
+			},
+		},
+	})
+	if _, err := svc.ListGoogleAdsAccounts(context.Background(), &conn.ListGoogleAdsAccountsPayload{ProjectID: "cncf"}); err == nil {
+		t.Fatal("expected an error for an undecryptable blob, got nil")
+	}
+	// Matched with the leading space that slog puts before every attribute, because the
+	// bare substring is also contained in `requested_by_project_id=cncf` — so without the
+	// boundary this assertion would still pass if the primary project_id regressed to the
+	// system scope, which is the exact regression it exists to catch.
+	if line := buf.String(); !strings.Contains(line, " project_id=cncf") {
+		t.Errorf("project's own row was not named as its own: %q", line)
+	}
 }

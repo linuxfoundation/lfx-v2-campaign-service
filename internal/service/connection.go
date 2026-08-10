@@ -160,6 +160,15 @@ func unusableConnectionReason(err error) string {
 }
 
 func (s *ConnectionService) ListGoogleAdsAccounts(ctx context.Context, p *conn.ListGoogleAdsAccountsPayload) (*conn.ListGoogleAdsAccountsResult, error) {
+	// The SEVENTH endpoint taking a caller-supplied project_id, and the only one not
+	// reaching the repo through a helper in connection_handler.go — which is why it was
+	// missed. Left open, GET on the reserved scope decrypts the LF credential and
+	// enumerates the Linux Foundation's own ad accounts. A project with NO connection still
+	// sees those accounts under its OWN id, deliberately (dispatch/creds.go); addressing
+	// the reserved scope directly is the different thing, and it is rejected.
+	if err := rejectSystemScope(p.ProjectID); err != nil {
+		return nil, err
+	}
 	_, _, orch, err := s.resolveBackendWithOrch()
 	if err != nil {
 		return nil, err
@@ -199,8 +208,30 @@ func (s *ConnectionService) ListGoogleAdsAccounts(ctx context.Context, p *conn.L
 			// question for whoever answers is whether OTHER projects are failing too, which
 			// is what separates the two causes. The cause is safe to log: it is produced by
 			// the encryptor from ciphertext and key material only, never from plaintext.
+			//
+			// The row logged is the one that FAILED, which is not the caller's project when
+			// the credentials came from the system fallback — that project has no row at
+			// all, and naming it would send whoever answers to inspect something that does
+			// not exist while repeated failures of one corrupt system row looked like
+			// failures spread across many projects, i.e. the deployment-wide reading this
+			// arm must not assert. Origin is carried by ErrSystemConnectionOrigin, separate
+			// from the usability sentinels, because this error is not a usability defect.
+			credentialProject := p.ProjectID
+			if errors.Is(aerr, domain.ErrSystemConnectionOrigin) {
+				credentialProject = model.SystemProjectID
+			}
 			slog.ErrorContext(ctx, "stored credentials failed authenticated decryption; check the application encryption key, and whether this is one row or every connection",
-				"project_id", p.ProjectID, "provider", string(model.ProviderGoogleAds), "error", aerr)
+				"project_id", credentialProject, "requested_by_project_id", p.ProjectID,
+				"provider", string(model.ProviderGoogleAds), "error", aerr)
+			return nil, &conn.InternalServerError{Code: "500", Message: "account discovery could not be completed"}
+		case errors.Is(aerr, domain.ErrSystemConnectionNotUsable):
+			// The project has no connection of its own and the LF system row it fell back
+			// to is unusable. The 400 below would tell this caller to edit "the stored
+			// connection" — they have none, and the system scope is unaddressable. Nobody
+			// but an operator can act, so page one and say nothing specific to the caller.
+			// The reason is safe to log; the error itself is not (see the arm below).
+			slog.ErrorContext(ctx, "the LF system connection is not usable; account discovery is failing for every project without its own connection",
+				"provider", string(model.ProviderGoogleAds), "reason", unusableConnectionReason(aerr))
 			return nil, &conn.InternalServerError{Code: "500", Message: "account discovery could not be completed"}
 		case errors.Is(aerr, domain.ErrConnectionNotUsable):
 			// The connection EXISTS but cannot be used as it stands — inactive, an

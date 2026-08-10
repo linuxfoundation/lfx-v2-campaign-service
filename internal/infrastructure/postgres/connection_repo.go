@@ -16,19 +16,6 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// providerConfigColumns lists the provider-specific config columns for each
-// provider table, in a fixed order. These names are compile-time constants
-// (never user input), so building SQL from them is safe.
-var providerConfigColumns = map[model.Provider][]string{
-	model.ProviderGoogleAds:    {"login_customer_id"},
-	model.ProviderLinkedInAds:  {"org_id"},
-	model.ProviderMetaAds:      {"page_id", "app_id"},
-	model.ProviderRedditAds:    {},
-	model.ProviderTwitterAds:   {"funding_instrument_id"},
-	model.ProviderMicrosoftAds: {"customer_id"},
-	model.ProviderHubSpot:      {"portal_id", "sender_email", "sender_name", "brand_kit"},
-}
-
 // connectionCommonCols are the shared columns every provider table selects, in
 // the fixed order scanConnection expects. Defined once so Get/Create/Update
 // can't drift out of alignment with the scan.
@@ -47,7 +34,7 @@ var connectionCommonCols = []string{
 // for a provider, in scan order. Single source of truth for the SELECT/RETURNING
 // column set across Get, Create, and Update.
 func connectionSelectCols(provider model.Provider) []string {
-	cfg := providerConfigColumns[provider]
+	cfg := provider.ConfigKeys()
 	cols := make([]string, 0, len(connectionCommonCols)+len(cfg))
 	cols = append(cols, connectionCommonCols...)
 	cols = append(cols, cfg...)
@@ -74,7 +61,7 @@ func (r *ConnectionRepo) Get(ctx context.Context, projectID string, provider mod
 	if !provider.Valid() {
 		return nil, fmt.Errorf("unknown provider %q", provider)
 	}
-	cfgCols := providerConfigColumns[provider]
+	cfgCols := provider.ConfigKeys()
 	cols := connectionSelectCols(provider)
 
 	//nolint:gosec // table and column names come from a fixed internal allowlist, not user input.
@@ -93,13 +80,33 @@ func (r *ConnectionRepo) Get(ctx context.Context, projectID string, provider mod
 	return c, nil
 }
 
+// Disconnected reports whether the project once had a connection for this provider and
+// explicitly removed it. Delete soft-deletes, and Get filters `status = 'deleted'` out, so
+// without this probe a deliberate disconnect is indistinguishable from never having connected —
+// and the dispatch fallback treats the latter as licence to use the LF-owned ad account.
+//
+// EXISTS rather than a row fetch: the caller needs one bit, and a project may accumulate several
+// tombstones (the partial unique index constrains only the live row).
+func (r *ConnectionRepo) Disconnected(ctx context.Context, projectID string, provider model.Provider) (bool, error) {
+	if !provider.Valid() {
+		return false, fmt.Errorf("unknown provider %q", provider)
+	}
+	//nolint:gosec // table name comes from a fixed internal allowlist, not user input.
+	q := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE project_id = $1 AND status = 'deleted')", provider.Table())
+	var exists bool
+	if err := r.db.QueryRow(ctx, q, projectID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check disconnected connection: %w", err)
+	}
+	return exists, nil
+}
+
 // Create inserts the project's connection. Returns domain.ErrConflict if one
 // already exists (partial unique index on project_id WHERE status <> 'deleted').
 func (r *ConnectionRepo) Create(ctx context.Context, c *model.Connection) (*model.Connection, error) {
 	if !c.Provider.Valid() {
 		return nil, fmt.Errorf("unknown provider %q", c.Provider)
 	}
-	cfgCols := providerConfigColumns[c.Provider]
+	cfgCols := c.Provider.ConfigKeys()
 
 	insertCols := append([]string{"project_id", "label", "account_id", "credentials", "created_by", "updated_by"}, cfgCols...)
 	placeholders := make([]string, len(insertCols))
@@ -138,10 +145,27 @@ func (r *ConnectionRepo) Create(ctx context.Context, c *model.Connection) (*mode
 // Update replaces config columns, gating on expectedVersion and bumping it.
 // Credentials are untouched. Returns ErrNotFound / ErrPreconditionFailed.
 func (r *ConnectionRepo) Update(ctx context.Context, c *model.Connection, expectedVersion int64) (*model.Connection, error) {
+	return r.update(ctx, c, nil, expectedVersion)
+}
+
+// UpdateWithCredential is Update with the credential blob written by the SAME statement,
+// so the row never holds one write's account beside the other's credential and a
+// concurrent writer loses on the version check instead of interleaving.
+func (r *ConnectionRepo) UpdateWithCredential(ctx context.Context, c *model.Connection, ciphertext []byte, expectedVersion int64) (*model.Connection, error) {
+	if len(ciphertext) == 0 {
+		// Writing an empty blob would leave a row that looks configured and cannot
+		// authenticate. Update is the call for "config only".
+		return nil, fmt.Errorf("update connection: credential ciphertext is required")
+	}
+	return r.update(ctx, c, ciphertext, expectedVersion)
+}
+
+// update is the one UPDATE both spellings issue; ciphertext nil leaves credentials alone.
+func (r *ConnectionRepo) update(ctx context.Context, c *model.Connection, ciphertext []byte, expectedVersion int64) (*model.Connection, error) {
 	if !c.Provider.Valid() {
 		return nil, fmt.Errorf("unknown provider %q", c.Provider)
 	}
-	cfgCols := providerConfigColumns[c.Provider]
+	cfgCols := c.Provider.ConfigKeys()
 
 	sets := []string{"label = $1", "account_id = $2", "updated_by = $3", "version = version + 1", "updated_at = now()"}
 	updatedBy, err := marshalActor(c.UpdatedBy)
@@ -149,6 +173,10 @@ func (r *ConnectionRepo) Update(ctx context.Context, c *model.Connection, expect
 		return nil, err
 	}
 	args := []any{nullStr(c.Label), c.AccountID, updatedBy}
+	if ciphertext != nil {
+		args = append(args, ciphertext)
+		sets = append(sets, fmt.Sprintf("credentials = $%d", len(args)))
+	}
 	for _, col := range cfgCols {
 		args = append(args, nullStr(c.ProviderConfig[col]))
 		sets = append(sets, fmt.Sprintf("%s = $%d", col, len(args)))
@@ -157,18 +185,25 @@ func (r *ConnectionRepo) Update(ctx context.Context, c *model.Connection, expect
 	args = append(args, c.ProjectID, expectedVersion)
 	projPos, verPos := len(args)-1, len(args)
 
+	// RETURNING, not a follow-up Get: this is an optimistic-concurrency write, so the row
+	// it hands back is also the ETag the caller publishes. A separate re-read can observe a
+	// LATER writer's row — the version check only proves nobody won the race BEFORE us, not
+	// that nobody wins it after — and the caller would then publish an ETag for a state its
+	// own write did not produce, silently making the next If-Match succeed against a version
+	// it never saw. One statement makes the write and the returned snapshot the same event.
 	//nolint:gosec // table and column names come from a fixed internal allowlist, not user input.
 	q := fmt.Sprintf(
-		"UPDATE %s SET %s WHERE project_id = $%d AND version = $%d AND status <> 'deleted'",
+		"UPDATE %s SET %s WHERE project_id = $%d AND version = $%d AND status <> 'deleted' RETURNING %s",
 		c.Provider.Table(), strings.Join(sets, ", "), projPos, verPos,
+		strings.Join(connectionSelectCols(c.Provider), ", "),
 	)
-	tag, err := r.db.Exec(ctx, q, args...)
+	updated, err := scanConnection(r.db.QueryRow(ctx, q, args...), c.Provider, cfgCols)
 	if err != nil {
-		return nil, fmt.Errorf("update connection: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		// Distinguish missing from stale version. Surface a transient Get error
-		// rather than masking it as a precondition failure (which would make the
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("update connection: %w", err)
+		}
+		// No row matched. Distinguish missing from stale version. Surface a transient Get
+		// error rather than masking it as a precondition failure (which would make the
 		// caller retry with a fresh ETag instead of backing off on a server error).
 		_, gerr := r.Get(ctx, c.ProjectID, c.Provider)
 		switch {
@@ -180,7 +215,7 @@ func (r *ConnectionRepo) Update(ctx context.Context, c *model.Connection, expect
 			return nil, domain.ErrPreconditionFailed
 		}
 	}
-	return r.Get(ctx, c.ProjectID, c.Provider)
+	return updated, nil
 }
 
 // SetCredential replaces only the encrypted credential blob and bumps version,
@@ -193,20 +228,23 @@ func (r *ConnectionRepo) SetCredential(ctx context.Context, projectID string, pr
 	if err != nil {
 		return nil, err
 	}
-	//nolint:gosec // table name comes from a fixed internal allowlist, not user input.
+	// RETURNING for the reason spelled out on update: the returned row becomes the caller's
+	// ETag, and this write is not even version-gated, so a re-read is MORE exposed here — any
+	// concurrent writer at all can land between the two statements.
+	//nolint:gosec // table and column names come from a fixed internal allowlist, not user input.
 	q := fmt.Sprintf(
 		"UPDATE %s SET credentials = $1, updated_by = $2, version = version + 1, updated_at = now() "+
-			"WHERE project_id = $3 AND status <> 'deleted'",
-		provider.Table(),
+			"WHERE project_id = $3 AND status <> 'deleted' RETURNING %s",
+		provider.Table(), strings.Join(connectionSelectCols(provider), ", "),
 	)
-	tag, err := r.db.Exec(ctx, q, ciphertext, updatedBy, projectID)
+	updated, err := scanConnection(r.db.QueryRow(ctx, q, ciphertext, updatedBy, projectID), provider, provider.ConfigKeys())
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
 		return nil, fmt.Errorf("set credential: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return nil, domain.ErrNotFound
-	}
-	return r.Get(ctx, projectID, provider)
+	return updated, nil
 }
 
 // Delete soft-deletes the connection.

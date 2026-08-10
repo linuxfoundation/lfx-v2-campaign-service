@@ -1,6 +1,7 @@
 # Code
 
 * [cmd/campaign-service](cmd-campaign-service.md) - The LFX V2 Campaign Service.
+* [internal/bootstrap](internal-bootstrap.md) - Installs and rotates the LF-owned system ad-account credentials that projects with no connection of their own fall back to.
 * [internal/container](internal-container.md) - Dependency injection: opens the PostgreSQL pool, runs migrations, and wires Readyz to the pool.
 * [internal/audience](internal-audience.md) - Derives the regional-expansion HubSpot inclusion lists that make up a brief's marketing audience.
 * [internal/infrastructure/indexer](internal-infrastructure-indexer.md) - Publishes brief and campaign snapshots to NATS for the platform Query Service.

@@ -31,6 +31,18 @@ func init() {
 }
 
 func main() {
+	// The installer runs as a subcommand of this binary (see sysacct.go) and must be
+	// dispatched before any serving setup: it needs no OTel exporter and no signal handler.
+	//
+	// An unrecognised command is REFUSED rather than ignored. Matching only the exact name and
+	// falling through meant a typo started the HTTP server: flag.Parse stops at the first
+	// positional argument, so `bootstrap-system-acount` parsed cleanly and the deployment Job
+	// that was meant to install credentials became a second, idle server replica — running,
+	// healthy, exit code pending forever, with nothing installed and no error anywhere.
+	if handled, code := runCommand(os.Args[1:], os.Stderr); handled {
+		os.Exit(code)
+	}
+
 	cfg := config.LoadConfig()
 
 	ctx := context.Background()
