@@ -350,6 +350,36 @@ func TestValidateIndexBulletDescriptionRejectsPaddedFrontmatter(t *testing.T) {
 	}
 }
 
+// CommonMark accepts `(<thing.md>)` and `(thing.md "Title")` as links to the same
+// file. Both must be rejected at the bullet-format check rather than reaching the
+// description comparison, where the brackets or the title travel with the path,
+// the ".md" suffix test fails, and the bullet is skipped — an index entry that
+// renders correctly but silently opts out of the description-sync invariant.
+func TestValidateIndexBulletRejectsNonBareDestinations(t *testing.T) {
+	for name, link := range map[string]string{
+		"angle brackets": "<thing.md>",
+		"link title":     `thing.md "Thing"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			// The frontmatter description deliberately DISAGREES with the bullet, so a
+			// test that fails here fails for the right reason: were the bullet accepted
+			// and its destination resolved, the drift below would be reported instead,
+			// and this assertion on the format error would still be the thing that broke.
+			writeConcept(t, filepath.Join(dir, "thing.md"), "Does the thing.")
+			writeFile(t, filepath.Join(dir, "index.md"), "# Bundle\n\n* [Thing]("+link+") - Does something else.\n")
+
+			errs := Validate(dir)
+			if len(errs) != 1 {
+				t.Fatalf("Validate() = %v, want the non-bare destination to be rejected", errs)
+			}
+			if !strings.Contains(errs[0].Error(), "does not match") {
+				t.Errorf("Validate() error = %q, want the bullet-format diagnostic", errs[0])
+			}
+		})
+	}
+}
+
 func TestValidateRealBundle(t *testing.T) {
 	// Use relative path from package directory to the real bundle at repo root
 	bundleDir := filepath.Join("..", "..", "docs", "knowledge")
