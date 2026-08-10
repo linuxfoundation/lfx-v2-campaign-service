@@ -314,8 +314,11 @@ bootstrap — credentials stored, account chosen afterwards, the way Google Ads 
 `MetaAdsConnectionConfig` still declares `Required("account_id")`, so that create is a 400
 before any of this code runs. Closing it is not a one-line loosening: only
 `resolveGoogleAdsClient` tags an empty account id with `domain.ErrAccountNotSelected`, so a
-Meta connection parked mid-bootstrap would answer the status toggle and metrics read with a
-generic error instead of the 409 that names the missing choice. Tracked as LFXV2-3061.
+Meta connection parked mid-bootstrap would answer `Dispatch` with a generic error instead of
+the 409 that names the missing choice. It is `Dispatch` alone — `ToggleStatus` and
+`ReadMetrics` target the campaign node by id and document that they need no account id
+(`internal/dispatch/meta.go`), so those two already work on an account-less row and there is
+nothing to tag in them. Tracked as LFXV2-3061.
 
 **The unmarshal cause on the decrypted blob is DROPPED, not wrapped.** It is the only value in
 the resolver derived from decrypted plaintext, and this error is logged and, on the not-usable

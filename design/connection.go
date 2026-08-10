@@ -374,8 +374,16 @@ var GoogleAdsConnection = Type("google-ads-connection", func() {
 
 // AccessibleAccount represents an ad account reachable via the connection's
 // stored credential. Returned by account discovery operations.
+//
+// No Example on `id`, deliberately. The type is shared by every provider's discovery method
+// and Goa copies an attribute-level example into each one's schema, so a single value cannot
+// be right: Google Ads mints bare digits, Meta mints `act_`-prefixed ids, and the Meta method
+// below promises the prefix in its own description. Pinning Google's `8666746580` published a
+// Meta example that Meta's own connection validation rejects. The formats belong in the
+// attribute description, where they can be stated per provider, rather than in one example
+// that silently claims to speak for all of them.
 var AccessibleAccount = Type("accessible-account", func() {
-	Attribute("id", String, "Account identifier in the ad platform's namespace", func() { Example("8666746580") })
+	Attribute("id", String, "Account identifier in the ad platform's own namespace, ready to store as the connection's account_id. Google Ads: bare digits (8666746580). Meta: act_-prefixed (act_8666746580).")
 	Attribute("label", String, "Human-readable account name or label")
 	Required("id")
 })

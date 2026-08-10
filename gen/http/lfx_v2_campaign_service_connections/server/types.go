@@ -2428,7 +2428,9 @@ type ListMetaAdsAccountsNotFoundResponseBody struct {
 // AccessibleAccountResponseBody is used to define fields on response body
 // types.
 type AccessibleAccountResponseBody struct {
-	// Account identifier in the ad platform's namespace
+	// Account identifier in the ad platform's own namespace, ready to store as the
+	// connection's account_id. Google Ads: bare digits (8666746580). Meta:
+	// act_-prefixed (act_8666746580).
 	ID string `form:"id" json:"id" xml:"id"`
 	// Human-readable account name or label
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`

@@ -209,9 +209,9 @@ var metaAdsAccountDiscovery = accountDiscovery{
 // of them quietly diverges. Every provider that gains discovery gets the arms that were
 // reasoned about here, or none of them.
 func (s *ConnectionService) listAccounts(ctx context.Context, projectID string, d accountDiscovery) ([]*conn.AccessibleAccount, error) {
-	// The SEVENTH endpoint taking a caller-supplied project_id, and the only one not
-	// reaching the repo through a helper in connection_handler.go — which is why it was
-	// missed. Left open, GET on the reserved scope decrypts the LF credential and
+	// One of the project_id-taking endpoints that does NOT reach the repo through a helper
+	// in connection_handler.go — the property that made the first of them miss this guard,
+	// and the reason it lives in the shared helper rather than per provider. Left open, GET on the reserved scope decrypts the LF credential and
 	// enumerates the Linux Foundation's own ad accounts. A project with NO connection still
 	// sees those accounts under its OWN id, deliberately (dispatch/creds.go); addressing
 	// the reserved scope directly is the different thing, and it is rejected.
@@ -285,7 +285,7 @@ func (s *ConnectionService) listAccounts(ctx context.Context, projectID string, 
 		case errors.Is(aerr, domain.ErrConnectionNotUsable):
 			// The connection EXISTS but cannot be used as it stands — inactive, an
 			// incomplete credential blob, or a malformed stored config value such as a
-			// dashed login_customer_id. Google is never contacted, and none of these
+			// dashed login_customer_id. The provider is never contacted, and none of these
 			// improve with time, so the 503 below would be a false promise: it tells the
 			// caller to retry a request that cannot succeed until a human edits the
 			// connection. The dispatcher wraps every pre-send failure with this sentinel
@@ -322,8 +322,9 @@ func (s *ConnectionService) listAccounts(ctx context.Context, projectID string, 
 	}
 	// Convert model.AccessibleAccount to generated conn type. Preallocated with make so an
 	// empty result serializes as `[]`, not `null` — a nil slice here would undo the
-	// dispatcher's deliberate make([]model.AccessibleAccount, 0, len(customers)) one layer
-	// down and hand every client a null it has to special-case.
+	// deliberate zero-length allocation each dispatcher makes one layer down (over Google's
+	// `customers`, over Meta's ad accounts) and hand every client a null it has to
+	// special-case.
 	connAccounts := make([]*conn.AccessibleAccount, 0, len(accounts))
 	for _, acct := range accounts {
 		label := acct.Label // Convert to pointer

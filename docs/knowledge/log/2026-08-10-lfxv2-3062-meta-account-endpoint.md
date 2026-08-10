@@ -123,6 +123,44 @@ that discovery is necessary but not sufficient — the account-needing path must
 Also: `metaAccountsServer` wrote the captured request path from the httptest handler goroutine
 with no mutex. Now a `recordedPath` with one, matching the rest of the file.
 
+## The shared account type published one provider's id format to both
+
+`AccessibleAccount` is the result element for every provider's discovery method, and its `id`
+attribute carried `Example("8666746580")` — Google's bare-digit customer id. Goa copies an
+attribute-level example into EVERY schema built from the shared type, so adding the Meta method
+here republished Google's format as Meta's, on the same endpoint whose own description promises
+`act_`-prefixed ids. A generated client scaffolded from the example would have stored a value
+Meta's own connection validation rejects.
+
+The example is gone rather than corrected: no single value can be right for a type shared across
+providers, and splitting into a Meta-specific type would force `listAccounts` — the shared
+status-mapping helper that is the whole design point of this change — to be duplicated or made
+generic. Both formats are now stated in the attribute DESCRIPTION, which can name each provider.
+This drops one `example:` line from 8 response schemas and shifts Goa's example-RNG stream, so
+`gen/` churns more widely than the design change implies; `make apigen` run twice is
+byte-identical, so the churn is deterministic, not a rebuild artifact.
+
+## Three concept files still said Google was the only provider with `/accounts`
+
+The chart changes here (`httproute.yaml`, `ruleset.yaml`, `parity_test.go`) admit a second
+discovery path, which under CLAUDE.md step 1 obliges the concept files that describe them:
+`kubernetes/httproute.md` documented the alternation branch as the literal
+`connection-google-ads`, `kubernetes/ruleset.md` called `/accounts` "the ONLY provider-specific
+`connection-*` sub-path", and `code/internal-bootstrap.md` explained `accountDiscoveryProviders`
+as "Google Ads alone" with discovery as the criterion. The last is the one that could cause harm:
+membership is NOT "the dispatcher implements `AccountLister`", so the next person adding a
+provider would have read the concept file, seen the criterion satisfied, and added a row to a map
+whose actual precondition (the account-needing path fails with `account_not_selected`) they had
+never been told about.
+
+## Three Google-specific comments in a now-shared handler
+
+`internal/service/connection.go` acquired the Meta path but kept prose written when Google was
+the only caller: "The SEVENTH endpoint" (eight, and the count was never the point — the property
+was reaching the repo without a `connection_handler.go` helper), "Google is never contacted" in
+the arm classifying pre-send failures, and a `len(customers)` justification for preallocating the
+result slice, which is Google's variable name. All three now describe the shared path.
+
 ## Related
 
 - `docs/knowledge/log/2026-08-09-lfxv2-3060-meta-account-discovery.md` — the client walk
