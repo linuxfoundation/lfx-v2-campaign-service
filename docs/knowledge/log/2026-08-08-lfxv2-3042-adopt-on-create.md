@@ -10,9 +10,17 @@ licenses the create that follows.
 `ComposeName` is deterministic in the brief, so a retried dispatch asks for the same campaign
 name a previous attempt may already have created. With adoption off — the default — that retry
 does not create a second live campaign: Google enforces name uniqueness among non-removed
-campaigns, so the second create is rejected with `CampaignError.DUPLICATE_CAMPAIGN_NAME` and
-the dispatch fails. The retry is BLOCKED, not silently duplicated. That is the failure this
-setting converts into a success, and it is why the setting is worth having.
+records, so the second create is rejected and the dispatch fails. The retry is BLOCKED, not
+silently duplicated. That is the failure this setting converts into a success, and it is why the
+setting is worth having.
+
+Which rejection arrives depends on how far the retry gets, and the usual answer is the first
+one. The client creates the BUDGET before the campaign (their names differ — `LFX | Budget …`
+vs the campaign name — so they collide independently), so a retry normally stops at
+`CampaignBudgetError.DUPLICATE_NAME`; `CampaignError.DUPLICATE_CAMPAIGN_NAME` is reached only
+when the budget mutate does not collide. Both families are handled and tested
+(`isDuplicateBudgetNameErr` / `isDuplicateCampaignNameErr`) — see the section below, which spells
+out why the two are easy to confuse.
 
 It is not the default because the guarantee has a hole with teeth. Uniqueness covers non-removed
 campaigns only, so once a campaign is REMOVED the name is free again — and an unconditional
