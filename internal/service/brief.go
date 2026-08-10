@@ -588,7 +588,13 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 			slog.WarnContext(ctx, "could not verify the campaign to adopt",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "platform", platform,
 				"platform_campaign_id", platformCampaignID, "error", safeErrSummary(lerr))
-			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the ad platform could not be reached to verify the campaign"}
+			// "Could not be reached" would be FALSE for most of what lands here. The platform
+			// is often reached and answers: an unhonoured id filter, an undecodable row, a
+			// status outside the known set. Naming connectivity sends an operator to look at
+			// the network when the response itself is the problem. What every case here does
+			// share is that the campaign was not VERIFIED, which is also the only thing the
+			// caller needs to know before retrying.
+			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the campaign could not be verified with the ad platform"}
 		}
 	}
 

@@ -136,6 +136,13 @@ func TestAdoptCampaign_AMismatchedIDIsRefusedNotBound(t *testing.T) {
 	if len(camps.adopted) != 0 {
 		t.Errorf("persisted %d campaign rows for a mismatched lookup; want 0", len(camps.adopted))
 	}
+	// The 503's TEXT is part of the contract, and "could not be reached" is a false statement
+	// here: the platform was reached and answered — with a campaign nobody asked for. Saying
+	// otherwise sends an operator to check connectivity for a response-shaped defect.
+	var unavail *briefs.ConnServiceUnavailableError
+	if errors.As(err, &unavail) && strings.Contains(unavail.Message, "could not be reached") {
+		t.Errorf("the 503 blames connectivity for a platform that answered: %q", unavail.Message)
+	}
 }
 
 // Absence — the answer an operator acts on by creating a duplicate — must persist nothing.

@@ -335,6 +335,21 @@ occupying its `(brief_id, platform)` slot. Restore the dropped constraint and bo
 is the check the regex test cannot perform, and it is the reason to reach for this package
 rather than another source-text assertion.
 
+`adopt_binding_live_test.go` pins migration 000020 the same way, and is the sharpest case in
+the package because the guard it covers has no runtime symptom. Adoption lets a caller name an
+arbitrary upstream campaign, so two briefs in one project can each bind the SAME paid campaign;
+from then on each brief's toggle and metrics reader act on it independently, and both rows stay
+individually well-formed, so nothing in the service can detect the collision afterwards. The
+only thing standing between that and production is one index definition — and a wrong one still
+applies cleanly, still satisfies the fake repository, and still matches the SQL-text assertions.
+Each of the four sub-tests is bound to a different way the definition can be wrong: putting
+`brief_id` in the key (the shape 000013 uses, and so the mistake most likely to be copied) lets
+the second brief bind; dropping `status <> 'deleted'` makes deletion permanently reserve the
+upstream campaign; dropping `platform_campaign_id IS NOT NULL` makes unprovisioned dispatch
+claims collide with each other; keying globally instead of per-project lets one project's
+numeric id lock another out of adopting its own campaign. All four were verified by making each
+of those edits to the migration and watching the corresponding sub-test fail.
+
 `ConnectionRepo.Disconnected` is here for a sharper version of the same reason. Its whole job
 is to tell a deliberate disconnect apart from never having connected, and the two are
 distinguished by ONE clause — `status = 'deleted'` — in one statement. Every other test of

@@ -151,3 +151,41 @@ The class: **a guard copied from a sibling inherits the sibling's context, not i
 Each of these three was correct where it came from. The question to ask of a copied line is not
 "is this what the neighbours do" but "what made it sufficient there, and is that thing here".
 
+
+## Round N+5: a guard that no test could distinguish from its own absence
+
+Three findings, all from Copilot's suppressed block — which is to say `unresolved=0` was true and
+meant nothing.
+
+**A missing connection answered 503.** `resolveOwnedGoogleAdsClient` refuses the LF system
+fallback, because adoption must bind a campaign the project itself can reach. It handled the
+`fromSystem` case and returned every other `resolve` error unchanged — including the one where
+NEITHER the project nor the system scope has a connection, which `credsSource.resolve` reports as
+a wrapped `domain.ErrNotFound`. That fell to the adopt switch's `default` arm: a 503 saying the
+platform could not be reached. Nothing was ever contacted. The caller retries a permanent
+condition, and the operator reads a network problem into a project that was simply never
+connected. It now maps to `ErrAdoptionRequiresOwnConnection` and answers 409, the same permanent
+refusal as the `fromSystem` case — the fallback distinction "use LF's instead" has no meaning on a
+path where LF's is refused anyway. Every other `resolve` failure still passes through, because a
+repo error and an unusable connection really do want different remedies.
+
+**"Could not be reached" was false for most of what reached it.** The same `default` arm also
+catches an unhonoured id filter, an undecodable row, a status outside the known set — cases where
+the platform answered perfectly well and the ANSWER is the problem. The message now says the
+campaign could not be *verified*, which is both true of every case and the only thing the caller
+needs before retrying. `docs/api-catalog.md` says the same.
+
+**The core guarantee had no test that could fail.** Migration 000020 stops one upstream campaign
+being bound to two briefs. It was covered by a fake repository and by regexes over SQL source —
+both of which assert what someone believed the index does. Neither can catch the failure that
+matters: a subtly wrong predicate or key applies cleanly, passes every unit test, and lets two
+briefs control one paid campaign, after which each brief's toggle and metrics reader act on it
+independently and the rows stay individually well-formed. There is no runtime symptom to find
+later. `dbtest/adopt_binding_live_test.go` now checks the real migrated schema, with one sub-test
+per way the definition can be wrong, each verified by making that exact edit to the migration and
+watching only its own sub-test fail.
+
+The class: **the first two findings are the same mistake as the third.** A 503 that means "we
+never tried", a message that names connectivity for a response-shaped defect, and an index test
+that cannot fail — each is a signal that carries no information, and in all three cases the code
+looked complete precisely because something was present in the place the signal belonged.

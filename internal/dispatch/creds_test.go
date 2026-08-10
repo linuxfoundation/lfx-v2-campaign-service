@@ -669,6 +669,27 @@ func TestAdoptionRefusesTheSystemFallback(t *testing.T) {
 		}
 	})
 
+	// The case where NEITHER scope has a connection. It looks like the one above and is not:
+	// there is no fallback to refuse, so resolve returns a wrapped domain.ErrNotFound and the
+	// gate never sees a resolved value at all. Left untranslated, the adopt switch has no
+	// ErrNotFound arm and answers 503 "could not be reached" — for a platform that was never
+	// contacted, about a state no retry can change. The remedy is identical to the fallback
+	// case (connect the project's own ad account), so the sentinel must be too.
+	t.Run("a project with no connection anywhere gets the same permanent refusal", func(t *testing.T) {
+		d := NewGoogleAdsDispatcher(&scopedConnReader{rows: map[string]*model.Connection{}}, identityEncryptor{})
+
+		_, err := d.LookupCampaign(context.Background(), "cncf", model.ProviderGoogleAds, "1234567890")
+		if !errors.Is(err, domain.ErrAdoptionRequiresOwnConnection) {
+			t.Fatalf("err = %v, want ErrAdoptionRequiresOwnConnection — without it this is a 503 "+
+				"blaming the network for a connection that was never configured", err)
+		}
+		// The cause survives the translation: an operator reading the log still learns the
+		// lookup missed rather than that some other resolve step failed.
+		if !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("err = %v, want the wrapped ErrNotFound cause preserved", err)
+		}
+	})
+
 	t.Run("a project with its own connection gets past the gate", func(t *testing.T) {
 		// Deliberately account-less rather than fully usable: that defect is raised by
 		// validateGoogleAdsConnection, one step PAST the ownership gate and still short of

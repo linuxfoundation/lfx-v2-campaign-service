@@ -365,6 +365,19 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsClient(ctx context.Context, projec
 func (d *GoogleAdsDispatcher) resolveOwnedGoogleAdsClient(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, error) {
 	res, err := d.creds.resolve(ctx, projectID, platform)
 	if err != nil {
+		// A total absence — NEITHER the project nor the LF system scope has a connection —
+		// arrives as a wrapped domain.ErrNotFound, and returning it unchanged lands in the
+		// adopt switch's default arm: a 503 telling the caller the platform could not be
+		// reached. It was never contacted, and no amount of retrying will change that; the
+		// remedy is the same permanent one as the fromSystem case below, so it gets the same
+		// sentinel and the same 409. The distinction the fallback normally draws — "you have
+		// no connection, so use LF's" — has no meaning on this path, where LF's is refused
+		// anyway. Every OTHER resolve failure (a repo error, an unusable connection) is
+		// passed through, because those are genuinely different remedies.
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, fmt.Errorf("%w: project %s has no %s connection, and adoption cannot fall back to the LF system account: %w",
+				domain.ErrAdoptionRequiresOwnConnection, projectID, platform, err)
+		}
 		return nil, err
 	}
 	if res.fromSystem {
