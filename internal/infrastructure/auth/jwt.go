@@ -131,19 +131,26 @@ func New(cfg Config) (*Verifier, error) {
 		return &Verifier{mock: &model.Actor{Username: p, Name: p}}, nil
 	}
 
+	// Neither branch below may render the configured URL. A URL can carry credentials in
+	// its userinfo (`https://user:pass@host/...`), and these errors are returned to main.go,
+	// which LOGS them — so echoing the raw value writes the secret to the log. url.Parse's
+	// own error embeds the whole raw URL, which is why it is reported rather than wrapped;
+	// Redacted() is the printable form, replacing the password with `xxxxx`. The config key
+	// is named instead, which is what an operator actually needs to fix it.
 	rawJWKS := orDefault(cfg.JWKSURL, constants.DefaultJWKSURL)
 	jwksURL, err := url.Parse(rawJWKS)
 	if err != nil {
-		return nil, fmt.Errorf("parse JWKS URL: %w", err)
+		return nil, fmt.Errorf("%s is not a parseable URL", constants.EnvJWKSURL)
 	}
 	// Scheme, not just absoluteness: http.Client cannot fetch ftp:// or file://, so
 	// accepting one would satisfy the fail-fast check and then refuse every request.
 	if (jwksURL.Scheme != "http" && jwksURL.Scheme != "https") || jwksURL.Host == "" {
-		return nil, fmt.Errorf("JWKS URL %q is not an absolute http(s) URL", rawJWKS)
+		return nil, fmt.Errorf("%s (%q) is not an absolute http(s) URL",
+			constants.EnvJWKSURL, jwksURL.Redacted())
 	}
 	issuer, err := url.Parse(orDefault(cfg.Issuer, constants.DefaultIssuer))
 	if err != nil {
-		return nil, fmt.Errorf("parse JWT issuer: %w", err)
+		return nil, fmt.Errorf("%s is not a parseable URL", constants.EnvIssuer)
 	}
 	if issuer.String() == "" {
 		return nil, errors.New("JWT issuer is empty")

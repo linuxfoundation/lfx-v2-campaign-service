@@ -107,7 +107,8 @@ func (h *capturingHandler) WithGroup(string) slog.Handler      { return h }
 //
 // A lost actor fails NOTHING: the row commits with NULL attribution and every response is a
 // normal 2xx. This log line is the only signal an operator gets that a gateway change, a
-// claim rename, or a regression in actorFromToken has silently stopped attribution — and its
+// claim rename, or a regression in the verifier's claims-to-actor mapping has silently
+// stopped attribution — and its
 // RATE is what alerting keys on, so the operation name has to be on the record too. Without
 // this test the line could be deleted or renamed and TestBriefActor_MissingActorStillWrites
 // would stay green, because it only checks that the write succeeded.

@@ -411,3 +411,44 @@ in a deployed environment," which is advice. The chart refuses to render it and 
 check refuses to boot, so the real behaviour is a crash-loop. Understating an enforced
 constraint as a guideline costs an operator the one sentence that would explain a rollout that
 never comes up.
+
+## Round N+2: a rejected JWKS URL was logged verbatim, credentials and all
+
+Copilot flagged `internal/infrastructure/auth/jwt.go` for disclosing a configured URL in a
+startup error. Both refusal paths did it, for different reasons:
+
+- the scheme check formatted `rawJWKS` with `%q`;
+- the parse failure wrapped `url.Parse`'s error, and that error embeds the entire raw URL
+  regardless of how it is wrapped.
+
+A URL may carry credentials in its userinfo, and `cmd/campaign-service/main.go` logs the
+error `New` returns, so a wrong value ships the password into the log of every pod that
+fails to start. Fixed by printing `jwksURL.Redacted()` in the first case and, in the second,
+reporting our own message instead of wrapping — the only way to drop what `url.Parse` put
+there. Both name `constants.EnvJWKSURL`; the issuer parse had the identical shape and got
+the identical treatment.
+
+`TestNew_RejectionDoesNotLeakURLCredentials` pins both arms. Verified by reverting each fix:
+the scheme arm failed with `JWKS URL "ftp://user:hunter2@h/jwks" ...` and the parse arm with
+`parse JWKS URL: parse "://user:hunter2@nope": missing protocol scheme` — the second is the
+one worth having a test for, because the leaking text is not in any format string in this
+repo. `TestNew_ConfigHandling` now asserts the error names the config key rather than the
+prose "JWKS URL".
+
+**The generalisation: redaction has to cover the errors you inherit, not just the ones you
+write.** Auditing our own format verbs would have found one of these two.
+
+## Round N+2 (merge): main relocated the helpers this branch had already moved
+
+`git merge origin/main` conflicted in `internal/service/connection_handler.go`. Main had
+added `actorFromCtx`, `attributedActor` and `actorFromToken` there; this branch had already
+moved the first two into `internal/service/auth.go` and deleted the third, because
+`actorFromToken`'s best-effort unverified decode is precisely what real JWKS verification
+replaces. Resolved by taking HEAD — the empty side. The only surviving reference was a
+comment in `brief_actor_test.go` naming `actorFromToken` as the thing whose regression the
+warning would catch; retargeted to the verifier's claims-to-actor mapping, which is what
+now occupies that role.
+
+`allowedVersionGaps[16]` was deleted: #95 merged 000016, so the excuse for the gap is gone
+and `TestMigrations_AllowedVersionGapsAreStillOpen` fails while it survives. That is the
+guard doing its job — the deletion did not have to be remembered.

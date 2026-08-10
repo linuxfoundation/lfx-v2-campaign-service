@@ -262,12 +262,11 @@ func TestMigrations_UniqueNumbering(t *testing.T) {
 // sibling PR that has not merged yet. A gap listed here is a merge-ORDERING obligation, not a
 // numbering bug — this branch must not merge before the PR that fills it, or those migrations
 // are skipped forever. The list must shrink to empty as siblings land.
-var allowedVersionGaps = map[int]string{
-	16: "000016_campaign_actor_columns is claimed by PR #95 (LFXV2-3038, " +
-		"feat/LFXV2-3038-campaign-actor-attribution). #93 MUST NOT merge before #95 — if it does, " +
-		"golang-migrate records 000017 as the highest applied version and #95's actor columns are " +
-		"skipped silently and forever. Delete this entry once #95 is on main.",
-}
+// Empty is the resting state. The 000016 entry that lived here was deleted when #95 merged
+// and brought the migration into the tree — deleted by obligation, not by memory:
+// TestMigrations_AllowedVersionGapsAreStillOpen fails on a stale entry, so the merge that
+// closes a gap cannot be green while its excuse survives.
+var allowedVersionGaps = map[int]string{}
 
 // TestMigrations_NoVersionGaps guards against numbering a migration ABOVE versions that do not
 // exist yet in this tree.

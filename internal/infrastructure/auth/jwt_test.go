@@ -418,8 +418,35 @@ func TestNew_ConfigHandling(t *testing.T) {
 	for _, bad := range []string{"lfx-platform-heimdall:4457/jwks", "/.well-known/jwks", "://nope", "ftp://h/jwks", "file:///jwks"} {
 		if _, err := New(Config{JWKSURL: bad, Audience: testAudience, Issuer: testIssuer}); err == nil {
 			t.Errorf("New accepted an unusable JWKS URL %q", bad)
-		} else if !strings.Contains(err.Error(), "JWKS URL") {
-			t.Errorf("error for %q does not name the JWKS URL: %v", bad, err)
+		} else if !strings.Contains(err.Error(), constants.EnvJWKSURL) {
+			t.Errorf("error for %q does not name the config key that set it: %v", bad, err)
+		}
+	}
+}
+
+// TestNew_RejectionDoesNotLeakURLCredentials pins that a rejected JWKS URL is never
+// rendered verbatim.
+//
+// A URL may carry credentials in its userinfo, and main.go LOGS whatever New returns, so a
+// `%q` of the raw value writes the password to the log of every pod that fails to start —
+// a place it survives rotation of the thing it protects. Both refusal paths are covered
+// because they had the same defect for different reasons: the scheme check formatted the
+// raw string, and the parse path WRAPPED url.Parse's error, which embeds the whole URL of
+// its own accord. That second one is the reason the parse error is reported rather than
+// wrapped, which reads like lost detail until you know what the detail was.
+func TestNew_RejectionDoesNotLeakURLCredentials(t *testing.T) {
+	const secret = "hunter2"
+	for _, bad := range []string{
+		"ftp://user:" + secret + "@h/jwks", // parses; refused by the scheme check
+		"://user:" + secret + "@nope",      // does not parse
+	} {
+		_, err := New(Config{JWKSURL: bad, Audience: testAudience, Issuer: testIssuer})
+		if err == nil {
+			t.Fatalf("New accepted %q", bad)
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("the error for a URL with userinfo carries its password, and this "+
+				"error is logged at startup: %v", err)
 		}
 	}
 }
