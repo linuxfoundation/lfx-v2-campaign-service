@@ -234,11 +234,15 @@ Three consequences follow, and they are what the SQL encodes:
 - **The claim INSERT is the row's first INSERT.** `claimCampaignDispatchQuery` is where
   `created_by` is stamped. Every later write for that (brief, platform) pair — a retry, a
   re-dispatch after a brief edit, a reconcile — goes through `upsertCampaignQuery`, and
-  normally takes its CONFLICT arm, since every dispatch claims before it upserts. (The
-  upsert's INSERT arm stamps `created_by` too, for the case where there is no row to conflict
-  with: a soft-deleted row falls outside the partial unique index, and a claim can be removed
-  concurrently. Both arms setting it is what keeps the column populated on every path that can
-  create the row.)
+  normally takes its CONFLICT arm, since every dispatch claims before it upserts. A
+  re-dispatch after a soft delete is NOT the exception it looks like: the deleted row falls
+  outside the partial unique index, so it is the CLAIM that inserts the fresh campaign and
+  stamps its `created_by`, and the upsert conflicts with that. (A `pending` row cannot be
+  soft-deleted in the first place — `CampaignStatusDeletable` is a whitelist of settled
+  statuses.) The upsert's INSERT arm stamps `created_by` too, but only for the case where the
+  claim row is gone by the time the upsert runs: an operator clearing an apparently-stuck
+  claim, or a concurrent `DeleteDispatchClaim`. Both arms setting it is what keeps the column
+  populated on every path that can create the row.
 - **The claim stamps BOTH actor columns from one placeholder** (`$5, $5`), matching
   `createBriefQuery`. At creation the author IS the last mover, and leaving `updated_by` NULL
   would make "untouched since it was made" indistinguishable from "we never recorded who" —

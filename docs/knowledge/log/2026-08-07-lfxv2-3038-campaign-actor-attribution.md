@@ -87,3 +87,35 @@ prior mover so a toggle that merely carries the previous actor forward is distin
 from one that reads the request actor, and they pin that an unauthenticated toggle stamps
 nil rather than inventing a principal. No further test was added here — a second pair
 asserting the same property would only be one more thing to keep in step.
+
+## Round N: the delete case named in three places was the wrong case
+
+Three comments — `orchestrator.dispatchPlatform`, `ClaimCampaignDispatch`'s godoc, and
+`docs/channel-connections-schema.md` — justified passing `CreatedBy` into the upsert by
+naming a soft-deleted row as the case that reaches its INSERT arm. The code is right and
+stays; the justification is not.
+
+Trace it. `dispatchPlatform` reaches the upsert only after it OWNS a claim, and
+`claimCampaignDispatchQuery` and `upsertCampaignQuery` share one conflict target
+(`ON CONFLICT (brief_id, platform) WHERE status <> 'deleted'`). So after a delete the
+deleted row is outside the index, the CLAIM's INSERT wins and stamps `created_by` on the
+fresh campaign, and the upsert conflicts with the row the claim just wrote. The delete case
+is an ordinary conflict-arm case. It is also doubly unreachable as stated: a `pending` row
+cannot be soft-deleted at all, because `CampaignStatusDeletable` is a whitelist of settled
+statuses (`campaign_test.go` pins `CampaignStatusPending: false`), so a claim never enters
+the deleted state.
+
+What DOES reach the INSERT arm is the claim row disappearing between the two statements: an
+operator clearing what looked like a stuck claim (`StuckDispatchClaims` exists to surface
+them), or a concurrent `DeleteDispatchClaim`. Narrower, real, and the only path that creates
+a campaign row with no live claim in front of it.
+
+Doc-only, but not cosmetic. **A comment that names the wrong case invites the reader to
+delete the code.** The next person to notice that the soft-delete case takes the conflict arm
+has been handed a proof that `campaign.CreatedBy = by` is dead — and it is not. The general
+rule: when a defensive assignment is justified by a scenario, the scenario has to be one that
+actually reaches it, or the justification argues for removal.
+
+Pinned by extending the comment on `CampaignStatusPending: false` in
+`TestCampaignStatusDeletable` to record what else depends on that row: it is the fact that
+makes the claim, not the upsert, the statement that preserves attribution after a delete.

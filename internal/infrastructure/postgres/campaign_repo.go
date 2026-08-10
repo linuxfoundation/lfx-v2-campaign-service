@@ -92,11 +92,16 @@ const claimCampaignDispatchQuery = `INSERT INTO campaigns
 // on conflict, so we detect the winner via RowsAffected and then read the current row.
 // The actor is stamped HERE, on the claim, because this is the row's FIRST insert — the
 // upsert that follows takes the conflict arm, which deliberately leaves created_by alone.
-// (The upsert's INSERT arm stamps it too, but not for an ordinary retry: a retry claims
-// again first, so the row is back and the conflict arm takes it. The INSERT arm is reached
-// only when the row is not there to conflict with — soft-deleted, and so outside the partial
-// unique index, or a claim removed concurrently. See orchestrator.dispatchPlatform. Both arms
-// setting it is what keeps the column populated on every path that can create the row.)
+// (The upsert's INSERT arm stamps it too, but it is nearly always THIS statement that does
+// the stamping. A retry claims again first, so the row is back and the conflict arm takes it.
+// A re-dispatch after a soft delete is the same story, not an exception: the deleted row sits
+// outside the partial unique index, so THIS INSERT wins and stamps created_by on the fresh
+// campaign, and the upsert then conflicts with it — and a 'pending' row cannot be deleted at
+// all, since CampaignStatusDeletable is a whitelist of settled statuses. The upsert's INSERT
+// arm is reached only when the row this statement just wrote is gone by the time the upsert
+// runs: an operator clearing an apparently-stuck claim, or a concurrent DeleteDispatchClaim.
+// See orchestrator.dispatchPlatform. Both arms setting it is what keeps the column populated
+// on every path that can create the row.)
 //
 // Both actor columns are set from the same value, matching createBriefQuery: at creation the
 // author IS the last mover, and leaving updated_by NULL on a freshly claimed row would make

@@ -870,17 +870,23 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				campaign.BriefID = brief.ID
 				campaign.ProjectID = brief.ProjectID
 				campaign.Platform = p
-				// Both, not just UpdatedBy. An ordinary retry does NOT reach the INSERT
-				// arm: every dispatch calls ClaimCampaignDispatch first, which recreates
-				// the pending row before this runs (and errors out rather than continuing
-				// if its read-after-claim fails), so the row is there and the conflict arm
-				// takes it. CreatedBy is set for the case that is not ordinary — a row
-				// soft-deleted or a claim concurrently removed between the claim and here,
-				// which puts the upsert outside the partial unique index and back on the
-				// INSERT arm, the only arm that can set created_by. On the conflict arm the
-				// query leaves the column alone, so passing it costs nothing; omitting it
-				// would leave a campaign with no recorded author on the one path that
-				// creates a row without a claim.
+				// Both, not just UpdatedBy. Reaching here means we OWN the claim, so a
+				// live 'pending' row for this (brief, platform) existed a moment ago and
+				// this upsert normally takes the conflict arm. That covers the
+				// re-dispatch-after-delete case too, which is NOT an INSERT-arm case:
+				// DeleteCampaign refuses a 'pending' row outright, so only a settled row
+				// can be soft-deleted, and the ClaimCampaignDispatch above then inserts a
+				// FRESH live row (the deleted one sits outside the partial unique index) —
+				// which is the statement that stamps the new campaign's created_by, and
+				// this upsert conflicts with it.
+				//
+				// CreatedBy is set for the one case that does reach the INSERT arm: the
+				// claim row disappearing between that call and this one — an operator
+				// clearing what looked like a stuck claim (see StuckDispatchClaims), or a
+				// concurrent DeleteDispatchClaim. On the conflict arm the query leaves the
+				// column alone, so passing it costs nothing; omitting it would leave a
+				// campaign with no recorded author on the one path that creates a row
+				// without a live claim in front of it.
 				campaign.CreatedBy = by
 				campaign.UpdatedBy = by
 				// Decide the persisted status. Preserve a dispatcher-set status that
