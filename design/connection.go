@@ -375,13 +375,26 @@ var GoogleAdsConnection = Type("google-ads-connection", func() {
 // AccessibleAccount represents an ad account reachable via the connection's
 // stored credential. Returned by account discovery operations.
 //
-// No Example on `id`, deliberately. The type is shared by every provider's discovery method
-// and Goa copies an attribute-level example into each one's schema, so a single value cannot
-// be right: Google Ads mints bare digits, Meta mints `act_`-prefixed ids, and the Meta method
-// below promises the prefix in its own description. Pinning Google's `8666746580` published a
-// Meta example that Meta's own connection validation rejects. The formats belong in the
-// attribute description, where they can be stated per provider, rather than in one example
-// that silently claims to speak for all of them.
+// No Example on `id`, deliberately, and the examples live on the two METHODS instead. The
+// type is shared by every provider's discovery method and Goa copies an attribute-level
+// example into each one's schema, so a single value cannot be right: Google Ads mints bare
+// digits, Meta mints `act_`-prefixed ids, and the Meta method below promises the prefix in its
+// own description. Pinning Google's `8666746580` published a Meta example that Meta's own
+// connection validation rejects.
+//
+// Deleting it is not sufficient on its own: Goa fabricates a lorem-ipsum example for any
+// attribute that lacks one, so a bare type published `id: Iste et aspernatur delectus.` to both
+// providers — no longer a wrong claim about a real format, but still not the documented one.
+// Each method therefore carries its own result-level example, which is per-provider without
+// splitting the element type the shared handler is built on.
+//
+// The generated `AccessibleAccount` COMPONENT schema still carries Goa's fabricated example,
+// and that is left as it is. Every response that returns the type overrides it with the right
+// one, so the fabricated value only survives where no provider is in scope — and there, a
+// visibly fake string is the safer artifact: a reader cannot copy it into a connection, whereas
+// a plausible `8666746580` in a provider-less context is exactly the wrong claim to publish to
+// the Meta half of the callers. The description on `id` carries both formats, which is where
+// the contract belongs.
 var AccessibleAccount = Type("accessible-account", func() {
 	Attribute("id", String, "Account identifier in the ad platform's own namespace, ready to store as the connection's account_id. Google Ads: bare digits (8666746580). Meta: act_-prefixed (act_8666746580).")
 	Attribute("label", String, "Human-readable account name or label")
@@ -613,7 +626,18 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Required("project_id")
 		})
 		Result(func() {
-			Attribute("accounts", ArrayOf(AccessibleAccount))
+			// The example lives on the METHOD's result, not on the shared element type.
+			// Goa fabricates lorem-ipsum ("Iste et aspernatur delectus.") for any attribute
+			// left without one, so removing the type-level example did not stop an example
+			// being published — it only stopped a TRUE one being published. Anchoring it
+			// here gives each provider its own id format without splitting the element type,
+			// which the shared listAccounts handler depends on.
+			Attribute("accounts", ArrayOf(AccessibleAccount), func() {
+				Example([]map[string]any{
+					{"id": "8666746580", "label": "Linux Foundation"},
+					{"id": "1234567890", "label": "CNCF"},
+				})
+			})
 			Required("accounts")
 		})
 		Error("NotFound", NotFoundError, "Resource not found")
@@ -643,7 +667,15 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Required("project_id")
 		})
 		Result(func() {
-			Attribute("accounts", ArrayOf(AccessibleAccount))
+			// Meta's own ids, for the reason given on the Google Ads method above: the
+			// `act_` prefix is what this method's description promises and what Meta's
+			// connection validation accepts.
+			Attribute("accounts", ArrayOf(AccessibleAccount), func() {
+				Example([]map[string]any{
+					{"id": "act_8666746580", "label": "Linux Foundation"},
+					{"id": "act_1234567890", "label": "CNCF (disabled: unsettled)"},
+				})
+			})
 			Required("accounts")
 		})
 		Error("NotFound", NotFoundError, "Resource not found")

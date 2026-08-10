@@ -161,7 +161,35 @@ was reaching the repo without a `connection_handler.go` helper), "Google is neve
 the arm classifying pre-send failures, and a `len(customers)` justification for preallocating the
 result slice, which is Google's variable name. All three now describe the shared path.
 
+## Deleting the shared example did not stop an example being published
+
+Removing `Example("8666746580")` from `accessible-account.id` fixed the wrong claim and
+replaced it with a different one: Goa fabricates a lorem-ipsum value for any attribute left
+without an example, so the regenerated contract advertised
+`id: Iste et aspernatur delectus.` for BOTH account-list responses — a value neither provider
+mints and the description calls "ready to store".
+
+The example now lives on each METHOD's result instead: Google Ads publishes `8666746580`,
+Meta publishes `act_8666746580`, and the element type stays shared, which is what the one
+`listAccounts` handler is built on. The `AccessibleAccount` component schema keeps Goa's
+fabricated value deliberately — every response that returns the type overrides it, so the
+fabricated one survives only where no provider is in scope, and a visibly fake string is the
+right artifact there. A plausible id in a provider-less context is the claim this whole round
+was about removing.
+
+## The `Dispatch` gap does not surface as a 409, and the note said it did
+
+The paragraph explaining why Meta stays out of `accountDiscoveryProviders` said an account-less
+Meta connection "would answer `Dispatch` with a generic error instead of the 409 that names the
+missing choice". Campaign create is asynchronous — `design/brief.go` answers `StatusAccepted` —
+so no 409 is available on that path at all; the failure surfaces in the polled job result, which
+`docs/api-catalog.md` already records for Google Ads. The synchronous 409 belongs to
+`ToggleStatus` and `ReadMetrics`, and those two need no account id, so there is nothing to tag
+in them. Tagging `Dispatch` (LFXV2-3061) improves a job result, not a status code — and a note
+pointing the next implementer at an HTTP mapping this path cannot reach is worse than no note.
+
 ## Related
+
 
 - `docs/knowledge/log/2026-08-09-lfxv2-3060-meta-account-discovery.md` — the client walk
 - `docs/knowledge/code/internal-service.md` — account discovery

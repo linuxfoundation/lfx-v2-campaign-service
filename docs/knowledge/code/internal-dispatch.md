@@ -314,11 +314,16 @@ bootstrap — credentials stored, account chosen afterwards, the way Google Ads 
 `MetaAdsConnectionConfig` still declares `Required("account_id")`, so that create is a 400
 before any of this code runs. Closing it is not a one-line loosening: only
 `resolveGoogleAdsClient` tags an empty account id with `domain.ErrAccountNotSelected`, so a
-Meta connection parked mid-bootstrap would answer `Dispatch` with a generic error instead of
-the 409 that names the missing choice. It is `Dispatch` alone — `ToggleStatus` and
-`ReadMetrics` target the campaign node by id and document that they need no account id
-(`internal/dispatch/meta.go`), so those two already work on an account-less row and there is
-nothing to tag in them. Tracked as LFXV2-3061.
+Meta connection parked mid-bootstrap would fail `Dispatch` with an error nothing classifies —
+the caller learns that the campaign did not launch, not that the reason is a choice they have
+not made. Note the shape of that answer: campaign create is ASYNCHRONOUS (`design/brief.go`
+answers `StatusAccepted`), so the untagged error surfaces in the polled job result, never as a
+409 — `docs/api-catalog.md` records the same split for Google Ads. The synchronous 409 that
+names the missing account belongs to `ToggleStatus` and `ReadMetrics`, and neither needs
+anything here: both target the campaign node by id and document that they need no account id
+(`internal/dispatch/meta.go`), so they already work on an account-less row. `Dispatch` is
+therefore the only exit to tag, and tagging it improves a job result rather than a status code.
+Tracked as LFXV2-3061.
 
 **The unmarshal cause on the decrypted blob is DROPPED, not wrapped.** It is the only value in
 the resolver derived from decrypted plaintext, and this error is logged and, on the not-usable
