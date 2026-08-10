@@ -625,6 +625,47 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	return updated, nil
 }
 
+// VerifyClaimedVersion checks that a row still matches the version claimed under
+// the given lockToken, without modifying it. Used to detect if the claimed connection
+// died and a successor modified the row between the platform call and the persist.
+//
+// On success, it returns the current campaign row (which should match the claimed
+// version if no concurrent modifications occurred). If the version has changed or the
+// row is no longer present, it returns ErrPreconditionFailed or ErrNotFound respectively,
+// classifying the failure THROUGH THE SAME locked connection (see ReplaceCampaign for the
+// reasoning: acquiring a second connection under pool pressure can starve the locked one).
+func (r *CampaignRepo) VerifyClaimedVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64, lockToken domain.CampaignLockToken) (*model.Campaign, error) {
+	// Use the same connection that holds the lock, just like ReplaceCampaign does.
+	var conn interface {
+		QueryRow(context.Context, string, ...any) pgx.Row
+	} = r.db
+	if lock, ok := lockToken.Handle().(*campaignLock); ok && lock != nil {
+		conn = lock.conn
+	}
+
+	// Read the campaign at the expected version, using the same query and predicates
+	// as ClaimCampaignVersion so the classification is consistent.
+	c, err := scanCampaign(conn.QueryRow(ctx, claimCampaignVersionQuery, campaignID, briefID, projectID, expectedVersion))
+	if err != nil {
+		// Classify no-rows as 404 vs 412, matching ClaimCampaignVersion's behavior.
+		if errors.Is(err, pgx.ErrNoRows) {
+			var exists bool
+			probeErr := conn.QueryRow(ctx, claimCampaignExistsQuery,
+				campaignID, briefID, projectID).Scan(&exists)
+			if probeErr != nil {
+				// Cannot tell the two apart; surface the probe failure.
+				return nil, fmt.Errorf("verify claimed version: classify read failure: %w", probeErr)
+			}
+			if !exists {
+				return nil, domain.ErrNotFound
+			}
+			return nil, domain.ErrPreconditionFailed
+		}
+		return nil, fmt.Errorf("verify claimed version: %w", err)
+	}
+	return c, nil
+}
+
 var activeCampaignLocks sync.Map // maps campaignID to *campaignLock
 
 // campaignLock holds the session-scoped advisory lock for a campaign.

@@ -88,11 +88,27 @@ cannot be safely resumed without provider idempotency keys).
 {active|paused}) pauses/resumes a campaign ON THE PLATFORM, then persists. Unlike
 `UpdateCampaign` (DB-only), the platform call happens FIRST via
 `Orchestrator.ToggleCampaignStatus` → the platform's `StatusToggler`; the DB row is written
-only after the platform confirms. Only a fully-created campaign (`created`, or one already `active`/`paused`) may be toggled
-(`model.CampaignStatusToggleable`); a `pending` ambiguous orphan or a `created_degraded`
-campaign is rejected 409 — toggling one would activate an incomplete campaign and/or
-overwrite its reconciliation marker with the run state (a non-empty `PlatformCampaignID`
-alone is not sufficient, since a partial/degraded campaign can carry an upstream id).
+only after the platform confirms. Only a fully-created campaign (`created`, or one already
+`active`/`paused`) may be toggled FREELY (`model.CampaignStatusToggleable`); a `pending`
+ambiguous orphan or a `created_degraded` campaign is rejected 409 on ACTIVATE — activating one
+would put an incomplete campaign in front of an audience and overwrite its reconciliation
+marker with the run state (a non-empty `PlatformCampaignID` alone is not sufficient, since a
+partial/degraded campaign can carry an upstream id).
+
+**PAUSE is the one exception, and only for `created_degraded`.** That status means the campaign
+definitely EXISTS upstream while the service does not know its full wiring — and an ADOPTED
+campaign (LFXV2-3042) reaches it by binding a campaign the lookup found, where `ENABLED` and
+`PAUSED` are alike live. So an adopted campaign can already be serving and spending, and
+refusing every toggle made the campaign most likely to need stopping the one campaign the
+service could not stop, even though the dispatchers explicitly support pausing a campaign with
+no child ids. A pause costs the guard nothing: it cannot activate anything. **The marker is
+preserved rather than written over** — pausing reconciles nothing, so the row keeps
+`created_degraded` (no version bump, no index event) and the response reports that unchanged
+status. The exception lives at the call site, not inside `CampaignStatusToggleable`, which
+stays direction-blind: a `toggleable(status, direction)` shape would invite an unrelated caller
+to pass the wrong direction and silently gain the exception. `pending` and the partial-orphan
+statuses stay refused in BOTH directions — they do not mean "exists upstream", so there is
+nothing for a pause to act on.
 Write ownership of the row is claimed via `CampaignRepo.ClaimCampaignVersion` BEFORE the
 paid platform call, not by comparing the read-time version in memory (LFXV2-2901): an
 in-memory comparison only rejects a stale caller, it does nothing to stop a SECOND
@@ -306,7 +322,7 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   keeps the 503 below honest: a 503 promises that waiting might help, and none of these conditions
   change until a human edits the connection. The distinction cannot be made here — a setup failure
   and an upstream one arrive as the same type — so `internal/dispatch/googleads.go` wraps the
-  pre-send failures with the sentinel and this arm reads it. The wrap has two owners:
+  pre-send failures with the sentinel and this arm reads it. The wrap has three owners:
   `validateGoogleAdsCredentials` tags the credential-state three (inactive, undecodable,
   incomplete), which is why they reach callers beyond discovery — but the SHAPE they reach them in
   depends on whether the caller is synchronous. The **status toggle** and the **metrics read**
@@ -315,7 +331,9 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   polled job result, never as a 409 — see `docs/api-catalog.md`. Do not describe "campaign
   dispatch" as receiving a 409; the dispatch layer produces the error, and only the two
   synchronous readers turn it into a status code.
-  `resolveGoogleAdsDiscoveryClient` tags the dashed `login_customer_id`. Neither the cause NOR its text leaves this function — not in the response and not in
+  `validatedLoginCustomerID` in `internal/dispatch/googleads.go` tags the dashed `login_customer_id`,
+  and it is now called by all three readers (toggle resolver, discovery resolver, and create dispatcher).
+  Neither the cause NOR its text leaves the dispatch layer — not in the response and not in
   the log line. One of the wrapped errors is computed over the decrypted credential blob, and
   `encoding/json` quotes its input, so logging the cause would put credential-derived bytes into
   centralized logs for exactly the connection whose credentials are malformed. What the log line

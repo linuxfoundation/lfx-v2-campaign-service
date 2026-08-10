@@ -166,6 +166,17 @@ type CampaignWriter interface {
 	// holder's own connection for this write MUST use lockToken's own handle, never a lookup by
 	// campaign ID, so a write can never attach to a different claimant's connection.
 	ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64, lockToken CampaignLockToken, indexPayload CampaignIndexPayloadFunc) (*model.Campaign, error)
+	// VerifyClaimedVersion checks that a row still matches the version claimed under
+	// lockToken, without modifying it. Used after a platform call to detect if the claimed
+	// connection died and the row was modified by a successor between the platform call and
+	// the persist. Returns the current campaign row if the version still matches, or
+	// ErrPreconditionFailed if the version has changed, or ErrNotFound if the row is gone.
+	//
+	// lockToken MUST be the token from the preceding ClaimCampaignVersion call for the same
+	// campaign. Implementations MUST use the claimed connection (the one holding the lock),
+	// never a separate connection, so a pool under pressure cannot starve the verification
+	// behind the claimed write.
+	VerifyClaimedVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64, lockToken CampaignLockToken) (*model.Campaign, error)
 	// ClaimCampaignVersion reserves EXCLUSIVE write ownership of a campaign row, gated on
 	// expectedVersion, and returns the row plus a CampaignLockToken. It returns
 	// ErrPreconditionFailed if expectedVersion is stale, or ErrNotFound if the row is gone;

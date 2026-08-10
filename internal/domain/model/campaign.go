@@ -82,8 +82,11 @@ func IsCampaignRunStatus(status string) bool {
 // campaignStatusCreated/CreatedDegraded and the orchestrator's "pending" placeholder. The
 // status toggle keys off these: it is safe to toggle a fully-created campaign, but a
 // "pending" (ambiguous orphan) or "created_degraded" (a sub-step still needs reconciliation)
-// campaign must NOT be toggled — doing so would activate an incomplete campaign and/or erase
-// the reconciliation marker.
+// campaign must NOT be ACTIVATED — doing so would put an incomplete campaign in front of an
+// audience. The service allows one exception in the other direction, which is why it is
+// spelled out here and not in CampaignStatusToggleable: a 'created_degraded' campaign
+// definitely exists upstream and may be spending, so it may be PAUSED, and the service
+// preserves the marker rather than overwriting it with the run state.
 const (
 	CampaignStatusPending         = "pending"
 	CampaignStatusCreated         = "created"
@@ -108,8 +111,15 @@ const (
 )
 
 // CampaignStatusToggleable reports whether a campaign in the given status may have its run
-// state toggled: only a cleanly-created campaign (or one already in a run state) is safe. A
-// pending/degraded/other provisioning state is not — see the provisioning-state constants.
+// state set FREELY, in either direction: only a cleanly-created campaign (or one already in a
+// run state) is safe. A pending/degraded/other provisioning state is not — see the
+// provisioning-state constants.
+//
+// It is deliberately direction-blind, and false for created_degraded. The service's one
+// pause-only exception for that status is expressed at the call site (ToggleCampaignStatus)
+// rather than by giving this predicate a direction parameter, because every other caller asks
+// the direction-free question and a `toggleable(status, direction)` shape would invite one of
+// them to pass the wrong direction and silently gain the exception.
 func CampaignStatusToggleable(status string) bool {
 	switch status {
 	case CampaignStatusCreated, CampaignRunActive, CampaignRunPaused:
@@ -133,8 +143,8 @@ func CampaignStatusToggleable(status string) bool {
 // Acting on such a row OVERWRITES that marker and so destroys the signal. This is the same
 // doctrine CampaignStatusToggleable enforces for the run-state toggle; it is a separate
 // predicate because the two answer different questions and legitimately differ on
-// created_degraded, which is fully created upstream (safe to retire, and to toggle only
-// after reconciliation).
+// created_degraded, which is fully created upstream (safe to retire, safe to PAUSE
+// immediately, and safe to resume only after reconciliation).
 func CampaignStatusNeedsReconciliation(status string) bool {
 	switch status {
 	case CampaignStatusPending, CampaignStatusGroupCreated, CampaignStatusUnconfirmed:
