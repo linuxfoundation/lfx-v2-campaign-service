@@ -282,11 +282,39 @@ that reports zero. Saying so there is part of the endpoint work in part 2, where
 window reaches the API surface; recorded here so the gap is a known one rather than an
 oversight.
 
+## Authenticated portal resolution (LFXV2-3058)
+
+`AuthenticatedPortalID` reads `/account-info/v3/details` to resolve the HubSpot hub
+(portal) id that the private-app bearer token actually authenticates against. This is
+deliberately NOT `AccountConfig.PortalID`, which is an optional operator-supplied string
+used only to build app URLs; nothing keeps it in step with the token, so a credential
+swap can leave the configured value pointing to one portal while the token reaches
+another. Only the token's authenticated identity is authoritative, and this method is
+how to query it.
+
+The id is returned as a string because it is compared against stored campaign
+`Result.PortalID` values (which are also strings) at metrics-read time. HubSpot email
+IDs are bare numerics unique only within a portal, so an email id can collide across
+portals — reading it under the wrong portal silently returns another portal's counters
+or false "no data". Both are wrong, so the dispatcher records the authenticated portal
+at dispatch time and refuses a metrics read when the token has moved to a different
+portal.
+
+This call is sent by both code paths: `Dispatch.cloneEmail` (best-effort, wrapped in
+a short timeout and logged as a warning if it fails, because account-info may be
+outside the private app's scopes) and `ReadMetrics` (fail-closed, so a token
+credential problem is discovered at metrics time, not at send time).
+
+Malformed responses (non-JSON or missing/non-numeric `portalId`) do not leak upstream
+data into logs; the error message is fixed text + response length.
+
 ## Scope
 
-Auth + request layer + the email/list/event-def operations above, plus marketing-email statistics reads. Consumers: the
-audience-building logic (LFXV2-2774, uses lists + event-defs) and the email staging
-dispatcher (LFXV2-2777, uses the marketing-email ops), the latter blocked on PR #11.
+Auth + request layer + the email/list/event-def operations above, plus marketing-email
+statistics reads and authenticated portal resolution. Consumers: the audience-building
+logic (LFXV2-2774, uses lists + event-defs) and the email staging dispatcher
+(LFXV2-2777, uses the marketing-email ops) and metrics reader, the latter blocked on
+PR #11.
 
 ## Dispatch adapter (internal/dispatch)
 
