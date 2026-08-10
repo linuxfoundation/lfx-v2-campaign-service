@@ -61,9 +61,10 @@ func insertApprovedBriefVersioned(ctx context.Context, t *testing.T, pool *pgxpo
 // which assert placeholder positions and cannot see the bound Go value at all.
 //
 // No caller passes an empty non-nil value today, so this pins a guard rather than a live bug.
-// It is still worth pinning: CreateAudience and CreateAudienceForApprovedBrief now differ in
-// nothing but this wrapper, and an unexplained difference between two near-identical inserts
-// is the kind that gets normalised away by whoever touches them next.
+// It is still worth pinning, and the reason is what the wrapper removes rather than what it
+// adds: CreateAudienceForApprovedBrief was the path that omitted it, and now that it does not,
+// the two inserts bind every column identically. An unexplained difference between two
+// near-identical inserts is the kind that gets normalised away by whoever touches them next.
 //
 // Revert check: drop the nullJSON wrappers and the empty-value subtest fails with the 22P02
 // insert error. The nil subtest passes either way, deliberately — it records that the nil
@@ -96,8 +97,16 @@ func TestCreateAudienceForApprovedBrief_EmptyRawJSONIsNotAFailedInsert(t *testin
 					"attribution.", name, err)
 			}
 
-			// Three-way, not a boolean: `IS NULL` alone cannot tell SQL NULL from the JSONB
-			// literal `null`, and keeping them apart is the point of the column.
+			// Three-way, not a boolean, though not for the reason an earlier version of this
+			// comment gave: `IS NULL` does distinguish the two on its own — it is true only
+			// for SQL NULL, and false for the JSONB literal `null`. The reason to classify
+			// rather than assert a boolean is the FAILURE message. A bare `IS NULL` check
+			// that fails says the column was not NULL and stops there, and the two ways it
+			// can be not-NULL want different investigations: `jsonb-null` means the value
+			// reached the driver and `nullJSON` marshalled a nil into a literal, which is a
+			// bug in this wrapper, whereas `value` means an actor was recorded on a path that
+			// is supposed to have none, which is a bug in the caller. Naming which one it is
+			// costs one CASE and saves the round-trip of going to find out.
 			for _, col := range []string{"created_by", "suppression_list_ids"} {
 				var got string
 				q := `SELECT CASE

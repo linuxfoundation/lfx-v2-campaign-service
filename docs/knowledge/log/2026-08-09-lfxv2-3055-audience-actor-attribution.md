@@ -26,8 +26,12 @@ unanswerable without also reading `created_by`. `CreateAudienceForApprovedBrief`
 `BuildAudience` insert, and it is stamped too — that request creates real HubSpot lists and
 spends money, and it runs under a human's HTTP request, so the initiator is a fact the
 statement has. The build's later progress writes carry that actor forward rather than
-restamping; if the build ever moves off the request goroutine, they must go NULL instead,
-because a scheduled retry has no principal.
+restamping. Moving the build off the request goroutine would not by itself change that —
+campaign creation is already asynchronous and attributes correctly, by capturing the decoded
+actor while the request context is still in hand and passing it down as a parameter. What
+forces NULL is not detachment but the absence of an initiator to capture: a separately
+scheduled retry or a cron sweep has no principal, and there NULL beats asserting a person who
+was not there.
 
 **What is deliberately NOT done.** Existing rows are not backfilled from `created_by`. The
 migration cannot know whether anyone edited them, so a backfill would manufacture

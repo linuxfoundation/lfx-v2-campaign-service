@@ -172,9 +172,13 @@ leaving headroom over reusing a number a sibling branch might renumber into.
 
 - `000019` — `updated_by` JSONB on `campaign_audiences`. Only the one column: that table
   has carried `created_by` since `000005`, and `000015` recorded the missing half as a
-  known gap. Only ONE version is missing between here and `000015`: `000018`, the audience
-  build lease, still open as PR #106. `000016` (campaigns actor columns) and `000017` (the
-  disconnected probe index) are both present, having merged with #95 and #93 — an earlier
+  known gap. At the time this branch was written one version was missing between here and
+  `000015` — `000018`, the audience build lease, then open as PR #106 — which is a statement
+  about merge order and stops being true the moment #106 lands. The durable form of the claim
+  is the rule, not the census: a gap in this sequence is expected only while the PR that
+  claims the version is unmerged, and `TestMigrations_AllowedVersionGapsAreStillOpen` is what
+  enforces that, failing as soon as an excused gap closes. `000016` (campaigns actor columns)
+  and `000017` (the disconnected probe index) are both present, having merged with #95 and #93 — an earlier
   draft of this bullet called `000017` skipped while the next clause said it had merged,
   which is the sort of contradiction a numbering note can least afford. This column was
   numbered `000017` until #93 merged and made it a silent duplicate, then `000018` until
@@ -332,9 +336,14 @@ Two things are specific to this table:
   step follows would lose the only record of who started it.
 - **The build's progress writes carry the actor FORWARD rather than restamping.**
   `BuildAudience` passes the row returned by the insert straight back to `UpdateAudience`,
-  so `updated_by` keeps naming the initiator. That is correct here and would not be if the
-  build ever moved off the request goroutine: a scheduled retry has no principal, and the
-  column would then have to go NULL rather than keep asserting a person who was not there.
+  so `updated_by` keeps naming the initiator. Moving the build off the request goroutine
+  would NOT by itself change that — campaign creation is already asynchronous and still
+  attributes correctly, by capturing the decoded actor while the request context is in hand
+  and threading it down (see the campaign pattern above). Detachment is not what breaks
+  attribution; absence of an initiator is. The column has to go NULL only where there was no
+  human request to capture from in the first place — a separately scheduled retry, a cron
+  sweep, a startup reconciliation — because there the alternative is asserting a person who
+  was not there.
 
 The service handler stamps the editor onto the row it LOADED, not onto the incoming patch:
 the loaded row already carries the PREVIOUS editor, so writing it back unchanged would
