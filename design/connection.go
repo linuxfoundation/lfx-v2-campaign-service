@@ -358,9 +358,12 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // Meta is NOT in that position as of this endpoint — an account-less Meta connection can be
 // completed through this API, by discovery followed by PUT. It stays required because the
 // second half is missing: Meta's Dispatch answers an empty account id with a generic error
-// rather than reason=account_not_selected, so a caller who created the row and stopped there
-// would meet a 503 that neither names the missing choice nor points at the list that would
-// supply it. That is a tagging gap with a ticket (LFXV2-3061), not a structural one.
+// rather than reason=account_not_selected. Campaign create is the only Meta path that needs
+// the id at all — the status toggle and the metrics read address the campaign node by id —
+// and campaign create is ASYNCHRONOUS: it answers 202, so what a caller who created the row
+// and stopped there actually meets is not an HTTP status but the polled job result, carrying
+// a message that neither names the missing choice nor points at the list that would supply
+// it. That is a tagging gap with a ticket (LFXV2-3061), not a structural one.
 //
 // Add the requirement back for Google Ads, or drop it for another provider, only together with
 // that provider's discovery endpoint AND its account_not_selected tagging.
