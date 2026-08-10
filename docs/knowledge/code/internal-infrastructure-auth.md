@@ -41,8 +41,17 @@ That write lock is also why the key fetch is **coalesced**. `jwks.CachingProvide
 do it itself: on a miss, `refreshKey` takes the lock and fetches *without re-checking the
 cache*, so N simultaneous first requests become N serialized fetches and the Nth caller
 waits roughly N × fetch. Authentication runs on every request, so the queue is the whole
-request load — reachable on the startup burst and on a TTL expiry that coincides with a slow
-JWKS endpoint. `coalesceKeyFunc` wraps the provider's `KeyFunc` in a `singleflight` group,
+request load.
+
+The reachable cases are narrower than "any cache miss", and the wider claim is worth
+refusing explicitly because it is the one that suggests itself. An ordinary **TTL expiry
+does not** stampede: `CachingProvider` holds a semaphore, admits exactly one background
+refresher, and serves the STALE key set to everyone else while that one runs, so no caller
+blocks and no second fetch starts. Two things do reach the cold path — **startup**, before
+anything is cached, and the second-order case where that lone background refresh **fails**
+and deletes the stale entry it was serving from. The next N callers then find an empty cache
+and serialize, which means the stampede arrives precisely when the JWKS endpoint is already
+unhealthy. `coalesceKeyFunc` wraps the provider's `KeyFunc` in a `singleflight` group,
 using `DoChan` so each caller keeps its own deadline, and `context.WithoutCancel` inside the
 shared call so the first caller's cancellation cannot fail everyone waiting on its result.
 

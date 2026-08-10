@@ -345,3 +345,41 @@ everyone; the next N callers find a cold cache and serialize on `refreshKey`'s w
 So a *down* endpoint does produce the stampede that expiry alone does not — precisely when
 the service can least afford it. The comment now says that. Neither party's summary was
 right, and the mechanism was only visible by reading the source.
+
+## Round N: a typed error a method does not declare is a 500
+
+The change that made JWTAuth able to refuse a token was only half a change. `JWTAuth`
+(`internal/service/connection_handler.go:42`) returns `*conn.BadRequestError` for every
+token-side refusal, and that is right. But Goa generates each method's error encoder from
+the errors that method **declares** in the design, and `get-`, `delete-` and `test-` in
+`design/connection.go` declared only `NotFound`, `InternalServerError` and
+`ServiceUnavailable`. A typed error with no `case` in its encoder falls through to Goa's
+generic encoder, so a caller with a bad token got **500**, and the 400 appeared nowhere in
+OpenAPI. Everything on the Go side looked correct: it compiled, the handler returned the
+right error, and the only observable defect was the wire status.
+
+Six providers × three methods, so the same omission eighteen times over — which is the
+tell that the omission was structural rather than an oversight on one method. The reads and
+the delete carry `bearerToken()` exactly as the writes do; the declaration follows the
+security scheme, not the payload.
+
+The test reads the **generated** encoder source and asserts a `case "BadRequest"` in every
+`Encode*Error` function, rather than exercising a list of encoders by name. The hazard being
+guarded is a new provider's `get`/`delete`/`test` added without the declaration, and a
+hand-maintained list would not contain the new one — the single case that has to fail.
+Revert-verified by dropping the declaration from `get-` alone and regenerating: seven
+failures, one per provider, each naming its method.
+
+`commonBriefErrors`/`briefErrorResponses` had already been through this and carried a
+`withBadRequest bool` that no longer gated anything, `_ = withBadRequest` and all. It is
+gone rather than retained-for-readability. A boolean at 38 call sites that a reader must
+check does nothing is not readability; it is a standing invitation to make it mean something
+again, which would restore exactly the defect above.
+
+**Two doc claims were narrowed in the same pass.** `docs/architecture.md` said "a gateway is
+a routing decision, not a security boundary a service may assume" — true of identity, false
+of authorization, since the `campaign_manager` gate is Heimdall RuleSets with no in-service
+equivalent. Verifying the signature buys one thing: the actor stamped on a write is the
+actor the token names. And `docs/knowledge/code/internal-infrastructure-auth.md` still
+preserved the TTL-expiry stampede claim that the previous round had already deleted from
+`jwt.go`'s godoc — a concept doc outliving the source it describes.

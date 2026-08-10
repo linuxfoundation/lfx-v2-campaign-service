@@ -1557,6 +1557,13 @@ paths:
                         ETag:
                             description: ETag header value (mirrors version)
                             type: string
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -1768,6 +1775,13 @@ paths:
             responses:
                 "204":
                     description: No Content response.
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -1935,6 +1949,13 @@ paths:
                         $ref: '#/definitions/ConnectionTestResult'
                         required:
                             - ok
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -1994,6 +2015,13 @@ paths:
                         ETag:
                             description: ETag header value (mirrors version)
                             type: string
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -2205,6 +2233,13 @@ paths:
             responses:
                 "204":
                     description: No Content response.
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -2315,6 +2350,13 @@ paths:
                         $ref: '#/definitions/ConnectionTestResult'
                         required:
                             - ok
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -2374,6 +2416,13 @@ paths:
                         ETag:
                             description: ETag header value (mirrors version)
                             type: string
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -2585,6 +2634,13 @@ paths:
             responses:
                 "204":
                     description: No Content response.
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -2695,6 +2751,13 @@ paths:
                         $ref: '#/definitions/ConnectionTestResult'
                         required:
                             - ok
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -2754,6 +2817,13 @@ paths:
                         ETag:
                             description: ETag header value (mirrors version)
                             type: string
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -2965,6 +3035,13 @@ paths:
             responses:
                 "204":
                     description: No Content response.
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -3075,6 +3152,13 @@ paths:
                         $ref: '#/definitions/ConnectionTestResult'
                         required:
                             - ok
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -3134,6 +3218,13 @@ paths:
                         ETag:
                             description: ETag header value (mirrors version)
                             type: string
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -3345,6 +3436,13 @@ paths:
             responses:
                 "204":
                     description: No Content response.
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -3455,6 +3553,13 @@ paths:
                         $ref: '#/definitions/ConnectionTestResult'
                         required:
                             - ok
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -3514,6 +3619,13 @@ paths:
                         ETag:
                             description: ETag header value (mirrors version)
                             type: string
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -3725,6 +3837,13 @@ paths:
             responses:
                 "204":
                     description: No Content response.
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -3835,6 +3954,13 @@ paths:
                         $ref: '#/definitions/ConnectionTestResult'
                         required:
                             - ok
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -3894,6 +4020,13 @@ paths:
                         ETag:
                             description: ETag header value (mirrors version)
                             type: string
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -4105,6 +4238,13 @@ paths:
             responses:
                 "204":
                     description: No Content response.
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:
@@ -4215,6 +4355,13 @@ paths:
                         $ref: '#/definitions/ConnectionTestResult'
                         required:
                             - ok
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
                 "404":
                     description: Not Found response.
                     schema:

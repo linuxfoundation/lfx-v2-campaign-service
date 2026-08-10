@@ -2052,6 +2052,15 @@ paths:
             responses:
                 "204":
                     description: No Content response.
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -2121,6 +2130,15 @@ paths:
                                 project_id: Aspernatur quos est magnam voluptates.
                                 status: active
                                 version: 8132372301950512811
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -2529,6 +2547,15 @@ paths:
                             example:
                                 message: Sapiente ex est modi cupiditate possimus ducimus.
                                 ok: true
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -2578,6 +2605,15 @@ paths:
             responses:
                 "204":
                     description: No Content response.
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -2650,6 +2686,15 @@ paths:
                                 sender_name: Voluptas qui voluptas veniam sint voluptas.
                                 status: active
                                 version: 1552956989772584247
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -2994,6 +3039,15 @@ paths:
                             example:
                                 message: Dolorem qui eaque.
                                 ok: false
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -3043,6 +3097,15 @@ paths:
             responses:
                 "204":
                     description: No Content response.
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -3112,6 +3175,15 @@ paths:
                                 project_id: Et est et corporis.
                                 status: active
                                 version: 691976492631326364
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -3444,6 +3516,15 @@ paths:
                             example:
                                 message: Temporibus dolorem cumque quis accusantium quia enim.
                                 ok: false
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -3493,6 +3574,15 @@ paths:
             responses:
                 "204":
                     description: No Content response.
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -3563,6 +3653,15 @@ paths:
                                 project_id: Voluptas est consequatur rerum neque.
                                 status: error
                                 version: 8402747170619008911
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -3901,6 +4000,15 @@ paths:
                             example:
                                 message: Et quia iure.
                                 ok: false
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -3950,6 +4058,15 @@ paths:
             responses:
                 "204":
                     description: No Content response.
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -4019,6 +4136,15 @@ paths:
                                 project_id: Non laudantium quis ab non sunt.
                                 status: inactive
                                 version: 7472986980795124202
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -4357,6 +4483,15 @@ paths:
                             example:
                                 message: Ab quos provident.
                                 ok: false
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -4406,6 +4541,15 @@ paths:
             responses:
                 "204":
                     description: No Content response.
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -4474,6 +4618,15 @@ paths:
                                 project_id: Quasi ut quas officiis mollitia ducimus.
                                 status: active
                                 version: 9107089964806714811
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -4806,6 +4959,15 @@ paths:
                             example:
                                 message: Ea sequi quos qui quo et praesentium.
                                 ok: false
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -4855,6 +5017,15 @@ paths:
             responses:
                 "204":
                     description: No Content response.
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -4924,6 +5095,15 @@ paths:
                                 project_id: Temporibus in qui provident corrupti ut similique.
                                 status: deleted
                                 version: 8091372322961997197
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:
@@ -5262,6 +5442,15 @@ paths:
                             example:
                                 message: Sapiente ab ea pariatur deserunt.
                                 ok: true
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
                 "404":
                     description: 'NotFound: Resource not found'
                     content:

@@ -332,9 +332,15 @@ The Query Service maintains revision history on each (re)index, so listing and a
    It *does* own **verifying** that token: `internal/infrastructure/auth` checks the signature
    against Heimdall's JWKS on every authenticated request and turns the claims into the domain
    actor recorded on writes. Trusting an unverified header would make attribution forgeable by
-   anything that can reach the pod, and a gateway is a routing decision, not a security
-   boundary a service may assume.
-3. **Authorization** — OpenFGA (`campaign_manager` relation gates every endpoint)
+   anything that can reach the pod.
+   The claim being made here is narrow and deliberately so: **identity** is verified in
+   process, **authorization** is not. The `campaign_manager` gate below is enforced by
+   Heimdall RuleSets at the gateway and has no in-service equivalent, so a request that
+   reaches this pod having bypassed the gateway is still treated as authorized. Verifying the
+   signature buys one thing — the actor stamped on a write is the actor the token names —
+   and does not turn the pod into a self-sufficient security boundary.
+3. **Authorization** — OpenFGA (`campaign_manager` relation gates every endpoint), enforced
+   at the gateway, not in this service. See the identity/authorization split in (2).
 4. **Frontend** — Angular components in lfx-v2-ui
 5. **Snowflake marketing KPIs** — read from the data lake via query service, not from this service
 6. **HubSpot UTM integration** — stays in the UI Express layer initially
