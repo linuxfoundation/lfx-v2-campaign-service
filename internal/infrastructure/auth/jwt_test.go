@@ -45,18 +45,23 @@ func newSigner(t *testing.T) *signer {
 		t.Fatalf("generate key: %v", err)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{
-			"kty": "RSA",
-			"kid": testKeyID,
-			"alg": "PS256",
-			"use": "sig",
-			"n":   base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
-			"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
-		}}})
+		writeKeySet(w, key)
 	}))
 	t.Cleanup(srv.Close)
 	return &signer{key: key, jwksURL: srv.URL + "/.well-known/jwks"}
+}
+
+// writeKeySet serves the JWKS Heimdall would serve for key.
+func writeKeySet(w http.ResponseWriter, key *rsa.PrivateKey) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{
+		"kty": "RSA",
+		"kid": testKeyID,
+		"alg": "PS256",
+		"use": "sig",
+		"n":   base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
+		"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
+	}}})
 }
 
 // sign mints a PS256 token with overrides merged over a valid baseline; a nil value
@@ -200,6 +205,103 @@ func TestVerifyActor_UnreachableJWKSRefuses(t *testing.T) {
 	if errors.Is(err, ErrUnauthenticated) {
 		t.Errorf("err = %v, want NOT ErrUnauthenticated: the service maps that to 400, and a "+
 			"caller holding a good token would be told their credential is bad and not to retry", err)
+	}
+}
+
+// TestVerifyActor_JWKSErrorBodyIsNotMistakenForAKeySet is the 200-shaped failure the
+// status guard exists for, and it is the one that is NOT self-announcing: a 500 with an
+// empty body fails the JSON decode on its own (see the test above), so the middleware
+// surfaces it either way. A 404 carrying `{"error":"not found"}` — a wrong JWKS path, a
+// proxy in front of Heimdall answering for it — decodes CLEANLY, because
+// jose.JSONWebKeySet has one field and ignores every other. Without the guard the
+// provider returns a zero-key set as a SUCCESS, CachingProvider stores it for the full
+// five-minute TTL, and every caller holding a perfectly good token is told for five
+// minutes that their credential is bad (HTTP 400) over a misconfiguration that is ours.
+//
+// The second half is the part the guard buys beyond the status code: because the failure
+// is a transport error rather than a successful fetch, nothing is cached, so the very
+// next request recovers the moment the endpoint does. Recovery inside the TTL is the
+// assertion — with a poisoned cache it could not happen at all.
+func TestVerifyActor_JWKSErrorBodyIsNotMistakenForAKeySet(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	var healthy atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if healthy.Load() {
+			writeKeySet(w, key)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"not found"}`))
+	}))
+	defer srv.Close()
+
+	s := &signer{key: key, jwksURL: srv.URL + "/.well-known/jwks"}
+	token := s.sign(t, nil)
+	v := s.verifier(t)
+
+	_, err = v.VerifyActor(context.Background(), token)
+	if !errors.Is(err, ErrKeyUnavailable) {
+		t.Fatalf("err = %v, want ErrKeyUnavailable: a 404 error object is not a key set", err)
+	}
+	if errors.Is(err, ErrUnauthenticated) {
+		t.Errorf("err = %v, want NOT ErrUnauthenticated: the token was never checked", err)
+	}
+	// The status has to reach the operator. requireKeys ALSO catches this case, which is
+	// why the sentinel above cannot distinguish the two guards — but it can only say "no
+	// signing keys", which describes a healthy issuer mid-rotation just as well as it
+	// describes a 404 on a mistyped path. The status and the URL are what name the actual
+	// fault, and only the transport guard has them. Without it this assertion is the one
+	// that fails, and the operator is left diagnosing a wrong URL from a message about
+	// key rotation.
+	if !strings.Contains(err.Error(), "HTTP 404") {
+		t.Errorf("err = %v, want the HTTP status in the message: it is what identifies the "+
+			"misconfiguration as a wrong JWKS endpoint rather than an issuer with no keys", err)
+	}
+
+	healthy.Store(true)
+	if _, err = v.VerifyActor(context.Background(), token); err != nil {
+		t.Fatalf("VerifyActor after the endpoint recovered: %v — the failed fetch must not "+
+			"have been cached, or recovery waits out the %s TTL", err, jwksCacheTTL)
+	}
+}
+
+// TestVerifyActor_EmptyKeySetIsUnavailable drives requireKeys through the REAL provider
+// rather than calling it with a constructed value, and that is the whole design of the
+// test: requireKeys type-asserts the key set, and the middleware decodes into
+// gopkg.in/go-jose/go-jose.v2 (jwks/provider.go:13). An assertion written against a
+// different go-jose major compiles, vets, lints, and never matches — a guard that passes
+// everything through. A test that builds the value itself would assert against whichever
+// version the TEST imported and pass just as vacuously. Only the provider's own value
+// can tell the two apart.
+//
+// The condition is reachable without any status anomaly: a 200 serving `{"keys":[]}` is
+// what an issuer mid-rotation with nothing published returns. A key set with no keys
+// cannot verify anything, so returning it as a success means every token that arrives is
+// refused as bad — 400 for what is squarely a 503.
+func TestVerifyActor_EmptyKeySetIsUnavailable(t *testing.T) {
+	s := newSigner(t)
+	token := s.sign(t, nil)
+
+	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"keys":[]}`))
+	}))
+	defer empty.Close()
+	v, err := New(Config{JWKSURL: empty.URL + "/.well-known/jwks", Audience: testAudience, Issuer: testIssuer})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, err = v.VerifyActor(context.Background(), token)
+	if !errors.Is(err, ErrKeyUnavailable) {
+		t.Fatalf("err = %v, want ErrKeyUnavailable: a key set with no keys cannot verify a token, "+
+			"so this is our outage and not a verdict on the credential", err)
+	}
+	if errors.Is(err, ErrUnauthenticated) {
+		t.Errorf("err = %v, want NOT ErrUnauthenticated", err)
 	}
 }
 

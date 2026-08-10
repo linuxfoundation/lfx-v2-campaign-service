@@ -245,3 +245,49 @@ made the two branches distinguishable enough for the test to be caught.
 
 **A test whose constructor omits the dependency under test can pass for the wrong reason, and
 nothing surfaces it until some other change makes the two paths return different things.**
+
+## Round N: a 404 is a valid key set, and the guard against it was nearly vacuous
+
+Copilot flagged that the JWKS fetch never checks the HTTP status. Verified in the
+vendored source rather than from the finding text: go-jwt-middleware v2.3.1's
+`jwks.Provider.KeyFunc` (`jwks/provider.go:84-93`) does `Client.Do` → `defer Close` →
+`json.NewDecoder(...).Decode(&jwks)`, with nothing in between. `jose.JSONWebKeySet` has
+one field and ignores unknown ones, so a 404 `{"error":"not found"}` decodes cleanly into
+a zero-key set, is returned as a **success**, and `CachingProvider` holds it for the whole
+five-minute TTL. Every valid token for those five minutes then fails to find its signing
+key — which the validator reports as a token problem, so callers with perfectly good
+credentials get HTTP 400 for a misconfiguration that is entirely ours.
+
+Two guards went in: `jwksStatusGuard` (a `RoundTripper` rejecting non-2xx before the
+decode, so the fetch fails and nothing is cached) and `requireKeys` (refusing a key set
+with no keys at all, whatever produced it).
+
+**The interesting part is what went wrong in writing the second one.** `requireKeys`
+type-asserts the value the provider returns. The build was green, `go vet` and
+`golangci-lint` were clean, and the added tests passed — but `go get` had pulled
+`github.com/go-jose/go-jose/v4` into the graph for the first time, which was the tell:
+the middleware decodes into `gopkg.in/go-jose/go-jose.v2` (`jwks/provider.go:13`). The
+assertion was against a type the provider can never return. It matched nothing and passed
+every value straight through. A guard that is a no-op, with a test suite that agrees.
+
+The general rule, worth more than the fix: **a type assertion against a dependency's type
+is only a check if it is the same major version the dependency returns.** Otherwise it is
+a silent pass-through that compiles, vets and lints clean — the compiler cannot object,
+because asserting an `any` to an unrelated type is perfectly legal code.
+
+The corollary shaped the test. A test that constructs the key set itself would assert
+against whichever go-jose version the *test file* imported, and would have passed against
+the broken version too — vacuous in exactly the same way as the thing it was meant to
+catch. `TestVerifyActor_EmptyKeySetIsUnavailable` therefore drives the **real** provider
+against a real endpoint serving `{"keys":[]}`; only the provider's own value can tell the
+two majors apart. Revert-verified: with the assertion pointed at a look-alike local type,
+it fails with `unsupported key type/format` instead of `ErrKeyUnavailable`.
+
+The status guard needed its own reachable assertion for the same reason, and it turned out
+not to be the sentinel: `requireKeys` catches the 404 case too, so both guards produce
+`ErrKeyUnavailable` and removing one changes nothing observable about the outcome. What it
+changes is the **diagnostic** — without the transport guard the operator is told "JWKS
+endpoint returned no signing keys", which describes a healthy issuer mid-rotation just as
+well as it describes a mistyped URL. So the test asserts the HTTP status reaches the error
+message, and revert-verifying confirms that is the assertion that breaks. Where two guards
+overlap on the outcome, the binding assertion is on what each one uniquely contributes.

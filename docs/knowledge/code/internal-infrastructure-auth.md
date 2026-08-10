@@ -63,6 +63,44 @@ The cancellation arm is tagged too: that our wait ended rather than Heimdall's a
 arriving still leaves nothing established about the token. The service layer maps the
 sentinel to **503** and every token-side refusal to 400.
 
+## A JWKS fetch that "succeeds" with no keys
+
+The 400-for-our-outage bug above has a second, quieter source that tagging cannot reach,
+because the fetch does not fail. go-jwt-middleware v2.3.1 never checks the HTTP status:
+`jwks.Provider.KeyFunc` goes straight from `Client.Do` to
+`json.NewDecoder(response.Body).Decode(&jwks)` (`jwks/provider.go:84-93`). A
+`jose.JSONWebKeySet` has one field and ignores every other, so an error object — a 404
+`{"error":"not found"}` from a mistyped path, a 502 from a proxy in front of Heimdall —
+decodes **cleanly** into a key set with zero keys and is returned as a success.
+`CachingProvider` then stores it for the full five-minute TTL, and for those five minutes
+every caller holding a good token is told their credential is bad.
+
+Two guards, at two different levels:
+
+- **`jwksStatusGuard`** is a `RoundTripper` that turns a non-2xx into a transport error
+  before anything decodes it. Because the fetch then *fails*, nothing is cached and the
+  next request recovers the moment the endpoint does. It drains a bounded prefix of the
+  body (`jwksErrorBodyPeek`) to a debug log — never into the error, which travels
+  further — and closes it, which also keeps the connection poolable on an endpoint that
+  fails on every refresh.
+- **`requireKeys`** refuses a key set with no keys in it, whatever produced it: a 200
+  carrying `{"keys":[]}`, an issuer mid-rotation with nothing published, a future
+  middleware version that drops the status check some other way. The status guard
+  prevents one cause; this prevents the *outcome*.
+
+`requireKeys` type-asserts against **`gopkg.in/go-jose/go-jose.v2`**, which is the version
+the middleware decodes into (`jwks/provider.go:13`) — and the general rule worth carrying
+past this file: **a type assertion against a dependency's type is only a check if it is
+the same major version the dependency returns.** Assert a different major and it compiles,
+vets and lints clean, never matches, and silently passes everything through. A test that
+constructs the key set itself asserts against whichever version the *test* imported and
+passes just as vacuously, which is why
+`TestVerifyActor_EmptyKeySetIsUnavailable` drives the real provider against a real
+`{"keys":[]}` endpoint. `TestVerifyActor_JWKSErrorBodyIsNotMistakenForAKeySet` covers the
+404 case, and asserts the HTTP status reaches the operator: `requireKeys` catches that
+case too, but can only say "no signing keys", which describes a healthy issuer
+mid-rotation just as well as it describes a wrong URL.
+
 ## Empty config defaults; a wrong one fails the pod
 
 `New` substitutes `constants.DefaultJWKSURL`/`DefaultAudience`/`DefaultIssuer` for empty

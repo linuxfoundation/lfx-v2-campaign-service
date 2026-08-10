@@ -16,6 +16,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -24,6 +26,7 @@ import (
 	"github.com/auth0/go-jwt-middleware/v2/jwks"
 	"github.com/auth0/go-jwt-middleware/v2/validator"
 	"golang.org/x/sync/singleflight"
+	jose "gopkg.in/go-jose/go-jose.v2"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -148,10 +151,13 @@ func New(cfg Config) (*Verifier, error) {
 
 	// WithCustomJWKSURI is required: "heimdall" is a bare name, not an OIDC discovery URL.
 	provider := jwks.NewCachingProvider(issuer, jwksCacheTTL, jwks.WithCustomJWKSURI(jwksURL),
-		jwks.WithCustomClient(&http.Client{Timeout: jwksFetchTimeout}))
+		jwks.WithCustomClient(&http.Client{
+			Timeout:   jwksFetchTimeout,
+			Transport: &jwksStatusGuard{next: http.DefaultTransport},
+		}))
 
 	v, err := validator.New(
-		coalesceKeyFunc(provider.KeyFunc),
+		coalesceKeyFunc(requireKeys(provider.KeyFunc)),
 		signatureAlgorithm,
 		issuer.String(),
 		[]string{audience},
@@ -162,6 +168,76 @@ func New(cfg Config) (*Verifier, error) {
 		return nil, fmt.Errorf("build JWT validator: %w", err)
 	}
 	return &Verifier{validator: v}, nil
+}
+
+// jwksErrorBodyPeek bounds how much of a non-2xx JWKS body is read before it is discarded.
+// Enough to make a misconfiguration diagnosable in a log line; small enough that a hostile
+// or runaway endpoint cannot make the read itself the outage.
+const jwksErrorBodyPeek = 512
+
+// jwksStatusGuard rejects a non-2xx JWKS response BEFORE the provider decodes it.
+//
+// go-jwt-middleware v2.3.1 does not check the status: jwks.Provider.KeyFunc goes straight
+// from Client.Do to json.NewDecoder(response.Body).Decode(&jwks) (jwks/provider.go:84-93).
+// jose.JSONWebKeySet has one field and ignores unknown ones, so an error object — a 404
+// `{"error":"not found"}` from a wrong path, a 502 from a proxy in front of Heimdall —
+// decodes CLEANLY into a key set with zero keys. The provider then returns it as a success
+// and CachingProvider caches it for the full TTL. Every valid token for the next five
+// minutes fails to find its signing key, and that is a verdict on the TOKEN: HTTP 400,
+// "invalid bearer token", to callers whose credentials are perfectly good, for a
+// misconfiguration that is entirely ours.
+//
+// Failing at the transport is what turns that into an error the provider propagates, so
+// coalesceKeyFunc tags it ErrKeyUnavailable and the service answers 503. It also means
+// nothing is cached: CachingProvider stores only successful fetches, so the next request
+// retries rather than waiting out a TTL on poisoned data.
+type jwksStatusGuard struct{ next http.RoundTripper }
+
+func (g *jwksStatusGuard) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := g.next.RoundTrip(req)
+	if err != nil || (resp.StatusCode >= 200 && resp.StatusCode < 300) {
+		return resp, err
+	}
+	// We are returning an error instead of the response, so nothing downstream will close
+	// this body. Drain a bounded prefix for the diagnostic, then close: draining also lets
+	// net/http return the connection to the idle pool instead of tearing down TCP+TLS,
+	// which matters because a misconfigured endpoint fails on EVERY refresh.
+	peek, _ := io.ReadAll(io.LimitReader(resp.Body, jwksErrorBodyPeek))
+	_ = resp.Body.Close()
+	// The body is NOT quoted into the error. It is untrusted upstream text that would
+	// travel into logs; the status and the URL are what identify the misconfiguration, and
+	// the body goes to a debug log where its length is bounded and its origin is obvious.
+	slog.Debug("JWKS endpoint returned a non-2xx response",
+		"url", req.URL.Redacted(), "status", resp.StatusCode, "body_prefix", string(peek))
+	return nil, fmt.Errorf("JWKS endpoint %s returned HTTP %d", req.URL.Redacted(), resp.StatusCode)
+}
+
+// requireKeys refuses a key set with no keys in it.
+//
+// The assertion is against gopkg.in/go-jose/go-jose.v2, which is the version
+// go-jwt-middleware v2.3.1 decodes into (jwks/provider.go:13). Asserting the wrong jose
+// major here would compile, never match, and pass everything through — the check would be
+// vacuous with nothing to show for it, which is why
+// TestRequireKeys_EmptyKeySetFromTheRealProviderIsUnavailable drives it through the actual
+// provider rather than constructing the type itself.
+//
+// jwksStatusGuard closes the reachable path to one (a decoded error object), but the
+// INVARIANT is what this states: a key set with nothing in it cannot verify any token, so
+// returning it as a success means every token that arrives is refused as bad. That is a
+// 503 in every case that produces it — a 200 carrying `{}` or `{"keys":[]}`, an issuer
+// mid-rotation with nothing published, a future provider version that drops the status
+// check some other way. The guard above prevents one cause; this prevents the outcome.
+func requireKeys(inner func(context.Context) (any, error)) func(context.Context) (any, error) {
+	return func(ctx context.Context) (any, error) {
+		val, err := inner(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if set, ok := val.(*jose.JSONWebKeySet); ok && len(set.Keys) == 0 {
+			return nil, errors.New("JWKS endpoint returned no signing keys")
+		}
+		return val, nil
+	}
 }
 
 // coalesceKeyFunc collapses concurrent COLD-cache JWKS fetches into one.
