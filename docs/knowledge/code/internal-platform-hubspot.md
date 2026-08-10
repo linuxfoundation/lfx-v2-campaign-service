@@ -316,7 +316,8 @@ The token travels in the request BODY rather than only the `Authorization` heade
 That is safe here because this client's errors are typed (`preSendError`,
 `transportError`, `apiError`) and render method and path only — no request body
 reaches an error string. Re-check that property before putting any other secret in
-a body.
+a body. The token-info endpoint needs no scope a private app cannot have, which is
+the point of using it.
 
 This call is sent by both code paths: `Dispatch.cloneEmail` (best-effort, wrapped in
 a short timeout and logged as a warning if it fails, so a provenance lookup cannot

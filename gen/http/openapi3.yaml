@@ -1856,7 +1856,7 @@ paths:
                                 cost_micros: 0
                                 ctr: 0.1152
                                 email:
-                                    bounces: 132
+                                    bounces: 95
                                     clicks: 212
                                     delivered: 9268
                                     opens: 1840
@@ -6965,7 +6965,7 @@ components:
                 cost_micros: 0
                 ctr: 0.1152
                 email:
-                    bounces: 132
+                    bounces: 95
                     clicks: 212
                     delivered: 9268
                     opens: 1840
@@ -7264,7 +7264,7 @@ components:
                 bounces:
                     type: integer
                     description: Bounced emails, to date
-                    example: 132
+                    example: 95
                     format: int64
                 clicks:
                     type: integer
@@ -7293,7 +7293,7 @@ components:
                     format: int64
             description: 'Counters that only an email campaign has. NONE of them is scoped to the requested window: the window selects which emails are in scope by their SEND date, and every counter below is then that email''s total to date. Rendering any of them as "in the last N days" is therefore wrong. impressions/clicks on the parent object mirror opens/clicks; cost_micros is always 0 for email because the platform bills no per-send cost — that 0 must not be blended into a cross-channel cost-per-acquisition.'
             example:
-                bounces: 132
+                bounces: 95
                 clicks: 212
                 delivered: 9268
                 opens: 1840

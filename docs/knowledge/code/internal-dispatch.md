@@ -274,13 +274,13 @@ reports false numbers:
   HubSpot email id is a bare numeric that is unique only inside the portal that minted it, so
   `Dispatch` records the portal in the campaign's `Result` blob and `ReadMetrics` refuses
   (`domain.ErrCampaignAccountMismatch`, 409) unless it still matches. Both sides come from
-  `Client.AuthenticatedPortalID`, which reads `/account-info/v3/details` — deliberately NOT
+  `Client.AuthenticatedPortalID`, which calls `POST /oauth/v2/private-apps/get/access-token-info` — deliberately NOT
   `providerConfig["portal_id"]`, an optional operator-supplied string used only for app URLs
   that `SetCredentialHubspot` leaves untouched when it swaps the token. A config-on-config
   comparison would fire only on the DECLARED change and stay silent on the undeclared token
   swap, which is the actual risk; that version was written, found unsound and reverted before
   this one. The asymmetry between the two callers is intentional: the `Dispatch` lookup is
-  BEST-EFFORT (account-info may be outside a private app's scopes, and a provenance read must
+  BEST-EFFORT (the call can still fail on network or upstream error, and a provenance read must
   not block a send that is otherwise ready), while `ReadMetrics` FAILS CLOSED — including when
   the row records no portal, which is every campaign staged before this landed. Those rows are
   unreadable until re-dispatched, and that is the honest outcome: nothing about such a row

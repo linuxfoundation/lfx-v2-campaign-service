@@ -171,7 +171,14 @@ func (d *HubSpotDispatcher) ReadMetrics(ctx context.Context, projectID string, p
 	// leaves it untouched, so a config-on-config comparison fires exactly when an operator
 	// DECLARES the change and stays silent on the undeclared token swap that is the actual
 	// risk.
-	current, perr := client.AuthenticatedPortalID(ctx)
+	//
+	// The lookup is bounded with its OWN short deadline, separate from the ambient context:
+	// the client's retry policy alone can wait up to retryMax*maxRetryWait (180s) on sustained
+	// throttling, which alone exceeds the whole metrics-call budget (20s) and would burn it
+	// before GetEmailMetrics even runs.
+	portalCtx, cancelPortal := context.WithTimeout(ctx, portalLookupTimeout)
+	current, perr := client.AuthenticatedPortalID(portalCtx)
+	cancelPortal()
 	if perr != nil {
 		return nil, fmt.Errorf("get email metrics from hubspot: cannot establish which portal this token authenticates against: %w", perr)
 	}

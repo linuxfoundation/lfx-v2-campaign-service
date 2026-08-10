@@ -57,7 +57,7 @@ func statsServer(t *testing.T) (*httptest.Server, *statsRec) {
 const (
 	// The wire path is the private-apps token-info endpoint, NOT /account-info/v3/details:
 	// the latter needs the `oauth` scope, which no private app can hold.
-	accountDetailsPath = hubSpotTokenInfoPath
+	accountDetailsPath = "/oauth/v2/private-apps/get/access-token-info"
 	testPortalID       = "8112310"
 	testPortalResponse = `{"hubId":8112310}`
 )

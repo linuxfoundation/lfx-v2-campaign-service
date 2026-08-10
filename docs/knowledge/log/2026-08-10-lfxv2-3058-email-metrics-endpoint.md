@@ -5,7 +5,7 @@
 first non-ad-platform on
 `GET /projects/{p}/briefs/{b}/campaigns/{c}/metrics`. Part 1 (LFXV2-3058, PR #105) built the
 client and its contract. This PR adds `Client.AuthenticatedPortalID` as part of the
-portal-provenance guard (LFXV2-3073 below) — a new client operation that reads `/account-info/v3/details`
+portal-provenance guard (LFXV2-3073 below) — a new client operation that calls `POST /oauth/v2/private-apps/get/access-token-info`
 to resolve the token's authenticated hub identity.
 
 ## The endpoint was shaped for ad platforms, and email breaks two of its assumptions
@@ -149,8 +149,8 @@ With no explicit values Goa fabricated independent integers, and the result adve
 `cost_micros` on an email response plus `impressions`/`clicks` that did not equal
 `email.opens`/`email.clicks` — contradicting, in the same document, the three invariants the
 descriptions directly above it state and the adapter enforces. Both types now carry explicit
-examples that satisfy the mapping, and `sent = delivered + bounces` besides, so the example is
-a legible email response rather than six unrelated numbers.
+examples that satisfy the mapping (opens <= delivered, impressions and clicks match their email
+counterparts), so the example is a legible email response rather than six unrelated numbers.
 
 ## LFXV2-3073 — the portal guard, done properly
 
@@ -161,12 +161,10 @@ which portal a request reaches, and `SetCredentialHubspot` swaps the token witho
 touching `providerConfig`, so the guard fired on the DECLARED move and stayed
 silent on the undeclared swap it claimed to block.
 
-The sound version asks the token: `Client.AuthenticatedPortalID` reads
-`/account-info/v3/details`, `Dispatch` records it, `ReadMetrics` re-resolves and
+The sound version asks the token: `Client.AuthenticatedPortalID` calls
+`POST /oauth/v2/private-apps/get/access-token-info`, `Dispatch` records it, `ReadMetrics` re-resolves and
 compares before contacting HubSpot. The two callers treat a failed lookup
-differently on purpose — `Dispatch` logs and proceeds (account-info may be outside
-a private app's scopes, and a campaign that sends and cannot be measured beats one
-that does not send), `ReadMetrics` refuses, since an unestablished identity is not
+differently on purpose — `Dispatch` logs and proceeds (a provenance lookup is not worth failing a send over, and the call can still fail on network or upstream error), `ReadMetrics` refuses, since an unestablished identity is not
 permission to report numbers it cannot attribute. An unrecorded portal is refused
 for the same reason, which leaves every campaign staged before this change
 unreadable until re-dispatched — accepted rather than worked around, because

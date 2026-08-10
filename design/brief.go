@@ -224,14 +224,15 @@ var CampaignMetrics = Type("campaign-metrics", func() {
 var EmailMetrics = Type("email-metrics", func() {
 	Description("Counters that only an email campaign has. NONE of them is scoped to the requested window: the window selects which emails are in scope by their SEND date, and every counter below is then that email's total to date. Rendering any of them as \"in the last N days\" is therefore wrong. impressions/clicks on the parent object mirror opens/clicks; cost_micros is always 0 for email because the platform bills no per-send cost — that 0 must not be blended into a cross-channel cost-per-acquisition.")
 	// Examples chosen to be internally consistent with each other and with the parent
-	// object: sent = delivered + bounces, opens <= delivered, and opens/clicks equal the
-	// parent's impressions/clicks. See the note on campaign-metrics for why the example
-	// has to hold up rather than merely exist.
+	// object: opens <= delivered, and opens/clicks equal the parent's impressions/clicks.
+	// Sent minus Delivered is not Bounces (messages can be dropped or suppressed before
+	// delivery is ever attempted), so sent and delivered are both independent data.
+	// See the note on campaign-metrics for why the example has to hold up rather than merely exist.
 	Attribute("sent", Int64, "Emails handed to the delivery pipeline, to date", func() { Example(9400) })
 	Attribute("delivered", Int64, "Emails the receiving server accepted, to date", func() { Example(9268) })
 	Attribute("opens", Int64, "Opens to date (mirrors impressions)", func() { Example(1840) })
 	Attribute("clicks", Int64, "Clicks to date (mirrors clicks)", func() { Example(212) })
-	Attribute("bounces", Int64, "Bounced emails, to date", func() { Example(132) })
+	Attribute("bounces", Int64, "Bounced emails, to date", func() { Example(95) })
 	Attribute("unsubscribes", Int64, "Unsubscribes, to date", func() { Example(17) })
 	Required("sent", "delivered", "opens", "clicks", "bounces", "unsubscribes")
 })
