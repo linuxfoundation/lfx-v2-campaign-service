@@ -47,11 +47,20 @@ func insertBriefIn(ctx context.Context, t *testing.T, pool *pgxpool.Pool, projec
 // anything — can be expressed, since that is one of the rows the index must NOT cover.
 func insertBinding(ctx context.Context, t *testing.T, pool *pgxpool.Pool, project, briefID string, platformID *string, status string) error {
 	t.Helper()
+	return insertBindingOn(ctx, t, pool, model.ProviderGoogleAds, project, briefID, platformID, status)
+}
+
+// insertBindingOn is insertBinding with the provider spelled out. Only the microsoft-ads
+// sub-test needs it: 000020's predicate is scoped to google-ads, so the provider is the one
+// column that decides whether the index applies to a row at all, and asserting the scope
+// means inserting rows OUTSIDE it.
+func insertBindingOn(ctx context.Context, t *testing.T, pool *pgxpool.Pool, platform model.Provider, project, briefID string, platformID *string, status string) error {
+	t.Helper()
 
 	_, err := pool.Exec(ctx, `
 		INSERT INTO campaigns (project_id, brief_id, platform, campaign_name, status, platform_campaign_id)
 		VALUES ($1, $2, $3, $4, $5, $6)`,
-		project, briefID, model.ProviderGoogleAds, dbtest.UniqueID(t, "campaign"), status, platformID)
+		project, briefID, platform, dbtest.UniqueID(t, "campaign"), status, platformID)
 	return err
 }
 
@@ -166,6 +175,36 @@ func TestLiveOneUpstreamCampaignBindsToOneBrief(t *testing.T) {
 		}
 		if pgErr.Code != sqlstateUniqueViolation {
 			t.Fatalf("SQLSTATE = %s (%s), want %s", pgErr.Code, pgErr.Message, sqlstateUniqueViolation)
+		}
+	})
+
+	// The mirror image of the sub-test above, and the reason 000020's predicate carries
+	// `platform = 'google-ads'`. The argument for keying globally rests entirely on Google
+	// Ads' shared customer id; it does not generalise. Microsoft campaign ids are
+	// ACCOUNT-scoped, and this service supports separate per-project Microsoft connections,
+	// so account B minting an id account A already used is not a collision — it is two
+	// distinct campaigns in two distinct id spaces. Under an unscoped index the second
+	// insert raises 23505 on a perfectly ordinary dispatch, and because only AdoptCampaign
+	// classifies 23505 as adoption-specific, the operator gets a generic 409 and an
+	// UNCONFIRMED partial rather than anything nameable.
+	//
+	// Remove the scope from the migration and this sub-test fails while its google-ads
+	// sibling still passes, which is exactly the distinction worth pinning.
+	t.Run("microsoft is not constrained", func(t *testing.T) {
+		platformID := dbtest.UniqueID(t, "msid")
+		projectA := dbtest.UniqueID(t, "projectA")
+		projectB := dbtest.UniqueID(t, "projectB")
+		briefA := insertBriefIn(ctx, t, pool, projectA, dbtest.UniqueID(t, "slug"))
+		briefB := insertBriefIn(ctx, t, pool, projectB, dbtest.UniqueID(t, "slug"))
+
+		if err := insertBindingOn(ctx, t, pool, model.ProviderMicrosoftAds, projectA, briefA, &platformID, testCampaignStatus); err != nil {
+			t.Fatalf("account A binding: %v", err)
+		}
+
+		if err := insertBindingOn(ctx, t, pool, model.ProviderMicrosoftAds, projectB, briefB, &platformID, testCampaignStatus); err != nil {
+			t.Fatalf("account B binding: %v — 000020 is covering microsoft-ads, where campaign "+
+				"ids are account-scoped. Two separate Microsoft accounts minting the same id is "+
+				"routine, so this rejects normal dispatches and leaves them UNCONFIRMED", err)
 		}
 	})
 }

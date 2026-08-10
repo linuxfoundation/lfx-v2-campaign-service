@@ -464,7 +464,11 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			projectSlugAttr()
 			briefIDAttr()
 			Attribute("platform", String, "Ad platform the campaign lives on", func() {
-				Example("google_ads")
+				// Hyphenated, matching model.ProviderGoogleAds and the Enum on
+				// campaign-create-input. Goa publishes this example straight into the
+				// OpenAPI document, so an underscore here hands client authors a value
+				// the service rejects.
+				Example("google-ads")
 			})
 			Attribute("platform_campaign_id", String, "The ad platform's own id for the existing campaign", func() {
 				// Load-bearing, not hygiene: an empty id degrades the lookup from "this

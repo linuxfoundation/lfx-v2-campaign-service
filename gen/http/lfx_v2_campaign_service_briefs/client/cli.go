@@ -355,7 +355,7 @@ func BuildAdoptCampaignPayload(lfxV2CampaignServiceBriefsAdoptCampaignBody strin
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsAdoptCampaignBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"platform\": \"google_ads\",\n      \"platform_campaign_id\": \"1234567890\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"platform\": \"google-ads\",\n      \"platform_campaign_id\": \"1234567890\"\n   }'")
 		}
 		if utf8.RuneCountInString(body.PlatformCampaignID) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.platform_campaign_id", body.PlatformCampaignID, utf8.RuneCountInString(body.PlatformCampaignID), 1, true))

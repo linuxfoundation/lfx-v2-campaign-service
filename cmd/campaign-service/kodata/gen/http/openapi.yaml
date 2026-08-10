@@ -5616,7 +5616,7 @@ definitions:
             platform:
                 type: string
                 description: Ad platform the campaign lives on
-                example: google_ads
+                example: google-ads
             platform_campaign_id:
                 type: string
                 description: The ad platform's own id for the existing campaign
@@ -5624,7 +5624,7 @@ definitions:
                 minLength: 1
                 maxLength: 64
         example:
-            platform: google_ads
+            platform: google-ads
             platform_campaign_id: "1234567890"
         required:
             - platform

@@ -291,6 +291,43 @@ func TestMigration000020_HasNoIfNotExists(t *testing.T) {
 	}
 }
 
+// TestMigration000020_ScopesTheIndexToGoogleAds pins the `platform = 'google-ads'` term in
+// 000020's predicate, because the index reads as a general one-upstream-campaign-one-brief
+// guard and the scope looks like a limitation someone would helpfully remove.
+//
+// The global key is correct ONLY for Google Ads, and only because Google Ads is one shared
+// customer id across every foundation — two projects there really are the same account.
+// Microsoft campaign ids are ACCOUNT-scoped and this service supports separate per-project
+// Microsoft connections, so an unscoped index raises 23505 when account B mints an id
+// account A already used. That is an ordinary dispatch, not a conflict, and only
+// AdoptCampaign classifies 23505 as adoption-specific — on the dispatch path it surfaces as
+// a generic 409 and leaves an UNCONFIRMED partial behind. The live-db counterpart is
+// TestLiveOneUpstreamCampaignBindsToOneBrief/"microsoft is not constrained"; this test runs
+// without a database so the scope is pinned even where the live suite is skipped.
+func TestMigration000020_ScopesTheIndexToGoogleAds(t *testing.T) {
+	const name = "000020_campaigns_unique_platform_campaign.up.sql"
+	b, err := os.ReadFile(filepath.Join("migrations", name))
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	// Only the statement, not the comment above it that explains the choice.
+	var stmt []string
+	for _, line := range strings.Split(string(b), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" && !strings.HasPrefix(trimmed, "--") {
+			stmt = append(stmt, trimmed)
+		}
+	}
+	joined := strings.Join(stmt, " ")
+	if !strings.Contains(joined, "platform = 'google-ads'") {
+		t.Fatalf("%s statement is missing the google-ads scope: %q\n"+
+			"Without it the index covers every provider. Microsoft campaign ids are "+
+			"account-scoped, so two per-project Microsoft accounts minting the same id "+
+			"collide on an ordinary dispatch — a 23505 that surfaces as a generic 409 and "+
+			"strands an UNCONFIRMED partial. A second provider needs its own constraint; do "+
+			"not widen this predicate.", name, joined)
+	}
+}
+
 // allowedVersionGaps records gaps that are KNOWN and transitional: versions claimed by a
 // sibling PR that has not merged yet. A gap listed here is a merge-ORDERING obligation, not a
 // numbering bug — this branch must not merge before the PR that fills it, or those migrations
