@@ -187,3 +187,67 @@ func TestReconcileAmbiguousAudienceCommit_ScopesByTenant(t *testing.T) {
 		t.Errorf("status = %q, want %q — reconcile touched a row outside the caller's tenant scope", status, "building")
 	}
 }
+
+// TestReconcileAmbiguousAudienceCommit_LeaveBuiltRowsUnchanged covers the fix for the Cursor
+// Bugbot finding on PR #106: reconcileAmbiguousAudienceCommit must not downgrade a successfully
+// built row to 'failed'. The reconcile path is called when tx.Commit returns an error that does
+// not prove a rollback — the row MAY have been persisted with ANY status (building, built, or
+// failed). Only 'building' rows hold the lease and need to be moved to 'failed'; 'built' rows
+// are successful builds with valid master-list pointers and must not be corrupted.
+func TestReconcileAmbiguousAudienceCommit_LeaveBuiltRowsUnchanged(t *testing.T) {
+	pool := reconcileTestPool(t)
+	ctx := context.Background()
+
+	briefID, projectID := insertReconcileTestBrief(ctx, t, pool)
+
+	// Insert a 'built' row with a master-list pointer, as if a build succeeded.
+	var builtRow model.CampaignAudience
+	masterListID := "master-list-" + reconcileUniqueID(t, "m")
+	err := pool.QueryRow(ctx, `
+		INSERT INTO campaign_audiences
+			(project_id, brief_id, platform, platform_master_list_id, status)
+		VALUES ($1, $2, $3, $4, 'built')
+		RETURNING id, version`, projectID, briefID, string(model.ProviderHubSpot), masterListID).
+		Scan(&builtRow.ID, &builtRow.Version)
+	if err != nil {
+		t.Fatalf("insert built audience row: %v", err)
+	}
+	builtRow.ProjectID = projectID
+	builtRow.BriefID = briefID
+	builtRow.Platform = model.ProviderHubSpot
+	builtRow.PlatformMasterListID = masterListID
+
+	// Call reconcile as if the INSERT had hit an ambiguous commit error. This should NOT
+	// downgrade the 'built' row to 'failed'.
+	reconcileAmbiguousAudienceCommit(ctx, pool, &builtRow)
+
+	// Verify the row is still 'built' with its master-list pointer intact.
+	var status, readMasterListID string
+	var readVersion int64
+	if err := pool.QueryRow(ctx,
+		`SELECT status, platform_master_list_id, version FROM campaign_audiences WHERE id = $1`,
+		builtRow.ID).Scan(&status, &readMasterListID, &readVersion); err != nil {
+		t.Fatalf("read back reconciled row: %v", err)
+	}
+	if status != "built" {
+		t.Errorf("status = %q, want %q — a built row must not be downgraded", status, "built")
+	}
+	if readMasterListID != masterListID {
+		t.Errorf("platform_master_list_id = %q, want %q — master list pointer must be preserved", readMasterListID, masterListID)
+	}
+	if readVersion != builtRow.Version {
+		t.Errorf("version = %d, want %d — reconcile must not bump version for a built row", readVersion, builtRow.Version)
+	}
+
+	// Importantly: the 'built' row does NOT hold the lease (the index is partial on
+	// status='building'), so a fresh build for the same (brief, platform) must be able to
+	// create a new 'building' row without hitting the uniqueness constraint.
+	var newID string
+	err = pool.QueryRow(ctx, `
+		INSERT INTO campaign_audiences (project_id, brief_id, platform, status)
+		VALUES ($1, $2, $3, 'building')
+		RETURNING id`, projectID, briefID, string(model.ProviderHubSpot)).Scan(&newID)
+	if err != nil {
+		t.Errorf("fresh build should be able to take the lease: insert failed: %v", err)
+	}
+}

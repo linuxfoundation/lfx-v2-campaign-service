@@ -117,23 +117,53 @@ func (r *AudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *mo
 const ambiguousCommitReconcileTimeout = 5 * time.Second
 
 // reconcileAmbiguousAudienceCommit runs after tx.Commit returns an error that does not prove
-// the transaction rolled back. If it actually committed, row is a real `building` row holding
-// the (brief_id, platform) build lease (migration 000018) with no other code path left to
-// release it — CreateAudienceForApprovedBrief returns nil for `created` on this path, so the
-// service layer's releaseUnstartedClaim has nothing to call UpdateAudience on. This moves the
-// row straight to `failed` by id+version, matching what releaseUnstartedClaim would have done
-// had it received the row. If the commit genuinely rolled back, no row exists at that id and
-// this UPDATE affects zero rows — a harmless no-op, not an error.
+// the transaction rolled back. If it actually committed, the row may be in ANY status
+// (building, built, or failed) — CreateAudienceForApprovedBrief and CreateAudience return
+// nil for `created` on this path, so the service layer has no way to know. The reconcile must
+// determine what was actually persisted and converge to THAT:
+//
+//   - If the row is 'building': move it to 'failed' to release the (brief_id, platform) build
+//     lease (migration 000018) held only by 'building' rows. This matches what the service
+//     layer would have done had it received the row and called releaseUnstartedClaim.
+//   - If the row is 'built' or 'failed': do NOT move it. A 'built' row is a successful build
+//     with a valid master-list pointer; a 'failed' row is already terminal. Both are stable
+//     end states that must not be corrupted.
+//   - If the commit genuinely rolled back, no row exists at that id and the UPDATE affects zero
+//     rows — a harmless no-op, not an error.
 func reconcileAmbiguousAudienceCommit(ctx context.Context, pool *Pool, row *model.CampaignAudience) {
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ambiguousCommitReconcileTimeout)
 	defer cancel()
+
+	// First, query the row's current status scoped by tenant (project_id, brief_id).
+	// If the row exists, we determine whether to move it to 'failed' based on its current
+	// status. If it does not exist, the commit rolled back and there's nothing to do.
+	var currentStatus string
+	q := `SELECT status FROM campaign_audiences WHERE id=$1 AND brief_id=$2 AND project_id=$3`
+	err := pool.QueryRow(rctx, q, row.ID, row.BriefID, row.ProjectID).Scan(&currentStatus)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// The commit rolled back: no row at that id for this tenant. This is expected in
+			// some commit-error cases and is not itself an error — reconciliation is complete.
+			return
+		}
+		slog.ErrorContext(ctx, "failed to query audience status for reconciliation after an ambiguous commit error",
+			"audience_id", row.ID, "error", err)
+		return
+	}
+
+	// The row exists. Only move it to 'failed' if it is currently 'building'. If it is
+	// 'built' or 'failed', it is in a stable end state and must not be corrupted.
+	if currentStatus != string(model.AudienceBuilding) {
+		return
+	}
+
 	// Scoped by brief_id and project_id too, matching UpdateAudience's predicate — id alone
 	// would still be correct (it's the primary key), but every other write to this table
 	// carries the tenant scope, and this is a write path, not a read: worth keeping the
 	// pattern uniform rather than carving out a silent exception here.
-	q := `UPDATE campaign_audiences SET status='failed', version=version+1, updated_at=now()
+	updateQ := `UPDATE campaign_audiences SET status='failed', version=version+1, updated_at=now()
 		WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND version=$4`
-	if _, err := pool.Exec(rctx, q, row.ID, row.BriefID, row.ProjectID, row.Version); err != nil {
+	if _, err := pool.Exec(rctx, updateQ, row.ID, row.BriefID, row.ProjectID, row.Version); err != nil {
 		slog.ErrorContext(ctx, "failed to reconcile an audience build row after an ambiguous commit error",
 			"audience_id", row.ID, "error", err)
 	}
