@@ -72,8 +72,9 @@ var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 // reusable: a deleted row sits outside the index, so it does not conflict and this
 // INSERT wins the claim cleanly. Pinned by
 // TestCampaignRepo_OnConflictCarriesLivePredicate.
-const claimCampaignDispatchQuery = `INSERT INTO campaigns (project_id, brief_id, job_id, platform, campaign_name, status)
-	VALUES ($1, $2, $3, $4, '', 'pending')
+const claimCampaignDispatchQuery = `INSERT INTO campaigns
+	(project_id, brief_id, job_id, platform, campaign_name, status, created_by, updated_by)
+	VALUES ($1, $2, $3, $4, '', 'pending', $5, $5)
 	ON CONFLICT (brief_id, platform) WHERE status <> 'deleted' DO NOTHING`
 
 // ClaimCampaignDispatch atomically claims the right to dispatch (brief, platform)
@@ -89,8 +90,34 @@ const claimCampaignDispatchQuery = `INSERT INTO campaigns (project_id, brief_id,
 // RowsAffected()==1 means this caller won the claim; 0 means the pair is already claimed or
 // already has a campaign. No RETURNING is used because ON CONFLICT DO NOTHING returns no row
 // on conflict, so we detect the winner via RowsAffected and then read the current row.
-func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string) (bool, *model.Campaign, error) {
-	tag, err := r.db.Exec(ctx, claimCampaignDispatchQuery, projectID, briefID, jobID, string(platform))
+// The actor is stamped HERE, on the claim, because this is the row's FIRST insert — the
+// upsert that follows takes the conflict arm, which deliberately leaves created_by alone.
+// (The upsert's INSERT arm stamps it too, but it is nearly always THIS statement that does
+// the stamping. A retry claims again first, so the row is back and the conflict arm takes it.
+// A re-dispatch after a soft delete is the same story, not an exception: the deleted row sits
+// outside the partial unique index, so THIS INSERT wins and stamps created_by on the fresh
+// campaign, and the upsert then conflicts with it — and a 'pending' row cannot be deleted at
+// all, since CampaignStatusDeletable is a whitelist of settled statuses. The upsert's INSERT
+// arm is reached only when the row this statement just wrote is gone by the time the upsert
+// runs: an operator clearing an apparently-stuck claim, or a concurrent DeleteDispatchClaim.
+// See orchestrator.dispatchPlatform. Both arms setting it is what keeps the column populated
+// on every path that can create the row.)
+//
+// Both actor columns are set from the same value, matching createBriefQuery: at creation the
+// author IS the last mover, and leaving updated_by NULL on a freshly claimed row would make
+// "nobody has touched this since it was made" indistinguishable from "we never recorded who".
+//
+// `by` may be nil, and that is an ordinary outcome rather than a defect. It comes from
+// attributedActor(ctx, "dispatch campaign brief") in Orchestrator.Start, which returns nil —
+// after logging a warning — when the request carries no authenticated principal. NULL then
+// means "not recorded", which is the honest value; inventing a placeholder actor would make
+// the audit trail claim a principal that never acted.
+func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
+	createdBy, err := marshalActor(by)
+	if err != nil {
+		return false, nil, fmt.Errorf("claim campaign dispatch: %w", err)
+	}
+	tag, err := r.db.Exec(ctx, claimCampaignDispatchQuery, projectID, briefID, jobID, string(platform), createdBy)
 	if err != nil {
 		return false, nil, fmt.Errorf("claim campaign dispatch: %w", err)
 	}
@@ -209,7 +236,7 @@ func (r *CampaignRepo) DeleteDispatchClaim(ctx context.Context, briefID string, 
 
 const campaignCols = `id::text, project_id::text, brief_id::text, job_id::text, platform, platform_campaign_id, campaign_name,
 	status, budget_amount, budget_type, start_date, end_date, config_snapshot, result, version,
-	created_at, updated_at`
+	created_by, updated_by, created_at, updated_at`
 
 // getCampaignQuery and getCampaignByPlatformQuery both exclude soft-deleted rows;
 // pinned by TestCampaignRepo_ReadsExcludeSoftDeleted.
@@ -266,14 +293,46 @@ func (r *CampaignRepo) GetCampaignByPlatform(ctx context.Context, projectID, bri
 // whatever may still exist upstream.
 const upsertCampaignQuery = `INSERT INTO campaigns
 	(project_id, brief_id, job_id, platform, platform_campaign_id, campaign_name, status,
-	 budget_amount, budget_type, start_date, end_date, config_snapshot, result)
-	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+	 budget_amount, budget_type, start_date, end_date, config_snapshot, result, created_by, updated_by)
+	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 	ON CONFLICT (brief_id, platform) WHERE status <> 'deleted' DO UPDATE SET
 		job_id=EXCLUDED.job_id, platform_campaign_id=EXCLUDED.platform_campaign_id,
 		campaign_name=EXCLUDED.campaign_name, status=EXCLUDED.status,
 		budget_amount=EXCLUDED.budget_amount, budget_type=EXCLUDED.budget_type,
 		start_date=EXCLUDED.start_date, end_date=EXCLUDED.end_date,
 		config_snapshot=EXCLUDED.config_snapshot, result=EXCLUDED.result,
+		-- created_by is NOT in the update list. What this arm does, on every path the
+		-- orchestrator actually takes, is FINALIZE THE CURRENT CLAIM: dispatchPlatform
+		-- reaches an upsert only when ClaimCampaignDispatch returned claimed=true, and
+		-- that INSERT stamped created_by moments earlier. Every !claimed branch returns
+		-- before this statement — a reusable campaign is reported as a reuse, a retained
+		-- partial as a reconcile, a bare pending claim as a skip — so a LATER dispatch of
+		-- the same (brief, platform) never reaches here at all. The same holds for the
+		-- cases that look like exceptions: a retry re-claims first (the released row is
+		-- gone, so the INSERT wins and re-stamps), and a re-dispatch after a soft delete
+		-- inserts a fresh row outside the partial unique index.
+		--
+		-- So the omission is not preventing an overwrite the orchestrator would otherwise
+		-- perform; it is REPOSITORY SEMANTICS. UpsertCampaign is a general-purpose method
+		-- on a repository, not a private half of dispatchPlatform, and its conflict arm
+		-- must be safe for a future caller that reaches it WITHOUT a claim in front of it.
+		-- For that caller, copying EXCLUDED.created_by would rewrite the original author
+		-- with whoever triggered the most recent write — exactly the information updated_by
+		-- exists to carry, and the one thing created_by exists NOT to carry. Under shared
+		-- system accounts the ad platform cannot supply the original author, so once
+		-- overwritten it is gone for good; the column is worth defending against a caller
+		-- that does not exist yet.
+		--
+		-- COALESCE, not a bare assignment, for the same reason from the other side. The
+		-- actor threaded into this arm is whatever attributedActor produced back in
+		-- Orchestrator.Start — nil whenever that request carried no authenticated
+		-- principal — and a NULL means "not recorded", so writing one over a real actor
+		-- would turn "we know who" into "we do not". Unlike created_by above, this one is
+		-- reachable TODAY without inventing a caller: the claim and the upsert are two
+		-- statements, and only the second can be re-run against a row the first already
+		-- stamped (the retained-partial persist and the success persist are both upserts
+		-- over the same claim). An unattributed re-persist is an ordinary event.
+		updated_by=COALESCE(EXCLUDED.updated_by, campaigns.updated_by),
 		version=campaigns.version+1, updated_at=now()
 	RETURNING ` + campaignCols
 
@@ -306,8 +365,13 @@ const claimCampaignExistsQuery = `SELECT EXISTS (
 
 const replaceCampaignQuery = `UPDATE campaigns SET
 	campaign_name=$1, status=$2, budget_amount=$3, budget_type=$4, start_date=$5, end_date=$6,
-	config_snapshot=$7, result=$8, version=version+1, updated_at=now()
-	WHERE id=$9 AND brief_id=$10 AND project_id=$11 AND version=$12
+	config_snapshot=$7, result=$8,
+	-- Same COALESCE reasoning as the upsert's conflict arm: an update whose caller had no
+	-- authenticated principal (attributedActor returned nil, having logged it) is an
+	-- ordinary unattributed write, not an instruction to forget the last actor we know.
+	updated_by=COALESCE($9, updated_by),
+	version=version+1, updated_at=now()
+	WHERE id=$10 AND brief_id=$11 AND project_id=$12 AND version=$13
 	  AND status <> 'deleted'`
 
 // UpsertCampaign inserts or updates the (brief, platform) campaign row. On
@@ -319,10 +383,20 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	createdBy, err := marshalActor(c.CreatedBy)
+	if err != nil {
+		return nil, fmt.Errorf("upsert campaign: %w", err)
+	}
+	updatedBy, err := marshalActor(c.UpdatedBy)
+	if err != nil {
+		return nil, fmt.Errorf("upsert campaign: %w", err)
+	}
+
 	row := tx.QueryRow(ctx, upsertCampaignQuery,
 		c.ProjectID, c.BriefID, c.JobID, string(c.Platform), nullStr(c.PlatformCampaignID),
 		c.CampaignName, c.Status, c.BudgetAmount, budgetTypeArg(c.BudgetType),
 		c.StartDate, c.EndDate, nullJSON(c.ConfigSnapshot), nullJSON(c.Result),
+		createdBy, updatedBy,
 	)
 	upserted, err := scanCampaign(row)
 	if err != nil {
@@ -409,9 +483,13 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	updatedBy, err := marshalActor(c.UpdatedBy)
+	if err != nil {
+		return nil, fmt.Errorf("replace campaign: %w", err)
+	}
 	updated, err := scanCampaign(tx.QueryRow(ctx, q,
 		c.CampaignName, c.Status, c.BudgetAmount, budgetTypeArg(c.BudgetType), c.StartDate, c.EndDate,
-		nullJSON(c.ConfigSnapshot), nullJSON(c.Result), c.ID, c.BriefID, c.ProjectID, expectedVersion,
+		nullJSON(c.ConfigSnapshot), nullJSON(c.Result), updatedBy, c.ID, c.BriefID, c.ProjectID, expectedVersion,
 	))
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("replace campaign: %w", err)
@@ -486,8 +564,13 @@ type campaignLock struct {
 // platform call. The lock is therefore a CONTENTION guard (it makes the common case one
 // writer at a time), not durable ownership.
 //
-// What is durable is the compare-and-swap in replaceCampaignQuery: `WHERE ... version=$12`
-// with `version=version+1`. Whichever writer commits first bumps the version; the other's
+// What is durable is the compare-and-swap in replaceCampaignQuery: the `version=` term of its
+// WHERE clause, paired with `version=version+1` in the SET list. (Named by term rather than by
+// placeholder ordinal on purpose — this comment read `version=$12` until the actor parameter
+// shifted the CAS to `$13` and left `$12` binding `project_id`, so the load-bearing sentence
+// pointed at the wrong column. Ordinals renumber; the column name does not.)
+//
+// Whichever writer commits first bumps the version; the other's
 // ReplaceCampaign matches zero rows and surfaces ErrPreconditionFailed, so a lost lock can
 // never produce two persisted writes at the same version, two outbox rows, or a stale
 // overwrite. TestClaimVersionIsBackedByACompareAndSwap pins that predicate.
@@ -944,7 +1027,18 @@ const deleteCampaignLockQuery = `SELECT status, version FROM campaigns
 // the row holds platform_campaign_id, the only local pointer to a campaign that may
 // still exist and still be spending upstream. Pinned by
 // TestDeleteCampaign_IsSoftDelete.
-const deleteCampaignQuery = `UPDATE campaigns SET status='deleted', version=version+1, updated_at=now()
+//
+// updated_by is stamped here for the same reason the row is kept at all. A soft delete
+// is the most consequential thing anyone does to a campaign — it retires the local
+// record of something that may still be spending — and it is the one mutation where
+// "who did this" is asked after the fact. Leaving the column alone would leave it
+// naming whoever last EDITED the campaign, so the audit trail would attribute the
+// deletion to someone who did not perform it: worse than NULL, because it reads as
+// knowledge. COALESCE for the usual reason (see the upsert's conflict arm): a delete
+// with no authenticated principal records nothing rather than erasing the last actor
+// we do know about.
+const deleteCampaignQuery = `UPDATE campaigns SET status='deleted',
+	updated_by=COALESCE($2, updated_by), version=version+1, updated_at=now()
 	WHERE id=$1`
 
 // DeleteCampaign soft-deletes a campaign (status = 'deleted'), gating on
@@ -983,7 +1077,7 @@ const deleteCampaignQuery = `UPDATE campaigns SET status='deleted', version=vers
 // mid-dispatch 'pending' claim, or a 'group_created'/'unconfirmed' partial orphan —
 // see model.CampaignStatusNeedsReconciliation), and domain.ErrPreconditionFailed on a
 // version mismatch.
-func (r *CampaignRepo) DeleteCampaign(ctx context.Context, projectID, briefID, id string, expectedVersion int64, indexPayload domain.CampaignIndexPayloadFunc) error {
+func (r *CampaignRepo) DeleteCampaign(ctx context.Context, projectID, briefID, id string, expectedVersion int64, by *model.Actor, indexPayload domain.CampaignIndexPayloadFunc) error {
 	// Participate in the SAME advisory-lock protocol as ClaimCampaignVersion before
 	// taking the row lock. FOR UPDATE alone serializes this against the dispatch path
 	// (which UPDATEs the row) but NOT against an in-flight run-state toggle: a toggle
@@ -1083,7 +1177,11 @@ func (r *CampaignRepo) DeleteCampaign(ctx context.Context, projectID, briefID, i
 		return domain.ErrPreconditionFailed
 	}
 
-	if _, uerr := tx.Exec(ctx, deleteCampaignQuery, id); uerr != nil {
+	deletedBy, merr := marshalActor(by)
+	if merr != nil {
+		return fmt.Errorf("delete campaign: %w", merr)
+	}
+	if _, uerr := tx.Exec(ctx, deleteCampaignQuery, id, deletedBy); uerr != nil {
 		return fmt.Errorf("delete campaign: soft delete: %w", uerr)
 	}
 	// Enqueue the deletion to the index, just as every other write does. A nil
@@ -1113,13 +1211,22 @@ func scanCampaign(row pgx.Row) (*model.Campaign, error) {
 		platform   string
 		pcID       *string
 		budgetType *string
+		createdBy  []byte
+		updatedBy  []byte
 	)
-	if err := row.Scan(
+	err := row.Scan(
 		&c.ID, &c.ProjectID, &c.BriefID, &c.JobID, &platform, &pcID, &c.CampaignName,
 		&c.Status, &c.BudgetAmount, &budgetType, &c.StartDate, &c.EndDate,
-		&c.ConfigSnapshot, &c.Result, &c.Version, &c.CreatedAt, &c.UpdatedAt,
-	); err != nil {
+		&c.ConfigSnapshot, &c.Result, &c.Version, &createdBy, &updatedBy, &c.CreatedAt, &c.UpdatedAt,
+	)
+	if err != nil {
 		return nil, err
+	}
+	if c.CreatedBy, err = unmarshalActor(createdBy); err != nil {
+		return nil, fmt.Errorf("decode campaign created_by: %w", err)
+	}
+	if c.UpdatedBy, err = unmarshalActor(updatedBy); err != nil {
+		return nil, fmt.Errorf("decode campaign updated_by: %w", err)
 	}
 	c.Platform = model.Provider(platform)
 	if pcID != nil {

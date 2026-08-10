@@ -106,11 +106,16 @@ func TestAudienceActor_CreateStampsBothColumns(t *testing.T) {
 	}
 }
 
-// TestAudienceActor_SystemUpdateRecordsNoActor covers the build path, which updates the
-// row from a background context with no principal (audiences are built through SYSTEM
-// accounts). NULL means "not recorded", never "nobody" — substituting a placeholder, or
-// the creator, would be inventing attribution for a write no human made.
-func TestAudienceActor_SystemUpdateRecordsNoActor(t *testing.T) {
+// TestAudienceActor_UnattributedUpdateRecordsNoActor covers a PATCH that arrives with no
+// principal in its context. NULL means "not recorded", never "nobody" — substituting a
+// placeholder, or carrying the creator forward, would invent attribution for a write no
+// identified human made.
+//
+// It was named ..._SystemUpdateRecordsNoActor and its comment said it covered the BUILD
+// path, which it does not: the build never reaches this handler. See
+// TestAudienceActor_BuildCarriesTheInitiatorForward for that path, and note the two
+// answers differ — which is why one test could not have covered both.
+func TestAudienceActor_UnattributedUpdateRecordsNoActor(t *testing.T) {
 	ada := &model.Actor{Username: "ada", Email: "ada@lf.dev"}
 	s, repo, created := seedAudience(t, ada)
 
@@ -128,5 +133,42 @@ func TestAudienceActor_SystemUpdateRecordsNoActor(t *testing.T) {
 	}
 	if a := actorJSON(t, stored.CreatedBy); a == nil || a.Username != ada.Username {
 		t.Errorf("created_by = %+v, want the system update to leave the creator alone", a)
+	}
+}
+
+// TestAudienceActor_BuildCarriesTheInitiatorForward pins the build path, which answers the
+// attribution question DIFFERENTLY from the actorless PATCH above — and does so by a route
+// that never touches the update handler.
+//
+// `BuildAudience` inserts the row from the request context (stamping the initiator into both
+// actor columns) and then writes progress with `repo.UpdateAudience(ctx, created, ...)`,
+// passing the model it already holds. Nothing clears `UpdatedBy` on the way, so the person
+// who asked for the build stays recorded as its last writer. That is the right answer: the
+// build is machinery acting on one human's instruction, and blanking the column would lose
+// the only identity anyone could be asked about. It is also the OPPOSITE of what the handler
+// does for an unattributed PATCH, where there is no such human.
+//
+// The comment on the test above used to claim this case, which is how a difference this
+// sharp went unpinned — a rename alone would have left the coverage gap it described.
+func TestAudienceActor_BuildCarriesTheInitiatorForward(t *testing.T) {
+	ada := &model.Actor{Username: "ada", Email: "ada@lf.dev", Name: "Ada Lovelace"}
+	b := &fakeBuilder{editions: []string{"KubeCon Korea 2025"}}
+	s, arepo, _ := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea","location":"Korea","year":"2026"}`)
+
+	res, err := s.BuildAudience(ctxWithActor(ada), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	if err != nil {
+		t.Fatalf("BuildAudience: %v", err)
+	}
+
+	stored := arepo.items[res.ID]
+	if a := actorJSON(t, stored.UpdatedBy); a == nil || a.Username != ada.Username {
+		t.Errorf("updated_by = %+v after a build initiated by %s; the build's progress write "+
+			"must not drop the initiator — she is the only identity attached to this row's "+
+			"machinery", a, ada.Username)
+	}
+	if a := actorJSON(t, stored.CreatedBy); a == nil || a.Username != ada.Username {
+		t.Errorf("created_by = %+v, want the build's own initiator", a)
 	}
 }

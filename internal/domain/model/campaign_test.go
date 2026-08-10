@@ -88,7 +88,11 @@ func TestCampaignStatusNeedsReconciliation(t *testing.T) {
 // deletable) rather than open. That is the one assertion this test cannot skip.
 func TestCampaignStatusDeletable(t *testing.T) {
 	deletable := map[string]bool{
-		// Unresolved reconciliation markers — never deletable.
+		// Unresolved reconciliation markers — never deletable. The 'pending' row in
+		// particular is load-bearing beyond this guard: because a dispatch claim can
+		// never be soft-deleted, a re-dispatch after a delete always finds the claim
+		// INSERT — not the upsert's INSERT arm — stamping created_by. See
+		// claimCampaignDispatchQuery and orchestrator.dispatchPlatform.
 		CampaignStatusPending:      false,
 		CampaignStatusGroupCreated: false,
 		CampaignStatusUnconfirmed:  false,

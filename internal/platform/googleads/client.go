@@ -41,6 +41,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 // ---------------------------------------------------------------------------
@@ -894,6 +895,28 @@ func (c *Client) gaqlSearchForCustomer(ctx context.Context, customerID, query st
 		// nothing legitimate.
 		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 			return nil, &transportError{Method: http.MethodPost, Path: path, Err: errors.New("search response was a bare JSON null, not a result set")}
+		}
+		// The row guards in campaign_lookup.go run on rows this envelope has already
+		// produced, so they cannot see a corruption that destroys a row on the way out.
+		// `{"results":[<campaign 555>],"results":[]}` is the case: encoding/json takes the
+		// LAST value, the page decodes to zero rows, and every per-row guard downstream is
+		// handed nothing to check. What reaches the caller is a clean, trustworthy absence
+		// — the one answer a fail-closed lookup must never manufacture, because its callers
+		// read it as a licence to create a real paid campaign. The same applies to the page
+		// token: a duplicated `nextPageToken` silently truncates or redirects pagination.
+		//
+		// So the envelope is checked before it is decoded, with the same guards and for a
+		// stronger reason than the rows get them. utf8.Valid and the surrogate scan come
+		// along because neither can over-reject: invalid UTF-8 bytes make the document
+		// malformed per RFC 8259 §8.1, and Google Ads cannot store an unpaired surrogate in
+		// any field, so a page carrying either has already gone wrong upstream. The per-row
+		// checks stay where they are — they name the campaign in their diagnostics, which
+		// this one cannot.
+		if !utf8.Valid(raw) || hasUnpairedSurrogateEscape(raw) {
+			return nil, &transportError{Method: http.MethodPost, Path: path, Err: errors.New("search response cannot survive JSON decoding intact (malformed UTF-8 bytes, or an unpaired surrogate escape); decoding it would substitute U+FFFD")}
+		}
+		if hasDuplicateKeys(raw) {
+			return nil, &transportError{Method: http.MethodPost, Path: path, Err: errors.New("search response declares the same JSON key twice; the envelope contradicts itself and its result set cannot be read as an answer, least of all as an empty one")}
 		}
 		var sr searchResponse
 		if err := json.Unmarshal(raw, &sr); err != nil {

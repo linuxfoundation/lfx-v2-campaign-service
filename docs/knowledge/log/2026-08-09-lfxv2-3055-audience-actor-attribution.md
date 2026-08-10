@@ -1,6 +1,7 @@
 # 2026-08-09 — An audience edit records who made it (LFXV2-3055)
 
-**Update** — `campaign_audiences` gained `updated_by` (migration `000017`), both inserts
+**Update** — `campaign_audiences` gained `updated_by` (migration `000019`; it was drafted as
+`000017`, then `000018`, as siblings claimed those numbers — see the renumbering below), both inserts
 now stamp it alongside `created_by`, and `UpdateAudience` stamps the editor.
 
 **The gap.** `campaign_audiences` has carried `created_by` since `000005` and nothing else.
@@ -128,3 +129,37 @@ where the next reader takes it as established.
 Fix kept, comment and test retargeted at the empty-value case. Revert check now fails on the
 `empty` subtest with the 22P02 error quoted; the `nil` subtest passes either way on purpose, to
 record that the nil case is safe on its own so nobody re-derives the wrong reason.
+
+## Round N+1: the merge, and a test that claimed a path it never reached
+
+Merged `origin/main` (which brought #95's `000016` and #93's `000017`). One conflict, in
+`docs/channel-connections-schema.md`: main added `campaigns` to the attribution bullet and a
+paragraph on why its write path needed its own migration, while this branch rewrote the same
+bullet to say `campaign_audiences` now carries `updated_by`. Both are true; resolved as the
+union. `allowedVersionGaps[16]` was deleted — #95 merged, so
+`TestMigrations_AllowedVersionGapsAreStillOpen` fails while the excuse survives. The `18`
+entry stays: #106 is still open.
+
+Copilot's suppressed findings, all three confirmed on the merits:
+
+**`TestAudienceActor_SystemUpdateRecordsNoActor` did not cover what it said it did.** Its
+comment claimed the BUILD path. It called the public PATCH handler with a bare context.
+`BuildAudience` never reaches that handler — it writes progress with
+`repo.UpdateAudience(ctx, created, ...)`, passing the model its own attributed insert
+returned, so the initiator stays in `updated_by`. The two paths therefore give OPPOSITE
+answers, and the test asserted only one of them while its name promised the other. Renamed
+to `..._UnattributedUpdateRecordsNoActor` and added
+`TestAudienceActor_BuildCarriesTheInitiatorForward` for the path that was actually
+uncovered; a rename alone would have left the gap. Verified binding by nil-ing
+`created.UpdatedBy` before the build's persist — it fails naming ada.
+
+**Two numbering statements had gone stale as the migration moved 000017 → 000018 → 000019.**
+The log's opening summary still said `000017`, and the concept file listed `000016` and
+`000017` as skipped in a sentence whose next clause said `000017` had merged. Both corrected;
+after this merge the only genuine gap is `000018`.
+
+**The generalisation: a test's name and comment are the only part of it a reviewer reads
+first, and they are not checked by anything.** Both this round's real findings were
+statements about coverage that no build could contradict — one in a test comment, two in
+docs. The mechanical fixes were minutes; noticing that the claim and the code had drifted is
+the whole cost.

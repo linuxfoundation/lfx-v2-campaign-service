@@ -263,18 +263,12 @@ func TestMigrations_UniqueNumbering(t *testing.T) {
 // numbering bug — this branch must not merge before the PR that fills it, or those migrations
 // are skipped forever. The list must shrink to empty as siblings land.
 var allowedVersionGaps = map[int]string{
-	16: "000016_campaign_actor_columns is claimed by PR #95 (LFXV2-3038, " +
-		"feat/LFXV2-3038-campaign-actor-attribution), which has NOT merged. #93 introduced " +
-		"000017 and has already merged, so main now carries this gap: the first environment to " +
-		"apply 000017 records it as the highest applied version, and #95's 000016 is thereafter " +
-		"skipped silently and forever. That is a live obligation on #95 (merge before the next " +
-		"deploy, or renumber above 000017), not something this branch can discharge.",
 	18: "000018_audience_build_lease is claimed by PR #106 (LFXV2-3059, " +
 		"feat/LFXV2-3059-audience-build-lease), still open. #106 must merge before this branch " +
 		"or its lease index is skipped forever. This branch's own migration moved 000017 -> " +
-		"000018 -> 000019 as #93 merged and then as #106's number was found: #106 keeps 000018 " +
-		"because its version-forcing recovery path names the number in pool.go and three tests, " +
-		"whereas this one is named only in its own test and two doc lines.",
+		"000018 -> 000019 as #93 merged and then as #106's number was found: this branch is the " +
+		"one that renumbers, because its migration is named only in its own test and two doc " +
+		"lines, which is the cheaper of the two edits.",
 }
 
 // TestMigrations_NoVersionGaps guards against numbering a migration ABOVE versions that do not
