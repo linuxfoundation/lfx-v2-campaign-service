@@ -379,6 +379,20 @@ caught whether or not a unit test can boot the path it is on.
 
 Rejections are 400, not 401: the design declares no Unauthorized type and
 `commonBriefErrors` documents 400 as the JWTAuth rejection status (401 is a follow-up).
+
+But not every rejection is about the token. `authenticate` returns a third value, an
+`unavailable bool`, saying whose fault the failure is: true when THIS service could not
+perform the check — no verifier wired, or Heimdall's JWKS unreachable
+(`domain.ErrKeyUnavailable`) — false when the token itself was refused. The three `JWTAuth`
+impls map the first to `ConnServiceUnavailableError` (**503**) and the second to
+`BadRequestError` (400). Both were 400 before, which answered a JWKS outage by telling every
+caller holding a valid credential that theirs was bad, and telling them not to retry.
+The verdict is returned separately rather than sniffed from the message: "invalid bearer
+token" is deliberately the *same* string for every token-side refusal, so it cannot carry
+the distinction. The nil-actor branch — a verifier that accepts but names nobody — stays on
+the 400 side on purpose: it is indistinguishable from a refusal seen from outside, and
+`TestAuthenticate_RejectionMessagesAreOpaque` pins that a caller cannot learn which of the
+two happened.
 `attributedActor` still warns on a nil actor although no served route can reach it with
 one — a tripwire for a future entry point wired without the security scheme, which would
 present only as NULL attribution.

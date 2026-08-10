@@ -198,3 +198,50 @@ the one path.
 The general form: **when a reviewer names one instance of a leak, check whether the function
 has a class of it. If it does, fix the class — a point fix on a growing list of returns is a
 defect scheduled for later.**
+
+## Round N: ValidateToken answers two different questions with one error
+
+Copilot, on `VerifyActor`: `validator.ValidateToken` does not only return verdicts on the
+token — it also returns whatever the key func returned, and we were collapsing every one of
+those into `ErrUnauthenticated`.
+
+Verified before touching anything, because the fix depends on the wrapping surviving. It
+does: go-jwt-middleware v2.3.1 wraps with `%w` at both layers on this path — `validator.go:192`
+(`error getting the keys from the key func: %w`) and `:115` (`failed to deserialize token
+claims: %w`) — so a sentinel tagged inside our own key func is readable by `errors.Is` at
+`VerifyActor`. The rewritten `TestVerifyActor_UnreachableJWKSRefuses` asserts that end to end
+rather than trusting the reading.
+
+The consequence was not cosmetic. A JWKS fetch that failed, timed out, or was cancelled came
+back as HTTP 400 "invalid bearer token" — to a caller holding a *perfectly good* one. Cold
+cache and every 5-minute TTL expiry both reach it, and 400 additionally tells that caller not
+to retry a condition that clears on its own.
+
+So: `domain.ErrKeyUnavailable`, tagged in `coalesceKeyFunc` (both select arms, including the
+caller-cancellation one — that our wait ended rather than Heimdall's answer arriving still
+leaves nothing established about the token), passed through untouched by `VerifyActor`, and
+turned into a third `unavailable bool` return from `authGuard.authenticate` that all three
+`JWTAuth` impls map to `ConnServiceUnavailableError` (503).
+
+Two choices worth recording.
+
+The sentinel lives in `internal/domain`, not `internal/infrastructure/auth`. The first draft
+imported the auth package into `internal/service` and contradicted the `TokenVerifier` doc
+three lines above it ("an interface here so this package does not depend on the JWKS client").
+`ErrConnectionNotUsable` had already set the precedent for exactly this: the service layer
+classifies without importing whatever produced the failure.
+
+And the fix was deliberately *not* applied everywhere it could have been. The nil-actor branch
+— a verifier that accepts a token but names nobody — is also "our fault", but it stays on the
+400 path, because `TestAuthenticate_RejectionMessagesAreOpaque` pins that a caller cannot tell
+that case apart from an ordinary refusal. Moving it would have leaked the distinction through
+the status code.
+
+A side effect worth more than the fix: `TestBriefService_JWTAuth_EmptyTokenIsBadRequest` started
+failing, and it turned out it had never tested its own name. Its constructor was
+`NewBriefService(nil,nil,nil,nil)` — no verifier — so every run had been exercising the
+no-verifier branch and the empty token never reached anything. Only splitting 400 from 503
+made the two branches distinguishable enough for the test to be caught.
+
+**A test whose constructor omits the dependency under test can pass for the wrong reason, and
+nothing surfaces it until some other change makes the two paths return different things.**

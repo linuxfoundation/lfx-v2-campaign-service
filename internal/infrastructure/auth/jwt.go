@@ -25,6 +25,7 @@ import (
 	"github.com/auth0/go-jwt-middleware/v2/validator"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
@@ -48,6 +49,13 @@ const (
 // purpose: a bad signature, wrong audience, expired token and missing principal are
 // indistinguishable from outside, so an attacker learns only "no".
 var ErrUnauthenticated = errors.New("the bearer token is not valid for this service")
+
+// ErrKeyUnavailable is domain.ErrKeyUnavailable, re-exported so this package's callers
+// and tests name it where they name ErrUnauthenticated. It reports that Heimdall's signing
+// keys could not be retrieved — a fetch that failed, timed out, or was cancelled — which is
+// NOT a statement about the token: nothing was learned about it, because it was never
+// checked. The service layer maps it to 503 while every token-side refusal gets 400.
+var ErrKeyUnavailable = domain.ErrKeyUnavailable
 
 // Config carries the deployment's JWT settings. An empty JWKS URL, audience or issuer
 // falls back to the pkg/constants default — the value LoadConfig supplies — so a
@@ -183,11 +191,21 @@ func coalesceKeyFunc(inner func(context.Context) (any, error)) func(context.Cont
 			// (jwksFetchTimeout) is what bounds this.
 			return inner(context.WithoutCancel(ctx))
 		})
+		// Both arms tag ErrKeyUnavailable, and this is the ONLY place that can: the
+		// validator wraps whatever the key func returns (validator.go:192, with %w), so
+		// tagging here is what lets VerifyActor tell "we could not fetch the keys" apart
+		// from "the token failed a check" — the two arrive as one error otherwise.
 		select {
 		case res := <-ch:
-			return res.Val, res.Err
+			if res.Err != nil {
+				return nil, fmt.Errorf("%w: %w", ErrKeyUnavailable, res.Err)
+			}
+			return res.Val, nil
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			// A caller-side cancellation still means no key was obtained, so no claim
+			// about the token was established. That it was OUR wait that ended rather
+			// than Heimdall's answer does not make the token bad.
+			return nil, fmt.Errorf("%w: %w", ErrKeyUnavailable, ctx.Err())
 		}
 	}
 }
@@ -200,8 +218,13 @@ func orDefault(v, def string) string {
 	return def
 }
 
-// VerifyActor validates the token and returns the actor its claims describe. Every
-// failure wraps ErrUnauthenticated; the reason is for the caller to LOG, never send.
+// VerifyActor validates the token and returns the actor its claims describe.
+//
+// Every failure that is a verdict on the TOKEN wraps ErrUnauthenticated, undifferentiated
+// on purpose; the reason is for the caller to LOG, never send. The one failure that is not
+// such a verdict — the signing keys could not be retrieved — wraps ErrKeyUnavailable
+// instead, so the caller can report this service's outage as one rather than as the
+// caller's fault.
 func (v *Verifier) VerifyActor(ctx context.Context, token string) (*model.Actor, error) {
 	if v.mock != nil {
 		a := *v.mock
@@ -222,6 +245,15 @@ func (v *Verifier) VerifyActor(ctx context.Context, token string) (*model.Actor,
 
 	parsed, err := v.validator.ValidateToken(ctx, raw)
 	if err != nil {
+		// ValidateToken answers two different questions with one error. Most of what it
+		// returns is a verdict ON THE TOKEN; a key-func failure is not — it is this
+		// service unable to check anything. Collapsing the second into ErrUnauthenticated
+		// makes a Heimdall outage present as "your token is invalid" with a 400 to every
+		// caller holding a good one, and 400 tells them not to retry a condition that
+		// clears by itself. coalesceKeyFunc tags it so the two are separable here.
+		if errors.Is(err, ErrKeyUnavailable) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("%w: %w", ErrUnauthenticated, err)
 	}
 	claims, ok := parsed.(*validator.ValidatedClaims)

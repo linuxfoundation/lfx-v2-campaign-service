@@ -174,6 +174,12 @@ func TestVerifyActor_Rejects(t *testing.T) {
 
 // TestVerifyActor_UnreachableJWKSRefuses pins the fail-closed side of the key fetch; the
 // tempting alternative, trusting claims until it recovers, is what this package replaced.
+//
+// It refuses as ErrKeyUnavailable, NOT ErrUnauthenticated, and the distinction is the
+// whole point: the token was never checked, so nothing about it was established. The tag
+// is applied inside coalesceKeyFunc and has to survive the validator wrapping it twice
+// (validator.go:192 and :115, both %w) to be readable here — which is exactly what this
+// asserts end to end.
 
 func TestVerifyActor_UnreachableJWKSRefuses(t *testing.T) {
 	s := newSigner(t)
@@ -187,8 +193,13 @@ func TestVerifyActor_UnreachableJWKSRefuses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if _, err := v.VerifyActor(context.Background(), token); !errors.Is(err, ErrUnauthenticated) {
-		t.Fatalf("err = %v, want ErrUnauthenticated when the key set cannot be fetched", err)
+	_, err = v.VerifyActor(context.Background(), token)
+	if !errors.Is(err, ErrKeyUnavailable) {
+		t.Fatalf("err = %v, want ErrKeyUnavailable when the key set cannot be fetched", err)
+	}
+	if errors.Is(err, ErrUnauthenticated) {
+		t.Errorf("err = %v, want NOT ErrUnauthenticated: the service maps that to 400, and a "+
+			"caller holding a good token would be told their credential is bad and not to retry", err)
 	}
 }
 

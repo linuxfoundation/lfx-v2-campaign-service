@@ -28,8 +28,15 @@ import (
 // the principal who authorized paid ad spend. Verification now happens here too,
 // against Heimdall's JWKS.
 func (s *ConnectionService) JWTAuth(ctx context.Context, token string, _ *security.JWTScheme) (context.Context, error) {
-	ctx, msg := s.authenticate(ctx, token)
-	if msg != "" {
+	ctx, msg, unavailable := s.authenticate(ctx, token)
+	switch {
+	case unavailable:
+		// The check could not be PERFORMED — no verifier wired, or Heimdall's JWKS is
+		// unreachable. Nothing was established about the caller's token, so 400 would
+		// blame a caller who may be holding a perfectly good one and tell them not to
+		// retry an outage that clears on its own.
+		return ctx, &conn.ConnServiceUnavailableError{Code: "503", Message: msg}
+	case msg != "":
 		return ctx, &conn.BadRequestError{Code: "400", Message: msg}
 	}
 	return ctx, nil

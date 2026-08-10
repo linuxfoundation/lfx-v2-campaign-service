@@ -44,10 +44,24 @@ waits roughly N × fetch. Authentication runs on every request, so the queue is 
 request load — reachable on the startup burst and on a TTL expiry that coincides with a slow
 JWKS endpoint. `coalesceKeyFunc` wraps the provider's `KeyFunc` in a `singleflight` group,
 using `DoChan` so each caller keeps its own deadline, and `context.WithoutCancel` inside the
-shared call so the first caller's cancellation cannot fail everyone waiting on its result. Every refusal returns
-one sentinel, `ErrUnauthenticated`, mapped to one message — a specific one only tells the
-sender which part of the token to fix next. The reason is wrapped so the service can
-**log** it, never return it.
+shared call so the first caller's cancellation cannot fail everyone waiting on its result.
+
+Every refusal **of the token** returns one sentinel, `ErrUnauthenticated`, mapped to one
+message — a specific one only tells the sender which part of the token to fix next. The
+reason is wrapped so the service can **log** it, never return it.
+
+A key-func failure is *not* one of those refusals, and it arrives inside the same error.
+`validator.ValidateToken` wraps whatever the key func returns (`%w`, twice over), so a
+JWKS fetch that failed, timed out, or was cancelled reached `VerifyActor` indistinguishable
+from a bad signature — and was reported as `ErrUnauthenticated`, i.e. HTTP 400 "invalid
+bearer token", to a caller whose credential was perfectly good. That is reachable on a cold
+cache and at every TTL expiry, and 400 additionally tells the caller not to retry a
+condition that clears by itself. `coalesceKeyFunc` therefore tags **both** arms of its
+select with `ErrKeyUnavailable` (a re-export of `domain.ErrKeyUnavailable`; it is the only
+place that can tag it), and `VerifyActor` passes it through untouched instead of wrapping.
+The cancellation arm is tagged too: that our wait ended rather than Heimdall's answer
+arriving still leaves nothing established about the token. The service layer maps the
+sentinel to **503** and every token-side refusal to 400.
 
 ## Empty config defaults; a wrong one fails the pod
 

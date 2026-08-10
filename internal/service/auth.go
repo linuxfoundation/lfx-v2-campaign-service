@@ -5,9 +5,11 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
@@ -50,7 +52,17 @@ func (g *authGuard) HasTokenVerifier() bool {
 
 // authenticate verifies the token and returns a context carrying the actor. The returned
 // string is a client-safe message, empty when authentication SUCCEEDED; each service maps
-// it to its own generated error type. A nil verifier REJECTS rather than bypasses: before
+// it to its own generated error type.
+//
+// The bool says whose fault the failure is: true when THIS service could not perform the
+// check (no verifier wired, Heimdall's JWKS unreachable), false when the token itself was
+// refused. Callers map the first to 503 and the second to 400. Both were 400 before, which
+// told a caller holding a perfectly valid token that their credential was bad, and told
+// them not to retry a condition that clears when the dependency recovers. The verdict is
+// not derivable from the message — "invalid bearer token" is deliberately the same string
+// for every token-side refusal — so it is returned separately rather than sniffed.
+//
+// A nil verifier REJECTS rather than bypasses: before
 // this, a request reaching the pod without passing Heimdall had its claims believed, so
 // missing wiring has to be an outage rather than a silent return to that behaviour.
 //
@@ -62,27 +74,36 @@ func (g *authGuard) HasTokenVerifier() bool {
 // running without Auth0 has no header to send: rejecting them before the verifier is
 // consulted made the mock work only for callers who invented a dummy token, i.e. not for
 // the workflow it exists for. Who may authenticate is the verifier's question.
-func (g *authGuard) authenticate(ctx context.Context, token string) (context.Context, string) {
+func (g *authGuard) authenticate(ctx context.Context, token string) (_ context.Context, msg string, unavailable bool) {
 	g.authMu.RLock()
 	v := g.v
 	g.authMu.RUnlock()
 	if v == nil {
 		slog.ErrorContext(ctx, "rejecting request: no token verifier is configured on this service")
-		return ctx, "authentication is unavailable"
+		return ctx, "authentication is unavailable", true
 	}
 	actor, err := v.VerifyActor(ctx, token)
 	if err != nil {
+		if errors.Is(err, domain.ErrKeyUnavailable) {
+			// Nothing was learned about the token: the keys to check it against never
+			// arrived. Logged at error, not warn — this one is ours.
+			slog.ErrorContext(ctx, "rejecting request: token signing keys are unavailable", "error", err)
+			return ctx, "authentication is unavailable", true
+		}
 		// The reason is logged, never returned: see auth.ErrUnauthenticated.
 		slog.WarnContext(ctx, "rejecting request: bearer token failed verification", "error", err)
-		return ctx, "invalid bearer token"
+		return ctx, "invalid bearer token", false
 	}
 	if actor == nil {
 		// A verifier that accepts must name someone, or the unattributed-write path
-		// this replaced is back.
+		// this replaced is back. This one stays on the token-side branch deliberately: it
+		// is indistinguishable from a refusal from outside, and keeping it there is what
+		// TestAuthenticate_RejectionMessagesAreOpaque pins — a caller must not learn from
+		// the response which of the two happened.
 		slog.ErrorContext(ctx, "rejecting request: verifier accepted a token but returned no actor")
-		return ctx, "invalid bearer token"
+		return ctx, "invalid bearer token", false
 	}
-	return context.WithValue(ctx, actorCtxKey{}, actor), ""
+	return context.WithValue(ctx, actorCtxKey{}, actor), "", false
 }
 
 // actorFromCtx returns the authenticated actor recorded by authenticate, or nil.
