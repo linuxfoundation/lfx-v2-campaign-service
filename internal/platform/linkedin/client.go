@@ -179,15 +179,32 @@ type linkedInResponse struct {
 	ID     flexibleID `json:"id"`
 	Name   string     `json:"name"`
 	Status string     `json:"status"`
-	// Elements is a POINTER slice so the "elements field absent or null" case is
-	// distinguishable from the "elements present but empty" case. A malformed 2xx
-	// search body like `{}` or `null` decodes with Elements == nil (field absent)
-	// and CANNOT prove absence, whereas an intentional empty result `{"elements":[]}`
-	// decodes with a non-nil, len-0 slice and IS a confirmed not-found. Collapsing
-	// both to a plain nil slice let a `{}`/`null` body read as "no elements → not
-	// found", permitting a DUPLICATE create. See doRequest's search-presence guard.
+	// Elements separates "the elements field was absent or null" from "elements was
+	// present but empty", which is the difference between a body that CANNOT prove
+	// absence (a malformed 2xx like `{}`) and one that confirms a not-found
+	// (`{"elements":[]}`). Getting that wrong would let a `{}` read as "no elements →
+	// not found" and permit a DUPLICATE create. See doRequest's search-presence guard.
+	//
+	// The pointer is not what MAKES the distinction possible — `encoding/json` already
+	// draws it for a plain slice, since a present `[]` decodes to a non-nil EMPTY slice
+	// while an absent field is left untouched and a present `null` is SET to nil. Those
+	// last two are different operations that happen to agree here: this struct is
+	// declared fresh per response, so "untouched" is already nil. (Which is also why the
+	// pointer adds no re-use guarantee — an absent key leaves the field alone, pointer or
+	// not, so a struct decoded into twice keeps the previous value either way. The
+	// protection there is declaring the value per response, which every call site does.)
+	// It is here so the distinction cannot be dropped by accident: a plain slice invites
+	// a future `len(x) == 0` check that silently merges the two cases, whereas a nil
+	// pointer has to be dereferenced and the compiler makes that decision explicit.
 	Elements *[]responseElement `json:"elements"`
-	Metadata linkedInMetadata   `json:"metadata"`
+	// Metadata is a POINTER for the same reason Elements is. A search response is an
+	// `elements + metadata` envelope, and metadata carries the cursor. Decoded into a
+	// VALUE, an absent or null `metadata` yields a zero NextPageToken — indistinguishable
+	// from the server saying "no more pages". Every cursor walk in this package then stops
+	// early and reports a partial result as a complete one: a false absence, which is the
+	// outcome each of those walks has its own guard against reaching by other routes. A nil
+	// pointer forces each walk to decide, and the compiler makes that decision explicit.
+	Metadata *linkedInMetadata `json:"metadata"`
 }
 
 // linkedInMetadata carries the cursor-pagination block used by the LinkedIn
@@ -254,6 +271,14 @@ type responseElement struct {
 	// lookup to the resolved group, so a same-name campaign under a DIFFERENT
 	// (e.g. archived/replaced) group is not treated as a match.
 	CampaignGroup string `json:"campaignGroup"`
+	// Type, Currency, Test and ServingStatuses are only populated for ad-account
+	// search results (ListAdAccounts, accounts.go). An ad account carries two
+	// independent health axes — its lifecycle `status`, decoded above, and the
+	// `servingStatuses` array below — and the picker needs both.
+	Type            string   `json:"type"`
+	Currency        string   `json:"currency"`
+	Test            bool     `json:"test"`
+	ServingStatuses []string `json:"servingStatuses"`
 }
 
 // pathValidRE allow-lists the characters a built request path may contain. `%` is included
@@ -685,7 +710,16 @@ func (c *Client) listCreativeURNs(ctx context.Context, accountID, campaignID str
 				urns = append(urns, urn)
 			}
 		}
-		next := resp.Metadata.NextPageToken
+		// An absent metadata block is treated as exhaustion here, which is what the
+		// value-typed field did implicitly before it became a pointer. That is the SAME
+		// false-absence exposure ListAdAccounts now rejects, and it is left alone on
+		// purpose: this walk predates the finding, and closing it means asserting a
+		// metadata block in ~50 existing fixtures — churn that belongs in its own change,
+		// not in a review round on an unrelated PR. Tracked as LFXV2-3066.
+		var next string
+		if resp.Metadata != nil {
+			next = resp.Metadata.NextPageToken
+		}
 		if next == "" {
 			return urns, nil // fully enumerated
 		}
@@ -1294,20 +1328,26 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 			}
 			return id, nil
 		}
-		// Cursor pagination: an empty nextPageToken marks the end of the result
-		// set. Otherwise carry the token into the next request.
-		if resp.Metadata.NextPageToken == "" {
+		// Cursor pagination: an empty nextPageToken marks the end of the result set.
+		// Otherwise carry the token into the next request. An absent metadata block reads
+		// as exhaustion, as it did implicitly before the field became a pointer — same
+		// pre-existing exposure and same reason for leaving it here (LFXV2-3066).
+		var nextToken string
+		if resp.Metadata != nil {
+			nextToken = resp.Metadata.NextPageToken
+		}
+		if nextToken == "" {
 			return "", nil
 		}
-		if _, seen := seenTokens[resp.Metadata.NextPageToken]; seen {
+		if _, seen := seenTokens[nextToken]; seen {
 			// The server handed back a cursor we've already followed: pagination is
 			// looping. Abort with the inconclusive-search error rather than replaying
 			// the same page — reporting a false no-match would let the caller create a
 			// duplicate.
 			return "", fmt.Errorf("search %q by name: pagination returned a repeated page token — aborting to avoid creating a duplicate", nestedPath)
 		}
-		seenTokens[resp.Metadata.NextPageToken] = struct{}{}
-		pageToken = resp.Metadata.NextPageToken
+		seenTokens[nextToken] = struct{}{}
+		pageToken = nextToken
 	}
 	// Cap reached with a next-page token still present: refuse to report a false
 	// no-match, which would let the caller create a duplicate resource.
