@@ -410,13 +410,16 @@ resolves). The credential-state checks that used to be inlined at each of `Dispa
 `resolveRedditClient`'s shape — active status, decodable blob, non-empty access token, each
 tagged with `domain.ErrConnectionNotUsable` plus its reason sentinel, and a named-return
 `defer` that runs every return path through `res.systemScoped`. It deliberately does not check
-`account_id`: that is `requireMetaAccountID`, called separately by all three callers right after
-credential resolution, because `Dispatch` additionally needs `page_id` (Meta has no discovery
-for that field) while `ToggleStatus`/`ReadMetrics` target an existing campaign by id and need
-only the account. `requireMetaAccountID` wraps an empty account the same way Google Ads does:
-`ErrConnectionNotUsable` selects the status, `domain.ErrAccountNotSelected` supplies the
-`account_not_selected` reason token, and it is matched before the general unusable-connection
-arm.
+`account_id`: that is `requireMetaAccountID`, called ONLY by `Dispatch`, right after credential
+resolution, because campaign creation builds Graph paths as `/{accountID}/campaigns` and needs a
+real account id (Meta has no discovery for `page_id`, the other prerequisite `Dispatch` checks).
+`ToggleStatus` and `ReadMetrics` do NOT call it: both target an existing campaign by platform id
+(`POST /{campaignID}`, `GET /{campaignID}/insights`) and never read `AccountConfig.AccountID` at
+all, so requiring a selected account for either would refuse a perfectly servable pause/resume
+or metrics-read on a connection whose account selection was later cleared via `PUT`.
+`requireMetaAccountID` wraps an empty account the same way Google Ads does: `ErrConnectionNotUsable`
+selects the status, `domain.ErrAccountNotSelected` supplies the `account_not_selected` reason
+token, and it is matched before the general unusable-connection arm.
 
 **A CONFIRMED default is the reason to reject this without discovery, not just the goal to
 build toward it.** The Google Ads log entry documenting its own bootstrap states the general

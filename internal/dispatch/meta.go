@@ -65,10 +65,13 @@ func NewMetaDispatcher(repo connReader, enc domain.Encryptor, opts ...meta.Optio
 // resolveMetaCredentials fetches the project's Meta connection and validates it is usable
 // for ANY Meta operation — active status, decodable credentials, non-empty access token —
 // tagging each defect with domain.ErrConnectionNotUsable plus a reason sentinel, mirroring
-// resolveRedditClient. It deliberately does NOT check account_id: Dispatch additionally
-// requires a non-empty account id (and page id) to create a campaign, while ToggleStatus and
-// ReadMetrics target an existing campaign by id — each checks account_id separately, via
-// requireMetaAccountID, right after calling this.
+// resolveRedditClient. It deliberately does NOT check account_id: only Dispatch needs it (a
+// campaign create builds Graph paths as /{accountID}/campaigns etc. — see
+// internal/platform/meta/client.go's AccountID checks ahead of CreateCampaign). ToggleStatus
+// and ReadMetrics target an existing campaign by id (POST /{campaignID}, GET
+// /{campaignID}/insights) and never read AccountConfig.AccountID at all, so requiring one
+// there would refuse a perfectly servable pause/metrics-read on a connection whose account
+// selection was later cleared via PUT.
 func (d *MetaDispatcher) resolveMetaCredentials(ctx context.Context, projectID string, platform model.Provider) (res *resolved, creds metaCreds, err error) {
 	res, err = d.creds.resolve(ctx, projectID, platform)
 	if err != nil {
@@ -95,11 +98,12 @@ func (d *MetaDispatcher) resolveMetaCredentials(ctx context.Context, projectID s
 
 // requireMetaAccountID returns res.accountID trimmed, or a tagged 409 naming the missing
 // choice — domain.ErrAccountNotSelected, which unusableConnectionReason reports as
-// "account_not_selected" — when it is empty. Mirrors validateGoogleAdsConnection: an
-// account-id-less connection (the credentials-only bootstrap state — see
-// MetaAdsConnectionConfig in design/connection.go) is refused HERE, before an empty
-// AccountConfig.AccountID can reach the Meta client and fail opaquely upstream instead of
-// with a clear, actionable 409.
+// "account_not_selected" — when it is empty. Called ONLY by Dispatch: an account-id-less
+// connection (the credentials-only bootstrap state — see MetaAdsConnectionConfig in
+// design/connection.go) can create no campaign, and this refuses it HERE, before an empty
+// AccountConfig.AccountID can reach the Meta client and fail opaquely (a malformed
+// "//campaigns" request) instead of with a clear, actionable 409. ToggleStatus and
+// ReadMetrics do not call this — see resolveMetaCredentials for why.
 func requireMetaAccountID(res *resolved, projectID string) (string, error) {
 	accountID := strings.TrimSpace(res.accountID)
 	if accountID == "" {
@@ -123,8 +127,12 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	if pageID == "" {
 		// page_id is Required at connection creation (design/connection.go), so this is
 		// unreachable through normal API validation; it only fires if a row somehow
-		// stored an empty value. Wrap it like every other stored-state defect on this
-		// path so the service classifies it as a 400, not an opaque 503.
+		// stored an empty value. CreateCampaigns already returned 202 by the time Dispatch
+		// runs, so this can't surface as a synchronous 4xx — notCreated marks it
+		// NoUpstreamCreate so the orchestrator releases the pending claim instead of
+		// retaining it for a create that may have partially landed, and the sentinel/reason
+		// chain (ErrConnectionNotUsable/ErrProviderConfigInvalid) is what a human reads back
+		// from the async job's failure log, same as every other stored-state defect here.
 		return nil, notCreated(res.systemScoped(fmt.Errorf("%w: %w: meta connection for project %s is missing page id",
 			domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid, brief.ProjectID)))
 	}
@@ -205,15 +213,15 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 }
 
 // ToggleStatus pauses or resumes an existing Meta campaign on the platform. It resolves the
-// connection (an inactive/undecryptable/incomplete/account-not-selected connection is a
-// clean 409, not a 503 — see resolveMetaCredentials and requireMetaAccountID), builds the
-// client, and CASCADES the status to the campaign, its ad set, and every ad — Meta's create
-// PAUSES all three, so toggling only the campaign to ACTIVE would not serve. campaign is the
-// persisted row; the ad set id is read from its CampaignResult (Meta persists the ad set id
-// but not the individual ad ids, which the client discovers via GET /{adSetID}/ads). status
-// is model.CampaignRunActive or model.CampaignRunPaused. Returns nil only when the platform
-// confirms; an UNCONFIRMED outcome (including a partial cascade) is wrapped so the caller
-// reports "verify before retry" (via the Unconfirmed() behavioral interface).
+// connection (an inactive/undecryptable/incomplete connection is a clean 409, not a 503 —
+// see resolveMetaCredentials), builds the client, and CASCADES the status to the campaign,
+// its ad set, and every ad — Meta's create PAUSES all three, so toggling only the campaign
+// to ACTIVE would not serve. campaign is the persisted row; the ad set id is read from its
+// CampaignResult (Meta persists the ad set id but not the individual ad ids, which the
+// client discovers via GET /{adSetID}/ads). status is model.CampaignRunActive or
+// model.CampaignRunPaused. Returns nil only when the platform confirms; an UNCONFIRMED
+// outcome (including a partial cascade) is wrapped so the caller reports "verify before
+// retry" (via the Unconfirmed() behavioral interface).
 func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
 	metaStatus, err := metaRunStatus(status)
 	if err != nil {
@@ -223,14 +231,11 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	if err != nil {
 		return err
 	}
-	accountID, err := requireMetaAccountID(res, projectID)
-	if err != nil {
-		return err
-	}
-	// A status update targets the campaign node by id (POST /{campaignID}); it needs no
-	// page id (unlike Dispatch), but does need a chosen account id — see
-	// requireMetaAccountID.
-	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: accountID, Label: res.label}, d.opts...)
+	// A status update targets the campaign node by id (POST /{campaignID}); it needs
+	// neither page id nor account id (unlike Dispatch — see resolveMetaCredentials), so an
+	// account cleared via PUT after the campaign was created does not block pausing or
+	// resuming it.
+	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: strings.TrimSpace(res.accountID), Label: res.label}, d.opts...)
 	// Cascade to the ad set (and its ads) as well as the campaign: CreateCampaign PAUSES the
 	// campaign, ad set, and every ad, so toggling only the campaign to ACTIVE would not serve.
 	// The ad set id is read from the persisted CampaignResult (Meta stores it, but not the
@@ -285,17 +290,13 @@ func metaMetricsWindow(w model.MetricsWindow) (meta.MetricsWindow, error) {
 }
 
 // ReadMetrics implements service.MetricsReader for Meta. It resolves the same connection
-// ToggleStatus does (no page id required — a metrics read targets the campaign node by id,
-// like the status update — but a chosen account id IS required, same as the toggle; see
-// resolveMetaCredentials and requireMetaAccountID) and reads the campaign's live Insights
-// metrics, mapping the platform-agnostic window to Meta's own vocabulary via
-// metaMetricsWindow before calling the client.
+// ToggleStatus does (no page id or account id required — a metrics read targets the
+// campaign node by id via GET /{campaignID}/insights, like the status update; see
+// resolveMetaCredentials) and reads the campaign's live Insights metrics, mapping the
+// platform-agnostic window to Meta's own vocabulary via metaMetricsWindow before calling
+// the client.
 func (d *MetaDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
 	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform)
-	if err != nil {
-		return nil, err
-	}
-	accountID, err := requireMetaAccountID(res, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +304,7 @@ func (d *MetaDispatcher) ReadMetrics(ctx context.Context, projectID string, plat
 	if err != nil {
 		return nil, err
 	}
-	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: accountID, Label: res.label}, d.opts...)
+	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: strings.TrimSpace(res.accountID), Label: res.label}, d.opts...)
 	m, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, metaWindow)
 	if err != nil {
 		return nil, err

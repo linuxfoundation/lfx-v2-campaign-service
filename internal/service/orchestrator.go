@@ -1072,11 +1072,15 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// no amount of retrying will fix. Hoisting the check into the shared validation is the
 	// fix; it is a behaviour change with its own test and lands separately.
 	//
-	// Reddit, Meta, LinkedIn, X AND Microsoft still return bare
-	// errors that fall through to the caller's default 503 arm; Microsoft is wired for
-	// toggles and runs the same active/incomplete preflight, so leaving it out of this list
-	// would hide a provider that is actually reachable here. Tagging
-	// theirs is the outstanding half of that work, tracked with the adapters. Bound the
+	// Reddit, LinkedIn, X AND Microsoft still return bare errors that fall through to the
+	// caller's default 503 arm; Microsoft is wired for toggles and runs the same
+	// active/incomplete preflight, so leaving it out of this list would hide a provider
+	// that is actually reachable here. Meta tags its connection-state preflight the same
+	// way Google Ads does (resolveMetaCredentials, internal/dispatch/meta.go) — it does NOT
+	// tag a missing account id here, though, because ToggleStatus never reads
+	// AccountConfig.AccountID (a status update targets the campaign node by id); that guard
+	// lives only in Dispatch. Tagging the remaining four is the outstanding half of that
+	// work, tracked with the adapters. Bound the
 	// whole (possibly multi-PATCH, each with its own retry budget) cascade with a total
 	// deadline UNDER the HTTP write timeout, so a slow toggle is cancelled and returned to the
 	// caller as an error rather than mutating the platform after the response can no longer be

@@ -427,16 +427,18 @@ var MetaAdsCredentials = Type("meta-ads-credentials", func() {
 //
 // A connection in this state stays status=active with account_id "", same caveat as
 // Google Ads: "active" means enabled for credential-based operations (discovery), not
-// that the credentials were verified. Readiness to run a campaign is account_id being
-// non-empty; the dispatch, status-toggle, and metrics paths say so with
-// reason=account_not_selected.
+// that the credentials were verified. Readiness to CREATE a campaign is account_id being
+// non-empty — the dispatch path says so with reason=account_not_selected. Status-toggle
+// and metrics-read do NOT require it: both target an existing campaign by platform id and
+// never read the connection's account_id, so they keep working on a connection whose
+// account was cleared after the campaign was created.
 var MetaAdsConnectionConfig = Type("meta-ads-connection-config", func() {
 	Attribute("label", String, "Optional friendly name")
 	// account_id must be the canonical Meta format act_<digits>: the Meta client
 	// rejects anything else before dispatch, so a non-conforming value (e.g. "foo",
 	// whitespace, or a bare number) stored on an active connection could never create a
 	// campaign. Validating the same Pattern here rejects it as a 4xx at creation.
-	Attribute("account_id", String, "Meta ad account ID. Optional: omit it to create the connection with credentials only, then choose one from GET .../connection-meta-ads/accounts and set it with PUT.", func() {
+	Attribute("account_id", String, "Meta ad account ID. Optional: omit it (while still supplying credentials and page_id) to defer account selection, then choose one from GET .../connection-meta-ads/accounts and set it with PUT.", func() {
 		Example("act_193556282970417")
 		Pattern(`^act_[0-9]+$`)
 		// The pattern bounds shape but not length; cap the stored size so an arbitrarily
