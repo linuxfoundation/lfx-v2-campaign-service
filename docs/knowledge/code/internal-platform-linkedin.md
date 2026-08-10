@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, and live analytics reads."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, and ad-account discovery."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -10,7 +10,8 @@ tags:
   - oauth2
   - go-package
   - metrics
-timestamp: "2026-08-05T14:30:00Z"
+  - account-discovery
+timestamp: "2026-08-09T20:00:00Z"
 ---
 
 # internal/platform/linkedin
@@ -113,6 +114,72 @@ so an out-of-range spend is an error rather than a silently wrapped micro value.
 rather than `AddDate(0, -1, 0)` on today's day-of-month, since `time.AddDate` silently
 normalizes an invalid day (e.g. subtracting a month from the 31st) into the following month —
 that would otherwise shift both windows' boundaries on 29th/30th/31st-of-month days.
+
+## Ad-account discovery
+
+`ListAdAccounts` (`accounts.go`) enumerates every ad account the client's access token can
+reach, so a connection that holds only credentials — or one being re-pointed at a different
+account — can ask which accounts are available. The request is `GET /adAccounts?q=search`
+with the `search` criteria OMITTED, which LinkedIn documents as returning every account the
+caller has access to; no account id appears anywhere in the path or parameters, which is what
+makes it callable before an account has been chosen. `newAccountsClient` in the test builds a
+client with a deliberately ZERO `RuntimeConfig`, so a future edit that starts consulting a
+configured account fails in the test rather than in production.
+
+The two required headers cost nothing here: `doRequest` already sends `LinkedIn-Version` and
+`X-RestLi-Protocol-Version: 2.0.0` on every call. Nor is there a no-`elements` guard in the
+walk beyond a defensive nil check — `doRequest` already fails any GET whose body cannot prove
+a result set. Restating either contract locally is exactly the drift risk the id check below
+avoids.
+
+**Two health axes, kept apart.** An ad account's lifecycle `status` (ACTIVE, CANCELED, DRAFT,
+PENDING_DELETION, REMOVED) and its `servingStatuses` array answer different questions and can
+disagree: an ACTIVE account on BILLING_HOLD is perfectly bindable but will not spend. So
+`Active()`/`StatusLabel()` report the lifecycle and `Servable()`/`ServingHolds()` report the
+serving state, rather than collapsing into one verdict that would either hide a usable account
+or promise one that cannot serve. `Servable()` is an ALLOW-LIST — exactly `["RUNNABLE"]`, and
+not a test account — so an absent or unrecognized value reads as "not confirmed servable"
+rather than as healthy. The test-account term is not redundant: LinkedIn reports `RUNNABLE` on
+test accounts, because they *are* runnable in the sense that field means, while a campaign
+bound to one never serves. Without it, a picker built on `Servable()` would present a test
+account as the one healthy choice — the most misleading answer available to it.
+`ServingHolds()` stays empty in that case, which is how a caller tells "held" from "unknown". An absent lifecycle `status` is likewise not a claim either way: not `Active()`, and no label.
+
+`test` accounts are surfaced through the `Test` field rather than filtered. A test account
+never serves and never bills, so binding a real campaign to one produces a campaign that
+silently does nothing — but a developer wiring up an integration is looking for precisely that
+account, so the honest move is to show it and say what it is — surfaced, but never reported
+as servable. Same reasoning applies to
+canceled, draft and held accounts: this feeds a picker, and dropping a user's only account
+answers "your token reaches no ad accounts" about an account sitting right there.
+
+**Fail, do not truncate.** A repeated page cursor, an ABSENT `metadata` block, and the page cap
+(`adAccountPageSize` x `adAccountMaxPages`) all return an error rather than the accounts
+collected so far, because a short list is indistinguishable from a complete one at the boundary
+and the caller acts on the absence. The metadata case is the least obvious of the three: a
+response carrying `elements` but no cursor envelope decodes to an empty `nextPageToken`, which
+reads exactly like exhaustion, so the walk stops and reports a partial enumeration as complete.
+The field is therefore a POINTER — absence has to be representable before it can be rejected.
+The cap is 20 pages, far tighter than `maxListPages`: that constant exists so a
+find-by-name survives a server-side filter the API may ignore, and discovery has no filter to
+be ignored, so a walk that long means something is wrong rather than that the collection is
+large.
+
+**The cursor is echoed back byte for byte**, and is one of the few strings in this walk that
+is NOT trimmed. It is an opaque server token, so trimming can request a different page than
+the one offered; worse, a token consisting only of whitespace would trim to `""`, read as
+exhaustion, and return page one alone as the complete account list — the same false absence
+the guards above exist to prevent, arriving through the pagination door instead. The two
+older cursor walks in `client.go` (creative discovery, find-by-name) already preserve the
+exact value. Trimming belongs on human-entered fields such as the account NAME, not on
+anything the server minted.
+
+The id check reuses `accountIDRE` from `targeting.go` — the same regexp a configured account
+id is validated against — rather than restating `^[0-9]+$`. An account this walk offers must
+be one the client will later accept, and a second copy of that contract could drift into
+offering ids that fail at bind time. An unusable id fails the WHOLE walk rather than skipping
+the row: a response shape that far from the documented one is not the response we think it is,
+and the rest of it is not trustworthy either.
 
 ## Dispatch adapter (internal/dispatch)
 
