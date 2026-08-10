@@ -3345,6 +3345,75 @@ func TestGetCampaignMetrics_UnusableConnectionIs409(t *testing.T) {
 	assertAccountNotSelectedLog(t, buf.String())
 }
 
+// A platform that answers successfully with no data is a 409, not the 503 default. For the
+// email channel this is the ORDINARY state — Dispatch stages a draft and a human sends it —
+// so the default would report an outage on a healthy integration for every read taken before
+// the send.
+func TestGetCampaignMetrics_NoDataInWindowIs409NotAnOutage(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderHubSpot,
+		PlatformCampaignID: "4242", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	disp := &metricsOnlyDispatcher{err: fmt.Errorf("get email metrics from hubspot: %w",
+		domain.ErrNoMetricsInWindow)}
+	s := newMetricsService(camp, disp)
+	_, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+
+	var unavailable *briefs.ConnServiceUnavailableError
+	if errors.As(err, &unavailable) {
+		t.Fatalf("an empty window was reported as a platform outage: %v", err)
+	}
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("want a 409 ConflictError, got %T: %v", err, err)
+	}
+	// The three causes are indistinguishable upstream, so the message must not commit to one.
+	if !strings.Contains(conflict.Message, "no data for this campaign in the requested window") {
+		t.Errorf("message = %q, want it to report an empty window", conflict.Message)
+	}
+}
+
+// The email counters reach the wire, and an ad platform's response still carries none. Both
+// halves in one test because the second is what makes the first meaningful: an unconditional
+// struct literal would populate email for every platform and pass a presence-only assertion.
+func TestGetCampaignMetrics_EmailCountersAreRenderedOnlyForEmail(t *testing.T) {
+	emailCamp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderHubSpot,
+		PlatformCampaignID: "4242", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	emailDisp := &metricsOnlyDispatcher{metrics: &model.CampaignMetrics{
+		CampaignID: "c1", Impressions: 400, Clicks: 80,
+		Email: &model.EmailMetrics{Sent: 1000, Delivered: 950, Opens: 400, Clicks: 80, Bounces: 50, Unsubscribes: 7},
+	}}
+	res, err := newMetricsService(emailCamp, emailDisp).GetCampaignMetrics(context.Background(),
+		&briefs.GetCampaignMetricsPayload{ProjectID: "cncf", BriefID: "b1", CampaignID: "c1"})
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if res.Email == nil {
+		t.Fatal("the email counters were dropped from the response")
+	}
+	if res.Email.Delivered != 950 || res.Email.Unsubscribes != 7 {
+		t.Errorf("email counters = %+v", res.Email)
+	}
+
+	adCamp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	adDisp := &metricsOnlyDispatcher{metrics: &model.CampaignMetrics{CampaignID: "c1", Impressions: 5}}
+	adRes, err := newMetricsService(adCamp, adDisp).GetCampaignMetrics(context.Background(),
+		&briefs.GetCampaignMetricsPayload{ProjectID: "cncf", BriefID: "b1", CampaignID: "c1"})
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics (ad platform): %v", err)
+	}
+	if adRes.Email != nil {
+		t.Errorf("an ad platform response carried email counters: %+v", adRes.Email)
+	}
+}
+
 // TestGetCampaignMetrics_OtherUnusableCauseKeepsTheGeneralMessage is the contrast that makes
 // the test above binding: an unusable connection for a DIFFERENT reason must still get the
 // general message. Without this, moving the specific message onto the broad arm would pass

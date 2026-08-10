@@ -543,6 +543,17 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			return nil, &briefs.BadRequestError{Code: "400", Message: msg}
 		case errors.Is(merr, ErrCampaignNotProvisioned):
 			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id yet"}
+		case errors.Is(merr, domain.ErrNoMetricsInWindow):
+			// A successful read of nothing. Kept out of the 503 default deliberately: the
+			// email channel stages a DRAFT, so this is what every read before the human
+			// presses send looks like, and calling that an ad-platform outage would send an
+			// operator to investigate a healthy integration. The message enumerates the
+			// three indistinguishable causes rather than picking one, because the upstream
+			// response genuinely cannot separate them.
+			slog.InfoContext(ctx, "campaign metrics read returned no data for the window",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "window", string(window))
+			return nil, &briefs.ConflictError{Code: "409", Message: "the platform reported no data for this campaign in the requested window — it may not have run inside the window, may not have been sent or started yet, or may no longer exist upstream"}
 		case errors.Is(merr, ErrCampaignAccountMismatch):
 			// The two customer ids stay server-side: which ad account a project is connected
 			// to is connection configuration, not something a metrics reader needs told.
@@ -621,7 +632,26 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 		Clicks:      m.Clicks,
 		CostMicros:  m.CostMicros,
 		Ctr:         m.Ctr,
+		Email:       emailMetricsResult(m.Email),
 	}, nil
+}
+
+// emailMetricsResult renders the email-channel counters, or nil for an ad platform. Kept a
+// function rather than an inline conditional so the nil case is the one the type system
+// enforces: the ad adapters never populate m.Email, and a nil dereference here would turn
+// every ad-platform metrics read into a 500.
+func emailMetricsResult(e *model.EmailMetrics) *briefs.EmailMetrics {
+	if e == nil {
+		return nil
+	}
+	return &briefs.EmailMetrics{
+		Sent:         e.Sent,
+		Delivered:    e.Delivered,
+		Opens:        e.Opens,
+		Clicks:       e.Clicks,
+		Bounces:      e.Bounces,
+		Unsubscribes: e.Unsubscribes,
+	}
 }
 
 // defaultMetricsWindowFor returns the window GetCampaignMetrics uses when the caller omits

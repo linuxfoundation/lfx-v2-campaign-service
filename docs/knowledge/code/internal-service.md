@@ -163,8 +163,12 @@ platform. An unprovisioned campaign (`PlatformCampaignID` empty, or `campaign ==
 returns `ErrCampaignNotProvisioned` (409) before any platform call, same as the toggle. A
 connection the dispatcher refuses BEFORE contacting the platform — `ErrCampaignAccountMismatch`,
 `ErrAccountNotSelected`, `ErrConnectionNotUsable` — is also a 409 (see the classification
-section below). Everything else propagates as-is (503) — a read has no ambiguous mutation to
-protect, so there is no UNCONFIRMED classification here. The call is
+section below). `ErrNoMetricsInWindow` is a fourth 409, and the one that is not about a
+connection at all: the platform answered successfully and reported no data. It is kept off
+the 503 default deliberately, because for the email channel it is the ORDINARY state (a
+staged draft nobody has sent yet) and calling that an outage would send an operator to
+investigate a healthy integration. Everything else propagates as-is (503) — a read has no
+ambiguous mutation to protect, so there is no UNCONFIRMED classification here. The call is
 bounded by `metricsCallTimeout` (20s, distinct from `toggleCallTimeout`'s 45s — reads should
 fail fast rather than hold a request open).
 
@@ -175,6 +179,15 @@ The `window` query parameter is a closed, platform-agnostic vocabulary
 `MetricsReader` adapter is responsible for mapping this vocabulary to its own platform's
 query syntax; the mapping (and any platform-specific validation, e.g. an allow-list guard
 against GAQL injection) lives in the platform client package, not here.
+
+One caveat the vocabulary cannot express: for the HubSpot email channel the window selects
+which EMAILS are in scope by send date, not which events are counted, so the counters are
+the email's totals to date and two different windows containing the send date return
+identical numbers. `Window` in the response records what was ASKED. The email channel also
+adds an optional `email` object to the result, rendered by `emailMetricsResult` — a function
+rather than an inline literal precisely so nil is the case the type system enforces, since
+no ad adapter ever populates it and a dereference here would turn every ad-platform read
+into a 500.
 
 When the caller omits `window`, `defaultMetricsWindowFor` (`internal/service/brief.go`)
 picks the default PER PLATFORM rather than applying one global constant: `last_30_days`

@@ -63,6 +63,18 @@ var (
 	// (%w) so the service layer can map it without importing every platform package.
 	ErrMetricsWindowUnsupported = errors.New("this window is not supported for the campaign's platform")
 
+	// ErrNoMetricsInWindow indicates the platform answered successfully and reported no
+	// data for this campaign in this window. It is NOT an upstream failure, so the 503
+	// default would be a false outage report, and it is NOT zeros, because the adapter
+	// that raises it cannot tell "no activity" from "no such campaign in scope" — see
+	// hubspot.ErrNoSentEmailInWindow, which reasons that out at length.
+	//
+	// The email channel makes this the ORDINARY case rather than an edge one: Dispatch
+	// stages the cloned email as a DRAFT for a human to send, so every metrics read
+	// between staging and the send lands here. Maps to 409 — the campaign's state, not
+	// the platform's health, is why there is nothing to return.
+	ErrNoMetricsInWindow = errors.New("the platform reported no data for this campaign in the requested window")
+
 	// ErrCampaignAccountMismatch indicates the campaign was created under one ad
 	// account but the project's CURRENT connection for that platform resolves to a
 	// different one. Platform campaign ids are unique only WITHIN an account, so an

@@ -6,6 +6,7 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -63,26 +64,104 @@ func NewHubSpotDispatcher(repo connReader, enc domain.Encryptor, audiences audie
 	return &HubSpotDispatcher{creds: newCredsSource(repo, enc), audiences: audiences, opts: opts}
 }
 
+// resolveHubSpotClient decrypts the project's HubSpot connection and builds a client from
+// it. Extracted once there was a second caller (ReadMetrics) rather than inlined again:
+// the credential-resolution sequence is where the connection-state and
+// incomplete-credential checks live, and two copies of it drift.
+//
+// Errors are returned unmarked except for resolve()'s own, which already carries
+// NoUpstreamCreate — a READ caller has no create to mark, so marking is the mutating
+// caller's job.
+func (d *HubSpotDispatcher) resolveHubSpotClient(ctx context.Context, projectID string, platform model.Provider) (*hubspot.Client, error) {
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return nil, err // already a preCreateError
+	}
+	if res.status != model.StatusActive {
+		return nil, fmt.Errorf("hubspot connection for project %s is %s, not active", projectID, res.status)
+	}
+
+	var creds hubspotCreds
+	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
+		return nil, fmt.Errorf("decode hubspot credentials: %w", err)
+	}
+	// Trimmed ONCE, and the trimmed value is what reaches the client. hubspot.NewClient
+	// trims again, so padding could not reach the wire either way; the point of trimming
+	// HERE is that the emptiness check below must be made against the same value the
+	// client will use. A whitespace-only token is an INCOMPLETE credential — a
+	// configuration error the caller can fix — and saying so at this layer beats letting
+	// it surface later as a generic missing-token failure from inside the client.
+	token := strings.TrimSpace(creds.PrivateAppToken)
+	if token == "" {
+		return nil, fmt.Errorf("hubspot credentials are incomplete (need privateAppToken)")
+	}
+
+	return hubspot.NewClient(
+		hubspot.Credentials{PrivateAppToken: token},
+		hubspot.AccountConfig{PortalID: res.providerConfig["portal_id"]},
+		d.opts...,
+	), nil
+}
+
+// ReadMetrics implements service.MetricsReader for the HubSpot email channel (LFXV2-3058):
+// it reads the staged email's live statistics over one window. A pure read — nothing is
+// mutated upstream and nothing is persisted.
+//
+// The window is validated BEFORE credentials are resolved, and the order is load-bearing:
+// an unsupported window is a permanent 400 whatever the connection looks like, whereas
+// resolving first would report a project with an inactive connection as a 503 and tell the
+// caller to retry a request that can never succeed. Same order as the linkedin and X
+// adapters.
+func (d *HubSpotDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+	if campaign.PlatformCampaignID == "" {
+		return nil, fmt.Errorf("campaign has no platform campaign ID")
+	}
+	if werr := hubspot.ValidateMetricsWindow(window); werr != nil {
+		return nil, fmt.Errorf("get email metrics from hubspot: %w", errors.Join(domain.ErrMetricsWindowUnsupported, werr))
+	}
+
+	client, err := d.resolveHubSpotClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+
+	metrics, err := client.GetEmailMetrics(ctx, campaign.PlatformCampaignID, window)
+	if err != nil {
+		if errors.Is(err, hubspot.ErrUnsupportedWindow) {
+			return nil, fmt.Errorf("get email metrics from hubspot: %w", errors.Join(domain.ErrMetricsWindowUnsupported, err))
+		}
+		// An empty match is a successful read of nothing, not a platform failure. Left
+		// unmarked it would take the 503 default and report an outage for the most
+		// ordinary state this channel has: a staged draft nobody has sent yet.
+		if errors.Is(err, hubspot.ErrNoSentEmailInWindow) {
+			return nil, fmt.Errorf("get email metrics from hubspot: %w", errors.Join(domain.ErrNoMetricsInWindow, err))
+		}
+		return nil, fmt.Errorf("get email metrics from hubspot: %w", err)
+	}
+	// The platform client keys its result by the HubSpot email id it queried; the API
+	// contract is that campaign_id is the SERVICE's campaign UUID, so it is restated here
+	// rather than in the client, which has no way to know it.
+	metrics.CampaignID = campaign.ID
+	return metrics, nil
+}
+
 // Dispatch implements service.PlatformDispatcher for the HubSpot email channel. It clones the
 // caller's template email and sets its send list to the brief's built audience. The returned
 // campaign's PlatformCampaignID is the cloned email's HubSpot id.
 func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
 	// Resolve creds FIRST (pre-create): a missing/undecryptable connection is a not-created
-	// error → the orchestrator releases the claim.
-	res, err := d.creds.resolve(ctx, brief.ProjectID, platform)
+	// error → the orchestrator releases the claim. resolve() already returns a preCreateError,
+	// so that one is passed through unwrapped; everything resolveHubSpotClient adds on top is
+	// pre-create too and gets wrapped here.
+	client, err := d.resolveHubSpotClient(ctx, brief.ProjectID, platform)
 	if err != nil {
-		return nil, err // already a preCreateError
-	}
-	if res.status != model.StatusActive {
-		return nil, notCreated(fmt.Errorf("hubspot connection for project %s is %s, not active", brief.ProjectID, res.status))
-	}
-
-	var creds hubspotCreds
-	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return nil, notCreated(fmt.Errorf("decode hubspot credentials: %w", err))
-	}
-	if strings.TrimSpace(creds.PrivateAppToken) == "" {
-		return nil, notCreated(fmt.Errorf("hubspot credentials are incomplete (need privateAppToken)"))
+		// Same shape as the reddit adapter: an already-marked error passes through rather
+		// than being double-wrapped, and everything else is marked here.
+		var nuc interface{ NoUpstreamCreate() bool }
+		if errors.As(err, &nuc) && nuc.NoUpstreamCreate() {
+			return nil, err
+		}
+		return nil, notCreated(err)
 	}
 
 	var cfg hubspotConfig
@@ -114,12 +193,6 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 			return nil, notCreated(fmt.Errorf("hubspot: the audience master list %q is also in its suppression set — the send list would exclude the entire audience", masterListID))
 		}
 	}
-
-	client := hubspot.NewClient(
-		hubspot.Credentials{PrivateAppToken: creds.PrivateAppToken},
-		hubspot.AccountConfig{PortalID: res.providerConfig["portal_id"]},
-		d.opts...,
-	)
 
 	// STEP 1 (mutating): clone the template email. From here a failure MAY have created the
 	// clone upstream, so classify by whether the outcome is confirmable.

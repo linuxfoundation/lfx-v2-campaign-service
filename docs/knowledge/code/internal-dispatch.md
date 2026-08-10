@@ -260,6 +260,41 @@ the platform's API limitation (NOT a reduced range, average, or extrapolation). 
 permanent X API constraint documented in the knowledge base. Spend is returned by X as
 `billed_charge_local_micro`, already in micro-currency units (no USD parsing or conversion).
 
+**HubSpot (the email channel)** implements it too, and it is the one `MetricsReader` whose
+subject is not an ad campaign. `HubSpotDispatcher.ReadMetrics` calls
+`hubspot.ValidateMetricsWindow` BEFORE `resolveHubSpotClient` — the same load-bearing order as
+LinkedIn and for the same reason — then reads the staged email's statistics and restates
+`CampaignID` as the SERVICE's campaign UUID, which the platform client cannot know (it keyed
+its result by the HubSpot email id it queried).
+
+Three things about it differ from every ad adapter, and a consumer that assumes otherwise
+reports false numbers:
+
+- **The window does not scope the counters.** HubSpot's statistics span selects WHICH EMAILS
+  are in scope by SEND date; the counters returned are that email's totals to date. `today`
+  and `last_30_days` on an email sent this morning return the same numbers. `Window` records
+  what was asked, not a period the counters cover. Genuine event-time windowing needs the
+  email-events API and is deliberately not attempted.
+- **An empty match is a successful read of nothing, not a failure.** The adapter marks
+  `hubspot.ErrNoSentEmailInWindow` with `domain.ErrNoMetricsInWindow` so the service answers
+  409. Unmarked it would take the 503 default — and this is the ORDINARY state, because
+  `Dispatch` stages the cloned email as a DRAFT for a human to send. Note what the sentinel
+  does NOT claim: sent-outside-the-window, never-sent and no-such-id arrive in one
+  indistinguishable shape, so it names all three.
+- **`CostMicros` is always 0**, and the extra counters ride in `CampaignMetrics.Email`
+  (`sent`, `delivered`, `opens`, `clicks`, `bounces`, `unsubscribes`), a nil-for-ad-platforms
+  pointer. `Impressions`/`Clicks` mirror `opens`/`clicks`. The zero cost means "not billed
+  per send", not "free", and must not be blended into a cross-channel CPA.
+
+`resolveHubSpotClient` was extracted from `Dispatch` once `ReadMetrics` became a second
+caller, rather than inlining the credential sequence a third time. It returns its own errors
+UNMARKED: `creds.resolve`'s error already carries `NoUpstreamCreate`, and marking the rest is
+the MUTATING caller's job — a read has no create to disown. `Dispatch` therefore passes an
+already-marked error through and wraps everything else in `notCreated`, the same shape the
+reddit adapter uses. The token is `TrimSpace`d ONCE inside the helper and the trimmed value is
+what reaches `hubspot.NewClient`, so the incomplete-credential check is made against the value
+the client will actually use.
+
 ## Account discovery (optional capability)
 
 `GoogleAdsDispatcher.ListAccounts(ctx, projectID, platform) ([]model.AccessibleAccount, error)`

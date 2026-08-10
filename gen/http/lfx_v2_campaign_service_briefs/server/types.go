@@ -286,6 +286,9 @@ type GetCampaignMetricsResponseBody struct {
 	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+	// Email-channel counters. Present only for the email channel (HubSpot); absent
+	// for every ad platform.
+	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
 }
 
 // UpdateCampaignResponseBody is the type of the
@@ -1145,6 +1148,22 @@ type GetJobNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// EmailMetricsResponseBody is used to define fields on response body types.
+type EmailMetricsResponseBody struct {
+	// Emails handed to the delivery pipeline
+	Sent int64 `form:"sent" json:"sent" xml:"sent"`
+	// Emails the receiving server accepted
+	Delivered int64 `form:"delivered" json:"delivered" xml:"delivered"`
+	// Opens in window (mirrors impressions)
+	Opens int64 `form:"opens" json:"opens" xml:"opens"`
+	// Clicks in window (mirrors clicks)
+	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
+	// Bounced emails in window
+	Bounces int64 `form:"bounces" json:"bounces" xml:"bounces"`
+	// Unsubscribes in window
+	Unsubscribes int64 `form:"unsubscribes" json:"unsubscribes" xml:"unsubscribes"`
+}
+
 // PlatformResultResponseBody is used to define fields on response body types.
 type PlatformResultResponseBody struct {
 	// Platform this result is for
@@ -1389,6 +1408,9 @@ func NewGetCampaignMetricsResponseBody(res *lfxv2campaignservicebriefs.CampaignM
 		Clicks:             res.Clicks,
 		CostMicros:         res.CostMicros,
 		Ctr:                res.Ctr,
+	}
+	if res.Email != nil {
+		body.Email = marshalLfxv2campaignservicebriefsEmailMetricsToEmailMetricsResponseBody(res.Email)
 	}
 	return body
 }

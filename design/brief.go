@@ -204,7 +204,22 @@ var CampaignMetrics = Type("campaign-metrics", func() {
 	Attribute("clicks", Int64, "Clicks in window")
 	Attribute("cost_micros", Int64, "Cost in window, in micro-units of the platform's native currency (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter, etc.)")
 	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0")
+	Attribute("email", EmailMetrics, "Email-channel counters. Present only for the email channel (HubSpot); absent for every ad platform.")
 	Required("campaign_id", "platform_campaign_id", "window", "impressions", "clicks", "cost_micros", "ctr")
+})
+
+// EmailMetrics is the email channel's counter set. It is a separate OPTIONAL object rather
+// than extra attributes on campaign-metrics so an ad-platform response does not carry six
+// fields that are structurally zero, which a client cannot distinguish from "zero sends".
+var EmailMetrics = Type("email-metrics", func() {
+	Description("Counters that only an email campaign has. impressions/clicks on the parent object mirror opens/clicks; cost_micros is always 0 for email because the platform bills no per-send cost — that 0 must not be blended into a cross-channel cost-per-acquisition.")
+	Attribute("sent", Int64, "Emails handed to the delivery pipeline")
+	Attribute("delivered", Int64, "Emails the receiving server accepted")
+	Attribute("opens", Int64, "Opens in window (mirrors impressions)")
+	Attribute("clicks", Int64, "Clicks in window (mirrors clicks)")
+	Attribute("bounces", Int64, "Bounced emails in window")
+	Attribute("unsubscribes", Int64, "Unsubscribes in window")
+	Required("sent", "delivered", "opens", "clicks", "bounces", "unsubscribes")
 })
 
 // EventDetailsResult is what fetch-event-url returns: the metadata extracted from an

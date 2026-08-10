@@ -200,6 +200,9 @@ type CampaignMetrics struct {
 	CostMicros int64
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr float64
+	// Email-channel counters. Present only for the email channel (HubSpot); absent
+	// for every ad platform.
+	Email *EmailMetrics
 }
 
 type CampaignUpdateInput struct {
@@ -257,6 +260,25 @@ type DeleteCampaignPayload struct {
 	CampaignID string
 	// If-Match header carrying the current ETag/version
 	IfMatch *string
+}
+
+// Counters that only an email campaign has. impressions/clicks on the parent
+// object mirror opens/clicks; cost_micros is always 0 for email because the
+// platform bills no per-send cost — that 0 must not be blended into a
+// cross-channel cost-per-acquisition.
+type EmailMetrics struct {
+	// Emails handed to the delivery pipeline
+	Sent int64
+	// Emails the receiving server accepted
+	Delivered int64
+	// Opens in window (mirrors impressions)
+	Opens int64
+	// Clicks in window (mirrors clicks)
+	Clicks int64
+	// Bounced emails in window
+	Bounces int64
+	// Unsubscribes in window
+	Unsubscribes int64
 }
 
 // EventDetails is the result type of the lfx-v2-campaign-service-briefs
