@@ -217,6 +217,19 @@ func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
 			want:    "https://idp/jwks",
 			secrets: []string{"s3cret", "access_token"},
 		},
+		{
+			// The sibling of the case above, and the shape Copilot asked for on #102: the
+			// query's `@` is not at the END of the value, so a whole-string LastIndexByte
+			// finds it, rebuilds from it, and deletes the `?` along with everything before —
+			// leaving `nats://***@live-secret,nats://c`, i.e. the credential SUFFIX printed
+			// verbatim with `***` standing in for the harmless part. Bounding the search at
+			// the first `?` means the `@` is never seen: nothing before the query holds one,
+			// so the value falls through to trimQueryAndFragment and both hosts survive.
+			name:    "multi-URL fallback does not leak a credential suffix after a query @",
+			in:      "nats://a,nats://b?access_token=prefix@live-secret,nats://c", // secretlint-disable-line
+			want:    "nats://a,nats://b",
+			secrets: []string{"live-secret", "access_token", "prefix"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := URLUserinfo(tc.in)
