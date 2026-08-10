@@ -88,6 +88,30 @@ The through-line for the round: when a new write path reuses an existing table, 
 must uphold are not all visible in Go. Some live in indexes and row locks that a sibling path
 established, and reading only the sibling's Go code will not find them.
 
+## Round N+3: a fallback that is safe everywhere except here
+
+The credential fallback to the LF system account has been in this service for a long time and is
+correct for every path that had it: each of those names a campaign the service already holds a
+project-scoped ROW for, so the row is the authorization and it does not matter that several
+projects share one ad account underneath. Adoption is the first endpoint where the caller names
+an ARBITRARY upstream id, and that single difference turns the shared account into a
+cross-project hole — project A binds project B's console-created campaign, then reads its spend
+and pauses it. Every guard that looks like it should catch this misses for a structural reason:
+the row-scoped guards on metrics and toggle check a row A legitimately owns, and the
+account-mismatch guard compares two customer ids that are the same id.
+
+The fix is a refusal, not a check, because there is nothing to check against. A campaign's name,
+labels and budget are all set by whoever created it, so no upstream field is evidence of which
+project owns it. `resolveOwnedGoogleAdsClient` therefore rejects `resolved.fromSystem` outright,
+and the refusal costs nothing real: a project with no ad account of its own has no campaign of
+its own to adopt.
+
+Worth recording as a class. When a shared resource is safe because *every existing caller happens
+to supply a scoped key*, that safety is a property of the CALLERS, not of the resource — and the
+first caller that supplies an unscoped key inherits none of it. The audit question for the next
+endpoint is not "does this reuse a vetted helper" but "does this reuse it with the same shape of
+input the vetting assumed".
+
 The generalisable part is WHICH arm went missing. Copying a switch reproduces the arms that fire
 in ordinary testing and drops the one for a condition nothing local produces; both remaining arms
 returned a `ConflictError`, so the code did not look incomplete. The new test asserts the response

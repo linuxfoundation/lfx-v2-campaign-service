@@ -287,4 +287,16 @@ var (
 	// gets for its own platform slot: the 409 has to name the OTHER brief's binding, or the
 	// caller reads "already has a campaign" about a brief that does not. Maps to 409.
 	ErrPlatformCampaignAlreadyBound = errors.New("this platform campaign is already bound to another brief")
+
+	// ErrAdoptionRequiresOwnConnection indicates the project has no ad-platform connection of
+	// its own, so its credentials resolved to the shared LF system account. Maps to 409.
+	//
+	// Every other platform call names a campaign the project already has a ROW for, and the
+	// row is the authorization. Adoption's caller names an ARBITRARY upstream id, so under the
+	// system fallback — where many projects share ONE account — it would let any project bind,
+	// meter and pause a campaign another project created there. Upstream metadata cannot settle
+	// ownership either: names, labels and budgets are all set by whoever created the campaign.
+	// The refusal costs nothing real, because a project with no ad account of its own has no
+	// campaign of its own to adopt.
+	ErrAdoptionRequiresOwnConnection = errors.New("adoption requires a connection owned by this project")
 )

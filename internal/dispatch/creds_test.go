@@ -643,3 +643,47 @@ func TestADisconnectedProjectDoesNotFallBackToTheLFAccount(t *testing.T) {
 		}
 	})
 }
+
+// TestAdoptionRefusesTheSystemFallback: the credential fallback is a feature for every path
+// that names a campaign this service already has a project-scoped ROW for — the row is the
+// authorization, so sharing one LF ad account across projects is safe. Adoption breaks that
+// assumption: its caller names an ARBITRARY upstream id, so inside the shared account project A
+// could bind project B's console-created campaign to its own brief and thereafter read its spend
+// and pause it. Neither the account-mismatch guard nor the row-scoped guards on metrics/toggle
+// help, because both projects resolve to the SAME customer id and the row A creates is A's own.
+//
+// The test pins the boundary in both directions: refuse under the fallback, proceed on a
+// project-owned connection. Without the second half a blanket refusal would pass.
+func TestAdoptionRefusesTheSystemFallback(t *testing.T) {
+	usable := func() *model.Connection { return usableConn(goodGoogleAdsCreds, "8666746580") }
+
+	t.Run("a project with no connection of its own cannot adopt", func(t *testing.T) {
+		d := NewGoogleAdsDispatcher(&scopedConnReader{
+			rows: map[string]*model.Connection{model.SystemProjectID: usable()},
+		}, identityEncryptor{})
+
+		_, err := d.LookupCampaign(context.Background(), "cncf", model.ProviderGoogleAds, "1234567890")
+		if !errors.Is(err, domain.ErrAdoptionRequiresOwnConnection) {
+			t.Fatalf("err = %v, want ErrAdoptionRequiresOwnConnection — adoption under the shared "+
+				"LF account lets any project bind another project's campaign there", err)
+		}
+	})
+
+	t.Run("a project with its own connection gets past the gate", func(t *testing.T) {
+		// Deliberately account-less rather than fully usable: that defect is raised by
+		// validateGoogleAdsConnection, one step PAST the ownership gate and still short of
+		// the network, so reaching it proves the gate did not fire without this unit test
+		// making an outbound call.
+		d := NewGoogleAdsDispatcher(&scopedConnReader{
+			rows: map[string]*model.Connection{"cncf": usableConn(goodGoogleAdsCreds, "")},
+		}, identityEncryptor{})
+
+		_, err := d.LookupCampaign(context.Background(), "cncf", model.ProviderGoogleAds, "1234567890")
+		if errors.Is(err, domain.ErrAdoptionRequiresOwnConnection) {
+			t.Fatalf("err = %v: this project owns its connection, so the gate must not fire", err)
+		}
+		if !errors.Is(err, domain.ErrAccountNotSelected) {
+			t.Fatalf("err = %v, want the account-not-selected defect from the step after the gate", err)
+		}
+	})
+}

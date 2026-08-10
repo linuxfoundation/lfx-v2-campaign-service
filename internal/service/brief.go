@@ -549,6 +549,14 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 			return nil, &briefs.BadRequestError{Code: "400", Message: "platform_campaign_id is not a valid campaign id for this platform"}
 		case errors.Is(lerr, ErrPlatformCampaignAbsent):
 			return nil, &briefs.NotFoundError{Code: "404", Message: "no such campaign exists on the ad platform under this project's connection"}
+		case errors.Is(lerr, domain.ErrAdoptionRequiresOwnConnection):
+			// ABOVE every connection arm below, which would otherwise send an operator to
+			// repair a connection that is working exactly as designed. Nothing is broken
+			// here: the project simply has no ad account of its own, and adoption is the
+			// one path where the shared LF account cannot stand in for one, because the
+			// caller names an arbitrary campaign inside it rather than one this service
+			// already has a project-scoped row for.
+			return nil, &briefs.ConflictError{Code: "409", Message: "this project has no ad-platform connection of its own — adoption can only bind a campaign from an ad account this project owns; connect the project's own ad account first"}
 		case errors.Is(lerr, domain.ErrSystemConnectionNotUsable):
 			// Reachable for the same reason as in the metrics and toggle paths: systemScoped
 			// WRAPS rather than replaces, so a defect in the LF system row this project fell

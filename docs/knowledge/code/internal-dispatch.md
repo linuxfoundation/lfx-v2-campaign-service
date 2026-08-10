@@ -518,10 +518,20 @@ acts on a 404 by creating a duplicate paid campaign. Never reduce an unverifiabl
 a clean absence (the `continue`-on-mismatch shape: skipping every non-matching row yields zero
 matches, exactly the licence-to-create answer the check existed to prevent).
 
-`GoogleAdsDispatcher.LookupCampaign` resolves the ORDINARY client via `resolveGoogleAdsClient`,
-not the discovery client, on purpose: discovery credentials see every account the login
-customer administers, so adoption through them could bind a campaign belonging to a different
-project. It drops the platform's `ENABLED`/`PAUSED` — reaching the mapping already means the
+`GoogleAdsDispatcher.LookupCampaign` resolves through `resolveOwnedGoogleAdsClient`, which is the
+ordinary `resolveGoogleAdsClient` plus one refusal: it rejects credentials that came from the LF
+system fallback (`resolved.fromSystem`) with `domain.ErrAdoptionRequiresOwnConnection` (409). Two
+separate isolation problems sit behind that. Discovery credentials see every account the login
+customer administers, so adopting through them could bind a campaign belonging to a different
+project — which is why this is not the discovery client. And the system fallback puts MANY
+projects inside ONE LF-owned ad account, where an endpoint that takes a caller-supplied arbitrary
+campaign id lets project A bind, meter and pause a campaign project B created there; the
+account-mismatch guard cannot see it, because both projects resolve to the same customer id.
+No upstream metadata settles ownership either — a campaign's name, labels and budget are set by
+whoever created it. Requiring a project-owned connection is the only check that holds, and it
+forbids nothing real: a project with no ad account of its own has no campaign to adopt. Every
+OTHER platform call keeps the fallback, because each names a campaign this service already has a
+project-scoped row for, and that row is the authorization. It drops the platform's `ENABLED`/`PAUSED` — reaching the mapping already means the
 campaign is live, since `googleads.GetCampaign` filters `REMOVED` server-side and errors on any
 status outside its known set — and it fills `PlatformCampaignRef.Result` with the resolved
 customer id, so the adopted row records the account it was verified under and the existing

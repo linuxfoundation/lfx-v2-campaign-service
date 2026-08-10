@@ -231,7 +231,12 @@ Persistence goes through `CampaignRepository.AdoptCampaign`, deliberately not `U
 The connection arms are ordered as in the metrics and toggle switches, and for the same reason:
 `ErrSystemConnectionNotUsable` (500, page an operator) then `ErrAccountNotSelected` (409) then
 the broad `ErrConnectionNotUsable` (409) — each WRAPPED alongside the next, so a broad match
-placed first wins and names a scope the caller cannot address. `ErrInvalidPlatformCampaignID`
+placed first wins and names a scope the caller cannot address. Ahead of all three sits
+`ErrAdoptionRequiresOwnConnection` (409), which is not a defect at all: the project has no
+connection of its own and adoption alone cannot accept the shared LF account
+(`internal-dispatch.md` has the isolation argument). Placing it first keeps the connection arms
+from sending an operator to repair something that is working as designed.
+`ErrInvalidPlatformCampaignID`
 is a 400: the adapter rejected the id locally and issued no query, so the 503 would invite a
 retry of input that can never succeed. Two more 409s come back from the repository, which is
 where they can be checked atomically: `ErrPlatformCampaignAlreadyBound` (the campaign is bound
