@@ -272,7 +272,10 @@ type GetCampaignResponseBody struct {
 type GetCampaignMetricsResponseBody struct {
 	// Campaign UUID
 	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
-	// ID returned by the ad platform
+	// The id the CHANNEL returned when the campaign was created. On an ad platform
+	// that is its campaign id; on the email channel it is the HubSpot
+	// marketing-email id of the cloned draft, which is what the metrics read
+	// queries by.
 	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
 	// The reporting window that was REQUESTED. On the ad platforms it is also the
 	// period the counters cover. On the email channel it is not: it selects which

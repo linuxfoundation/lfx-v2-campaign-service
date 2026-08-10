@@ -4888,7 +4888,7 @@ definitions:
                 format: int64
             platform_campaign_id:
                 type: string
-                description: ID returned by the ad platform
+                description: The id the CHANNEL returned when the campaign was created. On an ad platform that is its campaign id; on the email channel it is the HubSpot marketing-email id of the cloned draft, which is what the metrics read queries by.
                 example: Modi blanditiis totam tempora.
             window:
                 type: string

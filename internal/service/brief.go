@@ -615,10 +615,13 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 				"platform", existing.Platform, "reason", unusableConnectionReason(merr))
 			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection is not ready — its stored credentials or provider settings need attention; repair the connection before reading metrics"}
 		default:
-			slog.WarnContext(ctx, "campaign metrics read failed on the ad platform",
+			// "channel", not "ad platform": HubSpot reaches this arm too, and a message
+			// naming an ad platform on an email read tells the caller to check a system
+			// they never connected.
+			slog.WarnContext(ctx, "campaign metrics read failed on the channel",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID, "error", safeErrSummary(merr))
-			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "campaign metrics could not be read from the ad platform"}
+			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "campaign metrics could not be read from the campaign's channel"}
 		}
 	}
 	return &briefs.CampaignMetrics{

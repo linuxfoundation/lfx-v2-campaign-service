@@ -98,6 +98,28 @@ missing private-app token", which is precisely the generic late failure the chec
 pre-empt. The sibling padding test is honest about not being binding on this layer: it pins
 the end-to-end property and says so, rather than implying a guard it does not provide.
 
+## Three places still assumed every metrics read is an ad-platform read
+
+Adding a channel to a shared endpoint makes prose written for one channel false rather than merely
+incomplete, and all three cases were user-visible.
+
+`platform_campaign_id` was documented as "ID returned by the ad platform". For an email campaign it
+is the HubSpot marketing-email id of the cloned draft — the value the metrics read queries by — and
+a client that read the description would have looked for an ad platform that never held it. The
+attribute now states both.
+
+The 503 default arm logged "campaign metrics read failed on the ad platform" and answered "could not
+be read from the ad platform". HubSpot reaches that arm, and the message directs the caller to check
+a system they never connected. Both now say channel. (The status-toggle arm keeps "ad platform" —
+HubSpot has no toggle.)
+
+`docs/api-catalog.md`'s canonical metrics row said "Everything else here is Google-Ads-only" and
+that no other adapter emits the three `ErrConnectionNotUsable` reasons. `resolveHubSpotClient` in
+this change emits all three, so the row contradicted the endpoint's own behaviour. Corrected, with
+the part that IS still Google-only kept separate: only Google Ads verifies account identity, and
+there is no ad account in an email connection to mismatch, so HubSpot emits neither
+`account_not_selected` nor an account mismatch.
+
 ## Related
 
 - `docs/knowledge/log/2026-08-09-lfxv2-3058-hubspot-email-metrics.md` — part 1, the client

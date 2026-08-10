@@ -198,7 +198,7 @@ var Campaign = Type("campaign", func() {
 // Campaign (which reflects the stored row plus an ETag).
 var CampaignMetrics = Type("campaign-metrics", func() {
 	Attribute("campaign_id", String, "Campaign UUID")
-	Attribute("platform_campaign_id", String, "ID returned by the ad platform")
+	Attribute("platform_campaign_id", String, "The id the CHANNEL returned when the campaign was created. On an ad platform that is its campaign id; on the email channel it is the HubSpot marketing-email id of the cloned draft, which is what the metrics read queries by.")
 	Attribute("window", String, "The reporting window that was REQUESTED. On the ad platforms it is also the period the counters cover. On the email channel it is not: it selects which emails are in scope by their send date, and the counters are then that email's totals to date — see the email object.", metricsWindowEnum)
 	Attribute("impressions", Int64, "Impressions over the window on an ad platform; opens to date on the email channel")
 	Attribute("clicks", Int64, "Clicks over the window on an ad platform; clicks to date on the email channel")

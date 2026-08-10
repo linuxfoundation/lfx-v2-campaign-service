@@ -190,7 +190,10 @@ type CampaignCreateInput struct {
 type CampaignMetrics struct {
 	// Campaign UUID
 	CampaignID string
-	// ID returned by the ad platform
+	// The id the CHANNEL returned when the campaign was created. On an ad platform
+	// that is its campaign id; on the email channel it is the HubSpot
+	// marketing-email id of the cloned draft, which is what the metrics read
+	// queries by.
 	PlatformCampaignID string
 	// The reporting window that was REQUESTED. On the ad platforms it is also the
 	// period the counters cover. On the email channel it is not: it selects which
