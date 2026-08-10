@@ -251,3 +251,105 @@ func TestHubSpot_ReadMetricsMarksAnEmptyWindowAsNoData(t *testing.T) {
 		t.Error("the hubspot cause was dropped from the error chain")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Portal scoping (LFXV2-3058 review): a HubSpot email id is a bare numeric, unique only
+// within the portal that minted it, and UpdateHubspot / SetCredentialHubspot can re-point a
+// project's connection at a different portal between create and read. These pin that the read
+// refuses across a proven re-point, and — just as importantly — that it does NOT refuse in the
+// two cases where a mismatch cannot be proven.
+// ---------------------------------------------------------------------------
+
+// emailInPortal is a staged email whose Result records the portal it was created in, which is
+// what campaignFromHubSpot now persists.
+func emailInPortal(t *testing.T, portalID string) *model.Campaign {
+	t.Helper()
+	c := stagedEmail()
+	raw, err := json.Marshal(map[string]string{"id": "4242", "portalId": portalID})
+	if err != nil {
+		t.Fatalf("marshal result blob: %v", err)
+	}
+	c.Result = raw
+	return c
+}
+
+func TestHubSpot_ReadMetricsRefusesAnEmailFromAnotherPortal(t *testing.T) {
+	srv, rec := statsServer(t)
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+
+	// Created in 9999999; the connection resolves to 8112310.
+	_, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, emailInPortal(t, "9999999"), model.MetricsWindowLast30Days)
+	if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+		t.Fatalf("want ErrCampaignAccountMismatch, got %v", err)
+	}
+	// The point of the guard is that it fires BEFORE the request. Reading and then discarding
+	// would still have counted another portal's email against this project's API quota, and a
+	// same-numeric-id collision would already have produced a plausible-looking counter set.
+	if rec.Called() {
+		t.Fatal("guard must reject before contacting HubSpot; the stats endpoint was called")
+	}
+}
+
+func TestHubSpot_ReadMetricsAllowsTheCreatingPortal(t *testing.T) {
+	srv, _ := statsServer(t)
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+
+	if _, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, emailInPortal(t, "8112310"), model.MetricsWindowLast30Days); err != nil {
+		t.Fatalf("matching portal must read normally: %v", err)
+	}
+}
+
+// A row written before Result carried portalId cannot prove a mismatch, and refusing every one
+// of them would break reads that work today. Unknown means proceed — the same rule
+// googleAdsCreationCustomerID states for legacy Google Ads rows.
+func TestHubSpot_ReadMetricsProceedsWhenTheCreationPortalIsUnrecorded(t *testing.T) {
+	srv, _ := statsServer(t)
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+
+	// stagedEmail() has no Result at all — the legacy shape.
+	if _, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, stagedEmail(), model.MetricsWindowLast30Days); err != nil {
+		t.Fatalf("a row with no recorded portal must still read: %v", err)
+	}
+}
+
+// The half that differs from the Google Ads guard. portal_id is OPTIONAL on a HubSpot
+// connection — the client uses it only to build app URLs — so an unset one is an ordinary
+// configuration rather than evidence of a re-point. Failing closed here would block reads for
+// every project that never filled the field in.
+func TestHubSpot_ReadMetricsProceedsWhenTheConnectionHasNoPortalID(t *testing.T) {
+	srv, _ := statsServer(t)
+	conn := activeHubSpotConn(goodHubSpotCreds)
+	conn.ProviderConfig = map[string]string{}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: conn}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+
+	if _, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, emailInPortal(t, "9999999"), model.MetricsWindowLast30Days); err != nil {
+		t.Fatalf("an unknown CURRENT portal cannot prove a mismatch: %v", err)
+	}
+}
+
+// The guard is only reachable if the create path records the portal, so this pins the
+// producer. Without it every campaign is permanently "unknown" and the guard never fires —
+// which is exactly how a check like this passes its own tests while protecting nothing.
+func TestHubSpot_CampaignResultRecordsTheCreationPortal(t *testing.T) {
+	c := campaignFromHubSpot(context.Background(), &hubspot.Email{ID: "4242", Name: "n"}, hubspotConfig{}, "8112310")
+
+	if got := hubSpotCreationPortalID(c); got != "8112310" {
+		t.Fatalf("creation portal not persisted through Result: got %q", got)
+	}
+	// The email's own fields must survive alongside it — the blob is read by reconcilers too.
+	var blob struct {
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		PortalID string `json:"portalId"`
+	}
+	if err := json.Unmarshal(c.Result, &blob); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if blob.ID != "4242" || blob.Name != "n" {
+		t.Fatalf("email fields lost from Result: %+v", blob)
+	}
+}

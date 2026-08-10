@@ -286,6 +286,30 @@ reports false numbers:
   pointer. `Impressions`/`Clicks` mirror `opens`/`clicks`. The zero cost means "not billed
   per send", not "free", and must not be blended into a cross-channel CPA.
 
+#### The read is scoped to the portal that minted the id
+
+`PlatformCampaignID` for an email campaign is a bare numeric HubSpot email id, and those are
+unique only WITHIN a portal. The connection `ReadMetrics` resolves is the project's CURRENT
+one, and `UpdateHubspot` / `SetCredentialHubspot` can re-point it at a different portal between
+create and read. Both outcomes of reading across a re-point are silently wrong: if the new
+portal holds an email with the same numeric id, another portal's opens and clicks are reported
+as this campaign's; if it does not, the read comes back `ErrNoSentEmailInWindow` — "not sent
+yet", the most ordinary state this channel has — for an email that was sent and is fine.
+
+So `campaignFromHubSpot` records the creating portal in `Result` as `portalId`, and
+`ReadMetrics` compares it against `client.PortalID()` before contacting HubSpot, answering
+`domain.ErrCampaignAccountMismatch` on a mismatch. This mirrors `googleAdsCreationCustomerID`
+and the guard above the Google Ads toggle.
+
+One thing differs from that original, and it is the part to preserve. Google Ads requires
+`account_id`, so only the STORED side can be unknown there. `portal_id` is optional on a
+HubSpot connection — the client needs it solely to build app URLs — so BOTH sides can be
+empty, and the guard requires both to be known before it refuses. An unknown side cannot prove
+a mismatch: a row written before `Result` carried `portalId`, or a connection that never filled
+the field in, are ordinary states, and failing closed on either would break reads that work
+today in exchange for no proof of harm. The residual gap is an argument for recording
+`portal_id`, not for tightening the guard.
+
 `resolveHubSpotClient` was extracted from `Dispatch` once `ReadMetrics` became a second
 caller, rather than inlining the credential sequence a third time. Its two error axes are owned
 by different places:
