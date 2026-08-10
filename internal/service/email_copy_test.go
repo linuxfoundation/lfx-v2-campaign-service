@@ -546,3 +546,123 @@ func TestParseEmailCopyResponse_EnforcesMaxLengths(t *testing.T) {
 		t.Errorf("Subject truncation not applied: %d chars (want <= 200)", len(result.Subject))
 	}
 }
+
+// TestGenerateEmailCopy_RejectsOverlongBody verifies that an oversized body HTML
+// is rejected as a generation failure (503) rather than silently corrupted by truncation.
+// Truncating HTML at an arbitrary rune boundary can cut inside tags or entities,
+// leaving malformed markup. Oversized bodies must be rejected outright.
+func TestGenerateEmailCopy_RejectsOverlongBody(t *testing.T) {
+	repo := newFakeBriefRepo()
+	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
+		ID:           "brief-456",
+		ProjectID:    "proj-123",
+		EventDetails: json.RawMessage(`{"eventName":"Test Event"}`),
+	}
+
+	// Create a response with a body exceeding 8000 characters.
+	longBody := `<p>` + repeatStr(`This is email content that exceeds the safe limit. `, 200) + `</div>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		content := `{"subject":"Test","preheader":"Test","body":"` + longBody + `","cta":"Click"}`
+		encoded, _ := json.Marshal(content)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(encoded) + `},"finish_reason":"stop"}]}`))
+	}))
+	defer srv.Close()
+
+	svc := newTestBriefService(repo)
+	svc.SetLLMClient(newTestLLMClient(t, srv))
+
+	result, err := svc.GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+		ProjectID:   "proj-123",
+		BriefID:     "brief-456",
+		BearerToken: strPtr("token"),
+	})
+
+	// Should reject as ServiceUnavailable (503), not return a silently corrupted copy.
+	if result != nil {
+		t.Error("expected nil result when body is overlong; got result instead of rejection")
+	}
+	var unavail *briefs.ConnServiceUnavailableError
+	if !errors.As(err, &unavail) {
+		t.Errorf("expected ConnServiceUnavailableError for overlong body, got %T: %v", err, err)
+	}
+}
+
+// TestGenerateEmailCopy_RejectsOversizedPrompt verifies that event details large enough
+// to create an oversized prompt (>3000 chars total) are rejected as 400 BadRequest before
+// calling the LLM. This prevents unbounded input-token cost and large allocations from
+// unsized event_details fields.
+func TestGenerateEmailCopy_RejectsOversizedPrompt(t *testing.T) {
+	repo := newFakeBriefRepo()
+	// Create a brief with event details sized to exceed the 3000-char prompt limit.
+	hugeName := repeatStr("KubeCon ", 500) // ~4000 chars
+	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
+		ID:           "brief-456",
+		ProjectID:    "proj-123",
+		EventDetails: json.RawMessage(`{"eventName":"` + hugeName + `"}`),
+	}
+	svc := newTestBriefService(repo)
+	svc.SetLLMClient(newTestLLMClient(t, httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			t.Fatal("LLM should not be called when prompt exceeds size limit")
+		}))))
+
+	payload := &briefs.GenerateEmailCopyPayload{
+		ProjectID:   "proj-123",
+		BriefID:     "brief-456",
+		BearerToken: strPtr("token"),
+	}
+
+	result, err := svc.GenerateEmailCopy(context.Background(), payload)
+
+	// Should reject as BadRequest (400), not call the LLM.
+	if result != nil {
+		t.Error("expected nil result when prompt is oversized")
+	}
+	var badReq *briefs.BadRequestError
+	if !errors.As(err, &badReq) {
+		t.Errorf("expected BadRequestError for oversized prompt, got %T: %v", err, err)
+	}
+}
+
+// TestGenerateEmailCopy_AcceptsSizeablePrompt verifies that normally-sized event details
+// (within the 3000-char prompt limit) pass validation and reach the LLM.
+func TestGenerateEmailCopy_AcceptsSizeablePrompt(t *testing.T) {
+	repo := newFakeBriefRepo()
+	// Create a brief with large but acceptable event details.
+	reasonablyLongName := repeatStr("x", 500) // 500 chars is well within the 3000 limit
+	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
+		ID:           "brief-456",
+		ProjectID:    "proj-123",
+		EventDetails: json.RawMessage(`{"eventName":"` + reasonablyLongName + `","location":"Barcelona","startDate":"2026-06-17"}`),
+	}
+
+	llmCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		llmCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		content := `{"subject":"Join Us","preheader":"Event details","body":"<p>Register now</p>","cta":"Register"}`
+		encoded, _ := json.Marshal(content)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(encoded) + `},"finish_reason":"stop"}]}`))
+	}))
+	defer srv.Close()
+
+	svc := newTestBriefService(repo)
+	svc.SetLLMClient(newTestLLMClient(t, srv))
+
+	result, err := svc.GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+		ProjectID:   "proj-123",
+		BriefID:     "brief-456",
+		BearerToken: strPtr("token"),
+	})
+
+	if !llmCalled {
+		t.Error("LLM was not called; prompt size validation rejected a valid prompt")
+	}
+	if err != nil {
+		t.Fatalf("expected success with sized prompt, got error: %v", err)
+	}
+	if result == nil {
+		t.Error("expected non-nil result on success")
+	}
+}

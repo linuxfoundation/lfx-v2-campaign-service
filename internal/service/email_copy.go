@@ -123,6 +123,11 @@ func formatEventDates(startDate, endDate string) string {
 // an error (not a fallback); GenerateEmailCopy treats the error as a 503 because email copy
 // is the primary output of this endpoint. Follows the reference implementation's principle
 // of defensive parsing and fail-closed validation.
+//
+// The Body field is NOT truncated: HTML truncated at an arbitrary rune boundary corrupts markup
+// (cutting inside tags, attributes, entities, or dropping closing tags). Oversized bodies are
+// rejected as unusable responses (same path as unparseable responses). Subject, preheader, and
+// CTA are truncated because they are plain text with no markup concerns.
 func parseEmailCopyResponse(raw string) (*briefs.EmailCopy, error) {
 	// Try JSON first, stripping code fences if present.
 	raw = strings.TrimSpace(raw)
@@ -139,11 +144,19 @@ func parseEmailCopyResponse(raw string) (*briefs.EmailCopy, error) {
 	}
 	err := json.Unmarshal([]byte(raw), &parsed)
 	if err == nil {
-		// JSON parse succeeded; enforce truncation limits.
+		// Check that the HTML body is within bounds. Unlike subject/preheader/CTA,
+		// the body cannot be silently truncated: truncating HTML at an arbitrary rune
+		// boundary corrupts markup (cuts inside tags/attributes/entities, drops closing tags).
+		// Oversized bodies are rejected outright as unusable responses.
+		if len([]rune(parsed.Body)) > 8000 {
+			return nil, errors.New("email body exceeds maximum length of 8000 characters; model response is unusable")
+		}
+
+		// JSON parse succeeded; enforce truncation limits on plain-text fields only.
 		return &briefs.EmailCopy{
 			Subject:   truncateString(parsed.Subject, 200),
 			Preheader: truncateString(parsed.Preheader, 150),
-			Body:      truncateString(parsed.Body, 8000),
+			Body:      parsed.Body, // No truncation: oversized bodies are rejected above.
 			Cta:       truncateString(parsed.Cta, 50),
 		}, nil
 	}
@@ -208,6 +221,23 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 		dates:     formatEventDates(details.StartDate, details.EndDate),
 	}
 	systemPrompt, userPrompt := composeEmailCopyPrompt(promptVars)
+
+	// Enforce a bound on the composed prompt size to prevent unbounded input-token cost
+	// and large allocations from oversized event_details (which carries `Any` type with no
+	// schema constraints in design/brief.go). The bound is set conservatively above typical
+	// prompts (system ~320 + user ~150-300 chars) to allow headroom while catching pathological
+	// event details. Oversized prompts are rejected as 400 BadRequest.
+	const maxPromptSize = 3000 // chars
+	totalPromptSize := len(systemPrompt) + len(userPrompt)
+	if totalPromptSize > maxPromptSize {
+		slog.WarnContext(ctx, "email copy generation blocked: composed prompt exceeds size limit",
+			"project_id", p.ProjectID, "brief_id", p.BriefID,
+			"prompt_size", totalPromptSize, "limit", maxPromptSize)
+		return nil, &briefs.BadRequestError{
+			Code:    "400",
+			Message: "brief's event details are too large; reduce the event name, location, or dates",
+		}
+	}
 
 	// Call the model.
 	raw, cerr := llmClient.Complete(ctx, systemPrompt, userPrompt)

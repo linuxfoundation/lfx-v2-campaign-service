@@ -21,7 +21,7 @@ The implementation follows six principles from the reference lfx-one implementat
 
 3. **Prompt limits are advisory; code limits are real.** The system prompt tells the model "subject under 60 characters", but `GenerateEmailCopy` also enforces truncation in code via `truncateString()`: subject max 200, preheader max 150, body max 8000, CTA max 50 characters.
 
-4. **Parse defensively.** The model's response is JSON-in-prose; it may be fenced in ```json blocks or have leading/trailing prose. The parser strips fences, tolerates case variants in keys, and fails cleanly on invalid JSON rather than returning partial results.
+4. **Parse defensively, fail-closed.** The model's response must be JSON, optionally wrapped in ```json fences. The parser strips fences and calls `json.Unmarshal` directly; any leading or trailing prose outside the fences will cause JSON parsing to fail, triggering a 503 response. This is intentional: email copy is the primary output of this endpoint, so a malformed response is a generation failure, not a fallback case.
 
 5. **One concern per AI call.** Email copy has one shape (subject/preheader/body/CTA), so a single call suffices. No need to split further.
 
@@ -69,18 +69,26 @@ The LLM client is optional: it is injected via `SetLLMClient()` in the container
 
 ## Testing
 
-The test suite (`internal/service/email_copy_test.go`) includes:
+The test suite (`internal/service/email_copy_test.go`) includes 18 test functions:
 
 - **TestDecodeEmailCopyEventDetails**: Validates the opportunistic event-details decoder handles valid, partial, empty, invalid, and missing-name inputs.
-- **TestParseEmailCopyResponse**: Validates JSON parsing with fence stripping, case handling, and length truncation.
+- **TestParseEmailCopyResponse**: Validates JSON parsing with fence stripping and truncation of plain-text fields (subject, preheader, CTA).
 - **TestFormatEventDates**: Validates date range formatting.
 - **TestTruncateString**: Validates truncation and trailing-whitespace stripping.
 - **TestComposeEmailCopyPrompt**: Validates prompt composition includes constraints and event details.
 - **TestGenerateEmailCopy_NoLLMClient**: Validates 503 response when llmClient is nil.
-- **TestDecodeEmailCopyEventDetails_FailsWithoutName**: Validates scrape principle (no name → no generation).
-- **TestParseEmailCopyResponse_EnforcesMaxLengths**: Validates code-side truncation limits.
+- **TestGenerateEmailCopy_BriefNotFound**: Validates 404 when brief does not exist.
+- **TestGenerateEmailCopy_InvalidEventDetails**: Validates 400 when event details lack a required name.
+- **TestGenerateEmailCopy_LLMError**: Validates 503 when the LLM platform returns an error.
+- **TestGenerateEmailCopy_HappyPath**: Validates the full flow with valid brief and LLM response.
+- **TestGenerateEmailCopy_RejectsIncompleteCopy**: Validates 503 when any required field (subject/preheader/body/CTA) is blank.
+- **TestGenerateEmailCopy_RejectsOverlongBody**: Validates 503 when body HTML exceeds 8000 chars (not truncated, as truncation corrupts markup).
+- **TestGenerateEmailCopy_RejectsOversizedPrompt**: Validates 400 when composed prompt exceeds 3000 chars (prevents unbounded input-token cost).
+- **TestGenerateEmailCopy_AcceptsSizeablePrompt**: Validates the full path for normally-sized event details (within prompt limit).
+- **TestDecodeEmailCopyEventDetails_FailsWithoutName**: Mutation test validating scrape principle (no name → no generation).
 - **TestFormatEventDates_RangeFormat**: Mutation test for date range format.
 - **TestTruncateString_EnforcesLimit**: Mutation test for truncation limits.
+- **TestParseEmailCopyResponse_EnforcesMaxLengths**: Mutation test for plain-text field truncation limits.
 
 Each test is mutation-verified by reverting the corresponding logic and confirming the test fails with a meaningful diagnostic.
 

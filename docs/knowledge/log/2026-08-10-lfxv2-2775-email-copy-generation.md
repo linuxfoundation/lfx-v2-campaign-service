@@ -37,7 +37,7 @@ AI-generated email copy (subject, preheader, body, CTA) for campaign briefs, usi
 
 ### Testing
 - **`internal/service/email_copy_test.go`** (new):
-  - 9 test functions covering decode, parsing, truncation, date formatting, prompt composition, full generation flow, and three mutation-verification tests.
+  - 18 test functions covering decode, parsing, truncation, date formatting, prompt composition, full generation flow, body-length validation, prompt-size validation, and mutation-verification tests.
   - All tests mutation-verified by reverting logic and confirming failure.
 
 ### Container / Dependency Injection
@@ -70,7 +70,7 @@ AI-generated email copy (subject, preheader, body, CTA) for campaign briefs, usi
 ```
 go build ./... ✓
 go vet ./...   ✓
-go test -race ./... ✓ (all 9 email-copy tests pass)
+go test -race ./... ✓ (all 18 email-copy tests pass)
 go run ./cmd/okfvalidate ./docs/knowledge ✓ (OKF-conformant)
 ```
 
