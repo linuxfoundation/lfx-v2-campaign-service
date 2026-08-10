@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -366,5 +367,71 @@ func TestHubSpot_ReadMetricsRefusesWhenThePortalCannotBeResolved(t *testing.T) {
 	}
 	if rec.Called() {
 		t.Error("the statistics endpoint was contacted without established provenance")
+	}
+}
+
+// The provenance lookup ReadMetrics performs is a nested call inside a budget the ORCHESTRATOR
+// sets (metricsCallTimeout, 20s), and the HubSpot client's own retry policy can wait far longer
+// than that on sustained throttling — retryMax*maxRetryWait is 180s. Handed the ambient context,
+// a throttled token-info call would therefore consume the entire metrics budget and time the
+// read out before GetEmailMetrics ever ran, turning a slow provenance check into "metrics are
+// down". So the lookup carries its own short deadline.
+//
+// This is the read-side twin of TestHubSpot_DispatchBoundsThePortalLookupBelowProviderCallTimeout,
+// and it asserts the same two things that test does, for the same reason: the lookup IS bounded,
+// and the real work is NOT bounded down with it.
+func TestHubSpot_ReadMetricsBoundsThePortalLookupBelowTheMetricsBudget(t *testing.T) {
+	srv, _ := statsServer(t)
+
+	// The deadline has to be read from the CLIENT side of the request: the handler's
+	// r.Context() is an httptest connection-lifetime context and knows nothing about the
+	// context this code chose.
+	deadlines := map[string]time.Time{}
+	rt := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		if dl, ok := req.Context().Deadline(); ok {
+			deadlines[req.URL.Path] = dl
+		}
+		return http.DefaultTransport.RoundTrip(req)
+	})
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL), hubspot.WithHTTPClient(&http.Client{Transport: rt}))
+
+	before := time.Now()
+	if _, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, stagedEmail(), model.MetricsWindowLast30Days); err != nil {
+		t.Fatalf("ReadMetrics: %v", err)
+	}
+
+	portalDeadline, ok := deadlines[accountDetailsPath]
+	if !ok {
+		t.Fatal("the token-info request must carry a deadline, not the caller's metrics-call budget")
+	}
+	if d := portalDeadline.Sub(before); d <= 0 || d > portalLookupTimeout+time.Second {
+		t.Errorf("token-info deadline was %v out from ReadMetrics start, want within (0, portalLookupTimeout=%v]", d, portalLookupTimeout)
+	}
+
+	// The statistics read is the actual work and must keep the client's own per-attempt
+	// budget. Presence of a deadline proves nothing here — doRequest gives every attempt one
+	// unconditionally — so the assertion is that it was not truncated to the short
+	// provenance budget.
+	var statsDeadline time.Time
+	for path, dl := range deadlines {
+		if path != accountDetailsPath {
+			statsDeadline = dl
+			break
+		}
+	}
+	if statsDeadline.IsZero() {
+		t.Fatal("the statistics request must carry a deadline (doRequest's per-attempt timeout)")
+	}
+	if d := statsDeadline.Sub(before); d <= portalLookupTimeout {
+		t.Errorf("statistics deadline was only %v out from ReadMetrics start, want materially more than portalLookupTimeout=%v — it must not have inherited the short portal-lookup budget", d, portalLookupTimeout)
+	}
+
+	// metricsCallTimeout lives in internal/service (orchestrator.go) and cannot be imported
+	// here without a cycle, so its value is duplicated in this assertion to keep the two
+	// honest with each other. If that constant changes, this must change too.
+	const metricsCallTimeoutForTest = 20 * time.Second
+	if portalLookupTimeout >= metricsCallTimeoutForTest {
+		t.Fatalf("portalLookupTimeout (%v) must stay well under metricsCallTimeout (%v) or the guard is pointless", portalLookupTimeout, metricsCallTimeoutForTest)
 	}
 }
