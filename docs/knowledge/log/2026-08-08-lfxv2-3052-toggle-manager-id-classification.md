@@ -151,9 +151,13 @@ refactor that doc describes.
 The round above is right that `credsSource.resolve` returns three errors carrying no
 `ErrConnectionNotUsable`, and wrong about what happens to them. It annotated them "(404)",
 "(retry later)" and "(page ops)" as though those were the toggle endpoint's responses. They are
-not. `ToggleCampaignStatus`'s switch (`internal/service/brief.go`) has exactly **two** arms —
-`ErrConnectionNotUsable` and an `Unconfirmed()` platform error. All three untagged returns fall
-to `default`: logged, then 503, indistinguishable from a repository failure. The distinct
+not. `ToggleCampaignStatus`'s switch (`internal/service/brief.go`) has several typed arms, and
+**none of them matches any of these three** — no `ErrNotFound` arm, no arm for a bare repository
+error, no `ErrCredentialDecryptionFailed` arm. All three untagged returns fall to `default`:
+logged, then 503, indistinguishable from a repository failure. (An earlier draft of this
+paragraph said the switch had "exactly two arms", which is false and was itself an instance of
+the mistake being described — asserting more about the switch than had been checked. The load-
+bearing fact is the absence of the three arms, not the arm count.) The distinct
 classifications are honoured by the read-only discovery handlers, which is where they were
 introduced.
 

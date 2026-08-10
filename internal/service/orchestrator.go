@@ -1042,11 +1042,12 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// row-is-provably-bad returns (no stored credentials, ErrCredentialsMalformed) are tagged.
 	//
 	// What the TOGGLE CALLER does with those three today is a single thing: nothing special.
-	// ToggleCampaignStatus's switch (internal/service/brief.go) has exactly two arms —
-	// ErrConnectionNotUsable and an Unconfirmed platform error — so all three untagged returns
-	// land in default, get logged, and return 503. Their distinct classifications are honoured
-	// by the read-only DISCOVERY handlers, not here. Do not read the sentinel names off this
-	// paragraph and assume this endpoint already answers 404 or 500; it does not.
+	// ToggleCampaignStatus's switch (internal/service/brief.go) does have several typed arms,
+	// but NONE of them matches these three: there is no ErrNotFound arm, no arm for a bare
+	// repository error, and no ErrCredentialDecryptionFailed arm. So all three untagged
+	// returns land in default, get logged, and return 503. Their distinct classifications are
+	// honoured by the read-only DISCOVERY handlers, not here. Do not read the sentinel names
+	// off this paragraph and assume this endpoint already answers 404 or 500; it does not.
 	//
 	// That is a known rough edge rather than a considered choice: "this project has no
 	// connection configured" is permanent, and 503 invites a retry that cannot succeed. Adding
