@@ -203,8 +203,20 @@ campaign fail with a guaranteed 400.
 ## Account discovery
 
 `ConnectionService.ListGoogleAdsAccounts` (backing `GET .../connection-google-ads/accounts`)
-enumerates the ad accounts reachable UPSTREAM with the connection's stored credential, so an
-operator can pick one instead of pasting a customer id by hand. It is a live read on the same
+and `ListMetaAdsAccounts` (`GET .../connection-meta-ads/accounts`) enumerate the ad accounts
+reachable UPSTREAM with the connection's stored credential, so an operator can pick one instead
+of pasting an account id by hand.
+
+**Both handlers are three lines over one `listAccounts` helper**, parameterized by an
+`accountDiscovery{provider, displayName, notUsableRemedy}` value. The mapping below encodes
+several judgements that are individually easy to get wrong — 404 rather than 503 for a missing
+connection, a 500 that logs but never echoes a decryption failure, a 400 rather than 503 for a
+connection no waiting will fix — and a second copy is where one of them quietly diverges. What
+IS per-provider is the caller-facing text: Meta's remedy names `access_token`, Google's names
+`login_customer_id`, and pointing the second handler at the first's `accountDiscovery` would
+tell a Meta operator to check a field their connection does not have.
+`TestListMetaAdsAccounts_MessagesNameMetaNotGoogleAds` is the test for exactly that, because
+every status-code assertion passes with the wiring wrong. It is a live read on the same
 never-persisted discipline as `GetCampaignMetrics`, and `Orchestrator.ReadAccounts` uses the
 same optional-capability pattern: it type-asserts the platform's dispatcher for `AccountLister`
 at call time and returns `ErrAccountsUnsupported` (400) without contacting the platform when

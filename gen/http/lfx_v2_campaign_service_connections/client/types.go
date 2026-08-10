@@ -728,6 +728,13 @@ type ListGoogleAdsAccountsResponseBody struct {
 	Accounts []*AccessibleAccountResponseBody `form:"accounts,omitempty" json:"accounts,omitempty" xml:"accounts,omitempty"`
 }
 
+// ListMetaAdsAccountsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
+// endpoint HTTP response body.
+type ListMetaAdsAccountsResponseBody struct {
+	Accounts []*AccessibleAccountResponseBody `form:"accounts,omitempty" json:"accounts,omitempty" xml:"accounts,omitempty"`
+}
+
 // CreateGoogleAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "create-google-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -2378,6 +2385,46 @@ type ListGoogleAdsAccountsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListMetaAdsAccountsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListMetaAdsAccountsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdsAccountsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListMetaAdsAccountsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdsAccountsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListMetaAdsAccountsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdsAccountsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
+// endpoint HTTP response body for the "NotFound" error.
+type ListMetaAdsAccountsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GoogleAdsConnectionConfigRequestBody is used to define fields on request
 // body types.
 type GoogleAdsConnectionConfigRequestBody struct {
@@ -2538,7 +2585,9 @@ type HubspotCredentialsRequestBody struct {
 // AccessibleAccountResponseBody is used to define fields on response body
 // types.
 type AccessibleAccountResponseBody struct {
-	// Account identifier in the ad platform's namespace
+	// Account identifier in the ad platform's own namespace, ready to store as the
+	// connection's account_id. Google Ads: bare digits (8666746580). Meta:
+	// act_-prefixed (act_8666746580).
 	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
 	// Human-readable account name or label
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
@@ -5232,6 +5281,70 @@ func NewListGoogleAdsAccountsNotFound(body *ListGoogleAdsAccountsNotFoundRespons
 	return v
 }
 
+// NewListMetaAdsAccountsResultOK builds a
+// "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
+// endpoint result from a HTTP "OK" response.
+func NewListMetaAdsAccountsResultOK(body *ListMetaAdsAccountsResponseBody) *lfxv2campaignserviceconnections.ListMetaAdsAccountsResult {
+	v := &lfxv2campaignserviceconnections.ListMetaAdsAccountsResult{}
+	v.Accounts = make([]*lfxv2campaignserviceconnections.AccessibleAccount, len(body.Accounts))
+	for i, val := range body.Accounts {
+		if val == nil {
+			v.Accounts[i] = nil
+			continue
+		}
+		v.Accounts[i] = unmarshalAccessibleAccountResponseBodyToLfxv2campaignserviceconnectionsAccessibleAccount(val)
+	}
+
+	return v
+}
+
+// NewListMetaAdsAccountsBadRequest builds a
+// lfx-v2-campaign-service-connections service list-meta-ads-accounts endpoint
+// BadRequest error.
+func NewListMetaAdsAccountsBadRequest(body *ListMetaAdsAccountsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaAdsAccountsServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service list-meta-ads-accounts endpoint
+// ServiceUnavailable error.
+func NewListMetaAdsAccountsServiceUnavailable(body *ListMetaAdsAccountsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaAdsAccountsInternalServerError builds a
+// lfx-v2-campaign-service-connections service list-meta-ads-accounts endpoint
+// InternalServerError error.
+func NewListMetaAdsAccountsInternalServerError(body *ListMetaAdsAccountsInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaAdsAccountsNotFound builds a lfx-v2-campaign-service-connections
+// service list-meta-ads-accounts endpoint NotFound error.
+func NewListMetaAdsAccountsNotFound(body *ListMetaAdsAccountsNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // ValidateCreateGoogleAdsResponseBody runs the validations defined on
 // Create-Google-AdsResponseBody
 func ValidateCreateGoogleAdsResponseBody(body *CreateGoogleAdsResponseBody) (err error) {
@@ -5907,6 +6020,22 @@ func ValidateTestHubspotResponseBody(body *TestHubspotResponseBody) (err error) 
 // ValidateListGoogleAdsAccountsResponseBody runs the validations defined on
 // List-Google-Ads-AccountsResponseBody
 func ValidateListGoogleAdsAccountsResponseBody(body *ListGoogleAdsAccountsResponseBody) (err error) {
+	if body.Accounts == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("accounts", "body"))
+	}
+	for _, e := range body.Accounts {
+		if e != nil {
+			if err2 := ValidateAccessibleAccountResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateListMetaAdsAccountsResponseBody runs the validations defined on
+// List-Meta-Ads-AccountsResponseBody
+func ValidateListMetaAdsAccountsResponseBody(body *ListMetaAdsAccountsResponseBody) (err error) {
 	if body.Accounts == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("accounts", "body"))
 	}
@@ -7908,6 +8037,56 @@ func ValidateListGoogleAdsAccountsInternalServerErrorResponseBody(body *ListGoog
 // ValidateListGoogleAdsAccountsNotFoundResponseBody runs the validations
 // defined on list-google-ads-accounts_NotFound_response_body
 func ValidateListGoogleAdsAccountsNotFoundResponseBody(body *ListGoogleAdsAccountsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdsAccountsBadRequestResponseBody runs the validations
+// defined on list-meta-ads-accounts_BadRequest_response_body
+func ValidateListMetaAdsAccountsBadRequestResponseBody(body *ListMetaAdsAccountsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdsAccountsServiceUnavailableResponseBody runs the
+// validations defined on
+// list-meta-ads-accounts_ServiceUnavailable_response_body
+func ValidateListMetaAdsAccountsServiceUnavailableResponseBody(body *ListMetaAdsAccountsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdsAccountsInternalServerErrorResponseBody runs the
+// validations defined on
+// list-meta-ads-accounts_InternalServerError_response_body
+func ValidateListMetaAdsAccountsInternalServerErrorResponseBody(body *ListMetaAdsAccountsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdsAccountsNotFoundResponseBody runs the validations defined
+// on list-meta-ads-accounts_NotFound_response_body
+func ValidateListMetaAdsAccountsNotFoundResponseBody(body *ListMetaAdsAccountsNotFoundResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

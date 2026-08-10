@@ -133,6 +133,12 @@ type Service interface {
 	// Enumerate the Google Ads ad accounts accessible via the stored connection
 	// credential.
 	ListGoogleAdsAccounts(context.Context, *ListGoogleAdsAccountsPayload) (res *ListGoogleAdsAccountsResult, err error)
+	// Enumerate the Meta ad accounts accessible via the stored connection
+	// credential. Returns act_-prefixed account ids, ready to store as the
+	// connection's account_id. Accounts Meta reports as disabled, unsettled or
+	// closed are included with the reason in their label rather than filtered out,
+	// so the caller can see why an account they expected cannot be used.
+	ListMetaAdsAccounts(context.Context, *ListMetaAdsAccountsPayload) (res *ListMetaAdsAccountsResult, err error)
 }
 
 // Auther defines the authorization functions to be implemented by the service.
@@ -155,10 +161,12 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [43]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts"}
+var MethodNames = [44]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "list-meta-ads-accounts"}
 
 type AccessibleAccount struct {
-	// Account identifier in the ad platform's namespace
+	// Account identifier in the ad platform's own namespace, ready to store as the
+	// connection's account_id. Google Ads: bare digits (8666746580). Meta:
+	// act_-prefixed (act_8666746580).
 	ID string
 	// Human-readable account name or label
 	Label *string
@@ -524,6 +532,21 @@ type ListGoogleAdsAccountsPayload struct {
 // ListGoogleAdsAccountsResult is the result type of the
 // lfx-v2-campaign-service-connections service list-google-ads-accounts method.
 type ListGoogleAdsAccountsResult struct {
+	Accounts []*AccessibleAccount
+}
+
+// ListMetaAdsAccountsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service list-meta-ads-accounts method.
+type ListMetaAdsAccountsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// ListMetaAdsAccountsResult is the result type of the
+// lfx-v2-campaign-service-connections service list-meta-ads-accounts method.
+type ListMetaAdsAccountsResult struct {
 	Accounts []*AccessibleAccount
 }
 
