@@ -11,6 +11,16 @@ import (
 	"strings"
 )
 
+// Role ID constants for Microsoft Advertising roles.
+const (
+	// RoleNotDiscovered represents a pre-configured account where the role was not discovered.
+	// This is distinct from 0 (unparseable role) to maintain the allow-through semantics
+	// for pre-configured accounts while defaulting to deny for genuinely unknown roles.
+	RoleNotDiscovered = -1
+	// RoleViewer is the read-only Viewer role (value 100) which cannot create campaigns.
+	RoleViewer = 100
+)
+
 // lifecycleStatusLabels maps a KNOWN-BAD AccountLifeCycleStatus to a short reason.
 // "Active" is absent deliberately: the map answers "why can this account not be used",
 // and an active account has no answer. An unrecognized or absent status is also absent
@@ -66,29 +76,46 @@ type AdAccount struct {
 	// Retained raw rather than reduced to a bool so an undocumented value survives to
 	// the caller instead of being flattened into "paused, reason unknown".
 	PauseReason int
-	// RoleID is Microsoft's role id for the role used to discover this account. Role
-	// 100 is Viewer (read-only); other roles may have write permission. 0 means the
-	// role was not available (e.g., when the connection was pre-configured with an
-	// account id).
+	// RoleID is Microsoft's role id for the role used to discover this account.
+	// Values: RoleViewer (100) = read-only; RoleNotDiscovered (-1) = pre-configured account,
+	// role not discovered; 0 = role was present but unparseable/absent; other positive values
+	// may have write permission. See Usable() for how roles are interpreted.
 	RoleID int
 }
 
 // Usable reports whether the account is one a campaign can be bound to and expected to
 // run: status exactly "Active" AND no pause reason AND reachable with write permission.
-// It is an ALLOW-LIST, not an exclusion — an absent or unrecognized status returns false,
-// because an unknown status is not evidence the account can spend. Viewer role (100) is
-// read-only and cannot create campaigns. It is deliberately NOT used to filter
-// ListAdAccounts.
+// It is a DENY-LIST for roles known to be read-only or invalid, not an allow-list. The
+// full set of write-granting RoleId values from Microsoft's Customer Management API is
+// not documented here; only roles known to deny write are explicitly handled. An absent
+// or unrecognized status returns false because an unknown status is not evidence the
+// account can spend. It is deliberately NOT used to filter ListAdAccounts.
+//
+// Role semantics (DENY-LIST):
+// - RoleNotDiscovered (-1): Pre-configured account, role not discovered. Allowed (assume write).
+// - RoleViewer (100): Read-only. Denied.
+// - 0: Role unparseable/absent during discovery. Denied (fail closed).
+// - Other positive values: Unknown write capability. Allowed (assume write, pending Microsoft documentation).
+// - Other negative values: Invalid. Denied.
 func (a AdAccount) Usable() bool {
 	if a.Status != "Active" || a.PauseReason != 0 {
 		return false
 	}
-	// RoleID 100 is Viewer (read-only); other roles and 0 (no role, pre-configured account)
-	// are assumedto have write permission.
-	if a.RoleID == 100 {
+	// DENY-LIST: deny only roles known to be read-only or invalid.
+	// RoleViewer (100) and 0 (unparseable) are denied; all other positive and RoleNotDiscovered are allowed.
+	switch a.RoleID {
+	case RoleViewer:
 		return false
+	case 0:
+		// Unparseable role discovered during account enumeration. Deny (fail closed).
+		return false
+	case RoleNotDiscovered:
+		// Pre-configured account. Allow through (assume write permission).
+		return true
+	default:
+		// Allow positive roles (unknown write capability) and deny other negatives (except -1).
+		return a.RoleID > 0 || a.RoleID == RoleNotDiscovered
 	}
-	return true
 }
 
 // StatusLabel returns a human-readable reason for a KNOWN-BAD lifecycle status, and ""
@@ -170,6 +197,28 @@ type discoveredCustomer struct {
 	roleID int64
 }
 
+// roleIsStrong reports whether a role is likely to grant write permission (is "strong").
+// This is a DENY-LIST: a role is weak only if it is known to be read-only (RoleViewer 100)
+// or invalid (0, unparseable). The full set of write-granting RoleIds from Microsoft's
+// Customer Management API is not documented here, so all other values are assumed strong.
+// RoleNotDiscovered (-1) is strong (pre-configured accounts assume write).
+func roleIsStrong(roleID int64) bool {
+	switch roleID {
+	case RoleViewer:
+		return false
+	case 0:
+		// Unparseable role. Weak (fail closed).
+		return false
+	case RoleNotDiscovered:
+		// Pre-configured account. Strong (assume write).
+		return true
+	default:
+		// Other positive and negative (except -1) roles: allow positive (unknown capability),
+		// deny other negatives.
+		return roleID > 0
+	}
+}
+
 // discoveryCustomerIDs resolves which customers to enumerate accounts under.
 //
 // A configured CustomerID is taken as the answer: the connection has been scoped on
@@ -186,8 +235,10 @@ type discoveredCustomer struct {
 // customer being queried, which is a different relationship from a second customer the
 // same user administers.
 //
-// The list is returned in Microsoft's own order, and the caller keeps the first entry for
-// a duplicated account id, so the result is deterministic for a given response.
+// The list is returned in Microsoft's own order. When an account is reachable under
+// multiple customers (a linked account), ListAdAccounts keeps the one with the stronger
+// role (most likely to grant write permission), so the result is deterministic for a
+// given response.
 func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]discoveredCustomer, error) {
 	if c.account.CustomerID != "" {
 		// The SAME identity check the discovered roles below get, and for the same
@@ -209,8 +260,9 @@ func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]discoveredCustomer
 		if id == "" {
 			return nil, fmt.Errorf("invalid Microsoft Advertising customer id %q on this connection: must be a positive integer", clipID(c.account.CustomerID))
 		}
-		// Configured customers have no role information; use 0 to indicate unknown role.
-		return []discoveredCustomer{{id: id, roleID: 0}}, nil
+		// Configured customers have no role information; use RoleNotDiscovered to indicate
+		// that the role was not discovered (distinct from 0, which means unparseable).
+		return []discoveredCustomer{{id: id, roleID: int64(RoleNotDiscovered)}}, nil
 	}
 
 	// idempotent: a read, so a 429 retry cannot create anything. UserId is omitted
@@ -267,11 +319,12 @@ func (c *Client) discoveryCustomerIDs(ctx context.Context) ([]discoveredCustomer
 		}
 		seen[id] = struct{}{}
 		// Extract role id from the role; default to 0 if absent or unparseable.
+		// Parse with the bit size of the destination int type to avoid truncation on 32-bit systems.
 		var roleID int64
 		if role.RoleID != "" {
-			// Try to parse as int64; if it fails, use 0 (unknown).
-			if rid, err := strconv.ParseInt(string(role.RoleID), 10, 64); err == nil {
-				roleID = rid
+			// Try to parse with strconv.IntSize for the platform-native int size.
+			if rid, err := strconv.ParseInt(string(role.RoleID), 10, strconv.IntSize); err == nil {
+				roleID = int64(rid)
 			}
 		}
 		customers = append(customers, discoveredCustomer{id: id, roleID: roleID})
@@ -324,7 +377,7 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 	// ANSWER and has to stay distinguishable from "no answer", including on the wire
 	// where nil serializes as null.
 	accounts := make([]AdAccount, 0)
-	seen := make(map[string]struct{})
+	seen := make(map[string]int) // map from account ID to index in accounts slice
 	for _, customer := range customers {
 		batch, berr := c.accountsInfoForCustomer(ctx, customer.id, int(customer.roleID))
 		if berr != nil {
@@ -334,10 +387,15 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 			return nil, berr
 		}
 		for _, a := range batch {
-			if _, dup := seen[a.ID]; dup {
+			if idx, dup := seen[a.ID]; dup {
+				// Keep the account with the stronger role. If this account's role is stronger,
+				// replace the existing one; otherwise keep the existing.
+				if roleIsStrong(int64(a.RoleID)) && !roleIsStrong(int64(accounts[idx].RoleID)) {
+					accounts[idx] = a
+				}
 				continue
 			}
-			seen[a.ID] = struct{}{}
+			seen[a.ID] = len(accounts)
 			accounts = append(accounts, a)
 		}
 	}

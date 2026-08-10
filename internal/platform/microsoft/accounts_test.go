@@ -462,7 +462,10 @@ func TestListAdAccounts_ReturnsUnusableAccountsWithTheirReason(t *testing.T) {
 		statusLabel string
 		pauseLabel  string
 	}{
-		{0, true, "", ""},
+		// Account 0: Active, no pause, but RoleID=0 (role not discovered in User/Query).
+		// Usable() must be false because RoleID=0 is treated as unknown/unparseable,
+		// which fails closed. Pre-configured accounts use RoleNotDiscovered (-1) instead.
+		{0, false, "", ""},
 		{1, false, "suspended", ""},
 		// Active but paused: the two fields disagree, which is exactly why they are
 		// kept apart. Usable must be false, and the reason must come from the pause
@@ -733,5 +736,128 @@ func TestListAdAccounts_RejectsAnUnusableConfiguredCustomer(t *testing.T) {
 				t.Errorf("error does not say which value is wrong: %v", err)
 			}
 		})
+	}
+}
+
+// TestListAdAccounts_PreConfiguredAccountIsUsable ensures that pre-configured accounts
+// (with RoleNotDiscovered = -1) are marked as usable when status is Active and pause reason is 0,
+// even though the role was not discovered.
+func TestListAdAccounts_PreConfiguredAccountIsUsable(t *testing.T) {
+	c := newCustomerClient(t, AccountConfig{CustomerID: "9988776"},
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"AccountsInfo":[
+				{"Id":"1234567","Name":"Pre-configured Account","Number":"X1234567","AccountLifeCycleStatus":"Active"}
+			]}`)
+		})
+
+	got, err := c.ListAdAccounts(context.Background())
+	if err != nil {
+		t.Fatalf("ListAdAccounts: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d accounts, want 1", len(got))
+	}
+
+	// Pre-configured accounts should be usable (role was not discovered, so Usable() should allow through)
+	if !got[0].Usable() {
+		t.Errorf("Usable() = false, want true for pre-configured account with Active status")
+	}
+	if got[0].RoleID != -1 {
+		t.Errorf("RoleID = %d, want %d (RoleNotDiscovered)", got[0].RoleID, -1)
+	}
+}
+
+// TestListAdAccounts_UnparseableRoleIsNotUsable ensures that accounts discovered with an
+// unparseable/absent role (RoleID = 0) are not marked as usable, even if status is Active and
+// pause reason is 0. This covers both the case where RoleId is absent and where it's unparseable.
+func TestListAdAccounts_UnparseableRoleIsNotUsable(t *testing.T) {
+	c := newCustomerClient(t, AccountConfig{}, withCustomerRoles([]string{"5550001"},
+		func(w http.ResponseWriter, _ *http.Request) {
+			// Return an active, unpaused account
+			_, _ = io.WriteString(w, `{"AccountsInfo":[
+				{"Id":"1234567","Name":"Account with Absent Role","Number":"X1234567","AccountLifeCycleStatus":"Active"}
+			]}`)
+		}))
+
+	got, err := c.ListAdAccounts(context.Background())
+	if err != nil {
+		t.Fatalf("ListAdAccounts: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d accounts, want 1", len(got))
+	}
+
+	// Role was absent in the User/Query response (withCustomerRoles doesn't include RoleId),
+	// so it defaults to 0. An absent/unparseable role should result in not usable (fail closed).
+	if got[0].Usable() {
+		t.Errorf("Usable() = true, want false for absent role (RoleID=0)")
+	}
+	if got[0].RoleID != 0 {
+		t.Errorf("RoleID = %d, want 0 (absent/unparseable)", got[0].RoleID)
+	}
+}
+
+// TestListAdAccounts_DedupKeepsStrongerRole ensures that when an account is reachable
+// under multiple customers with different roles, the dedup keeps the account with the
+// stronger role (one that grants write permission).
+func TestListAdAccounts_DedupKeepsStrongerRole(t *testing.T) {
+	c := newCustomerClient(t, AccountConfig{}, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/User/Query") {
+			// Two customers: first with Viewer role (weak), second with Admin role (strong)
+			_, _ = io.WriteString(w, `{"CustomerRoles":[{"CustomerId":"1111111","RoleId":"100"},{"CustomerId":"2222222","RoleId":"1"}]}`)
+			return
+		}
+		// Both customers return the same account, so it will be seen twice with different roles
+		_, _ = io.WriteString(w, `{"AccountsInfo":[
+			{"Id":"5555555","Name":"Shared Account","Number":"X5555555","AccountLifeCycleStatus":"Active"}
+		]}`)
+	})
+
+	got, err := c.ListAdAccounts(context.Background())
+	if err != nil {
+		t.Fatalf("ListAdAccounts: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d accounts, want 1 (deduplicated)", len(got))
+	}
+
+	// Should have kept the account with the stronger role (RoleId 1, not 100)
+	if got[0].RoleID != 1 {
+		t.Errorf("RoleID = %d, want 1 (the stronger role from the second customer)", got[0].RoleID)
+	}
+	if !got[0].Usable() {
+		t.Errorf("Usable() = false, want true for account with strong role")
+	}
+}
+
+// TestListAdAccounts_IntegerConversionSafety ensures that role IDs are parsed with the
+// correct bit size to avoid truncation on 32-bit builds.
+func TestListAdAccounts_IntegerConversionSafety(t *testing.T) {
+	// Use a large role ID that would truncate on 32-bit systems if parsed as int64
+	// and then cast to int without bounds checking. We'll use a value that's within
+	// int range but large enough to catch truncation bugs.
+	largeRoleID := "2147483647" // Max int32
+
+	c := newCustomerClient(t, AccountConfig{}, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/User/Query") {
+			_, _ = io.WriteString(w, `{"CustomerRoles":[{"CustomerId":"5550001","RoleId":`+largeRoleID+`}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"AccountsInfo":[
+			{"Id":"1234567","Name":"Large RoleID Account","Number":"X1234567","AccountLifeCycleStatus":"Active"}
+		]}`)
+	})
+
+	got, err := c.ListAdAccounts(context.Background())
+	if err != nil {
+		t.Fatalf("ListAdAccounts: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d accounts, want 1", len(got))
+	}
+
+	// Verify the role ID is correctly preserved
+	if got[0].RoleID != 2147483647 {
+		t.Errorf("RoleID = %d, want 2147483647 (role ID should be preserved without truncation)", got[0].RoleID)
 	}
 }
