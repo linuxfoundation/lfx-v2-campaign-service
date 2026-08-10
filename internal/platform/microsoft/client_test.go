@@ -268,13 +268,12 @@ func TestDoRequest_OmitsCustomerIdHeaderWhenUnset(t *testing.T) {
 	}
 }
 
-// TestDoRequest_StillSendsTheAccountHeader guards the refactor that split doRequest and
-// It lives here rather than beside ListAdAccounts because it is a doRequest test: what
-// it asserts is that the CAMPAIGN transport was left alone, and the other TestDoRequest_*
-// cases are the ones a change to that transport would be read against. Its acctRecorder
-// helper is defined in accounts_test.go, same package.
-// doCustomerRequest: the campaign path must keep its per-account identity. Without this,
-// making the header conditional could silently drop it everywhere.
+// TestDoRequest_StillSendsTheAccountHeader guards the refactor that split doRequest
+// and doCustomerRequest: the campaign path must keep its per-account identity. Without
+// this, making the header conditional could silently drop it everywhere. It lives here
+// rather than beside ListAdAccounts because it is a doRequest test — the other
+// TestDoRequest_* cases are what a change to that transport would be read against.
+// Its acctRecorder helper is defined in accounts_test.go, same package.
 func TestDoRequest_StillSendsTheAccountHeader(t *testing.T) {
 	rec := &acctRecorder{}
 	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
