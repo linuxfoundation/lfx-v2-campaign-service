@@ -2240,11 +2240,11 @@ func TestGoogleAds_ToggleStatus_MalformedManagerIDIsClassified(t *testing.T) {
 // sentinel vocabulary with no payload precisely so it can be logged.
 //
 // The two assertions unique to create are the last ones. NoUpstreamCreate must hold: nothing
-// was sent, so the orchestrator has to RELEASE the claim rather than retain it for
-// reconciliation — a retained claim over a campaign that was never attempted wedges the
-// (brief, platform) slot against the very re-dispatch that fixing the row is supposed to
-// enable. And the campaign result must be nil, since a non-nil partial is this adapter's
-// signal for "may exist upstream".
+// was sent, so the orchestrator RELEASES the claim. The old path would have wrapped a
+// pre-send CreateCampaign failure (result==nil) with notCreated anyway, so claim semantics
+// were already correct; what this precheck adds is log hygiene (preventing the raw manager id
+// from being embedded in the error) and no unnecessary upstream API call. And the campaign
+// result must be nil, since a non-nil partial is this adapter's signal for "may exist upstream".
 func TestGoogleAds_Dispatch_MalformedManagerIDIsClassified(t *testing.T) {
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)

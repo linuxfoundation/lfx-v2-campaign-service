@@ -45,10 +45,12 @@ which endpoint the caller reached:
 - **Create** — passed through uninspected too, but what that COST is different, and saying
   "create answered 503" would be wrong. Create is queued work rather than a request: every
   dispatcher error becomes the same `platform campaign creation failed` job result, so there
-  is no status code to get right. What the missing classification cost is claim semantics —
-  an unclassified failure is not `notCreated`, so the orchestrator RETAINS the claim for
-  reconciliation of a campaign that was never attempted, wedging the (brief, platform) slot
-  against the re-dispatch that repairing the connection is supposed to enable.
+  is no status code to get right. The old path checked CreateCampaign's result: if it was
+  nil (pre-send failure), it wrapped the error with `notCreated` and released the claim.
+  If a malformed login_customer_id caused a pre-send failure, claim semantics were already
+  correct. What the check gains is not claim semantics but log hygiene (preventing the raw
+  manager id from reaching logs via the client's `%q` formatting) and prevention of
+  unnecessary upstream calls.
 
 Create carried a second defect the read-only paths did not. The client's own validator renders
 the offending value with `%q`, and a create failure is logged by the orchestrator on both the

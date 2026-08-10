@@ -108,12 +108,12 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// mistaken for a status-code fix. Create is queued work, not a request: dispatchOne
 	// reports every dispatcher error as the same "platform campaign creation failed"
 	// (internal/service/orchestrator.go), so there is no caller-facing 503 here to replace.
-	// What the check buys is claim semantics and log hygiene. notCreated marks that nothing
-	// upstream was attempted, so the orchestrator RELEASES the claim instead of retaining it
-	// for reconciliation — a retained claim over a campaign that was never attempted wedges
-	// the (brief, platform) slot against the very re-dispatch that repairing the row enables.
-	// And it keeps the client's own validator from running, whose error embeds the raw id
-	// with %q and would land it in the dispatch-failure log line.
+	// What the check buys is log hygiene and prevention of unnecessary upstream calls.
+	// notCreated marks that nothing upstream was attempted. The old path would reach the
+	// client with an unvalidated ID, fail there inside CreateCampaign with result==nil, and
+	// be wrapped with notCreated anyway (so claim semantics were already correct). This check
+	// prevents the raw ID from reaching logs via the client's %q error formatting, and stops
+	// a pre-send failure from being reported as a failed create to Google.
 	loginCustomerID, err := validatedLoginCustomerID(res)
 	if err != nil {
 		return nil, notCreated(err)
@@ -357,15 +357,16 @@ func validateGoogleAdsCredentials(projectID string, res *resolved) (creds google
 // validatedLoginCustomerID returns the trimmed manager id, having checked it is a shape the
 // client will accept.
 //
-// It is a separate helper, and called by BOTH resolvers below, because it used to be inline
-// in the discovery one — which meant the toggle path read the same stored column, passed it
-// to the same client, and classified the same defect differently. A malformed manager id
-// reached the client uninspected, failed there at validateLoginCustomerID, and arrived at
-// the orchestrator indistinguishable from an upstream failure: same call, same error type.
-// The handler's default arm answered 503, "the platform did not respond", for a stored value
-// no amount of retrying will repair. Checking the value where it is READ, rather than where
-// it is used, is what makes it classifiable; doing that in one place is what keeps the two
-// paths from drifting apart again.
+// It is a separate helper, and called by THREE readers — the toggle and discovery
+// resolvers, and the create dispatcher — because it used to be inline in the discovery one.
+// Originally, the toggle path read the same stored column, passed it to the same client,
+// and classified the same defect differently. A malformed manager id reached the client
+// uninspected, failed there at validateLoginCustomerID, and arrived at the orchestrator
+// indistinguishable from an upstream failure: same call, same error type. The handler's
+// default arm answered 503, "the platform did not respond", for a stored value no amount
+// of retrying will repair. Checking the value where it is READ, rather than where it is
+// used, is what makes it classifiable; doing that in one place keeps all three paths
+// from drifting apart.
 //
 // The client keeps its own validateLoginCustomerID as the backstop for every other caller.
 // This is not a duplicate of it: by the time that one fires, the information needed to tell
@@ -445,9 +446,9 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsDiscoveryClient(ctx context.Contex
 	}
 	// Everything from here to NewClient inspects STORED state, before any request exists.
 	// A failure means the connection needs editing, not retrying, so each one carries
-	// domain.ErrConnectionNotUsable — the validator tags its own, this function tags the
-	// login_customer_id check below. Errors from creds.resolve above are deliberately NOT
-	// tagged: that layer distinguishes ErrNotFound (no connection — a 404) from a real
+	// domain.ErrConnectionNotUsable — the validator tags its own, and validatedLoginCustomerID
+	// tags the login_customer_id check below. Errors from creds.resolve above are deliberately
+	// NOT tagged: that layer distinguishes ErrNotFound (no connection — a 404) from a real
 	// storage failure (which IS transient and IS a 503), and flattening both into "not
 	// usable" would lose it.
 	creds, err := validateGoogleAdsCredentials(projectID, res)
