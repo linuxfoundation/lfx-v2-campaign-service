@@ -18,10 +18,10 @@ import (
 // emailCopyEventDetails is the slice of a brief's EventDetails this generation needs.
 // It mirrors the pattern in audience_build.go and is decoded opportunistically.
 type emailCopyEventDetails struct {
-	EventName string `json:"event_name"`
+	EventName string `json:"eventName"`
 	Location  string `json:"location"`
-	StartDate string `json:"start_date"`
-	EndDate   string `json:"end_date"`
+	StartDate string `json:"startDate"`
+	EndDate   string `json:"endDate"`
 }
 
 // emailCopyPromptVars holds the values needed to compose the generation prompt.
@@ -32,8 +32,9 @@ type emailCopyPromptVars struct {
 }
 
 // decodeEmailCopyEventDetails pulls the fields email generation needs from the brief's opaque
-// EventDetails blob. It mirrors the pattern in audience_build.go: a blob that isn't this shape
-// is skipped rather than failing the request.
+// EventDetails blob. Unlike audience_build.go (which skips mismatched shapes), this function
+// returns an error for missing or invalid event details, causing GenerateEmailCopy to return
+// a 400 response.
 func decodeEmailCopyEventDetails(blob json.RawMessage) (emailCopyEventDetails, error) {
 	var details emailCopyEventDetails
 	if len(blob) == 0 {
@@ -109,9 +110,10 @@ func formatEventDates(startDate, endDate string) string {
 	return endDate
 }
 
-// parseEmailCopyResponse parses the model's JSON response, defaulting gracefully
-// to raw-text fallback if parsing fails. Follows the reference implementation's
-// principle of defensive parsing and soft-fail-non-essential.
+// parseEmailCopyResponse parses the model's JSON response. If parsing fails, it returns
+// an error (not a fallback); GenerateEmailCopy treats the error as a 503 because email copy
+// is the primary output of this endpoint. Follows the reference implementation's principle
+// of defensive parsing and fail-closed validation.
 func parseEmailCopyResponse(raw string) (*briefs.EmailCopy, error) {
 	// Try JSON first, stripping code fences if present.
 	raw = strings.TrimSpace(raw)
@@ -142,15 +144,17 @@ func parseEmailCopyResponse(raw string) (*briefs.EmailCopy, error) {
 	return nil, fmt.Errorf("failed to parse model response as json: %w", err)
 }
 
-// truncateString limits a string to maxLen characters, stripping trailing whitespace.
+// truncateString limits a string to maxLen runes (not bytes), stripping trailing whitespace.
 // Follows the pattern in internal/platform/googleads/ad_copy.go: bounded truncation
-// with documented rationale. Trailing whitespace is always stripped.
+// on rune boundaries so multibyte UTF-8 sequences are never split.
+// Trailing whitespace is always stripped.
 func truncateString(s string, maxLen int) string {
-	if len(s) > maxLen {
-		s = s[:maxLen]
+	runes := []rune(s)
+	if len(runes) > maxLen {
+		runes = runes[:maxLen]
 	}
 	// Strip trailing whitespace after truncation.
-	return strings.TrimRight(s, " \t\n\r")
+	return strings.TrimRight(string(runes), " \t\n\r")
 }
 
 // GenerateEmailCopy implements the briefs.Service GenerateEmailCopy method.

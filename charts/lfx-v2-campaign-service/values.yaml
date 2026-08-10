@@ -286,15 +286,11 @@ app:
       value: ''
 
     # AI_* configure the LF LiteLLM proxy used to GENERATE email copy (subject, preheader,
-    # body, CTA) when staging a marketing email. BOTH url and key are required; with either
-    # missing the model is unconfigured and the staged email keeps whatever body its cloned
-    # template carried. Optional refs for the same reason as SNOWFLAKE_* above: generated
-    # copy is an enrichment, and failing pod start over it would take down campaign dispatch
-    # for a feature that degrades cleanly.
-    #
+    # body, CTA) via the POST /projects/{id}/briefs/{id}/email-copy endpoint. Optional as a
+    # GROUP: with either URL or key missing, the endpoint returns 503 (service unavailable).
     # The credential is the PROXY's key, not a Bedrock or Anthropic key. Rollout
     # prerequisite: secret sync must provision `ai-proxy-url` and `ai-api-key` on
-    # lfx-v2-campaign-service-secrets before copy generation will run.
+    # lfx-v2-campaign-service-secrets before copy generation will be available.
     AI_PROXY_URL:
       valueFrom:
         secretKeyRef:

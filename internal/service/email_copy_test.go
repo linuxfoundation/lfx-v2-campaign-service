@@ -44,13 +44,13 @@ func TestDecodeEmailCopyEventDetails(t *testing.T) {
 	}{
 		{
 			name:      "valid details",
-			blob:      json.RawMessage(`{"event_name":"KubeCon EU 2026","location":"Barcelona","start_date":"June 17","end_date":"June 20"}`),
+			blob:      json.RawMessage(`{"eventName":"KubeCon EU 2026","location":"Barcelona","startDate":"June 17","endDate":"June 20"}`),
 			wantName:  "KubeCon EU 2026",
 			wantError: false,
 		},
 		{
 			name:      "partial details with only event_name",
-			blob:      json.RawMessage(`{"event_name":"Linux Foundation Summit"}`),
+			blob:      json.RawMessage(`{"eventName":"Linux Foundation Summit"}`),
 			wantName:  "Linux Foundation Summit",
 			wantError: false,
 		},
@@ -71,7 +71,7 @@ func TestDecodeEmailCopyEventDetails(t *testing.T) {
 		},
 		{
 			name:      "whitespace-only event_name",
-			blob:      json.RawMessage(`{"event_name":"   "}`),
+			blob:      json.RawMessage(`{"eventName":"   "}`),
 			wantError: true,
 		},
 	}
@@ -126,6 +126,10 @@ func TestTruncateString(t *testing.T) {
 		{"", "", 10},
 		{"a", "a", 1},
 		{"ab", "a", 1},
+		// UTF-8 multibyte sequences (rune boundaries)
+		{"こんにちは", "こんに", 3},      // 3 runes (Japanese), not truncated mid-rune
+		{"café ☕", "café", 4},    // 4 runes, emoji excluded
+		{"💻 computer", "💻 c", 3}, // 3 runes including emoji
 	}
 
 	for _, tt := range tests {
@@ -245,7 +249,14 @@ func TestComposeEmailCopyPrompt(t *testing.T) {
 
 // TestGenerateEmailCopy_NoLLMClient verifies the handler returns 503 when no LLM client is wired.
 func TestGenerateEmailCopy_NoLLMClient(t *testing.T) {
-	svc := NewBriefService(nil, nil, nil, nil)
+	repo := newFakeBriefRepo()
+	// Add a brief so ready() succeeds but don't wire an LLM client.
+	repo.briefs["proj-123/brief-456"] = &model.CampaignBrief{
+		ID:           "brief-456",
+		ProjectID:    "proj-123",
+		EventDetails: json.RawMessage(`{"eventName":"Test","location":"Boston","startDate":"2026-09-01","endDate":"2026-09-02"}`),
+	}
+	svc := newTestBriefService(repo)
 	// Don't call SetLLMClient, so it remains nil
 
 	ctx := context.Background()
@@ -263,10 +274,13 @@ func TestGenerateEmailCopy_NoLLMClient(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when llmClient is nil")
 	}
-	// Should be ServiceUnavailable (503).
+	// Should be ServiceUnavailable (503) with the specific message.
 	var unavail *briefs.ConnServiceUnavailableError
 	if !errors.As(err, &unavail) {
 		t.Errorf("expected ConnServiceUnavailableError, got %T: %v", err, err)
+	}
+	if unavail.Message != "AI model is not configured; email copy generation is unavailable" {
+		t.Errorf("expected specific nil-client message, got: %s", unavail.Message)
 	}
 }
 
@@ -335,7 +349,7 @@ func TestGenerateEmailCopy_LLMError(t *testing.T) {
 	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
 		ID:           "brief-456",
 		ProjectID:    "proj-123",
-		EventDetails: json.RawMessage(`{"event_name":"KubeCon EU 2026"}`),
+		EventDetails: json.RawMessage(`{"eventName":"KubeCon EU 2026"}`),
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -369,7 +383,7 @@ func TestGenerateEmailCopy_HappyPath(t *testing.T) {
 		ID:        "brief-456",
 		ProjectID: "proj-123",
 		EventDetails: json.RawMessage(
-			`{"event_name":"KubeCon EU 2026","location":"Barcelona","start_date":"June 17","end_date":"June 20"}`),
+			`{"eventName":"KubeCon EU 2026","location":"Barcelona","startDate":"June 17","endDate":"June 20"}`),
 	}
 	longSubject := repeatStr("x", 250)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

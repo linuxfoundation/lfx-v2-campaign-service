@@ -140,11 +140,10 @@ rather than making it correct.
 ### LLM / email copy (optional, `AI_*`)
 
 The LF **LiteLLM proxy**, used ONLY to generate email copy — subject, preheader,
-body and CTA — for the HubSpot email channel (LFXV2-2775). OPTIONAL as a GROUP,
-on the same reasoning as `SNOWFLAKE_*`: unless BOTH `AI_PROXY_URL` and
-`AI_API_KEY` are set, the LLM is treated as unconfigured and the client's
-constructor returns `ErrNotConfigured`, so a caller degrades to the cloned
-template's own body rather than the pod refusing to start.
+body and CTA — via the POST `/projects/{id}/briefs/{id}/email-copy` endpoint
+(LFXV2-2775). Optional as a GROUP: unless BOTH `AI_PROXY_URL` and `AI_API_KEY`
+are set, the endpoint returns 503 (service unavailable). The pod starts successfully
+with or without these values configured.
 
 - `AI_PROXY_URL` — LiteLLM proxy base URL; `/chat/completions` is appended
 - `AI_API_KEY` — the **proxy's** key, not a Bedrock or Anthropic credential (the

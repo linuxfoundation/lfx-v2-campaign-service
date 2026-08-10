@@ -40,9 +40,9 @@ type Config struct {
 	SnowflakeWarehouse  string
 	SnowflakeRole       string
 
-	// LLM settings for email copy generation. Optional as a GROUP, on the same reasoning as
-	// Snowflake above: with proxy URL or key missing the model is unconfigured and email
-	// staging degrades to the cloned template's own body. Empty AIModel = llm.DefaultModel.
+	// LLM settings for email copy generation. Optional as a GROUP: with proxy URL or key missing
+	// the model is unconfigured, and the GenerateEmailCopy endpoint returns 503. Empty AIModel
+	// defaults to llm.DefaultModel.
 	AIProxyURL string
 	AIAPIKey   string
 	AIModel    string
