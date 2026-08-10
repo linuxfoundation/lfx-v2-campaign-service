@@ -178,9 +178,14 @@ func checkBulletDescription(bundleDir, indexPath, link, bulletDesc string) error
 	if i := strings.IndexAny(target, "#?"); i >= 0 {
 		target = target[:i]
 	}
-	if target == "" || !strings.HasSuffix(target, ".md") {
-		return nil
-	}
+	// Parse BEFORE any test on the destination's shape, because a markdown link
+	// destination is a URL reference and every test below is about the path it
+	// denotes, not about its spelling. Percent escapes are the whole reason the
+	// order matters: "thing%2Emd" does not end in ".md" and would be skipped,
+	// and "my%20thing.md" would be read as a filename containing a literal
+	// "%20" — both are working links to a concept file that would have opted
+	// out of description sync just by being written with an escape.
+	//
 	// Only a bundle-relative destination names a concept file. A "://" test is
 	// not enough: "//host/spec.md" (protocol-relative), "/spec.md" (site-root)
 	// and "mailto:notes.md" (a scheme with no authority) all lack it, and
@@ -190,7 +195,15 @@ func checkBulletDescription(bundleDir, indexPath, link, bulletDesc string) error
 	// happens to exist, which is the failure this check is least able to
 	// notice: it reports a mismatch against a file the bullet never named.
 	u, err := url.Parse(target)
-	if err != nil || u.Scheme != "" || u.Host != "" || strings.HasPrefix(target, "/") {
+	if err != nil || u.Scheme != "" || u.Host != "" {
+		// An unparseable destination (a stray "%" that is not an escape) is not
+		// a link to anything, so there is nothing to compare it against.
+		return nil
+	}
+	// u.Path is the DECODED path; the site-root test belongs here rather than on
+	// the raw text, so "%2Fspec.md" is judged as the "/spec.md" it denotes.
+	target = u.Path
+	if target == "" || strings.HasPrefix(target, "/") || !strings.HasSuffix(target, ".md") {
 		return nil
 	}
 

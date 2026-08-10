@@ -43,7 +43,9 @@ resolving only one side reports every target as an escape.
 The comparison is also raw rather than trimmed. Trimming was the one tolerance
 the check claimed not to have: a frontmatter description of `" Summary. "`
 satisfied a `Summary.` bullet, while the diagnostic printed both sides trimmed
-and so could show two identical strings as a mismatch. A bullet can never
-carry matching padding — the index line is trimmed before it is matched — so
-the padding is itself the drift, and the fix is always to unpad the
-frontmatter.
+and so could show two identical strings as a mismatch. The index line is
+stripped of LEADING whitespace only, so padding on one side alone is visible
+drift and the fix is to unpad whichever side carries it — usually the
+frontmatter, since markdownlint already forbids a bullet from ending in
+space. Padding that genuinely matches on both sides is not drift and is not
+what this check is for.

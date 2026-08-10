@@ -330,12 +330,14 @@ func TestValidateIndexBulletDescriptionSkipsSymlinkOutOfBundle(t *testing.T) {
 	}
 }
 
-// "Verbatim" has to include whitespace or it is not verbatim. Padding in the
-// frontmatter is drift in its own right — the bullet can never carry matching
-// padding, because the index line is trimmed before it is matched — so
-// tolerating it would leave the two files permanently unequal in a way the
-// check reports as equal. Written by hand rather than through WriteConcept so
-// the padding is unambiguously what reaches the parser.
+// "Verbatim" has to include whitespace or it is not verbatim. This fixture pads
+// only the FRONTMATTER, which is the asymmetry the check has to catch: trimming
+// it would let " Does the thing. " satisfy a bullet reading "Does the thing.",
+// while the diagnostic printed both sides trimmed and so showed two identical
+// strings as a mismatch. (A bullet padded to match is a separate case, covered
+// by TestValidateIndexBulletTrailingSpaceIsNotTolerated.) Written by hand rather
+// than through WriteConcept so the padding is unambiguously what reaches the
+// parser.
 func TestValidateIndexBulletDescriptionRejectsPaddedFrontmatter(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "thing.md"), "---\ntype: Go Package\ntitle: Thing\ndescription: ' Does the thing. '\n---\n\n# Thing\n")
@@ -394,6 +396,36 @@ func TestValidateIndexBulletTrailingSpaceIsNotTolerated(t *testing.T) {
 	}
 	if !strings.Contains(errs[0].Error(), "must match verbatim") {
 		t.Errorf("Validate() error = %q, want the verbatim-mismatch diagnostic", errs[0])
+	}
+}
+
+// TestValidateIndexBulletDecodesPercentEscapes pins the ORDER of the two tests on a
+// destination: it has to be parsed as a URL reference before its shape is judged, or a
+// percent escape becomes a way to opt a working link out of description sync. Both
+// fixtures below are links a markdown renderer resolves to the concept file, and both
+// carry a description that does not match it.
+func TestValidateIndexBulletDecodesPercentEscapes(t *testing.T) {
+	for name, tc := range map[string]struct{ file, link string }{
+		// "%2E" is ".", so the raw text does not end in ".md" and a suffix test
+		// applied first skips the bullet entirely.
+		"escaped-dot": {"thing.md", "thing%2Emd"},
+		// "%20" is a space; read raw, this names a file that does not exist, and a
+		// missing file is silently tolerated as somebody else's broken link.
+		"escaped-space": {"my thing.md", "my%20thing.md"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeConcept(t, filepath.Join(dir, tc.file), "Does the thing.")
+			writeFile(t, filepath.Join(dir, "index.md"), "# Bundle\n\n* [Thing]("+tc.link+") - Stale description.\n")
+
+			errs := Validate(dir)
+			if len(errs) != 1 {
+				t.Fatalf("Validate() = %v, want the escaped link to be checked like any other", errs)
+			}
+			if !strings.Contains(errs[0].Error(), "must match verbatim") {
+				t.Errorf("Validate() error = %q, want the verbatim-mismatch diagnostic", errs[0])
+			}
+		})
 	}
 }
 
