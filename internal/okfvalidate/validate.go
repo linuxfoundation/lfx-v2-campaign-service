@@ -81,14 +81,18 @@ func validateConcept(path string) error {
 	return nil
 }
 
-// The destination excludes whitespace and angle brackets deliberately. CommonMark
-// also accepts `(<thing.md>)` and `(thing.md "Title")`, and a looser class would
-// capture the brackets or the title as part of the path — which then fails the
-// ".md" suffix test in checkBulletDescription and skips the bullet silently. A
-// link that looks valid would quietly opt out of the description-sync invariant.
-// Rejecting the two exotic forms outright is cheaper than parsing them: okfgen
-// emits bare paths, and the OKF §6 format documents only that form.
-var indexBulletPattern = regexp.MustCompile(`^\* \[([^\]]+)\]\(([^)\s<>]+)\) - (.+)$`)
+// The destination excludes whitespace, angle brackets, backslashes, and ampersands
+// deliberately. CommonMark also accepts `(<thing.md>)` and `(thing.md "Title")`, and
+// a looser class would capture the brackets or the title as part of the path — which
+// then fails the ".md" suffix test in checkBulletDescription and skips the bullet
+// silently. A link that looks valid would quietly opt out of the description-sync
+// invariant. Backslash and ampersand are CommonMark escape sequences
+// (`\.` → `.`, `&#46;` → `.`): excluding them forces escaped/entity-encoded
+// destinations to be rejected at the format stage with a diagnostic, rather than
+// silently skipped when the validator's naive matching doesn't decode them.
+// Rejecting these forms outright is cheaper than parsing them: okfgen emits bare
+// paths, and the OKF §6 format documents only that form.
+var indexBulletPattern = regexp.MustCompile(`^\* \[([^\]]+)\]\(([^)\s<>&\\]+)\) - (.+)$`)
 
 // validateIndex checks OKF §9 rule 3 & the §6 bullet format: no
 // frontmatter (except an optional okf_version at the bundle root), any
@@ -136,7 +140,7 @@ func validateIndex(bundleDir, path string, isRoot bool) []error {
 		}
 		m := indexBulletPattern.FindStringSubmatch(trimmed)
 		if m == nil {
-			errs = append(errs, fmt.Errorf("%s: bullet %q does not match \"* [Title](url) - description\" (the url must be a bare path: no spaces, angle brackets, or link title)", path, trimmed))
+			errs = append(errs, fmt.Errorf("%s: bullet %q does not match \"* [Title](url) - description\" (the url must be a bare path: no spaces, angle brackets, link title, backslash escapes, or HTML entities)", path, trimmed))
 			continue
 		}
 		// The pattern's "(.+)$" only requires one character, so a bullet ending

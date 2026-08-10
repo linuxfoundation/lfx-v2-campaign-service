@@ -414,6 +414,37 @@ func TestValidateIndexBulletRejectsNonBareDestinations(t *testing.T) {
 	}
 }
 
+// CommonMark interprets backslash and ampersand escapes in link destinations:
+// `thing\.md` becomes `thing.md`, `thing&#46;md` becomes `thing.md`. This validator
+// does not decode them, so both pass the naive ".md" suffix test if allowed through
+// the regex, then silently fail when filepath.Join and os.ReadFile can't find a
+// file with the escaped spelling. Both must be rejected at the bullet-format check
+// to ensure a broken destination gets a diagnostic, not a silent skip.
+func TestValidateIndexBulletRejectsEscapedDestinations(t *testing.T) {
+	for name, link := range map[string]string{
+		"backslash-escape": `thing\.md`,
+		"html-entity":      `thing&#46;md`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			// The frontmatter description deliberately DISAGREES with the bullet, so a
+			// test that fails here fails for the right reason: were the bullet accepted
+			// and its destination resolved, the drift below would be reported instead,
+			// and this assertion on the format error would still be the thing that broke.
+			writeConcept(t, filepath.Join(dir, "thing.md"), "Does the thing.")
+			writeFile(t, filepath.Join(dir, "index.md"), "# Bundle\n\n* [Thing]("+link+") - Does something else.\n")
+
+			errs := Validate(dir)
+			if len(errs) != 1 {
+				t.Fatalf("Validate() = %v, want the escaped destination to be rejected", errs)
+			}
+			if !strings.Contains(errs[0].Error(), "does not match") {
+				t.Errorf("Validate() error = %q, want the bullet-format diagnostic", errs[0])
+			}
+		})
+	}
+}
+
 // TestValidateIndexBulletTrailingSpaceIsNotTolerated pins the symmetric half of the
 // verbatim invariant. Padded FRONTMATTER was already rejected; a padded BULLET was
 // not, because the line was trimmed on both sides before matching.
