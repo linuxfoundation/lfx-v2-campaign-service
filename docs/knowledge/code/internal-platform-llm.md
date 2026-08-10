@@ -1,7 +1,7 @@
 ---
 type: "Code Concept"
 title: "internal/platform/llm"
-description: "Client for the LF LiteLLM proxy's OpenAI-compatible /chat/completions surface: the service's only route to a model, with redirect refusal, per-attempt deadlines, 429 retry and credential-safe errors."
+description: "Client for the LF LiteLLM proxy's OpenAI-compatible /chat/completions surface: the service's only route to a model, with redirect refusal that survives client injection, per-attempt context deadlines, 429 retry with drained bodies, and rebuilt (never forwarded) transport errors."
 resource: "internal/platform/llm"
 ---
 
