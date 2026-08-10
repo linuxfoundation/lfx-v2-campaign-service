@@ -224,7 +224,7 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   `internal/dispatch/{googleads,reddit,twitter,microsoft}.go`, each in its own shared
   resolve/validate helper, so every path through an adapter is covered rather than just the one
   that happened to be fixed. Meta and LinkedIn do NOT yet — their equivalent checks are still bare
-  and still fall to the 503 arm below (LFXV2-3069 part 2). In Google Ads the wrap has two owners:
+  and still fall to the 503 arm below (LFXV2-3069 part 2). In Google Ads the wrap has three owners:
   `validateGoogleAdsCredentials` tags the credential-state three (inactive, undecodable,
   incomplete), which is why they reach callers beyond discovery — but the SHAPE they reach them in
   depends on whether the caller is synchronous. The **status toggle** and the **metrics read**
@@ -233,7 +233,9 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   polled job result, never as a 409 — see `docs/api-catalog.md`. Do not describe "campaign
   dispatch" as receiving a 409; the dispatch layer produces the error, and only the two
   synchronous readers turn it into a status code.
-  `resolveGoogleAdsDiscoveryClient` tags the dashed `login_customer_id`. Neither the cause NOR its text leaves this function — not in the response and not in
+  `validatedLoginCustomerID` in `internal/dispatch/googleads.go` tags the dashed `login_customer_id`,
+  and it is now called by all three readers (toggle resolver, discovery resolver, and create dispatcher).
+  Neither the cause NOR its text leaves the dispatch layer — not in the response and not in
   the log line. One of the wrapped errors is computed over the decrypted credential blob, and
   `encoding/json` quotes its input, so logging the cause would put credential-derived bytes into
   centralized logs for exactly the connection whose credentials are malformed. What the log line
