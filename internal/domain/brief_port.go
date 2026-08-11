@@ -156,6 +156,30 @@ type CampaignWriter interface {
 	// UpsertCampaign inserts or updates the campaign row for a (brief, platform).
 	// Campaigns are updated in place when a brief changes after they exist.
 	UpsertCampaign(ctx context.Context, c *model.Campaign, indexPayload CampaignIndexPayloadFunc) (*model.Campaign, error)
+
+	// AdoptCampaign INSERTs the campaign row for a (brief, platform) pair that has no live
+	// campaign yet, binding an already-existing upstream campaign to the brief.
+	//
+	// It is deliberately NOT UpsertCampaign. The upsert's conflict arm overwrites the live
+	// row in place, which is right for a re-dispatch of a campaign this service created and
+	// wrong for adoption: the caller supplies a platform campaign id, and silently
+	// repointing an existing binding at a different upstream campaign would orphan the old
+	// one — still spending, with nothing in this service referring to it. AdoptCampaign
+	// returns ErrConflict instead and leaves the existing binding alone.
+	//
+	// The check is the INSERT itself (ON CONFLICT DO NOTHING against the live partial
+	// unique index), not a preceding read, so two concurrent adopts of the same pair cannot
+	// both observe "no campaign yet" and race. A second live index rejects binding the same
+	// upstream campaign to a DIFFERENT brief (ErrPlatformCampaignAlreadyBound) -- in any project,
+	// not just this one, because providers like Google Ads put every project on one shared
+	// upstream account, and a project-scoped rejection would miss the collisions that follow.
+	//
+	// expectedVersion is the brief version the caller verified as approved. The implementation
+	// re-checks it under a row lock inside the same transaction and returns ErrStaleApproval on
+	// a mismatch: approval is read before a platform lookup bounded at 20 seconds, and without
+	// the re-check a concurrent replace or archive inside that window would leave a paid
+	// campaign bound to an unapproved brief.
+	AdoptCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64, indexPayload CampaignIndexPayloadFunc) (*model.Campaign, error)
 	// ReplaceCampaign replaces a campaign's mutable fields, gating on version. lockToken is the
 	// token returned by ClaimCampaignVersion when the caller holds the claim lock for this
 	// campaign (the zero CampaignLockToken otherwise) — implementations that reuse the lock

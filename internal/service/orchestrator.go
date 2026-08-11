@@ -146,6 +146,11 @@ const metricsCallTimeout = 20 * time.Second
 // with no cascade, so it can use the same ceiling as metrics reads.
 const accountsCallTimeout = 20 * time.Second
 
+// adoptLookupTimeout bounds the SYNCHRONOUS pre-bind platform lookup: the same kind of call as
+// metrics and account discovery, so the same ceiling. Far below the dispatch budget because
+// nothing here creates anything upstream for a longer wait to resolve.
+const adoptLookupTimeout = 20 * time.Second
+
 // jobFinalizeTimeout bounds the terminal job-status write, which runs on a
 // context detached from the dispatch context so a cancelled run still reaches a
 // terminal state instead of being stuck queued/running.
@@ -221,6 +226,34 @@ type AccountLister interface {
 	ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error)
 }
 
+// CampaignAdopter is an OPTIONAL dispatcher capability: look a campaign up BY ITS PLATFORM ID,
+// so an existing one can be bound to a brief without creating anything. Type-asserted like
+// StatusToggler, MetricsReader and AccountLister, so a dispatcher without it yields a clean
+// ErrAdoptionUnsupported -> 400. It MUST NOT create, mutate or resurrect anything upstream:
+// adoption's safety argument is that the campaign already existed and this service confirmed it.
+type CampaignAdopter interface {
+	// LookupCampaign reports what the platform holds for platformCampaignID under the
+	// project's connection.
+	//
+	// The (nil, nil) return is MEANINGFUL here — "the platform answered, and no such campaign
+	// exists" — unlike MetricsReader and AccountLister, where it is a contract violation. An
+	// unverifiable answer must be an ERROR, never a nil ref: a false absence tells an operator
+	// "your campaign isn't there" about a campaign sitting on the platform spending money.
+	//
+	// It MUST resolve the PROJECT's own connection only — never the shared LF system account
+	// that every other path falls back to. Under that fallback all such projects share one ad
+	// account, so project A could name a campaign project B created there and bind it to its
+	// own brief; the account-mismatch guards do not help, because both resolve to the same
+	// customer id. A project with no connection of its own must be refused with
+	// domain.ErrAdoptionRequiresOwnConnection, which the service maps to an actionable 409.
+	//
+	// Declining to RESOLVE the fallback, rather than rejecting a value that came from it, is
+	// part of the contract: resolution validates and decrypts the LF row before the caller can
+	// see where it came from, so consulting it lets that row's defects surface as this call's
+	// failure. The service switch has no arm for them, deliberately.
+	LookupCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) (*model.PlatformCampaignRef, error)
+}
+
 // Status-toggle classification sentinels. These distinguish a client/state error (the
 // toggle never reached the ad platform) from a real platform-call failure, so the service
 // can return an accurate status + message instead of blaming the platform for everything.
@@ -244,6 +277,13 @@ var (
 
 	// ErrAccountsUnsupported: the platform has no account-listing capability wired.
 	ErrAccountsUnsupported = domain.ErrAccountsUnsupported
+
+	// ErrAdoptionUnsupported: the platform has no campaign-adoption capability wired.
+	ErrAdoptionUnsupported = domain.ErrAdoptionUnsupported
+	// ErrPlatformCampaignAbsent: the platform answered and holds no such campaign.
+	ErrPlatformCampaignAbsent = domain.ErrPlatformCampaignAbsent
+	// ErrInvalidPlatformCampaignID: the id cannot name a campaign on that platform.
+	ErrInvalidPlatformCampaignID = domain.ErrInvalidPlatformCampaignID
 )
 
 // noUpstreamCreator lets a dispatcher signal that a returned error occurred
@@ -1139,6 +1179,57 @@ func (o *Orchestrator) ReadCampaignMetrics(ctx context.Context, projectID string
 		return nil, fmt.Errorf("%s metrics reader returned a nil result with no error", platform)
 	}
 	return m, nil
+}
+
+// LookupPlatformCampaign confirms that platformCampaignID names a real campaign under the
+// project's own connection. It never mutates the platform or the DB, and returns
+// ErrPlatformCampaignAbsent — not (nil, nil) — when the platform answers that no such campaign
+// exists, so "absent" never looks like "we could not tell".
+func (o *Orchestrator) LookupPlatformCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) (*model.PlatformCampaignRef, error) {
+	// Guarded here as well as at the transport layer: an empty id is a lookup for "any
+	// campaign", and on a platform whose filter degrades to "unfiltered" that returns SOMEBODY
+	// ELSE'S campaign as the adoption target. Unreachable over HTTP today, so a bare error
+	// rather than a 400 sentinel — a programming fault, not something callers can provoke.
+	if strings.TrimSpace(platformCampaignID) == "" {
+		return nil, fmt.Errorf("lookup platform campaign: no platform campaign id given for %s", platform)
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrAdoptionUnsupported, platform)
+	}
+	adopter, ok := d.(CampaignAdopter)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrAdoptionUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, adoptLookupTimeout)
+	defer cancel()
+	ref, err := adopter.LookupCampaign(callCtx, projectID, platform, platformCampaignID)
+	if err != nil {
+		return nil, err
+	}
+	if ref == nil {
+		return nil, fmt.Errorf("%w: %s campaign %s", ErrPlatformCampaignAbsent, platform, platformCampaignID)
+	}
+	// The returned identity must be the requested one. An empty id is the obvious case — the
+	// row would claim an upstream campaign with no way to reach it — but a DIFFERENT non-empty
+	// id is the dangerous one: binding it means the caller asked to adopt campaign X and this
+	// service bound campaign Y, a real paid campaign nobody named, under a 201. That is the
+	// exact outcome verify-before-bind exists to prevent, and it is reachable from the ordinary
+	// failure of an id filter that degrades to unfiltered — the adapter is expected to catch
+	// that, and this is the check that holds if the adapter's does not. A mismatch is not an
+	// absence: nothing here establishes that campaign X is missing, so it must be unverifiable
+	// rather than a 404 that invites the caller to create a duplicate.
+	//
+	// Compared after TrimSpace on both sides and nothing else. Any looser comparison would be
+	// this service inventing an equivalence between two platform ids, which is the platform's
+	// vocabulary, not ours.
+	if got := strings.TrimSpace(ref.ID); got != strings.TrimSpace(platformCampaignID) {
+		if got == "" {
+			return nil, fmt.Errorf("%s campaign lookup returned a campaign with no id for %s", platform, platformCampaignID)
+		}
+		return nil, fmt.Errorf("%s campaign lookup for %s returned campaign %s; the id filter was not honoured, so nothing about this response can be trusted", platform, platformCampaignID, got)
+	}
+	return ref, nil
 }
 
 // ReadAccounts enumerates the accessible ad accounts for a project's stored connection.

@@ -265,7 +265,13 @@ ten.** The other nine were never judged less important — they were just not wh
 looking at. The seven connection entries are therefore GENERATED from the table list rather
 than written out, so an eighth provider added to the schema and the list is covered without
 anyone remembering, and `TestMigrateRefusesEachDroppedSingletonIndex` drops each one against
-a live database and requires `Migrate` to refuse.
+a live database and requires `Migrate` to refuse. The counts above are the ten that existed
+when the list was written; 000020's `uq_campaigns_platform_campaign_live` is the eleventh,
+and it arrived by exactly the route this paragraph warns about — the index was created on one
+branch while the list was introduced on another, so neither tree was wrong on its own and the
+schema-wide check in `TestEveryUniquePartialIndexIsRequired` is what caught it. That test
+enumerates unique PARTIAL indexes from `pg_index` rather than from any hand-written list,
+which is why a count stated in prose can go stale here without the guard going stale with it.
 The parser matches the CREATE, not the name anywhere in the file, so a migration that
 DROPs an index is not reported as the version to force back to; where two migrations
 create one name, the highest wins. `TestMigrationIndexOwners_FindsEveryCreatedIndex`
@@ -666,6 +672,26 @@ occupying its `(brief_id, platform)` slot. Restore the dropped constraint and bo
 is the check the regex test cannot perform, and it is the reason to reach for this package
 rather than another source-text assertion.
 
+`adopt_binding_live_test.go` pins migration 000020 the same way, and is the sharpest case in
+the package because the guard it covers has no runtime symptom. Adoption lets a caller name an
+arbitrary upstream campaign, so two briefs in one project can each bind the SAME paid campaign;
+from then on each brief's toggle and metrics reader act on it independently, and both rows stay
+individually well-formed, so nothing in the service can detect the collision afterwards. The
+only thing standing between that and production is one index definition — and a wrong one still
+applies cleanly, still satisfies the fake repository, and still matches the SQL-text assertions.
+Each of the four sub-tests is bound to a different way the definition can be wrong: putting
+`brief_id` in the key (the shape 000013 uses, and so the mistake most likely to be copied) lets
+the second brief bind; dropping `status <> 'deleted'` makes deletion permanently reserve the
+upstream campaign; dropping `platform_campaign_id IS NOT NULL` makes unprovisioned dispatch
+claims collide with each other; and ADDING `project_id` to the key lets a second project bind a
+campaign the first already holds. That last one is the edit that reads as the careful choice — a
+bare platform id is unique only within the account that minted it — and it is wrong for exactly the
+provider adoption supports: Google Ads is ONE shared customer across every foundation, with a
+connection row per project pointing at it, so a project-scoped key inserts both rows cleanly and
+they then toggle the same live campaign against each other. 000020 keys globally on purpose. All
+four were verified by making each of those edits to the migration and watching the corresponding
+sub-test fail.
+
 `ConnectionRepo.Disconnected` is here for a sharper version of the same reason. Its whole job
 is to tell a deliberate disconnect apart from never having connected, and the two are
 distinguished by ONE clause — `status = 'deleted'` — in one statement. Every other test of
@@ -949,3 +975,74 @@ package. A DB-backed test of `DeleteCampaign` would need a docker dependency in 
 no other test here uses.
 
 See [internal/infrastructure/postgres](../../../internal/infrastructure/postgres).
+
+## `AdoptCampaign` — why it is not `UpsertCampaign`
+
+`adoptCampaignQuery` inserts a campaigns row with `ON CONFLICT (brief_id, platform) WHERE
+status <> 'deleted' DO NOTHING ... RETURNING`, and `AdoptCampaign` classifies `pgx.ErrNoRows`
+as `domain.ErrConflict`.
+
+The predicate is mandatory for the same reason it is on every other statement targeting this
+pair: migration 000014 drops the full `UNIQUE (brief_id, platform)` constraint, leaving only
+000013's PARTIAL unique index, so a bare conflict target infers no arbiter index and fails at
+runtime. `TestCampaignRepo_OnConflictCarriesLivePredicate` covers this statement too.
+
+`DO NOTHING` is what distinguishes adoption from an upsert. `UpsertCampaign`'s `DO UPDATE`
+arm is correct where it is used, because it overwrites a row describing THE SAME campaign
+this service is provisioning — that is how a retried dispatch converges. Adoption's caller
+names an ARBITRARY upstream campaign, so an updating arm would repoint a live binding at a
+different campaign and orphan the one it used to name; this service never deletes or pauses
+upstream, so that orphan keeps spending with nothing here pointing at it. `RETURNING` is
+load-bearing for the same reason the classification is: "no rows came back" IS the conflict
+signal, so dropping it makes a refused adoption indistinguishable from a successful one.
+
+The statement also names `result`, `created_by` and `updated_by` (both actor columns from one
+parameter — adoption creates the row and is the last thing to have touched it). Omitting them
+would leave an adopted row with no audit trail and, because `result` is where the Google Ads
+customer id lives, no account provenance for the mismatch guards to check.
+
+Two guards live in the same transaction as the insert, and neither can be enforced in Go:
+
+- **A locked re-read of the brief.** `lockAdoptBriefQuery` takes the same `SELECT … FOR UPDATE`
+  as `CreateJobForApprovedBrief` and re-checks `status`/`version` against the caller's
+  `expectedVersion`, returning `domain.ErrStaleApproval` on a mismatch. The service reads
+  approval BEFORE a platform lookup bounded at 20 seconds, and a `ReplaceBrief` or
+  `ArchiveBrief` committing inside that window would otherwise leave paid spend bound to an
+  unapproved brief — the approval gate defeated by latency alone.
+- **`uq_campaigns_platform_campaign_live`** (migration 000020), keyed
+  `(platform, platform_campaign_id)` over live rows **restricted to
+  `platform = 'google-ads'`**. It is registered in `requiredIndexes`, so its definition —
+  uniqueness, both keys and the three-conjunct predicate — is re-asserted at every boot and
+  not only at migration time. That matters more here than for the other entries: 000020
+  deliberately omits `IF NOT EXISTS`, which protects the FIRST build from a same-named
+  leftover but says nothing about a later `DROP INDEX`. 000013's index answers only
+  "does this BRIEF have a campaign here"; adoption names an arbitrary upstream campaign, so
+  without this a second brief can bind the same one and the two rows toggle it against each
+  other. The index is deliberately not scoped by project and equally deliberately scoped to one
+  provider: Google Ads campaign IDs are globally unique within Google's shared customer account
+  across every foundation, while Microsoft campaign IDs are account-scoped. This service
+  supports separate per-project Microsoft connections, so a global uniqueness index would
+  false-reject a perfectly legitimate dispatch from Microsoft account B because account A had
+  already minted the same numeric ID. The `platform = 'google-ads'` predicate was added in
+  commit `1ca63e97` to prevent the dispatch path from ever touching this index when using
+  non-Google providers, keeping a normal dispatch from triggering the wrong conflict error. When
+  adoption gains a second provider, that provider needs its own uniqueness handling in a
+  separate constraint — do not widen this one, because whether a global key is even correct
+  depends on whether that provider's IDs are account-scoped or globally unique like Google Ads.
+
+  Note what this is NOT: an ownership check. A project connected to the shared customer
+  can already read and pause anything in it through Google's API, so adoption cannot be more
+  restrictive than the credential it uses; the index enforces the service's own invariant, one
+  upstream campaign to one brief. The `ON CONFLICT` clause names 000013's index, so this one raises an ordinary
+  unique violation — classified separately as `domain.ErrPlatformCampaignAlreadyBound`, because
+  a 409 naming the wrong brief sends the operator to inspect one that has no campaign. It is
+  also the ONLY index in the chain built without `IF NOT EXISTS`, which is a correctness
+  choice rather than an oversight: a failed `CONCURRENTLY` build leaves an INVALID index
+  holding the name, and the recovery for the resulting dirty version — force back and re-run —
+  would then skip the build and record the version clean over an index that enforces nothing.
+  000013 carries the clause and is safe only because 000014 follows it with an explicit
+  `indisvalid` guard; nothing follows 000020, so the absence of the clause is the guard.
+  `TestMigration000020_HasNoIfNotExists` keeps it absent.
+
+The insert and its outbox index row are co-committed in one transaction, as every campaign
+write is — see `enqueueCampaignIndex`.
