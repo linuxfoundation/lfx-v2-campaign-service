@@ -36,7 +36,8 @@ have the id in hand — which is exactly what Google Ads' own discovery endpoint
 
 `resolveMetaCredentials` replaces three inlined copies of the same credential-state check
 (active status, decodable JSON, non-empty access token) at `Dispatch`, `ToggleStatus`, and
-`ReadMetrics` — the same shape as `resolveRedditClient`, including the named-return
+`ReadMetrics` — the shape `validateGoogleAdsCredentials` established (Reddit's
+`resolveRedditClient` adopted it from there and is the nearest sibling), including the named-return
 `defer func() { err = res.systemScoped(err) }()` so every return path is scoped without needing
 to remember it individually. It does NOT check `account_id`. That split is deliberate, not an
 oversight: `Dispatch` needs both `account_id` and `page_id` to create a campaign, but

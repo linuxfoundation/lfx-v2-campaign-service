@@ -549,8 +549,9 @@ endpoint (`GET .../connection-meta-ads/accounts`, LFXV2-3062) exists to complete
 `MetaAdsConnectionConfig` no longer declares `Required("account_id")` either (`page_id` stays
 required — it names a Facebook page the operator already controls, not something discovery
 resolves). The credential-state checks that used to be inlined at each of `Dispatch`,
-`ToggleStatus`, and `ReadMetrics` are now `resolveMetaCredentials`, a single helper mirroring
-`resolveRedditClient`'s shape — active status, decodable blob, non-empty access token, each
+`ToggleStatus`, and `ReadMetrics` are now `resolveMetaCredentials`, a single helper in the shape
+`validateGoogleAdsCredentials` established and `resolveRedditClient` adopted — active status,
+decodable blob, non-empty access token, each
 tagged with `domain.ErrConnectionNotUsable` plus its reason sentinel, and a named-return
 `defer` that runs every return path through `res.systemScoped`. It deliberately does not check
 `account_id`: that is `requireMetaAccountID`, called ONLY by `Dispatch`, right after credential

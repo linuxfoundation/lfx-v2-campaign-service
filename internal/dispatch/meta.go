@@ -64,8 +64,12 @@ func NewMetaDispatcher(repo connReader, enc domain.Encryptor, opts ...meta.Optio
 
 // resolveMetaCredentials fetches the project's Meta connection and validates it is usable
 // for ANY Meta operation — active status, decodable credentials, non-empty access token —
-// tagging each defect with domain.ErrConnectionNotUsable plus a reason sentinel, mirroring
-// resolveRedditClient. It deliberately does NOT check account_id: only Dispatch needs it (a
+// tagging each defect with domain.ErrConnectionNotUsable plus a reason sentinel. The pattern —
+// named returns, defer systemScoped, a reason sentinel under ErrConnectionNotUsable — ORIGINATES
+// in Google Ads' validateGoogleAdsCredentials; resolveRedditClient adopted it from there and
+// says so, and is the nearest sibling to read alongside this one. Cite the origin rather than
+// the sibling: which adapter you copy from is a detail, which one DEFINES the shape is not.
+// It deliberately does NOT check account_id: only Dispatch needs it (a
 // campaign create builds Graph paths as /{accountID}/campaigns etc. — see
 // internal/platform/meta/client.go's AccountID checks ahead of CreateCampaign). ToggleStatus
 // and ReadMetrics target an existing campaign by id (POST /{campaignID}, GET

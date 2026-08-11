@@ -461,8 +461,9 @@ var MetaAdsCredentials = Type("meta-ads-credentials", func() {
 // MetaAdsConnectionConfig is the second provider config where account_id is optional,
 // for the same reason as GoogleAdsConnectionConfig above: a caller can create the
 // connection with credentials only, defer account selection, and set the chosen id
-// afterwards with PUT (discovery via GET .../connection-meta-ads/accounts is planned
-// in a follow-up PR, same pattern as Google Ads' list-google-ads-accounts).
+// afterwards with PUT (discovery via GET .../connection-meta-ads/accounts, added in
+// LFXV2-3062 and declared below as list-meta-ads-accounts, same pattern as Google Ads'
+// list-google-ads-accounts).
 // page_id stays Required — it names a Facebook page the operator already controls,
 // not something the token's reachable-account list resolves, so there is nothing for
 // discovery to do about it.
