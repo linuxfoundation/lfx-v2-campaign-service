@@ -13,6 +13,7 @@ package okfvalidate
 
 import (
 	"fmt"
+	"html"
 	"io/fs"
 	"net/url"
 	"os"
@@ -81,7 +82,8 @@ func validateConcept(path string) error {
 	return nil
 }
 
-// The destination excludes whitespace, angle brackets and backslashes deliberately.
+// The destination excludes whitespace, angle brackets, backslashes and parentheses
+// deliberately.
 // CommonMark also accepts `(<thing.md>)` and `(thing.md "Title")`, and a looser class
 // would capture the brackets or the title as part of the path — which then fails the
 // ".md" suffix test in checkBulletDescription and skips the bullet silently. A link
@@ -91,13 +93,23 @@ func validateConcept(path string) error {
 // silently skipped downstream. Rejecting it outright is cheaper than parsing it:
 // okfgen emits bare paths, and the OKF §6 format documents only that form.
 //
+// The OPENING parenthesis is excluded for the same reason the closing one is, and its
+// omission was a bug. CommonMark permits `(` in an unbracketed destination only as part
+// of a BALANCED pair, so `* [Thing](thing(foo.md) - Summary.` is not a link at all — the
+// destination runs to a `)` that never comes. Accepting it here made this validator the
+// only reader that saw a link there, and it then resolved a path (`thing(foo.md`) that
+// cannot exist. Excluding `(` outright rather than counting pairs keeps the rule the
+// same shape as the rest of the class, and costs nothing: a balanced-paren filename is
+// legal CommonMark but okfgen never emits one, and refusing it yields a diagnostic
+// instead of a silent skip.
+//
 // The ampersand is NOT excluded here, even though `&#46;` is the entity spelling of
 // the same escape. A query string legitimately carries one (`thing.md?v=1&lang=en`),
 // and checkBulletDescription strips the query before resolving the path — so a class
 // that banned every `&` would reject a destination this validator otherwise supports.
 // The entity form is caught by hasEntityRef instead, which keys on the closing `;`
 // rather than on the `&`.
-var indexBulletPattern = regexp.MustCompile(`^\* \[([^\]]+)\]\(([^)\s<>\\]+)\) - (.+)$`)
+var indexBulletPattern = regexp.MustCompile(`^\* \[([^\]]+)\]\(([^()\s<>\\]+)\) - (.+)$`)
 
 // destinationPath returns the part of a markdown link destination that names a file:
 // everything before the first fragment or query marker. Both are properties of the
@@ -109,10 +121,48 @@ func destinationPath(link string) string {
 	return link
 }
 
-// entityRefPattern matches an HTML character reference: named (`&amp;`), decimal
-// (`&#46;`) or hexadecimal (`&#x2e;`). The closing `;` is required and is the whole
-// discriminator — it is what an entity has and a bare ampersand does not.
+// entityRefPattern matches the SHAPE of an HTML character reference: named (`&amp;`),
+// decimal (`&#46;`) or hexadecimal (`&#x2e;`). The closing `;` is required — it is what
+// an entity has and a bare ampersand does not.
+//
+// Shape alone is not the discriminator, and treating it as one was an over-rejection of
+// exactly the kind priced below. `&notAnHtmlEntity;` has the shape and is not a
+// reference: CommonMark decodes a named reference only when the name is in the HTML5
+// entity table, so that text stays literal and `research&notAnHtmlEntity;.md` is a path
+// this validator supports. Every match is therefore confirmed by charRef before it
+// counts.
 var entityRefPattern = regexp.MustCompile(`&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);`)
+
+// charRef reports whether an entityRefPattern match is a real character reference rather
+// than merely one shaped like it.
+//
+// The test is whether the DECODE CONSUMED THE TRAILING `;`, which is the CommonMark rule
+// stated as an observation: in a genuine reference the semicolon is part of the reference
+// and disappears with it.
+//
+// It cannot simply be `html.UnescapeString(c) != c`. Go's decoder also honours the HTML5
+// LEGACY forms that need no semicolon, so it rewrites `&notAnHtmlEntity;` to
+// `¬AnHtmlEntity;` — a prefix match CommonMark does not perform. Comparing against the
+// decode of the candidate minus its `;` isolates precisely that: a legacy prefix match
+// decodes the same either way and only puts the literal `;` back, whereas a genuine
+// reference decodes differently because its `;` was consumed.
+//
+// Verified against both edge cases a cruder "the decode does not end in `;`" test gets
+// wrong: `&semi;` and `&#59;` decode TO a semicolon and are still reported genuine here.
+func charRef(c string) bool {
+	return html.UnescapeString(c) != html.UnescapeString(c[:len(c)-1])+";"
+}
+
+// charRefSpans returns the byte ranges of c that are genuine character references.
+func charRefSpans(s string) [][]int {
+	var out [][]int
+	for _, m := range entityRefPattern.FindAllStringIndex(s, -1) {
+		if charRef(s[m[0]:m[1]]) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
 
 // hasEntityRef reports whether a destination's PATH carries an HTML character reference.
 //
@@ -141,7 +191,7 @@ var entityRefPattern = regexp.MustCompile(`&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z][
 // the boundary both want: cut at the query, and at the first `#` that does not itself begin a
 // character reference.
 func hasEntityRef(link string) bool {
-	return entityRefPattern.MatchString(pathRegion(link))
+	return len(charRefSpans(pathRegion(link))) > 0
 }
 
 // pathRegion returns the part of a destination that could name a file, for the purpose of
@@ -156,8 +206,10 @@ func pathRegion(link string) string {
 		link = link[:i]
 	}
 	// Spans of the remaining text that are character references. A `#` inside one belongs to
-	// the reference, not to a fragment.
-	refs := entityRefPattern.FindAllStringIndex(link, -1)
+	// the reference, not to a fragment. Shape-only matches are excluded for the same reason
+	// hasEntityRef excludes them: a `#` in something CommonMark leaves literal is a fragment
+	// marker like any other.
+	refs := charRefSpans(link)
 	inRef := func(i int) bool {
 		for _, r := range refs {
 			if i >= r[0] && i < r[1] {

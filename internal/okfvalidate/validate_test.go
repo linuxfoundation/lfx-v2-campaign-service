@@ -577,6 +577,98 @@ func TestValidateIndexBulletAcceptsAnEntityOutsideThePath(t *testing.T) {
 	}
 }
 
+// TestValidateIndexBulletAcceptsAnEntityShapedLiteral is the THIRD over-rejection the entity
+// guard has had to price, and the one that shows shape was never the discriminator.
+//
+// `&notAnHtmlEntity;` looks exactly like a named reference and is not one: CommonMark decodes a
+// named reference only when the name is in the HTML5 entity table, so this text stays literal and
+// `research&notAnHtmlEntity;.md` names a file that resolves. Refusing it answers "that link is
+// malformed" about a link that is not — the same failure mode as the bare-`&` and
+// entity-in-the-query rounds, one level further in.
+//
+// The two hard cases are the reverse direction, and they are why the check is not the obvious
+// `html.UnescapeString(c) != c`: Go's decoder honours the HTML5 LEGACY forms that need no
+// semicolon, so it rewrites `&notAnHtmlEntity;` to `¬AnHtmlEntity;` — a prefix match CommonMark
+// never performs — while `&semi;` and `&#59;` decode TO a semicolon and would fail a cruder
+// "the decode must not end in `;`" test. charRef asks whether the trailing `;` was CONSUMED,
+// which separates all three.
+//
+// The accepted fixtures carry a DRIFTED description, so the assertion is that the link was
+// resolved and compared, not merely that no format error was raised.
+func TestValidateIndexBulletAcceptsAnEntityShapedLiteral(t *testing.T) {
+	for name, base := range map[string]string{
+		"an unknown name":                "research&notAnHtmlEntity;",
+		"a name that is a legacy prefix": "research&nots;",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeConcept(t, filepath.Join(dir, base+".md"), "Covers R&D.")
+			writeFile(t, filepath.Join(dir, "index.md"),
+				"# Bundle\n\n* [R and D]("+base+".md) - Says something else.\n")
+
+			errs := Validate(dir)
+			if len(errs) != 1 {
+				t.Fatalf("Validate() = %v, want exactly the description-drift error — %q is not an "+
+					"HTML5 named reference, so the path is literal and resolves", errs, base)
+			}
+			if strings.Contains(errs[0].Error(), "HTML entity") {
+				t.Fatalf("Validate() error = %q, want the description diagnostic: this link resolves "+
+					"correctly and is being refused for a reference it does not contain", errs[0])
+			}
+			if !strings.Contains(errs[0].Error(), "description") {
+				t.Errorf("Validate() error = %q, want the description-sync diagnostic", errs[0])
+			}
+		})
+	}
+
+	// The reverse direction, so the fix above cannot be satisfied by dropping the guard: a name
+	// that IS in the table must still be refused, including the two whose replacement is itself a
+	// semicolon and which a "decode must not end in `;`" test would wave through.
+	for name, base := range map[string]string{
+		"a named reference":          "thing&period;",
+		"a named semicolon":          "thing&semi;",
+		"a numeric semicolon":        "thing&#59;",
+		"a legacy name with its own": "thing&not;",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeConcept(t, filepath.Join(dir, "thing.md"), "Does the thing.")
+			writeFile(t, filepath.Join(dir, "index.md"),
+				"# Bundle\n\n* [Thing]("+base+"md) - Does the thing.\n")
+
+			errs := Validate(dir)
+			if len(errs) != 1 || !strings.Contains(errs[0].Error(), "HTML entity") {
+				t.Fatalf("Validate() = %v, want the HTML-entity diagnostic: %q is a real character "+
+					"reference, and this validator does not decode one — so the bullet would be "+
+					"skipped without a word", errs, base)
+			}
+		})
+	}
+}
+
+// TestValidateIndexBulletRejectsAnUnbalancedOpeningParen pins the destination class against the
+// opening parenthesis, whose omission let this validator see a link where CommonMark sees none.
+//
+// CommonMark permits `(` in an unbracketed destination only as part of a BALANCED pair, so
+// `* [Thing](thing(foo.md) - Summary.` is not a link: the destination runs to a `)` that never
+// arrives. With `(` accepted, this was the only reader that parsed a bullet there, and it went on
+// to resolve `thing(foo.md` — a path that cannot exist, since okfgen never emits one. The bullet
+// silently opted out of the description-sync invariant the format check exists to enforce, which
+// is the same outcome as every other destination shape this class refuses.
+func TestValidateIndexBulletRejectsAnUnbalancedOpeningParen(t *testing.T) {
+	dir := t.TempDir()
+	writeConcept(t, filepath.Join(dir, "thing.md"), "Does the thing.")
+	writeFile(t, filepath.Join(dir, "index.md"),
+		"# Bundle\n\n* [Thing](thing(foo.md) - Does the thing.\n")
+
+	errs := Validate(dir)
+	if len(errs) != 1 {
+		t.Fatalf("Validate() = %v, want the malformed bullet to be reported: CommonMark does not "+
+			"parse an unbalanced `(` as a link destination, so nothing here should be treated as "+
+			"one", errs)
+	}
+}
+
 // TestValidateIndexBulletRejectsANumericEntityBeforeAFragment is why the boundary is computed
 // rather than taken from strings.IndexAny(link, "#?"). A numeric reference's own `#` is not a
 // fragment marker, so a destination carrying both has to have the reference found in what
