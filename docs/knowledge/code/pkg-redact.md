@@ -93,33 +93,43 @@ Stopping at the query fixes the first and is what makes the second detectable, w
 the case the bound exists for: an `@` in a query is not userinfo, and treating it as one throws
 away the host and path that are the only reason to log a URL.
 
-One shape stays undecidable — no path, and the only `@` past a `?`. That is either a harmless
-query `@` or a malformed password containing a `?` (`nats://u:p?x@host`), and the two want
-opposite handling. A path before the query settles it, since a path has already closed the
-authority; without one, nothing after the scheme is printed. `nats://u:p?x@host:4222` therefore
-renders as `nats://***`, losing the host. Lossy beats leaky, and the shapes it costs are rare.
+### The undecidable shape, and why nothing tries to decide it
 
-A bare `/` is **not** that path, and taking it for one leaked. `pathClosesAuthority` asks what
-the `/` closes, not whether one exists: `nats://u:p/path?x@host` has a `/`, but `u:p` is no
-authority for it to close (`p` is not a port), so the only legal reading is userinfo — the `/`
-is inside the password, and trimming at the `?` printed `nats://u:p`. The tell is a `:` in the
-pre-slash host whose right side is not a decimal port; a bare host (`idp.example.com`), a real
-port (`:8443`) and a bracketed IPv6 literal all keep their host and path. The multi-URL branch's
-`passwordCouldSpanQuery` asks the same question for the same reason — it had the identical hole.
+One shape has no answer in the bytes: the only `@` is past the `?`. That is either a harmless
+query `@` (`https://idp/jwks?contact=ops@b.example`) or a malformed password containing a `?`
+(`nats://u:p?x@host`), and the two want opposite handling. **Both branches of `redactOne` refuse
+it outright** — nothing after the scheme is printed, so `nats://u:p?x@host:4222` renders as
+`nats://***` and loses the host.
 
-The IPv6 exemption is the delicate part, because a bracket is an ordinary password character.
-It was first written as "the pre-slash host ends in `]`", and that suffix test leaked:
-`nats://u:secret]/path?x@host:4222` has `u:secret]` before the `/`, which a suffix test calls
-an IPv6 host and therefore a closed authority — so the `?` reads as a genuine query, the value
-is cut there, and `nats://u:secret]` goes to the log with the password in it. Requiring the
-opening bracket too is not enough on its own: `[secret]` has both. `bracketedHostCloses`
-validates the **whole** bracketed form instead — the address is hex digits, `:` and `.`, with
-at least one `:`, since every IPv6 literal has one and nothing else reaching here does, and any
-trailing `:port` is decimal. The zone id after a `%25` (RFC 6874) gets a **looser** rule than
-the address, and must: it is an interface name, so `eth0` and `en0` are the ordinary cases and
-a hex-only rule refuses every real one. It is loose safely because the address in front of it
-has already had to pass. `TestURLUserinfo_Shapes` carries `[::1]`, `[::ffff:127.0.0.1]` and
-`[fe80::1%25eth0]` so the tightening cannot start discarding legitimate hosts unnoticed.
+That is the end state of four review rounds. Each round added or narrowed a rule claiming some
+feature of the pre-`?` region proved it was an authority rather than userinfo, and each rule
+leaked:
+
+| Rule | Killed by |
+|---|---|
+| a `/` exists, so the authority is closed | `nats://u:p/path?x@host` → `nats://u:p` |
+| the right of the `:` is not a decimal port | a numeric password: `nats://u:1234/path?x@host:4222` |
+| there is no `:` at all, so no password | token-only userinfo: `nats://s3cret/path?x@host:4222` |
+| the host ends in `]`, so it is IPv6 | `nats://u:secret]/path?x@host` |
+| the host is a **well-formed** `[IPv6]` | `nats://[dead::beef]/path?x@host:4222` |
+
+The last one is why there is no sixth. Its argument was not a heuristic: RFC 3986 §3.2.1 excludes
+`[` from userinfo, so a bracketed value provably cannot be a credential *in a conformant URL*.
+But this package exists **because** the input is not trusted to be conformant — refusing to parse
+malformed credential-bearing values is its entire job — so "the grammar forbids it" says nothing
+about what an operator typed into a config file. A password may be `[dead::beef]`.
+
+With the best available proof still failing, the conclusion is that no test on these bytes can
+succeed: the two readings are the same bytes, and only the operator knows which was meant. The
+helpers that asked (`queryIsGenuine`, `pathClosesAuthority`, `bracketedHostCloses`,
+`owningAuthority`, `isPort`, and round 7's already-deleted `passwordCouldSpanQuery`) are gone;
+both call sites are a plain "`@` past the `?` ⇒ print nothing".
+
+The cost is a **host**, never a credential, and only for a value that carries an `@` past its
+`?`. `https://idp/jwks?contact=ops@b.example` and `https://[2001:db8::1]/jwks?contact=ops@b`
+both redact whole; the far commoner `…/jwks?access_token=…` keeps its host, since it has no `@`.
+`TestURLUserinfo_Shapes` pins that split, and `TestURLUserinfo_NeverEmitsACredential` carries one
+regression case per row of the table above.
 
 ### When the whole-value fallback runs
 

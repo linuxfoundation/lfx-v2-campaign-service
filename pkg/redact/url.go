@@ -215,16 +215,13 @@ func redactOne(u string) string {
 		// `nats://u:p` and the password with it. The single-URL path already refuses this
 		// shape; this branch has to refuse it too, on the same terms.
 		//
-		// On EXACTLY the same terms — this is `queryIsGenuine`, not a variant of it. A
-		// narrower test lived here, on the argument that refusing costs one host in a single
-		// URL and every host in a list, so a list should pay for a sharper discriminator. The
-		// discriminator it bought was `strings.ContainsRune(seg, ':')`, which is the colonless
-		// reading pathClosesAuthority's own doc records as leaking — so the round that fixed
-		// that reading left the leak standing here, one caller away, and
-		// `nats://s3cret/path?x@host:4222,nats://c` still printed `nats://s3cret/path`.
-		// Cheapness is not a reason to accept a rule already known to be unsound.
-		if preQueryMulti < len(u) && strings.ContainsRune(u[preQueryMulti:], '@') &&
-			!queryIsGenuine(u, preQueryMulti) {
+		// On EXACTLY the same terms as the single-URL path below — no narrower test. One lived
+		// here, on the argument that refusing costs one host in a single URL and every host in
+		// a list, so a list should pay for a sharper discriminator; the discriminator it bought
+		// was already known to leak, and `nats://s3cret/path?x@host:4222,nats://c` printed
+		// `nats://s3cret/path` one caller away from the round that fixed it. Cheapness is not a
+		// reason to accept an unsound rule.
+		if preQueryMulti < len(u) && strings.ContainsRune(u[preQueryMulti:], '@') {
 			return u[:authStart] + "***"
 		}
 		return trimQueryAndFragment(u)
@@ -239,178 +236,41 @@ func redactOne(u string) string {
 		at += authStart
 		return trimQueryAndFragment(u[:authStart] + "***@" + u[at+1:])
 	}
-	if strings.ContainsRune(u[preQuery:], '@') && !queryIsGenuine(u, preQuery) {
-		// Path-less, and the only `@` is past the `?`. Either the query holds it or the `?` is
-		// inside a password; the value cannot say, so print nothing that could be half of one.
+	if strings.ContainsRune(u[preQuery:], '@') {
+		// The only `@` is past the `?`. Either the query holds it or the `?` is inside a
+		// password; the value cannot say, so print nothing that could be half of one.
+		//
+		// UNCONDITIONALLY — there is no longer an exception for a value whose pre-`?` region
+		// "looks like" a closed authority. Four rounds of review each killed one such rule and
+		// each time the next reviewer found the next shape, because every one of them was the
+		// same argument wearing a different disguise: that some feature of the bytes proves the
+		// region is a host rather than userinfo.
+		//
+		//   - "the right-hand side of the `:` is not a port" — a numeric password is equally
+		//     legal, so `nats://u:1234/path?x@host:4222` printed `nats://u:1234`.
+		//   - "there is no `:` at all, so there is nothing that could be a password" — userinfo
+		//     needs no colon (`nats://token@host:4222` is a documented NATS form), so
+		//     `nats://s3cret/path?x@host:4222` printed `nats://s3cret/path`.
+		//   - "it ENDS in `]`, so it is an IPv6 host" — `nats://u:secret]/path?x@host` printed
+		//     `nats://u:secret]`.
+		//   - "it is a WELL-FORMED `[IPv6]`, and RFC 3986 §3.2.1 excludes `[` from userinfo, so
+		//     the authority reading is the only one" — the strongest of the four, and still
+		//     wrong: this package exists because the input is NOT trusted to be RFC-conformant,
+		//     so "the grammar forbids it in userinfo" says nothing about what an operator typed.
+		//     `nats://[dead::beef]/path?x@host:4222` printed `nats://[dead::beef]/path`.
+		//
+		// The fourth is the reason there is no fifth. Its proof was a genuine grammar argument
+		// and it still failed, which means no test on these bytes can succeed — the two readings
+		// are the same bytes and only the operator knows which was meant. So the question is not
+		// asked at all.
+		//
+		// The cost is a host, and only for a URL that carries an `@` past its `?`:
+		// `https://idp/jwks?contact=ops@b.example` and `https://[2001:db8::1]/jwks?contact=ops@b`
+		// both redact whole. The package doc promises best-effort identity rather than format
+		// preservation; this is where that promise is spent.
 		return u[:authStart] + "***"
 	}
 	return trimQueryAndFragment(u) // no userinfo, but a query can still carry a token
-}
-
-// queryIsGenuine reports whether the `?` or `#` at index q really begins a query, rather than
-// being an ordinary character inside a password.
-//
-// The tell is a path that CLOSES the authority owning the delimiter (RFC 3986 §3.2, §3.3):
-// an authority a path has already closed cannot extend past the `?`. With no such path,
-// nothing in the value decides between `https://idp?contact=a@b` — a harmless query `@` whose
-// host is worth keeping — and `nats://u:p?x@host`, where the `?` is inside the password and
-// cutting at it logs half a secret. The two want opposite handling, so the undecidable case
-// is refused rather than guessed.
-//
-// Which authority is asked is owningAuthority's problem, and in a list it is not the first one.
-// Whether its `/` really closes anything is pathClosesAuthority's.
-func queryIsGenuine(u string, q int) bool {
-	return pathClosesAuthority(owningAuthority(u, q))
-}
-
-// pathClosesAuthority reports whether the first `/` in seg — the region between a segment's
-// `://` and the delimiter — really ends an authority, rather than sitting inside a password.
-//
-// The bare presence of a `/` does not prove it, and treating it as proof leaked. RFC 3986
-// §3.2.1 excludes `/` from userinfo, so a value carrying one there is already malformed — and
-// malformed credential-bearing input is precisely what this package exists to refuse rather
-// than parse. `nats://u:p/path?x@host` and `https://idp/path?contact=a@b` have the identical
-// shape; in the first, `u:p/path?x` is the password and `host` the host, and cutting at the
-// `?` prints `nats://u:p`.
-//
-// What separates them has to be a STRUCTURAL proof that the region before the `/` could not be
-// userinfo — and only one thing in this position is such a proof. Two weaker tells were tried
-// and both leaked:
-//
-//   - "the right-hand side of the `:` is not a port". A numeric PASSWORD is equally legal:
-//     `nats://u:1234/path?x@host:4222` has `u:1234` before the `/`, and `u`-host-port-1234 and
-//     `u`-user-password-1234 are the same eleven bytes. Nothing in the value chooses, so the `?`
-//     was called genuine and `nats://u:1234/path` was logged with the password in it.
-//   - "there is no `:` at all, so there is nothing that could be a password". Userinfo does not
-//     need a colon. `nats://token@host:4222` is a documented NATS form and this service's own
-//     config accepts it, so a bare `s3cret` is a whole credential rather than a username missing
-//     its other half — and `nats://s3cret/path?x@host:4222` printed `nats://s3cret/path`.
-//
-// The shared error is treating the absence of a disqualifying feature as proof of an authority.
-// Both malformed readings put a `/` and a `?` inside userinfo, which RFC 3986 §3.2.1 excludes;
-// neither is more malformed than the other, so accepting one and refusing the other was never
-// principled. An unbracketed region is therefore refused whatever it contains.
-//
-// A bracketed host is the exception, and the only one, because `[` and `]` are gen-delims
-// §3.2.1 excludes from userinfo: a value that opens with `[` CANNOT be userinfo, so there the
-// authority reading is not the likelier one but the only one. That is a proof about the
-// grammar rather than a guess about the bytes, which is what the other two lacked.
-//
-// The cost is confined and it is the right way round: only a value that ALSO carries an `@` past
-// its `?` ever consults this (see redactOne), so what is lost is the host of an unbracketed URL
-// with an `@` in its query — `https://idp/jwks?contact=ops@b.example` redacts whole — and what is
-// kept is every credential. The package doc already promises best-effort identity rather than
-// format preservation; this is where that promise is spent.
-func pathClosesAuthority(seg string) bool {
-	slash := strings.IndexByte(seg, '/')
-	if slash < 0 {
-		return false
-	}
-	host := seg[:slash]
-	// An IPv6 literal is bracketed, so its colons are inside the brackets and none of them
-	// separates a port. Without this it would be read as a non-numeric port and refused.
-	//
-	// The test is the WHOLE bracketed form, not a trailing `]`. A suffix test alone accepts
-	// any password that happens to END in one, and that leaked: `nats://u:secret]/path?x@host`
-	// has `u:secret]` before the `/`, which a suffix test calls an IPv6 host and therefore a
-	// closed authority — so the `?` reads as a genuine query, the value is cut there, and
-	// `nats://u:secret]` goes to the log with the password in it. Requiring the opening
-	// bracket costs nothing a real IPv6 authority has.
-	if strings.HasPrefix(host, "[") {
-		return bracketedHostCloses(host)
-	}
-	return false // an unbracketed authority and a userinfo are the same bytes here
-}
-
-// bracketedHostCloses reports whether host is a well-formed `[IPv6]` or `[IPv6]:port`
-// authority (RFC 3986 §3.2.2).
-//
-// The bracket contents are checked against the characters an IPv6 literal can be built
-// from rather than parsed into an address. The question here is only whether the value could
-// be a host at all, and a literal that is well-formed but not routable is still not a
-// password.
-//
-// The ADDRESS is hex digits, `:`, and `.` for an IPv4-mapped tail. The ZONE ID after a `%25`
-// (RFC 6874) is not: it is an interface name, so `eth0` and `en0` are the ordinary cases and
-// a hex-only rule would refuse every one of them. It gets the looser unreserved set, and it
-// is looser SAFELY because the address in front of it has already had to pass.
-//
-// At least one `:` is required in the address, because every IPv6 literal has one and
-// nothing else that reaches here does. It is what separates a real `[::1]` from `[secret]` —
-// a userinfo that merely opens with a bracket, which the prefix test alone would wave
-// through exactly as the old suffix test waved through one that closed with it. Default-deny
-// past that: anything after the `]` must be `:port` and nothing else.
-func bracketedHostCloses(host string) bool {
-	end := strings.IndexByte(host, ']')
-	if end < 0 {
-		return false // unterminated: not an authority this package will vouch for
-	}
-	addr, zone := host[1:end], ""
-	if pct := strings.IndexByte(addr, '%'); pct >= 0 {
-		addr, zone = addr[:pct], addr[pct:]
-	}
-	if !strings.ContainsRune(addr, ':') {
-		return false
-	}
-	for i := 0; i < len(addr); i++ {
-		c := addr[i]
-		switch {
-		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
-		case c == ':', c == '.':
-		default:
-			return false
-		}
-	}
-	for i := 0; i < len(zone); i++ {
-		c := zone[i]
-		switch {
-		case c >= '0' && c <= '9', c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
-		case c == '%', c == '.', c == '-', c == '_', c == '~':
-		default:
-			return false
-		}
-	}
-	switch rest := host[end+1:]; {
-	case rest == "":
-		return true
-	case rest[0] != ':':
-		return false
-	default:
-		return isPort(rest[1:])
-	}
-}
-
-// isPort reports whether p is a non-empty decimal port. An EMPTY port is refused rather than
-// treated as "absent", since `u:` is a likelier empty password than a real authority.
-func isPort(p string) bool {
-	if p == "" {
-		return false
-	}
-	for i := 0; i < len(p); i++ {
-		if p[i] < '0' || p[i] > '9' {
-			return false
-		}
-	}
-	return true
-}
-
-// owningAuthority returns the part of the value between the `://` of the segment that owns the
-// delimiter at q and q itself.
-//
-// Which segment owns it matters in a comma-separated list: only the LAST one can, because every
-// comma from the query onward belongs to it (see splitBeforeQuery), so the scan starts at the
-// comma before the delimiter. Scanning from the start of the value instead would find the `/` in
-// an EARLIER segment's path and call every multi-URL query genuine — which is exactly the
-// fallthrough that leaked.
-func owningAuthority(u string, q int) string {
-	seg := u[:q]
-	if c := strings.LastIndexByte(seg, ','); c >= 0 {
-		seg = seg[c+1:]
-	}
-	if i := strings.Index(seg, "://"); i >= 0 {
-		seg = seg[i+3:]
-	}
-	return seg
 }
 
 // trimQueryAndFragment drops everything from the first `?` or `#`.

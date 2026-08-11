@@ -795,3 +795,40 @@ endpoint: an operator who configured plaintext has already accepted it, and `htt
 strictly improves on what they asked for. `TestRedirectTarget_RefusesATLSDowngrade` is a unit
 test on the function, since the scheme pair is the entire subject and an end-to-end version would
 need a TLS server this transport trusts in order to assert the same thing.
+
+## Round 8: the last authority rule, and why there is no ninth
+
+**Kind:** Fix
+
+Copilot found the fifth and final shape in this series: `URLUserinfo("nats://[dead::beef]/path?x@host:4222")`
+printed `nats://[dead::beef]/path`. `[dead::beef]` is a well-formed IPv6 literal — and a
+perfectly typeable password. Reproduced before touching anything, then revert-verified as
+"an IPv6-shaped credential is not an IPv6 host".
+
+The bracket rule had the strongest argument of the five, and round 7's own doc said so: RFC 3986
+§3.2.1 excludes `[` from userinfo, so a bracketed value provably cannot be a credential — a
+claim about the grammar rather than a guess about the bytes, which is exactly what the four
+rules before it lacked. It still leaked, and the reason it leaked is the reason the series ends
+here: **this package exists because the input is not trusted to be RFC-conformant.** Refusing to
+parse malformed credential-bearing values is its entire job. "The grammar forbids it in
+userinfo" therefore says nothing about what an operator typed into a config file.
+
+With the best available proof failing, the conclusion is not "find a sharper rule" — it is that
+no rule can exist. The two readings are the same bytes and only the operator knows which was
+meant. So the question is no longer asked: `queryIsGenuine`, `pathClosesAuthority`,
+`bracketedHostCloses`, `owningAuthority` and `isPort` are deleted, and both branches of
+`redactOne` reduce to "an `@` past the `?` ⇒ print nothing after the scheme". That is ~130 lines
+of reasoning replaced by one condition, and it is the first version of this code that cannot
+have a next round, because there is nothing left to be wrong about.
+
+The five rules and their counterexamples are tabulated in `docs/knowledge/code/pkg-redact.md`,
+one revert-verified regression case per row.
+
+The priced cost is a host and never a credential, paid only by a value carrying an `@` past its
+`?`. Five `TestURLUserinfo_Shapes` rows flipped to `https://***` — `[::1]`, `[::1]:8443`,
+`[::ffff:127.0.0.1]`, `[fe80::1%25eth0]` and the multi-URL `[2001:db8::1]` case. None of them
+leaked before or after; they were the diagnostic benefit the rule was bought for.
+
+One process note. `docs/knowledge/code/pkg-redact.md` still described `passwordCouldSpanQuery`,
+which round 7 had deleted — the code and its knowledge doc were fixed in the same commit and the
+doc was not re-read. A doc that lags one round behind the code is a doc that argues for the bug.

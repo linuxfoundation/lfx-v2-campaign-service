@@ -134,10 +134,11 @@ func TestURLUserinfo_Shapes(t *testing.T) {
 		// first would truncate the case below to 'nats://u:p' and log half a password.
 		{"https://idp.example.com/jwks?access_token=s3cret", "https://idp.example.com/jwks"},
 		{"https://svc:pw@idp.example.com/jwks?access_token=s3cret", "https://***@idp.example.com/jwks"}, // secretlint-disable-line
-		// Path-less, and its only '@' is past the '?'. This is either a password containing a
-		// '?' or an ordinary query '@', and the value cannot say which — so nothing after the
-		// scheme is printed. The host is lost; a password never is. The case below keeps its
-		// host because a '/' closed the authority before the query, which settles it.
+		// Its only '@' is past the '?'. This is either a password containing a '?' or an
+		// ordinary query '@', and the value cannot say which — so nothing after the scheme is
+		// printed. The host is lost; a password never is. Five successive rules claimed to
+		// settle it from the bytes and all five leaked (see the table in docs/knowledge/code/
+		// pkg-redact.md); nothing tries any more.
 		{"nats://u:p?x@host:4222", "nats://***"}, // secretlint-disable-line
 		{"https://idp.example.com/jwks#s3cret", "https://idp.example.com/jwks"},
 		// A comma is legal in a QUERY too, and the query is where the other credential
@@ -164,14 +165,18 @@ func TestURLUserinfo_Shapes(t *testing.T) {
 		// its `?`, which is why the far commoner `…/jwks?access_token=…` keeps its host.
 		{"https://idp.example.com/jwks?access_token=s3cret", "https://idp.example.com/jwks"},
 		{"https://idp.example.com:8443/jwks?access_token=s3cret", "https://idp.example.com:8443/jwks"},
-		{"https://[::1]:8443/jwks?contact=ops@b.example", "https://[::1]:8443/jwks"},
-		// The bracketed forms a real authority takes, all of which must still keep their host
-		// now that the literal is validated rather than sniffed by its last byte: no port, an
-		// IPv4-mapped tail, and a zone id, whose interface name is not hex and so needs a
-		// looser rule than the address in front of it.
-		{"https://[::1]/jwks?contact=ops@b.example", "https://[::1]/jwks"},
-		{"https://[::ffff:127.0.0.1]/jwks?contact=ops@b.example", "https://[::ffff:127.0.0.1]/jwks"},
-		{"https://[fe80::1%25eth0]/jwks?contact=ops@b.example", "https://[fe80::1%25eth0]/jwks"},
+		// A BRACKETED host pays it too, and this is the last rule that claimed otherwise. It
+		// had the best argument of the four: RFC 3986 §3.2.1 excludes `[` from userinfo, so a
+		// value opening with one cannot be userinfo — a grammar proof rather than a guess about
+		// the bytes. It still leaked, because this package exists precisely because the input is
+		// not trusted to be RFC-conformant, and what the grammar forbids says nothing about what
+		// an operator typed: `nats://[dead::beef]/path?x@host:4222` printed `nats://[dead::beef]`
+		// plus its path. All four forms a real IPv6 authority takes — port, no port, IPv4-mapped
+		// tail, zone id — now redact whole, and nothing looks at these bytes to decide.
+		{"https://[::1]:8443/jwks?contact=ops@b.example", "https://***"},
+		{"https://[::1]/jwks?contact=ops@b.example", "https://***"},
+		{"https://[::ffff:127.0.0.1]/jwks?contact=ops@b.example", "https://***"},
+		{"https://[fe80::1%25eth0]/jwks?contact=ops@b.example", "https://***"},
 		{"https://svc:pw@idp.example.com/jwks?contact=ops@b.example", "https://***@idp.example.com/jwks"}, // secretlint-disable-line
 		// The scheme must START a segment, not merely appear in it — the narrowing that closes
 		// `allSchemed`'s hole directly. Here `x/y://b@c` carries a `://` but begins with a path
@@ -285,9 +290,9 @@ func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
 			// Multi-URL fallback must not mistake @ in a query for userinfo. The mix
 			// `URLUserinfo` refuses to split arrives here whole; searching the whole
 			// string for @ would find the query's @, delete the ?, and leave the token.
-			// The hosts go with it, for pathClosesAuthority's reason: `idp/jwks` is an
-			// unbracketed region, so `idp` is as legally a token-only userinfo as it is a
-			// host. What this still pins is the thing it was written for — that no `***@`
+			// The hosts go with it: an `@` past the `?` is refused outright, since `idp` is
+			// as legally a token-only userinfo as it is a host and nothing in the value
+			// chooses. What this still pins is the thing it was written for — that no `***@`
 			// rebuild happens off the query's `@`, and that `s3cret` never survives.
 			name:    "multi-URL fallback does not leak a query @ as userinfo",
 			in:      "https://idp/jwks?contact=ops@b.example,https://x&access_token=s3cret", // secretlint-disable-line
@@ -335,34 +340,42 @@ func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
 			secrets: []string{"u:p", "p?x"},
 		},
 		{
-			// The other side of the same rule, and after round 7 there is exactly one side
-			// left. A PATH used to be enough — `https://idp.example/jwks?contact=ops@…` kept
-			// both hosts — until it turned out `idp.example` is as legally a token-only
-			// userinfo as it is a host. A BRACKETED last segment still keeps them, because
-			// RFC 3986 §3.2.1 excludes `[` from userinfo, so `[2001:db8::1]` cannot be a
-			// credential. This is what stops the branch from being "refuse every multi-URL
-			// query outright" — a claim the previous version of this case no longer supported.
-			name:    "a list whose last segment is a bracketed host keeps its hosts",
+			// The round-8 case, and the one that ended the series. A well-formed `[IPv6]` was
+			// the last shape still trusted to close an authority, on the strongest argument any
+			// of the four had: RFC 3986 §3.2.1 excludes `[` from userinfo, so the value could
+			// not be a credential. But a password is free to BE `[dead::beef]` — the grammar
+			// constrains what is legal, not what an operator typed, and refusing to parse
+			// illegal input is this package's whole reason for existing. So the last exception
+			// went with the other three and the branch now IS "refuse every ambiguous query
+			// outright". The cost is the two hosts below; no credential is among them.
+			name:    "a list whose last segment is a bracketed host redacts whole",
 			in:      "nats://a:4222,https://[2001:db8::1]/jwks?contact=ops@b.example&access_token=s3cret", // secretlint-disable-line
-			want:    "nats://a:4222,https://[2001:db8::1]/jwks",
+			want:    "nats://***",
 			secrets: []string{"s3cret", "access_token"},
 		},
 		{
-			// The IPv6 exemption in pathClosesAuthority was a `HasSuffix(host, "]")`, and a
-			// password is free to end in a bracket. `u:secret]` then read as an IPv6 host, so
-			// the `/` looked like it closed an authority, so the `?` looked like a genuine
-			// query — and cutting there printed the password. The opening bracket is what
-			// makes it a literal; requiring it costs nothing a real IPv6 authority has.
+			// The single-URL twin, verbatim from the review that found it: `[dead::beef]` is a
+			// well-formed literal and a perfectly typeable password, and this printed
+			// `nats://[dead::beef]/path`.
+			name:    "an IPv6-shaped credential is not an IPv6 host",
+			in:      "nats://[dead::beef]/path?x@host:4222", // secretlint-disable-line
+			want:    "nats://***",
+			secrets: []string{"dead::beef", "/path"},
+		},
+		{
+			// Round 6's shape, kept because it fails for a DIFFERENT reason now. It used to
+			// need the opening-bracket rule — a `HasSuffix(host, "]")` exemption read `u:secret]`
+			// as an IPv6 host, so the `/` looked like it closed an authority and cutting at the
+			// `?` printed the password. Nothing looks at brackets any more, so it is refused for
+			// carrying an `@` past its `?` like everything else.
 			name:    "a password ending in a bracket is not an IPv6 host",
 			in:      "nats://u:secret]/path?x@host:4222", // secretlint-disable-line
 			want:    "nats://***",
 			secrets: []string{"secret]", "/path"},
 		},
 		{
-			// Requiring the opening bracket alone would have swapped one suffix test for one
-			// prefix test. A userinfo that merely OPENS with a bracket has to be refused on the
-			// same terms, and the address is what tells them apart: every IPv6 literal has a
-			// colon in it and this does not.
+			// Likewise: this once needed the address to contain a colon to distinguish
+			// `[secret]` from `[::1]`. Both are refused now.
 			name:    "a bracketed value with no colon is not an IPv6 host",
 			in:      "nats://[secret]/path?x@host:4222", // secretlint-disable-line
 			want:    "nats://***",
@@ -373,8 +386,8 @@ func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
 			// numeric PASSWORD is just as legal as a port: `u:1234` is `u`-host-port-1234 and
 			// `u`-user-password-1234 in the same eleven bytes. The authority reading won by
 			// default, so the `?` was called genuine, the value cut there, and `nats://u:1234`
-			// went to the log. An unbracketed `:` before the path is now refused whatever
-			// follows it — the one position that cannot ask `isPort` a meaningful question.
+			// went to the log. A `:` before the path is now refused whatever follows it — this
+			// is the one position where "is it a port?" cannot be a meaningful question.
 			name:    "a numeric password is not a port",
 			in:      "nats://u:1234/path?x@host:4222", // secretlint-disable-line
 			want:    "nats://***",
@@ -400,11 +413,12 @@ func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
 		},
 		{
 			// The multi-URL twin of the case above, and the reason round 6 did not end this.
-			// The fix landed in pathClosesAuthority, but the multi-URL caller ANDed its own
-			// `ContainsRune(seg, ':')` on top of it, so the colonless reading survived one
-			// caller away and this still printed `nats://s3cret/path`. A rule corrected in one
-			// place and independently re-derived in another is corrected nowhere; both branches
-			// now ask the identical question through queryIsGenuine.
+			// The fix landed in the single-URL branch, but the multi-URL branch had
+			// independently re-derived the same rule and ANDed its own `ContainsRune(seg, ':')`
+			// on top, so the colonless reading survived one caller away and this still printed
+			// `nats://s3cret/path`. A rule corrected in one place and re-derived in another is
+			// corrected nowhere — which is why both branches are now the same two conditions
+			// inline, with no shared helper left to diverge from.
 			name:    "a token-only userinfo is not a host in a list either",
 			in:      "nats://s3cret/path?x@host:4222,nats://c", // secretlint-disable-line
 			want:    "nats://***",
