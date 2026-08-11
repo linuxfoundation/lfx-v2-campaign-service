@@ -425,6 +425,23 @@ func redirectTarget(cur *http.Request, resp *http.Response) *http.Request {
 	if loc.Scheme != "https" && loc.Scheme != "http" {
 		return nil
 	}
+	// A DOWNGRADE is refused even though both schemes are individually allowed. The key set
+	// this fetch returns decides which signatures mint a valid identity, so an on-path
+	// attacker who can rewrite the response body can mint tokens this verifier accepts —
+	// there is no signature over the JWKS itself to catch it. TLS on the first hop is the
+	// only thing standing between that attacker and the trust anchor, and a `Location:` is
+	// chosen by the upstream, so honouring one that steps out of TLS lets the upstream (or
+	// anyone who can spoof it) discard the protection the operator configured.
+	//
+	// Dropping the Authorization header is not enough here. That protects the CREDENTIAL,
+	// and the credential is not what is at risk: this response is trusted for its BODY.
+	//
+	// http -> https and same-scheme are both fine. An operator who configured a plaintext
+	// JWKS URL (auth.New permits one, for local dev) has already accepted plaintext, and
+	// upgrading strictly improves on what they asked for.
+	if cur.URL.Scheme == "https" && loc.Scheme == "http" {
+		return nil
+	}
 	next := cur.Clone(cur.Context())
 	next.URL = loc
 	next.Host = "" // derive Host from the new URL rather than carrying the previous hop's

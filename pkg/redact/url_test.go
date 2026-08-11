@@ -203,7 +203,7 @@ func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
 			// prefix, so trimQueryAndFragment had no query left to find and the token rode
 			// out on `&access_token=`. A redirect parameter is ordinary in an OIDC
 			// deployment, and `Config.String` sends JWKS URLs through here.
-			name:    "query holding a URL with an @ is one URL, not two",
+			name: "query holding a URL with an @ is one URL, not two",
 			// The host now goes too, because an unbracketed region before the `/` is as legal
 			// a token-only userinfo as it is an authority (see "a token-only userinfo is not
 			// a host"). What this case pins is unchanged and is the part that matters: the
@@ -285,9 +285,13 @@ func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
 			// Multi-URL fallback must not mistake @ in a query for userinfo. The mix
 			// `URLUserinfo` refuses to split arrives here whole; searching the whole
 			// string for @ would find the query's @, delete the ?, and leave the token.
+			// The hosts go with it, for pathClosesAuthority's reason: `idp/jwks` is an
+			// unbracketed region, so `idp` is as legally a token-only userinfo as it is a
+			// host. What this still pins is the thing it was written for — that no `***@`
+			// rebuild happens off the query's `@`, and that `s3cret` never survives.
 			name:    "multi-URL fallback does not leak a query @ as userinfo",
 			in:      "https://idp/jwks?contact=ops@b.example,https://x&access_token=s3cret", // secretlint-disable-line
-			want:    "https://idp/jwks",
+			want:    "https://***",
 			secrets: []string{"s3cret", "access_token"},
 		},
 		{
@@ -298,9 +302,14 @@ func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
 			// verbatim with `***` standing in for the harmless part. Bounding the search at
 			// the first `?` means the `@` is never seen: nothing before the query holds one,
 			// so the value falls through to trimQueryAndFragment and both hosts survive.
+			// `nats://a,nats://b` was the old expectation and it is now `nats://***`: the
+			// segment owning the `?` is `b`, which carries no `/`, so nothing proves it is a
+			// host rather than a whole token. The property under test is unchanged — the
+			// credential SUFFIX must never be printed — and redacting whole satisfies it
+			// strictly more than keeping the hosts did.
 			name:    "multi-URL fallback does not leak a credential suffix after a query @",
 			in:      "nats://a,nats://b?access_token=prefix@live-secret,nats://c", // secretlint-disable-line
-			want:    "nats://a,nats://b",
+			want:    "nats://***",
 			secrets: []string{"live-secret", "access_token", "prefix"},
 		},
 		{
@@ -326,12 +335,16 @@ func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
 			secrets: []string{"u:p", "p?x"},
 		},
 		{
-			// The other side of the same rule: when the last segment DOES have a path, the `?`
-			// really is a query and both hosts are worth keeping. Without this the fix above
-			// would be indistinguishable from refusing every multi-URL query outright.
-			name:    "a list whose last segment has a path keeps its hosts",
-			in:      "nats://a:4222,https://idp.example/jwks?contact=ops@b.example&access_token=s3cret", // secretlint-disable-line
-			want:    "nats://a:4222,https://idp.example/jwks",
+			// The other side of the same rule, and after round 7 there is exactly one side
+			// left. A PATH used to be enough — `https://idp.example/jwks?contact=ops@…` kept
+			// both hosts — until it turned out `idp.example` is as legally a token-only
+			// userinfo as it is a host. A BRACKETED last segment still keeps them, because
+			// RFC 3986 §3.2.1 excludes `[` from userinfo, so `[2001:db8::1]` cannot be a
+			// credential. This is what stops the branch from being "refuse every multi-URL
+			// query outright" — a claim the previous version of this case no longer supported.
+			name:    "a list whose last segment is a bracketed host keeps its hosts",
+			in:      "nats://a:4222,https://[2001:db8::1]/jwks?contact=ops@b.example&access_token=s3cret", // secretlint-disable-line
+			want:    "nats://a:4222,https://[2001:db8::1]/jwks",
 			secrets: []string{"s3cret", "access_token"},
 		},
 		{
@@ -382,6 +395,18 @@ func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
 			// proof about the grammar rather than a guess about the bytes.
 			name:    "a token-only userinfo is not a host",
 			in:      "nats://s3cret/path?x@host:4222", // secretlint-disable-line
+			want:    "nats://***",
+			secrets: []string{"s3cret", "/path"},
+		},
+		{
+			// The multi-URL twin of the case above, and the reason round 6 did not end this.
+			// The fix landed in pathClosesAuthority, but the multi-URL caller ANDed its own
+			// `ContainsRune(seg, ':')` on top of it, so the colonless reading survived one
+			// caller away and this still printed `nats://s3cret/path`. A rule corrected in one
+			// place and independently re-derived in another is corrected nowhere; both branches
+			// now ask the identical question through queryIsGenuine.
+			name:    "a token-only userinfo is not a host in a list either",
+			in:      "nats://s3cret/path?x@host:4222,nats://c", // secretlint-disable-line
 			want:    "nats://***",
 			secrets: []string{"s3cret", "/path"},
 		},

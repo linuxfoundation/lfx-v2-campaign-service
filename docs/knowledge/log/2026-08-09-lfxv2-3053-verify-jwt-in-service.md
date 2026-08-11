@@ -739,3 +739,59 @@ Fifth instance of the class, and the second in a row where the FIX was the next 
 both times was the same: the rule proved an authority from the ABSENCE of a disqualifying
 feature (a non-numeric port; then a colon), which proves nothing about a value whose structure is
 untrustworthy. Only the bracket test ever argued from presence, and it is the one still standing.
+
+## Round 7: the same rule, one caller away
+
+**Kind:** Fix
+
+Cursor found that round 6 fixed `pathClosesAuthority` and left the leak standing in its other
+caller. The multi-URL branch did not ask `queryIsGenuine`; it asked `passwordCouldSpanQuery`,
+which was `!pathClosesAuthority(seg) && strings.ContainsRune(seg, ':')` — the colonless reading
+round 6 had just retired, re-derived locally and ANDed on top of the corrected function. So
+`nats://s3cret/path?x@host:4222` redacted whole while
+`nats://s3cret/path?x@host:4222,nats://c` still printed `nats://s3cret/path`.
+
+The narrower test was deliberate and its justification was economic: refusing in a single URL
+costs one host, refusing in a list costs every host in it, so the list branch "pays for a
+sharper discriminator". The reasoning is sound and the discriminator it bought was unsound —
+cheapness is not a reason to keep a rule already known to leak. `passwordCouldSpanQuery` is
+deleted and both branches now call `queryIsGenuine`.
+
+The priced cost lands on three cases that previously kept their hosts, none of which leaked
+before and none of which leak now; each is redacted whole instead:
+
+- `https://idp/jwks?contact=ops@b.example,https://x&access_token=s3cret`
+- `nats://a,nats://b?access_token=prefix@live-secret,nats://c`
+- `nats://a:4222,https://idp.example/jwks?contact=ops@b.example&…`
+
+The third case previously existed to prove the branch was not "refuse every multi-URL query
+outright". A path no longer proves that, so it is rewritten onto the one distinction that
+survives — a BRACKETED last segment, `nats://a:4222,https://[2001:db8::1]/jwks?…`, which keeps
+both hosts because `[` cannot begin userinfo. The leak itself is a revert-verified case, "a
+token-only userinfo is not a host in a list either".
+
+Sixth instance of the class and the third consecutive round where the previous fix was the next
+finding — but with a different tell. Rounds 5 and 6 were the wrong RULE. This one was the right
+rule applied in one place and independently restated in another, where the restatement went
+stale the moment the original was corrected. A rule with two implementations has none.
+
+## Round 7b: a JWKS redirect could step out of TLS
+
+**Kind:** Fix
+
+Copilot found that `redirectTarget` accepted any `http` or `https` Location regardless of the
+current hop's scheme, so an `https` JWKS endpoint could be redirected to plaintext `http`.
+`auth.New` permits an `http` JWKS URL for local dev, which is what made both schemes individually
+acceptable and hid the pair.
+
+Dropping the `Authorization` header — already done on every hop — does not cover this. That
+protects the credential sent OUT, and the risk is what comes BACK: nothing signs a JWKS, so the
+response body IS the trust anchor. An on-path attacker on a plaintext hop can substitute a key
+set and mint tokens this verifier accepts.
+
+`https` → `http` is now refused. The other three pairs are permitted and asserted, because a
+guard that refused all four would pass a downgrade-only test while breaking the local-dev
+endpoint: an operator who configured plaintext has already accepted it, and `http` → `https`
+strictly improves on what they asked for. `TestRedirectTarget_RefusesATLSDowngrade` is a unit
+test on the function, since the scheme pair is the entire subject and an end-to-end version would
+need a TLS server this transport trusts in order to assert the same thing.

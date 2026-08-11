@@ -214,8 +214,17 @@ func redactOne(u string) string {
 		// the `?`. For `nats://u:p?x@a,nats://b` — a password containing a `?` — that prints
 		// `nats://u:p` and the password with it. The single-URL path already refuses this
 		// shape; this branch has to refuse it too, on the same terms.
+		//
+		// On EXACTLY the same terms — this is `queryIsGenuine`, not a variant of it. A
+		// narrower test lived here, on the argument that refusing costs one host in a single
+		// URL and every host in a list, so a list should pay for a sharper discriminator. The
+		// discriminator it bought was `strings.ContainsRune(seg, ':')`, which is the colonless
+		// reading pathClosesAuthority's own doc records as leaking — so the round that fixed
+		// that reading left the leak standing here, one caller away, and
+		// `nats://s3cret/path?x@host:4222,nats://c` still printed `nats://s3cret/path`.
+		// Cheapness is not a reason to accept a rule already known to be unsound.
 		if preQueryMulti < len(u) && strings.ContainsRune(u[preQueryMulti:], '@') &&
-			passwordCouldSpanQuery(u, preQueryMulti) {
+			!queryIsGenuine(u, preQueryMulti) {
 			return u[:authStart] + "***"
 		}
 		return trimQueryAndFragment(u)
@@ -402,24 +411,6 @@ func owningAuthority(u string, q int) string {
 		seg = seg[i+3:]
 	}
 	return seg
-}
-
-// passwordCouldSpanQuery reports whether refusing the value at the delimiter q is warranted
-// because a PASSWORD might be what the delimiter sits inside.
-//
-// It is the multi-URL branch's test, and it is narrower than the single-URL branch's plain
-// `!queryIsGenuine` on purpose: refusing there costs one host, while refusing here costs every
-// host in the list, so this branch pays for a sharper discriminator. A password is what makes
-// truncation dangerous, and userinfo carrying a password must contain a `:` before the
-// delimiter. `nats://b?access_token=x@live-secret,nats://c` has none — `b` could only ever be a
-// bare username — so its hosts are kept, while `nats://u:p?x@a,nats://b` is refused.
-//
-// It asks pathClosesAuthority rather than testing for a `/` directly, for the reason given
-// there: `nats://u:p/path?x@a,nats://b` carries a `/` and still has no authority the `/` could
-// close, so the plain test called it safe and printed `nats://u:p`.
-func passwordCouldSpanQuery(u string, q int) bool {
-	seg := owningAuthority(u, q)
-	return !pathClosesAuthority(seg) && strings.ContainsRune(seg, ':')
 }
 
 // trimQueryAndFragment drops everything from the first `?` or `#`.

@@ -1175,3 +1175,56 @@ func TestVerifyActor_JWKSURLCredentialsStillAuthenticate(t *testing.T) {
 		t.Errorf("key set served %d times, want 1", got)
 	}
 }
+
+// TestRedirectTarget_RefusesATLSDowngrade pins the one scheme pair redirectTarget must not
+// follow, and it is a unit test on that function because the scheme PAIR is the whole subject:
+// an end-to-end version would need a TLS server whose certificate this transport trusts, and
+// would still be asserting exactly this.
+//
+// The JWKS response is trusted for its BODY — it decides which signatures mint a valid
+// identity, and nothing signs the key set itself. So an on-path attacker who can rewrite a
+// plaintext response can install their own key and mint tokens this verifier accepts. TLS on
+// the fetch is the only thing preventing that, and a `Location:` is chosen by the upstream, so
+// following one out of TLS lets the upstream — or anyone able to spoof it — discard the
+// protection the operator configured.
+//
+// Withholding the Authorization header does not cover this. That protects the CREDENTIAL sent
+// OUT; the risk here is what comes BACK.
+//
+// The three permitted pairs are asserted alongside, because a guard that refused all four
+// would also pass a downgrade-only assertion while breaking the http-configured local-dev
+// endpoint auth.New deliberately allows.
+func TestRedirectTarget_RefusesATLSDowngrade(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		from, to   string
+		wantFollow bool
+	}{
+		{name: "https to http is a downgrade", from: "https", to: "http", wantFollow: false},
+		{name: "https to https is the ordinary case", from: "https", to: "https", wantFollow: true},
+		// An operator who configured a plaintext JWKS URL has already accepted plaintext;
+		// upgrading strictly improves on what they asked for.
+		{name: "http to https is an upgrade", from: "http", to: "https", wantFollow: true},
+		{name: "http to http keeps local dev working", from: "http", to: "http", wantFollow: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cur, err := http.NewRequest(http.MethodGet, tc.from+"://idp.example.com/jwks", nil)
+			if err != nil {
+				t.Fatalf("build request: %v", err)
+			}
+			resp := &http.Response{
+				StatusCode: http.StatusFound,
+				Header:     http.Header{"Location": {tc.to + "://idp.example.com/elsewhere/jwks"}},
+			}
+			next := redirectTarget(cur, resp)
+			if tc.wantFollow && next == nil {
+				t.Fatalf("%s -> %s was refused; only a TLS downgrade may be", tc.from, tc.to)
+			}
+			if !tc.wantFollow && next != nil {
+				t.Fatalf("%s -> %s was followed to %q: an on-path attacker can replace the key "+
+					"set on that hop and mint tokens this verifier accepts",
+					tc.from, tc.to, next.URL)
+			}
+		})
+	}
+}
