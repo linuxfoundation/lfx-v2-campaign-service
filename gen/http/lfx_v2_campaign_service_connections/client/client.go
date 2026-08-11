@@ -190,6 +190,10 @@ type Client struct {
 	// list-google-ads-accounts endpoint.
 	ListGoogleAdsAccountsDoer goahttp.Doer
 
+	// ListMetaAdsAccounts Doer is the HTTP client used to make requests to the
+	// list-meta-ads-accounts endpoint.
+	ListMetaAdsAccountsDoer goahttp.Doer
+
 	// RestoreResponseBody controls whether the response bodies are reset after
 	// decoding so they can be read again.
 	RestoreResponseBody bool
@@ -254,6 +258,7 @@ func NewClient(
 		TestHubspotDoer:               doer,
 		SetCredentialHubspotDoer:      doer,
 		ListGoogleAdsAccountsDoer:     doer,
+		ListMetaAdsAccountsDoer:       doer,
 		RestoreResponseBody:           restoreBody,
 		scheme:                        scheme,
 		host:                          host,
@@ -1292,6 +1297,30 @@ func (c *Client) ListGoogleAdsAccounts() goa.Endpoint {
 		resp, err := c.ListGoogleAdsAccountsDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-google-ads-accounts", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ListMetaAdsAccounts returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service list-meta-ads-accounts server.
+func (c *Client) ListMetaAdsAccounts() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeListMetaAdsAccountsRequest(c.encoder)
+		decodeResponse = DecodeListMetaAdsAccountsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildListMetaAdsAccountsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ListMetaAdsAccountsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", err)
 		}
 		return decodeResponse(resp)
 	}
