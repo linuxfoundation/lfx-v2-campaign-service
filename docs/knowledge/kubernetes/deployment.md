@@ -1,7 +1,7 @@
 ---
 type: "Kubernetes Resource"
 title: "Deployment"
-description: "Helm Deployment for the campaign service, including PG*, CREDENTIAL_ENCRYPTION_KEY, and SNOWFLAKE_* from lfx-v2-campaign-service-secrets."
+description: "Helm Deployment for the campaign service, including PG*, CREDENTIAL_ENCRYPTION_KEY, SNOWFLAKE_* and the AI_PROXY_URL / AI_API_KEY credentials from lfx-v2-campaign-service-secrets, plus plain non-secret values such as AI_MODEL."
 resource: "charts/lfx-v2-campaign-service/templates/deployment.yaml"
 ---
 
@@ -25,6 +25,23 @@ past-editions audience lookup (`internal/platform/snowflake`), and its absence
 just narrows a built audience to country-only rather than failing the pod.
 `SNOWFLAKE_WAREHOUSE` / `SNOWFLAKE_ROLE` are plain (non-secret) values, empty by
 default so a cluster with no override uses the account's default.
+
+`AI_PROXY_URL` / `AI_API_KEY` follow the Snowflake pattern exactly: `secretKeyRef`
+to `lfx-v2-campaign-service-secrets` (keys `ai-proxy-url`, `ai-api-key`), both
+`optional: true`. Generated email copy is an enrichment on the same terms — a
+cluster with no LiteLLM provisioning must still start, and the `GenerateEmailCopy`
+endpoint returns 503 ServiceUnavailable when unconfigured. The secret is the **proxy's**
+key, not a Bedrock or Anthropic credential. `AI_MODEL` is a plain (non-secret) value,
+empty by default: a model id is not a credential, and empty selects `llm.DefaultModel`.
+All three are printed by `Config.String()` — the model verbatim, the key through
+`redactSecret`, and the URL through `redactAIProxyURL`, which keeps only the scheme,
+renders the host as `xxxxx`, and masks the whole value if it will not parse or its
+scheme is neither `http` nor `https`. The host is masked because it can itself BE the
+pasted secret — `AI_PROXY_URL=https://sup3r-s3cret/` is a well-formed absolute URL.
+That reduction is deliberate: `Config.String()` renders at startup before
+`llm.NewClient` can reject a bad value, so it is the only place a pasted credential
+would otherwise land in the log. What survives is enough for the thing being
+diagnosed — whether a proxy and key are configured at all.
 
 `REDDIT_METRICS_ENABLED` is likewise a plain (non-secret) value, defaulting to
 `"false"`. It is a feature gate rather than a credential: the Reddit reporting

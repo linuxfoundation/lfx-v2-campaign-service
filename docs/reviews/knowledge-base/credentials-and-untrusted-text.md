@@ -152,5 +152,27 @@ unencrypted (`internal/domain/model/campaign.go` `ConfigSnapshot`), which is why
 `applyCampaignConfig` scrubs before storing.
 
 **Not a finding when:** the full URL is used in the outbound request itself —
-that is required. A redactor that keeps scheme, host and path is the intended
-output, not a partial fix.
+that is required.
+
+**But "it kept the host" IS a finding, and so was "it kept the path".**
+`redactAIProxyURL` (`internal/infrastructure/config/config.go`) took FOUR review
+rounds to get to scheme-only-with-a-masked-host, and every round's mistake was the
+same one: reasoning that because `url.Parse` had already split the dangerous
+components into their own fields, whatever remained was structurally safe. Where
+the DELIMITERS fall says nothing about what a component CONTAINS. `sk-secret:foo`
+parses with the token as the SCHEME; `https://litellm.example.com/sup3r-s3cret/v1`
+parses with it as a PATH segment; and `https://sup3r-s3cret/` is a perfectly
+well-formed absolute URL whose entire content is the token sitting in the HOST.
+The rule that survives: reproduce a component only when it is BOTH structurally
+incapable of holding a secret AND load-bearing for the diagnosis.
+
+In practice that leaves almost nothing. A scheme qualifies only once the code has
+CHECKED it equals a literal from a fixed set, because then what is printed is the
+code's own constant rather than operator input — an unchecked scheme is just
+another place a token can sit. Everything else in a URL is free-form, so the
+honest rendering is a marker: `https://xxxxx` still answers "is this configured,
+and is it TLS", which is the operational question, and "which host exactly" is
+answered by the deployment manifest, not the pod log. When reviewing a URL
+redactor, ask of every component it keeps "could an operator have pasted a token
+here?" — and note that the answer is yes for every component that is not compared
+against a constant first.

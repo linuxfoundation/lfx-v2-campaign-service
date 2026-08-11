@@ -288,6 +288,20 @@ type GetCampaignMetricsResponseBody struct {
 	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
 }
 
+// GenerateEmailCopyResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body.
+type GenerateEmailCopyResponseBody struct {
+	// Email subject line
+	Subject *string `form:"subject,omitempty" json:"subject,omitempty" xml:"subject,omitempty"`
+	// Email preheader text (preview summary)
+	Preheader *string `form:"preheader,omitempty" json:"preheader,omitempty" xml:"preheader,omitempty"`
+	// Email body HTML (the main content)
+	Body *string `form:"body,omitempty" json:"body,omitempty" xml:"body,omitempty"`
+	// Call-to-action button text
+	Cta *string `form:"cta,omitempty" json:"cta,omitempty" xml:"cta,omitempty"`
+}
+
 // UpdateCampaignResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
 // response body.
@@ -909,6 +923,59 @@ type GetCampaignMetricsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "get-campaign-metrics" endpoint
 // HTTP response body for the "NotFound" error.
 type GetCampaignMetricsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GenerateEmailCopyBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body for the "BadRequest" error.
+type GenerateEmailCopyBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GenerateEmailCopyConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body for the "Conflict" error.
+type GenerateEmailCopyConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GenerateEmailCopyServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type GenerateEmailCopyServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GenerateEmailCopyInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body for the "InternalServerError" error.
+type GenerateEmailCopyInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GenerateEmailCopyNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body for the "NotFound" error.
+type GenerateEmailCopyNotFoundResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -2114,6 +2181,77 @@ func NewGetCampaignMetricsNotFound(body *GetCampaignMetricsNotFoundResponseBody)
 	return v
 }
 
+// NewGenerateEmailCopyEmailCopyOK builds a "lfx-v2-campaign-service-briefs"
+// service "generate-email-copy" endpoint result from a HTTP "OK" response.
+func NewGenerateEmailCopyEmailCopyOK(body *GenerateEmailCopyResponseBody) *lfxv2campaignservicebriefs.EmailCopy {
+	v := &lfxv2campaignservicebriefs.EmailCopy{
+		Subject:   *body.Subject,
+		Preheader: *body.Preheader,
+		Body:      *body.Body,
+		Cta:       *body.Cta,
+	}
+
+	return v
+}
+
+// NewGenerateEmailCopyBadRequest builds a lfx-v2-campaign-service-briefs
+// service generate-email-copy endpoint BadRequest error.
+func NewGenerateEmailCopyBadRequest(body *GenerateEmailCopyBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGenerateEmailCopyConflict builds a lfx-v2-campaign-service-briefs service
+// generate-email-copy endpoint Conflict error.
+func NewGenerateEmailCopyConflict(body *GenerateEmailCopyConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewGenerateEmailCopyServiceUnavailable builds a
+// lfx-v2-campaign-service-briefs service generate-email-copy endpoint
+// ServiceUnavailable error.
+func NewGenerateEmailCopyServiceUnavailable(body *GenerateEmailCopyServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGenerateEmailCopyInternalServerError builds a
+// lfx-v2-campaign-service-briefs service generate-email-copy endpoint
+// InternalServerError error.
+func NewGenerateEmailCopyInternalServerError(body *GenerateEmailCopyInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGenerateEmailCopyNotFound builds a lfx-v2-campaign-service-briefs service
+// generate-email-copy endpoint NotFound error.
+func NewGenerateEmailCopyNotFound(body *GenerateEmailCopyNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewUpdateCampaignCampaignOK builds a "lfx-v2-campaign-service-briefs"
 // service "update-campaign" endpoint result from a HTTP "OK" response.
 func NewUpdateCampaignCampaignOK(body *UpdateCampaignResponseBody, etag *string) *lfxv2campaignservicebriefs.Campaign {
@@ -2726,6 +2864,44 @@ func ValidateGetCampaignMetricsResponseBody(body *GetCampaignMetricsResponseBody
 	if body.Window != nil {
 		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days" || *body.Window == "last_14_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
+		}
+	}
+	return
+}
+
+// ValidateGenerateEmailCopyResponseBody runs the validations defined on
+// Generate-Email-CopyResponseBody
+func ValidateGenerateEmailCopyResponseBody(body *GenerateEmailCopyResponseBody) (err error) {
+	if body.Subject == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("subject", "body"))
+	}
+	if body.Preheader == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("preheader", "body"))
+	}
+	if body.Body == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("body", "body"))
+	}
+	if body.Cta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cta", "body"))
+	}
+	if body.Subject != nil {
+		if utf8.RuneCountInString(*body.Subject) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.subject", *body.Subject, utf8.RuneCountInString(*body.Subject), 200, false))
+		}
+	}
+	if body.Preheader != nil {
+		if utf8.RuneCountInString(*body.Preheader) > 150 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.preheader", *body.Preheader, utf8.RuneCountInString(*body.Preheader), 150, false))
+		}
+	}
+	if body.Body != nil {
+		if utf8.RuneCountInString(*body.Body) > 8000 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.body", *body.Body, utf8.RuneCountInString(*body.Body), 8000, false))
+		}
+	}
+	if body.Cta != nil {
+		if utf8.RuneCountInString(*body.Cta) > 50 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.cta", *body.Cta, utf8.RuneCountInString(*body.Cta), 50, false))
 		}
 	}
 	return
@@ -3498,6 +3674,71 @@ func ValidateGetCampaignMetricsInternalServerErrorResponseBody(body *GetCampaign
 // ValidateGetCampaignMetricsNotFoundResponseBody runs the validations defined
 // on get-campaign-metrics_NotFound_response_body
 func ValidateGetCampaignMetricsNotFoundResponseBody(body *GetCampaignMetricsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGenerateEmailCopyBadRequestResponseBody runs the validations defined
+// on generate-email-copy_BadRequest_response_body
+func ValidateGenerateEmailCopyBadRequestResponseBody(body *GenerateEmailCopyBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGenerateEmailCopyConflictResponseBody runs the validations defined
+// on generate-email-copy_Conflict_response_body
+func ValidateGenerateEmailCopyConflictResponseBody(body *GenerateEmailCopyConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
+	return
+}
+
+// ValidateGenerateEmailCopyServiceUnavailableResponseBody runs the validations
+// defined on generate-email-copy_ServiceUnavailable_response_body
+func ValidateGenerateEmailCopyServiceUnavailableResponseBody(body *GenerateEmailCopyServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGenerateEmailCopyInternalServerErrorResponseBody runs the
+// validations defined on generate-email-copy_InternalServerError_response_body
+func ValidateGenerateEmailCopyInternalServerErrorResponseBody(body *GenerateEmailCopyInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGenerateEmailCopyNotFoundResponseBody runs the validations defined
+// on generate-email-copy_NotFound_response_body
+func ValidateGenerateEmailCopyNotFoundResponseBody(body *GenerateEmailCopyNotFoundResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
