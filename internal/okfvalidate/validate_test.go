@@ -815,11 +815,20 @@ func TestValidateIndexBulletDecodesPercentEscapes(t *testing.T) {
 // no "://" yet are not bundle-relative paths. Each fixture writes a local file at the
 // name filepath.Join would produce, so a guard that lets one of these through resolves
 // to that file and reports a drift — the assertion below is what catches it.
+//
+// The two entity variants are the site root's version of the external-destination
+// over-rejection: the entity guard's premise is that an undecoded reference cannot be
+// classified as a path IN THIS BUNDLE, and a site-root path is not in this bundle. The
+// percent-encoded spelling is here because the site-root test is on the DECODED path —
+// "%2Fspec..." denotes "/spec...", and judging the raw text instead would classify the
+// two spellings of one destination differently.
 func TestValidateIndexBulletSkipsExternalDestinations(t *testing.T) {
 	for name, tc := range map[string]struct{ link, decoy string }{
-		"protocol-relative": {"//host/spec.md", filepath.Join("host", "spec.md")},
-		"site-root":         {"/spec.md", "spec.md"},
-		"scheme-no-slashes": {"mailto:notes.md", "mailto:notes.md"},
+		"protocol-relative":                {"//host/spec.md", filepath.Join("host", "spec.md")},
+		"site-root":                        {"/spec.md", "spec.md"},
+		"scheme-no-slashes":                {"mailto:notes.md", "mailto:notes.md"},
+		"site-root with an entity":         {"/spec&amp;notes.md", "spec&amp;notes.md"},
+		"encoded site-root with an entity": {"%2Fspec&amp;notes.md", "spec&amp;notes.md"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()

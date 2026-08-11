@@ -116,8 +116,10 @@ var indexBulletPattern = regexp.MustCompile(`^\* \[([^\]]+)\]\(([^()\s<>\\]+)\) 
 type destinationKind int
 
 const (
-	// destExternal carries a scheme or an authority, so it names no file in this
-	// bundle: never resolved, never compared, and nothing to hold to the format.
+	// destExternal carries a scheme, an authority, or a site-root path, so it names no
+	// file in this bundle: never resolved, never compared, and nothing to hold to the
+	// format. The site root is somebody else's root — checkBulletDescription drops such
+	// a destination for the same reason it drops the other two.
 	destExternal destinationKind = iota
 	// destLocal is bundle-relative and may name a concept file.
 	destLocal
@@ -132,12 +134,16 @@ const (
 // treating that as "nothing to compare against" let such a bullet opt out of description
 // sync in silence, which is the very failure every other rule in this class exists to
 // prevent. okfgen never emits such a name, so refusing it costs nothing and says so.
+// The site-root arm keys on u.Path, the DECODED path, and not on the raw text — same
+// reason checkBulletDescription decodes before its own site-root test: "%2Fspec.md"
+// denotes "/spec.md" and has to be judged as the path it names, not as the way it was
+// spelled.
 func classifyDestination(target string) destinationKind {
 	u, err := url.Parse(target)
 	switch {
 	case err != nil:
 		return destUnparseable
-	case u.Scheme != "" || u.Host != "":
+	case u.Scheme != "" || u.Host != "" || strings.HasPrefix(u.Path, "/"):
 		return destExternal
 	default:
 		return destLocal
