@@ -237,10 +237,22 @@ func TestConfigString_RedactsSecrets(t *testing.T) {
 		Port:                    "8080",
 		DatabaseURL:             "postgres://campaign:s3cret-value@db.example.com:5432/campaign", // secretlint-disable-line -- intentional fake DSN
 		CredentialEncryptionKey: "TEZYLWNhbXBhaWduLWxvY2FsLWRldi1hZXMtMjU2ISE=",
-		PGHost:                  "db.example.com",
-		PGUser:                  "campaign",
-		PGDatabase:              "campaign",
-		passwordPresent:         true,
+		// Every secret-bearing field belongs in this fixture, not just the ones that
+		// existed when it was written: the contract this test pins is "no configured
+		// secret reaches a log", and a field added without a line here is a contract
+		// nobody is checking. AIProxyURL and AIModel are populated too, but for opposite
+		// reasons: the URL IS masked (the host is operator input and can itself be the
+		// secret) down to a scheme-only `https://xxxxx`, which still answers "is copy
+		// generation wired, and is the hop TLS?"; the model id is NOT masked, because it
+		// is not a credential and an operator diagnosing bad copy needs it. The
+		// assertions below pin both halves.
+		AIProxyURL:      "https://litellm.example.com",
+		AIAPIKey:        "sk-ai-s3cret-value", // secretlint-disable-line -- intentional fake key
+		AIModel:         "us.anthropic.claude-sonnet-4-20250514-v1:0",
+		PGHost:          "db.example.com",
+		PGUser:          "campaign",
+		PGDatabase:      "campaign",
+		passwordPresent: true,
 	}
 
 	for _, formatted := range []string{
@@ -255,6 +267,14 @@ func TestConfigString_RedactsSecrets(t *testing.T) {
 		assert.Contains(t, formatted, "[redacted]")
 		assert.Contains(t, formatted, "xxxxx")
 		assert.Contains(t, formatted, "db.example.com")
+		// The one thing this string is for is telling an operator whether copy
+		// generation is configured, and `https://xxxxx` still says so — plus whether
+		// the hop is TLS. The host itself is operator input and can BE the secret
+		// (`AI_PROXY_URL=https://sup3r-s3cret/` is a well-formed URL), so it is masked.
+		assert.Contains(t, formatted, `AIProxyURL:"https://xxxxx"`)
+		assert.NotContains(t, formatted, "litellm.example.com")
+		// A model id is not a credential, and an operator diagnosing bad copy needs it.
+		assert.Contains(t, formatted, "us.anthropic.claude-sonnet-4-20250514-v1:0")
 	}
 }
 
@@ -330,6 +350,107 @@ func TestConfigString_RedactsJWKSCredentials(t *testing.T) {
 		assert.NotContains(t, formatted, "sup3r-s3cret", "the JWKS credential must never reach a log line")
 		assert.NotContains(t, formatted, "svcuser", "the username is part of the credential")
 		assert.Contains(t, formatted, "auth.lfx.dev/.well-known/jwks.json")
+	}
+}
+
+// TestConfigString_RedactsAIProxyCredentials pins that String() does not leak a credential
+// carried INSIDE the proxy URL. The field looks secret-free — the key has its own field —
+// but that is a property of what an operator typed, not of the field, and a URL has several
+// places a token rides for free. Userinfo and the query were the obvious two; the PATH is
+// here because it is the one that survived two earlier rounds of this exact fix, on the
+// reasoning that url.Parse had already split the dangerous components out. Where the
+// delimiters fall says nothing about what a component holds.
+func TestConfigString_RedactsAIProxyCredentials(t *testing.T) {
+	for name, raw := range map[string]string{
+		"userinfo": "https://svcuser:sup3r-s3cret@litellm.example.com/v1",          // secretlint-disable-line -- fixture
+		"query":    "https://litellm.example.com/v1?api-key=sup3r-s3cret",          // secretlint-disable-line -- fixture
+		"path":     "https://litellm.example.com/sup3r-s3cret/v1",                  // secretlint-disable-line -- fixture
+		"both":     "https://u:sup3r-s3cret@litellm.example.com/v1?k=sup3r-s3cret", // secretlint-disable-line -- fixture
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := &Config{AIProxyURL: raw}
+			for _, formatted := range []string{cfg.String(), cfg.GoString(), fmt.Sprintf("%v", cfg), fmt.Sprintf("%+v", cfg)} {
+				assert.NotContains(t, formatted, "sup3r-s3cret", "a credential inside AI_PROXY_URL must never reach a log line")
+				assert.NotContains(t, formatted, "svcuser", "the username is part of the credential")
+				// The host is masked too, so the exact rendered form is asserted:
+				// only the scheme survives, and only after being checked against two
+				// constants. Anything more reproduces operator input.
+				assert.NotContains(t, formatted, "litellm.example.com", "the host is operator input and can itself be the secret")
+				assert.Contains(t, formatted, `AIProxyURL:"https://xxxxx"`)
+			}
+		})
+	}
+}
+
+// TestConfigString_AISettingsAgreeWithConstruction pins the diagnostic to what
+// llm.NewClient will actually see. NewClient trims all three AI values and stores the
+// normalized form, so a whitespace-only URL or key is NOT configured — it returns
+// ErrNotConfigured. Printing the untrimmed originals made this string say the opposite:
+// redactAIProxyURL's emptiness check ran before its TrimSpace, so "\n" rendered as
+// "[redacted]", and redactSecret rendered a "\n" key as "xxxxx". Both read as CONFIGURED
+// on the one line an operator consults to find out whether copy generation can run.
+func TestConfigString_AISettingsAgreeWithConstruction(t *testing.T) {
+	cfg := &Config{AIProxyURL: "\n", AIModel: "  gpt-4o-mini\n", AIAPIKey: " \t "}
+	formatted := cfg.String()
+
+	assert.Contains(t, formatted, `AIProxyURL:""`,
+		"a whitespace-only proxy URL is unconfigured; [redacted] would report a proxy that NewClient rejects")
+	assert.Contains(t, formatted, `AIAPIKey:""`,
+		"a whitespace-only key is unconfigured; xxxxx would report a credential that is not there")
+	assert.Contains(t, formatted, `AIModel:"gpt-4o-mini"`,
+		"the model must be logged as it will be SENT, not as it was received")
+}
+
+// TestRedactAIProxyURL_Shapes covers the forms the value takes. Every http(s) case
+// collapses to the same two-constant rendering, which is the point: the only component
+// reproduced is a scheme this function has already checked equals "http" or "https", so
+// no input can reach the log through it.
+func TestRedactAIProxyURL_Shapes(t *testing.T) {
+	cases := map[string]string{
+		"":                                  "",
+		"https://litellm.example.com":       "https://xxxxx",
+		"https://litellm.example.com/v1/":   "https://xxxxx",
+		"http://litellm:4000/v1":            "http://xxxxx",
+		"https://u:p@litellm.example.com/v": "https://xxxxx", // secretlint-disable-line -- fixture
+		"https://litellm.example.com?k=v":   "https://xxxxx",
+		"https://litellm.example.com/v#f":   "https://xxxxx",
+		// A token in a PATH SEGMENT. Parses cleanly, and the path is neither userinfo
+		// nor a query, so an earlier scheme/host/path rebuild printed it verbatim.
+		"https://litellm.example.com/sup3r-s3cret/v1": "https://xxxxx", // secretlint-disable-line -- fixture
+		// A token AS THE HOST. This is the case the scheme+host form could not survive:
+		// it is a well-formed absolute https URL whose entire content is the secret, so
+		// there is no parse-level property that distinguishes it from a real endpoint.
+		"https://sup3r-s3cret/":   "https://xxxxx", // secretlint-disable-line -- fixture
+		"https://sup3r-s3cret:80": "https://xxxxx", // secretlint-disable-line -- fixture
+		// Unparseable: no component this function can vouch for, so it masks.
+		"https://litellm.example.com/%zz": "[redacted]",
+		// Opaque/relative: the whole value sits in a field this does not render.
+		"mailto:u:p@x": "[redacted]", // secretlint-disable-line -- fixture
+		// A non-http(s) scheme with a HOST. It masks wholesale rather than rendering
+		// `scheme://xxxxx`, because the scheme is the one component still reproduced
+		// and an unrecognised one is exactly where the secret may be.
+		"sup3r-s3cret://litellm.example.com": "[redacted]", // secretlint-disable-line -- fixture
+	}
+	for in, want := range cases {
+		assert.Equal(t, want, redactAIProxyURL(in), "input %q", in)
+	}
+}
+
+// TestRedactAIProxyURL_ReproducesNothingButTheScheme is the property behind the table:
+// for any http(s) input, the output is drawn entirely from constants. Asserting it as a
+// property rather than case by case is what stops the next round — a future component
+// judged "structurally safe" fails here without anyone having to think of its fixture.
+func TestRedactAIProxyURL_ReproducesNothingButTheScheme(t *testing.T) {
+	const secret = "sup3r-s3cret" // secretlint-disable-line -- fixture
+	for _, in := range []string{
+		"https://" + secret,
+		"https://" + secret + "/v1",
+		"http://" + secret + ":4000/" + secret + "?k=" + secret + "#" + secret,
+		"https://u:" + secret + "@" + secret + "/" + secret,
+	} {
+		got := redactAIProxyURL(in)
+		assert.NotContains(t, got, secret, "input %q leaked through redaction", in)
+		assert.Contains(t, []string{"https://xxxxx", "http://xxxxx", "[redacted]"}, got, "input %q", in)
 	}
 }
 

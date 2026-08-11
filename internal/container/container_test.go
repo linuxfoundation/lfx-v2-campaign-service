@@ -10,7 +10,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1349,4 +1352,66 @@ func TestEventFetcherWithoutConfigStillGuards(t *testing.T) {
 			require.ErrorIs(t, err, eventurl.ErrEventURLForbidden)
 		})
 	}
+}
+
+// llmClientInjected reports whether newBriefService actually stored an LLM client on the
+// service it returned.
+//
+// It reads the unexported field by reflection, deliberately. The wiring under test lives in
+// THIS package while the field lives in `service`, and nothing public exposes it: the only
+// method that reads it, GenerateEmailCopy, calls ready() first, so with the nil repositories
+// this test uses it returns "brief storage is unavailable" whatever the client is — the two
+// cases would be indistinguishable through the public API, which is exactly how the previous
+// version of this test came to assert nothing but `brief != nil`. The alternatives were worse:
+// an exported accessor would put a test-only hook on a production type, and stubbing all 22
+// repository methods to reach the real 503 would cost more than the wiring it verifies.
+// reflect.Value.IsNil does not require CanInterface, so no unsafe is involved, and a rename of
+// the field fails the require below rather than silently reporting "not injected".
+func llmClientInjected(t *testing.T, s *service.BriefService) bool {
+	t.Helper()
+	f := reflect.ValueOf(s).Elem().FieldByName("llmClient")
+	require.True(t, f.IsValid(),
+		"service.BriefService no longer has an llmClient field; update this test to match")
+	return !f.IsNil()
+}
+
+// TestNewBriefService_InjectsLLMClient verifies that the container-wired LLM client
+// reaches the BriefService. If this wiring is deleted, the service compiles and runs
+// (no compile error), but every deployed request returns 503 because llmClient remains
+// nil — a failure mode indistinguishable, from the outside, from "the model is not
+// configured in this environment". So the assertion is on the field itself.
+func TestNewBriefService_InjectsLLMClient(t *testing.T) {
+	// Case 1: Unconfigured LLM (no AI_PROXY_URL or AI_API_KEY).
+	c := &Container{Config: &config.Config{}}
+	client := c.newLLMClient()
+	require.Nil(t, client, "unconfigured container should return nil LLM client")
+
+	brief := c.newBriefService(nil, nil, nil, nil)
+	require.NotNil(t, brief, "newBriefService should not return nil")
+	require.False(t, llmClientInjected(t, brief),
+		"an unconfigured container must leave llmClient nil, so GenerateEmailCopy answers 503")
+
+	// Case 2: Configured LLM (both proxy URL and API key set). The server is never
+	// contacted — construction does not dial — but a real URL keeps llm.NewClient's own
+	// validation out of the way of what is being tested.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{}"}}]}`))
+	}))
+	defer srv.Close()
+
+	c = &Container{Config: &config.Config{
+		AIProxyURL: srv.URL,
+		AIAPIKey:   "test-key",
+	}}
+
+	client = c.newLLMClient()
+	require.NotNil(t, client,
+		"newLLMClient should return a non-nil client when proxy URL and API key are set")
+
+	brief = c.newBriefService(nil, nil, nil, nil)
+	require.NotNil(t, brief, "newBriefService should not return nil")
+	require.True(t, llmClientInjected(t, brief),
+		"newBriefService must inject the configured client; without SetLLMClient every "+
+			"email-copy request 503s in a deployment that IS configured")
 }

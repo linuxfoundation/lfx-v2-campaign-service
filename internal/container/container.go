@@ -25,6 +25,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/snowflake"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
@@ -1034,16 +1035,17 @@ func (c *Container) Close(ctx context.Context) error {
 }
 
 // newBriefService constructs a BriefService and injects the container's shared index
-// publisher. EVERY BriefService construction in this file must go through it: the
-// publisher is opt-in via SetIndexer (so the ~40 test call sites default to Noop), which
-// means a path that calls service.NewBriefService directly compiles, runs, serves traffic
-// and silently indexes NOTHING. Routing every path through one helper is what makes that
-// failure impossible rather than merely unlikely.
+// publisher, LLM client (if configured), and event URL fetcher. EVERY BriefService construction
+// in this file must go through it: the publisher is opt-in via SetIndexer (so the ~40 test call
+// sites default to Noop), which means a path that calls service.NewBriefService directly
+// compiles, runs, serves traffic and silently indexes NOTHING. Routing every path through one
+// helper is what makes that failure impossible rather than merely unlikely.
 func (c *Container) newBriefService(briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator) *service.BriefService {
 	s := service.NewBriefService(briefs, campaigns, jobs, orch)
 	s.SetTokenVerifier(c.tokenVerifier)
 	s.SetIndexer(c.indexPublisher)
 	s.SetEventURL(c.eventFetcher(), eventurl.NewParser())
+	s.SetLLMClient(c.newLLMClient())
 	if c.indexingDisabled() {
 		s.DisableIndexing()
 	}
@@ -1068,6 +1070,37 @@ func (c *Container) eventFetcher() *eventurl.Fetcher {
 		return eventurl.NewFetcher()
 	}
 	return eventurl.NewFetcher(eventurl.WithNAT64Prefixes(c.Config.EventURLNAT64Prefixes...))
+}
+
+// newLLMClient constructs the LLM client for email copy generation when configured.
+// Returns nil when the proxy URL or API key is missing (email copy generation degrades
+// to unavailable, not failing), matching the optional-GROUP pattern for Snowflake.
+//
+// A misconfiguration detected at construction (invalid URL format, empty credentials
+// after trimming) logs a warning and returns nil rather than failing the pod: email
+// copy generation is an enrichment, not a core platform feature, so degrading on
+// misconfiguration is safer than crashing boot over a non-fatal setting.
+func (c *Container) newLLMClient() *llm.Client {
+	if c.Config == nil {
+		return nil
+	}
+	if c.Config.AIProxyURL == "" || c.Config.AIAPIKey == "" {
+		return nil
+	}
+	cfg := llm.Config{
+		ProxyURL: c.Config.AIProxyURL,
+		APIKey:   c.Config.AIAPIKey,
+		Model:    c.Config.AIModel, // empty means llm.DefaultModel
+	}
+	client, err := llm.NewClient(cfg)
+	if err != nil {
+		// Log but don't fail: email generation is optional. The generation endpoint
+		// will return 503 ServiceUnavailable.
+		slog.Warn("llm client initialization failed; email copy generation will be unavailable",
+			"error", err)
+		return nil
+	}
+	return client
 }
 
 // indexingDisabled reports whether indexing is DELIBERATELY off, from CONFIG alone.

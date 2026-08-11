@@ -207,6 +207,27 @@ var CampaignMetrics = Type("campaign-metrics", func() {
 	Required("campaign_id", "platform_campaign_id", "window", "impressions", "clicks", "cost_micros", "ctr")
 })
 
+// EmailCopy holds AI-generated email copy for a campaign brief.
+var EmailCopy = Type("email-copy", func() {
+	Attribute("subject", String, "Email subject line", func() {
+		MaxLength(200)
+		Example("Join Us at KubeCon 2026")
+	})
+	Attribute("preheader", String, "Email preheader text (preview summary)", func() {
+		MaxLength(150)
+		Example("Register now and shape the future of cloud native computing")
+	})
+	Attribute("body", String, "Email body HTML (the main content)", func() {
+		MaxLength(8000)
+		Example("<p>We're excited to invite you...</p>")
+	})
+	Attribute("cta", String, "Call-to-action button text", func() {
+		MaxLength(50)
+		Example("Register Now")
+	})
+	Required("subject", "preheader", "body", "cta")
+})
+
 // EventDetailsResult is what fetch-event-url returns: the metadata extracted from an
 // event page, plus where in the page it came from.
 //
@@ -488,6 +509,24 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			GET("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/metrics")
 			Header("bearer_token:Authorization")
 			Param("window")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("generate-email-copy", func() {
+		Description("Generate AI-written email copy (subject, preheader, body, CTA) for a campaign brief. Returns immediately with generated text; does NOT persist to the brief. The AI model is optional — without it configured this endpoint returns 503.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			Required("project_id", "brief_id")
+		})
+		Result(EmailCopy)
+		commonBriefErrors()
+		HTTP(func() {
+			POST("/projects/{project_id}/briefs/{brief_id}/email-copy")
+			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			briefErrorResponses()
 		})

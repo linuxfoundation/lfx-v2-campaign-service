@@ -152,6 +152,23 @@ rather than making it correct.
   omitted
 - `SNOWFLAKE_ROLE` — optional role; the user's default is used when omitted
 
+### LLM / email copy (optional, `AI_*`)
+
+The LF **LiteLLM proxy**, used ONLY to generate email copy — subject, preheader,
+body and CTA — via the POST `/projects/{id}/briefs/{id}/email-copy` endpoint
+(LFXV2-2775). Optional as a GROUP: unless BOTH `AI_PROXY_URL` and `AI_API_KEY`
+are set, the endpoint returns 503 (service unavailable). The pod starts successfully
+with or without these values configured.
+
+- `AI_PROXY_URL` — LiteLLM proxy base URL; `/chat/completions` is appended
+- `AI_API_KEY` — the **proxy's** key, not a Bedrock or Anthropic credential (the
+  proxy holds those), so it cannot be replayed against a model provider directly
+- `AI_MODEL` — optional, not a secret; the model id the proxy routes on. Empty
+  selects `llm.DefaultModel`.
+
+In-cluster the two secrets come from the same ExternalSecret-managed secret as
+the rest; `AI_MODEL` is a plain chart value.
+
 ### Observability (`OTEL_*`)
 
 OpenTelemetry is opt-in. Exporters default to `none` (no collector

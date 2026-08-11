@@ -52,6 +52,13 @@ type Config struct {
 	SnowflakeWarehouse  string
 	SnowflakeRole       string
 
+	// LLM settings for email copy generation. Optional as a GROUP: with proxy URL or key missing
+	// the model is unconfigured, and the GenerateEmailCopy endpoint returns 503. Empty AIModel
+	// defaults to llm.DefaultModel.
+	AIProxyURL string
+	AIAPIKey   string
+	AIModel    string
+
 	// IndexerServiceToken is the SERVICE credential the index relay stamps onto replayed
 	// messages. Outbox rows store no token — the table is retained for audit, so a per-request
 	// JWT written there would persist as a live credential — and the indexer requires a
@@ -160,6 +167,10 @@ func LoadConfig() *Config {
 		SnowflakePrivateKey: os.Getenv(constants.EnvSnowflakePrivateKey),
 		SnowflakeWarehouse:  os.Getenv(constants.EnvSnowflakeWarehouse),
 		SnowflakeRole:       os.Getenv(constants.EnvSnowflakeRole),
+
+		AIProxyURL: os.Getenv(constants.EnvAIProxyURL),
+		AIAPIKey:   os.Getenv(constants.EnvAIAPIKey),
+		AIModel:    os.Getenv(constants.EnvAIModel),
 
 		IndexerServiceToken:     os.Getenv(constants.EnvIndexerServiceToken),
 		DatabaseURL:             os.Getenv(constants.EnvDatabaseURL),
@@ -301,7 +312,9 @@ func (c *Config) String() string {
 		return "<nil>"
 	}
 	return fmt.Sprintf(
-		"&{Debug:%v Host:%q Port:%q JWKSUrl:%q Audience:%q Issuer:%q NATSUrl:%q DatabaseURL:%q CredentialEncryptionKey:%q PGHost:%q PGPort:%q PGUser:%q PGDatabase:%q PGEngine:%q}",
+		"&{Debug:%v Host:%q Port:%q JWKSUrl:%q Audience:%q Issuer:%q NATSUrl:%q DatabaseURL:%q "+
+			"CredentialEncryptionKey:%q AIProxyURL:%q AIModel:%q AIAPIKey:%q "+
+			"PGHost:%q PGPort:%q PGUser:%q PGDatabase:%q PGEngine:%q}",
 		c.Debug,
 		c.Host,
 		c.Port,
@@ -311,6 +324,23 @@ func (c *Config) String() string {
 		redactURLUserinfo(c.NATSUrl),
 		redactDatabaseURL(c.DatabaseURL),
 		redactSecret(c.CredentialEncryptionKey),
+		// The AI settings are printed rather than omitted, and the key is masked rather
+		// than dropped. Omission is safe but says nothing: "copy generation is not
+		// running" is diagnosed by knowing WHETHER a proxy and key are configured, and
+		// redactSecret answers exactly that — "" for unset, "xxxxx" for present — without
+		// putting the credential in a log. The model is not a secret; the URL is reduced
+		// to its non-secret components rather than printed raw (see redactAIProxyURL).
+		//
+		// All three are trimmed FIRST, because llm.NewClient trims them and stores the
+		// normalized form: these arrive from Kubernetes secrets, where a trailing newline
+		// is the commonest way a value is malformed. Printing the originals would make the
+		// diagnostic disagree with construction on exactly the values it exists to report —
+		// a newline-only URL would render as `[redacted]` and a newline-only key as
+		// `xxxxx`, both reading as CONFIGURED, while NewClient returns ErrNotConfigured for
+		// them; and a padded model would be logged differently from the model actually sent.
+		redactAIProxyURL(strings.TrimSpace(c.AIProxyURL)),
+		strings.TrimSpace(c.AIModel),
+		redactSecret(strings.TrimSpace(c.AIAPIKey)),
 		c.PGHost,
 		c.PGPort,
 		c.PGUser,
@@ -347,6 +377,59 @@ func redactDatabaseURL(dsn string) string {
 // parseable URLs (there is no keyword-DSN form to worry about), so the credential portion can
 // be removed precisely.
 func redactURLUserinfo(u string) string { return redact.URLUserinfo(u) }
+
+// redactAIProxyURL reduces AI_PROXY_URL to its scheme, with the host masked. Everything
+// else — userinfo, host, path, query, fragment — is dropped or replaced.
+//
+// The value LOOKS secret-free — it is a service endpoint, and the key that authenticates
+// to it lives in its own field — but "looks secret-free" is not a property of the field,
+// it is a property of whatever an operator typed into it. A URL has two places a secret
+// rides for free: userinfo (`https://user:token@proxy/`, which Go's transport turns into
+// a Basic credential) and the query (`?api-key=…`, the shape several LiteLLM deployments
+// document). Both survive `%q` intact, and String() is the form every config log line
+// uses, so printing raw makes the pod log the disclosure channel.
+//
+// Four rounds of review narrowed this to one rule, and each round narrowed it the same
+// way: url.Parse decides where the DELIMITERS fall, never what a component CONTAINS. A
+// pasted credential lands in the scheme ("sk-secret://host" parses cleanly), in the path
+// ("https://proxy/sk-secret/v1"), and — the case that closed the last gap — in the HOST,
+// because `AI_PROXY_URL=https://sup3r-s3cret/` is a well-formed absolute URL whose entire
+// informative content is the token. Each round the surviving component was defended as
+// "structurally safe"; each time that meant "url.Parse put it in this field", which is
+// not the same claim. So the rule is: reproduce a component only when it is BOTH
+// structurally incapable of holding a secret AND load-bearing for the diagnosis.
+//
+// Exactly one component clears that bar. The scheme is reproduced only after it is
+// checked to be literally "http" or "https", so what is printed is one of two constants
+// this function chose — it cannot carry operator input at all. The host is masked to
+// `xxxxx`, the same marker redactSecret uses, which still answers the question this
+// string exists to answer: whether a proxy is configured, and whether it is being reached
+// over TLS. "Which proxy" is not worth a credential-shaped host in a pod log, and an
+// operator who needs it has the deployment manifest.
+//
+// Note this is redaction for DISPLAY only; llm.NewClient REJECTS a proxy URL carrying
+// userinfo, a query or a fragment, so a value reaching a live client has none of them —
+// but it accepts a path and any host, and String() runs before it in any case.
+func redactAIProxyURL(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(strings.TrimSpace(raw))
+	// A missing Host is the tell for an OPAQUE url ("mailto:u:p@host"), whose entire
+	// content lands in a field this function does not render and therefore cannot
+	// vouch for — url.Parse only splits out userinfo for an authority-form url. Both
+	// that and an unparseable value mask, for the same reason: nothing is known safe.
+	if err != nil || u.Host == "" {
+		return "[redacted]"
+	}
+	// A non-http(s) scheme masks wholesale rather than rendering as `scheme://xxxxx`,
+	// because the scheme is the only component this function still reproduces and an
+	// unrecognised one is exactly the case where it may be the secret.
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "[redacted]"
+	}
+	return u.Scheme + "://xxxxx"
+}
 
 // splitCSV parses a comma-separated env var into its non-empty, space-trimmed entries.
 //
