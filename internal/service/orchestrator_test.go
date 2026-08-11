@@ -2040,6 +2040,87 @@ func TestOrchestrator_ClassifiedPreCreateFailureLogsNoCause(t *testing.T) {
 	t.Fatal("no \"before upstream create\" log record was emitted")
 }
 
+// systemCredsDispatcher fails exactly as undecodableCredsDispatcher does, but on the
+// LF-owned SYSTEM row rather than on the project's own connection.
+//
+// The sentinel order is the point. internal/dispatch/creds.go:188-191 wraps
+// ErrSystemConnectionNotUsable ALONGSIDE ErrConnectionNotUsable rather than instead of it —
+// domain/errors.go says so in as many words — so errors.Is reports BOTH, and a single broad
+// arm matches first and answers a question nobody asked.
+type systemCredsDispatcher struct{}
+
+func (systemCredsDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return nil, accountNotSelectedErr{err: fmt.Errorf(
+		"decoding meta credentials: invalid character 'x' looking for beginning of value in %q: %w: %w: %w",
+		credentialCanary, domain.ErrSystemConnectionNotUsable, domain.ErrConnectionNotUsable,
+		domain.ErrCredentialsUndecodable)}
+}
+
+// TestOrchestrator_SystemConnectionPreCreateFailurePagesTheOperator pins the OTHER thing the
+// reason gate must not throw away.
+//
+// Suppressing the cause is what that arm exists for. Suppressing the SCOPE was collateral:
+// once every ErrConnectionNotUsable took one branch, a broken LF fallback row — which
+// domain.ErrSystemConnectionNotUsable defines as the operator's page, and which means every
+// project without its own connection is failing — logged identically to one project's
+// misconfigured connection. The synchronous handlers had always split the two
+// (brief.go:577, brief.go:914, connection.go:276); the asynchronous path is the only one on
+// which a campaign is ever created, and it did not.
+//
+// The assertions are deliberately paired: the scope must be distinguished AND the cause must
+// still be gone. A split that reintroduced the raw error on the new arm would be a
+// regression of the fix this test sits next to, so the canary sweep runs here too.
+func TestOrchestrator_SystemConnectionPreCreateFailurePagesTheOperator(t *testing.T) {
+	h := &capturingHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(&fakeCampaignRepo{}, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderMetaAds: systemCredsDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderMetaAds}, nil)
+	waitForTerminal(t, jobs, id)
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, rec := range h.recs {
+		var reason, gotJob string
+		var leaked []string
+		rec.Attrs(func(a slog.Attr) bool {
+			switch a.Key {
+			case "reason":
+				reason = a.Value.String()
+			case "job_id":
+				gotJob = a.Value.String()
+			}
+			if strings.Contains(a.Value.String(), credentialCanary) {
+				leaked = append(leaked, a.Key)
+			}
+			return true
+		})
+		if gotJob != id {
+			continue
+		}
+		if !strings.Contains(rec.Message, "the LF system connection is not usable") {
+			t.Fatalf("logged message = %q, want the LF-system wording. A system-row defect that "+
+				"reads like one project's broken connection sends nobody to the row that is "+
+				"actually broken, and every project without its own connection is failing", rec.Message)
+		}
+		if reason != "credentials_undecodable" {
+			t.Fatalf("logged reason=%q, want \"credentials_undecodable\"", reason)
+		}
+		if len(leaked) != 0 || strings.Contains(rec.Message, credentialCanary) {
+			t.Fatalf("attribute(s) %v (message %q) carry the decrypted-credential canary %q on the "+
+				"system arm — splitting the scope out must not restore the cause", leaked, rec.Message, credentialCanary)
+		}
+		return
+	}
+	t.Fatal("no pre-create failure log record was emitted for this job")
+}
+
 type malformedConfigDispatcher struct{}
 
 func (malformedConfigDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {

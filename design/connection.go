@@ -339,7 +339,12 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // which is the Meta case spelled out below. Google Ads had both
 // from the start. Meta is the one provider where the halves came apart — it gained discovery
 // in LFXV2-3062 and stayed required here until LFXV2-3061 supplied the tagging; see the
-// paragraph below MetaAdsConnectionConfig's own godoc. The remaining four have neither.
+// paragraph below MetaAdsConnectionConfig's own godoc. None of the remaining four has BOTH:
+// all four lack discovery, and Microsoft, Reddit and X already tag a missing account with
+// domain.ErrAccountNotSelected (validateMicrosoftConnection, resolveRedditClient, validateTwitterConnection), so LinkedIn
+// alone is missing the tagging as well. Naming the halves separately matters because the bar
+// is the conjunction — a provider that gains discovery tomorrow becomes eligible immediately
+// if it is one of those three, and needs a second change if it is LinkedIn.
 //
 // That is the bootstrap this enables — credentials first, account chosen afterwards:
 //

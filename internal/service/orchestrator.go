@@ -887,11 +887,30 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			// same reason for existing at all. The retained-claim branches below and the
 			// else arm here keep the cause because those errors describe the PROVIDER's
 			// response, which never passed through the credential blob.
+			//
+			// The system arm sits ABOVE the broad one, for the reason brief.go:577
+			// states at the synchronous split: systemScoped WRAPS rather than
+			// replaces, so errors.Is still reports ErrConnectionNotUsable and a broad
+			// match would win. Collapsing the two loses the only thing that says WHO
+			// can fix it — a broken LF fallback row would read exactly like one
+			// project's misconfigured connection, when domain.ErrSystemConnectionNotUsable
+			// is defined as the operator's page and means every project without its own
+			// connection is failing. Suppressing the cause is what the arm is for;
+			// suppressing the scope was not.
+			//
+			// The scope is carried by the MESSAGE rather than by a new attribute
+			// because that is how both synchronous splits already carry it
+			// (brief.go:577, brief.go:914, connection.go:276) and this line pages the
+			// same operator with the same distinction.
 			const preCreateMsg = "platform dispatch failed before upstream create (claim released)"
-			if errors.Is(derr, domain.ErrConnectionNotUsable) {
+			switch {
+			case errors.Is(derr, domain.ErrSystemConnectionNotUsable):
+				slog.ErrorContext(ctx, "the LF system connection is not usable; platform campaign creation is failing for every project without its own connection (claim released)",
+					"platform", p, "job_id", jobID, "reason", unusableConnectionReason(derr))
+			case errors.Is(derr, domain.ErrConnectionNotUsable):
 				slog.ErrorContext(ctx, preCreateMsg,
 					"platform", p, "job_id", jobID, "reason", unusableConnectionReason(derr))
-			} else {
+			default:
 				slog.ErrorContext(ctx, preCreateMsg, "platform", p, "job_id", jobID, "error", derr)
 			}
 			releaseClaim()

@@ -179,3 +179,47 @@ rendered value for a canary rather than asserting one key is absent, because the
 care which key carries it, and checks the message text and the polled job result too.
 Revert-verified: restoring `"error", derr` gives
 `attribute(s) [error] carry the decrypted-credential canary`.
+
+## Round: suppressing the cause also suppressed the scope
+
+The previous round removed the raw cause from the `ErrConnectionNotUsable` arm of the async
+pre-create log, which was right. It took the OWNERSHIP signal with it, which was not.
+
+`domain.ErrSystemConnectionNotUsable` is wrapped ALONGSIDE `ErrConnectionNotUsable`, not instead
+of it — `internal/dispatch/creds.go:188-191` does the wrapping and `domain/errors.go` says so in
+as many words, so that nothing merely asking "was this refused before the platform?" has to learn
+about it. The consequence is that a single broad `errors.Is` arm matches BOTH, and matches first.
+So a broken LF fallback row logged identically to one project's misconfigured connection: same
+message, same reason token, nothing saying that the failure belongs to a row no project can edit
+and that every project without its own connection is failing with it. That distinction is the
+entire reason the sentinel exists; `errors.go` calls it the operator's page.
+
+The synchronous handlers had always split the two (`brief.go:577`, `brief.go:914`,
+`connection.go:276`), each with the system arm placed ABOVE the broad one and a comment saying
+why. The asynchronous path is the only one on which a campaign is ever created, and it was the
+one path that did not. The fix mirrors those three rather than inventing a new marker attribute:
+the scope is carried by the message, because that is what already pages this operator with this
+distinction.
+
+Worth naming as a shape: **when a fix narrows what a log line may say, check what else that line
+was saying.** The rule being enforced here was about the CAUSE. The arm that enforced it also
+happened to be the only place the SCOPE was distinguished, and a rule stated as "do not log the
+error" gives no hint that a second, unrelated signal is riding on the same branch. Both rounds of
+this gate were correct about the thing they were looking at.
+
+**Regression Guard** — `TestOrchestrator_SystemConnectionPreCreateFailurePagesTheOperator`, with a
+`systemCredsDispatcher` whose error wraps the system sentinel alongside the broad one in the order
+`creds.go` produces. It asserts BOTH halves at once: the LF-system wording must appear AND the
+canary must not, so a split that reintroduced the cause on the new arm fails the same test that
+demands the split. Revert-verified — deleting the system case fails it with `logged message =
+"platform dispatch failed before upstream create (claim released)"`.
+
+**Doc-accuracy round, same review.** Four places claimed LinkedIn, Microsoft, Reddit and X "have
+neither half" of the credentials-first prerequisite. Verified against the adapters and false:
+`validateMicrosoftConnection`, `resolveRedditClient` and `validateTwitterConnection` all already
+tag a missing account with `domain.ErrAccountNotSelected`; LinkedIn alone returns a generic error.
+All four lack DISCOVERY, which is on its own enough to keep them out, so the conclusion held while
+the stated reason did not. Corrected in `design/connection.go`, `internal/bootstrap/sysacct_test.go`,
+this bundle's `internal-bootstrap.md` and `docs/api-catalog.md` to say none has both and which half
+each is missing — which half matters, because the halves are earned separately: whichever of those
+three gains a discovery endpoint first becomes eligible in one change, and LinkedIn needs two.

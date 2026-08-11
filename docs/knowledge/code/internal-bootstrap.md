@@ -62,9 +62,11 @@ apart — it gained a discovery endpoint in LFXV2-3062 and was still excluded, b
 as `account_not_selected`) and Meta joined the map. That token reaches an operator through the
 dispatch-failure LOG LINE rather than the polled job result, because `dispatchPlatform` collapses
 every dispatcher error into `"platform campaign creation failed"`; Meta's toggle and metrics need
-no account id, so create — the asynchronous path — is its only account-needing one. LinkedIn,
-Microsoft, Reddit and X have neither half, so an account-less row for them stays a dead row and
-the map keeps them out — see the comment on the map itself for the full reasoning. On a ROTATION the same omission means KEEP, because a rotation should not have to
+no account id, so create — the asynchronous path — is its only account-needing one. None of
+LinkedIn, Microsoft, Reddit and X has BOTH halves: all four lack discovery, and Microsoft, Reddit
+and X already tag a missing account with `domain.ErrAccountNotSelected`, so LinkedIn alone is
+missing the tagging too. Either way an account-less row for them stays a dead row and the map
+keeps them out — see the comment on the map itself for the full reasoning. On a ROTATION the same omission means KEEP, because a rotation should not have to
 restate the whole row.
 
 Preserve-by-default cannot express a removal, and this scope has no other writer that could —
