@@ -43,6 +43,11 @@ type fakeBriefRepo struct {
 	// createErr, when set, fails CreateBrief BEFORE it stores anything — the shape of a
 	// version conflict or a database error, where the handler ran but no row committed.
 	createErr error
+	// getErr, when set, fails every GetBrief. It is deliberately NOT ErrNotFound: it models
+	// the case where the service cannot tell what the brief's state is (pool exhausted,
+	// deadline expired), which must never be answered with a claim about what somebody else
+	// did to the brief.
+	getErr error
 }
 
 func newFakeBriefRepo() *fakeBriefRepo {
@@ -50,6 +55,19 @@ func newFakeBriefRepo() *fakeBriefRepo {
 }
 
 func briefKey(projectID, id string) string { return projectID + "|" + id }
+
+// snapshot reads a brief WITHOUT firing onGet. The audience fake's claim uses it because the
+// real claim reads the brief inside its own transaction, under a row lock — that read is not
+// a window a second request can be delayed in, so a test hook that pretends it is would model
+// a race the database does not have.
+func (r *fakeBriefRepo) snapshot(projectID, id string) (*model.CampaignBrief, bool) {
+	b, ok := r.briefs[briefKey(projectID, id)]
+	if !ok {
+		return nil, false
+	}
+	cp := *b
+	return &cp, true
+}
 
 // FindBriefByEventSlug scans for a non-archived brief matching the slug, mirroring the
 // repo's partial-unique-index semantics (archived rows free the slug).
@@ -64,6 +82,9 @@ func (r *fakeBriefRepo) FindBriefByEventSlug(_ context.Context, projectID, event
 }
 
 func (r *fakeBriefRepo) GetBrief(_ context.Context, projectID, id string) (*model.CampaignBrief, error) {
+	if r.getErr != nil {
+		return nil, r.getErr
+	}
 	b, ok := r.briefs[briefKey(projectID, id)]
 	if !ok {
 		return nil, domain.ErrNotFound
@@ -80,6 +101,24 @@ func (r *fakeBriefRepo) GetBrief(_ context.Context, projectID, id string) (*mode
 		hook()
 	}
 	return &cp, nil
+}
+
+// ConfirmBriefApproved answers from the CURRENT stored row and does NOT fire onGet.
+//
+// Not firing it is the point. The real one holds a row lock, so an in-flight writer either
+// commits before this read (and is seen) or after it (and is a different race entirely) —
+// there is no moment inside the read for a hook to mutate. A fake that fired onGet here would
+// model a window the lock removes, and a test written against it would pass whether or not
+// the implementation locked at all.
+func (r *fakeBriefRepo) ConfirmBriefApproved(_ context.Context, projectID, id string, expectedVersion int64) error {
+	b, ok := r.snapshot(projectID, id)
+	if !ok || b.Status == model.BriefArchived {
+		return domain.ErrNotFound
+	}
+	if b.Status != model.BriefApproved || b.Version != expectedVersion {
+		return domain.ErrStaleApproval
+	}
+	return nil
 }
 
 func (r *fakeBriefRepo) CreateBrief(_ context.Context, b *model.CampaignBrief, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {

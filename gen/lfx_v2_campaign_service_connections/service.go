@@ -952,6 +952,9 @@ type ConflictError struct {
 	Code string
 	// Error message
 	Message string
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string
 }
 
 type ConnServiceUnavailableError struct {

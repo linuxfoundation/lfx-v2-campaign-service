@@ -5229,10 +5229,19 @@ definitions:
                 type: string
                 description: Error message
                 example: A connection for this provider already exists on the project.
+            reason:
+                type: string
+                description: Stable machine-readable discriminator, present only where an endpoint returns more than one kind of conflict. Absent means unspecified.
+                example: already_exists
+                enum:
+                    - stale_approval
+                    - audience_build_in_flight
+                    - already_exists
         description: Conflict
         example:
             code: "409"
             message: A connection for this provider already exists on the project.
+            reason: already_exists
         required:
             - code
             - message
