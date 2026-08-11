@@ -1,7 +1,7 @@
 ---
 type: "Code Concept"
 title: "internal/infrastructure/auth"
-description: "Verifies the Heimdall-issued bearer token against Heimdall's JWKS and turns its claims into the domain actor recorded on writes."
+description: "Verifies the Heimdall-issued bearer token against Heimdall's JWKS (PS256, issuer, audience, expiry, non-empty principal) and turns its claims into the domain actor recorded on writes."
 resource: "internal/infrastructure/auth"
 ---
 
