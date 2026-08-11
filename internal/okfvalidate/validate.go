@@ -111,6 +111,39 @@ func validateConcept(path string) error {
 // rather than on the `&`.
 var indexBulletPattern = regexp.MustCompile(`^\* \[([^\]]+)\]\(([^()\s<>\\]+)\) - (.+)$`)
 
+// destinationKind says what a link destination could denote, which is what decides
+// whether the format checks that run before description sync apply to it at all.
+type destinationKind int
+
+const (
+	// destExternal carries a scheme or an authority, so it names no file in this
+	// bundle: never resolved, never compared, and nothing to hold to the format.
+	destExternal destinationKind = iota
+	// destLocal is bundle-relative and may name a concept file.
+	destLocal
+	// destUnparseable is not a URL reference at all.
+	destUnparseable
+)
+
+// classifyDestination reports which of the three a destination is.
+//
+// destUnparseable is a DIAGNOSTIC outcome, not a skip. CommonMark's destination grammar
+// accepts a bare `%`, so `[Thing](thing%.md)` is a link — but `url.Parse` rejects it, and
+// treating that as "nothing to compare against" let such a bullet opt out of description
+// sync in silence, which is the very failure every other rule in this class exists to
+// prevent. okfgen never emits such a name, so refusing it costs nothing and says so.
+func classifyDestination(target string) destinationKind {
+	u, err := url.Parse(target)
+	switch {
+	case err != nil:
+		return destUnparseable
+	case u.Scheme != "" || u.Host != "":
+		return destExternal
+	default:
+		return destLocal
+	}
+}
+
 // destinationPath returns the part of a markdown link destination that names a file:
 // everything before the first fragment or query marker. Both are properties of the
 // reference, not of the path it denotes.
@@ -275,9 +308,29 @@ func validateIndex(bundleDir, path string, isRoot bool) []error {
 			errs = append(errs, fmt.Errorf("%s: bullet %q does not match \"* [Title](url) - description\" (the url must be a bare path: no spaces, angle brackets, link title, or backslash escapes)", path, trimmed))
 			continue
 		}
-		if hasEntityRef(m[2]) {
-			errs = append(errs, fmt.Errorf("%s: bullet %q has an HTML entity in its link destination path; write the path literally", path, trimmed))
+		// Classify BEFORE the entity guard. The guard exists because this validator
+		// cannot decode a reference and so cannot classify a path that carries one —
+		// but that argument is about a path in THIS bundle. An external destination
+		// names no concept file, is never resolved and is never compared, so an
+		// entity in one cannot bypass anything; refusing it reported a defect in a
+		// working link. That was this guard's fourth over-rejection, after the bare
+		// `&`, the entity in a query and the entity-SHAPED literal.
+		//
+		// The guard still runs for a bundle-relative destination whatever its
+		// extension, and that is deliberate rather than an oversight of the same
+		// argument: a non-`.md` target is out of scope only if the suffix can be
+		// trusted, and an undecoded reference is exactly the case where it cannot —
+		// `notes&#46;txt` and `notes&#46;md` are indistinguishable here. Declining to
+		// classify is the whole point of the guard.
+		switch classifyDestination(m[2]) {
+		case destUnparseable:
+			errs = append(errs, fmt.Errorf("%s: bullet %q has a destination that is not a URL reference (most often a %% that does not begin a percent-escape); write the path literally", path, trimmed))
 			continue
+		case destLocal:
+			if hasEntityRef(m[2]) {
+				errs = append(errs, fmt.Errorf("%s: bullet %q has an HTML entity in its link destination path; write the path literally", path, trimmed))
+				continue
+			}
 		}
 		// The pattern's "(.+)$" only requires one character, so a bullet ending
 		// in "- " plus trailing spaces still matches with a whitespace-only
@@ -320,8 +373,8 @@ func validateIndex(bundleDir, path string, isRoot bool) []error {
 // bundle that declares a frontmatter description. That deliberately excludes
 // links to directories, to a sub-index (index.md carries no frontmatter at
 // all, by rule 3 above), and to anything outside the bundle. It does NOT
-// excuse a concept file that simply omits its description: this bundle's 47
-// concept files all declare one, and adding the "description" key to the
+// excuse a concept file that simply omits its description: every concept file
+// in this bundle declares one, and adding the "description" key to the
 // required set belongs with "type" in validateConcept rather than here, where
 // it would only be enforced for files that happen to be linked.
 func checkBulletDescription(bundleDir, indexPath, link, bulletDesc string) error {
@@ -346,8 +399,11 @@ func checkBulletDescription(bundleDir, indexPath, link, bulletDesc string) error
 	// notice: it reports a mismatch against a file the bullet never named.
 	u, err := url.Parse(target)
 	if err != nil || u.Scheme != "" || u.Host != "" {
-		// An unparseable destination (a stray "%" that is not an escape) is not
-		// a link to anything, so there is nothing to compare it against.
+		// An external destination names no concept file, so there is nothing to
+		// compare it against. An unparseable one is reported by the caller's
+		// classifyDestination arm and never reaches here; the check is kept so
+		// this function stays correct standing alone, but silence is no longer
+		// how that case is handled.
 		return nil
 	}
 	// u.Path is the DECODED path; the site-root test belongs here rather than on

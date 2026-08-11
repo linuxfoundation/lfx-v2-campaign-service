@@ -646,6 +646,61 @@ func TestValidateIndexBulletAcceptsAnEntityShapedLiteral(t *testing.T) {
 	}
 }
 
+// TestValidateIndexBulletAcceptsAnEntityInAnExternalDestination is the entity guard's FOURTH
+// over-rejection, after the bare `&`, the entity in a query and the entity-shaped literal.
+//
+// The guard's argument — this validator cannot decode a reference, so it cannot classify a path
+// carrying one — is about a path in THIS bundle. An external destination names no concept file:
+// checkBulletDescription returns before resolving anything with a scheme or an authority, so the
+// bullet is never compared and an entity in it cannot bypass a comparison that never happens.
+// Refusing it reported a defect in a link that works.
+func TestValidateIndexBulletAcceptsAnEntityInAnExternalDestination(t *testing.T) {
+	for name, link := range map[string]string{
+		"an absolute URL":       "https://example.com/a&amp;b.md",
+		"a protocol-relative":   "//example.com/a&amp;b.md",
+		"a scheme without host": "mailto:notes&amp;more.md",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, filepath.Join(dir, "index.md"),
+				"# Bundle\n\n* [Spec]("+link+") - An external spec.\n")
+
+			if errs := Validate(dir); len(errs) != 0 {
+				t.Fatalf("Validate() = %v, want an external destination to be left alone: it names "+
+					"no concept file, so it is never resolved and never compared", errs)
+			}
+		})
+	}
+}
+
+// TestValidateIndexBulletRejectsAnUnparseableDestination closes the last silent opt-out in this
+// class.
+//
+// CommonMark's destination grammar accepts a bare `%`, so `[Thing](thing%.md)` IS a link — but
+// `url.Parse` rejects it, and checkBulletDescription read that rejection as "not a link to
+// anything, so nothing to compare against" and returned nil. A bullet could therefore drift from
+// its target's description forever, reported by nothing, for the sake of one character. That is
+// the same failure the backslash, angle-bracket and paren rules all exist to prevent, reached
+// through the parser instead of through the character class.
+//
+// The fixture's description is DELIBERATELY wrong, so a passing Validate would mean the bullet
+// was skipped rather than that it agreed with its target.
+func TestValidateIndexBulletRejectsAnUnparseableDestination(t *testing.T) {
+	dir := t.TempDir()
+	writeConcept(t, filepath.Join(dir, "thing%.md"), "Does the thing.")
+	writeFile(t, filepath.Join(dir, "index.md"),
+		"# Bundle\n\n* [Thing](thing%.md) - COMPLETELY DIFFERENT TEXT.\n")
+
+	errs := Validate(dir)
+	if len(errs) != 1 {
+		t.Fatalf("Validate() = %v, want the unparseable destination to be reported rather than "+
+			"silently skipped past description sync", errs)
+	}
+	if !strings.Contains(errs[0].Error(), "not a URL reference") {
+		t.Errorf("Validate() error = %q, want the unparseable-destination diagnostic", errs[0])
+	}
+}
+
 // TestValidateIndexBulletRejectsAnUnbalancedOpeningParen pins the destination class against the
 // opening parenthesis, whose omission let this validator see a link where CommonMark sees none.
 //

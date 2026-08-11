@@ -15,7 +15,10 @@ needed two different guards:
   `#` reads as the start of a fragment — so the target is truncated to `thing&`,
   which fails the `.md` suffix test and is dropped without a word.
 
-The destination character class now excludes backslash: `[^)\s<>\\]+`.
+The destination character class now excludes backslash, and both parentheses:
+`[^()\s<>\\]+`. The OPENING paren is there because CommonMark admits `(` in an
+unbracketed destination only as part of a balanced pair, so `[Thing](thing(foo.md)` is
+not a link — accepting it made this validator the only reader that saw one.
 It deliberately does NOT exclude `&`. A legitimate destination carries one in a
 multi-parameter query (`thing.md?v=1&lang=en`), which `checkBulletDescription`
 strips before resolving the path — so banning every `&` in the class would reject,
