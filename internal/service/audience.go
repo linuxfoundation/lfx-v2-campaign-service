@@ -22,6 +22,8 @@ import (
 // the audience repository. Built audiences are the "B2" resource: a pointer +
 // provenance to a platform-side audience (a HubSpot master list), never its contents.
 type AudienceService struct {
+	authGuard
+
 	mu   sync.RWMutex
 	repo domain.AudienceRepository
 	// briefs and builder are needed only by BuildAudience (see audience_build.go). They are
@@ -70,14 +72,19 @@ func (s *AudienceService) ready() (domain.AudienceRepository, error) {
 	return repo, nil
 }
 
-// JWTAuth records the authenticated actor (validated by Heimdall at the gateway) into
-// the context for attribution, mirroring the brief service.
+// JWTAuth verifies the bearer token and records the authenticated actor into the
+// context for attribution, mirroring the brief service.
 func (s *AudienceService) JWTAuth(ctx context.Context, token string, _ *security.JWTScheme) (context.Context, error) {
-	if token == "" {
-		return ctx, &audiences.BadRequestError{Code: "400", Message: "missing bearer token"}
-	}
-	if a := actorFromToken(token); a != nil {
-		ctx = context.WithValue(ctx, actorCtxKey{}, a)
+	ctx, msg, unavailable := s.authenticate(ctx, token)
+	switch {
+	case unavailable:
+		// The check could not be PERFORMED — no verifier wired, or Heimdall's JWKS is
+		// unreachable. Nothing was established about the caller's token, so 400 would
+		// blame a caller who may be holding a perfectly good one and tell them not to
+		// retry an outage that clears on its own.
+		return ctx, &audiences.ConnServiceUnavailableError{Code: "503", Message: msg}
+	case msg != "":
+		return ctx, &audiences.BadRequestError{Code: "400", Message: msg}
 	}
 	return ctx, nil
 }

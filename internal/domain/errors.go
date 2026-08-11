@@ -111,6 +111,20 @@ var (
 	// importing the orchestration layer.
 	ErrAccountsUnsupported = errors.New("account discovery is not supported for this platform")
 
+	// ErrKeyUnavailable indicates this service could not obtain the JWT signing keys
+	// (Heimdall's JWKS) needed to check a bearer token. It is NOT a verdict on the token:
+	// nothing was learned about it, because it was never checked.
+	//
+	// It lives here rather than in internal/infrastructure/auth for the same reason
+	// ErrConnectionNotUsable does — the service layer classifies without importing the
+	// package that produced the failure. auth.Verifier wraps it (%w).
+	//
+	// Maps to 503, not the 400 every token-side refusal gets. A JWKS outage is reachable
+	// on a cold cache and at every 5-minute TTL expiry, and answering it with "invalid
+	// bearer token" tells a caller holding a perfectly good credential that theirs is
+	// bad — and 400 tells them not to retry a condition that clears on its own.
+	ErrKeyUnavailable = errors.New("the token signing keys could not be retrieved")
+
 	// ErrConnectionNotUsable indicates the project's stored connection cannot be used as
 	// it stands: it is not active, its credential blob is incomplete or undecodable, or a
 	// stored config value is malformed. The ad platform is never contacted.

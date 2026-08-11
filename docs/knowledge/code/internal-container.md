@@ -126,3 +126,16 @@ behaviour at this call site specifically: composition runs at startup, so a pref
 wrong stops the pod instead of silently decoding at the wrong offset for its lifetime.
 
 See [internal/container](../../../internal/container).
+
+## A failed `NewContainer` must not leave a live NATS connection behind
+
+`newIndexPublisher` runs before every wiring branch, and against a configured `NATS_URL` it
+returns a LIVE `*NATSPublisher` with `MaxReconnects(-1)` behind it — a goroutine that dials
+forever. Every failure after that point returns a NIL container, so the caller has no handle
+to `Close`, and nothing else stops that goroutine. In a long-lived caller (a test binary is
+where this shows up first) each failed construction leaks a connection and its background work.
+
+`NewContainer` therefore names its results and closes the publisher in a `defer` keyed on the
+error, rather than closing it at each `return`. The difference matters: this function grows a
+new failure path roughly every time the container gains a dependency, and a per-return close is
+a rule the next one has to remember. A deferred one is the default.

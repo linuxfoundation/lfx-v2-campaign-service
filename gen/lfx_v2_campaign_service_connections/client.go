@@ -132,6 +132,7 @@ func (c *Client) CreateGoogleAds(ctx context.Context, p *CreateGoogleAdsPayload)
 // GetGoogleAds calls the "get-google-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // GetGoogleAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -167,6 +168,7 @@ func (c *Client) UpdateGoogleAds(ctx context.Context, p *UpdateGoogleAdsPayload)
 // DeleteGoogleAds calls the "delete-google-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // DeleteGoogleAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -179,6 +181,7 @@ func (c *Client) DeleteGoogleAds(ctx context.Context, p *DeleteGoogleAdsPayload)
 // TestGoogleAds calls the "test-google-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // TestGoogleAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -225,6 +228,7 @@ func (c *Client) CreateLinkedinAds(ctx context.Context, p *CreateLinkedinAdsPayl
 // GetLinkedinAds calls the "get-linkedin-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // GetLinkedinAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -260,6 +264,7 @@ func (c *Client) UpdateLinkedinAds(ctx context.Context, p *UpdateLinkedinAdsPayl
 // DeleteLinkedinAds calls the "delete-linkedin-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // DeleteLinkedinAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -272,6 +277,7 @@ func (c *Client) DeleteLinkedinAds(ctx context.Context, p *DeleteLinkedinAdsPayl
 // TestLinkedinAds calls the "test-linkedin-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // TestLinkedinAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -318,6 +324,7 @@ func (c *Client) CreateMetaAds(ctx context.Context, p *CreateMetaAdsPayload) (re
 // GetMetaAds calls the "get-meta-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // GetMetaAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -353,6 +360,7 @@ func (c *Client) UpdateMetaAds(ctx context.Context, p *UpdateMetaAdsPayload) (re
 // DeleteMetaAds calls the "delete-meta-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // DeleteMetaAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -365,6 +373,7 @@ func (c *Client) DeleteMetaAds(ctx context.Context, p *DeleteMetaAdsPayload) (er
 // TestMetaAds calls the "test-meta-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // TestMetaAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -411,6 +420,7 @@ func (c *Client) CreateRedditAds(ctx context.Context, p *CreateRedditAdsPayload)
 // GetRedditAds calls the "get-reddit-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // GetRedditAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -446,6 +456,7 @@ func (c *Client) UpdateRedditAds(ctx context.Context, p *UpdateRedditAdsPayload)
 // DeleteRedditAds calls the "delete-reddit-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // DeleteRedditAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -458,6 +469,7 @@ func (c *Client) DeleteRedditAds(ctx context.Context, p *DeleteRedditAdsPayload)
 // TestRedditAds calls the "test-reddit-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // TestRedditAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -504,6 +516,7 @@ func (c *Client) CreateTwitterAds(ctx context.Context, p *CreateTwitterAdsPayloa
 // GetTwitterAds calls the "get-twitter-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // GetTwitterAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -539,6 +552,7 @@ func (c *Client) UpdateTwitterAds(ctx context.Context, p *UpdateTwitterAdsPayloa
 // DeleteTwitterAds calls the "delete-twitter-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // DeleteTwitterAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -551,6 +565,7 @@ func (c *Client) DeleteTwitterAds(ctx context.Context, p *DeleteTwitterAdsPayloa
 // TestTwitterAds calls the "test-twitter-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // TestTwitterAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -597,6 +612,7 @@ func (c *Client) CreateMicrosoftAds(ctx context.Context, p *CreateMicrosoftAdsPa
 // GetMicrosoftAds calls the "get-microsoft-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // GetMicrosoftAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -632,6 +648,7 @@ func (c *Client) UpdateMicrosoftAds(ctx context.Context, p *UpdateMicrosoftAdsPa
 // DeleteMicrosoftAds calls the "delete-microsoft-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // DeleteMicrosoftAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -644,6 +661,7 @@ func (c *Client) DeleteMicrosoftAds(ctx context.Context, p *DeleteMicrosoftAdsPa
 // TestMicrosoftAds calls the "test-microsoft-ads" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // TestMicrosoftAds may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -690,6 +708,7 @@ func (c *Client) CreateHubspot(ctx context.Context, p *CreateHubspotPayload) (re
 // GetHubspot calls the "get-hubspot" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // GetHubspot may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -725,6 +744,7 @@ func (c *Client) UpdateHubspot(ctx context.Context, p *UpdateHubspotPayload) (re
 // DeleteHubspot calls the "delete-hubspot" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // DeleteHubspot may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
@@ -737,6 +757,7 @@ func (c *Client) DeleteHubspot(ctx context.Context, p *DeleteHubspotPayload) (er
 // TestHubspot calls the "test-hubspot" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
 // TestHubspot may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
 //   - "NotFound" (type *NotFoundError): Resource not found
 //   - "InternalServerError" (type *InternalServerError): Internal server error
 //   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
