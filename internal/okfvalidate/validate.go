@@ -137,7 +137,8 @@ const (
 // The site-root arm keys on u.Path, the DECODED path, and not on the raw text — same
 // reason checkBulletDescription decodes before its own site-root test: "%2Fspec.md"
 // denotes "/spec.md" and has to be judged as the path it names, not as the way it was
-// spelled.
+// spelled. Callers owe this the same treatment one level up, for character references:
+// see decodeCharRefs.
 func classifyDestination(target string) destinationKind {
 	u, err := url.Parse(target)
 	switch {
@@ -190,6 +191,40 @@ var entityRefPattern = regexp.MustCompile(`&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z][
 // wrong: `&semi;` and `&#59;` decode TO a semicolon and are still reported genuine here.
 func charRef(c string) bool {
 	return html.UnescapeString(c) != html.UnescapeString(c[:len(c)-1])+";"
+}
+
+// decodeCharRefs replaces every genuine character reference in s with the character it
+// denotes, and leaves the shape-only lookalikes alone.
+//
+// This exists for classification, and only for classification. A character reference is
+// decoded by CommonMark inside a link destination, so `&sol;spec.md` IS the site-root path
+// `/spec.md` and `https&colon;//example.com/spec.md` IS an absolute URL — each names
+// nothing in this bundle, exactly like the literal spellings the arms above skip. Judging
+// them on their raw text put all three in destLocal, where the entity guard then refused a
+// link that renders perfectly: over-rejection number five, and the same one the percent
+// escapes already taught. It is also what this file's own argument for keeping the guard
+// unconditioned on the `.md` suffix demands — if an undecoded reference is the case where
+// the suffix cannot be trusted, then the scheme and the leading slash cannot be trusted
+// either, and the answer is to decode before deciding rather than to trust less.
+//
+// It is NOT html.UnescapeString: that also honours the HTML5 legacy semicolon-less forms,
+// which CommonMark does not, so it would rewrite the entity-SHAPED literal that charRef
+// exists to protect. Reusing charRefSpans keeps the two in exact agreement — what counts
+// as a reference for the guard is what counts as one here.
+func decodeCharRefs(s string) string {
+	spans := charRefSpans(s)
+	if len(spans) == 0 {
+		return s
+	}
+	var b strings.Builder
+	prev := 0
+	for _, r := range spans {
+		b.WriteString(s[prev:r[0]])
+		b.WriteString(html.UnescapeString(s[r[0]:r[1]]))
+		prev = r[1]
+	}
+	b.WriteString(s[prev:])
+	return b.String()
 }
 
 // charRefSpans returns the byte ranges of c that are genuine character references.
@@ -328,15 +363,26 @@ func validateIndex(bundleDir, path string, isRoot bool) []error {
 		// trusted, and an undecoded reference is exactly the case where it cannot —
 		// `notes&#46;txt` and `notes&#46;md` are indistinguishable here. Declining to
 		// classify is the whole point of the guard.
-		switch classifyDestination(m[2]) {
-		case destUnparseable:
+		//
+		// Classification runs on the DECODED destination and the guard on the raw one,
+		// and the split is the whole point: what a destination DENOTES decides whether
+		// it is in scope, and how it is SPELT decides whether this validator can work
+		// with it. `&sol;spec.md` denotes the site root and so is out of scope, while
+		// `thing&#46;md` denotes a file in this bundle spelt in a way that defeats every
+		// path test below it.
+		kind := classifyDestination(decodeCharRefs(m[2]))
+		switch {
+		case kind == destExternal:
+			// Nothing to resolve, nothing to compare, no format to hold it to.
+		case hasEntityRef(m[2]):
+			// Ahead of the unparseable arm because decoding can create the very
+			// character that arm reports: `thing&percnt;.md` becomes `thing%.md`. The
+			// author wrote an entity, so that is what the message should name.
+			errs = append(errs, fmt.Errorf("%s: bullet %q has an HTML entity in its link destination path; write the path literally", path, trimmed))
+			continue
+		case kind == destUnparseable:
 			errs = append(errs, fmt.Errorf("%s: bullet %q has a destination that is not a URL reference (most often a %% that does not begin a percent-escape); write the path literally", path, trimmed))
 			continue
-		case destLocal:
-			if hasEntityRef(m[2]) {
-				errs = append(errs, fmt.Errorf("%s: bullet %q has an HTML entity in its link destination path; write the path literally", path, trimmed))
-				continue
-			}
 		}
 		// The pattern's "(.+)$" only requires one character, so a bullet ending
 		// in "- " plus trailing spaces still matches with a whitespace-only
@@ -386,7 +432,18 @@ func validateIndex(bundleDir, path string, isRoot bool) []error {
 func checkBulletDescription(bundleDir, indexPath, link, bulletDesc string) error {
 	// Anchors and query strings are not part of the path; a bare fragment
 	// ("#section") points inside this same index, which has no frontmatter.
-	target := destinationPath(link)
+	//
+	// Character references are decoded first, and for this function that is a
+	// correctness requirement rather than tidiness. Its own external tests below
+	// run on the destination's shape, so an entity-encoded scheme or site root
+	// ("https&colon;//example.com/spec.md", "&sol;spec.md") reads here as a
+	// bundle-relative path and filepath.Join reinterprets it as one — the exact
+	// wrong-file comparison the block below exists to prevent, and the one it is
+	// least able to notice. Until the caller learned to decode, its entity guard
+	// was refusing these before they arrived, so nothing had ever exercised the
+	// path; decoding at both levels is what makes the two agree. Decoding also
+	// precedes destinationPath because a decoded "&num;" IS a fragment marker.
+	target := destinationPath(decodeCharRefs(link))
 	// Parse BEFORE any test on the destination's shape, because a markdown link
 	// destination is a URL reference and every test below is about the path it
 	// denotes, not about its spelling. Percent escapes are the whole reason the

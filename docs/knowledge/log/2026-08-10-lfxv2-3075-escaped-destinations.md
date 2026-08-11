@@ -99,3 +99,52 @@ real fragment. Revert-verified both ways — matching on the raw destination fai
 with the "has an HTML entity" diagnostic on a link that resolves fine; matching on
 `destinationPath` fails the numeric cases with `Validate() = []`, the silent skip the whole guard
 exists to prevent.
+
+## Round: what a destination DENOTES decides scope; how it is SPELT decides workability
+
+The fifth over-rejection, and the first that was hiding a second, worse bug behind itself.
+
+Copilot: a character reference is decoded by CommonMark inside a link destination, so
+`&sol;spec.md` renders as the site-root `/spec.md` and `https&colon;//example.com/spec.md` renders
+as an absolute URL. `classifyDestination` was judging the RAW text, `url.Parse` saw no scheme, no
+authority and no leading slash in either, and both landed in `destLocal` — where the entity guard
+refused a link that renders perfectly. The previous round's fix had made the literal spellings
+(`/spec&amp;notes.md`, `%2Fspec&amp;notes.md`) skip correctly; the encoded spellings of the
+external marker itself were still rejected.
+
+This is settled by this file's own argument, not by the reviewer's. The guard is deliberately NOT
+conditioned on the `.md` suffix because "an undecoded reference is exactly the case where the
+suffix cannot be trusted." That reasoning does not stop at the suffix. If a reference can make
+`notes&#46;txt` and `notes&#46;md` indistinguishable, it can make a scheme and a leading slash
+invisible too — and the answer is to **decode before deciding**, not to trust less. Hence the
+split the code now states: what a destination DENOTES decides whether it is in scope, and how it
+is SPELT decides whether this validator can work with it. Classification runs on the decoded text,
+the guard on the raw.
+
+`decodeCharRefs` is built on `charRefSpans` rather than on `html.UnescapeString`, so what counts
+as a reference for the guard is exactly what counts as one for classification. Go's decoder also
+honours the HTML5 legacy semicolon-less forms, which CommonMark does not, and using it directly
+would have rewritten the entity-SHAPED literal that `charRef` exists to protect.
+
+**The half the review did not mention.** `checkBulletDescription` runs its own external tests on
+its own copy of the destination, and those were on the raw text too. So the entity guard had been
+the ONLY thing stopping `&sol;spec.md` from reaching `filepath.Join` as a bundle-relative path —
+the wrong-file comparison that function's own doc comment calls the failure it is least able to
+notice. Removing the rejection without decoding there as well would have converted an
+over-rejection into a silent comparison against a file the bullet never named: strictly worse than
+the bug being fixed, and it would have passed a review that only checked the reported symptom.
+
+Worth naming as a shape: **a guard that wrongly rejects something may be the only thing standing
+between that input and a real defect downstream. Removing the rejection is not the whole fix —
+find out what the rejection was incidentally protecting.** Nothing had ever exercised the path,
+because nothing had ever reached it.
+
+**Regression Guard** — three rows added to `TestValidateIndexBulletSkipsExternalDestinations`:
+`&sol;spec.md`, `&#47;spec.md` and `https&colon;//example.com/spec.md`. Each decoy is written at
+the location `filepath.Join` would produce if the RAW spelling were treated as a bundle path, so
+the table asserts both halves at once. Revert-verified independently: undoing the classification
+decode fails all three with "has an HTML entity in its link destination path", and undoing the
+`checkBulletDescription` decode fails the two with resolvable decoys with `bullet for
+"&sol;spec.md" ... but the file's frontmatter description is "The decoy the bullet never named."`
+— the wrong-file comparison, caught only because the decoy was placed at the trap rather than
+somewhere harmless.

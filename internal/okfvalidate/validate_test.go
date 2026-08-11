@@ -822,6 +822,14 @@ func TestValidateIndexBulletDecodesPercentEscapes(t *testing.T) {
 // percent-encoded spelling is here because the site-root test is on the DECODED path —
 // "%2Fspec..." denotes "/spec...", and judging the raw text instead would classify the
 // two spellings of one destination differently.
+//
+// The last three carry that same rule one level up, to the part of the destination that
+// MAKES it external. CommonMark decodes a character reference in a link destination, so
+// "&sol;spec.md" IS "/spec.md" and "https&colon;//..." IS an absolute URL; classifying the
+// raw text put each in destLocal, where the entity guard refused a link that renders
+// perfectly. Each decoy sits where filepath.Join would land if the raw spelling were ever
+// treated as a bundle path, so a fix that merely stops REJECTING these — without also
+// stopping them being RESOLVED — reports a drift here instead of passing.
 func TestValidateIndexBulletSkipsExternalDestinations(t *testing.T) {
 	for name, tc := range map[string]struct{ link, decoy string }{
 		"protocol-relative":                {"//host/spec.md", filepath.Join("host", "spec.md")},
@@ -829,6 +837,9 @@ func TestValidateIndexBulletSkipsExternalDestinations(t *testing.T) {
 		"scheme-no-slashes":                {"mailto:notes.md", "mailto:notes.md"},
 		"site-root with an entity":         {"/spec&amp;notes.md", "spec&amp;notes.md"},
 		"encoded site-root with an entity": {"%2Fspec&amp;notes.md", "spec&amp;notes.md"},
+		"named-entity site-root":           {"&sol;spec.md", "&sol;spec.md"},
+		"numeric-entity site-root":         {"&#47;spec.md", "spec.md"},
+		"named-entity scheme":              {"https&colon;//example.com/spec.md", filepath.Join("https&colon;", "example.com", "spec.md")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
