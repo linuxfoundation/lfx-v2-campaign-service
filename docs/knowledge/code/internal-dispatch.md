@@ -322,6 +322,99 @@ the platform's API limitation (NOT a reduced range, average, or extrapolation). 
 permanent X API constraint documented in the knowledge base. Spend is returned by X as
 `billed_charge_local_micro`, already in micro-currency units (no USD parsing or conversion).
 
+**HubSpot (the email channel)** implements it too, and it is the one `MetricsReader` whose
+subject is not an ad campaign. `HubSpotDispatcher.ReadMetrics` calls
+`hubspot.ValidateMetricsWindow` BEFORE `resolveHubSpotClient` — the same load-bearing order as
+LinkedIn and for the same reason — then reads the staged email's statistics and restates
+`CampaignID` as the SERVICE's campaign UUID, which the platform client cannot know (it keyed
+its result by the HubSpot email id it queried).
+
+Four things about it differ from every ad adapter, and a consumer that assumes otherwise
+reports false numbers:
+
+- **Identity is bound to the PORTAL, and it is resolved from the token, not from config.** A
+  HubSpot email id is a bare numeric that is unique only inside the portal that minted it, so
+  `Dispatch` records the portal in the campaign's `Result` blob and `ReadMetrics` refuses
+  (`domain.ErrCampaignAccountMismatch`, 409) unless it still matches. Both sides come from
+  `Client.AuthenticatedPortalID`, which calls `POST /oauth/v2/private-apps/get/access-token-info` — deliberately NOT
+  `providerConfig["portal_id"]`, an optional operator-supplied string used only for app URLs
+  that `SetCredentialHubspot` leaves untouched when it swaps the token. A config-on-config
+  comparison would fire only on the DECLARED change and stay silent on the undeclared token
+  swap, which is the actual risk; that version was written, found unsound and reverted before
+  this one. The asymmetry between the two callers is intentional: the `Dispatch` lookup is
+  BEST-EFFORT (the call can still fail on network or upstream error, and a provenance read must
+  not block a send that is otherwise ready), while `ReadMetrics` FAILS CLOSED — including when
+  the row records no portal, which is every campaign staged before this landed. Those rows are
+  unreadable until re-dispatched, and that is the honest outcome: nothing about such a row
+  establishes which portal its id means.
+
+  A row with no recorded portal is an ABSENCE, not a MISMATCH, and the two need different
+  operator-facing remedy text: "reconnect the original account" (the mismatch case) tells the
+  operator to point the connection back at a tenant this row never named, which is not
+  something they can do. `ReadMetrics` returns `errors.Join(domain.ErrCampaignProvenanceUnknown,
+  domain.ErrCampaignAccountMismatch)` for the no-portal case — joined, not returned alone, so
+  every pre-existing `errors.Is(err, ErrCampaignAccountMismatch)` caller still matches — and
+  `brief.go`'s status mapping checks `ErrCampaignProvenanceUnknown` FIRST (case order matters
+  in that switch) to give the correct "must be re-dispatched" 409 message instead.
+
+  That absence is checked BEFORE `AuthenticatedPortalID` is called, and the order is
+  load-bearing rather than incidental. Absent provenance is a purely LOCAL fact — no value the
+  lookup could return would change the answer — so asking first inverted the outcome for exactly
+  the rows the guard exists for: a legacy row read while token-info was throttled or down
+  returned the transient "cannot establish which portal this token authenticates against" 503
+  instead of the deterministic `ErrCampaignProvenanceUnknown` 409, hiding the one remedy that
+  fixes it (re-dispatch, which writes the provenance) behind an upstream failure that no amount
+  of retrying the read will clear, and spending up to `portalLookupTimeout` of the 20s metrics
+  budget on a call whose result was already irrelevant. Pinned by
+  `TestHubSpot_ReadMetricsRefusesUnrecordedProvenanceBeforeContactingHubSpot`, which asserts the
+  lookup is never CONTACTED — asserting only on the sentinel would keep passing against an
+  implementation that asks first and happens to get an answer.
+
+  The best-effort portal lookup in `Dispatch` is bounded by its OWN `portalLookupTimeout` (10s),
+  not the caller's context: the HubSpot client's retry policy alone can wait up to
+  `retryMax*maxRetryWait` (180s) under sustained throttling, which exceeds the entire 2-minute
+  `providerCallTimeout` (`internal/service/orchestrator.go`) and would otherwise hand the
+  mutating `CloneEmail`/`SetSendList` calls that follow an already-cancelled context. A
+  provenance read whose failure is only ever logged must not be able to spend the budget those
+  calls need.
+
+- **The window does not scope the counters.** HubSpot's statistics span selects WHICH EMAILS
+  are in scope by SEND date; the counters returned are that email's totals to date. `today`
+  and `last_30_days` on an email sent this morning return the same numbers. `Window` records
+  what was asked, not a period the counters cover. Genuine event-time windowing needs the
+  email-events API and is deliberately not attempted.
+- **An empty match is a successful read of nothing, not a failure.** The adapter marks
+  `hubspot.ErrNoSentEmailInWindow` with `domain.ErrNoMetricsInWindow` so the service answers
+  409. Unmarked it would take the 503 default — and this is the ORDINARY state, because
+  `Dispatch` stages the cloned email as a DRAFT for a human to send. Note what the sentinel
+  does NOT claim: sent-outside-the-window, never-sent and no-such-id arrive in one
+  indistinguishable shape, so it names all three.
+- **`CostMicros` is always 0**, and the extra counters ride in `CampaignMetrics.Email`
+  (`sent`, `delivered`, `opens`, `clicks`, `bounces`, `unsubscribes`), a nil-for-ad-platforms
+  pointer. `Impressions`/`Clicks` mirror `opens`/`clicks`. The zero cost means "not billed
+  per send", not "free", and must not be blended into a cross-channel CPA.
+
+`resolveHubSpotClient` was extracted from `Dispatch` once `ReadMetrics` became a second
+caller, rather than inlining the credential sequence a third time. Its two error axes are owned
+by different places:
+
+- **CREATE axis — the mutating caller's.** The helper adds `NoUpstreamCreate` to nothing;
+  `creds.resolve`'s error already carries it, and a read has no create to disown. `Dispatch`
+  therefore passes an already-marked error through and wraps everything else in `notCreated`,
+  the same shape the reddit adapter uses.
+- **AUDIENCE axis — the helper's, at the point of detection.** Each of the three
+  stored-connection defects carries `domain.ErrConnectionNotUsable` plus a reason sentinel:
+  `ErrConnectionInactive`, `ErrCredentialsUndecodable`, `ErrCredentialsIncomplete`. Returned
+  bare they fall to `GetCampaignMetrics`' default arm and answer 503 for a platform that was
+  never contacted. Same template as `validateGoogleAdsCredentials`, including the named return
+  with `defer func() { err = res.systemScoped(err) }()` so a later return site cannot forget to
+  re-attribute the error to the LF system row. The `json.Unmarshal` cause is DROPPED, not
+  wrapped — it is derived from the DECRYPTED blob and `encoding/json` quotes its input.
+
+The token is `TrimSpace`d ONCE inside the helper and the trimmed value is
+what reaches `hubspot.NewClient`, so the incomplete-credential check is made against the value
+the client will actually use.
+
 ## Account discovery (optional capability)
 
 `GoogleAdsDispatcher.ListAccounts(ctx, projectID, platform) ([]model.AccessibleAccount, error)`

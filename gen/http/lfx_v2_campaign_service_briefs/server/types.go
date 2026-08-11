@@ -303,20 +303,31 @@ type GetCampaignResponseBody struct {
 type GetCampaignMetricsResponseBody struct {
 	// Campaign UUID
 	CampaignID string `form:"campaign_id" json:"campaign_id" xml:"campaign_id"`
-	// ID returned by the ad platform
+	// The id the CHANNEL returned when the campaign was created. On an ad platform
+	// that is its campaign id; on the email channel it is the HubSpot
+	// marketing-email id of the cloned draft, which is what the metrics read
+	// queries by.
 	PlatformCampaignID string `form:"platform_campaign_id" json:"platform_campaign_id" xml:"platform_campaign_id"`
-	// Platform-agnostic reporting window the metrics were read for
+	// The reporting window that was REQUESTED. On the ad platforms it is also the
+	// period the counters cover. On the email channel it is not: it selects which
+	// emails are in scope by their send date, and the counters are then that
+	// email's totals to date — see the email object.
 	Window string `form:"window" json:"window" xml:"window"`
-	// Impressions in window
+	// Impressions over the window on an ad platform; opens to date on the email
+	// channel
 	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
-	// Clicks in window
+	// Clicks over the window on an ad platform; clicks to date on the email channel
 	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
-	// Cost in window, in micro-units of the platform's native currency
+	// Cost over the window, in micro-units of the platform's native currency
 	// (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter,
-	// etc.)
+	// etc.). Always 0 on the email channel, which bills no per-send cost — do not
+	// blend that 0 into a cross-channel cost-per-acquisition.
 	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+	// Email-channel counters. Present only for the email channel (HubSpot); absent
+	// for every ad platform.
+	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
 }
 
 // GenerateEmailCopyResponseBody is the type of the
@@ -1338,6 +1349,22 @@ type GetJobNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// EmailMetricsResponseBody is used to define fields on response body types.
+type EmailMetricsResponseBody struct {
+	// Emails handed to the delivery pipeline, to date
+	Sent int64 `form:"sent" json:"sent" xml:"sent"`
+	// Emails the receiving server accepted, to date
+	Delivered int64 `form:"delivered" json:"delivered" xml:"delivered"`
+	// Opens to date (mirrors impressions)
+	Opens int64 `form:"opens" json:"opens" xml:"opens"`
+	// Clicks to date (mirrors clicks)
+	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
+	// Bounced emails, to date
+	Bounces int64 `form:"bounces" json:"bounces" xml:"bounces"`
+	// Unsubscribes, to date
+	Unsubscribes int64 `form:"unsubscribes" json:"unsubscribes" xml:"unsubscribes"`
+}
+
 // PlatformResultResponseBody is used to define fields on response body types.
 type PlatformResultResponseBody struct {
 	// Platform this result is for
@@ -1599,6 +1626,9 @@ func NewGetCampaignMetricsResponseBody(res *lfxv2campaignservicebriefs.CampaignM
 		Clicks:             res.Clicks,
 		CostMicros:         res.CostMicros,
 		Ctr:                res.Ctr,
+	}
+	if res.Email != nil {
+		body.Email = marshalLfxv2campaignservicebriefsEmailMetricsToEmailMetricsResponseBody(res.Email)
 	}
 	return body
 }

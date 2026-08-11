@@ -6,6 +6,7 @@ name: MegaLinter
 
 "on":
   pull_request: null
+  merge_group: null
 
 permissions:
   contents: read

@@ -7,7 +7,7 @@ resource: ".mega-linter.yml"
 
 # MegaLinter and secret scanning
 
-CI runs MegaLinter on pull requests via
+CI runs MegaLinter on pull requests and merge-queue entries via
 [`.github/workflows/mega-linter.yaml`](../../../.github/workflows/mega-linter.yaml)
 (Go flavor `v9.1.0`). Repo config is
 [`.mega-linter.yml`](../../../.mega-linter.yml).
