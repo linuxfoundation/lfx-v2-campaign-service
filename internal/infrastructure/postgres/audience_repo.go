@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -121,14 +122,21 @@ const ambiguousCommitReconcileTimeout = 5 * time.Second
 //
 // The attempt cap, not the timeout, is what normally ends the loop, and it exists to bound
 // what this costs on the path where nothing is wrong. A commit the server already accepted
-// becomes visible in single-digit milliseconds; 25ms doubling to 500ms over 6 attempts spans
-// ~1.2s, roughly two orders of magnitude of headroom over that. The alternative — retrying
-// until the 5s timeout — would add five seconds to EVERY genuinely-rolled-back commit, which
-// during a database outage means every failing request holds its goroutine five times longer
-// while the database is already the bottleneck. The timeout stays as the hard ceiling for the
-// case the queries themselves are slow.
+// becomes visible in single-digit milliseconds; 25ms doubling to a 500ms cap spans
+// 25+50+100+200+400+500 = 1275ms, roughly two orders of magnitude of headroom over that. The
+// alternative — retrying until the 5s timeout — would add five seconds to EVERY
+// genuinely-rolled-back commit, which during a database outage means every failing request
+// holds its goroutine five times longer while the database is already the bottleneck. The
+// timeout stays as the hard ceiling for the case the queries themselves are slow.
+//
+// N attempts sleep N-1 times, so the count is one MORE than the number of delays the schedule
+// above lists. It was 6, which the same paragraph described as spanning ~1.2s while actually
+// spanning 775ms — and 6 attempts never reach the 500ms cap at all, so the documented "doubling
+// to 500ms" was not merely mis-added but unreachable. TestAmbiguousCommitReconcileScheduleSpans
+// now computes the sum from the constants, so the next change to any of the three fails a test
+// rather than a comment.
 const (
-	ambiguousCommitReconcileAttempts = 6
+	ambiguousCommitReconcileAttempts = 7
 	ambiguousCommitReconcileMinDelay = 25 * time.Millisecond
 	ambiguousCommitReconcileMaxDelay = 500 * time.Millisecond
 )
@@ -241,12 +249,35 @@ const (
 	audienceReconcileHeld
 )
 
+// audienceReconcileDB is the slice of *Pool the reconcile uses. It exists so the attempt below
+// can be driven directly in a unit test: the two outcomes that matter most here — a confirmed
+// held lease, and a query that FAILS after the row has already been observed 'building' — both
+// require the row to appear between an attempt's two statements, which nothing can schedule
+// into against a live database. The live tests cover the paths that can be staged; this covers
+// the ones that cannot.
+type audienceReconcileDB interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // tryReleaseAudienceBuildLease performs one attempt of the reconcile above.
 //
 // An error is returned for the caller to log but never settles anything: this runs precisely
 // when the connection is known to be unreliable, so a failed query is the least trustworthy
 // evidence of absence there is.
-func tryReleaseAudienceBuildLease(ctx context.Context, pool *Pool, row *model.CampaignAudience) (audienceReconcileOutcome, error) {
+//
+// What an error means for the OUTCOME depends on what this attempt has already seen, though,
+// and conflating the two lost information the caller cannot recover. Once the first pass has
+// read the row as 'building', this process KNOWS a lease is held; a second-pass query failing
+// after that does not unlearn it. Returning the zero value (audienceReconcileUnseen) on those
+// paths left confirmedHeld false in the retry loop, so a lease this process had confirmed was
+// held got reported as the ordinary probable-rollback warn — the exact downgrade the tri-state
+// outcome was introduced to prevent.
+func tryReleaseAudienceBuildLease(ctx context.Context, pool audienceReconcileDB, row *model.CampaignAudience) (audienceReconcileOutcome, error) {
+	// What an unsettled result means, given everything seen so far in THIS attempt. It starts
+	// as Unseen and can only ever be promoted, never demoted: absence is evidence only until
+	// the row is observed, and after that it is not evidence at all.
+	unsettled := audienceReconcileUnseen
 	// Two passes, not one. Observing 'building' after a zero-row UPDATE means the row became
 	// visible BETWEEN this attempt's two statements — they run on separately-pooled connections
 	// with their own snapshots — so the UPDATE merely ran too early and an immediate second one
@@ -272,7 +303,7 @@ func tryReleaseAudienceBuildLease(ctx context.Context, pool *Pool, row *model.Ca
 		tag, err := pool.Exec(ctx, releaseAudienceBuildLeaseQ,
 			row.ID, row.BriefID, row.ProjectID, string(model.AudienceBuilding))
 		if err != nil {
-			return audienceReconcileUnseen, fmt.Errorf("release audience build lease: %w", err)
+			return unsettled, fmt.Errorf("release audience build lease: %w", err)
 		}
 		if tag.RowsAffected() > 0 {
 			return audienceReconcileSettled, nil
@@ -290,14 +321,17 @@ func tryReleaseAudienceBuildLease(ctx context.Context, pool *Pool, row *model.Ca
 			// Rolled back, or not yet visible. Indistinguishable here; the caller retries.
 			return audienceReconcileUnseen, nil
 		case err != nil:
-			return audienceReconcileUnseen, fmt.Errorf("check audience row after a zero-row reconcile: %w", err)
+			return unsettled, fmt.Errorf("check audience row after a zero-row reconcile: %w", err)
 		case status != string(model.AudienceBuilding):
 			// 'built' or 'failed': a stable end state that holds no lease and must not be
 			// touched. Re-read on the second pass too, so a concurrent PATCH landing between
 			// the passes is reported as settled rather than as a held lease.
 			return audienceReconcileSettled, nil
 		}
-		// Still 'building'. Fall through to the second pass, or out of the loop.
+		// Still 'building': the lease is confirmed held from here on, so a later failure in this
+		// attempt must not report absence.
+		unsettled = audienceReconcileHeld
+		// Fall through to the second pass, or out of the loop.
 	}
 	return audienceReconcileHeld, nil
 }

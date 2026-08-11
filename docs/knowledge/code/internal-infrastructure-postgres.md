@@ -697,9 +697,12 @@ on a different pooled connection, so it takes its own snapshot, and under READ C
 inserted by a not-yet-committed transaction is *invisible*, not locked. The UPDATE does not
 block on it; it matches nothing and returns. Milliseconds later the commit lands and the row
 is there in `building`, holding the lease — the exact case the function exists for, missed by
-the function. So that one outcome is retried (`ambiguousCommitReconcileAttempts = 6`, 25ms
-doubling to a 500ms cap, ~1.2s in total) while a row observed in a terminal state settles
-immediately. The attempt cap rather than the 5s timeout is what normally ends the loop, and it
+the function. So that one outcome is retried (`ambiguousCommitReconcileAttempts = 7`, 25ms
+doubling to a 500ms cap: 25+50+100+200+400+500 = 1275ms in total) while a row observed in a
+terminal state settles immediately. N attempts sleep N-1 times, so the count is one more than
+the number of delays — it was 6, which spans 775ms and never reaches the documented cap at all.
+`TestAmbiguousCommitReconcileScheduleSpans` now derives the sum from the three constants so the
+prose cannot drift from them again. The attempt cap rather than the 5s timeout is what normally ends the loop, and it
 is there to bound the cost on the path where nothing is wrong: retrying to the timeout would
 add five seconds to every genuinely-rolled-back commit, which during a database outage means
 every failing request holding its goroutine five times longer.
@@ -714,6 +717,20 @@ there a row this process had just CONFIRMED holding the lease got abandoned to t
 escape hatch. `tryReleaseAudienceBuildLease` therefore returns a tri-state —
 `audienceReconcileUnseen` / `Settled` / `Held` — rather than a bool, and only `Unseen` is worth
 waiting on.
+
+**An attempt's ERROR paths carry what that attempt already observed.** Both error returns handed
+back `audienceReconcileUnseen` — the zero value — which reintroduced the same collapse through
+the back door: once the first pass has read the row as `building`, this process KNOWS the lease
+is held, and a second-pass query failing afterwards does not unlearn it. The retry loop's
+`confirmedHeld` stayed false, so a confirmed stranded lease was logged at warn in the hedged
+"if the commit did land" wording. The attempt now promotes its unsettled outcome to `Held` the
+moment it observes `building`, and never demotes: absence is evidence only until the row is
+seen. A FIRST-pass failure still reports `Unseen`, because it observed nothing.
+
+`tryReleaseAudienceBuildLease` takes an `audienceReconcileDB` interface (`Exec`/`QueryRow`,
+satisfied by `*Pool`) so both of those paths are unit-testable. They have to be: reaching them
+requires the row to become visible in the microseconds *between* an attempt's two statements,
+which nothing can schedule into against a live database — the live tests say as much.
 
 Giving up after the last attempt logs at **warn** *when no attempt ever saw the row*, and at
 **error** when one did. The two endings are different events and collapsing them was the defect:

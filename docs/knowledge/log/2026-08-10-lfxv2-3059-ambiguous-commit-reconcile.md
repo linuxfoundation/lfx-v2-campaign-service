@@ -54,3 +54,44 @@ Run locally (no CI Postgres service available in this environment): spun up a th
 `postgres@16` instance via Homebrew's `initdb`/`pg_ctl` (no Docker available) against
 `TEST_DATABASE_URL=postgres://postgres@127.0.0.1:55432/campaign_service_test?sslmode=disable`,
 ran the full `internal/...` suite with `-race` — all green — then tore the instance down.
+
+## Round: the retry budget and the error paths that forgot what they had seen
+
+**Kind:** Fix
+
+Two Copilot findings on PR #106, both in `audience_repo.go`, both a case of the code and the
+paragraph above it disagreeing.
+
+**The schedule was one attempt short of the one it documents.** N attempts sleep N-1 times, so
+`ambiguousCommitReconcileAttempts = 6` spans 25+50+100+200+400 = **775ms**, not the "~1.2s" the
+comment claimed — and it never reaches the 500ms cap that same comment describes doubling to. Now
+7, spanning 1275ms. `TestAmbiguousCommitReconcileScheduleSpans` derives the total from the three
+constants rather than restating it, and separately asserts the cap is reachable and that the whole
+schedule stays inside the 5s timeout: the attempt cap is supposed to be what ends the loop
+normally, leaving the timeout a ceiling for slow queries.
+
+**An attempt's error paths discarded what that attempt had already observed.** Both returned
+`audienceReconcileUnseen` — the zero value. That reintroduced, through the error path, exactly the
+collapse the tri-state outcome was added to prevent: once the first pass has read the row as
+`building` the lease is CONFIRMED held, and a second-pass query failing afterwards does not
+unlearn it. The retry loop's `confirmedHeld` stayed false, so `reportUnreconciledAudience` logged
+a known stranded lease at **warn**, in the hedged "if the commit did land" wording meant for the
+ordinary rolled-back commit. The attempt now promotes its unsettled outcome to `Held` the moment
+it observes `building`, and never demotes — absence is evidence only until the row is seen. A
+FIRST-pass failure still reports `Unseen`, which is why this is a promotion rather than a constant.
+
+**Regression Guard** — `tryReleaseAudienceBuildLease` now takes an `audienceReconcileDB`
+interface (`Exec`/`QueryRow`, satisfied by `*Pool`). It had to: reaching either error path
+requires the row to become visible in the microseconds BETWEEN an attempt's two statements, and
+the live tests already record that as unschedulable — which is precisely why the bug survived
+three rounds of review on this function. `audience_reconcile_attempt_test.go` drives it with a
+fake that models the real contract (a parsed `pgconn.CommandTag`, a `pgx.Row` that can report
+`pgx.ErrNoRows`) and covers both second-pass failures, both first-pass failures, the both-passes-
+`building` Held case, and the settles-on-the-second-pass case. Revert-verified: restoring
+`audienceReconcileUnseen` on the error returns fails with `outcome = 0, want
+audienceReconcileHeld (2)`; restoring `= 6` fails with `spans 775ms, want 1.275s` plus `the last
+delay is 400ms and never reaches the 500ms cap`.
+
+The generalisation worth keeping: **a comment that states a computed value is a test that never
+runs.** Both findings here are the same defect wearing different clothes — a number and a
+tri-state, each asserted in prose and neither checked by anything.
