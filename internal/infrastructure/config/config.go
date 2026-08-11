@@ -14,6 +14,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
+
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
@@ -26,6 +28,16 @@ type Config struct {
 	JWKSUrl  string
 	Audience string
 	Issuer   string
+	// MockLocalPrincipal, when non-empty, disables in-app JWT verification and
+	// attributes every request to this principal. Local development only; see
+	// constants.EnvMockLocalPrincipal.
+	MockLocalPrincipal string
+	// InCluster reports whether this process is running as a Kubernetes pod. It exists
+	// so auth.New can REFUSE MockLocalPrincipal in a deployment rather than trust the
+	// chart's empty default; see the comment there. Derived from two independent signals
+	// so that one env override cannot both enable the bypass and hide the cluster —
+	// see runningInCluster.
+	InCluster bool
 
 	// NATSUrl is the NATS server URL. Used to publish Query Service index updates; empty
 	// disables indexing without affecting any other capability.
@@ -76,6 +88,41 @@ type Config struct {
 	pgPortPresent bool
 }
 
+// serviceAccountDir is where the kubelet projects a pod's service-account token. Its
+// presence is a cluster signal that does NOT come from the environment, which is the
+// whole reason it is consulted: see runningInCluster.
+const serviceAccountDir = "/var/run/secrets/kubernetes.io/serviceaccount"
+
+// runningInCluster reports whether this process is a Kubernetes pod, from the OR of two
+// independent signals.
+//
+// KUBERNETES_SERVICE_HOST alone is NOT sufficient, and the comment that used to sit here
+// claiming the chart could not set it was wrong: templates/deployment.yaml renders every
+// key of app.environment and appends app.extraEnv verbatim, so an override can declare
+// this exact name with an empty value — and an explicit container env entry takes
+// precedence over the kubelet's service variables. The single override that enables the
+// mock principal could therefore also conceal the cluster, which is precisely the
+// combination the InCluster check exists to prevent.
+//
+// The chart now refuses to render either input (see the reserved-name guard in
+// templates/deployment.yaml), so that path is closed at deploy time. This second signal
+// closes it at RUNTIME as well, for the deploys that never go through the chart — a
+// hand-applied manifest, a kubectl patch, an ArgoCD override. Suppressing it needs
+// automountServiceAccountToken: false, which is a separate, visible, and unrelated change
+// rather than one line in the same env block.
+//
+// Both are checked, not just the file: KUBERNETES_SERVICE_HOST still catches a pod that
+// legitimately runs without an automounted token.
+func runningInCluster(getenv func(string) string, saDir string) bool {
+	if getenv(constants.EnvKubernetesServiceHost) != "" {
+		return true
+	}
+	// Only a directory counts. A stat error of any kind — absent, or unreadable — is not
+	// a cluster signal, and the env check above is the one that has to carry those cases.
+	info, err := os.Stat(saDir)
+	return err == nil && info.IsDir()
+}
+
 // LoadConfig loads configuration from CLI flags, then environment variables, then defaults.
 // Priority: CLI flags > env vars > defaults.
 //
@@ -106,6 +153,10 @@ func LoadConfig() *Config {
 		JWKSUrl:  envOrDefault(constants.EnvJWKSURL, constants.DefaultJWKSURL),
 		Audience: envOrDefault(constants.EnvAudience, constants.DefaultAudience),
 		Issuer:   envOrDefault(constants.EnvIssuer, constants.DefaultIssuer),
+		// os.Getenv, not envOrDefault: there is no default for a verification
+		// bypass, and unset must stay unset.
+		MockLocalPrincipal: strings.TrimSpace(os.Getenv(constants.EnvMockLocalPrincipal)),
+		InCluster:          runningInCluster(os.Getenv, serviceAccountDir),
 		// NOT envOrDefault: an explicitly-empty NATS_URL is the documented switch
 		// that disables index publishing, and envOrDefault cannot express it (it
 		// collapses unset and empty into the default).
@@ -267,10 +318,10 @@ func (c *Config) String() string {
 		c.Debug,
 		c.Host,
 		c.Port,
-		c.JWKSUrl,
+		redactURLUserinfo(c.JWKSUrl),
 		c.Audience,
 		c.Issuer,
-		redactNATSURL(c.NATSUrl),
+		redactURLUserinfo(c.NATSUrl),
 		redactDatabaseURL(c.DatabaseURL),
 		redactSecret(c.CredentialEncryptionKey),
 		// The AI settings are printed rather than omitted, and the key is masked rather
@@ -312,24 +363,20 @@ func redactDatabaseURL(dsn string) string {
 	return "[redacted]"
 }
 
-// redactNATSURL strips any credentials from a NATS URL while KEEPING the host.
+// redactURLUserinfo strips any credentials from a URL while KEEPING the host.
 //
-// A NATS URL may carry userinfo (nats://user:pass@host:4222), and String() promises a
-// log-safe representation — so printing it verbatim would put the broker password in the
-// pod logs of anything that logs the config. Unlike redactDatabaseURL this does not mask
-// wholesale: the broker host is genuinely useful when diagnosing an indexing outage, and
-// a NATS URL is always a parseable URL (there is no keyword-DSN form to worry about), so
-// the credential portion can be removed precisely.
-func redactNATSURL(u string) string {
-	at := strings.LastIndexByte(u, '@')
-	if at < 0 {
-		return u // no userinfo: nothing to redact
-	}
-	if scheme := strings.Index(u, "://"); scheme >= 0 && scheme+3 <= at {
-		return u[:scheme+3] + "***@" + u[at+1:]
-	}
-	return "***@" + u[at+1:]
-}
+// Two fields need it. A NATS URL may carry userinfo (nats://user:pass@host:4222), and a JWKS
+// URL may too — an issuer behind a gateway that authenticates with basic auth is an ordinary
+// deployment, and nothing in this service forbids configuring one, so "a JWKS URL is public"
+// is a convention rather than a guarantee. String() promises a log-safe representation, so
+// printing either verbatim would put a credential in the pod logs of anything that logs the
+// config.
+//
+// Unlike redactDatabaseURL this does not mask wholesale: the host is exactly what an operator
+// needs when diagnosing an indexing outage or a failing JWKS fetch, and both values are always
+// parseable URLs (there is no keyword-DSN form to worry about), so the credential portion can
+// be removed precisely.
+func redactURLUserinfo(u string) string { return redact.URLUserinfo(u) }
 
 // redactAIProxyURL reduces AI_PROXY_URL to its scheme, with the host masked. Everything
 // else — userinfo, host, path, query, fragment — is dropped or replaced.

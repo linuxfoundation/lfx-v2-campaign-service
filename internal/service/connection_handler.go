@@ -5,12 +5,9 @@ package service
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"strconv"
-	"strings"
 	"sync"
 
 	"goa.design/goa/v3/security"
@@ -20,99 +17,29 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// actorCtxKey is the context key under which the authenticated actor is stored.
-type actorCtxKey struct{}
-
-// JWTAuth authorizes a request and records the authenticated actor in the
-// context for attribution. Authentication of the token signature and audience,
-// and authorization on campaign_manager, are performed by Heimdall/OpenFGA at
-// the gateway before the request reaches this service. Here we require the
-// bearer token to be present and extract the principal claims for attribution.
+// JWTAuth verifies the bearer token and records the authenticated actor in the
+// context for attribution.
 //
-// NOTE: full in-app JWKS signature verification is a follow-up; the token
-// reaching this service has already been minted and validated by Heimdall.
+// It used to base64-decode the payload and believe it. Heimdall does validate
+// the token at the gateway, and every route is covered there (the chart's parity
+// test fails the build if one is not) — but that guarantee ends at the cluster
+// boundary, and these claims are written to created_by/updated_by. Trusting them
+// meant anything able to reach the pod directly could name whoever it liked as
+// the principal who authorized paid ad spend. Verification now happens here too,
+// against Heimdall's JWKS.
 func (s *ConnectionService) JWTAuth(ctx context.Context, token string, _ *security.JWTScheme) (context.Context, error) {
-	if token == "" {
-		return ctx, &conn.BadRequestError{Code: "400", Message: "missing bearer token"}
-	}
-	if a := actorFromToken(token); a != nil {
-		ctx = context.WithValue(ctx, actorCtxKey{}, a)
+	ctx, msg, unavailable := s.authenticate(ctx, token)
+	switch {
+	case unavailable:
+		// The check could not be PERFORMED — no verifier wired, or Heimdall's JWKS is
+		// unreachable. Nothing was established about the caller's token, so 400 would
+		// blame a caller who may be holding a perfectly good one and tell them not to
+		// retry an outage that clears on its own.
+		return ctx, &conn.ConnServiceUnavailableError{Code: "503", Message: msg}
+	case msg != "":
+		return ctx, &conn.BadRequestError{Code: "400", Message: msg}
 	}
 	return ctx, nil
-}
-
-// actorFromCtx returns the authenticated actor recorded by JWTAuth, or nil.
-func actorFromCtx(ctx context.Context) *model.Actor {
-	if a, ok := ctx.Value(actorCtxKey{}).(*model.Actor); ok {
-		return a
-	}
-	return nil
-}
-
-// attributedActor returns the authenticated actor for a write that will RECORD it, logging
-// when there is none.
-//
-// The write proceeds either way — refusing it would escalate a token-decoding regression into
-// a total outage — but "proceeds" must not mean "silently". A broken gateway, a claim rename
-// upstream, or a regression in actorFromToken all present identically: every row commits with
-// NULL attribution and nothing else fails. This warning is the only signal an operator gets,
-// and its rate is the thing to alert on: a steady trickle is unauthenticated traffic, a step
-// change across every write is the auth path having broken.
-//
-// It counts ATTEMPTS, not commits, and that is deliberate — the message says "attempted" so
-// the two are not confused. This resolver runs before the repository call, so a write that
-// then fails on a version conflict, a missing parent, or a database error still logs here.
-// Moving the warning after a successful commit would look more precise and be strictly worse:
-// whether an actor was present is decided at the gateway, upstream of anything the repository
-// does, so a failed write is evidence about the auth path in exactly the same way a
-// successful one is. Worse, a deploy that breaks auth AND breaks writes would go silent
-// precisely when the signal is most needed. Alert on the rate relative to total write
-// attempts, not to commits.
-// The message says the write records NO actor, not that it records NULL, because this helper
-// is shared across write paths that dispose of a nil differently and only the weaker claim is
-// true of all of them. The campaign upsert writes `updated_by=COALESCE($n, updated_by)`, so a
-// nil leaves whoever last moved the row in place; the brief and connection updates assign
-// `updated_by=$n` outright, so a nil there does write NULL. Saying "records no actor" is
-// accurate under both: this write contributes no attribution. Which of the two the column then
-// reads is the repository's decision, made in SQL, and pinned in each repo's own tests.
-func attributedActor(ctx context.Context, operation string) *model.Actor {
-	a := actorFromCtx(ctx)
-	if a == nil {
-		slog.WarnContext(ctx, "write attempted with no authenticated actor; it will record no actor",
-			"operation", operation)
-	}
-	return a
-}
-
-// actorFromToken best-effort decodes the JWT payload to extract principal
-// claims for attribution. It does not verify the signature (see JWTAuth).
-func actorFromToken(token string) *model.Actor {
-	token = strings.TrimPrefix(token, "Bearer ")
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return nil
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return nil
-	}
-	var claims struct {
-		Name              string `json:"name"`
-		Email             string `json:"email"`
-		PreferredUsername string `json:"preferred_username"`
-		Sub               string `json:"sub"`
-	}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return nil
-	}
-	username := claims.PreferredUsername
-	if username == "" {
-		username = claims.Sub
-	}
-	if claims.Name == "" && claims.Email == "" && username == "" {
-		return nil
-	}
-	return &model.Actor{Name: claims.Name, Email: claims.Email, Username: username}
 }
 
 // ConnectionService implements the generated connection service interface by
@@ -120,6 +47,8 @@ func actorFromToken(token string) *model.Actor {
 // thin adapters (see connection.go) that convert the typed Goa payloads to and
 // from the generic domain model and call the core helpers here.
 type ConnectionService struct {
+	authGuard
+
 	// mu guards repo, enc, and orch, which can be swapped in after construction: during
 	// a database cold start the service boots with nil values (every method returns 503)
 	// and the container injects the live values once the pool opens. Probe/handler

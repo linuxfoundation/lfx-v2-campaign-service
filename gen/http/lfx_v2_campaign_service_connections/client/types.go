@@ -775,6 +775,16 @@ type CreateGoogleAdsInternalServerErrorResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetGoogleAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-google-ads" endpoint HTTP
+// response body for the "BadRequest" error.
+type GetGoogleAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetGoogleAdsServiceUnavailableResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-google-ads" endpoint HTTP
 // response body for the "ServiceUnavailable" error.
@@ -865,6 +875,16 @@ type UpdateGoogleAdsPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// DeleteGoogleAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-google-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type DeleteGoogleAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteGoogleAdsServiceUnavailableResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-google-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
@@ -889,6 +909,16 @@ type DeleteGoogleAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-google-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteGoogleAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// TestGoogleAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-google-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type TestGoogleAdsBadRequestResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1005,6 +1035,16 @@ type CreateLinkedinAdsInternalServerErrorResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetLinkedinAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type GetLinkedinAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetLinkedinAdsServiceUnavailableResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-linkedin-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
@@ -1095,6 +1135,16 @@ type UpdateLinkedinAdsPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// DeleteLinkedinAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-linkedin-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type DeleteLinkedinAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteLinkedinAdsServiceUnavailableResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-linkedin-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
@@ -1119,6 +1169,16 @@ type DeleteLinkedinAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-linkedin-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteLinkedinAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// TestLinkedinAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-linkedin-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type TestLinkedinAdsBadRequestResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1235,6 +1295,16 @@ type CreateMetaAdsInternalServerErrorResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetMetaAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads" endpoint HTTP
+// response body for the "BadRequest" error.
+type GetMetaAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetMetaAdsServiceUnavailableResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-meta-ads" endpoint HTTP
 // response body for the "ServiceUnavailable" error.
@@ -1325,6 +1395,16 @@ type UpdateMetaAdsPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// DeleteMetaAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-meta-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type DeleteMetaAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteMetaAdsServiceUnavailableResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-meta-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
@@ -1349,6 +1429,16 @@ type DeleteMetaAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-meta-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteMetaAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// TestMetaAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-meta-ads" endpoint HTTP
+// response body for the "BadRequest" error.
+type TestMetaAdsBadRequestResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1465,6 +1555,16 @@ type CreateRedditAdsInternalServerErrorResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetRedditAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads" endpoint HTTP
+// response body for the "BadRequest" error.
+type GetRedditAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetRedditAdsServiceUnavailableResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-reddit-ads" endpoint HTTP
 // response body for the "ServiceUnavailable" error.
@@ -1555,6 +1655,16 @@ type UpdateRedditAdsPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// DeleteRedditAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-reddit-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type DeleteRedditAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteRedditAdsServiceUnavailableResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-reddit-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
@@ -1579,6 +1689,16 @@ type DeleteRedditAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-reddit-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteRedditAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// TestRedditAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-reddit-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type TestRedditAdsBadRequestResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1695,6 +1815,16 @@ type CreateTwitterAdsInternalServerErrorResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetTwitterAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type GetTwitterAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetTwitterAdsServiceUnavailableResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-twitter-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
@@ -1785,6 +1915,16 @@ type UpdateTwitterAdsPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// DeleteTwitterAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-twitter-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type DeleteTwitterAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteTwitterAdsServiceUnavailableResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-twitter-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
@@ -1809,6 +1949,16 @@ type DeleteTwitterAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-twitter-ads" endpoint
 // HTTP response body for the "NotFound" error.
 type DeleteTwitterAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// TestTwitterAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-twitter-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type TestTwitterAdsBadRequestResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1925,6 +2075,16 @@ type CreateMicrosoftAdsInternalServerErrorResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetMicrosoftAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type GetMicrosoftAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetMicrosoftAdsServiceUnavailableResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads" endpoint
 // HTTP response body for the "ServiceUnavailable" error.
@@ -2015,6 +2175,16 @@ type UpdateMicrosoftAdsPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// DeleteMicrosoftAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-microsoft-ads"
+// endpoint HTTP response body for the "BadRequest" error.
+type DeleteMicrosoftAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteMicrosoftAdsServiceUnavailableResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-microsoft-ads"
 // endpoint HTTP response body for the "ServiceUnavailable" error.
@@ -2039,6 +2209,16 @@ type DeleteMicrosoftAdsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-microsoft-ads"
 // endpoint HTTP response body for the "NotFound" error.
 type DeleteMicrosoftAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// TestMicrosoftAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-microsoft-ads" endpoint
+// HTTP response body for the "BadRequest" error.
+type TestMicrosoftAdsBadRequestResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -2155,6 +2335,16 @@ type CreateHubspotInternalServerErrorResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetHubspotBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-hubspot" endpoint HTTP
+// response body for the "BadRequest" error.
+type GetHubspotBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetHubspotServiceUnavailableResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-hubspot" endpoint HTTP
 // response body for the "ServiceUnavailable" error.
@@ -2245,6 +2435,16 @@ type UpdateHubspotPreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// DeleteHubspotBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "delete-hubspot" endpoint HTTP
+// response body for the "BadRequest" error.
+type DeleteHubspotBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteHubspotServiceUnavailableResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "delete-hubspot" endpoint HTTP
 // response body for the "ServiceUnavailable" error.
@@ -2269,6 +2469,16 @@ type DeleteHubspotInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "delete-hubspot" endpoint HTTP
 // response body for the "NotFound" error.
 type DeleteHubspotNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// TestHubspotBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "test-hubspot" endpoint HTTP
+// response body for the "BadRequest" error.
+type TestHubspotBadRequestResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -2929,6 +3139,17 @@ func NewGetGoogleAdsGoogleAdsConnectionOK(body *GetGoogleAdsResponseBody, etag s
 	return v
 }
 
+// NewGetGoogleAdsBadRequest builds a lfx-v2-campaign-service-connections
+// service get-google-ads endpoint BadRequest error.
+func NewGetGoogleAdsBadRequest(body *GetGoogleAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewGetGoogleAdsServiceUnavailable builds a
 // lfx-v2-campaign-service-connections service get-google-ads endpoint
 // ServiceUnavailable error.
@@ -3053,6 +3274,17 @@ func NewUpdateGoogleAdsPreconditionRequired(body *UpdateGoogleAdsPreconditionReq
 	return v
 }
 
+// NewDeleteGoogleAdsBadRequest builds a lfx-v2-campaign-service-connections
+// service delete-google-ads endpoint BadRequest error.
+func NewDeleteGoogleAdsBadRequest(body *DeleteGoogleAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewDeleteGoogleAdsServiceUnavailable builds a
 // lfx-v2-campaign-service-connections service delete-google-ads endpoint
 // ServiceUnavailable error.
@@ -3095,6 +3327,17 @@ func NewTestGoogleAdsConnectionTestResultOK(body *TestGoogleAdsResponseBody) *lf
 	v := &lfxv2campaignserviceconnections.ConnectionTestResult{
 		OK:      *body.OK,
 		Message: body.Message,
+	}
+
+	return v
+}
+
+// NewTestGoogleAdsBadRequest builds a lfx-v2-campaign-service-connections
+// service test-google-ads endpoint BadRequest error.
+func NewTestGoogleAdsBadRequest(body *TestGoogleAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
 	}
 
 	return v
@@ -3267,6 +3510,17 @@ func NewGetLinkedinAdsLinkedinAdsConnectionOK(body *GetLinkedinAdsResponseBody, 
 	return v
 }
 
+// NewGetLinkedinAdsBadRequest builds a lfx-v2-campaign-service-connections
+// service get-linkedin-ads endpoint BadRequest error.
+func NewGetLinkedinAdsBadRequest(body *GetLinkedinAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewGetLinkedinAdsServiceUnavailable builds a
 // lfx-v2-campaign-service-connections service get-linkedin-ads endpoint
 // ServiceUnavailable error.
@@ -3391,6 +3645,17 @@ func NewUpdateLinkedinAdsPreconditionRequired(body *UpdateLinkedinAdsPreconditio
 	return v
 }
 
+// NewDeleteLinkedinAdsBadRequest builds a lfx-v2-campaign-service-connections
+// service delete-linkedin-ads endpoint BadRequest error.
+func NewDeleteLinkedinAdsBadRequest(body *DeleteLinkedinAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewDeleteLinkedinAdsServiceUnavailable builds a
 // lfx-v2-campaign-service-connections service delete-linkedin-ads endpoint
 // ServiceUnavailable error.
@@ -3433,6 +3698,17 @@ func NewTestLinkedinAdsConnectionTestResultOK(body *TestLinkedinAdsResponseBody)
 	v := &lfxv2campaignserviceconnections.ConnectionTestResult{
 		OK:      *body.OK,
 		Message: body.Message,
+	}
+
+	return v
+}
+
+// NewTestLinkedinAdsBadRequest builds a lfx-v2-campaign-service-connections
+// service test-linkedin-ads endpoint BadRequest error.
+func NewTestLinkedinAdsBadRequest(body *TestLinkedinAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
 	}
 
 	return v
@@ -3607,6 +3883,17 @@ func NewGetMetaAdsMetaAdsConnectionOK(body *GetMetaAdsResponseBody, etag string)
 	return v
 }
 
+// NewGetMetaAdsBadRequest builds a lfx-v2-campaign-service-connections service
+// get-meta-ads endpoint BadRequest error.
+func NewGetMetaAdsBadRequest(body *GetMetaAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewGetMetaAdsServiceUnavailable builds a lfx-v2-campaign-service-connections
 // service get-meta-ads endpoint ServiceUnavailable error.
 func NewGetMetaAdsServiceUnavailable(body *GetMetaAdsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
@@ -3731,6 +4018,17 @@ func NewUpdateMetaAdsPreconditionRequired(body *UpdateMetaAdsPreconditionRequire
 	return v
 }
 
+// NewDeleteMetaAdsBadRequest builds a lfx-v2-campaign-service-connections
+// service delete-meta-ads endpoint BadRequest error.
+func NewDeleteMetaAdsBadRequest(body *DeleteMetaAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewDeleteMetaAdsServiceUnavailable builds a
 // lfx-v2-campaign-service-connections service delete-meta-ads endpoint
 // ServiceUnavailable error.
@@ -3773,6 +4071,17 @@ func NewTestMetaAdsConnectionTestResultOK(body *TestMetaAdsResponseBody) *lfxv2c
 	v := &lfxv2campaignserviceconnections.ConnectionTestResult{
 		OK:      *body.OK,
 		Message: body.Message,
+	}
+
+	return v
+}
+
+// NewTestMetaAdsBadRequest builds a lfx-v2-campaign-service-connections
+// service test-meta-ads endpoint BadRequest error.
+func NewTestMetaAdsBadRequest(body *TestMetaAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
 	}
 
 	return v
@@ -3942,6 +4251,17 @@ func NewGetRedditAdsRedditAdsConnectionOK(body *GetRedditAdsResponseBody, etag s
 	return v
 }
 
+// NewGetRedditAdsBadRequest builds a lfx-v2-campaign-service-connections
+// service get-reddit-ads endpoint BadRequest error.
+func NewGetRedditAdsBadRequest(body *GetRedditAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewGetRedditAdsServiceUnavailable builds a
 // lfx-v2-campaign-service-connections service get-reddit-ads endpoint
 // ServiceUnavailable error.
@@ -4065,6 +4385,17 @@ func NewUpdateRedditAdsPreconditionRequired(body *UpdateRedditAdsPreconditionReq
 	return v
 }
 
+// NewDeleteRedditAdsBadRequest builds a lfx-v2-campaign-service-connections
+// service delete-reddit-ads endpoint BadRequest error.
+func NewDeleteRedditAdsBadRequest(body *DeleteRedditAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewDeleteRedditAdsServiceUnavailable builds a
 // lfx-v2-campaign-service-connections service delete-reddit-ads endpoint
 // ServiceUnavailable error.
@@ -4107,6 +4438,17 @@ func NewTestRedditAdsConnectionTestResultOK(body *TestRedditAdsResponseBody) *lf
 	v := &lfxv2campaignserviceconnections.ConnectionTestResult{
 		OK:      *body.OK,
 		Message: body.Message,
+	}
+
+	return v
+}
+
+// NewTestRedditAdsBadRequest builds a lfx-v2-campaign-service-connections
+// service test-reddit-ads endpoint BadRequest error.
+func NewTestRedditAdsBadRequest(body *TestRedditAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
 	}
 
 	return v
@@ -4279,6 +4621,17 @@ func NewGetTwitterAdsTwitterAdsConnectionOK(body *GetTwitterAdsResponseBody, eta
 	return v
 }
 
+// NewGetTwitterAdsBadRequest builds a lfx-v2-campaign-service-connections
+// service get-twitter-ads endpoint BadRequest error.
+func NewGetTwitterAdsBadRequest(body *GetTwitterAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewGetTwitterAdsServiceUnavailable builds a
 // lfx-v2-campaign-service-connections service get-twitter-ads endpoint
 // ServiceUnavailable error.
@@ -4403,6 +4756,17 @@ func NewUpdateTwitterAdsPreconditionRequired(body *UpdateTwitterAdsPreconditionR
 	return v
 }
 
+// NewDeleteTwitterAdsBadRequest builds a lfx-v2-campaign-service-connections
+// service delete-twitter-ads endpoint BadRequest error.
+func NewDeleteTwitterAdsBadRequest(body *DeleteTwitterAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewDeleteTwitterAdsServiceUnavailable builds a
 // lfx-v2-campaign-service-connections service delete-twitter-ads endpoint
 // ServiceUnavailable error.
@@ -4445,6 +4809,17 @@ func NewTestTwitterAdsConnectionTestResultOK(body *TestTwitterAdsResponseBody) *
 	v := &lfxv2campaignserviceconnections.ConnectionTestResult{
 		OK:      *body.OK,
 		Message: body.Message,
+	}
+
+	return v
+}
+
+// NewTestTwitterAdsBadRequest builds a lfx-v2-campaign-service-connections
+// service test-twitter-ads endpoint BadRequest error.
+func NewTestTwitterAdsBadRequest(body *TestTwitterAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
 	}
 
 	return v
@@ -4617,6 +4992,17 @@ func NewGetMicrosoftAdsMicrosoftAdsConnectionOK(body *GetMicrosoftAdsResponseBod
 	return v
 }
 
+// NewGetMicrosoftAdsBadRequest builds a lfx-v2-campaign-service-connections
+// service get-microsoft-ads endpoint BadRequest error.
+func NewGetMicrosoftAdsBadRequest(body *GetMicrosoftAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewGetMicrosoftAdsServiceUnavailable builds a
 // lfx-v2-campaign-service-connections service get-microsoft-ads endpoint
 // ServiceUnavailable error.
@@ -4741,6 +5127,17 @@ func NewUpdateMicrosoftAdsPreconditionRequired(body *UpdateMicrosoftAdsPrecondit
 	return v
 }
 
+// NewDeleteMicrosoftAdsBadRequest builds a lfx-v2-campaign-service-connections
+// service delete-microsoft-ads endpoint BadRequest error.
+func NewDeleteMicrosoftAdsBadRequest(body *DeleteMicrosoftAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewDeleteMicrosoftAdsServiceUnavailable builds a
 // lfx-v2-campaign-service-connections service delete-microsoft-ads endpoint
 // ServiceUnavailable error.
@@ -4783,6 +5180,17 @@ func NewTestMicrosoftAdsConnectionTestResultOK(body *TestMicrosoftAdsResponseBod
 	v := &lfxv2campaignserviceconnections.ConnectionTestResult{
 		OK:      *body.OK,
 		Message: body.Message,
+	}
+
+	return v
+}
+
+// NewTestMicrosoftAdsBadRequest builds a lfx-v2-campaign-service-connections
+// service test-microsoft-ads endpoint BadRequest error.
+func NewTestMicrosoftAdsBadRequest(body *TestMicrosoftAdsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
 	}
 
 	return v
@@ -4961,6 +5369,17 @@ func NewGetHubspotHubspotConnectionOK(body *GetHubspotResponseBody, etag string)
 	return v
 }
 
+// NewGetHubspotBadRequest builds a lfx-v2-campaign-service-connections service
+// get-hubspot endpoint BadRequest error.
+func NewGetHubspotBadRequest(body *GetHubspotBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewGetHubspotServiceUnavailable builds a lfx-v2-campaign-service-connections
 // service get-hubspot endpoint ServiceUnavailable error.
 func NewGetHubspotServiceUnavailable(body *GetHubspotServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
@@ -5087,6 +5506,17 @@ func NewUpdateHubspotPreconditionRequired(body *UpdateHubspotPreconditionRequire
 	return v
 }
 
+// NewDeleteHubspotBadRequest builds a lfx-v2-campaign-service-connections
+// service delete-hubspot endpoint BadRequest error.
+func NewDeleteHubspotBadRequest(body *DeleteHubspotBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewDeleteHubspotServiceUnavailable builds a
 // lfx-v2-campaign-service-connections service delete-hubspot endpoint
 // ServiceUnavailable error.
@@ -5129,6 +5559,17 @@ func NewTestHubspotConnectionTestResultOK(body *TestHubspotResponseBody) *lfxv2c
 	v := &lfxv2campaignserviceconnections.ConnectionTestResult{
 		OK:      *body.OK,
 		Message: body.Message,
+	}
+
+	return v
+}
+
+// NewTestHubspotBadRequest builds a lfx-v2-campaign-service-connections
+// service test-hubspot endpoint BadRequest error.
+func NewTestHubspotBadRequest(body *TestHubspotBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
 	}
 
 	return v
@@ -6097,6 +6538,18 @@ func ValidateCreateGoogleAdsInternalServerErrorResponseBody(body *CreateGoogleAd
 	return
 }
 
+// ValidateGetGoogleAdsBadRequestResponseBody runs the validations defined on
+// get-google-ads_BadRequest_response_body
+func ValidateGetGoogleAdsBadRequestResponseBody(body *GetGoogleAdsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetGoogleAdsServiceUnavailableResponseBody runs the validations
 // defined on get-google-ads_ServiceUnavailable_response_body
 func ValidateGetGoogleAdsServiceUnavailableResponseBody(body *GetGoogleAdsServiceUnavailableResponseBody) (err error) {
@@ -6205,6 +6658,18 @@ func ValidateUpdateGoogleAdsPreconditionRequiredResponseBody(body *UpdateGoogleA
 	return
 }
 
+// ValidateDeleteGoogleAdsBadRequestResponseBody runs the validations defined
+// on delete-google-ads_BadRequest_response_body
+func ValidateDeleteGoogleAdsBadRequestResponseBody(body *DeleteGoogleAdsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteGoogleAdsServiceUnavailableResponseBody runs the validations
 // defined on delete-google-ads_ServiceUnavailable_response_body
 func ValidateDeleteGoogleAdsServiceUnavailableResponseBody(body *DeleteGoogleAdsServiceUnavailableResponseBody) (err error) {
@@ -6232,6 +6697,18 @@ func ValidateDeleteGoogleAdsInternalServerErrorResponseBody(body *DeleteGoogleAd
 // ValidateDeleteGoogleAdsNotFoundResponseBody runs the validations defined on
 // delete-google-ads_NotFound_response_body
 func ValidateDeleteGoogleAdsNotFoundResponseBody(body *DeleteGoogleAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateTestGoogleAdsBadRequestResponseBody runs the validations defined on
+// test-google-ads_BadRequest_response_body
+func ValidateTestGoogleAdsBadRequestResponseBody(body *TestGoogleAdsBadRequestResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -6375,6 +6852,18 @@ func ValidateCreateLinkedinAdsInternalServerErrorResponseBody(body *CreateLinked
 	return
 }
 
+// ValidateGetLinkedinAdsBadRequestResponseBody runs the validations defined on
+// get-linkedin-ads_BadRequest_response_body
+func ValidateGetLinkedinAdsBadRequestResponseBody(body *GetLinkedinAdsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetLinkedinAdsServiceUnavailableResponseBody runs the validations
 // defined on get-linkedin-ads_ServiceUnavailable_response_body
 func ValidateGetLinkedinAdsServiceUnavailableResponseBody(body *GetLinkedinAdsServiceUnavailableResponseBody) (err error) {
@@ -6483,6 +6972,18 @@ func ValidateUpdateLinkedinAdsPreconditionRequiredResponseBody(body *UpdateLinke
 	return
 }
 
+// ValidateDeleteLinkedinAdsBadRequestResponseBody runs the validations defined
+// on delete-linkedin-ads_BadRequest_response_body
+func ValidateDeleteLinkedinAdsBadRequestResponseBody(body *DeleteLinkedinAdsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteLinkedinAdsServiceUnavailableResponseBody runs the validations
 // defined on delete-linkedin-ads_ServiceUnavailable_response_body
 func ValidateDeleteLinkedinAdsServiceUnavailableResponseBody(body *DeleteLinkedinAdsServiceUnavailableResponseBody) (err error) {
@@ -6510,6 +7011,18 @@ func ValidateDeleteLinkedinAdsInternalServerErrorResponseBody(body *DeleteLinked
 // ValidateDeleteLinkedinAdsNotFoundResponseBody runs the validations defined
 // on delete-linkedin-ads_NotFound_response_body
 func ValidateDeleteLinkedinAdsNotFoundResponseBody(body *DeleteLinkedinAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateTestLinkedinAdsBadRequestResponseBody runs the validations defined
+// on test-linkedin-ads_BadRequest_response_body
+func ValidateTestLinkedinAdsBadRequestResponseBody(body *TestLinkedinAdsBadRequestResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -6653,6 +7166,18 @@ func ValidateCreateMetaAdsInternalServerErrorResponseBody(body *CreateMetaAdsInt
 	return
 }
 
+// ValidateGetMetaAdsBadRequestResponseBody runs the validations defined on
+// get-meta-ads_BadRequest_response_body
+func ValidateGetMetaAdsBadRequestResponseBody(body *GetMetaAdsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetMetaAdsServiceUnavailableResponseBody runs the validations
 // defined on get-meta-ads_ServiceUnavailable_response_body
 func ValidateGetMetaAdsServiceUnavailableResponseBody(body *GetMetaAdsServiceUnavailableResponseBody) (err error) {
@@ -6761,6 +7286,18 @@ func ValidateUpdateMetaAdsPreconditionRequiredResponseBody(body *UpdateMetaAdsPr
 	return
 }
 
+// ValidateDeleteMetaAdsBadRequestResponseBody runs the validations defined on
+// delete-meta-ads_BadRequest_response_body
+func ValidateDeleteMetaAdsBadRequestResponseBody(body *DeleteMetaAdsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteMetaAdsServiceUnavailableResponseBody runs the validations
 // defined on delete-meta-ads_ServiceUnavailable_response_body
 func ValidateDeleteMetaAdsServiceUnavailableResponseBody(body *DeleteMetaAdsServiceUnavailableResponseBody) (err error) {
@@ -6788,6 +7325,18 @@ func ValidateDeleteMetaAdsInternalServerErrorResponseBody(body *DeleteMetaAdsInt
 // ValidateDeleteMetaAdsNotFoundResponseBody runs the validations defined on
 // delete-meta-ads_NotFound_response_body
 func ValidateDeleteMetaAdsNotFoundResponseBody(body *DeleteMetaAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateTestMetaAdsBadRequestResponseBody runs the validations defined on
+// test-meta-ads_BadRequest_response_body
+func ValidateTestMetaAdsBadRequestResponseBody(body *TestMetaAdsBadRequestResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -6931,6 +7480,18 @@ func ValidateCreateRedditAdsInternalServerErrorResponseBody(body *CreateRedditAd
 	return
 }
 
+// ValidateGetRedditAdsBadRequestResponseBody runs the validations defined on
+// get-reddit-ads_BadRequest_response_body
+func ValidateGetRedditAdsBadRequestResponseBody(body *GetRedditAdsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetRedditAdsServiceUnavailableResponseBody runs the validations
 // defined on get-reddit-ads_ServiceUnavailable_response_body
 func ValidateGetRedditAdsServiceUnavailableResponseBody(body *GetRedditAdsServiceUnavailableResponseBody) (err error) {
@@ -7039,6 +7600,18 @@ func ValidateUpdateRedditAdsPreconditionRequiredResponseBody(body *UpdateRedditA
 	return
 }
 
+// ValidateDeleteRedditAdsBadRequestResponseBody runs the validations defined
+// on delete-reddit-ads_BadRequest_response_body
+func ValidateDeleteRedditAdsBadRequestResponseBody(body *DeleteRedditAdsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteRedditAdsServiceUnavailableResponseBody runs the validations
 // defined on delete-reddit-ads_ServiceUnavailable_response_body
 func ValidateDeleteRedditAdsServiceUnavailableResponseBody(body *DeleteRedditAdsServiceUnavailableResponseBody) (err error) {
@@ -7066,6 +7639,18 @@ func ValidateDeleteRedditAdsInternalServerErrorResponseBody(body *DeleteRedditAd
 // ValidateDeleteRedditAdsNotFoundResponseBody runs the validations defined on
 // delete-reddit-ads_NotFound_response_body
 func ValidateDeleteRedditAdsNotFoundResponseBody(body *DeleteRedditAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateTestRedditAdsBadRequestResponseBody runs the validations defined on
+// test-reddit-ads_BadRequest_response_body
+func ValidateTestRedditAdsBadRequestResponseBody(body *TestRedditAdsBadRequestResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -7209,6 +7794,18 @@ func ValidateCreateTwitterAdsInternalServerErrorResponseBody(body *CreateTwitter
 	return
 }
 
+// ValidateGetTwitterAdsBadRequestResponseBody runs the validations defined on
+// get-twitter-ads_BadRequest_response_body
+func ValidateGetTwitterAdsBadRequestResponseBody(body *GetTwitterAdsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetTwitterAdsServiceUnavailableResponseBody runs the validations
 // defined on get-twitter-ads_ServiceUnavailable_response_body
 func ValidateGetTwitterAdsServiceUnavailableResponseBody(body *GetTwitterAdsServiceUnavailableResponseBody) (err error) {
@@ -7317,6 +7914,18 @@ func ValidateUpdateTwitterAdsPreconditionRequiredResponseBody(body *UpdateTwitte
 	return
 }
 
+// ValidateDeleteTwitterAdsBadRequestResponseBody runs the validations defined
+// on delete-twitter-ads_BadRequest_response_body
+func ValidateDeleteTwitterAdsBadRequestResponseBody(body *DeleteTwitterAdsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteTwitterAdsServiceUnavailableResponseBody runs the validations
 // defined on delete-twitter-ads_ServiceUnavailable_response_body
 func ValidateDeleteTwitterAdsServiceUnavailableResponseBody(body *DeleteTwitterAdsServiceUnavailableResponseBody) (err error) {
@@ -7344,6 +7953,18 @@ func ValidateDeleteTwitterAdsInternalServerErrorResponseBody(body *DeleteTwitter
 // ValidateDeleteTwitterAdsNotFoundResponseBody runs the validations defined on
 // delete-twitter-ads_NotFound_response_body
 func ValidateDeleteTwitterAdsNotFoundResponseBody(body *DeleteTwitterAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateTestTwitterAdsBadRequestResponseBody runs the validations defined on
+// test-twitter-ads_BadRequest_response_body
+func ValidateTestTwitterAdsBadRequestResponseBody(body *TestTwitterAdsBadRequestResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -7487,6 +8108,18 @@ func ValidateCreateMicrosoftAdsInternalServerErrorResponseBody(body *CreateMicro
 	return
 }
 
+// ValidateGetMicrosoftAdsBadRequestResponseBody runs the validations defined
+// on get-microsoft-ads_BadRequest_response_body
+func ValidateGetMicrosoftAdsBadRequestResponseBody(body *GetMicrosoftAdsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetMicrosoftAdsServiceUnavailableResponseBody runs the validations
 // defined on get-microsoft-ads_ServiceUnavailable_response_body
 func ValidateGetMicrosoftAdsServiceUnavailableResponseBody(body *GetMicrosoftAdsServiceUnavailableResponseBody) (err error) {
@@ -7596,6 +8229,18 @@ func ValidateUpdateMicrosoftAdsPreconditionRequiredResponseBody(body *UpdateMicr
 	return
 }
 
+// ValidateDeleteMicrosoftAdsBadRequestResponseBody runs the validations
+// defined on delete-microsoft-ads_BadRequest_response_body
+func ValidateDeleteMicrosoftAdsBadRequestResponseBody(body *DeleteMicrosoftAdsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteMicrosoftAdsServiceUnavailableResponseBody runs the
 // validations defined on delete-microsoft-ads_ServiceUnavailable_response_body
 func ValidateDeleteMicrosoftAdsServiceUnavailableResponseBody(body *DeleteMicrosoftAdsServiceUnavailableResponseBody) (err error) {
@@ -7623,6 +8268,18 @@ func ValidateDeleteMicrosoftAdsInternalServerErrorResponseBody(body *DeleteMicro
 // ValidateDeleteMicrosoftAdsNotFoundResponseBody runs the validations defined
 // on delete-microsoft-ads_NotFound_response_body
 func ValidateDeleteMicrosoftAdsNotFoundResponseBody(body *DeleteMicrosoftAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateTestMicrosoftAdsBadRequestResponseBody runs the validations defined
+// on test-microsoft-ads_BadRequest_response_body
+func ValidateTestMicrosoftAdsBadRequestResponseBody(body *TestMicrosoftAdsBadRequestResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -7766,6 +8423,18 @@ func ValidateCreateHubspotInternalServerErrorResponseBody(body *CreateHubspotInt
 	return
 }
 
+// ValidateGetHubspotBadRequestResponseBody runs the validations defined on
+// get-hubspot_BadRequest_response_body
+func ValidateGetHubspotBadRequestResponseBody(body *GetHubspotBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetHubspotServiceUnavailableResponseBody runs the validations
 // defined on get-hubspot_ServiceUnavailable_response_body
 func ValidateGetHubspotServiceUnavailableResponseBody(body *GetHubspotServiceUnavailableResponseBody) (err error) {
@@ -7874,6 +8543,18 @@ func ValidateUpdateHubspotPreconditionRequiredResponseBody(body *UpdateHubspotPr
 	return
 }
 
+// ValidateDeleteHubspotBadRequestResponseBody runs the validations defined on
+// delete-hubspot_BadRequest_response_body
+func ValidateDeleteHubspotBadRequestResponseBody(body *DeleteHubspotBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteHubspotServiceUnavailableResponseBody runs the validations
 // defined on delete-hubspot_ServiceUnavailable_response_body
 func ValidateDeleteHubspotServiceUnavailableResponseBody(body *DeleteHubspotServiceUnavailableResponseBody) (err error) {
@@ -7901,6 +8582,18 @@ func ValidateDeleteHubspotInternalServerErrorResponseBody(body *DeleteHubspotInt
 // ValidateDeleteHubspotNotFoundResponseBody runs the validations defined on
 // delete-hubspot_NotFound_response_body
 func ValidateDeleteHubspotNotFoundResponseBody(body *DeleteHubspotNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateTestHubspotBadRequestResponseBody runs the validations defined on
+// test-hubspot_BadRequest_response_body
+func ValidateTestHubspotBadRequestResponseBody(body *TestHubspotBadRequestResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

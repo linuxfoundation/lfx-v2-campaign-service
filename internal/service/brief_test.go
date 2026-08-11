@@ -229,12 +229,38 @@ func TestBriefService_SetBackend_LateBinding(t *testing.T) {
 
 // A missing bearer token is a client-side problem and must map to 400, not 500
 // (a 500 misrepresents it as a server fault and can trigger ops alerting).
+//
+// The verifier has to be WIRED for this to be the case it claims. Without one the guard
+// takes its own no-verifier branch, which is a 503 — this service failing, not the caller
+// — and the assertion below would pass for the wrong reason before that split existed.
 func TestBriefService_JWTAuth_EmptyTokenIsBadRequest(t *testing.T) {
 	s := NewBriefService(nil, nil, nil, nil)
+	s.SetTokenVerifier(&stubVerifier{})
 	_, err := s.JWTAuth(context.Background(), "", nil)
 	if _, ok := err.(*briefs.BadRequestError); !ok {
 		t.Fatalf("expected *briefs.BadRequestError for empty token, got %T (%v)", err, err)
 	}
+}
+
+// TestBriefService_JWTAuth_UnverifiableIsUnavailable pins the other half at the boundary
+// the client actually sees. A JWKS outage and an unwired verifier are both this service
+// unable to CHECK the token; 400 would blame the caller for it and tell them not to retry.
+func TestBriefService_JWTAuth_UnverifiableIsUnavailable(t *testing.T) {
+	t.Run("no verifier wired", func(t *testing.T) {
+		s := NewBriefService(nil, nil, nil, nil)
+		_, err := s.JWTAuth(context.Background(), "any-token", nil)
+		if _, ok := err.(*briefs.ConnServiceUnavailableError); !ok {
+			t.Fatalf("err = %T (%v), want *briefs.ConnServiceUnavailableError", err, err)
+		}
+	})
+	t.Run("signing keys unavailable", func(t *testing.T) {
+		s := NewBriefService(nil, nil, nil, nil)
+		s.SetTokenVerifier(&stubVerifier{err: fmt.Errorf("fetch jwks: %w", domain.ErrKeyUnavailable)})
+		_, err := s.JWTAuth(context.Background(), "a-perfectly-good-token", nil)
+		if _, ok := err.(*briefs.ConnServiceUnavailableError); !ok {
+			t.Fatalf("err = %T (%v), want *briefs.ConnServiceUnavailableError", err, err)
+		}
+	})
 }
 
 func isBriefUnavailable(err error) bool {

@@ -104,12 +104,12 @@ var _ = Service("lfx-v2-campaign-service-audiences", func() {
 			Required("project_id", "brief_id", "audience")
 		})
 		Result(Audience)
-		commonBriefErrors(true)
+		commonBriefErrors()
 		HTTP(func() {
 			POST("/projects/{project_id}/briefs/{brief_id}/audiences")
 			Header("bearer_token:Authorization")
 			Response(StatusCreated, func() { Header("etag:ETag") })
-			briefErrorResponses(true)
+			briefErrorResponses()
 		})
 	})
 
@@ -123,12 +123,12 @@ var _ = Service("lfx-v2-campaign-service-audiences", func() {
 			Required("project_id", "brief_id", "audience_id")
 		})
 		Result(Audience)
-		commonBriefErrors(false)
+		commonBriefErrors()
 		HTTP(func() {
 			GET("/projects/{project_id}/briefs/{brief_id}/audiences/{audience_id}")
 			Header("bearer_token:Authorization")
 			Response(StatusOK, func() { Header("etag:ETag") })
-			briefErrorResponses(false)
+			briefErrorResponses()
 		})
 	})
 
@@ -144,12 +144,12 @@ var _ = Service("lfx-v2-campaign-service-audiences", func() {
 			Attribute("audiences", ArrayOf(Audience))
 			Required("audiences")
 		})
-		commonBriefErrors(false)
+		commonBriefErrors()
 		HTTP(func() {
 			GET("/projects/{project_id}/briefs/{brief_id}/audiences")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
-			briefErrorResponses(false)
+			briefErrorResponses()
 		})
 	})
 
@@ -167,7 +167,7 @@ var _ = Service("lfx-v2-campaign-service-audiences", func() {
 			Required("project_id", "brief_id", "audience_id", "audience")
 		})
 		Result(Audience)
-		commonBriefErrors(true)
+		commonBriefErrors()
 		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
 		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
 		HTTP(func() {
@@ -175,7 +175,7 @@ var _ = Service("lfx-v2-campaign-service-audiences", func() {
 			Header("bearer_token:Authorization")
 			Header("if_match:If-Match")
 			Response(StatusOK, func() { Header("etag:ETag") })
-			briefErrorResponses(true)
+			briefErrorResponses()
 			Response("PreconditionFailed", StatusPreconditionFailed)
 			Response("PreconditionRequired", StatusPreconditionRequired)
 		})
@@ -190,7 +190,7 @@ var _ = Service("lfx-v2-campaign-service-audiences", func() {
 			Required("project_id", "brief_id")
 		})
 		Result(Audience)
-		commonBriefErrors(true)
+		commonBriefErrors()
 		HTTP(func() {
 			POST("/projects/{project_id}/briefs/{brief_id}/audiences/build")
 			Header("bearer_token:Authorization")
@@ -198,7 +198,7 @@ var _ = Service("lfx-v2-campaign-service-audiences", func() {
 			// reported as accepted-and-recorded rather than implying the platform-side
 			// lists were all confirmed within the request.
 			Response(StatusAccepted, func() { Header("etag:ETag") })
-			briefErrorResponses(true)
+			briefErrorResponses()
 		})
 	})
 })
