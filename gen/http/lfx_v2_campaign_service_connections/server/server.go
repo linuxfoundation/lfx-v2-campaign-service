@@ -63,6 +63,7 @@ type Server struct {
 	TestHubspot               http.Handler
 	SetCredentialHubspot      http.Handler
 	ListGoogleAdsAccounts     http.Handler
+	ListMetaAdsAccounts       http.Handler
 }
 
 // MountPoint holds information about the mounted endpoints.
@@ -136,6 +137,7 @@ func New(
 			{"TestHubspot", "POST", "/projects/{project_id}/connection-hubspot/test"},
 			{"SetCredentialHubspot", "POST", "/projects/{project_id}/connection-hubspot/set-credential"},
 			{"ListGoogleAdsAccounts", "GET", "/projects/{project_id}/connection-google-ads/accounts"},
+			{"ListMetaAdsAccounts", "GET", "/projects/{project_id}/connection-meta-ads/accounts"},
 		},
 		CreateGoogleAds:           NewCreateGoogleAdsHandler(e.CreateGoogleAds, mux, decoder, encoder, errhandler, formatter),
 		GetGoogleAds:              NewGetGoogleAdsHandler(e.GetGoogleAds, mux, decoder, encoder, errhandler, formatter),
@@ -180,6 +182,7 @@ func New(
 		TestHubspot:               NewTestHubspotHandler(e.TestHubspot, mux, decoder, encoder, errhandler, formatter),
 		SetCredentialHubspot:      NewSetCredentialHubspotHandler(e.SetCredentialHubspot, mux, decoder, encoder, errhandler, formatter),
 		ListGoogleAdsAccounts:     NewListGoogleAdsAccountsHandler(e.ListGoogleAdsAccounts, mux, decoder, encoder, errhandler, formatter),
+		ListMetaAdsAccounts:       NewListMetaAdsAccountsHandler(e.ListMetaAdsAccounts, mux, decoder, encoder, errhandler, formatter),
 	}
 }
 
@@ -231,6 +234,7 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.TestHubspot = m(s.TestHubspot)
 	s.SetCredentialHubspot = m(s.SetCredentialHubspot)
 	s.ListGoogleAdsAccounts = m(s.ListGoogleAdsAccounts)
+	s.ListMetaAdsAccounts = m(s.ListMetaAdsAccounts)
 }
 
 // MethodNames returns the methods served.
@@ -282,6 +286,7 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountTestHubspotHandler(mux, h.TestHubspot)
 	MountSetCredentialHubspotHandler(mux, h.SetCredentialHubspot)
 	MountListGoogleAdsAccountsHandler(mux, h.ListGoogleAdsAccounts)
+	MountListMetaAdsAccountsHandler(mux, h.ListMetaAdsAccounts)
 }
 
 // Mount configures the mux to serve the lfx-v2-campaign-service-connections
@@ -2600,6 +2605,61 @@ func NewListGoogleAdsAccountsHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "list-google-ads-accounts")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountListMetaAdsAccountsHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
+// endpoint.
+func MountListMetaAdsAccountsHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/connection-meta-ads/accounts", f)
+}
+
+// NewListMetaAdsAccountsHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-connections" service
+// "list-meta-ads-accounts" endpoint.
+func NewListMetaAdsAccountsHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeListMetaAdsAccountsRequest(mux, decoder)
+		encodeResponse = EncodeListMetaAdsAccountsResponse(encoder)
+		encodeError    = EncodeListMetaAdsAccountsError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "list-meta-ads-accounts")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
 		payload, err := decodeRequest(r)
 		if err != nil {

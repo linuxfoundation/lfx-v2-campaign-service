@@ -19,10 +19,11 @@ chart↔route parity invariant — see [httproute.md](httproute.md)):
 1. **`openapi:get`** — `/_campaigns/openapi.*` docs are publicly readable
    (`oidc` + `anonymous_authenticator` → `allow_all` → `create_jwt`).
 2. **`project-api`** — every project-nested endpoint (`connection-*` — including
-   `connection-google-ads/accounts`, ad-account discovery, which today is the ONLY
-   provider-specific `connection-*` sub-path and is ruled by its own entry rather
-   than by the shared `connection-*` family; the HTTPRoute regex admits it on the
-   same one-provider basis, and `parity_test` fails if the two ever disagree —
+   `connection-google-ads/accounts` and `connection-meta-ads/accounts`, ad-account
+   discovery, today the only provider-specific `connection-*` sub-path and ruled by
+   its own entry rather than by the shared `connection-*` family; the HTTPRoute regex
+   admits it for the same two providers, and `parity_test` fails if the two ever
+   disagree —
    `briefs` [+ nested campaigns], `jobs`, `{provider}/metrics` for the five ad
    providers, `google-ads/keywords|audience`, `hubspot`). Gated on the project
    `campaign_manager` relation (D2 — reads AND writes; no read-only audience),

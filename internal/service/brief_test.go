@@ -3472,6 +3472,7 @@ func TestGetCampaignMetrics_UnusableConnectionIs409(t *testing.T) {
 	if !strings.Contains(conflict.Message, "no ad account selected") {
 		t.Errorf("message = %q, want it to name the missing account specifically", conflict.Message)
 	}
+	assertNoAccountsEndpointPromised(t, conflict.Message)
 	assertAccountNotSelectedLog(t, buf.String())
 }
 
@@ -3528,6 +3529,7 @@ func TestToggleCampaignStatus_UnusableConnectionIs409(t *testing.T) {
 	if !strings.Contains(conflict.Message, "no ad account selected") {
 		t.Errorf("message = %q, want it to name the missing account specifically", conflict.Message)
 	}
+	assertNoAccountsEndpointPromised(t, conflict.Message)
 	assertAccountNotSelectedLog(t, buf.String())
 }
 
@@ -3553,6 +3555,20 @@ func TestToggleCampaignStatus_OtherUnusableCauseKeepsTheGeneralMessage(t *testin
 	}
 	if strings.Contains(conflict.Message, "no ad account selected") {
 		t.Errorf("message = %q, want the general unusable-connection wording for an inactive connection", conflict.Message)
+	}
+}
+
+// assertNoAccountsEndpointPromised guards the remedy the 409 prescribes. Only Google Ads has
+// an accounts endpoint (design/connection.go, list-google-ads-accounts); Reddit, X/Twitter and
+// Microsoft Ads reach this same arm and have none. A message telling those callers to "choose
+// one from the connection's accounts endpoint" sends them to a route that 404s, which is worse
+// than no remedy at all — the caller reads it as a bug in the service rather than a value they
+// have to supply. Saving the id directly works on every provider, so that is what it must say.
+func assertNoAccountsEndpointPromised(t *testing.T, message string) {
+	t.Helper()
+	if strings.Contains(message, "accounts endpoint") {
+		t.Errorf("message = %q promises an accounts endpoint, but only Google Ads has one: "+
+			"every other provider reaching this arm would be sent to a route that does not exist", message)
 	}
 }
 
