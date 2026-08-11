@@ -37,7 +37,7 @@ GOA_VERSION := v3.25.3
 clean: ## Remove temporary build artifacts (binaries, coverage)
 	@echo "Cleaning build artifacts..."
 	rm -rf bin/
-	rm -f coverage.out
+	rm -f coverage.out coverage-postgres.out
 
 .PHONY: all
 all: clean apigen fmt lint test build ## Clean, generate, format, lint, test, and build
@@ -92,7 +92,48 @@ lint: ## Run golangci-lint (local Go linting)
 .PHONY: test
 test: ## Run tests
 	@echo "Running tests..."
-	go test -v -race -coverprofile=coverage.out ./...
+	# internal/infrastructure/postgres and its dbtest subpackage each run live-database
+	# migrations against the SAME TEST_DATABASE_URL from their own package-scoped
+	# sync.Once (dbtest.Pool cannot be reused from the postgres package's own live tests —
+	# it would be an import cycle, see audience_reconcile_live_test.go). `go test ./...`
+	# builds and runs packages as separate binaries/processes, so with the default
+	# parallelism these two can call Migrate() at the same moment. golang-migrate's
+	# advisory lock serializes the two Up() calls, but 000018's CREATE INDEX CONCURRENTLY
+	# still has to wait out every OTHER session's open transaction against the table —
+	# including one held by the OTHER package's own live tests — which is exactly the
+	# shape of Postgres's documented CONCURRENTLY-vs-concurrent-transaction deadlock.
+	# `-p 1` forces every package under internal/infrastructure/postgres/... to run
+	# strictly one at a time, closing the race at its source instead of retrying past it
+	# (a retry after a failed CONCURRENTLY build risks finding the index already present
+	# and INVALID under IF NOT EXISTS, which checkNoInvalidIndexes then fails permanently).
+	#
+	# Both halves run even when the first fails, and the target's status is the OR of the
+	# two. As two plain recipe lines, a red postgres suite aborted the target and the
+	# remaining ~40 packages were never built or run — so one live-database failure hid
+	# every unrelated failure until somebody ran the suite again. `go test ./...` did not
+	# have that property, and splitting it should not have cost it.
+	#
+	# `go list` runs on its own line and its status is checked, rather than inline in the
+	# `go test` argument list. A command substitution's exit status is DISCARDED — not
+	# merely masked by the pipeline's final `grep`, as it would be in a plain pipeline — so
+	# a `go list` that fails after emitting a partial package list left `go test` running
+	# that partial list and `make test` reporting success without having tested the package
+	# whose breakage stopped discovery. A build failure in one package is exactly the case
+	# that both breaks discovery and most needs reporting, so the failure mode selected for
+	# the worst input. Splitting the target introduced this too: `go test ./...` never
+	# enumerated packages in a substitution.
+	@rc=0; \
+	echo "==> go test ./internal/infrastructure/postgres/... (live database, -p 1)"; \
+	go test -v -race -p 1 -coverprofile=coverage-postgres.out ./internal/infrastructure/postgres/... || rc=1; \
+	echo "==> go test (all other packages)"; \
+	all=$$(go list ./...) || { echo "go list failed; refusing to run a partial package list" >&2; exit 1; }; \
+	rest=$$(printf '%s\n' "$$all" | grep -v -E '/internal/infrastructure/postgres(/|$$)'); \
+	if [ -z "$$rest" ]; then \
+		echo "no packages outside internal/infrastructure/postgres; the filter is wrong" >&2; \
+		exit 1; \
+	fi; \
+	go test -v -race -coverprofile=coverage.out $$rest || rc=1; \
+	exit $$rc
 
 .PHONY: build
 build: ## Build the application for local OS
