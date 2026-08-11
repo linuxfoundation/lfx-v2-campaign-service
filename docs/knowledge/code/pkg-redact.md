@@ -70,6 +70,19 @@ is where the other credential shape lives: neither piece of
 character inside a value. The scheme has to be at the **start**: merely containing a `://` was
 the weaker form, and it admitted the tail of a value as though it were the head of a URL.
 
+`redactOne` anchors the scheme the same way, and its not doing so was a leak. It took the
+first `://` **anywhere** as the start of the authority, which for a value with no scheme of its
+own is the one inside its query: `u:p@host?redirect=https://x` began the userinfo search after
+the real `@` and printed `u:p@host` verbatim. What turned a lossy read into a leaking one is
+that such a value has no `@` past its query either, so it misses every refusal and reaches the
+query trim with nothing left to cut — and with a path (`user:s3cret@idp.example/jwks?redirect=…`)
+the output even looks like a correctly redacted URL. Schemeless values are routine here: the
+list rule declines to split the schemeless NATS form on purpose, and `URLUserinfo`'s callers
+include the path where `url.Parse` **failed**. The two functions now share `schemeEnd`/
+`isScheme`; the defect was one requiring a scheme at the start while the other accepted a `://`
+anywhere, so a value rejected as schemeless was treated as schemed by the function it fell back
+to.
+
 Even anchored, no test applied to a **segment** is enough, because a token tail can be
 scheme-shaped: `nats://a,nats://b?access_token=s3cret,secret://tail` yields three well-formed-
 looking entries, the middle one trims at its `?`, and the third — half a token — is joined

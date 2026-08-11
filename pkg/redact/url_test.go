@@ -219,6 +219,48 @@ func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
 			secrets: []string{"s3cret", "access_token"},
 		},
 		{
+			// The value has no scheme of its own, so the first `://` in it belongs to its
+			// QUERY. authStart was set past that, which put the start of the search after the
+			// real `@` at offset 3: no userinfo was found, and — the part that made this a leak
+			// rather than a lossy read — no `@` was found past the (now empty) query either, so
+			// every refusal was missed and the value fell through to trimQueryAndFragment with
+			// nothing left to cut. It printed `u:p@host`.
+			//
+			// Schemeless input is not hypothetical here: allSchemed declines to split the
+			// schemeless NATS list form on purpose, and URLUserinfo's callers include the path
+			// where url.Parse FAILED, which is where a malformed value is likeliest to come from.
+			name:    "a query's :// is not a schemeless value's scheme",
+			in:      "u:p@host?redirect=https://x", // secretlint-disable-line
+			want:    "***@host",
+			secrets: []string{"u:p"},
+		},
+		{
+			// The same defect with a path, which is the worse shape: host and path survive the
+			// redaction they are meant to survive, so a reader sees a plausible, complete-looking
+			// URL and the credential is at the front of it. Printed in full.
+			name:    "a schemeless value with a path keeps host and path, not the credential",
+			in:      "user:s3cret@idp.example/jwks?redirect=https://x", // secretlint-disable-line
+			want:    "***@idp.example/jwks",
+			secrets: []string{"user:s3cret"},
+		},
+		{
+			// Commas plus the query's `://` sent this into the multi-URL branch, where the same
+			// wrong authStart applied. The fallback is lossy by contract — the first host goes —
+			// but it must not print either credential.
+			name:    "a schemeless list is not rescued by the query's scheme",
+			in:      "u:p@host,v:q@host2?redirect=https://x", // secretlint-disable-line
+			want:    "***@host2",
+			secrets: []string{"u:p", "v:q"},
+		},
+		{
+			// The other side of the rule: a REAL scheme must still be honoured, or the fix
+			// would redact every schemed URL down to its authority-less form.
+			name:    "a real scheme is still a scheme",
+			in:      "https://user:s3cret@idp.example/jwks", // secretlint-disable-line
+			want:    "https://***@idp.example/jwks",
+			secrets: []string{"user:s3cret"},
+		},
+		{
 			// The multi-URL fallback used to be reachable only when the FIRST authority had
 			// no '@'. This value is the mix URLUserinfo deliberately refuses to split, so it
 			// is the likeliest thing to arrive whole — and its first authority does have an

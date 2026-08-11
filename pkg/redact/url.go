@@ -148,6 +148,34 @@ func isScheme(s string) bool {
 	return len(s) > 0
 }
 
+// schemeEnd returns the offset where this value's authority begins: just past `://` when the
+// value actually starts with a scheme, and 0 when it does not.
+//
+// The `isScheme` test is the whole point, and its absence leaked. `strings.Index(u, "://")`
+// finds the FIRST `://` anywhere, which in a schemeless value is the one inside its own query:
+// `u:p@host?redirect=https://x` put authStart past the query's `https://`, so the search for
+// userinfo began after the `@` at offset 3, found none, and returned the credential verbatim.
+// With a path it was worse — `user:s3cret@idp.example/jwks?redirect=https://x` printed all of
+// it — because a value that has no `@` after authStart also has none past its (now empty)
+// query, so it misses every refusal below and falls through to `trimQueryAndFragment`, which
+// has nothing left to cut.
+//
+// Schemeless values reach here by design: `allSchemed` deliberately declines to split the
+// schemeless NATS list form, and `URLUserinfo`'s callers include the path where `url.Parse`
+// FAILED, which is where a malformed value is likeliest.
+//
+// This is the same rule `allSchemed` applies per segment, and the two are now spelled the same
+// way on purpose. `redactOne` disagreeing with it was the defect: one function required a
+// scheme at the start of the value and the other accepted a `://` anywhere in it, so a value
+// the list rule rejected as schemeless was then treated as schemed by the very function it
+// fell back to.
+func schemeEnd(u string) int {
+	if i := strings.Index(u, "://"); i > 0 && isScheme(u[:i]) {
+		return i + 3
+	}
+	return 0
+}
+
 // redactOne is URLUserinfo for a value known to hold at most one URL.
 //
 // The split is on the LAST `@` WITHIN THE AUTHORITY, not the last `@` in the string, and not
@@ -200,11 +228,7 @@ func isScheme(s string) bool {
 // survives into the log. One JWKS URL of the form `?redirect=https://x@y&access_token=…` was
 // enough to print the token in full.
 func redactOne(u string) string {
-	scheme := strings.Index(u, "://")
-	authStart := 0
-	if scheme >= 0 {
-		authStart = scheme + 3
-	}
+	authStart := schemeEnd(u)
 	if strings.ContainsRune(u, ',') && strings.Contains(u[authStart:], "://") {
 		// More than one URL in the value: the authority bound proves nothing about what
 		// follows, so fall back to the whole-string rule. Bound the search to the pre-query
