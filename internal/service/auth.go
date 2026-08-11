@@ -122,16 +122,20 @@ func actorFromCtx(ctx context.Context) *model.Actor {
 // nothing else failing. It counts ATTEMPTS, not commits — whether an actor is present is
 // decided upstream of anything the repository does.
 //
-// The message says "unattributed", not "recorded as NULL", because NULL is only what an
-// INSERT does. Every update path COALESCEs (`campaign_repo.go`, the upsert conflict arm, the
-// replace, and the soft delete), so a nil actor there PRESERVES the last actor known rather
-// than clearing it — deliberately, since forgetting who last touched a row is worse than not
-// learning who touched it this time. A warning promising NULL would send an operator looking
-// for a null column that the row does not have.
+// The message says "unattributed" rather than naming a column state, because this helper serves
+// every table and the tables disagree. `campaign_repo.go` COALESCEs on update (the upsert
+// conflict arm, the replace, and the soft delete), so a nil actor there PRESERVES the last actor
+// known — deliberately, since forgetting who last touched a row is worse than not learning who
+// touched it this time. `brief_repo.go` (replace, approve, archive) and `connection_repo.go`
+// assign `updated_by` outright, so the same nil actor CLEARS it.
+//
+// Promising either one here would send an operator looking for a column state half the tables do
+// not have, which is why the warning names neither. The divergence itself is worth settling, but
+// it is a repository decision and not this helper's to make.
 func attributedActor(ctx context.Context, operation string) *model.Actor {
 	a := actorFromCtx(ctx)
 	if a == nil {
-		slog.WarnContext(ctx, "write attempted with no authenticated actor; this write is unattributed (inserts record NULL; updates preserve the previous actor via COALESCE)",
+		slog.WarnContext(ctx, "write attempted with no authenticated actor; this write is unattributed (the stored actor is left NULL, preserved, or cleared depending on the table)",
 			"operation", operation)
 	}
 	return a

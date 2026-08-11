@@ -155,9 +155,14 @@ func TestURLUserinfo_Shapes(t *testing.T) {
 		// it concludes the endpoint is misconfigured.
 		{"https://idp.example.com/jwks?contact=ops@b.example", "https://idp.example.com/jwks"},
 		// The host is kept because `idp.example.com` is a well-formed authority, so the `/`
-		// after it can only start a path. A port does not change that; a NON-numeric one does,
-		// because then userinfo is the only legal reading and the `/` is inside the password.
-		{"https://idp.example.com:8443/jwks?contact=ops@b.example", "https://idp.example.com:8443/jwks"},
+		// after it can only start a path.
+		//
+		// An explicit port takes that away, numeric or not: `idp.example.com:8443` is also a
+		// legal `user:password`, so the `/` may be inside the password and the `?` with it. The
+		// diagnostic cost is narrow — it is paid only by a value that ALSO has an `@` past its
+		// `?`, which is why the far commoner `…:8443/jwks?access_token=…` below keeps its host.
+		{"https://idp.example.com:8443/jwks?contact=ops@b.example", "https://***"},
+		{"https://idp.example.com:8443/jwks?access_token=s3cret", "https://idp.example.com:8443/jwks"},
 		{"https://[::1]:8443/jwks?contact=ops@b.example", "https://[::1]:8443/jwks"},
 		// The bracketed forms a real authority takes, all of which must still keep their host
 		// now that the literal is validated rather than sniffed by its last byte: no port, an
@@ -343,6 +348,18 @@ func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
 			in:      "nats://[secret]/path?x@host:4222", // secretlint-disable-line
 			want:    "nats://***",
 			secrets: []string{"secret]", "/path"},
+		},
+		{
+			// Reading a NON-numeric right-hand side as the tell left the numeric one, and a
+			// numeric PASSWORD is just as legal as a port: `u:1234` is `u`-host-port-1234 and
+			// `u`-user-password-1234 in the same eleven bytes. The authority reading won by
+			// default, so the `?` was called genuine, the value cut there, and `nats://u:1234`
+			// went to the log. An unbracketed `:` before the path is now refused whatever
+			// follows it — the one position that cannot ask `isPort` a meaningful question.
+			name:    "a numeric password is not a port",
+			in:      "nats://u:1234/path?x@host:4222", // secretlint-disable-line
+			want:    "nats://***",
+			secrets: []string{"u:1234", ":1234", "/path"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -618,9 +618,16 @@ output and the query `@` erases the host.
 ## Three statements that were true of a narrower thing than they described
 
 - The no-actor warning promised "attribution will be recorded as NULL if it commits". Only an
-  INSERT does that. Every update path COALESCEs — the upsert conflict arm, the replace and the
-  soft delete in `campaign_repo.go` — so a nil actor there PRESERVES the last actor known, and
-  an operator following the warning would look for a null column the row does not have.
+  INSERT does that. `campaign_repo.go`'s update paths COALESCE — the upsert conflict arm, the
+  replace and the soft delete — so a nil actor there PRESERVES the last actor known, and an
+  operator following the warning would look for a null column the row does not have.
+
+  The first correction over-corrected: it said "every update path", which is true of exactly one
+  repository. `brief_repo.go` (replace, approve, archive) and `connection_repo.go` assign
+  `updated_by` outright, so there the same nil actor CLEARS it — the third outcome. Copilot
+  caught this on round 5. The warning now names none of the three and says the stored actor
+  depends on the table, because `attributedActor` serves all of them. Whether the repositories
+  should agree is a real question and a separate one; it is not resolved here.
 - `commonBriefErrors` said JWTAuth returns `*conn.BadRequestError`. Goa generates one concrete
   type per service from the shared design type, so `BriefService.JWTAuth` returns
   `*briefs.BadRequestError` — identically shaped and a different Go type.
@@ -668,3 +675,35 @@ value that is in this function precisely because its structure could not be trus
 one held for the shape it was written against and broke on the next. What finally stopped the
 sequence was not a smarter inference but a cheaper one — a positional fact from the grammar,
 and a conservative branch that costs earlier hosts rather than trying to keep them.
+
+## Round 5: `isPort` answered a question its caller could not ask
+
+Copilot found, and dealako confirmed as the round's one blocking item, that
+`pathClosesAuthority` still leaked through the branch the previous round had left alone.
+
+The rule was: an unbracketed `:` before the path is the tell, because the right-hand side of a
+real authority's colon is a decimal port — so `u:p/path?x@host` is refused (`p` is not a port,
+therefore `u:p` can only be userinfo) while `idp.example.com:8443/jwks?…@…` keeps its host.
+
+A numeric PASSWORD is equally legal. `nats://u:1234/path?x@host:4222` has `u:1234` before the
+`/`, and `u`-host-port-`1234` and `u`-user-password-`1234` are the same eleven bytes. The
+authority reading won by default, so the `?` was called genuine, the value was cut there, and
+`nats://u:1234/path` went to the log with the password in it.
+
+There is no sharper test available at that position — `isPort` distinguishes a well-formed port
+from a malformed one, and the question here is which of two well-formed readings applies. So an
+unbracketed `:` is now refused whatever follows it. Bracketed hosts keep their port test:
+RFC 3986 §3.2.1 excludes `[` and `]` from userinfo, so there the authority reading is the only
+one.
+
+The cost is bounded and lands the right way round. `pathClosesAuthority` is consulted only for a
+value that ALSO carries an `@` past its `?`, so what is lost is the host of an explicit-port URL
+with an `@` in its query (`https://idp:8443/jwks?contact=ops@b` now prints `https://***`), and
+what is kept is every numeric password. The commoner `https://idp:8443/jwks?access_token=…` is
+untouched — it has no `@` and never reaches the test. Both are now in `TestURLUserinfo_Shapes`,
+and the leak is a revert-verified case in `TestURLUserinfo_NeverEmitsACredential`
+("a numeric password is not a port"): restoring `isPort` there prints `nats://u:1234/path`.
+
+This is the same class as the three above and it is the fourth instance: a rule that inferred
+structure from a value whose structure is untrustworthy. The pattern in the resolutions is
+consistent too — each one ends by giving up a distinction rather than making a finer one.

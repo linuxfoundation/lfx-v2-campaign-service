@@ -267,8 +267,20 @@ func queryIsGenuine(u string, q int) bool {
 // What separates them is what the `/` closes. `idp` is a well-formed authority, so the `/`
 // after it can only begin a path. `u:p` is not: `p` is not a port, so the sole reading that
 // makes `u:p` legal is userinfo — and then the `/` is inside the password and the `?` may be
-// too. A `:` whose right-hand side is not a decimal port is therefore the tell, and an empty
-// port is refused with it, since `u:` is a likelier empty password than a real authority.
+// too.
+//
+// An unbracketed `:` is therefore refused WHATEVER follows it, including a decimal port. Reading
+// only a non-numeric right-hand side as the tell still leaked, because a numeric PASSWORD is
+// equally legal: `nats://u:1234/path?x@host:4222` has `u:1234` before the `/`, and `u`-host-
+// port-1234 and `u`-user-password-1234 are the same eleven bytes. Nothing in the value chooses,
+// so the `?` was called genuine, the value cut there, and `nats://u:1234/path` logged with the
+// password in it. `isPort` answers a question this position cannot ask.
+//
+// The cost is confined and it is the right way round: only a value that ALSO carries an `@` past
+// its `?` ever consults this (see redactOne), so what is lost is the host of an explicit-port URL
+// with an `@` in its query, and what is kept is every numeric password. A bracketed IPv6 host
+// keeps its port test, because `[` and `]` are gen-delims RFC 3986 §3.2.1 excludes from userinfo:
+// there the authority reading is the only one.
 func pathClosesAuthority(seg string) bool {
 	slash := strings.IndexByte(seg, '/')
 	if slash < 0 {
@@ -287,11 +299,10 @@ func pathClosesAuthority(seg string) bool {
 	if strings.HasPrefix(host, "[") {
 		return bracketedHostCloses(host)
 	}
-	colon := strings.LastIndexByte(host, ':')
-	if colon < 0 {
-		return true // a bare host holds nothing that could be a password
+	if strings.ContainsRune(host, ':') {
+		return false // host:port and user:password are the same bytes here; refuse rather than guess
 	}
-	return isPort(host[colon+1:])
+	return true // a bare host holds nothing that could be a password
 }
 
 // bracketedHostCloses reports whether host is a well-formed `[IPv6]` or `[IPv6]:port`
