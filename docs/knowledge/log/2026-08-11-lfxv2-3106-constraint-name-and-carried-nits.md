@@ -79,8 +79,11 @@ stated on the interface.
 **000018's one-statement warning sat ~80 lines above the statement.** Restated directly above the
 `CREATE UNIQUE INDEX CONCURRENTLY`, where someone about to append a second statement is looking.
 
-**Two appended log sections used `**Kind:** Fix`** instead of this file's own `**Fix** — <what>`
-form. Reformatted.
+**Two appended log sections in prior dated entries use `**Kind:** Fix`** instead of the
+`**Fix** — <what>` form this file uses. Left alone: the knowledge-log contract is one file per
+entry, "never edit another entry's file" (`CLAUDE.md:26`), and a cosmetic heading difference is
+not worth an exception to it. Noted here so the inconsistency is on the record rather than
+silently carried.
 
 **A failure message named a migration that does not exist.** `TestEveryUniquePartialIndexIsRequired`
 said the schema "cannot be true while 000013 and 000020 exist"; the lease index is 000018 and there
