@@ -48,3 +48,29 @@ failure with a retry.
 `coverage.out` was never consumed downstream (no codecov/upload step), so splitting it into
 `coverage.out` + `coverage-postgres.out` needed no other change; both are already covered by
 the repo's `*.out` gitignore rule.
+
+## Follow-up: the split could report success without testing
+
+**Kind:** Fix
+
+Copilot found that the second invocation enumerated its packages inline:
+
+```make
+go test ... $$(go list ./... | grep -v -E '/internal/infrastructure/postgres(/|$$)')
+```
+
+A command substitution's exit status is **discarded** — this is stronger than the usual
+"a pipeline reports its last command" masking, because even the `grep` status never reaches
+`make`. So a `go list` that failed after emitting a partial list left `go test` running that
+partial list and the target reporting success. The input that triggers it is a package that
+does not build, which is both the case that breaks discovery and the case that most needs
+reporting, so the failure mode selected for the worst input.
+
+`go test ./...` never had this property; splitting the target introduced it, alongside the
+abort-on-first-failure regression already recorded above. Both are the same kind of mistake:
+a property the single command had for free, not re-established after the split.
+
+`go list` now runs on its own line with its status checked, and an empty filtered list is a
+hard error rather than a `go test` with no arguments. Verified against three stubbed `go list`
+behaviours — success, partial-output-then-exit-1, and postgres-only output — which exit 0, 1
+and 1 respectively; before the change the middle one silently tested the partial list.

@@ -112,11 +112,27 @@ test: ## Run tests
 	# remaining ~40 packages were never built or run — so one live-database failure hid
 	# every unrelated failure until somebody ran the suite again. `go test ./...` did not
 	# have that property, and splitting it should not have cost it.
+	#
+	# `go list` runs on its own line and its status is checked, rather than inline in the
+	# `go test` argument list. A command substitution's exit status is DISCARDED — not
+	# merely masked by the pipeline's final `grep`, as it would be in a plain pipeline — so
+	# a `go list` that fails after emitting a partial package list left `go test` running
+	# that partial list and `make test` reporting success without having tested the package
+	# whose breakage stopped discovery. A build failure in one package is exactly the case
+	# that both breaks discovery and most needs reporting, so the failure mode selected for
+	# the worst input. Splitting the target introduced this too: `go test ./...` never
+	# enumerated packages in a substitution.
 	@rc=0; \
 	echo "==> go test ./internal/infrastructure/postgres/... (live database, -p 1)"; \
 	go test -v -race -p 1 -coverprofile=coverage-postgres.out ./internal/infrastructure/postgres/... || rc=1; \
 	echo "==> go test (all other packages)"; \
-	go test -v -race -coverprofile=coverage.out $$(go list ./... | grep -v -E '/internal/infrastructure/postgres(/|$$)') || rc=1; \
+	all=$$(go list ./...) || { echo "go list failed; refusing to run a partial package list" >&2; exit 1; }; \
+	rest=$$(printf '%s\n' "$$all" | grep -v -E '/internal/infrastructure/postgres(/|$$)'); \
+	if [ -z "$$rest" ]; then \
+		echo "no packages outside internal/infrastructure/postgres; the filter is wrong" >&2; \
+		exit 1; \
+	fi; \
+	go test -v -race -coverprofile=coverage.out $$rest || rc=1; \
 	exit $$rc
 
 .PHONY: build
