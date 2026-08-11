@@ -283,6 +283,84 @@ func TestAudienceBuildLeaseRefusesUpdateBackToBuilding(t *testing.T) {
 	}
 }
 
+// TestAudienceLeaseMappingIgnoresOtherUniqueIndexes is the test the constraint-name
+// narrowing exists for, and the only one in this file that the SQLSTATE-only predicate
+// fails. Every other lease test fires the REAL lease index, so a mapping that matches
+// any 23505 on campaign_audiences answers them all correctly — which is precisely why
+// none of them binds the change.
+//
+// What the narrowing buys is the case below: a DIFFERENT unique index on the table
+// raises 23505, and the caller must NOT be told a build is already running. Today no
+// second unique index exists, so the case is unreachable in production and cannot be
+// reached by arranging rows — it has to be constructed. The probe index is that
+// construction, and it is the whole test: without one, the property has no witness and
+// the next migration to add a unique index inherits ErrAudienceBuildInFlight silently.
+//
+// The two indexes are separated by their PREDICATE, not by their key. The lease covers
+// status = 'building'; the probe covers status = 'failed', so two failed rows under one
+// brief violate the probe and never enter the lease's predicate at all. Separating them
+// by platform instead would not work: migration 000006 CHECKs platform IN ('hubspot'),
+// so every audience row this table can hold shares the lease's second key column.
+//
+// Asserting only "not the sentinel" would pass if the insert failed for some unrelated
+// reason — that CHECK included — so the test also asserts the error really is a 23505
+// naming the probe.
+func TestAudienceLeaseMappingIgnoresOtherUniqueIndexes(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+	repo := postgres.NewAudienceRepo(&postgres.Pool{Pool: pool})
+
+	briefID, projectID := insertApprovedBrief(ctx, t, pool)
+	newRow := func() *model.CampaignAudience {
+		return &model.CampaignAudience{
+			ProjectID: projectID,
+			BriefID:   briefID,
+			Platform:  model.ProviderHubSpot,
+			Status:    model.AudienceFailed,
+		}
+	}
+
+	if _, err := repo.CreateAudience(ctx, newRow()); err != nil {
+		t.Fatalf("first audience: %v", err)
+	}
+
+	// Created without IF NOT EXISTS: the package shares one migrated schema, so an index
+	// leaked by an earlier run must fail loudly here rather than be silently adopted.
+	const probeIndex = "uq_probe_second_unique_index_on_campaign_audiences"
+	if _, err := pool.Exec(ctx, `CREATE UNIQUE INDEX `+probeIndex+
+		` ON campaign_audiences (brief_id) WHERE status = 'failed'`); err != nil {
+		t.Fatalf("create the probe index: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `DROP INDEX `+probeIndex); err != nil {
+			t.Errorf("drop the probe index: %v — it is now visible to every later test "+
+				"in this package", err)
+		}
+	})
+
+	// 'failed' is outside the lease's predicate, so the lease cannot refuse this row and
+	// no build is in flight for it. Only the probe can refuse it.
+	_, err := repo.CreateAudience(ctx, newRow())
+	if err == nil {
+		t.Fatal("second audience succeeded, so the probe index did not fire and the test " +
+			"proves nothing — check the probe's predicate against the row being inserted")
+	}
+	// Checked before the shape assertion below: the sentinel is the defect under test, and
+	// mapping to it discards the *pgconn.PgError, so the shape check would otherwise fail
+	// first and report the wrong reason.
+	if errors.Is(err, domain.ErrAudienceBuildInFlight) {
+		t.Fatalf("a 23505 from %s was mapped to ErrAudienceBuildInFlight, which claims a "+
+			"build holds the lease for brief %s. None does — every row here is 'failed', "+
+			"outside the lease's predicate. A caller told this retries or reports an "+
+			"occupied slot that does not exist", probeIndex, briefID)
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" || pgErr.ConstraintName != probeIndex {
+		t.Fatalf("second audience: got %v, want a 23505 naming %s — the test must fail on "+
+			"the probe, not on something else", err, probeIndex)
+	}
+}
+
 // TestConfirmBriefApprovedWaitsForAnInFlightWithdrawal is the property that made
 // ConfirmBriefApproved a repository operation instead of a GetBrief and a comparison, and
 // like the lease above it can only be observed against a real database: what is under test

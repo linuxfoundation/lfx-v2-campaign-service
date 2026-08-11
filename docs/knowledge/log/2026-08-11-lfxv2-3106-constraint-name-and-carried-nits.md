@@ -31,8 +31,32 @@ CONSTRAINT NAME:  uq_probe_partial
 `isUniqueViolation` stays for the callers where the statement can violate exactly one constraint
 (`connection_repo.go`, `brief_repo.go`); its doc comment now says which of the two to reach for.
 
-**Revert-verified.** Making the comparison wrong *inside* `isUniqueViolationOn` fails four live
-tests — `TestAudienceBuildLeaseAdmitsExactlyOneConcurrentBuild`, `...FreesOnCompletion`,
+## The test that had to be constructed, because no arrangement of rows reaches the case
+
+Every lease test in `dbtest` fires the REAL lease index, so a mapping that matches any 23505 on
+`campaign_audiences` answers all of them correctly. Measured, not assumed: degrading
+`isUniqueViolationOn` back to SQLSTATE-only leaves all five PASSING. That is the pre-fix
+behaviour, so the suite as it stood did not bind this change at all — the permissive direction
+being untestable *is* the evidence the narrowing was unpinned.
+
+`TestAudienceLeaseMappingIgnoresOtherUniqueIndexes` is the missing witness. It CREATEs a second
+unique index on the table for the duration of the test, violates only that one, and asserts the
+error is not `ErrAudienceBuildInFlight`. Two constraints shaped it:
+
+- **The two indexes are separated by their PREDICATE, not their key.** The obvious separation —
+  a different `platform` — is unavailable: migration 000006 CHECKs `platform IN ('hubspot')`, so
+  every row the table can hold shares the lease's second key column. The probe covers
+  `status = 'failed'` instead, which is outside the lease's `status = 'building'` predicate, so
+  two failed rows under one brief violate the probe and never enter the lease's predicate.
+- **"Not the sentinel" is not a sufficient assertion.** It passes when the insert fails for any
+  unrelated reason, and the first draft of this test did exactly that: it used a second platform
+  and the 23514 from `campaign_audiences_platform_valid` was not the sentinel either. The test
+  asserts the error is a 23505 naming the probe, which is what caught the bad premise.
+
+**Revert-verified in both directions.** Degrading the helper to SQLSTATE-only fails this test and
+only this test; the other five still pass. Making the comparison wrong *inside*
+`isUniqueViolationOn` fails four live tests —
+`TestAudienceBuildLeaseAdmitsExactlyOneConcurrentBuild`, `...FreesOnCompletion`,
 `...RefusesPlainCreate`, `...RefusesUpdateBackToBuilding`. The first attempt at this verification
 was worthless and worth recording: breaking the *constant* instead breaks `requiredIndexes` in
 `pool.go`, which shares it, so the boot guard rejects the schema before any insert reaches a

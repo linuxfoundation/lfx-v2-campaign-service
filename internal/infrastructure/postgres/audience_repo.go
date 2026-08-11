@@ -21,8 +21,14 @@ import (
 // audience per (brief, platform) in `building`. Named here because three statements translate
 // a violation of THIS index — and only this one — into domain.ErrAudienceBuildInFlight, which
 // tells the caller a build is already running. Matching on SQLSTATE 23505 alone would hand the
-// next unique index added to campaign_audiences that same meaning, silently and with no test
-// in this package failing.
+// next unique index added to campaign_audiences that same meaning, silently — the witness is
+// TestAudienceLeaseMappingIgnoresOtherUniqueIndexes in the dbtest package, which builds a
+// second unique index to reach a case no arrangement of rows can.
+//
+// pool.go's requiredIndexes shares this constant, so the value is also the name the boot guard
+// looks for: change it without changing migration 000018 and the service refuses to start
+// rather than mis-mapping anything. That coupling is why a test that breaks the constant tests
+// the guard, not the mapping.
 const audienceBuildLeaseIndex = "uq_campaign_audiences_brief_platform_building"
 
 // AudienceRepo is a pgx-backed implementation of domain.AudienceRepository.
