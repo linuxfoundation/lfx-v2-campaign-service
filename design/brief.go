@@ -197,14 +197,44 @@ var Campaign = Type("campaign", func() {
 // It is never persisted — a fresh platform read populates it on every request, unlike
 // Campaign (which reflects the stored row plus an ETag).
 var CampaignMetrics = Type("campaign-metrics", func() {
-	Attribute("campaign_id", String, "Campaign UUID")
-	Attribute("platform_campaign_id", String, "ID returned by the ad platform")
-	Attribute("window", String, "Platform-agnostic reporting window the metrics were read for", metricsWindowEnum)
-	Attribute("impressions", Int64, "Impressions in window")
-	Attribute("clicks", Int64, "Clicks in window")
-	Attribute("cost_micros", Int64, "Cost in window, in micro-units of the platform's native currency (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter, etc.)")
-	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0")
+	Attribute("campaign_id", String, "Campaign UUID", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	// The rest of this type's example is forced into an EMAIL-channel shape (see the
+	// comment on `impressions` below), so this example has to be one too: a bare-numeric
+	// HubSpot marketing-email id, matching what ReadMetrics actually queries by. It is not
+	// a claim about the ad platforms' own id formats.
+	Attribute("platform_campaign_id", String, "The id the CHANNEL returned when the campaign was created. On an ad platform that is its campaign id; on the email channel it is the HubSpot marketing-email id of the cloned draft, which is what the metrics read queries by.", func() { Example("104670127234") })
+	Attribute("window", String, "The reporting window that was REQUESTED. On the ad platforms it is also the period the counters cover. On the email channel it is not: it selects which emails are in scope by their send date, and the counters are then that email's totals to date — see the email object.", metricsWindowEnum)
+	// The counters below are examples of an EMAIL-channel response, not an ad-platform one,
+	// and that is forced rather than chosen: `email` is optional but Goa emits every attribute
+	// into the generated example, so the example always shows an email response. Given that,
+	// the numbers have to obey the mapping the adapter enforces — impressions == email.opens,
+	// clicks == email.clicks, cost_micros == 0 — or the contract's own example contradicts the
+	// descriptions two lines above it. Goa's fabricated integers satisfied none of the three.
+	Attribute("impressions", Int64, "Impressions over the window on an ad platform; opens to date on the email channel", func() { Example(1840) })
+	Attribute("clicks", Int64, "Clicks over the window on an ad platform; clicks to date on the email channel", func() { Example(212) })
+	Attribute("cost_micros", Int64, "Cost over the window, in micro-units of the platform's native currency (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter, etc.). Always 0 on the email channel, which bills no per-send cost — do not blend that 0 into a cross-channel cost-per-acquisition.", func() { Example(0) })
+	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0", func() { Example(0.1152) })
+	Attribute("email", EmailMetrics, "Email-channel counters. Present only for the email channel (HubSpot); absent for every ad platform.")
 	Required("campaign_id", "platform_campaign_id", "window", "impressions", "clicks", "cost_micros", "ctr")
+})
+
+// EmailMetrics is the email channel's counter set. It is a separate OPTIONAL object rather
+// than extra attributes on campaign-metrics so an ad-platform response does not carry six
+// fields that are structurally zero, which a client cannot distinguish from "zero sends".
+var EmailMetrics = Type("email-metrics", func() {
+	Description("Counters that only an email campaign has. NONE of them is scoped to the requested window: the window selects which emails are in scope by their SEND date, and every counter below is then that email's total to date. Rendering any of them as \"in the last N days\" is therefore wrong. impressions/clicks on the parent object mirror opens/clicks; cost_micros is always 0 for email because the platform bills no per-send cost — that 0 must not be blended into a cross-channel cost-per-acquisition.")
+	// Examples chosen to be internally consistent with each other and with the parent
+	// object: opens <= delivered, and opens/clicks equal the parent's impressions/clicks.
+	// Sent minus Delivered is not Bounces (messages can be dropped or suppressed before
+	// delivery is ever attempted), so sent and delivered are both independent data.
+	// See the note on campaign-metrics for why the example has to hold up rather than merely exist.
+	Attribute("sent", Int64, "Emails handed to the delivery pipeline, to date", func() { Example(9400) })
+	Attribute("delivered", Int64, "Emails the receiving server accepted, to date", func() { Example(9268) })
+	Attribute("opens", Int64, "Opens to date (mirrors impressions)", func() { Example(1840) })
+	Attribute("clicks", Int64, "Clicks to date (mirrors clicks)", func() { Example(212) })
+	Attribute("bounces", Int64, "Bounced emails, to date", func() { Example(95) })
+	Attribute("unsubscribes", Int64, "Unsubscribes, to date", func() { Example(17) })
+	Required("sent", "delivered", "opens", "clicks", "bounces", "unsubscribes")
 })
 
 // EmailCopy holds AI-generated email copy for a campaign brief.
@@ -289,12 +319,12 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "brief")
 		})
 		Result(Brief)
-		commonBriefErrors(true)
+		commonBriefErrors()
 		HTTP(func() {
 			POST("/projects/{project_id}/briefs")
 			Header("bearer_token:Authorization")
 			Response(StatusCreated, func() { Header("etag:ETag") })
-			briefErrorResponses(true)
+			briefErrorResponses()
 		})
 	})
 
@@ -324,7 +354,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "event_slug")
 		})
 		Result(Brief)
-		commonBriefErrors(false)
+		commonBriefErrors()
 		HTTP(func() {
 			// A query param, not a path segment: the slug is caller-derived free text, and
 			// a lookup that legitimately MISSES is the common case (404 = generate one).
@@ -332,7 +362,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Param("event_slug")
 			Header("bearer_token:Authorization")
 			Response(StatusOK, func() { Header("etag:ETag") })
-			briefErrorResponses(false)
+			briefErrorResponses()
 		})
 	})
 
@@ -345,12 +375,12 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "brief_id")
 		})
 		Result(Brief)
-		commonBriefErrors(false)
+		commonBriefErrors()
 		HTTP(func() {
 			GET("/projects/{project_id}/briefs/{brief_id}")
 			Header("bearer_token:Authorization")
 			Response(StatusOK, func() { Header("etag:ETag") })
-			briefErrorResponses(false)
+			briefErrorResponses()
 		})
 	})
 
@@ -365,7 +395,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "brief_id", "brief")
 		})
 		Result(Brief)
-		commonBriefErrors(true)
+		commonBriefErrors()
 		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
 		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
 		HTTP(func() {
@@ -373,7 +403,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Header("bearer_token:Authorization")
 			Header("if_match:If-Match")
 			Response(StatusOK, func() { Header("etag:ETag") })
-			briefErrorResponses(true)
+			briefErrorResponses()
 			Response("PreconditionFailed", StatusPreconditionFailed)
 			Response("PreconditionRequired", StatusPreconditionRequired)
 		})
@@ -392,7 +422,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "brief_id")
 		})
 		Result(Brief)
-		commonBriefErrors(false)
+		commonBriefErrors()
 		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
 		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
 		HTTP(func() {
@@ -400,7 +430,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Header("bearer_token:Authorization")
 			Header("if_match:If-Match")
 			Response(StatusOK, func() { Header("etag:ETag") })
-			briefErrorResponses(false)
+			briefErrorResponses()
 			Response("PreconditionFailed", StatusPreconditionFailed)
 			Response("PreconditionRequired", StatusPreconditionRequired)
 		})
@@ -414,12 +444,12 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			briefIDAttr()
 			Required("project_id", "brief_id")
 		})
-		commonBriefErrors(false)
+		commonBriefErrors()
 		HTTP(func() {
 			DELETE("/projects/{project_id}/briefs/{brief_id}")
 			Header("bearer_token:Authorization")
 			Response(StatusNoContent)
-			briefErrorResponses(false)
+			briefErrorResponses()
 		})
 	})
 
@@ -438,7 +468,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "url")
 		})
 		Result(EventDetailsResult)
-		commonBriefErrors(true)
+		commonBriefErrors()
 		HTTP(func() {
 			// POST, not GET, though it creates nothing: the URL is a request BODY
 			// parameter. As a query parameter it would be written verbatim into access
@@ -449,7 +479,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			POST("/projects/{project_id}/fetch-event-url")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
-			briefErrorResponses(true)
+			briefErrorResponses()
 		})
 	})
 
@@ -465,12 +495,12 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "brief_id", "input")
 		})
 		Result(JobCreateResponse)
-		commonBriefErrors(true)
+		commonBriefErrors()
 		HTTP(func() {
 			POST("/projects/{project_id}/briefs/{brief_id}/campaigns")
 			Header("bearer_token:Authorization")
 			Response(StatusAccepted)
-			briefErrorResponses(true)
+			briefErrorResponses()
 		})
 	})
 
@@ -484,17 +514,17 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "brief_id", "campaign_id")
 		})
 		Result(Campaign)
-		commonBriefErrors(false)
+		commonBriefErrors()
 		HTTP(func() {
 			GET("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}")
 			Header("bearer_token:Authorization")
 			Response(StatusOK, func() { Header("etag:ETag") })
-			briefErrorResponses(false)
+			briefErrorResponses()
 		})
 	})
 
 	Method("get-campaign-metrics", func() {
-		Description("Read live performance metrics (impressions, clicks, cost, CTR) for one campaign directly from its ad platform. This is a pure read — never persisted — unlike get-campaign, which returns the stored row. Support is per-platform: a campaign whose platform has no metrics-read dispatcher wired returns 400.")
+		Description("Read live performance metrics (impressions, clicks, cost, CTR) for one campaign directly from the platform that runs it — an ad platform, or HubSpot for the email channel, which additionally returns the email object. This is a pure read — never persisted — unlike get-campaign, which returns the stored row. Support is per-platform: a campaign whose platform has no metrics-read dispatcher wired returns 400. Note that the requested window scopes the counters on the ad platforms but NOT on email, where it selects which emails are in scope by send date and the counters are those emails' totals to date.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -504,13 +534,13 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "brief_id", "campaign_id")
 		})
 		Result(CampaignMetrics)
-		commonBriefErrors(false)
+		commonBriefErrors()
 		HTTP(func() {
 			GET("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/metrics")
 			Header("bearer_token:Authorization")
 			Param("window")
 			Response(StatusOK)
-			briefErrorResponses(false)
+			briefErrorResponses()
 		})
 	})
 
@@ -523,12 +553,12 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "brief_id")
 		})
 		Result(EmailCopy)
-		commonBriefErrors(false)
+		commonBriefErrors()
 		HTTP(func() {
 			POST("/projects/{project_id}/briefs/{brief_id}/email-copy")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
-			briefErrorResponses(false)
+			briefErrorResponses()
 		})
 	})
 
@@ -544,7 +574,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "brief_id", "campaign_id", "campaign")
 		})
 		Result(Campaign)
-		commonBriefErrors(true)
+		commonBriefErrors()
 		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
 		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
 		HTTP(func() {
@@ -552,7 +582,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Header("bearer_token:Authorization")
 			Header("if_match:If-Match")
 			Response(StatusOK, func() { Header("etag:ETag") })
-			briefErrorResponses(true)
+			briefErrorResponses()
 			Response("PreconditionFailed", StatusPreconditionFailed)
 			Response("PreconditionRequired", StatusPreconditionRequired)
 		})
@@ -570,7 +600,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "brief_id", "campaign_id", "status")
 		})
 		Result(Campaign)
-		commonBriefErrors(true)
+		commonBriefErrors()
 		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
 		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
 		HTTP(func() {
@@ -578,7 +608,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Header("bearer_token:Authorization")
 			Header("if_match:If-Match")
 			Response(StatusOK, func() { Header("etag:ETag") })
-			briefErrorResponses(true)
+			briefErrorResponses()
 			Response("PreconditionFailed", StatusPreconditionFailed)
 			Response("PreconditionRequired", StatusPreconditionRequired)
 		})
@@ -594,7 +624,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			ifMatchAttr()
 			Required("project_id", "brief_id", "campaign_id")
 		})
-		commonBriefErrors(false)
+		commonBriefErrors()
 		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
 		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
 		HTTP(func() {
@@ -602,7 +632,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Header("bearer_token:Authorization")
 			Header("if_match:If-Match")
 			Response(StatusNoContent)
-			briefErrorResponses(false)
+			briefErrorResponses()
 			Response("PreconditionFailed", StatusPreconditionFailed)
 			Response("PreconditionRequired", StatusPreconditionRequired)
 		})
@@ -617,12 +647,12 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "job_id")
 		})
 		Result(JobPollResponse)
-		commonBriefErrors(false)
+		commonBriefErrors()
 		HTTP(func() {
 			GET("/projects/{project_id}/jobs/{job_id}")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
-			briefErrorResponses(false)
+			briefErrorResponses()
 		})
 	})
 })
@@ -647,13 +677,19 @@ func metricsWindowEnum() {
 }
 
 // commonBriefErrors declares the standard error set for a brief method.
-// BadRequest is always declared: JWTAuth can reject any method with a 400
-// (malformed/invalid token) regardless of whether the method takes a body, so
-// every method's generated encoder must handle it. The withBadRequest parameter
-// is retained for call-site readability (true = the method also validates a body)
-// but no longer gates BadRequest.
-func commonBriefErrors(withBadRequest bool) {
-	_ = withBadRequest
+//
+// BadRequest is unconditional, and it takes no parameter deciding otherwise. JWTAuth
+// returns this service's own *briefs.BadRequestError for any refused token — Goa generates
+// one concrete type per service from the shared design type, so the connections service's
+// identically-shaped error is a DIFFERENT Go type and naming it here would send a reader to
+// the wrong package. Goa builds each method's
+// error encoder from its declared list — a method that omits BadRequest has no case
+// for it, so the typed 400 falls out of the generic encoder as a 500 and never appears
+// in OpenAPI. That is true of a bodyless GET exactly as much as of a create. An earlier
+// revision took a `withBadRequest bool` that had stopped gating anything; it is gone
+// rather than retained-and-ignored, because a boolean at 38 call sites that a reader
+// must check does nothing is an invitation to make it mean something again.
+func commonBriefErrors() {
 	Error("BadRequest", BadRequestError, "Bad request")
 	Error("NotFound", NotFoundError, "Resource not found")
 	Error("Conflict", ConflictError, "Conflict")
@@ -661,10 +697,12 @@ func commonBriefErrors(withBadRequest bool) {
 	Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 }
 
-// briefErrorResponses maps the standard errors to HTTP responses. BadRequest is
-// always mapped to match commonBriefErrors.
-func briefErrorResponses(withBadRequest bool) {
-	_ = withBadRequest
+// briefErrorResponses maps the standard errors to HTTP responses. Every error
+// commonBriefErrors declares is mapped here, unconditionally and in the same order:
+// a declared error with no Response mapping is the same 500 as an undeclared one, so
+// the two functions only work as a pair if neither can be called with a narrower set
+// than the other.
+func briefErrorResponses() {
 	Response("BadRequest", StatusBadRequest)
 	Response("NotFound", StatusNotFound)
 	Response("Conflict", StatusConflict)

@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -335,6 +337,22 @@ func TestConfigString_RedactsNATSCredentials(t *testing.T) {
 	}
 }
 
+// TestConfigString_RedactsJWKSCredentials: the JWKS URL was printed verbatim by a formatter
+// whose doc comment promises a log-safe representation. An issuer behind a gateway that
+// authenticates with basic auth is an ordinary deployment, and nothing in this service forbids
+// configuring one — so "a JWKS URL is public" is a convention, not a guarantee, and the
+// formatter is exactly where a convention stops holding. The host is KEPT, for the same reason
+// as the broker host: it is what makes a failing JWKS fetch diagnosable.
+func TestConfigString_RedactsJWKSCredentials(t *testing.T) {
+	cfg := &Config{JWKSUrl: "https://svcuser:sup3r-s3cret@auth.lfx.dev/.well-known/jwks.json"} // secretlint-disable-line -- fixture asserting the password is redacted
+
+	for _, formatted := range []string{cfg.String(), cfg.GoString(), fmt.Sprintf("%v", cfg), fmt.Sprintf("%+v", cfg)} {
+		assert.NotContains(t, formatted, "sup3r-s3cret", "the JWKS credential must never reach a log line")
+		assert.NotContains(t, formatted, "svcuser", "the username is part of the credential")
+		assert.Contains(t, formatted, "auth.lfx.dev/.well-known/jwks.json")
+	}
+}
+
 // TestConfigString_RedactsAIProxyCredentials pins that String() does not leak a credential
 // carried INSIDE the proxy URL. The field looks secret-free — the key has its own field —
 // but that is a property of what an operator typed, not of the field, and a URL has several
@@ -436,18 +454,75 @@ func TestRedactAIProxyURL_ReproducesNothingButTheScheme(t *testing.T) {
 	}
 }
 
-// TestRedactNATSURL_Shapes covers the forms a NATS URL actually takes, including the ones with
-// nothing to redact (where masking would needlessly hide the host).
-func TestRedactNATSURL_Shapes(t *testing.T) {
+// TestRedactURLUserinfo_Shapes covers the forms these URLs actually take, including the ones
+// with nothing to redact (where masking would needlessly hide the host).
+func TestRedactURLUserinfo_Shapes(t *testing.T) {
 	cases := map[string]string{
 		"":                              "",
 		"nats://nats.lfx.svc:4222":      "nats://nats.lfx.svc:4222",
 		"nats://u:p@nats.lfx.svc:4222":  "nats://***@nats.lfx.svc:4222", // secretlint-disable-line -- fixture
 		"nats://token@nats.lfx.svc:422": "nats://***@nats.lfx.svc:422",
 		"u:p@host:4222":                 "***@host:4222", // secretlint-disable-line -- fixture: no scheme
+		"https://auth.lfx.dev/.well-known/jwks.json":     "https://auth.lfx.dev/.well-known/jwks.json",
+		"https://u:p@auth.lfx.dev/.well-known/jwks.json": "https://***@auth.lfx.dev/.well-known/jwks.json", // secretlint-disable-line -- fixture
 	}
 	for in, want := range cases {
-		assert.Equal(t, want, redactNATSURL(in), "input %q", in)
+		assert.Equal(t, want, redactURLUserinfo(in), "input %q", in)
+	}
+}
+
+// TestRunningInCluster covers the discriminator auth.New uses to refuse the local
+// mock-principal bypass in a deployment.
+//
+// The env variable alone is not trustworthy: the chart renders every app.environment key
+// and appends app.extraEnv verbatim, and an explicit container env entry overrides the
+// kubelet's service variables — so the one override that enables the bypass could also
+// have cleared KUBERNETES_SERVICE_HOST. The chart now refuses to render that, and this
+// pins the runtime half: the service-account directory is a second signal, so a manifest
+// applied outside the chart cannot hide the cluster by clearing the variable either.
+func TestRunningInCluster(t *testing.T) {
+	saDir := t.TempDir()
+	// A path that does not exist, for the "not in a cluster" cases.
+	absent := filepath.Join(saDir, "no-such-dir")
+
+	// A FILE at the service-account path is not a mounted token directory. Only a
+	// directory counts, so a stray file cannot fabricate a cluster.
+	saFile := filepath.Join(saDir, "not-a-dir")
+	if err := os.WriteFile(saFile, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	env := func(v string) func(string) string {
+		return func(k string) string {
+			if k == constants.EnvKubernetesServiceHost {
+				return v
+			}
+			return ""
+		}
+	}
+
+	tests := []struct {
+		name  string
+		host  string
+		saDir string
+		want  bool
+	}{
+		{"neither signal: a developer's laptop", "", absent, false},
+		{"kubelet variable only", "10.96.0.1", absent, true},
+		// THE case the guard exists for: the deploy cleared the variable, and the
+		// service-account mount still gives it away.
+		{"service-account mount only, variable cleared", "", saDir, true},
+		{"both signals", "10.96.0.1", saDir, true},
+		{"a file at the service-account path is not a mount", "", saFile, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := runningInCluster(env(tc.host), tc.saDir); got != tc.want {
+				t.Errorf("runningInCluster(host=%q, saDir=%q) = %v, want %v",
+					tc.host, tc.saDir, got, tc.want)
+			}
+		})
 	}
 }
 

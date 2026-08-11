@@ -27,6 +27,17 @@ var (
 	// to 409. Maps to 409.
 	ErrStaleApproval = errors.New("brief is no longer approved at the expected version")
 
+	// ErrAudienceBuildInFlight indicates another build for the same (brief, platform)
+	// is already in progress — the 'building' row holds the lease (migration 000018).
+	// Distinct from ErrConflict, which both map to 409, because the remedy is
+	// different and the generic "resource already exists" is actively misleading here:
+	// nothing the caller asked for exists yet, and the answer is to wait for the
+	// in-flight build rather than to change the request. A build that DIED holding the
+	// lease reports the same thing, which is intended — its HubSpot lists exist, so the
+	// operator must reconcile the portal and fail the row rather than build again.
+	// Maps to 409.
+	ErrAudienceBuildInFlight = errors.New("an audience build for this brief and platform is already in progress")
+
 	// ErrPreconditionFailed indicates an optimistic-concurrency version
 	// mismatch on a conditional update (stale If-Match). Maps to 412.
 	ErrPreconditionFailed = errors.New("version precondition failed")
@@ -63,15 +74,48 @@ var (
 	// (%w) so the service layer can map it without importing every platform package.
 	ErrMetricsWindowUnsupported = errors.New("this window is not supported for the campaign's platform")
 
-	// ErrCampaignAccountMismatch indicates the campaign was created under one ad
-	// account but the project's CURRENT connection for that platform resolves to a
-	// different one. Platform campaign ids are unique only WITHIN an account, so an
-	// account-scoped request issued under the wrong account is not merely unauthorized —
-	// it is silently WRONG: the id most often matches nothing (indistinguishable from a
-	// campaign with genuinely zero activity) and, on a collision, matches somebody
-	// else's campaign. The platform is never contacted. It is a state error, not a
+	// ErrNoMetricsInWindow indicates the platform answered successfully and reported no
+	// data for this campaign in this window. It is NOT an upstream failure, so the 503
+	// default would be a false outage report, and it is NOT zeros, because the adapter
+	// that raises it cannot tell "no activity" from "no such campaign in scope" — see
+	// hubspot.ErrNoSentEmailInWindow, which reasons that out at length.
+	//
+	// The email channel makes this the ORDINARY case rather than an edge one: Dispatch
+	// stages the cloned email as a DRAFT for a human to send, so every metrics read
+	// between staging and the send lands here. Maps to 409 — the campaign's state, not
+	// the platform's health, is why there is nothing to return.
+	ErrNoMetricsInWindow = errors.New("the platform reported no data for this campaign in the requested window")
+
+	// ErrCampaignAccountMismatch indicates the campaign was created under one platform
+	// tenant — a Google Ads customer, a HubSpot portal — but the project's CURRENT
+	// connection for that platform resolves to a different one, or records none at all.
+	// Platform campaign ids are unique only WITHIN a tenant, so a tenant-scoped request
+	// issued under the wrong one is not merely unauthorized — it is silently WRONG: the
+	// id most often matches nothing (indistinguishable from a campaign with genuinely
+	// zero activity) and, on a collision, matches somebody else's campaign. On HubSpot the
+	// mismatch is caught only AFTER the token's own portal has been resolved via
+	// AuthenticatedPortalID, so "the platform is never contacted" no longer holds for
+	// every path to this sentinel — what is true of all of them is that the tenant-scoped
+	// campaign metrics read itself is never attempted. It is a state error, not a
 	// transport one — a retry now fails identically — so it maps to 409, not 503.
-	ErrCampaignAccountMismatch = errors.New("the campaign belongs to a different ad account than the project's current connection")
+	//
+	// "Tenant" rather than "ad account" deliberately: this sentinel reaches the email
+	// channel too, where the operator has no ad account to reconnect and being told to
+	// go find one is a wrong instruction, not just an imprecise word.
+	ErrCampaignAccountMismatch = errors.New("the campaign belongs to a different platform account than the project's current connection")
+
+	// ErrCampaignProvenanceUnknown indicates a campaign row records NO creating tenant at
+	// all — not a mismatch, an absence. It is joined with ErrCampaignAccountMismatch (never
+	// returned alone) so existing errors.Is(err, ErrCampaignAccountMismatch) callers keep
+	// matching, while a handler that wants to tell the two apart can check this sentinel
+	// first.
+	//
+	// The remedy differs from an actual mismatch: "reconnect the original account" tells
+	// the operator to point the connection back at a tenant this row never named, which
+	// they cannot do — there is nothing recorded to reconnect to. The only way to give this
+	// row a provenance is to re-dispatch it, which is what a row written before provenance
+	// tracking existed, or under a connection with no tenant id at all, needs.
+	ErrCampaignProvenanceUnknown = errors.New("the campaign does not record which platform tenant it was created under")
 
 	// ErrCampaignWriteInProgress indicates another writer already holds the claim for this
 	// campaign, so this request did not acquire it. Maps to 409.
@@ -99,6 +143,20 @@ var (
 	// ErrToggleUnsupported: a platform dispatcher must be able to return it without
 	// importing the orchestration layer.
 	ErrAccountsUnsupported = errors.New("account discovery is not supported for this platform")
+
+	// ErrKeyUnavailable indicates this service could not obtain the JWT signing keys
+	// (Heimdall's JWKS) needed to check a bearer token. It is NOT a verdict on the token:
+	// nothing was learned about it, because it was never checked.
+	//
+	// It lives here rather than in internal/infrastructure/auth for the same reason
+	// ErrConnectionNotUsable does — the service layer classifies without importing the
+	// package that produced the failure. auth.Verifier wraps it (%w).
+	//
+	// Maps to 503, not the 400 every token-side refusal gets. A JWKS outage is reachable
+	// on a cold cache and at every 5-minute TTL expiry, and answering it with "invalid
+	// bearer token" tells a caller holding a perfectly good credential that theirs is
+	// bad — and 400 tells them not to retry a condition that clears on its own.
+	ErrKeyUnavailable = errors.New("the token signing keys could not be retrieved")
 
 	// ErrConnectionNotUsable indicates the project's stored connection cannot be used as
 	// it stands: it is not active, its credential blob is incomplete or undecodable, or a

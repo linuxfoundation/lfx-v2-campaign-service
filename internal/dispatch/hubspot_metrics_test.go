@@ -1,0 +1,482 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package dispatch
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
+)
+
+const statsResponse = `{"emails":[4242],"campaignAggregations":{},"aggregate":{"counters":` +
+	`{"sent":1000,"delivered":950,"open":400,"click":80,"bounce":50,"unsubscribed":7}}}`
+
+// statsRec captures what the fake statistics server saw. Written by the HANDLER goroutine
+// and read by the TEST goroutine, so guarded — same reason as hubspotRec.
+type statsRec struct {
+	mu     sync.Mutex
+	auth   string
+	called bool
+}
+
+func (r *statsRec) mark(auth string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.auth, r.called = auth, true
+}
+func (r *statsRec) Auth() string { r.mu.Lock(); defer r.mu.Unlock(); return r.auth }
+func (r *statsRec) Called() bool { r.mu.Lock(); defer r.mu.Unlock(); return r.called }
+
+func statsServer(t *testing.T) (*httptest.Server, *statsRec) {
+	t.Helper()
+	rec := &statsRec{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == accountDetailsPath {
+			_, _ = io.WriteString(w, testPortalResponse)
+			return
+		}
+		rec.mark(r.Header.Get("Authorization"))
+		_, _ = io.WriteString(w, statsResponse)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, rec
+}
+
+const (
+	// The wire path is the private-apps token-info endpoint, NOT /account-info/v3/details:
+	// the latter needs the `oauth` scope, which no private app can hold.
+	accountDetailsPath = "/oauth/v2/private-apps/get/access-token-info"
+	testPortalID       = "8112310"
+	testPortalResponse = `{"hubId":8112310}`
+)
+
+// stagedEmail is a campaign whose Result records the portal the token authenticates against,
+// which is the ordinary state for anything created since the provenance lookup landed.
+func stagedEmail() *model.Campaign {
+	return &model.Campaign{
+		ID: "camp-uuid-1", Platform: model.ProviderHubSpot, PlatformCampaignID: "4242",
+		Result: json.RawMessage(`{"id":"4242","portalId":"` + testPortalID + `"}`),
+	}
+}
+
+func TestHubSpot_ReadMetricsReturnsEmailCounters(t *testing.T) {
+	srv, rec := statsServer(t)
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+
+	m, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, stagedEmail(), model.MetricsWindowLast30Days)
+	if err != nil {
+		t.Fatalf("ReadMetrics: %v", err)
+	}
+	// The SERVICE's campaign UUID, not the HubSpot email id the platform client keyed its
+	// result by — the API contract for campaign_id is the former, and the client has no way
+	// to know it.
+	if m.CampaignID != "camp-uuid-1" {
+		t.Errorf("campaign_id = %q, want camp-uuid-1", m.CampaignID)
+	}
+	if m.Email == nil || m.Email.Delivered != 950 || m.Email.Unsubscribes != 7 {
+		t.Errorf("email counters = %+v", m.Email)
+	}
+	if m.Impressions != 400 || m.Clicks != 80 {
+		t.Errorf("impressions/clicks = %d/%d, want 400/80", m.Impressions, m.Clicks)
+	}
+	if !rec.Called() {
+		t.Error("the statistics endpoint was never called")
+	}
+}
+
+// A campaign with no platform id was never staged upstream, so there is nothing to read.
+// The orchestrator maps this to 409, not a platform failure.
+func TestHubSpot_ReadMetricsRejectsAnUnprovisionedCampaign(t *testing.T) {
+	srv, rec := statsServer(t)
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+	c := stagedEmail()
+	c.PlatformCampaignID = ""
+	if _, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, c, model.MetricsWindowToday); err == nil {
+		t.Fatal("an unprovisioned campaign was accepted")
+	}
+	if rec.Called() {
+		t.Error("a request was sent for an unprovisioned campaign")
+	}
+}
+
+// The load-bearing ordering assertion. An unsupported window is a permanent 400 whatever
+// the connection looks like, so it must be detected BEFORE credentials are resolved — the
+// connection here is missing entirely, and resolving first would surface that instead and
+// tell the caller to retry a request that can never succeed.
+func TestHubSpot_ReadMetricsValidatesTheWindowBeforeResolvingCredentials(t *testing.T) {
+	d := NewHubSpotDispatcher(fakeConnReader{err: domain.ErrNotFound}, identityEncryptor{}, fakeAudienceReader{})
+	_, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, stagedEmail(), model.MetricsWindow("last_quarter"))
+	if err == nil {
+		t.Fatal("an unsupported window was accepted")
+	}
+	if !errors.Is(err, domain.ErrMetricsWindowUnsupported) {
+		t.Fatalf("err = %v, want it to wrap ErrMetricsWindowUnsupported", err)
+	}
+	if errors.Is(err, domain.ErrNotFound) {
+		t.Error("the missing connection was reported instead of the unsupported window")
+	}
+}
+
+func TestHubSpot_ReadMetricsRejectsAnInactiveConnection(t *testing.T) {
+	srv, rec := statsServer(t)
+	conn := activeHubSpotConn(goodHubSpotCreds)
+	conn.Status = model.StatusInactive
+	d := NewHubSpotDispatcher(fakeConnReader{conn: conn}, identityEncryptor{}, fakeAudienceReader{},
+		hubspot.WithBaseURL(srv.URL))
+	_, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, stagedEmail(), model.MetricsWindowToday)
+	if err == nil {
+		t.Fatal("an inactive connection was accepted")
+	}
+	// Marked at the point of DETECTION, exactly as validateGoogleAdsCredentials does. Bare,
+	// this reaches GetCampaignMetrics' default arm and answers 503 — "the platform did not
+	// respond" about a platform that was never contacted, telling the operator to retry a
+	// request that only a human editing the connection can ever make succeed.
+	if !errors.Is(err, domain.ErrConnectionNotUsable) {
+		t.Errorf("err = %v, want it to wrap ErrConnectionNotUsable (else the service answers 503, not 409)", err)
+	}
+	if !errors.Is(err, domain.ErrConnectionInactive) {
+		t.Errorf("err = %v, want it to name the reason as ErrConnectionInactive", err)
+	}
+	if rec.Called() {
+		t.Error("a request was sent on an inactive connection")
+	}
+}
+
+// Credentials that are not JSON are a stored-connection defect, and the error must say so
+// WITHOUT quoting the blob. encoding/json's errors are derived from the DECRYPTED plaintext —
+// *json.SyntaxError names the offending character, *json.UnmarshalTypeError names the field —
+// and the 503 default arm logs the chain through safeErrSummary, so a wrapped cause would put
+// credential-derived bytes in the service log for exactly the connection whose credentials are
+// malformed. The sentinel keeps the condition greppable with no payload attached.
+func TestHubSpot_ReadMetricsRejectsUndecodableCredentialsWithoutQuotingThem(t *testing.T) {
+	srv, rec := statsServer(t)
+	const secret = "s3cr3t-private-app-token"
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(`{"PrivateAppToken":"` + secret + `"`)},
+		identityEncryptor{}, fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+	_, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, stagedEmail(), model.MetricsWindowToday)
+	if err == nil {
+		t.Fatal("undecodable credentials were accepted")
+	}
+	if !errors.Is(err, domain.ErrConnectionNotUsable) {
+		t.Errorf("err = %v, want it to wrap ErrConnectionNotUsable", err)
+	}
+	if !errors.Is(err, domain.ErrCredentialsUndecodable) {
+		t.Errorf("err = %v, want it to name the reason as ErrCredentialsUndecodable", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Error("the credential blob leaked into the error message")
+	}
+	// The unmarshal cause itself must be gone, not merely unquoted at the top level: anything
+	// still in the chain is reachable by an errors.As-walking logger.
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) {
+		t.Error("the json.SyntaxError survived in the chain, carrying plaintext-derived detail")
+	}
+	if rec.Called() {
+		t.Error("a request was sent with undecodable credentials")
+	}
+}
+
+// A whitespace-only stored token is an INCOMPLETE credential, not a token. The dispatcher
+// must say so — hubspot.NewClient trims too (client.go:189), so nothing malformed could
+// reach the wire regardless, but without the trim here the emptiness check passes and the
+// failure resurfaces later from inside the client as a generic missing-token error that
+// does not point at the stored connection.
+func TestHubSpot_ReadMetricsRejectsAWhitespaceOnlyToken(t *testing.T) {
+	srv, rec := statsServer(t)
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(`{"PrivateAppToken":"   "}`)},
+		identityEncryptor{}, fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+	_, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, stagedEmail(), model.MetricsWindowToday)
+	if err == nil {
+		t.Fatal("a whitespace-only token was accepted")
+	}
+	if !strings.Contains(err.Error(), "incomplete") {
+		t.Errorf("err = %v, want it to name the credential as incomplete", err)
+	}
+	if !errors.Is(err, domain.ErrConnectionNotUsable) {
+		t.Errorf("err = %v, want it to wrap ErrConnectionNotUsable", err)
+	}
+	if !errors.Is(err, domain.ErrCredentialsIncomplete) {
+		t.Errorf("err = %v, want it to name the reason as ErrCredentialsIncomplete", err)
+	}
+	if rec.Called() {
+		t.Error("a request was sent with no usable token")
+	}
+}
+
+// Padding around a real token never reaches the Authorization header. This pins the
+// END-TO-END property, not the dispatcher's trim specifically: removing the trim here still
+// passes, because hubspot.NewClient trims again (client.go:189). What the dispatcher's trim
+// is actually load-bearing for is the emptiness check above — see the revert-diagnostic in
+// TestHubSpot_ReadMetricsRejectsAWhitespaceOnlyToken, which is the binding one.
+func TestHubSpot_ReadMetricsTrimsPaddingOffTheStoredToken(t *testing.T) {
+	srv, rec := statsServer(t)
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn("{\"PrivateAppToken\":\"  pat-123 \"}")},
+		identityEncryptor{}, fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+	if _, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, stagedEmail(), model.MetricsWindowToday); err != nil {
+		t.Fatalf("ReadMetrics: %v", err)
+	}
+	if got := rec.Auth(); got != "Bearer pat-123" {
+		t.Errorf("Authorization = %q, want %q", got, "Bearer pat-123")
+	}
+}
+
+// The dispatcher satisfies the orchestrator's optional metrics capability. Asserted at
+// compile time here rather than left to the type assertion in ReadCampaignMetrics, where a
+// signature drift would surface as a 400 "not supported for this platform" instead of a
+// build failure.
+var _ interface {
+	ReadMetrics(context.Context, string, model.Provider, *model.Campaign, model.MetricsWindow) (*model.CampaignMetrics, error)
+} = (*HubSpotDispatcher)(nil)
+
+// An empty statistics match is a successful read of nothing. The dispatcher must mark it so
+// the service can answer 409; unmarked it takes the 503 default, which reports an outage for
+// the ordinary case — the staged draft nobody has sent yet.
+func TestHubSpot_ReadMetricsMarksAnEmptyWindowAsNoData(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == accountDetailsPath {
+			_, _ = io.WriteString(w, testPortalResponse)
+			return
+		}
+		_, _ = io.WriteString(w, `{"emails":[],"campaignAggregations":{},"aggregate":{"counters":{}}}`)
+	}))
+	t.Cleanup(srv.Close)
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+
+	_, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, stagedEmail(), model.MetricsWindowLast30Days)
+	if err == nil {
+		t.Fatal("an empty window was reported as a successful read")
+	}
+	if !errors.Is(err, domain.ErrNoMetricsInWindow) {
+		t.Fatalf("err = %v, want it to wrap ErrNoMetricsInWindow", err)
+	}
+	// The platform cause survives alongside the domain marker, so the log still says which
+	// upstream condition produced it.
+	if !errors.Is(err, hubspot.ErrNoSentEmailInWindow) {
+		t.Error("the hubspot cause was dropped from the error chain")
+	}
+}
+
+// portalServer answers the provenance lookup with the given body and every other path with
+// ordinary statistics, so a test can vary the portal the TOKEN reports without disturbing
+// anything else.
+func portalServer(t *testing.T, accountBody string) (*httptest.Server, *statsRec) {
+	t.Helper()
+	rec := &statsRec{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == accountDetailsPath {
+			_, _ = io.WriteString(w, accountBody)
+			return
+		}
+		rec.mark(r.Header.Get("Authorization"))
+		_, _ = io.WriteString(w, statsResponse)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, rec
+}
+
+// The defect this guard exists for. PlatformCampaignID is a bare numeric that means something
+// only inside the portal that minted it, and a credential swap re-points the connection without
+// touching anything the row records. Reading across the swap is wrong in both directions: a
+// same-numeric collision reports ANOTHER portal's opens and clicks as this campaign's, and no
+// collision reports "not sent yet" for an email that was sent. Neither is distinguishable
+// downstream from the truth, so refuse before the request goes out.
+func TestHubSpot_ReadMetricsRefusesWhenTheTokenReachesADifferentPortal(t *testing.T) {
+	srv, rec := portalServer(t, `{"hubId":9999999}`)
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+
+	_, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, stagedEmail(), model.MetricsWindowLast30Days)
+	if err == nil {
+		t.Fatal("metrics were read from a portal the email was not created in")
+	}
+	if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+		t.Fatalf("err = %v, want it to wrap ErrCampaignAccountMismatch", err)
+	}
+	if rec.Called() {
+		t.Error("the statistics endpoint was contacted despite the mismatch")
+	}
+}
+
+// The ORDER of the two provenance checks, pinned. Absent provenance is a purely local fact and
+// no token-info answer could change it, so it must be decided before the lookup — otherwise the
+// rows this guard exists for get the wrong answer in exactly the conditions that matter. With
+// the check placed after the lookup, a legacy row read while token-info is throttled or down
+// returns the transient 503 "cannot establish which portal this token authenticates against"
+// instead of the deterministic ErrCampaignProvenanceUnknown 409, so the handler offers "the
+// platform is unavailable, try later" for a row that no amount of retrying will fix, and hides
+// the one remedy that does fix it (re-dispatch, which writes the provenance).
+//
+// The assertion that the lookup was never CONTACTED is the load-bearing one: asserting only on
+// the sentinel would keep passing against an implementation that asks first and happens to get
+// an answer, which is the arrangement this test exists to forbid.
+func TestHubSpot_ReadMetricsRefusesUnrecordedProvenanceBeforeContactingHubSpot(t *testing.T) {
+	var tokenInfoCalls atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == accountDetailsPath {
+			tokenInfoCalls.Add(1)
+			// Throttled: the realistic form of "the lookup cannot answer right now".
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, statsResponse)
+	}))
+	t.Cleanup(srv.Close)
+
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+	c := stagedEmail()
+	c.Result = json.RawMessage(`{"id":"4242"}`)
+
+	_, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, c, model.MetricsWindowLast30Days)
+	if err == nil {
+		t.Fatal("a row that names no portal was read anyway")
+	}
+	// The deterministic outcome, not the transient one the failing lookup would produce.
+	if !errors.Is(err, domain.ErrCampaignProvenanceUnknown) {
+		t.Fatalf("err = %v, want it to wrap ErrCampaignProvenanceUnknown — a failing portal lookup must not mask the row's own missing provenance", err)
+	}
+	if n := tokenInfoCalls.Load(); n != 0 {
+		t.Errorf("token-info was contacted %d times; a row with no recorded provenance is refusable locally, so the lookup must not run at all", n)
+	}
+}
+
+// A row written before the portal was recorded. Unlike the Google Ads guard this copies, an
+// unknown stored side is NOT permission to proceed: nothing about such a row establishes which
+// portal its id means, and numbers that might belong to somebody else are not a better answer
+// than saying so. The cost — re-dispatch to become readable — is the honest one.
+func TestHubSpot_ReadMetricsRefusesWhenTheRowRecordsNoPortal(t *testing.T) {
+	srv, rec := portalServer(t, testPortalResponse)
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+	c := stagedEmail()
+	c.Result = json.RawMessage(`{"id":"4242"}`)
+
+	_, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, c, model.MetricsWindowLast30Days)
+	if err == nil {
+		t.Fatal("a row that names no portal was read anyway")
+	}
+	if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+		t.Fatalf("err = %v, want it to wrap ErrCampaignAccountMismatch", err)
+	}
+	// This case is an ABSENCE, not a mismatch — the row never named a tenant to be
+	// mismatched against. A handler that tells the two apart (brief.go's status mapping)
+	// needs this sentinel to give "re-dispatch it" rather than "reconnect the account"
+	// remedy text, which the row cannot act on. Reverting the errors.Join in hubspot.go's
+	// created == "" branch back to the bare sentinel makes this assertion fail while the
+	// one above keeps passing — proof the two are actually distinguishable, not just two
+	// names for the same check.
+	if !errors.Is(err, domain.ErrCampaignProvenanceUnknown) {
+		t.Fatalf("err = %v, want it to wrap ErrCampaignProvenanceUnknown", err)
+	}
+	if rec.Called() {
+		t.Error("the statistics endpoint was contacted without established provenance")
+	}
+}
+
+// The lookup itself failing is also an unestablished identity. It should be rare now that the
+// call uses an endpoint private-app tokens can actually reach, but a throttled or unreachable
+// HubSpot still produces it. Dispatch treats that as best-effort and sends anyway; the read
+// must not, for the same reason as the case above.
+func TestHubSpot_ReadMetricsRefusesWhenThePortalCannotBeResolved(t *testing.T) {
+	srv, rec := portalServer(t, `{"hubId":0}`)
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+
+	_, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, stagedEmail(), model.MetricsWindowLast30Days)
+	if err == nil {
+		t.Fatal("metrics were read without establishing which portal the token reaches")
+	}
+	if !strings.Contains(err.Error(), "which portal this token authenticates against") {
+		t.Errorf("err = %v, want it to say the portal could not be established", err)
+	}
+	if rec.Called() {
+		t.Error("the statistics endpoint was contacted without established provenance")
+	}
+}
+
+// The provenance lookup ReadMetrics performs is a nested call inside a budget the ORCHESTRATOR
+// sets (metricsCallTimeout, 20s), and the HubSpot client's own retry policy can wait far longer
+// than that on sustained throttling — retryMax*maxRetryWait is 180s. Handed the ambient context,
+// a throttled token-info call would therefore consume the entire metrics budget and time the
+// read out before GetEmailMetrics ever ran, turning a slow provenance check into "metrics are
+// down". So the lookup carries its own short deadline.
+//
+// This is the read-side twin of TestHubSpot_DispatchBoundsThePortalLookupBelowProviderCallTimeout,
+// and it asserts the same two things that test does, for the same reason: the lookup IS bounded,
+// and the real work is NOT bounded down with it.
+func TestHubSpot_ReadMetricsBoundsThePortalLookupBelowTheMetricsBudget(t *testing.T) {
+	srv, _ := statsServer(t)
+
+	// The deadline has to be read from the CLIENT side of the request: the handler's
+	// r.Context() is an httptest connection-lifetime context and knows nothing about the
+	// context this code chose.
+	deadlines := map[string]time.Time{}
+	rt := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		if dl, ok := req.Context().Deadline(); ok {
+			deadlines[req.URL.Path] = dl
+		}
+		return http.DefaultTransport.RoundTrip(req)
+	})
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL), hubspot.WithHTTPClient(&http.Client{Transport: rt}))
+
+	before := time.Now()
+	if _, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, stagedEmail(), model.MetricsWindowLast30Days); err != nil {
+		t.Fatalf("ReadMetrics: %v", err)
+	}
+
+	portalDeadline, ok := deadlines[accountDetailsPath]
+	if !ok {
+		t.Fatal("the token-info request must carry a deadline, not the caller's metrics-call budget")
+	}
+	if d := portalDeadline.Sub(before); d <= 0 || d > portalLookupTimeout+time.Second {
+		t.Errorf("token-info deadline was %v out from ReadMetrics start, want within (0, portalLookupTimeout=%v]", d, portalLookupTimeout)
+	}
+
+	// The statistics read is the actual work and must keep the client's own per-attempt
+	// budget. Presence of a deadline proves nothing here — doRequest gives every attempt one
+	// unconditionally — so the assertion is that it was not truncated to the short
+	// provenance budget.
+	var statsDeadline time.Time
+	for path, dl := range deadlines {
+		if path != accountDetailsPath {
+			statsDeadline = dl
+			break
+		}
+	}
+	if statsDeadline.IsZero() {
+		t.Fatal("the statistics request must carry a deadline (doRequest's per-attempt timeout)")
+	}
+	if d := statsDeadline.Sub(before); d <= portalLookupTimeout {
+		t.Errorf("statistics deadline was only %v out from ReadMetrics start, want materially more than portalLookupTimeout=%v — it must not have inherited the short portal-lookup budget", d, portalLookupTimeout)
+	}
+
+	// metricsCallTimeout lives in internal/service (orchestrator.go) and cannot be imported
+	// here without a cycle, so its value is duplicated in this assertion to keep the two
+	// honest with each other. If that constant changes, this must change too.
+	const metricsCallTimeoutForTest = 20 * time.Second
+	if portalLookupTimeout >= metricsCallTimeoutForTest {
+		t.Fatalf("portalLookupTimeout (%v) must stay well under metricsCallTimeout (%v) or the guard is pointless", portalLookupTimeout, metricsCallTimeoutForTest)
+	}
+}

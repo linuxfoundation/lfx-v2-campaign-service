@@ -33,6 +33,8 @@ import (
 // place rather than swap the instance. Handlers snapshot the collaborators under the
 // lock (deps) and never dereference the fields directly.
 type BriefService struct {
+	authGuard
+
 	mu        sync.RWMutex
 	briefs    domain.BriefRepository
 	campaigns domain.CampaignRepository
@@ -208,14 +210,20 @@ func (s *BriefService) ready() (domain.BriefRepository, domain.CampaignRepositor
 	return b, c, j, orch, nil
 }
 
-// JWTAuth mirrors the connection service: it records the authenticated actor
-// (validated by Heimdall at the gateway) into the context for attribution.
+// JWTAuth mirrors the connection service: it verifies the bearer token against
+// Heimdall's JWKS and records the authenticated actor into the context for
+// attribution.
 func (s *BriefService) JWTAuth(ctx context.Context, token string, _ *security.JWTScheme) (context.Context, error) {
-	if token == "" {
-		return ctx, &briefs.BadRequestError{Code: "400", Message: "missing bearer token"}
-	}
-	if a := actorFromToken(token); a != nil {
-		ctx = context.WithValue(ctx, actorCtxKey{}, a)
+	ctx, msg, unavailable := s.authenticate(ctx, token)
+	switch {
+	case unavailable:
+		// The check could not be PERFORMED — no verifier wired, or Heimdall's JWKS is
+		// unreachable. Nothing was established about the caller's token, so 400 would
+		// blame a caller who may be holding a perfectly good one and tell them not to
+		// retry an outage that clears on its own.
+		return ctx, &briefs.ConnServiceUnavailableError{Code: "503", Message: msg}
+	case msg != "":
+		return ctx, &briefs.BadRequestError{Code: "400", Message: msg}
 	}
 	return ctx, nil
 }
@@ -559,6 +567,29 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			return nil, &briefs.BadRequestError{Code: "400", Message: msg}
 		case errors.Is(merr, ErrCampaignNotProvisioned):
 			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id yet"}
+		case errors.Is(merr, domain.ErrNoMetricsInWindow):
+			// A successful read of nothing. Kept out of the 503 default deliberately: the
+			// email channel stages a DRAFT, so this is what every read before the human
+			// presses send looks like, and calling that an ad-platform outage would send an
+			// operator to investigate a healthy integration. The message enumerates the
+			// three indistinguishable causes rather than picking one, because the upstream
+			// response genuinely cannot separate them.
+			slog.InfoContext(ctx, "campaign metrics read returned no data for the window",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "window", string(window))
+			return nil, &briefs.ConflictError{Code: "409", Message: "the platform reported no data for this campaign in the requested window — it may not have run inside the window, may not have been sent or started yet, or may no longer exist upstream"}
+		case errors.Is(merr, domain.ErrCampaignProvenanceUnknown):
+			// Split out from the general mismatch arm below, and placed ABOVE it: this row
+			// does not name a tenant to be mismatched against, so "reconnect the original
+			// account" tells the operator to point the connection back at a tenant that was
+			// never recorded — an instruction they cannot follow, because there is nothing
+			// to reconnect to. The only way to give the row a provenance is to re-dispatch
+			// it, which is the state every campaign written before provenance tracking
+			// existed is in.
+			slog.WarnContext(ctx, "campaign metrics read blocked: campaign does not record which platform tenant it was created under",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "error", safeErrSummary(merr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "this campaign does not record which platform account it was created under, so its metrics cannot be resolved safely — it must be re-dispatched before it can be read"}
 		case errors.Is(merr, ErrCampaignAccountMismatch):
 			// The two customer ids stay server-side: which ad account a project is connected
 			// to is connection configuration, not something a metrics reader needs told.
@@ -570,10 +601,16 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			// so the client's own validateAccountIDs has not executed for this instance yet.
 			// The value reaching this line is therefore arbitrary operator-supplied text, and
 			// safeErrSummary is what keeps it from being written verbatim into a log record.
-			slog.WarnContext(ctx, "campaign metrics read blocked: campaign belongs to a different ad account than the current connection",
+			//
+			// Worded "account" rather than "ad account" because this arm serves the EMAIL
+			// channel as well, where the mismatch is a HubSpot portal and the operator has no
+			// ad account to reconnect. Naming a thing they do not have turns a correct refusal
+			// into an instruction they cannot follow. The toggle arm below keeps "ad account":
+			// no email dispatcher implements a status toggle, so it genuinely is ads-only.
+			slog.WarnContext(ctx, "campaign metrics read blocked: campaign belongs to a different platform account than the current connection",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "error", safeErrSummary(merr))
-			return nil, &briefs.ConflictError{Code: "409", Message: "the campaign belongs to a different ad account than this project's current connection — reconnect the original account to read its metrics"}
+			return nil, &briefs.ConflictError{Code: "409", Message: "the campaign belongs to a different account than this project's current connection — reconnect the original account to read its metrics"}
 		case errors.Is(merr, domain.ErrSystemConnectionNotUsable):
 			// The project has no connection of its own and the LF system row it fell back to
 			// is unusable. This arm must sit ABOVE both arms below, because systemScoped
@@ -617,18 +654,26 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			// would be a false promise — it tells the caller to retry a request that cannot
 			// succeed with time alone.
 			//
+			// "channel", not "ad platform": HubSpot's resolveHubSpotClient tags the same three
+			// reasons (inactive, credentials undecodable, credentials incomplete) with this
+			// sentinel, so an email connection reaches this arm too — naming an ad platform
+			// would send that caller to check a system they never connected.
+			//
 			// Logged with the fixed reason token rather than the error, for the reason
 			// spelled out at unusableConnectionReason: one of the conditions behind this
 			// sentinel is detected by decoding the DECRYPTED credential blob.
 			slog.WarnContext(ctx, "campaign metrics read blocked: the project's connection is not usable",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "reason", unusableConnectionReason(merr))
-			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection is not ready — its stored credentials or provider settings need attention; repair the connection before reading metrics"}
+			return nil, &briefs.ConflictError{Code: "409", Message: "this project's channel connection is not ready — its stored credentials or provider settings need attention; repair the connection before reading metrics"}
 		default:
-			slog.WarnContext(ctx, "campaign metrics read failed on the ad platform",
+			// "channel", not "ad platform": HubSpot reaches this arm too, and a message
+			// naming an ad platform on an email read tells the caller to check a system
+			// they never connected.
+			slog.WarnContext(ctx, "campaign metrics read failed on the channel",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID, "error", safeErrSummary(merr))
-			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "campaign metrics could not be read from the ad platform"}
+			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "campaign metrics could not be read from the campaign's channel"}
 		}
 	}
 	return &briefs.CampaignMetrics{
@@ -642,7 +687,26 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 		Clicks:      m.Clicks,
 		CostMicros:  m.CostMicros,
 		Ctr:         m.Ctr,
+		Email:       emailMetricsResult(m.Email),
 	}, nil
+}
+
+// emailMetricsResult renders the email-channel counters, or nil for an ad platform. Kept a
+// function rather than an inline conditional so the nil case is the one the type system
+// enforces: the ad adapters never populate m.Email, and a nil dereference here would turn
+// every ad-platform metrics read into a 500.
+func emailMetricsResult(e *model.EmailMetrics) *briefs.EmailMetrics {
+	if e == nil {
+		return nil
+	}
+	return &briefs.EmailMetrics{
+		Sent:         e.Sent,
+		Delivered:    e.Delivered,
+		Opens:        e.Opens,
+		Clicks:       e.Clicks,
+		Bounces:      e.Bounces,
+		Unsubscribes: e.Unsubscribes,
+	}
 }
 
 // defaultMetricsWindowFor returns the window GetCampaignMetrics uses when the caller omits

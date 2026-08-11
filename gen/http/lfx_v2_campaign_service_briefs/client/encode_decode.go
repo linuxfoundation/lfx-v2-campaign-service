@@ -2814,6 +2814,25 @@ func marshalCampaignCreateInputRequestBodyToLfxv2campaignservicebriefsCampaignCr
 	return res
 }
 
+// unmarshalEmailMetricsResponseBodyToLfxv2campaignservicebriefsEmailMetrics
+// builds a value of type *lfxv2campaignservicebriefs.EmailMetrics from a value
+// of type *EmailMetricsResponseBody.
+func unmarshalEmailMetricsResponseBodyToLfxv2campaignservicebriefsEmailMetrics(v *EmailMetricsResponseBody) *lfxv2campaignservicebriefs.EmailMetrics {
+	if v == nil {
+		return nil
+	}
+	res := &lfxv2campaignservicebriefs.EmailMetrics{
+		Sent:         *v.Sent,
+		Delivered:    *v.Delivered,
+		Opens:        *v.Opens,
+		Clicks:       *v.Clicks,
+		Bounces:      *v.Bounces,
+		Unsubscribes: *v.Unsubscribes,
+	}
+
+	return res
+}
+
 // marshalLfxv2campaignservicebriefsCampaignUpdateInputToCampaignUpdateInputRequestBody
 // builds a value of type *CampaignUpdateInputRequestBody from a value of type
 // *lfxv2campaignservicebriefs.CampaignUpdateInput.

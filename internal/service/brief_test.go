@@ -43,6 +43,11 @@ type fakeBriefRepo struct {
 	// createErr, when set, fails CreateBrief BEFORE it stores anything — the shape of a
 	// version conflict or a database error, where the handler ran but no row committed.
 	createErr error
+	// getErr, when set, fails every GetBrief. It is deliberately NOT ErrNotFound: it models
+	// the case where the service cannot tell what the brief's state is (pool exhausted,
+	// deadline expired), which must never be answered with a claim about what somebody else
+	// did to the brief.
+	getErr error
 }
 
 func newFakeBriefRepo() *fakeBriefRepo {
@@ -50,6 +55,19 @@ func newFakeBriefRepo() *fakeBriefRepo {
 }
 
 func briefKey(projectID, id string) string { return projectID + "|" + id }
+
+// snapshot reads a brief WITHOUT firing onGet. The audience fake's claim uses it because the
+// real claim reads the brief inside its own transaction, under a row lock — that read is not
+// a window a second request can be delayed in, so a test hook that pretends it is would model
+// a race the database does not have.
+func (r *fakeBriefRepo) snapshot(projectID, id string) (*model.CampaignBrief, bool) {
+	b, ok := r.briefs[briefKey(projectID, id)]
+	if !ok {
+		return nil, false
+	}
+	cp := *b
+	return &cp, true
+}
 
 // FindBriefByEventSlug scans for a non-archived brief matching the slug, mirroring the
 // repo's partial-unique-index semantics (archived rows free the slug).
@@ -64,6 +82,9 @@ func (r *fakeBriefRepo) FindBriefByEventSlug(_ context.Context, projectID, event
 }
 
 func (r *fakeBriefRepo) GetBrief(_ context.Context, projectID, id string) (*model.CampaignBrief, error) {
+	if r.getErr != nil {
+		return nil, r.getErr
+	}
 	b, ok := r.briefs[briefKey(projectID, id)]
 	if !ok {
 		return nil, domain.ErrNotFound
@@ -80,6 +101,24 @@ func (r *fakeBriefRepo) GetBrief(_ context.Context, projectID, id string) (*mode
 		hook()
 	}
 	return &cp, nil
+}
+
+// ConfirmBriefApproved answers from the CURRENT stored row and does NOT fire onGet.
+//
+// Not firing it is the point. The real one holds a row lock, so an in-flight writer either
+// commits before this read (and is seen) or after it (and is a different race entirely) —
+// there is no moment inside the read for a hook to mutate. A fake that fired onGet here would
+// model a window the lock removes, and a test written against it would pass whether or not
+// the implementation locked at all.
+func (r *fakeBriefRepo) ConfirmBriefApproved(_ context.Context, projectID, id string, expectedVersion int64) error {
+	b, ok := r.snapshot(projectID, id)
+	if !ok || b.Status == model.BriefArchived {
+		return domain.ErrNotFound
+	}
+	if b.Status != model.BriefApproved || b.Version != expectedVersion {
+		return domain.ErrStaleApproval
+	}
+	return nil
 }
 
 func (r *fakeBriefRepo) CreateBrief(_ context.Context, b *model.CampaignBrief, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
@@ -229,12 +268,38 @@ func TestBriefService_SetBackend_LateBinding(t *testing.T) {
 
 // A missing bearer token is a client-side problem and must map to 400, not 500
 // (a 500 misrepresents it as a server fault and can trigger ops alerting).
+//
+// The verifier has to be WIRED for this to be the case it claims. Without one the guard
+// takes its own no-verifier branch, which is a 503 — this service failing, not the caller
+// — and the assertion below would pass for the wrong reason before that split existed.
 func TestBriefService_JWTAuth_EmptyTokenIsBadRequest(t *testing.T) {
 	s := NewBriefService(nil, nil, nil, nil)
+	s.SetTokenVerifier(&stubVerifier{})
 	_, err := s.JWTAuth(context.Background(), "", nil)
 	if _, ok := err.(*briefs.BadRequestError); !ok {
 		t.Fatalf("expected *briefs.BadRequestError for empty token, got %T (%v)", err, err)
 	}
+}
+
+// TestBriefService_JWTAuth_UnverifiableIsUnavailable pins the other half at the boundary
+// the client actually sees. A JWKS outage and an unwired verifier are both this service
+// unable to CHECK the token; 400 would blame the caller for it and tell them not to retry.
+func TestBriefService_JWTAuth_UnverifiableIsUnavailable(t *testing.T) {
+	t.Run("no verifier wired", func(t *testing.T) {
+		s := NewBriefService(nil, nil, nil, nil)
+		_, err := s.JWTAuth(context.Background(), "any-token", nil)
+		if _, ok := err.(*briefs.ConnServiceUnavailableError); !ok {
+			t.Fatalf("err = %T (%v), want *briefs.ConnServiceUnavailableError", err, err)
+		}
+	})
+	t.Run("signing keys unavailable", func(t *testing.T) {
+		s := NewBriefService(nil, nil, nil, nil)
+		s.SetTokenVerifier(&stubVerifier{err: fmt.Errorf("fetch jwks: %w", domain.ErrKeyUnavailable)})
+		_, err := s.JWTAuth(context.Background(), "a-perfectly-good-token", nil)
+		if _, ok := err.(*briefs.ConnServiceUnavailableError); !ok {
+			t.Fatalf("err = %T (%v), want *briefs.ConnServiceUnavailableError", err, err)
+		}
+	})
 }
 
 func isBriefUnavailable(err error) bool {
@@ -2593,6 +2658,34 @@ func TestBriefService_GetCampaignMetrics_AccountMismatchIs409(t *testing.T) {
 	}
 }
 
+// A campaign whose row records NO creating tenant at all is an ABSENCE, not a mismatch, and
+// must get different remedy text: "reconnect the original account" (the mismatch arm's
+// message) tells the operator to point the connection back at a tenant this row never named,
+// which is not something they can do. The only fix is to re-dispatch the row.
+func TestBriefService_GetCampaignMetrics_ProvenanceUnknownIs409WithReDispatchRemedy(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderHubSpot,
+		PlatformCampaignID: "4242", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	disp := &metricsOnlyDispatcher{err: fmt.Errorf(
+		"campaign c1 does not record which portal email 4242 was created in, so its id cannot be resolved against portal 8112310: %w",
+		errors.Join(domain.ErrCampaignProvenanceUnknown, ErrCampaignAccountMismatch))}
+	s := newMetricsService(camp, disp)
+	_, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected a ConflictError (409) for a campaign with no recorded provenance, got %T: %v", err, err)
+	}
+	if strings.Contains(conflict.Message, "reconnect") {
+		t.Errorf("a row with no recorded provenance cannot be reconnected -- nothing was recorded to reconnect to; got %q", conflict.Message)
+	}
+	if !strings.Contains(conflict.Message, "re-dispatch") {
+		t.Errorf("expected the message to tell the operator to re-dispatch the campaign, got %q", conflict.Message)
+	}
+}
+
 func TestBriefService_GetCampaignMetrics_WindowUnsupportedIs400(t *testing.T) {
 	camp := &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderTwitterAds,
@@ -3435,6 +3528,75 @@ func TestGetCampaignMetrics_UnusableConnectionIs409(t *testing.T) {
 	}
 	assertNoAccountsEndpointPromised(t, conflict.Message)
 	assertAccountNotSelectedLog(t, buf.String())
+}
+
+// A platform that answers successfully with no data is a 409, not the 503 default. For the
+// email channel this is the ORDINARY state — Dispatch stages a draft and a human sends it —
+// so the default would report an outage on a healthy integration for every read taken before
+// the send.
+func TestGetCampaignMetrics_NoDataInWindowIs409NotAnOutage(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderHubSpot,
+		PlatformCampaignID: "4242", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	disp := &metricsOnlyDispatcher{err: fmt.Errorf("get email metrics from hubspot: %w",
+		domain.ErrNoMetricsInWindow)}
+	s := newMetricsService(camp, disp)
+	_, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1",
+	})
+
+	var unavailable *briefs.ConnServiceUnavailableError
+	if errors.As(err, &unavailable) {
+		t.Fatalf("an empty window was reported as a platform outage: %v", err)
+	}
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("want a 409 ConflictError, got %T: %v", err, err)
+	}
+	// The three causes are indistinguishable upstream, so the message must not commit to one.
+	if !strings.Contains(conflict.Message, "no data for this campaign in the requested window") {
+		t.Errorf("message = %q, want it to report an empty window", conflict.Message)
+	}
+}
+
+// The email counters reach the wire, and an ad platform's response still carries none. Both
+// halves in one test because the second is what makes the first meaningful: an unconditional
+// struct literal would populate email for every platform and pass a presence-only assertion.
+func TestGetCampaignMetrics_EmailCountersAreRenderedOnlyForEmail(t *testing.T) {
+	emailCamp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderHubSpot,
+		PlatformCampaignID: "4242", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	emailDisp := &metricsOnlyDispatcher{metrics: &model.CampaignMetrics{
+		CampaignID: "c1", Impressions: 400, Clicks: 80,
+		Email: &model.EmailMetrics{Sent: 1000, Delivered: 950, Opens: 400, Clicks: 80, Bounces: 50, Unsubscribes: 7},
+	}}
+	res, err := newMetricsService(emailCamp, emailDisp).GetCampaignMetrics(context.Background(),
+		&briefs.GetCampaignMetricsPayload{ProjectID: "cncf", BriefID: "b1", CampaignID: "c1"})
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if res.Email == nil {
+		t.Fatal("the email counters were dropped from the response")
+	}
+	if res.Email.Delivered != 950 || res.Email.Unsubscribes != 7 {
+		t.Errorf("email counters = %+v", res.Email)
+	}
+
+	adCamp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	adDisp := &metricsOnlyDispatcher{metrics: &model.CampaignMetrics{CampaignID: "c1", Impressions: 5}}
+	adRes, err := newMetricsService(adCamp, adDisp).GetCampaignMetrics(context.Background(),
+		&briefs.GetCampaignMetricsPayload{ProjectID: "cncf", BriefID: "b1", CampaignID: "c1"})
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics (ad platform): %v", err)
+	}
+	if adRes.Email != nil {
+		t.Errorf("an ad platform response carried email counters: %+v", adRes.Email)
+	}
 }
 
 // TestGetCampaignMetrics_OtherUnusableCauseKeepsTheGeneralMessage is the contrast that makes
