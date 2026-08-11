@@ -343,6 +343,8 @@ persisted — the same live-read-only discipline as `ReadMetrics`. Errors from t
 propagate verbatim: a read has no ambiguous mutation to protect, and the adapter does not classify
 those, leaving the HTTP status mapping to the service layer.
 
+### Google Ads
+
 **Errors that arise BEFORE any request are classified here, and must be.** The service layer has
 exactly one default arm for an unrecognized error, and it answers 503 — "the provider call failed,
 retry later". Three conditions would land there wrongly: an inactive connection, a credential blob
@@ -399,48 +401,6 @@ fails. The error names the field and the rule but never echoes the VALUE: a mana
 account-identifying configuration, this error reaches a log, and the rest of this path keeps
 error text to a fixed sentinel vocabulary with no payload attached.
 
-### Meta
-
-`MetaDispatcher.ListAccounts` follows the same contract, through
-`resolveMetaDiscoveryClient`, and the differences are the interesting part.
-
-**The account id is not consulted, and `AccountConfig` is left zero.** Graph
-`GET /me/adaccounts` asks what the TOKEN reaches, so scoping the client to one of the answers
-would narrow the response to a subset of the question. Requiring an account id would also make
-the endpoint reachable only by connections that no longer need it.
-
-**Only re-pointing is reachable today.** The resolver is already correct for first-time
-bootstrap — credentials stored, account chosen afterwards, the way Google Ads works — but
-`MetaAdsConnectionConfig` still declares `Required("account_id")`, so that create is a 400
-before any of this code runs. Closing it is not a one-line loosening: only
-`resolveGoogleAdsClient` tags an empty account id with `domain.ErrAccountNotSelected`, so a
-Meta connection parked mid-bootstrap would fail `Dispatch` with an error nothing classifies —
-the caller learns that the campaign did not launch, not that the reason is a choice they have
-not made. Note the shape of that answer: campaign create is ASYNCHRONOUS (`design/brief.go`
-answers `StatusAccepted`), so the untagged error surfaces in the polled job result, never as a
-409 — `docs/api-catalog.md` records the same split for Google Ads. The synchronous 409 that
-names the missing account belongs to `ToggleStatus` and `ReadMetrics`, and neither needs
-anything here: both target the campaign node by id and document that they need no account id
-(`internal/dispatch/meta.go`), so they already work on an account-less row. `Dispatch` is
-therefore the only exit to tag, and tagging it improves a job result rather than a status code.
-Tracked as LFXV2-3061.
-
-**The unmarshal cause on the decrypted blob is DROPPED, not wrapped.** It is the only value in
-the resolver derived from decrypted plaintext, and this error is logged and, on the not-usable
-arm, described to the caller. Today's `encoding/json` happens not to quote the offending bytes
-for a struct of string fields, but that is a behaviour rather than a documented guarantee and
-it does not hold for every field type. `TestMeta_ListAccounts_UndecodableBlobDropsTheUnmarshalCause`
-asserts the error text is EXACTLY the two sentinels — asserting merely that it does not contain
-the secret would not bind, because it passes with the cause appended.
-
-**Known-bad accounts are returned, not filtered.** Disabled, unsettled, pending-review,
-pending-settlement, grace-period and closed accounts come back with the reason in the label
-(`"LF Events (disabled)"`). This is a picker: dropping them answers "your token reaches no ad
-accounts" about an account sitting right there. The label reuses
-`inactiveAccountStatusLabels`, the same map `CreateCampaign`'s preflight refuses on, so the
-picker and the create path cannot disagree about which accounts are known-bad. `account_status`
-0 means the field was absent, which is not a claim of disabled, and gets no label.
-
 The manager-id check is duplicated on purpose. `Client.validateLoginCustomerID` still validates it
 (the backstop for every other caller), but it does so inside the same call that talks to Google, so
 by the time it fires the error is indistinguishable at this boundary from a genuine upstream
@@ -448,58 +408,7 @@ failure. `storedCustomerIDRE` in `internal/dispatch/googleads.go` therefore chec
 where it is READ, not where it is used — the check has to happen while the answer is still
 classifiable. The two regexps must stay in step.
 
-`creds.resolve` classifies each of its failure branches, and the splits are deliberate. A connection
-row with an EMPTY credential blob is permanently unusable as it stands, so it carries
-`domain.ErrConnectionNotUsable` (→ 400) alongside `domain.ErrCredentialsAbsent` for the reason
-token — without that second sentinel the most trivially diagnosable state in the set logs as
-`reason=unclassified`. Two branches do not:
-`domain.ErrNotFound` means there is no connection at all (→ 404, and the caller should create one,
-not edit one), and a repository failure is a genuine "try again later" (→ 503). Flattening either
-into "not usable" would lose a distinction the service layer depends on.
-
-**A decrypt failure is not one condition, and it splits again.** Only a blob the encryptor could not
-even ATTEMPT to authenticate — `domain.ErrCredentialsMalformed`, for AES-GCM a ciphertext shorter
-than a nonce PLUS the authentication tag (`Seal` appends `Overhead()` bytes to every message,
-including an empty one, so anything shorter is provably truncated) — is proven bad ROW data, and
-only that branch earns `ErrConnectionNotUsable` → 400. Getting that boundary wrong is not cosmetic:
-a blob between the two lengths reaches `Open`, fails authentication, and is then classified as the
-key condition below. A GCM AUTHENTICATION failure carries `domain.ErrCredentialDecryptionFailed`
-instead: it means a wrong or rotated APPLICATION key, or tampering or corruption of that one row
-(`internal/infrastructure/crypto/aesgcm.go` states both), and the tag check CANNOT distinguish them.
-The blast radius therefore is not decided by the sentinel — a wrong deployment key fails every
-project at once, one corrupted row fails only that row, and the COUNT of failures is what tells a
-responder which. Reported as "not usable as configured" it would answer 400 to a whole deployment's
-worth of operators, each told to go fix a connection that is fine, and would erase the 500 that is
-the only signal a key rotation went wrong; answering 500 for one corrupted row over-escalates, which
-is the recoverable direction. An unrecognized decrypt error takes the authentication path on
-purpose: an `Encryptor` that proves nothing about the row must not be read as accusing it.
-
-**Which defect it was is carried by a second sentinel, and the log line is why.** Alongside
-`ErrConnectionNotUsable`, each stored-connection defect wraps one of
-`domain.ErrConnectionInactive`, `ErrCredentialsAbsent`, `ErrCredentialsUndecodable`,
-`ErrCredentialsIncomplete`, or `ErrProviderConfigInvalid`. The status is still decided by the one
-sentinel; these only name the
-reason. They have to be sentinels rather than message text because the service layer cannot log the
-error at all: `validateGoogleAdsCredentials` detects the undecodable case by decoding the DECRYPTED
-blob, and `encoding/json` quotes its input — a `*json.SyntaxError` names the offending character, a
-`*json.UnmarshalTypeError` names the field being read. So that unmarshal error is **dropped, not
-wrapped**: nothing a reader could act on is lost (the remedy is "re-save the credential", not "fix
-byte 41"), and `errors.Is` over a fixed vocabulary carries the diagnosis with no payload attached to
-carry secrets in.
-
-The two decrypt sentinels are declared in `internal/domain` rather than in `crypto` because callers depend
-on the `domain.Encryptor` PORT and never import the implementation; the port's doc states the
-wrapping obligation, and `crypto`'s `ErrCiphertextTooShort` / `ErrDecryptionFailed` each wrap their
-domain sentinel so `errors.Is` carries the classification across the layer without inverting the
-dependency. Note the decrypt branches wrap BOTH a sentinel and the decrypt error (`%w: %w`), and
-the service layer never returns that cause to a caller — but whether it LOGS it depends on which
-sentinel the branch carried. Authenticated-decryption failure (`ErrCredentialDecryptionFailed` →
-500) logs the cause: that error is constructed by the encryptor from ciphertext and key material
-only. Malformed ciphertext reaches `ErrConnectionNotUsable` → 400, whose handler deliberately
-suppresses the cause and logs `reason=credential_blob_malformed` alone, because the conditions on
-that arm include one detected by decoding the DECRYPTED blob.
-
-Google Ads is the only implementation today, via
+The Google Ads implementation goes via
 `Client.ListAccessibleCustomers` → `customers:listAccessibleCustomers`. That endpoint is
 **account-agnostic** — it has no `customers/{id}` path segment, unlike every other Google Ads call
 — and it is sent with a nil body (so no `Content-Type`) and `idempotent=true` (a pure read, so
@@ -557,6 +466,101 @@ first create. Only `status = 'ENABLED'` clients are requested. The expansion als
 `descriptive_name`, which the flat endpoint does not return at all — so labels appear only for
 accounts reached this way. Without a manager id there is no hierarchy root to walk and the direct
 list is the whole answer.
+
+### Meta
+
+`MetaDispatcher.ListAccounts` follows the same contract, through
+`resolveMetaDiscoveryClient`, and the differences are the interesting part.
+
+**The account id is not consulted, and `AccountConfig` is left zero.** Graph
+`GET /me/adaccounts` asks what the TOKEN reaches, so scoping the client to one of the answers
+would narrow the response to a subset of the question. Requiring an account id would also make
+the endpoint reachable only by connections that no longer need it.
+
+**Only re-pointing is reachable today.** The resolver is already correct for first-time
+bootstrap — credentials stored, account chosen afterwards, the way Google Ads works — but
+`MetaAdsConnectionConfig` still declares `Required("account_id")`, so that create is a 400
+before any of this code runs. Closing it is not a one-line loosening: only
+`resolveGoogleAdsClient` tags an empty account id with `domain.ErrAccountNotSelected`, so a
+Meta connection parked mid-bootstrap would fail `Dispatch` with an error nothing classifies —
+the caller learns that the campaign did not launch, not that the reason is a choice they have
+not made. Note the shape of that answer: campaign create is ASYNCHRONOUS (`design/brief.go`
+answers `StatusAccepted`), so the untagged error surfaces in the polled job result, never as a
+409 — `docs/api-catalog.md` records the same split for Google Ads. The synchronous 409 that
+names the missing account belongs to `ToggleStatus` and `ReadMetrics`, and neither needs
+anything here: both target the campaign node by id and document that they need no account id
+(`internal/dispatch/meta.go`), so they already work on an account-less row. `Dispatch` is
+therefore the only exit to tag, and tagging it improves a job result rather than a status code.
+Tracked as LFXV2-3061.
+
+**The unmarshal cause on the decrypted blob is DROPPED, not wrapped.** It is the only value in
+the resolver derived from decrypted plaintext, and this error is logged and, on the not-usable
+arm, described to the caller. Today's `encoding/json` happens not to quote the offending bytes
+for a struct of string fields, but that is a behaviour rather than a documented guarantee and
+it does not hold for every field type. `TestMeta_ListAccounts_UndecodableBlobDropsTheUnmarshalCause`
+asserts the error text is EXACTLY the two sentinels — asserting merely that it does not contain
+the secret would not bind, because it passes with the cause appended.
+
+**Known-bad accounts are returned, not filtered.** Disabled, unsettled, pending-review,
+pending-settlement, grace-period and closed accounts come back with the reason in the label
+(`"LF Events (disabled)"`). This is a picker: dropping them answers "your token reaches no ad
+accounts" about an account sitting right there. The label reuses
+`inactiveAccountStatusLabels`, the same map `CreateCampaign`'s preflight refuses on, so the
+picker and the create path cannot disagree about which accounts are known-bad. `account_status`
+0 means the field was absent, which is not a claim of disabled, and gets no label.
+
+### Shared: credential resolution and decrypt classification
+
+`creds.resolve` classifies each of its failure branches, and the splits are deliberate. A connection
+row with an EMPTY credential blob is permanently unusable as it stands, so it carries
+`domain.ErrConnectionNotUsable` (→ 400) alongside `domain.ErrCredentialsAbsent` for the reason
+token — without that second sentinel the most trivially diagnosable state in the set logs as
+`reason=unclassified`. Two branches do not:
+`domain.ErrNotFound` means there is no connection at all (→ 404, and the caller should create one,
+not edit one), and a repository failure is a genuine "try again later" (→ 503). Flattening either
+into "not usable" would lose a distinction the service layer depends on.
+
+**A decrypt failure is not one condition, and it splits again.** Only a blob the encryptor could not
+even ATTEMPT to authenticate — `domain.ErrCredentialsMalformed`, for AES-GCM a ciphertext shorter
+than a nonce PLUS the authentication tag (`Seal` appends `Overhead()` bytes to every message,
+including an empty one, so anything shorter is provably truncated) — is proven bad ROW data, and
+only that branch earns `ErrConnectionNotUsable` → 400. Getting that boundary wrong is not cosmetic:
+a blob between the two lengths reaches `Open`, fails authentication, and is then classified as the
+key condition below. A GCM AUTHENTICATION failure carries `domain.ErrCredentialDecryptionFailed`
+instead: it means a wrong or rotated APPLICATION key, or tampering or corruption of that one row
+(`internal/infrastructure/crypto/aesgcm.go` states both), and the tag check CANNOT distinguish them.
+The blast radius therefore is not decided by the sentinel — a wrong deployment key fails every
+project at once, one corrupted row fails only that row, and the COUNT of failures is what tells a
+responder which. Reported as "not usable as configured" it would answer 400 to a whole deployment's
+worth of operators, each told to go fix a connection that is fine, and would erase the 500 that is
+the only signal a key rotation went wrong; answering 500 for one corrupted row over-escalates, which
+is the recoverable direction. An unrecognized decrypt error takes the authentication path on
+purpose: an `Encryptor` that proves nothing about the row must not be read as accusing it.
+
+**Which defect it was is carried by a second sentinel, and the log line is why.** Alongside
+`ErrConnectionNotUsable`, each stored-connection defect wraps one of
+`domain.ErrConnectionInactive`, `ErrCredentialsAbsent`, `ErrCredentialsUndecodable`,
+`ErrCredentialsIncomplete`, or `ErrProviderConfigInvalid`. The status is still decided by the one
+sentinel; these only name the
+reason. They have to be sentinels rather than message text because the service layer cannot log the
+error at all: `validateGoogleAdsCredentials` detects the undecodable case by decoding the DECRYPTED
+blob, and `encoding/json` quotes its input — a `*json.SyntaxError` names the offending character, a
+`*json.UnmarshalTypeError` names the field being read. So that unmarshal error is **dropped, not
+wrapped**: nothing a reader could act on is lost (the remedy is "re-save the credential", not "fix
+byte 41"), and `errors.Is` over a fixed vocabulary carries the diagnosis with no payload attached to
+carry secrets in.
+
+The two decrypt sentinels are declared in `internal/domain` rather than in `crypto` because callers depend
+on the `domain.Encryptor` PORT and never import the implementation; the port's doc states the
+wrapping obligation, and `crypto`'s `ErrCiphertextTooShort` / `ErrDecryptionFailed` each wrap their
+domain sentinel so `errors.Is` carries the classification across the layer without inverting the
+dependency. Note the decrypt branches wrap BOTH a sentinel and the decrypt error (`%w: %w`), and
+the service layer never returns that cause to a caller — but whether it LOGS it depends on which
+sentinel the branch carried. Authenticated-decryption failure (`ErrCredentialDecryptionFailed` →
+500) logs the cause: that error is constructed by the encryptor from ciphertext and key material
+only. Malformed ciphertext reaches `ErrConnectionNotUsable` → 400, whose handler deliberately
+suppresses the cause and logs `reason=credential_blob_malformed` alone, because the conditions on
+that arm include one detected by decoding the DECRYPTED blob.
 
 ## Channel kinds: paid ads vs email
 
