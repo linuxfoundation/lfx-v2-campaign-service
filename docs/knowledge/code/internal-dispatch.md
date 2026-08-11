@@ -408,11 +408,15 @@ failure. `storedCustomerIDRE` in `internal/dispatch/googleads.go` therefore chec
 where it is READ, not where it is used — the check has to happen while the answer is still
 classifiable. The two regexps must stay in step.
 
-The Google Ads implementation goes via
-`Client.ListAccessibleCustomers` → `customers:listAccessibleCustomers`. That endpoint is
-**account-agnostic** — it has no `customers/{id}` path segment, unlike every other Google Ads call
-— and it is sent with a nil body (so no `Content-Type`) and `idempotent=true` (a pure read, so
-retrying a 429 cannot double-apply anything).
+The Google Ads implementation goes via `Client.ListAccessibleCustomers`, which branches on mode
+before it issues any request. In **direct mode** (no `login_customer_id`) it reaches
+`customers:listAccessibleCustomers`. That endpoint is **account-agnostic** — it has no
+`customers/{id}` path segment, unlike every other Google Ads call — and it is sent with a nil body
+(so no `Content-Type`) and `idempotent=true` (a pure read, so retrying a 429 cannot double-apply
+anything). In **manager mode** (`login_customer_id` configured) the flat endpoint is skipped
+entirely: the call returns through `expandManagerHierarchy` first
+(`internal/platform/googleads/client.go:1025-1027`), because a flat read whose rows are never
+consumed could only add a way for discovery to fail.
 
 **Discovery runs without an account id, deliberately, at both layers.** The call is
 account-agnostic: it asks which customer ids the CREDENTIAL reaches, so an account id is not

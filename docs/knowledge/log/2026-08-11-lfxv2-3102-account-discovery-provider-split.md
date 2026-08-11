@@ -8,6 +8,14 @@ that owns it — with exactly one sentence rewritten: the `ListAccessibleCustome
 than the sentence did. That exception is spelled out below rather than rounded off, because "no
 prose was rewritten" is the kind of summary a later reader would trust instead of the diff.
 
+A second sentence was rewritten in review. The `ListAccessibleCustomers` paragraph asserted the
+call goes to `customers:listAccessibleCustomers` flatly, but `Client.ListAccessibleCustomers`
+branches on mode first and returns through `expandManagerHierarchy` whenever `login_customer_id`
+is set (`internal/platform/googleads/client.go:1025-1027`) — the flat endpoint is never reached in
+manager mode. Under a `### Google Ads` heading that unqualified claim reads as the provider's only
+path, so it now names both modes. Documenting one execution path as if it were the whole is the
+same defect this split was meant to remove, one level down.
+
 ## What the flat section had become
 
 The section was written when Google Ads was the only implementation, so provider-specific detail
