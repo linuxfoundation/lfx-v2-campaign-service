@@ -258,8 +258,14 @@ var (
 	// reaches by doing exactly what the API told them to do.
 	//
 	// It became a SUPPORTED state when GoogleAdsConnectionConfig dropped
-	// Required("account_id") to allow credentials-first bootstrap (design/connection.go).
-	// It was not, however, previously impossible: Required checked only that the JSON key
+	// Required("account_id") to allow credentials-first bootstrap (design/connection.go),
+	// and MetaAdsConnectionConfig now does the same — it requires only page_id, so a Meta
+	// connection can be created with credentials alone and its account chosen afterwards
+	// from GET .../connection-meta-ads/accounts. Do not read this sentinel as Google-only:
+	// it is the shared name for an unfinished connection on every provider that supports a
+	// credentials-first create, and the list is expected to keep growing.
+	//
+	// On Google Ads it was not, however, previously impossible: Required checked only that the JSON key
 	// was present (the generated validator was `if body.AccountID == nil`) and the Go field
 	// is a plain string, so `"account_id": ""` was accepted and stored. The guard that
 	// produces this sentinel was therefore reachable before — via an unintended, unnamed
@@ -273,15 +279,28 @@ var (
 	// ErrConnectionNotUsable selects the HTTP status, this one supplies the reason token
 	// (unusableConnectionReason -> "account_not_selected") and the specific message.
 	//
-	// It reaches exactly two handlers, the campaign status toggle and the per-campaign
-	// metrics read, both of which answer 409: the campaign is the resource there, and an
-	// unfinished connection is a precondition conflict, matching how those handlers already
-	// classify ErrCampaignNotProvisioned. Non-retryable is the property that actually
-	// matters and the one 503 got wrong.
+	// It reaches two SYNCHRONOUS handlers, the campaign status toggle and the per-campaign
+	// metrics read (internal/service/brief.go), both of which answer 409: the campaign is
+	// the resource there, and an unfinished connection is a precondition conflict, matching
+	// how those handlers already classify ErrCampaignNotProvisioned. Non-retryable is the
+	// property that actually matters and the one 503 got wrong. Those two are fed by the
+	// credential resolution behind ToggleStatus and ReadMetrics — Google Ads, Microsoft,
+	// Reddit and Twitter all tag the sentinel there.
 	//
-	// Account discovery does NOT map this sentinel. It calls validateGoogleAdsCredentials,
-	// which deliberately omits the account-id check — accepting an account-less connection
-	// is precisely what makes the bootstrap possible, since discovery is how the operator
-	// finds the account to select. Discovery's own 400 covers its other unusable states.
+	// 409 is NOT this sentinel's universal fate, and code that maps errors must not assume
+	// it is. Meta tags it from requireMetaAccountID (internal/dispatch/meta.go), whose only
+	// caller is Dispatch — queued work, where dispatchPlatform collapses every dispatcher
+	// error into one job-result string. On that path the sentinel is a CLASSIFICATION whose
+	// reason token reaches an operator through the dispatch-failure log line and nothing
+	// else; no status code is derived from it and no caller sees its text. Meta has no
+	// synchronous producer at all today, because its toggle and metrics reads target the
+	// campaign node by id and need no account id.
+	//
+	// Account discovery does NOT map this sentinel, on any provider, because no discovery
+	// path produces it: Google's calls validateGoogleAdsCredentials, which deliberately
+	// omits the account-id check, and Meta's resolveMetaDiscoveryClient simply never calls
+	// requireMetaAccountID. Accepting an account-less connection is precisely what makes the
+	// bootstrap possible, since discovery is how the operator finds the account to select.
+	// Discovery's own 400 covers its other unusable states.
 	ErrAccountNotSelected = errors.New("no ad account has been selected for the stored connection")
 )
