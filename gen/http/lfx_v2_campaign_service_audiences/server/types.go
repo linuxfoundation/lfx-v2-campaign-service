@@ -151,6 +151,9 @@ type CreateAudienceConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateAudienceServiceUnavailableResponseBody is the type of the
@@ -201,6 +204,9 @@ type GetAudienceConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // GetAudienceServiceUnavailableResponseBody is the type of the
@@ -251,6 +257,9 @@ type ListAudiencesConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // ListAudiencesServiceUnavailableResponseBody is the type of the
@@ -301,6 +310,9 @@ type UpdateAudienceConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // UpdateAudienceServiceUnavailableResponseBody is the type of the
@@ -371,6 +383,9 @@ type BuildAudienceConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // BuildAudienceServiceUnavailableResponseBody is the type of the
@@ -590,6 +605,7 @@ func NewCreateAudienceConflictResponseBody(res *lfxv2campaignserviceaudiences.Co
 	body := &CreateAudienceConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -645,6 +661,7 @@ func NewGetAudienceConflictResponseBody(res *lfxv2campaignserviceaudiences.Confl
 	body := &GetAudienceConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -700,6 +717,7 @@ func NewListAudiencesConflictResponseBody(res *lfxv2campaignserviceaudiences.Con
 	body := &ListAudiencesConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -755,6 +773,7 @@ func NewUpdateAudienceConflictResponseBody(res *lfxv2campaignserviceaudiences.Co
 	body := &UpdateAudienceConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -832,6 +851,7 @@ func NewBuildAudienceConflictResponseBody(res *lfxv2campaignserviceaudiences.Con
 	body := &BuildAudienceConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }

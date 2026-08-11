@@ -25,15 +25,37 @@ type fakeAudienceRepo struct {
 	// broke, so the row cannot carry the created list ids and the caller's error is the only
 	// remaining channel for them.
 	updateE error
-	// staleAt, when it matches the expectedVersion passed to
-	// CreateAudienceForApprovedBrief, makes that call report ErrStaleApproval.
-	staleAt int64
+	// releaseE, when set, makes every ReleaseAudienceBuildLease fail, so the lease-release
+	// paths can be driven into their best-effort log-and-continue arm.
+	releaseE error
+	// briefs is the SAME brief store the service reads. The real
+	// CreateAudienceForApprovedBrief locks the parent brief and gates on it, so a fake
+	// holding its own private notion of approval could not express the thing these tests
+	// exist for: a ReplaceBrief landing partway through a build.
+	briefs *fakeBriefRepo
+	// leaseHeld makes CreateAudienceForApprovedBrief report ErrAudienceBuildInFlight, which
+	// is what the real repo returns when the partial unique index from migration 000018
+	// rejects the insert because a concurrent build for this (brief, platform) already
+	// holds the lease.
+	leaseHeld bool
+	// afterClaim, when set, fires once immediately after a SUCCESSFUL claim. It models the
+	// only window the post-claim brief re-read can lose: the claim committed while the brief
+	// was approved, and a withdrawal commits before the service reads it back. onGet cannot
+	// express this — it fires after the read and returns the pre-mutation snapshot, so the
+	// service would still see an approved brief.
+	afterClaim func()
 }
 
 func newFakeAudienceRepo() *fakeAudienceRepo {
 	return &fakeAudienceRepo{items: map[string]*model.CampaignAudience{}}
 }
 
+// CreateAudience stores a COPY and returns a SECOND copy, for the same reason GetAudience
+// does. Handing the caller the stored pointer makes every later in-place mutation of the
+// returned row visible in the store without any repository call, and that silently converts
+// the lease tests into tautologies: any in-place `row.Status = FAILED` on the service side
+// would make `rows()[0].Status == AudienceFailed` true through a shared pointer whether or not
+// the release was ever persisted. PostgreSQL cannot do that; neither may this.
 func (r *fakeAudienceRepo) CreateAudience(_ context.Context, a *model.CampaignAudience) (*model.CampaignAudience, error) {
 	if r.createE != nil {
 		return nil, r.createE
@@ -41,18 +63,54 @@ func (r *fakeAudienceRepo) CreateAudience(_ context.Context, a *model.CampaignAu
 	r.seq++
 	a.ID = "aud-" + string(rune('a'+r.seq))
 	a.Version = 1
-	r.items[a.ID] = a
-	return a, nil
+	// The real INSERT binds updated_by to the SAME placeholder as created_by
+	// (createAudienceQuery), so a freshly created row already answers "who touched this
+	// last". A fake that left it nil would hide a regression in exactly that stamp.
+	a.UpdatedBy = a.CreatedBy
+	stored := *a
+	r.items[a.ID] = &stored
+	out := stored
+	return &out, nil
 }
 
-// CreateAudienceForApprovedBrief models the version gate: briefVersion is what the fake's
-// parent brief is "at", and a mismatch is ErrStaleApproval — the same signal the real repo
-// gives when a concurrent ReplaceBrief moved the brief.
-func (r *fakeAudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *model.CampaignAudience, expectedVersion int64) (*model.CampaignAudience, error) {
-	if r.staleAt != 0 && r.staleAt == expectedVersion {
-		return nil, domain.ErrStaleApproval
+// CreateAudienceForApprovedBrief models the real repo's two gates in the real repo's order:
+// the parent brief is read under the claim and must be APPROVED, and the version it is at is
+// reported back; then the lease. Reading the shared brief store rather than a private flag is
+// what lets a test move the brief mid-build and see the same answer production would give.
+func (r *fakeAudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *model.CampaignAudience) (*model.CampaignAudience, int64, error) {
+	var version int64
+	if r.briefs != nil {
+		brief, ok := r.briefs.snapshot(a.ProjectID, a.BriefID)
+		if !ok || brief.Status != model.BriefApproved {
+			return nil, 0, domain.ErrStaleApproval
+		}
+		version = brief.Version
 	}
-	return r.CreateAudience(ctx, a)
+	// Checked after the approval because the real repo checks the approval FIRST — the lease
+	// is only consulted once the insert is attempted.
+	if r.leaseHeld {
+		return nil, 0, domain.ErrAudienceBuildInFlight
+	}
+	// Model the partial unique index itself, not just the flag: an existing BUILDING row for
+	// the same (brief, platform) rejects the insert. The flag alone cannot express WHEN the
+	// lease is taken, so a fake that only honoured it would pass whether the service claimed
+	// before or after its slow pre-build work — which is the ordering under test.
+	for _, existing := range r.items {
+		if existing.BriefID == a.BriefID && existing.Platform == a.Platform &&
+			existing.Status == model.AudienceBuilding {
+			return nil, 0, domain.ErrAudienceBuildInFlight
+		}
+	}
+	out, cerr := r.CreateAudience(ctx, a)
+	if cerr != nil {
+		return nil, 0, cerr
+	}
+	if r.afterClaim != nil {
+		hook := r.afterClaim
+		r.afterClaim = nil // one-shot
+		hook()
+	}
+	return out, version, nil
 }
 
 func (r *fakeAudienceRepo) GetAudience(_ context.Context, _, _, id string) (*model.CampaignAudience, error) {
@@ -72,7 +130,8 @@ func (r *fakeAudienceRepo) GetAudience(_ context.Context, _, _, id string) (*mod
 func (r *fakeAudienceRepo) ListAudiences(_ context.Context, _, _ string) ([]*model.CampaignAudience, error) {
 	out := make([]*model.CampaignAudience, 0, len(r.items))
 	for _, a := range r.items {
-		out = append(out, a)
+		cp := *a
+		out = append(out, &cp)
 	}
 	return out, nil
 }
@@ -89,8 +148,28 @@ func (r *fakeAudienceRepo) UpdateAudience(_ context.Context, a *model.CampaignAu
 		return nil, domain.ErrPreconditionFailed
 	}
 	a.Version = cur.Version + 1
-	r.items[a.ID] = a
-	return a, nil
+	stored := *a
+	r.items[a.ID] = &stored
+	out := stored
+	return &out, nil
+}
+
+// ReleaseAudienceBuildLease models the real predicate rather than a convenient one: scoped by
+// tenant, gated on the STATUS, and a silent no-op for anything else. A fake that keyed off the
+// version instead — or that released unconditionally — would make
+// TestBuildAudience_ReleasesTheLeaseAfterAConcurrentPatchBumpsTheVersion vacuous, since that
+// test exists precisely to pin that the release does not consult the version.
+func (r *fakeAudienceRepo) ReleaseAudienceBuildLease(_ context.Context, projectID, briefID, id string) error {
+	if r.releaseE != nil {
+		return r.releaseE
+	}
+	cur, ok := r.items[id]
+	if !ok || cur.ProjectID != projectID || cur.BriefID != briefID || cur.Status != model.AudienceBuilding {
+		return nil
+	}
+	cur.Status = model.AudienceFailed
+	cur.Version++
+	return nil
 }
 
 func strptr(s string) *string { return &s }
@@ -469,5 +548,53 @@ func TestAudienceService_Update_SuppressionListOps(t *testing.T) {
 	}
 	if len(both.SuppressionListIds) != 0 {
 		t.Errorf("clear flag must win over a supplied list, got: %v", both.SuppressionListIds)
+	}
+}
+
+// TestMapAudienceErr_ConflictReasonsAreDistinctAndStable pins the machine-readable half of
+// the three 409s.
+//
+// All three carry code "409". Before `reason` existed the only thing telling them apart was
+// the message, and a caller cannot act on those: "wait for the build that holds the lease"
+// and "refresh and rebuild" are opposite instructions, and the prose that expresses them is
+// rewritten whenever an operator finds it unclear. This asserts the slugs, so a reworded
+// message is free and a renamed slug is a failing test.
+//
+// It also asserts the three are pairwise distinct — a copy-paste that gave two branches the
+// same slug would re-merge exactly the cases the attribute exists to separate, and every
+// individual assertion would still pass.
+func TestMapAudienceErr_ConflictReasonsAreDistinctAndStable(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"stale approval", domain.ErrStaleApproval, "stale_approval"},
+		{"lease held", domain.ErrAudienceBuildInFlight, "audience_build_in_flight"},
+		{"generic conflict", domain.ErrConflict, "already_exists"},
+	}
+
+	seen := make(map[string]string, len(cases))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var conflict *audiences.ConflictError
+			if !errors.As(mapAudienceErr(tc.err), &conflict) {
+				t.Fatalf("mapAudienceErr(%v) is not a ConflictError", tc.err)
+			}
+			if conflict.Reason == nil {
+				t.Fatalf("no reason on the %s conflict: the caller is back to matching on "+
+					"message prose to tell it from the other two 409s", tc.name)
+			}
+			if *conflict.Reason != tc.want {
+				t.Errorf("reason = %q, want %q — this slug is the part clients are promised, "+
+					"so renaming it breaks them silently", *conflict.Reason, tc.want)
+			}
+			if prev, dup := seen[*conflict.Reason]; dup {
+				t.Errorf("%s reuses the reason %q already returned for %s, which merges two "+
+					"conflicts that call for opposite client behaviour",
+					tc.name, *conflict.Reason, prev)
+			}
+			seen[*conflict.Reason] = tc.name
+		})
 	}
 }

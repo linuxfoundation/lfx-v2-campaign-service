@@ -1,0 +1,31 @@
+-- Copyright The Linux Foundation and each contributor to LFX.
+-- SPDX-License-Identifier: MIT
+
+-- Actor attribution on campaign_audiences.updated_by.
+--
+-- 000015 named this gap while closing the brief one: campaign_audiences (000005)
+-- carries created_by ONLY, and update-audience is a published PATCH backed by an
+-- in-place UPDATE, so an audience edit currently records no actor at all. The row
+-- keeps naming whoever created it however many times someone else rewrites its
+-- suppression lists or flips its status.
+--
+-- That matters here for the same reason it did for briefs and campaigns: audiences
+-- are built through SYSTEM accounts. HubSpot sees one shared LF-owned identity, so
+-- the platform cannot tell us which person narrowed a list. If this service does not
+-- record it, the information exists nowhere.
+--
+-- Same JSONB shape as created_by and as every other actor column in this schema, so
+-- marshalActor / unmarshalActor apply unchanged.
+--
+-- Nullable by necessity, not by preference: every existing row predates this migration
+-- and has no actor, and an unauthenticated write still commits rather than failing. NULL
+-- means "not recorded", never "nobody". Existing rows are deliberately NOT backfilled
+-- from created_by: this migration cannot know whether anyone edited them, so filling the
+-- column would manufacture attribution for edits it has no evidence of. New rows get the
+-- creator at insert, which is a fact the INSERT does have.
+--
+-- Personal data (name, email), retained as long as the audience, with no pruning
+-- path — an audit trail that expires answers "who did this" only for recent writes.
+-- Adding one is a compliance decision, tracked with the identical note on 000015.
+ALTER TABLE campaign_audiences
+    ADD COLUMN IF NOT EXISTS updated_by JSONB;

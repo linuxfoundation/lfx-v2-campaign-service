@@ -186,6 +186,11 @@ func (s *AudienceService) UpdateAudience(ctx context.Context, p *audiences.Updat
 	if verr := cur.Validate(); verr != nil {
 		return nil, audienceValidationErr(verr)
 	}
+	// Stamp the editor onto the MERGED row rather than leaving the patch's own zero
+	// value: cur was loaded from the database, so it already carries the PREVIOUS
+	// editor, and writing it back unchanged would silently re-assert them as the
+	// author of this edit.
+	cur.UpdatedBy = marshalActor(attributedActor(ctx, "update audience"))
 	updated, uerr := repo.UpdateAudience(ctx, cur, version)
 	if uerr != nil {
 		return nil, mapAudienceErr(uerr)
@@ -331,6 +336,27 @@ func audienceValidationErr(err error) error {
 	return &audiences.BadRequestError{Code: "400", Message: err.Error()}
 }
 
+// conflictReason returns the ConflictError.reason discriminator as the optional
+// attribute's *string.
+//
+// The three 409s below are three different instructions to the caller — refresh and
+// retry, wait for a lease to clear, stop because the thing exists — and until now the
+// only thing separating them was the English message. Those messages are edited
+// whenever an operator finds them unclear (the in-flight one has been rewritten twice
+// for exactly that reason), so any client that matched on their text would break on a
+// wording change with no version bump and no failing test anywhere. The slug is the
+// contract; the message stays free to improve.
+//
+// The Enum in design/connection.go does NOT catch a typo here. Goa emits response-body
+// validation into the generated CLIENT decoder only — the server encoder validates
+// nothing — so a misspelled slug is serialized and sent, and the failure surfaces as a
+// generated client refusing to decode the 409 at all. The protection is in-repo instead:
+// TestMapAudienceErr_ConflictReasonsAreDistinctAndStable pins each slug literally and
+// asserts the three are pairwise distinct, so a typo or a silent rename fails a unit test
+// here. Keep that test's literals in step with the design Enum by hand — nothing checks
+// the two against each other.
+func conflictReason(slug string) *string { return &slug }
+
 // mapAudienceErr maps domain errors to the generated audiences API error types,
 // preserving already-typed audiences errors.
 func mapAudienceErr(err error) error {
@@ -346,9 +372,31 @@ func mapAudienceErr(err error) error {
 		// The brief moved (re-edited / re-approved) between the build's approval check and the
 		// insert. A 409 tells the caller to refresh and retry rather than implying the brief
 		// or audience is missing.
-		return &audiences.ConflictError{Code: "409", Message: "the brief changed while its audience was being built; refresh and rebuild"}
+		return &audiences.ConflictError{Code: "409", Reason: conflictReason("stale_approval"), Message: "the brief changed while its audience was being built; refresh and rebuild"}
+	case errors.Is(err, domain.ErrAudienceBuildInFlight):
+		// Named separately from ErrConflict below because "the resource already exists" is
+		// the wrong instruction: nothing the caller asked for exists yet. The remedy is to
+		// wait for the build that holds the lease — or, if it died, to reconcile the
+		// HubSpot lists it left and PATCH its row to failed, which frees the slot.
+		//
+		// The message states the reconciliation FIRST because the two steps are not
+		// interchangeable. Failing the row frees the lease immediately, so an operator who
+		// does that before reconciling has admitted the next build while the dead build's
+		// lists are still in the portal — which creates the duplicate set this lease exists
+		// to prevent.
+		//
+		// The message must NOT send the operator to inclusion_summary alone. A row that is
+		// genuinely stuck is the one least likely to have recorded anything: the claim
+		// inserts with an empty summary, and ids are written only once createPlanLists
+		// returns, so the crash-mid-build case leaves real lists in the portal and an empty
+		// row. An operator who checks the summary, finds it empty and concludes there is
+		// nothing to reconcile will fail the row and let the next build duplicate them.
+		// Every list a build creates carries the first 8 characters of its audience row id
+		// (Plan.BuildRef, see internal/audience.listName), so that prefix finds them whether
+		// or not the row recorded anything, and the message names it as the primary handle.
+		return &audiences.ConflictError{Code: "409", Reason: conflictReason("audience_build_in_flight"), Message: "an audience build for this brief is already in progress; wait for it to finish, or — if it is stuck — first reconcile its HubSpot lists, then PATCH its audience row to failed. Its lists are named with the first 8 characters of the audience row id in parentheses; search the portal for that, because a build that crashed before recording anything leaves lists behind with an EMPTY inclusion_summary"}
 	case errors.Is(err, domain.ErrConflict):
-		return &audiences.ConflictError{Code: "409", Message: "the resource already exists"}
+		return &audiences.ConflictError{Code: "409", Reason: conflictReason("already_exists"), Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):
 		return &audiences.PreconditionFailedError{Code: "412", Message: "the supplied ETag does not match the current version"}
 	}

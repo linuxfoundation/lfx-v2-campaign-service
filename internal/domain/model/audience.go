@@ -50,8 +50,13 @@ type CampaignAudience struct {
 	Status           AudienceStatus
 	Version          int64
 	CreatedBy        json.RawMessage
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// UpdatedBy names whoever touched the row LAST. Both inserts stamp it alongside
+	// CreatedBy (nobody has edited yet, so the creator is the last to touch it), and
+	// each edit replaces it. Nil means "not recorded" — an unauthenticated write — and
+	// never "nobody".
+	UpdatedBy json.RawMessage
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // StatusOrDefault returns the status, defaulting an empty value to AudienceBuilding

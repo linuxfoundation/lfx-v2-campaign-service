@@ -38,10 +38,14 @@ type Service interface {
 	// Get one campaign under a brief; returns ETag.
 	GetCampaign(context.Context, *GetCampaignPayload) (res *Campaign, err error)
 	// Read live performance metrics (impressions, clicks, cost, CTR) for one
-	// campaign directly from its ad platform. This is a pure read — never
-	// persisted — unlike get-campaign, which returns the stored row. Support is
-	// per-platform: a campaign whose platform has no metrics-read dispatcher wired
-	// returns 400.
+	// campaign directly from the platform that runs it — an ad platform, or
+	// HubSpot for the email channel, which additionally returns the email object.
+	// This is a pure read — never persisted — unlike get-campaign, which returns
+	// the stored row. Support is per-platform: a campaign whose platform has no
+	// metrics-read dispatcher wired returns 400. Note that the requested window
+	// scopes the counters on the ad platforms but NOT on email, where it selects
+	// which emails are in scope by send date and the counters are those emails'
+	// totals to date.
 	GetCampaignMetrics(context.Context, *GetCampaignMetricsPayload) (res *CampaignMetrics, err error)
 	// Generate AI-written email copy (subject, preheader, body, CTA) for a
 	// campaign brief. Returns immediately with generated text; does NOT persist to
@@ -199,20 +203,31 @@ type CampaignCreateInput struct {
 type CampaignMetrics struct {
 	// Campaign UUID
 	CampaignID string
-	// ID returned by the ad platform
+	// The id the CHANNEL returned when the campaign was created. On an ad platform
+	// that is its campaign id; on the email channel it is the HubSpot
+	// marketing-email id of the cloned draft, which is what the metrics read
+	// queries by.
 	PlatformCampaignID string
-	// Platform-agnostic reporting window the metrics were read for
+	// The reporting window that was REQUESTED. On the ad platforms it is also the
+	// period the counters cover. On the email channel it is not: it selects which
+	// emails are in scope by their send date, and the counters are then that
+	// email's totals to date — see the email object.
 	Window string
-	// Impressions in window
+	// Impressions over the window on an ad platform; opens to date on the email
+	// channel
 	Impressions int64
-	// Clicks in window
+	// Clicks over the window on an ad platform; clicks to date on the email channel
 	Clicks int64
-	// Cost in window, in micro-units of the platform's native currency
+	// Cost over the window, in micro-units of the platform's native currency
 	// (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter,
-	// etc.)
+	// etc.). Always 0 on the email channel, which bills no per-send cost — do not
+	// blend that 0 into a cross-channel cost-per-acquisition.
 	CostMicros int64
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr float64
+	// Email-channel counters. Present only for the email channel (HubSpot); absent
+	// for every ad platform.
+	Email *EmailMetrics
 }
 
 type CampaignUpdateInput struct {
@@ -283,6 +298,28 @@ type EmailCopy struct {
 	Body string
 	// Call-to-action button text
 	Cta string
+}
+
+// Counters that only an email campaign has. NONE of them is scoped to the
+// requested window: the window selects which emails are in scope by their SEND
+// date, and every counter below is then that email's total to date. Rendering
+// any of them as "in the last N days" is therefore wrong. impressions/clicks
+// on the parent object mirror opens/clicks; cost_micros is always 0 for email
+// because the platform bills no per-send cost — that 0 must not be blended
+// into a cross-channel cost-per-acquisition.
+type EmailMetrics struct {
+	// Emails handed to the delivery pipeline, to date
+	Sent int64
+	// Emails the receiving server accepted, to date
+	Delivered int64
+	// Opens to date (mirrors impressions)
+	Opens int64
+	// Clicks to date (mirrors clicks)
+	Clicks int64
+	// Bounced emails, to date
+	Bounces int64
+	// Unsubscribes, to date
+	Unsubscribes int64
 }
 
 // EventDetails is the result type of the lfx-v2-campaign-service-briefs
@@ -493,6 +530,9 @@ type ConflictError struct {
 	Code string
 	// Error message
 	Message string
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string
 }
 
 type ConnServiceUnavailableError struct {
