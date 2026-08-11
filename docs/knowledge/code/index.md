@@ -7,6 +7,7 @@
 * [internal/infrastructure/indexer](internal-infrastructure-indexer.md) - Publishes brief and campaign snapshots to NATS for the platform Query Service.
 * [internal/utm](internal-utm.md) - Tags outbound email links with UTM parameters so email traffic is attributable.
 * [internal/dispatch](internal-dispatch.md) - Per-platform PlatformDispatcher adapters bridging the orchestrator to the channel API clients (six paid ad platforms plus the hubspot email channel), plus the HubSpot audience builder.
+* [internal/infrastructure/auth](internal-infrastructure-auth.md) - Verifies the Heimdall-issued bearer token against Heimdall's JWKS (PS256, issuer, audience, expiry, non-empty principal) and turns its claims into the domain actor recorded on writes.
 * [internal/infrastructure/config](internal-infrastructure-config.md) - Application configuration from CLI flags and env vars, including PG* composition into a PostgreSQL DSN.
 * [internal/infrastructure/postgres](internal-infrastructure-postgres.md) - PostgreSQL pool (otelpgx), migrations, repositories, and Ready() for readiness probes.
 * [internal/middleware](internal-middleware.md) - Package middleware provides HTTP middleware for the service.
@@ -24,5 +25,6 @@
 * [internal/service/email_copy](internal-service-email-copy.md) - AI-generated email copy (subject, preheader, body, CTA) for campaign briefs using the LiteLLM proxy client. Implements scrape-not-invent, defensive parsing, code-enforced length limits, and graceful degradation when the model is unconfigured.
 * [pkg/constants](pkg-constants.md) - Application-wide constants, including PG*, DATABASE_URL and AI_* environment variable names.
 * [pkg/log](pkg-log.md) - Package log provides structured logging utilities for context-aware logging.
+* [pkg/redact](pkg-redact.md) - Renders credential-bearing values into log-safe forms; strips URL userinfo entirely, unlike url.URL.Redacted().
 * [pkg/utils](pkg-utils.md) - Package utils provides OpenTelemetry SDK setup utilities.
 * [design](design.md) - Package design contains the DSL for the campaign service Goa API generation.

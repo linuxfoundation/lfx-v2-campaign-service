@@ -26,8 +26,13 @@ import (
 )
 
 // JWTAuth is the JWT security scheme. Tokens are issued by Heimdall at the
-// gateway (audience = this service) and validated in-app. Authorization on the
-// campaign_manager relation is enforced at the gateway, not here.
+// gateway (audience = this service) and verified in-app against Heimdall's JWKS:
+// signature, issuer, audience and expiry, plus a non-empty principal claim. The
+// gateway checks the same token, so this is not the happy path working twice — the
+// gateway's guarantee stops at the cluster boundary, and these claims become the
+// created_by / updated_by of records that say who authorized paid ad spend. See
+// internal/infrastructure/auth. Authorization on the campaign_manager relation is
+// still enforced at the gateway, not here.
 var JWTAuth = JWTSecurity("jwt", func() {
 	Description("JWT issued by Heimdall; audience is this service.")
 })
@@ -173,6 +178,14 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			Required("project_id", "config", "credentials")
 		})
 		Result(result)
+		// BadRequest on THIS method also covers payload validation, but that is not why
+		// every method below declares it too. JWTAuth returns *conn.BadRequestError when
+		// a token is refused, and Goa generates the error encoder from THIS list: a
+		// method that omits BadRequest has no case for it, so the typed 400 falls through
+		// to the generic encoder and reaches the caller as a 500 — undocumented in
+		// OpenAPI, and telling a client with a bad credential to treat it as a server
+		// fault. The declaration is what makes JWTAuth's mapping real, so it is required
+		// on every method carrying bearerToken(), payload or no payload.
 		Error("BadRequest", BadRequestError, "Bad request")
 		Error("Conflict", ConflictError, "A connection already exists for this provider on the project")
 		Error("InternalServerError", InternalServerError, "Internal server error")
@@ -198,6 +211,10 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			Required("project_id")
 		})
 		Result(result)
+		// BadRequest is declared on EVERY secured method, including the reads and the
+		// delete, because JWTAuth can now refuse a token — and a refusal it cannot encode
+		// becomes a 500. See the comment on the create method's copy.
+		Error("BadRequest", BadRequestError, "Bad request")
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -207,6 +224,7 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			Response(StatusOK, func() {
 				Header("etag:ETag")
 			})
+			Response("BadRequest", StatusBadRequest)
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
@@ -257,6 +275,10 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			projectIDAttr()
 			Required("project_id")
 		})
+		// BadRequest is declared on EVERY secured method, including the reads and the
+		// delete, because JWTAuth can now refuse a token — and a refusal it cannot encode
+		// becomes a 500. See the comment on the create method's copy.
+		Error("BadRequest", BadRequestError, "Bad request")
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -264,6 +286,7 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			DELETE("/projects/{project_id}/connection-" + key)
 			Header("bearer_token:Authorization")
 			Response(StatusNoContent)
+			Response("BadRequest", StatusBadRequest)
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
@@ -278,6 +301,10 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			Required("project_id")
 		})
 		Result(TestResult)
+		// BadRequest is declared on EVERY secured method, including the reads and the
+		// delete, because JWTAuth can now refuse a token — and a refusal it cannot encode
+		// becomes a 500. See the comment on the create method's copy.
+		Error("BadRequest", BadRequestError, "Bad request")
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -285,6 +312,7 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			POST("/projects/{project_id}/connection-" + key + "/test")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
+			Response("BadRequest", StatusBadRequest)
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)

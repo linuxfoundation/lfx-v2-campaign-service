@@ -209,6 +209,19 @@ func EncodeGetGoogleAdsError(encoder func(context.Context, http.ResponseWriter) 
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetGoogleAdsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -463,6 +476,19 @@ func EncodeDeleteGoogleAdsError(encoder func(context.Context, http.ResponseWrite
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewDeleteGoogleAdsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -559,6 +585,19 @@ func EncodeTestGoogleAdsError(encoder func(context.Context, http.ResponseWriter)
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewTestGoogleAdsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -920,6 +959,19 @@ func EncodeGetLinkedinAdsError(encoder func(context.Context, http.ResponseWriter
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetLinkedinAdsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -1174,6 +1226,19 @@ func EncodeDeleteLinkedinAdsError(encoder func(context.Context, http.ResponseWri
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewDeleteLinkedinAdsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -1270,6 +1335,19 @@ func EncodeTestLinkedinAdsError(encoder func(context.Context, http.ResponseWrite
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewTestLinkedinAdsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -1632,6 +1710,19 @@ func EncodeGetMetaAdsError(encoder func(context.Context, http.ResponseWriter) go
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetMetaAdsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -1886,6 +1977,19 @@ func EncodeDeleteMetaAdsError(encoder func(context.Context, http.ResponseWriter)
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewDeleteMetaAdsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -1982,6 +2086,19 @@ func EncodeTestMetaAdsError(encoder func(context.Context, http.ResponseWriter) g
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewTestMetaAdsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -2342,6 +2459,19 @@ func EncodeGetRedditAdsError(encoder func(context.Context, http.ResponseWriter) 
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetRedditAdsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -2596,6 +2726,19 @@ func EncodeDeleteRedditAdsError(encoder func(context.Context, http.ResponseWrite
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewDeleteRedditAdsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -2692,6 +2835,19 @@ func EncodeTestRedditAdsError(encoder func(context.Context, http.ResponseWriter)
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewTestRedditAdsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -3053,6 +3209,19 @@ func EncodeGetTwitterAdsError(encoder func(context.Context, http.ResponseWriter)
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetTwitterAdsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -3307,6 +3476,19 @@ func EncodeDeleteTwitterAdsError(encoder func(context.Context, http.ResponseWrit
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewDeleteTwitterAdsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -3403,6 +3585,19 @@ func EncodeTestTwitterAdsError(encoder func(context.Context, http.ResponseWriter
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewTestTwitterAdsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -3764,6 +3959,19 @@ func EncodeGetMicrosoftAdsError(encoder func(context.Context, http.ResponseWrite
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetMicrosoftAdsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -4018,6 +4226,19 @@ func EncodeDeleteMicrosoftAdsError(encoder func(context.Context, http.ResponseWr
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewDeleteMicrosoftAdsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -4114,6 +4335,19 @@ func EncodeTestMicrosoftAdsError(encoder func(context.Context, http.ResponseWrit
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewTestMicrosoftAdsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -4477,6 +4711,19 @@ func EncodeGetHubspotError(encoder func(context.Context, http.ResponseWriter) go
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetHubspotBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -4731,6 +4978,19 @@ func EncodeDeleteHubspotError(encoder func(context.Context, http.ResponseWriter)
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewDeleteHubspotBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
@@ -4827,6 +5087,19 @@ func EncodeTestHubspotError(encoder func(context.Context, http.ResponseWriter) g
 			return encodeError(ctx, w, v)
 		}
 		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewTestHubspotBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
 		case "ServiceUnavailable":
 			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
 			errors.As(v, &res)
