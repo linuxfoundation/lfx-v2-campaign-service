@@ -6252,7 +6252,7 @@ definitions:
         properties:
             account_id:
                 type: string
-                description: 'Meta ad account ID. Optional: omit it (while still supplying credentials and page_id) to defer account selection, then set the chosen id with PUT (discovery endpoint planned in follow-up).'
+                description: 'Meta ad account ID. Optional: omit it (while still supplying credentials and page_id) to defer account selection, then list the reachable accounts with GET /projects/{project_id}/connection-meta-ads/accounts and set the chosen id with PUT.'
                 example: act_193556282970417
                 pattern: ^act_[0-9]+$
                 maxLength: 64

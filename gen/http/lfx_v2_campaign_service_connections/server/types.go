@@ -2487,8 +2487,9 @@ type MetaAdsConnectionConfigRequestBody struct {
 	// Optional friendly name
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
 	// Meta ad account ID. Optional: omit it (while still supplying credentials and
-	// page_id) to defer account selection, then set the chosen id with PUT
-	// (discovery endpoint planned in follow-up).
+	// page_id) to defer account selection, then list the reachable accounts with
+	// GET /projects/{project_id}/connection-meta-ads/accounts and set the chosen
+	// id with PUT.
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
 	// Facebook page ID
 	PageID *string `form:"page_id,omitempty" json:"page_id,omitempty" xml:"page_id,omitempty"`

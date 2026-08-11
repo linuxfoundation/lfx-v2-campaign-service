@@ -327,9 +327,9 @@ func TestInstallRejectsMisshapenValues(t *testing.T) {
 		"x id carrying a path separator":   {model.ProviderTwitterAds, "8r7gb", map[string]string{"funding_instrument_id": "a/b"}, xCreds, true},
 		"meta values in shape":             {model.ProviderMetaAds, "act_1", map[string]string{"page_id": "1"}, metaCreds, false},
 		// Omission is a SHAPE question here, and an omitted id has no shape to fail. Whether
-		// omission is ALLOWED is requireAccountID's question, and for Meta the answer is no —
-		// see TestInstallRequiresAnAccountIDWhereNothingCanSupplyOneLater. Google Ads is used
-		// so this case still tests only what it claims to.
+		// omission is ALLOWED is requireAccountID's separate question — see
+		// TestInstallRequiresAnAccountIDWhereNothingCanSupplyOneLater. A provider that allows
+		// it is used so this case still tests only what it claims to.
 		"omitted account id is legal": {model.ProviderGoogleAds, "", map[string]string{"login_customer_id": "1"}, gaCreds, false},
 
 		// Runtime-validator providers. Each of these exited 0 before the rule was added.
@@ -496,23 +496,32 @@ func TestRotationRefusesWhenTheRowMovedUnderIt(t *testing.T) {
 }
 
 // TestInstallRequiresAnAccountIDWhereNothingCanSupplyOneLater: credentials-first is a real
-// lifecycle state only where the dispatcher can enumerate the accounts a credential reaches.
-// Google Ads has that endpoint; the rest do not, and each of their adapters refuses an empty
-// account id — so an account-less Meta or LinkedIn system row installs, reports success, and
-// then fails every dispatch with nothing an operator can do to complete it. That is the same
-// installable-and-dead shape requiredConfigKeys already guards, applied to the one column that
-// is not part of ProviderConfig.
+// lifecycle state only where BOTH halves of a completable lifecycle are present — the
+// dispatcher can enumerate the accounts a credential reaches, AND the path that needs an
+// account id refuses an empty one by NAMING the missing choice, so the operator is told to go
+// and use that enumeration. Google Ads and Meta have both; the remaining four have neither, and
+// each of their adapters answers an empty account id with a generic failure — so an
+// account-less LinkedIn system row installs, reports success, and then fails every dispatch
+// with nothing an operator can do to complete it. That is the same installable-and-dead shape
+// requiredConfigKeys already guards, applied to the one column that is not part of
+// ProviderConfig.
 //
-// The third case is the one that makes this a check on the value WRITTEN rather than the flag
+// Meta is asserted as an ALLOWED case, not a refused one, and it is the case that keeps this
+// test honest about the rule: it has had discovery since LFXV2-3062 and was still refused here
+// until LFXV2-3061 supplied the tagging, so it is the only provider where the two halves ever
+// came apart. If someone adds a provider to accountDiscoveryProviders on the strength of a
+// discovery endpoint alone, this comment is the record of why that is not the bar.
+//
+// The last case is the one that makes this a check on the value WRITTEN rather than the flag
 // TYPED: a rotation may omit -account-id, because the row keeps the id it already has.
 func TestInstallRequiresAnAccountIDWhereNothingCanSupplyOneLater(t *testing.T) {
 	metaCreds := []byte(`{"access_token":"tok","app_secret":"sec"}`)
 
 	repo := &stubRepo{}
 	err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderMetaAds, "", false, map[string]string{"page_id": "1"}, metaCreds)
+		model.ProviderLinkedInAds, "", false, map[string]string{"org_id": "1"}, []byte(`{"access_token":"tok"}`))
 	if err == nil || !strings.Contains(err.Error(), "requires -account-id") {
-		t.Fatalf("creating an account-less meta row = %v, want a refusal naming -account-id", err)
+		t.Fatalf("creating an account-less linkedin row = %v, want a refusal naming -account-id", err)
 	}
 	if repo.created != nil || repo.updated != nil || repo.setCT != nil {
 		t.Fatalf("refused and wrote anyway; calls = %v", repo.calls)
@@ -522,6 +531,18 @@ func TestInstallRequiresAnAccountIDWhereNothingCanSupplyOneLater(t *testing.T) {
 	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
 		model.ProviderGoogleAds, "", false, nil, []byte(goodCreds)); err != nil {
 		t.Fatalf("google ads has account discovery, so credentials-first must still be legal: %v", err)
+	}
+
+	repo = &stubRepo{}
+	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderMetaAds, "", false, map[string]string{"page_id": "1"}, metaCreds); err != nil {
+		t.Fatalf("meta has discovery AND names the missing choice, so credentials-first must be legal: %v", err)
+	}
+	if repo.created == nil {
+		t.Fatalf("an account-less meta row wrote nothing; calls = %v", repo.calls)
+	}
+	if repo.created.AccountID != "" {
+		t.Fatalf("created.AccountID = %q, want it left empty for the picker to fill", repo.created.AccountID)
 	}
 
 	repo = &stubRepo{row: &model.Connection{
@@ -571,8 +592,11 @@ func TestInstallRefusesProvidersTheFallbackCannotServe(t *testing.T) {
 }
 
 // gaRow is a system Google Ads row as installed: an account selected and one optional config
-// column set. Google Ads is the provider used throughout because it is the only one where
-// clearing the account id is a legal destination state (accountDiscoveryProviders).
+// column set. Google Ads is the provider used throughout because clearing the account id is a
+// legal destination state for it (accountDiscoveryProviders), so these tests exercise the merge
+// itself rather than tripping that guard first. Meta qualifies too as of LFXV2-3061, but it is
+// not substituted in: login_customer_id is a Google Ads column and is what makes the
+// clear-an-optional-column case below a real one.
 func gaRow(accountID string, cfg map[string]string) *stubRepo {
 	return &stubRepo{row: &model.Connection{
 		ProjectID: model.SystemProjectID, Provider: model.ProviderGoogleAds,
@@ -658,14 +682,14 @@ func TestClearAccountIDReturnsTheRowToCredentialsFirst(t *testing.T) {
 // dispatcher can discover the account holds for the removal path too, and holds automatically.
 func TestClearAccountIDIsRefusedWhereNothingCanSupplyOneLater(t *testing.T) {
 	repo := &stubRepo{row: &model.Connection{
-		ProjectID: model.SystemProjectID, Provider: model.ProviderMetaAds,
-		AccountID: "act_123", ProviderConfig: map[string]string{"page_id": "1"},
+		ProjectID: model.SystemProjectID, Provider: model.ProviderLinkedInAds,
+		AccountID: "509123456", ProviderConfig: map[string]string{"org_id": "1"},
 		Version: 4, Status: model.StatusActive,
 	}}
 	err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
-		model.ProviderMetaAds, "", true, nil, []byte(`{"access_token":"tok","app_secret":"sec"}`))
+		model.ProviderLinkedInAds, "", true, nil, []byte(`{"access_token":"tok"}`))
 	if err == nil || !strings.Contains(err.Error(), "requires -account-id") {
-		t.Fatalf("clearing meta's account id = %v, want a refusal naming -account-id", err)
+		t.Fatalf("clearing linkedin's account id = %v, want a refusal naming -account-id", err)
 	}
 	if repo.updated != nil || repo.setCT != nil {
 		t.Fatalf("refused and wrote anyway; calls = %v", repo.calls)

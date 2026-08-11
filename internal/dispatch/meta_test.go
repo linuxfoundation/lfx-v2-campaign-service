@@ -936,9 +936,11 @@ func TestMeta_ListAccounts_AsksAboutTheTokenNotTheAccount(t *testing.T) {
 // does not need to ask which accounts exist, so requiring one would make the endpoint
 // reachable only by callers who no longer have the question.
 //
-// Only re-pointing reaches this today — MetaAdsConnectionConfig still requires account_id at
-// create — but the resolver is already correct for first-time bootstrap, which is why
-// LFXV2-3061 is a change to the config and the account-needing paths, not to this function.
+// Before LFXV2-3061 only re-pointing could reach this, because MetaAdsConnectionConfig required
+// account_id at create; the resolver was already correct for first-time bootstrap, which is why
+// that ticket changed the config and the account-needing paths rather than this function. Both
+// callers reach it now, and the assertion is unchanged — the record that the omission was
+// deliberate rather than a gap the config happened to cover.
 func TestMeta_ListAccounts_WorksBeforeAnAccountIsChosen(t *testing.T) {
 	srv := metaAccountsServer(t, `{"id":"act_222","name":"Beta","account_status":1}`, nil)
 
@@ -1006,6 +1008,92 @@ func TestMeta_ListAccounts_AttributesSystemRowDefects(t *testing.T) {
 	}
 }
 
+// TestMeta_SystemScopedCoversEveryCallerOfResolveMetaCredentials is the same invariant as
+// the test above, extended to the three callers it does NOT reach — and it exists because
+// those three were broken.
+//
+// resolveMetaCredentials applies systemScoped in a defer, which is the right shape: a fourth
+// not-usable return added later cannot forget it. But the defer read the NAMED RETURN `res`,
+// and every not-usable return sets res to nil on its way out. systemScoped is a no-op on a
+// nil receiver, so the tag was dropped from precisely the errors that need it, on every
+// caller of this resolver: create, toggle and metrics. Nothing failed. The error was still
+// correct in every other respect — right sentinels, right message, right status class — so
+// the only symptom was a project on the LF fallback being told to go and edit a connection it
+// does not own, while the operator who installed the LF credential was never paged.
+//
+// Discovery masked it until this commit: resolveMetaDiscoveryClient carried its own copy of
+// the three checks, over a plain local rather than a named return, so ListAccounts tagged
+// correctly while the other three did not. Collapsing the duplicate onto the shared resolver
+// is what surfaced the defect, which is the argument for the collapse: two copies meant one
+// path's correctness said nothing about the other's.
+//
+// Every caller is exercised, discovery included, so the path that was already right cannot
+// regress while attention is on the three that were not.
+func TestMeta_SystemScopedCoversEveryCallerOfResolveMetaCredentials(t *testing.T) {
+	defects := map[string]func() *model.Connection{
+		"connection not active": func() *model.Connection {
+			c := activeMetaConn(goodMetaCreds)
+			c.Status = model.StatusInactive
+			return c
+		},
+		"credentials undecodable": func() *model.Connection { return activeMetaConn(`not json`) },
+		"credentials incomplete":  func() *model.Connection { return activeMetaConn(`{"AccessToken":""}`) },
+	}
+
+	// testBrief()'s ProjectID is "cncf", so every caller below resolves the same scope.
+	callers := map[string]func(*MetaDispatcher) error{
+		"create/Dispatch": func(d *MetaDispatcher) error {
+			_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, nil)
+			return err
+		},
+		"toggle/ToggleStatus": func(d *MetaDispatcher) error {
+			return d.ToggleStatus(context.Background(), "cncf", model.ProviderMetaAds,
+				metaToggleCampaign("23847290", "999"), model.CampaignRunPaused)
+		},
+		"metrics/ReadMetrics": func(d *MetaDispatcher) error {
+			camp := &model.Campaign{Platform: model.ProviderMetaAds, PlatformCampaignID: "777"}
+			_, err := d.ReadMetrics(context.Background(), "cncf", model.ProviderMetaAds, camp,
+				model.MetricsWindowLast30Days)
+			return err
+		},
+		"discovery/ListAccounts": func(d *MetaDispatcher) error {
+			_, err := d.ListAccounts(context.Background(), "cncf", model.ProviderMetaAds)
+			return err
+		},
+	}
+
+	for defectName, conn := range defects {
+		for callerName, call := range callers {
+			t.Run(defectName+"/"+callerName, func(t *testing.T) {
+				dispatcherFor := func(scope string) *MetaDispatcher {
+					return NewMetaDispatcher(&scopedConnReader{
+						rows: map[string]*model.Connection{scope: conn()},
+					}, identityEncryptor{})
+				}
+
+				err := call(dispatcherFor(model.SystemProjectID))
+				if !errors.Is(err, domain.ErrConnectionNotUsable) {
+					t.Fatalf("err = %v, want ErrConnectionNotUsable", err)
+				}
+				if !errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+					t.Errorf("err = %v, want it attributed to the SYSTEM connection — this caller "+
+						"sends the project to fix a row it does not own", err)
+				}
+
+				// The mirror half: the project's OWN broken row must not pick up the marker,
+				// or every 400 naming a connection the caller can actually fix becomes a page.
+				err = call(dispatcherFor("cncf"))
+				if !errors.Is(err, domain.ErrConnectionNotUsable) {
+					t.Fatalf("err = %v, want ErrConnectionNotUsable", err)
+				}
+				if errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+					t.Errorf("err = %v, must not be attributed to the system account", err)
+				}
+			})
+		}
+	}
+}
+
 // TestMeta_ListAccounts_KnownBadAccountsAreLabelledNotDropped pins the picker contract.
 //
 // Dropping a disabled account answers "your token reaches no ad accounts" about an account
@@ -1058,9 +1146,16 @@ func TestMeta_ListAccounts_KnownBadAccountsAreLabelledNotDropped(t *testing.T) {
 // string fields, but that is a behaviour rather than a documented guarantee and it does not
 // hold for every field type — a number decoded into a numeric field appears verbatim.
 //
-// The assertion is that the text is EXACTLY the two sentinels. Merely asserting that it does
-// not contain the secret would not bind: that passes with the cause appended, and the whole
-// point is to remove the class rather than to check one instance of it.
+// The assertion is EXACT EQUALITY against the whole expected message, not a "does not
+// contain the secret" check. The latter would not bind: it passes with the cause appended,
+// and the point is to remove the class rather than to catch one instance of it. Equality is
+// what makes any newly appended text fail, whatever it says.
+//
+// The expected text carries the project id. That is deliberate and not a weakening: the
+// project id is a caller-supplied path parameter, not a value derived from the decrypted
+// blob, and it is the one thing that tells an operator reading a log WHICH connection has to
+// be re-entered. What must never appear is the *json.SyntaxError / *json.UnmarshalTypeError
+// cause, and this assertion still rejects it.
 func TestMeta_ListAccounts_UndecodableBlobDropsTheUnmarshalCause(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Error("reached Meta with an undecodable credential blob")
@@ -1074,10 +1169,14 @@ func TestMeta_ListAccounts_UndecodableBlobDropsTheUnmarshalCause(t *testing.T) {
 	if err == nil {
 		t.Fatal("an undecodable credential blob must not reach Meta")
 	}
-	want := domain.ErrConnectionNotUsable.Error() + ": " + domain.ErrCredentialsUndecodable.Error()
+	want := domain.ErrConnectionNotUsable.Error() + ": " + domain.ErrCredentialsUndecodable.Error() +
+		": meta credentials for project proj are not valid JSON"
 	if err.Error() != want {
-		t.Errorf("error = %q, want exactly %q — anything appended is derived from decrypted plaintext",
-			err.Error(), want)
+		t.Errorf("error = %q, want exactly %q — anything further appended would be the decode cause, "+
+			"which is derived from decrypted plaintext", err.Error(), want)
+	}
+	if strings.Contains(err.Error(), "SUPER-SECRET-PLAINTEXT") {
+		t.Error("the decrypted blob leaked into the error text")
 	}
 	if !errors.Is(err, domain.ErrConnectionNotUsable) || !errors.Is(err, domain.ErrCredentialsUndecodable) {
 		t.Error("both sentinels must survive: the first is how the handler answers 400 rather than 503, " +

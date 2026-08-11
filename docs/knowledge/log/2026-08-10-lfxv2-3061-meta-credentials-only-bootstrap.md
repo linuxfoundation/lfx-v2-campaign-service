@@ -46,6 +46,31 @@ same wrapping shape as Google Ads' equivalent: `domain.ErrConnectionNotUsable` p
 `domain.ErrAccountNotSelected` supplies the `account_not_selected` reason token, matched ahead of
 the general unusable-connection arm in `unusableConnectionReason`.
 
+## The system-account installer is the other surface, and it had its own gate
+
+Dropping `Required("account_id")` relaxes the HTTP surface. `bootstrap-system-account` writes
+PAST that surface, straight to the repository, so it carries its own rule —
+`accountDiscoveryProviders` in `internal/bootstrap/sysacct.go` — and Meta was excluded from it.
+That exclusion was correct at the time, and its comment named this ticket as the gate: discovery
+alone is half a lifecycle, and Meta's `Dispatch` still answered an empty account id with a
+generic error, so an operator holding an account-less Meta system row was told nothing about what
+was missing or where to find it.
+
+`requireMetaAccountID` is that second half, so Meta joins the map here. Leaving it out would have
+shipped a branch whose design comment and API catalog both say Meta can be created
+credentials-first while the one tool that installs the LF's own credentials refuses to.
+
+The bar for the next provider is now stated as both halves together, because Meta is the only
+provider where they ever came apart, and this map is exactly where someone would be tempted to
+add a provider on the strength of a discovery endpoint alone.
+
+Two tests used Meta as the exemplar of "no discovery, so `-account-id` is required"
+(`TestInstallRequiresAnAccountIDWhereNothingCanSupplyOneLater`,
+`TestClearAccountIDIsRefusedWhereNothingCanSupplyOneLater`). They now use LinkedIn, which has
+neither half, and the first gained a Meta case asserting the OPPOSITE — that an account-less Meta
+install is accepted and writes an empty `AccountID` for the picker to fill. Verified by mutation:
+removing Meta from the map fails that case with the `-account-id` refusal.
+
 ## What changed to make `*string` build again
 
 Goa's codegen makes a dropped-from-`Required` attribute a pointer on the generated request-body
