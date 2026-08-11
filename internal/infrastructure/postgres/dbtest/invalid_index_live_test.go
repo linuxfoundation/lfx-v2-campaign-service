@@ -508,7 +508,7 @@ func TestEveryUniquePartialIndexIsRequired(t *testing.T) {
 	}
 	if len(inSchema) == 0 {
 		t.Fatal("the migrated schema has no unique partial indexes at all, which cannot be " +
-			"true while 000013 and 000020 exist — the query is wrong, and a query that " +
+			"true while 000013 and 000018 exist — the query is wrong, and a query that " +
 			"finds nothing agrees with any registry")
 	}
 

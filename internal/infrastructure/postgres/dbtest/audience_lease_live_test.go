@@ -23,12 +23,21 @@ import (
 // exists for, and it can only be observed against a real database: the arbitration is the
 // index, and no fake repository has one.
 //
-// Two builds for the same (brief, platform) start together. One must get a row; the other
-// must get ErrAudienceBuildInFlight — NOT a second row, because a second row means a
+// Builds for the same (brief, platform) are released together. One must get a row; every
+// other must get ErrAudienceBuildInFlight — NOT a second row, because a second row means a
 // second complete set of HubSpot lists in the portal, indistinguishable from the first and
 // billable. They cannot collide by list NAME either: the plan's BuildRef is the row id,
 // chosen so a later build does not adopt an earlier one's lists, so nothing downstream
 // would notice the duplication.
+//
+// Be precise about WHERE they contend, because it is not where the name suggests. The
+// inserts are not concurrent: CreateAudienceForApprovedBrief opens with
+// `SELECT ... FOR UPDATE` on the brief, so the eight transactions queue at the BRIEF row
+// lock and each reaches its INSERT with the previous one already committed. What the index
+// decides is the OUTCOME — the second through eighth inserts see a committed 'building' row
+// and raise 23505 — not a race between simultaneous writes. That does not weaken the test:
+// the index is still what produces the outcome, and releasing the goroutines together is
+// what puts them in that queue at all.
 func TestAudienceBuildLeaseAdmitsExactlyOneConcurrentBuild(t *testing.T) {
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
@@ -57,7 +66,8 @@ func TestAudienceBuildLeaseAdmitsExactlyOneConcurrentBuild(t *testing.T) {
 				Status:    model.AudienceBuilding,
 			}
 			// The brief is untouched and approved, so all eight pass the approval guard
-			// and the ONLY thing that can separate them is the lease.
+			// once the brief row lock lets them through, and the ONLY thing left that can
+			// separate them is the lease.
 			created, _, err := repo.CreateAudienceForApprovedBrief(ctx, row)
 			mu.Lock()
 			defer mu.Unlock()

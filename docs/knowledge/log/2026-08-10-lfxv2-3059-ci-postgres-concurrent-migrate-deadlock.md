@@ -51,7 +51,8 @@ the repo's `*.out` gitignore rule.
 
 ## Follow-up: the split could report success without testing
 
-**Kind:** Fix
+**Fix** — a command substitution's discarded exit status let the split `make test` report
+success while running only part of the package list.
 
 Copilot found that the second invocation enumerated its packages inline:
 

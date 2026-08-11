@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -347,10 +348,31 @@ func nullStr(s string) any {
 
 // isUniqueViolation reports whether err is a Postgres unique-constraint
 // violation (SQLSTATE 23505).
+//
+// It does not say WHICH constraint fired. Use it only where the statement can
+// violate exactly one, or where every one it can violate maps to the same
+// outcome. Where a 23505 is translated into a sentinel that means something
+// specific, use isUniqueViolationOn: the SQLSTATE-only match silently adopts
+// the next unique index added to the table.
 func isUniqueViolation(err error) bool {
 	var pgErr interface{ SQLState() string }
 	if errors.As(err, &pgErr) {
 		return pgErr.SQLState() == "23505"
+	}
+	return false
+}
+
+// isUniqueViolationOn reports whether err is a Postgres unique-constraint
+// violation (SQLSTATE 23505) raised by the named constraint or index.
+//
+// Postgres reports the constraint name in the error's CONSTRAINT field, so the
+// caller does not have to reason about which unique indexes the table happens
+// to carry today — a fact that changes with every migration, and that no test
+// on the calling package would notice changing.
+func isUniqueViolationOn(err error, constraint string) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505" && pgErr.ConstraintName == constraint
 	}
 	return false
 }

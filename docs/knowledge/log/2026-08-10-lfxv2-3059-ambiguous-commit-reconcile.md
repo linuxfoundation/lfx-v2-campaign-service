@@ -57,7 +57,8 @@ ran the full `internal/...` suite with `-race` — all green — then tore the i
 
 ## Round: the retry budget and the error paths that forgot what they had seen
 
-**Kind:** Fix
+**Fix** — an attempt schedule one attempt short of the span its own comment documented, and
+error paths that discarded an observation they had already made.
 
 Two Copilot findings on PR #106, both in `audience_repo.go`, both a case of the code and the
 paragraph above it disagreeing.

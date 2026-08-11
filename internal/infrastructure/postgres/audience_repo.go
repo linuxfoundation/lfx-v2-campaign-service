@@ -17,6 +17,14 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
+// audienceBuildLeaseIndex is the partial unique index migration 000018 creates: at most one
+// audience per (brief, platform) in `building`. Named here because three statements translate
+// a violation of THIS index — and only this one — into domain.ErrAudienceBuildInFlight, which
+// tells the caller a build is already running. Matching on SQLSTATE 23505 alone would hand the
+// next unique index added to campaign_audiences that same meaning, silently and with no test
+// in this package failing.
+const audienceBuildLeaseIndex = "uq_campaign_audiences_brief_platform_building"
+
 // AudienceRepo is a pgx-backed implementation of domain.AudienceRepository.
 type AudienceRepo struct {
 	db *Pool
@@ -82,13 +90,10 @@ func (r *AudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *mo
 		a.SuppressionListIDs, nullStr(a.InclusionSummary), string(a.StatusOrDefault()),
 		a.CreatedBy))
 	if serr != nil {
-		if isUniqueViolation(serr) {
-			// The id is generated server-side, so the primary key cannot be the constraint
-			// that fired; the build lease (000018) is the only other unique index on this
-			// table. A 23505 here therefore means another build for this (brief, platform)
-			// is already in flight and holds the lease. Reported as its own sentinel rather
-			// than ErrConflict: the caller has not created a duplicate of anything, it has
-			// arrived second.
+		if isUniqueViolationOn(serr, audienceBuildLeaseIndex) {
+			// Another build for this (brief, platform) is already in flight and holds the
+			// lease. Reported as its own sentinel rather than ErrConflict: the caller has
+			// not created a duplicate of anything, it has arrived second.
 			return nil, 0, domain.ErrAudienceBuildInFlight
 		}
 		return nil, 0, fmt.Errorf("create audience for approved brief: insert: %w", serr)
@@ -401,7 +406,7 @@ func (r *AudienceRepo) CreateAudience(ctx context.Context, a *model.CampaignAudi
 		// archived, or belongs to another project.
 		return nil, domain.ErrNotFound
 	}
-	if isUniqueViolation(err) {
+	if isUniqueViolationOn(err, audienceBuildLeaseIndex) {
 		// The plain create defaults status to 'building' too, so it takes the same lease
 		// (000018) and can lose it to an in-flight BuildAudience. Same sentinel: this
 		// caller is second, not duplicating.
@@ -515,7 +520,7 @@ func (r *AudienceRepo) UpdateAudience(ctx context.Context, a *model.CampaignAudi
 	if err == nil {
 		return updated, nil
 	}
-	if isUniqueViolation(err) {
+	if isUniqueViolationOn(err, audienceBuildLeaseIndex) {
 		// A PATCH that moves a 'failed' or 'built' row BACK to 'building' takes the lease
 		// (000018) and can find it held. Worth the branch even though it is the rarest way
 		// in: this is the retry path an operator reaches for after reconciling a stuck

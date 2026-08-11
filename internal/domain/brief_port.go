@@ -21,6 +21,14 @@ type BriefReader interface {
 	// ConfirmBriefApproved reports nil when the brief is STILL approved at expectedVersion,
 	// ErrStaleApproval when it is not, and ErrNotFound when it is missing or archived.
 	//
+	// expectedVersion is not a version the caller chose. Its only producer today is the
+	// second return value of AudienceRepository.CreateAudienceForApprovedBrief — the brief
+	// version that call OBSERVED under its own lock, at the moment it took the build lease.
+	// That pairing is what the check means: not "the brief is approved" but "the brief has
+	// not changed since the claim that authorised this build". Passing a version read at any
+	// other time answers a different question and would not catch a withdrawal that landed
+	// between the claim and this call, which is the entire window this guard exists for.
+	//
 	// It exists because GetBrief cannot answer this question safely. GetBrief is a plain
 	// SELECT, so under READ COMMITTED it returns the last COMMITTED row and an in-flight
 	// ReplaceBrief — updated, not yet committed — is invisible to it. A caller that reads
