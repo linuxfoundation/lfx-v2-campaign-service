@@ -43,6 +43,11 @@ type fakeBriefRepo struct {
 	// createErr, when set, fails CreateBrief BEFORE it stores anything — the shape of a
 	// version conflict or a database error, where the handler ran but no row committed.
 	createErr error
+	// getErr, when set, fails every GetBrief. It is deliberately NOT ErrNotFound: it models
+	// the case where the service cannot tell what the brief's state is (pool exhausted,
+	// deadline expired), which must never be answered with a claim about what somebody else
+	// did to the brief.
+	getErr error
 }
 
 func newFakeBriefRepo() *fakeBriefRepo {
@@ -50,6 +55,19 @@ func newFakeBriefRepo() *fakeBriefRepo {
 }
 
 func briefKey(projectID, id string) string { return projectID + "|" + id }
+
+// snapshot reads a brief WITHOUT firing onGet. The audience fake's claim uses it because the
+// real claim reads the brief inside its own transaction, under a row lock — that read is not
+// a window a second request can be delayed in, so a test hook that pretends it is would model
+// a race the database does not have.
+func (r *fakeBriefRepo) snapshot(projectID, id string) (*model.CampaignBrief, bool) {
+	b, ok := r.briefs[briefKey(projectID, id)]
+	if !ok {
+		return nil, false
+	}
+	cp := *b
+	return &cp, true
+}
 
 // FindBriefByEventSlug scans for a non-archived brief matching the slug, mirroring the
 // repo's partial-unique-index semantics (archived rows free the slug).
@@ -64,6 +82,9 @@ func (r *fakeBriefRepo) FindBriefByEventSlug(_ context.Context, projectID, event
 }
 
 func (r *fakeBriefRepo) GetBrief(_ context.Context, projectID, id string) (*model.CampaignBrief, error) {
+	if r.getErr != nil {
+		return nil, r.getErr
+	}
 	b, ok := r.briefs[briefKey(projectID, id)]
 	if !ok {
 		return nil, domain.ErrNotFound
@@ -80,6 +101,24 @@ func (r *fakeBriefRepo) GetBrief(_ context.Context, projectID, id string) (*mode
 		hook()
 	}
 	return &cp, nil
+}
+
+// ConfirmBriefApproved answers from the CURRENT stored row and does NOT fire onGet.
+//
+// Not firing it is the point. The real one holds a row lock, so an in-flight writer either
+// commits before this read (and is seen) or after it (and is a different race entirely) —
+// there is no moment inside the read for a hook to mutate. A fake that fired onGet here would
+// model a window the lock removes, and a test written against it would pass whether or not
+// the implementation locked at all.
+func (r *fakeBriefRepo) ConfirmBriefApproved(_ context.Context, projectID, id string, expectedVersion int64) error {
+	b, ok := r.snapshot(projectID, id)
+	if !ok || b.Status == model.BriefArchived {
+		return domain.ErrNotFound
+	}
+	if b.Status != model.BriefApproved || b.Version != expectedVersion {
+		return domain.ErrStaleApproval
+	}
+	return nil
 }
 
 func (r *fakeBriefRepo) CreateBrief(_ context.Context, b *model.CampaignBrief, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
@@ -229,12 +268,38 @@ func TestBriefService_SetBackend_LateBinding(t *testing.T) {
 
 // A missing bearer token is a client-side problem and must map to 400, not 500
 // (a 500 misrepresents it as a server fault and can trigger ops alerting).
+//
+// The verifier has to be WIRED for this to be the case it claims. Without one the guard
+// takes its own no-verifier branch, which is a 503 — this service failing, not the caller
+// — and the assertion below would pass for the wrong reason before that split existed.
 func TestBriefService_JWTAuth_EmptyTokenIsBadRequest(t *testing.T) {
 	s := NewBriefService(nil, nil, nil, nil)
+	s.SetTokenVerifier(&stubVerifier{})
 	_, err := s.JWTAuth(context.Background(), "", nil)
 	if _, ok := err.(*briefs.BadRequestError); !ok {
 		t.Fatalf("expected *briefs.BadRequestError for empty token, got %T (%v)", err, err)
 	}
+}
+
+// TestBriefService_JWTAuth_UnverifiableIsUnavailable pins the other half at the boundary
+// the client actually sees. A JWKS outage and an unwired verifier are both this service
+// unable to CHECK the token; 400 would blame the caller for it and tell them not to retry.
+func TestBriefService_JWTAuth_UnverifiableIsUnavailable(t *testing.T) {
+	t.Run("no verifier wired", func(t *testing.T) {
+		s := NewBriefService(nil, nil, nil, nil)
+		_, err := s.JWTAuth(context.Background(), "any-token", nil)
+		if _, ok := err.(*briefs.ConnServiceUnavailableError); !ok {
+			t.Fatalf("err = %T (%v), want *briefs.ConnServiceUnavailableError", err, err)
+		}
+	})
+	t.Run("signing keys unavailable", func(t *testing.T) {
+		s := NewBriefService(nil, nil, nil, nil)
+		s.SetTokenVerifier(&stubVerifier{err: fmt.Errorf("fetch jwks: %w", domain.ErrKeyUnavailable)})
+		_, err := s.JWTAuth(context.Background(), "a-perfectly-good-token", nil)
+		if _, ok := err.(*briefs.ConnServiceUnavailableError); !ok {
+			t.Fatalf("err = %T (%v), want *briefs.ConnServiceUnavailableError", err, err)
+		}
+	})
 }
 
 func isBriefUnavailable(err error) bool {
@@ -617,6 +682,13 @@ func (r *campaignEditRepo) recordIndex(c *model.Campaign, indexPayload domain.Ca
 	}
 	r.indexPayloads = append(r.indexPayloads, payload)
 	return nil
+}
+func (r *campaignEditRepo) VerifyClaimedVersion(_ context.Context, _, _, campaignID string, expectedVersion int64, _ domain.CampaignLockToken) (*model.Campaign, error) {
+	if r.cur.Version != expectedVersion {
+		return nil, domain.ErrPreconditionFailed
+	}
+	cp := *r.cur
+	return &cp, nil
 }
 func (r *campaignEditRepo) ClaimCampaignVersion(_ context.Context, _, _, campaignID string, expectedVersion int64) (*model.Campaign, domain.CampaignLockToken, error) {
 	r.claims++
@@ -1038,6 +1110,18 @@ func (r *toggleCampaignRepo) ReleaseCampaignLock(context.Context, domain.Campaig
 	return nil
 }
 
+// VerifyClaimedVersion mirrors the real implementation: it checks that the version
+// still matches without modifying it, using the same dataMu protection as ClaimCampaignVersion.
+func (r *toggleCampaignRepo) VerifyClaimedVersion(_ context.Context, _, _, _ string, expectedVersion int64, _ domain.CampaignLockToken) (*model.Campaign, error) {
+	r.dataMu.Lock()
+	defer r.dataMu.Unlock()
+	if r.got.Version != expectedVersion {
+		return nil, domain.ErrPreconditionFailed
+	}
+	cp := *r.got
+	return &cp, nil
+}
+
 // ReleaseCampaignLockAfterCooldown overrides the embedded fakeCampaignRepo's
 // no-op: the real ToggleCampaignStatus UNCONFIRMED path calls this instead of
 // ReleaseCampaignLock, so without an override claimMu is never unlocked here
@@ -1347,10 +1431,11 @@ func TestBriefService_ToggleCampaignStatus_UnconfirmedIsSurfaced(t *testing.T) {
 	}
 }
 
-func TestBriefService_ToggleCampaignStatus_DegradedNotToggleable(t *testing.T) {
-	// A created_degraded campaign WITH a real upstream id must NOT be toggled: toggling
-	// would activate an incomplete campaign and overwrite the reconciliation marker. It is
-	// a 409, the platform is never called, and the row is untouched.
+func TestBriefService_ToggleCampaignStatus_DegradedNotActivatable(t *testing.T) {
+	// A created_degraded campaign WITH a real upstream id must NOT be ACTIVATED: doing so
+	// would put an incomplete campaign in front of an audience and overwrite the
+	// reconciliation marker. It is a 409, the platform is never called, and the row is
+	// untouched. (Pausing one IS allowed — see the test below.)
 	camp := &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
 		PlatformCampaignID: "t3_c", Status: model.CampaignStatusCreatedDegraded, Version: 1,
@@ -1359,17 +1444,88 @@ func TestBriefService_ToggleCampaignStatus_DegradedNotToggleable(t *testing.T) {
 	s, camps := newToggleService(camp, tog)
 	im := "1"
 	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
-		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunActive,
 	})
 	var conflict *briefs.ConflictError
 	if !errors.As(err, &conflict) {
-		t.Fatalf("expected a 409 ConflictError for a degraded campaign, got %T: %v", err, err)
+		t.Fatalf("expected a 409 ConflictError for activating a degraded campaign, got %T: %v", err, err)
+	}
+	// The message has to point at the one thing the caller CAN still do, or an operator
+	// watching a degraded campaign spend reads the 409 as "nothing to be done here".
+	if !strings.Contains(conflict.Message, "PAUSED") {
+		t.Errorf("409 message = %q; it must tell the caller the campaign can still be paused", conflict.Message)
 	}
 	if tog.gotID != "" {
-		t.Error("the platform must NOT be called for a non-toggleable (degraded) campaign")
+		t.Error("the platform must NOT be called to activate a degraded campaign")
 	}
 	if camps.replaced != nil {
 		t.Error("the row (and its degraded reconciliation marker) must NOT be overwritten")
+	}
+}
+
+// TestBriefService_ToggleCampaignStatus_DegradedCanStillBePaused pins the one direction the
+// reconciliation guard must not block.
+//
+// 'created_degraded' means the campaign definitely EXISTS upstream while this service does not
+// know its full wiring. Adoption (LFXV2-3042) reaches that status by binding a campaign the
+// lookup found, and that lookup treats ENABLED and PAUSED alike as live — so an adopted
+// campaign can already be serving and spending. Refusing every toggle made the campaign most
+// likely to need stopping the one campaign this service could not stop, even though the
+// dispatchers explicitly support pausing a campaign with no child ids.
+//
+// The marker is the other half: pausing reconciles nothing, so writing 'paused' over
+// 'created_degraded' would erase the only record that the wiring is unverified. The row is
+// therefore left alone and the campaign comes back at its unchanged status and version.
+func TestBriefService_ToggleCampaignStatus_DegradedCanStillBePaused(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "t3_c", Status: model.CampaignStatusCreatedDegraded, Version: 4,
+	}
+	tog := &stubToggler{}
+	s, camps := newToggleService(camp, tog)
+	im := "4"
+	res, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+	if err != nil {
+		t.Fatalf("pausing a degraded campaign must be allowed, got %T: %v", err, err)
+	}
+	if tog.gotID != "t3_c" || tog.gotStat != model.CampaignRunPaused {
+		t.Errorf("platform toggle got (%q,%q), want (t3_c,paused) — the pause must actually reach the platform", tog.gotID, tog.gotStat)
+	}
+	if camps.replaced != nil {
+		t.Errorf("the row was rewritten to %+v; 'created_degraded' is the only record that this campaign's wiring is unverified, and a pause reconciles nothing", camps.replaced)
+	}
+	if res.Status != model.CampaignStatusCreatedDegraded {
+		t.Errorf("result status = %q, want %q — the response must report what the row actually says", res.Status, model.CampaignStatusCreatedDegraded)
+	}
+}
+
+// TestBriefService_ToggleCampaignStatus_PendingCannotBePausedEither is the boundary of the
+// exception above. 'pending' and the partial-orphan statuses do not mean "exists upstream" —
+// the create may never have completed — so there is nothing for a pause to act on, and a
+// pause that reached the platform would be a mutation against an id whose meaning is unknown.
+func TestBriefService_ToggleCampaignStatus_PendingCannotBePausedEither(t *testing.T) {
+	for _, status := range []string{model.CampaignStatusPending, model.CampaignStatusGroupCreated, model.CampaignStatusUnconfirmed} {
+		t.Run(status, func(t *testing.T) {
+			camp := &model.Campaign{
+				ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+				PlatformCampaignID: "t3_c", Status: status, Version: 1,
+			}
+			tog := &stubToggler{}
+			s, _ := newToggleService(camp, tog)
+			im := "1"
+			_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+				ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+			})
+			var conflict *briefs.ConflictError
+			if !errors.As(err, &conflict) {
+				t.Fatalf("expected a 409 pausing a %q campaign, got %T: %v", status, err, err)
+			}
+			if tog.gotID != "" {
+				t.Errorf("the platform must NOT be called to pause a %q campaign", status)
+			}
+		})
 	}
 }
 
@@ -3342,6 +3498,7 @@ func TestGetCampaignMetrics_UnusableConnectionIs409(t *testing.T) {
 	if !strings.Contains(conflict.Message, "no ad account selected") {
 		t.Errorf("message = %q, want it to name the missing account specifically", conflict.Message)
 	}
+	assertNoAccountsEndpointPromised(t, conflict.Message)
 	assertAccountNotSelectedLog(t, buf.String())
 }
 
@@ -3398,6 +3555,7 @@ func TestToggleCampaignStatus_UnusableConnectionIs409(t *testing.T) {
 	if !strings.Contains(conflict.Message, "no ad account selected") {
 		t.Errorf("message = %q, want it to name the missing account specifically", conflict.Message)
 	}
+	assertNoAccountsEndpointPromised(t, conflict.Message)
 	assertAccountNotSelectedLog(t, buf.String())
 }
 
@@ -3423,6 +3581,20 @@ func TestToggleCampaignStatus_OtherUnusableCauseKeepsTheGeneralMessage(t *testin
 	}
 	if strings.Contains(conflict.Message, "no ad account selected") {
 		t.Errorf("message = %q, want the general unusable-connection wording for an inactive connection", conflict.Message)
+	}
+}
+
+// assertNoAccountsEndpointPromised guards the remedy the 409 prescribes. Only Google Ads has
+// an accounts endpoint (design/connection.go, list-google-ads-accounts); Reddit, X/Twitter and
+// Microsoft Ads reach this same arm and have none. A message telling those callers to "choose
+// one from the connection's accounts endpoint" sends them to a route that 404s, which is worse
+// than no remedy at all — the caller reads it as a bug in the service rather than a value they
+// have to supply. Saving the id directly works on every provider, so that is what it must say.
+func assertNoAccountsEndpointPromised(t *testing.T, message string) {
+	t.Helper()
+	if strings.Contains(message, "accounts endpoint") {
+		t.Errorf("message = %q promises an accounts endpoint, but only Google Ads has one: "+
+			"every other provider reaching this arm would be sent to a route that does not exist", message)
 	}
 }
 

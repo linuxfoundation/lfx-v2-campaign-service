@@ -10,7 +10,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -177,6 +180,9 @@ func (stubCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, _ d
 	return c, nil
 }
 func (stubCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64, domain.CampaignLockToken, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	return nil, domain.ErrNotFound
+}
+func (stubCampaignRepo) VerifyClaimedVersion(context.Context, string, string, string, int64, domain.CampaignLockToken) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
 func (stubCampaignRepo) DeleteCampaign(context.Context, string, string, string, int64, *model.Actor, domain.CampaignIndexPayloadFunc) error {
@@ -468,8 +474,8 @@ func (fakeAudienceRepo) CreateAudience(_ context.Context, a *model.CampaignAudie
 	return a, nil
 }
 
-func (fakeAudienceRepo) CreateAudienceForApprovedBrief(_ context.Context, a *model.CampaignAudience, _ int64) (*model.CampaignAudience, error) {
-	return a, nil
+func (fakeAudienceRepo) CreateAudienceForApprovedBrief(_ context.Context, a *model.CampaignAudience) (*model.CampaignAudience, int64, error) {
+	return a, 1, nil
 }
 
 func (fakeAudienceRepo) GetAudience(_ context.Context, _, _, _ string) (*model.CampaignAudience, error) {
@@ -482,6 +488,10 @@ func (fakeAudienceRepo) ListAudiences(_ context.Context, _, _ string) ([]*model.
 
 func (fakeAudienceRepo) UpdateAudience(_ context.Context, a *model.CampaignAudience, _ int64) (*model.CampaignAudience, error) {
 	return a, nil
+}
+
+func (fakeAudienceRepo) ReleaseAudienceBuildLease(_ context.Context, _, _, _ string) error {
+	return nil
 }
 
 // TestNewAudienceBuilder_SnowflakeOptional pins that an unconfigured or misconfigured warehouse
@@ -552,6 +562,85 @@ func TestNewContainer_AllPathsInjectIndexer(t *testing.T) {
 		require.True(t, ok, "briefs service must be the concrete *BriefService")
 		assert.False(t, bs.IndexerIsNoop(), "503-mode path kept the Noop indexer")
 	})
+}
+
+// TestNewContainer_AllPathsInjectTheTokenVerifier is the indexer test's security twin and
+// fails louder: an unwired verifier REFUSES every request to that service. Goa wires each
+// service's JWTAuth separately and the degraded boot paths build their services
+// independently, so a missed injection only shows up by asking all three on every path.
+func TestNewContainer_AllPathsInjectTheTokenVerifier(t *testing.T) {
+	const unreachableNATS = "nats://127.0.0.1:14222"
+
+	assertAll := func(t *testing.T, cont *Container) {
+		t.Helper()
+		for name, s := range map[string]interface{ HasTokenVerifier() bool }{
+			"briefs":      cont.Briefs.(*service.BriefService),
+			"connections": cont.Connections.(*service.ConnectionService),
+			"audiences":   cont.Audiences.(*service.AudienceService),
+		} {
+			assert.True(t, s.HasTokenVerifier(),
+				"%s was constructed without a token verifier: it will reject every request", name)
+		}
+	}
+
+	t.Run("no-database path", func(t *testing.T) {
+		cont, err := NewContainer(&config.Config{Host: "*", Port: "8080", NATSUrl: unreachableNATS})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = cont.Close(context.Background()) })
+		assertAll(t, cont)
+	})
+
+	t.Run("503-mode path", func(t *testing.T) {
+		shrinkDBTimers(t)
+		cont, err := NewContainer(&config.Config{
+			Host: "*", Port: "8080", NATSUrl: unreachableNATS,
+			DatabaseURL:             "postgres://app@127.0.0.1:1/campaign?sslmode=disable",
+			CredentialEncryptionKey: validEncryptionKey(),
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = cont.Close(context.Background()) })
+		assertAll(t, cont)
+	})
+}
+
+// stubTokenVerifier stands in for auth.Verifier. It is never called: these tests assert
+// only that a verifier REACHED the service, which is the wiring failure that would
+// otherwise refuse every request.
+type stubTokenVerifier struct{}
+
+func (stubTokenVerifier) VerifyActor(context.Context, string) (*model.Actor, error) {
+	return &model.Actor{Username: "stub"}, nil
+}
+
+// TestNewServices_LivePathInjectsTheTokenVerifier closes the one path the test above
+// cannot reach. NewContainer only runs wireLiveBackends with a REAL pool, so the
+// no-database and 503-mode subtests leave the live wiring — the path every deployment
+// actually takes — unasserted; a missed injection there would ship while both subtests
+// stayed green.
+//
+// Calling the three helpers directly proves the same guarantee without a database,
+// because wireLiveBackends constructs each service through exactly these helpers and
+// nothing else (container.go:680, :707, :708). That is what makes this equivalent rather
+// than merely adjacent: if a future edit inlines service.NewXService there instead, the
+// helper rule is broken and this test is no longer standing in for anything — which is
+// precisely what the godoc on each helper exists to prevent.
+func TestNewServices_LivePathInjectsTheTokenVerifier(t *testing.T) {
+	c := &Container{tokenVerifier: stubTokenVerifier{}, indexPublisher: indexer.Noop{}}
+	for name, s := range map[string]interface{ HasTokenVerifier() bool }{
+		"briefs":      c.newBriefService(nil, nil, nil, nil),
+		"connections": c.newConnectionService(nil, nil),
+		"audiences":   c.newAudienceService(nil, nil),
+	} {
+		assert.True(t, s.HasTokenVerifier(),
+			"%s: the live wiring path built it without a verifier; it would reject every request", name)
+	}
+
+	// The injection must PROPAGATE the container's field, not merely set something
+	// non-nil: a helper that built its own verifier would pass the check above and still
+	// leave a deployment verifying against the wrong JWKS.
+	c = &Container{indexPublisher: indexer.Noop{}}
+	assert.False(t, c.newBriefService(nil, nil, nil, nil).HasTokenVerifier(),
+		"a container with no verifier must not yield a service that claims one")
 }
 
 // TestNewBriefService_InjectsSharedPublisher covers the live fast path's constructor
@@ -1267,4 +1356,66 @@ func TestEventFetcherWithoutConfigStillGuards(t *testing.T) {
 			require.ErrorIs(t, err, eventurl.ErrEventURLForbidden)
 		})
 	}
+}
+
+// llmClientInjected reports whether newBriefService actually stored an LLM client on the
+// service it returned.
+//
+// It reads the unexported field by reflection, deliberately. The wiring under test lives in
+// THIS package while the field lives in `service`, and nothing public exposes it: the only
+// method that reads it, GenerateEmailCopy, calls ready() first, so with the nil repositories
+// this test uses it returns "brief storage is unavailable" whatever the client is — the two
+// cases would be indistinguishable through the public API, which is exactly how the previous
+// version of this test came to assert nothing but `brief != nil`. The alternatives were worse:
+// an exported accessor would put a test-only hook on a production type, and stubbing all 22
+// repository methods to reach the real 503 would cost more than the wiring it verifies.
+// reflect.Value.IsNil does not require CanInterface, so no unsafe is involved, and a rename of
+// the field fails the require below rather than silently reporting "not injected".
+func llmClientInjected(t *testing.T, s *service.BriefService) bool {
+	t.Helper()
+	f := reflect.ValueOf(s).Elem().FieldByName("llmClient")
+	require.True(t, f.IsValid(),
+		"service.BriefService no longer has an llmClient field; update this test to match")
+	return !f.IsNil()
+}
+
+// TestNewBriefService_InjectsLLMClient verifies that the container-wired LLM client
+// reaches the BriefService. If this wiring is deleted, the service compiles and runs
+// (no compile error), but every deployed request returns 503 because llmClient remains
+// nil — a failure mode indistinguishable, from the outside, from "the model is not
+// configured in this environment". So the assertion is on the field itself.
+func TestNewBriefService_InjectsLLMClient(t *testing.T) {
+	// Case 1: Unconfigured LLM (no AI_PROXY_URL or AI_API_KEY).
+	c := &Container{Config: &config.Config{}}
+	client := c.newLLMClient()
+	require.Nil(t, client, "unconfigured container should return nil LLM client")
+
+	brief := c.newBriefService(nil, nil, nil, nil)
+	require.NotNil(t, brief, "newBriefService should not return nil")
+	require.False(t, llmClientInjected(t, brief),
+		"an unconfigured container must leave llmClient nil, so GenerateEmailCopy answers 503")
+
+	// Case 2: Configured LLM (both proxy URL and API key set). The server is never
+	// contacted — construction does not dial — but a real URL keeps llm.NewClient's own
+	// validation out of the way of what is being tested.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{}"}}]}`))
+	}))
+	defer srv.Close()
+
+	c = &Container{Config: &config.Config{
+		AIProxyURL: srv.URL,
+		AIAPIKey:   "test-key",
+	}}
+
+	client = c.newLLMClient()
+	require.NotNil(t, client,
+		"newLLMClient should return a non-nil client when proxy URL and API key are set")
+
+	brief = c.newBriefService(nil, nil, nil, nil)
+	require.NotNil(t, brief, "newBriefService should not return nil")
+	require.True(t, llmClientInjected(t, brief),
+		"newBriefService must inject the configured client; without SetLLMClient every "+
+			"email-copy request 503s in a deployment that IS configured")
 }

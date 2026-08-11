@@ -125,6 +125,68 @@ Each adapter interprets its own credential + config shape; see the "Dispatch ada
 [googleads](internal-platform-googleads.md), [microsoft](internal-platform-microsoft.md),
 [hubspot](internal-platform-hubspot.md).
 
+## Stored-connection defects are tagged where they are detected
+
+This section is about the six PAID-ADS adapters. HubSpot is a registered dispatcher too and it
+is deliberately outside the scope; the table below says why.
+
+Every paid-ads adapter runs the same pre-flight before it contacts a platform: the connection row
+must be `active`, its decrypted blob must be valid JSON, the decoded credentials must have every
+required field, and (for the paths that need one) an ad account must have been selected. All four
+are STORED-STATE defects — a human has to edit the connection, and no amount of retrying helps.
+
+The service layer has exactly one default arm for an error it does not recognize, and it answers
+**503**. So an untagged defect is not merely mislabelled: it tells the caller a platform did not
+respond, about a platform that was never contacted, and prescribes a remedy (wait, retry) that
+cannot ever succeed. Each defect is therefore wrapped with `domain.ErrConnectionNotUsable` — which
+selects the status — PLUS a reason sentinel from the fixed vocabulary (`ErrConnectionInactive`,
+`ErrCredentialsUndecodable`, `ErrCredentialsIncomplete`, `ErrAccountNotSelected`), which is what
+the handler logs. Both are required: the status marker alone logs `reason=unclassified`.
+
+Two properties of this pattern are easy to lose and worth stating outright:
+
+- **The unmarshal error is DROPPED, not wrapped.** It is produced by decoding the DECRYPTED
+  credential blob, and `encoding/json` quotes its input — `*json.SyntaxError` names the offending
+  character, `*json.UnmarshalTypeError` names the field. Keeping it in the chain puts
+  credential-derived bytes within reach of anything that renders or `errors.As`-walks the error.
+  Nothing actionable is lost: the remedy is "re-save the credential", not "fix byte 41".
+- **The tagging belongs in the SHARED resolve/validate helper, not at each call site.** Where an
+  adapter HAS one — Google Ads, Reddit, X/Twitter and Microsoft Ads each route Dispatch,
+  `ToggleStatus` and (where wired) `ReadMetrics` through a single helper — tagging it once covers
+  every path. Meta and LinkedIn have no such helper yet; see below. Tagging per-path is how Google
+  Ads ended up correct on discovery while its other callers were still bare, before the helper
+  absorbed it.
+
+Which adapters honour it today:
+
+| Adapter | Tagged | Paths covered |
+|---|---|---|
+| Google Ads | yes | `validateGoogleAdsCredentials` — dispatch, toggle, metrics, discovery |
+| Reddit | yes | `resolveRedditClient` — dispatch, toggle, metrics |
+| X/Twitter | yes | `validateTwitterConnection` — dispatch, toggle, metrics |
+| Microsoft Ads | yes | `validateMicrosoftConnection` — dispatch, toggle (no metrics; async Reporting API) |
+| Meta | **no** | still bare, still 503 — LFXV2-3069 part 2 |
+| LinkedIn | **no** | still bare, still 503 — LFXV2-3069 part 2 |
+| HubSpot (email) | **n/a** | out of scope — see below |
+
+HubSpot is listed for completeness, not as a gap. Its checks in `internal/dispatch/hubspot.go`
+are bare — inactive row, JSON decode, empty `privateAppToken`, and no ad-account check at all,
+because an email connection has no ad account to select. But they are bare on a DIFFERENT axis:
+they are wrapped in `notCreated(...)`, the pre-create classification the orchestrator uses to
+release the dispatch claim, and campaign create is asynchronous, so none of them is choosing
+between a 409 and a 503 the way the six above are. Tagging them would change what a polled job
+result says, which is worth doing, but it is a separate question from the status mapping this
+section is about — do not read the empty cell as work queued behind LFXV2-3069 part 2.
+
+Meta and LinkedIn each inline `d.creds.resolve(...)` at more than one call site with no shared
+helper, so tagging them is an extraction rather than an annotation, and it collides with open work
+on those files. Until it lands, their four defects continue to answer 503.
+
+The full rationale for the classification — including why a decrypt failure splits into two
+sentinels, and why an inactive row is refused rather than treated as "pending" — lives in the
+Google Ads discussion under *Account discovery* below, since that is where the pattern was first
+worked out.
+
 ## Status toggle (optional capability)
 
 `StatusToggler` is an OPTIONAL dispatcher interface (separate from `PlatformDispatcher`) —
@@ -265,7 +327,7 @@ permanent X API constraint documented in the knowledge base. Spend is returned b
 `GoogleAdsDispatcher.ListAccounts(ctx, projectID, platform) ([]model.AccessibleAccount, error)`
 enumerates the ad accounts reachable **upstream at the provider** with the connection's stored
 credential. It exists so an operator configuring a connection can pick the right account instead
-of pasting a customer ID by hand.
+of pasting a customer ID by hand. `MetaDispatcher.ListAccounts` is the second implementation.
 
 **Now fully wired.** The adapter landed one PR ahead of its caller; both halves are present as of
 this change. `internal/service/orchestrator.go` declares `AccountLister` alongside `StatusToggler`
@@ -292,19 +354,99 @@ downstream can recover the distinction.
 
 Ownership of that wrap is SPLIT, and the split follows which function is in a position to know.
 `validateGoogleAdsCredentials` tags the three CREDENTIAL-STATE failures — a non-`active` status,
-a blob that is not valid JSON, a blob missing a required field — and it is used by every Google
-Ads path, so campaign dispatch and the metrics read get the classification too, not just
-discovery. `resolveGoogleAdsDiscoveryClient` tags the one that is not about the credential at
-all: a `login_customer_id` stored with dashes. Reading either as "the resolver wraps every
-pre-send failure" would suggest the campaign paths are unclassified, which is the opposite of
-what happens.
+a blob that is not valid JSON, a blob missing a required field. `validatedLoginCustomerID` tags
+the one that is not about the credential at all: a `login_customer_id` stored with dashes.
+
+**Both are called by EVERY path that reads the column, and that is the whole point of the second
+one being a function.** The manager-id check used to sit INLINE in
+`resolveGoogleAdsDiscoveryClient`, which meant only the discovery endpoint got it. The other paths
+read the same stored column, handed it to the same client, and classified the same defect
+differently: the value reached the client uninspected, failed there at `validateLoginCustomerID`,
+and arrived at the orchestrator indistinguishable from an upstream failure — same call, same error
+type. The default arm answered `503`, promising a retry would help, for a stored value only a
+human can repair. LFXV2-3052 hoisted it into a helper.
+
+There are **three** readers, not two, and the third is easy to miss: `resolveGoogleAdsClient`
+(toggle, metrics), `resolveGoogleAdsDiscoveryClient` (account discovery), and `Dispatch` — which
+builds its own client INLINE rather than through a resolver, because it predates both of them.
+Enumerating callers by the abstraction ("which resolvers call this?") does not find it;
+enumerating by the STORED KEY does — and, now that this PR has hoisted the read into one
+helper, so does enumerating by the helper. Both commands need `-F`, because the useful search
+strings contain regex metacharacters (`[`, `"`), and quoting, because an unquoted `[...]` is a
+shell glob:
+
+```bash
+grep -rn -F 'login_customer_id' internal/ | grep -v '_test\.go'   # the key, every reader
+grep -rn -F 'validatedLoginCustomerID' internal/                  # the helper: 3 call sites
+```
+
+Note that `grep -rn -F 'providerConfig["login_customer_id"]'` is now the WRONG enumeration even
+though it runs: after the hoist there is exactly one such expression, inside the helper itself.
+An enumeration keyed on an expression the refactor was designed to centralise reports one
+reader and reads as reassurance. `Dispatch` is also the
+path where the consequences are worst: it is the one that spends money, and the client's own
+validator renders the offending value with `%q`, which the orchestrator then writes to its
+dispatch-failure log line — so leaving it uninspected leaked account-identifying configuration
+into logs on top of misclassifying the failure. Its wrap is `notCreated`, preserving create-only
+claim semantics: nothing was sent, so the claim must be released rather than retained for
+reconciliation.
+
+A check that lives on one of several paths through the same column is not a check; it is a coin
+flip on which endpoint the caller happened to use.
+
+An empty `login_customer_id` is legal and means "no manager", so only a non-empty malformed value
+fails. The error names the field and the rule but never echoes the VALUE: a manager id is
+account-identifying configuration, this error reaches a log, and the rest of this path keeps
+error text to a fixed sentinel vocabulary with no payload attached.
+
+### Meta
+
+`MetaDispatcher.ListAccounts` follows the same contract, through
+`resolveMetaDiscoveryClient`, and the differences are the interesting part.
+
+**The account id is not consulted, and `AccountConfig` is left zero.** Graph
+`GET /me/adaccounts` asks what the TOKEN reaches, so scoping the client to one of the answers
+would narrow the response to a subset of the question. Requiring an account id would also make
+the endpoint reachable only by connections that no longer need it.
+
+**Only re-pointing is reachable today.** The resolver is already correct for first-time
+bootstrap — credentials stored, account chosen afterwards, the way Google Ads works — but
+`MetaAdsConnectionConfig` still declares `Required("account_id")`, so that create is a 400
+before any of this code runs. Closing it is not a one-line loosening: only
+`resolveGoogleAdsClient` tags an empty account id with `domain.ErrAccountNotSelected`, so a
+Meta connection parked mid-bootstrap would fail `Dispatch` with an error nothing classifies —
+the caller learns that the campaign did not launch, not that the reason is a choice they have
+not made. Note the shape of that answer: campaign create is ASYNCHRONOUS (`design/brief.go`
+answers `StatusAccepted`), so the untagged error surfaces in the polled job result, never as a
+409 — `docs/api-catalog.md` records the same split for Google Ads. The synchronous 409 that
+names the missing account belongs to `ToggleStatus` and `ReadMetrics`, and neither needs
+anything here: both target the campaign node by id and document that they need no account id
+(`internal/dispatch/meta.go`), so they already work on an account-less row. `Dispatch` is
+therefore the only exit to tag, and tagging it improves a job result rather than a status code.
+Tracked as LFXV2-3061.
+
+**The unmarshal cause on the decrypted blob is DROPPED, not wrapped.** It is the only value in
+the resolver derived from decrypted plaintext, and this error is logged and, on the not-usable
+arm, described to the caller. Today's `encoding/json` happens not to quote the offending bytes
+for a struct of string fields, but that is a behaviour rather than a documented guarantee and
+it does not hold for every field type. `TestMeta_ListAccounts_UndecodableBlobDropsTheUnmarshalCause`
+asserts the error text is EXACTLY the two sentinels — asserting merely that it does not contain
+the secret would not bind, because it passes with the cause appended.
+
+**Known-bad accounts are returned, not filtered.** Disabled, unsettled, pending-review,
+pending-settlement, grace-period and closed accounts come back with the reason in the label
+(`"LF Events (disabled)"`). This is a picker: dropping them answers "your token reaches no ad
+accounts" about an account sitting right there. The label reuses
+`inactiveAccountStatusLabels`, the same map `CreateCampaign`'s preflight refuses on, so the
+picker and the create path cannot disagree about which accounts are known-bad. `account_status`
+0 means the field was absent, which is not a claim of disabled, and gets no label.
 
 The manager-id check is duplicated on purpose. `Client.validateLoginCustomerID` still validates it
 (the backstop for every other caller), but it does so inside the same call that talks to Google, so
 by the time it fires the error is indistinguishable at this boundary from a genuine upstream
 failure. `storedCustomerIDRE` in `internal/dispatch/googleads.go` therefore checks the STORED value
-where it is read — the check has to happen where the answer is still classifiable. The two regexps
-must stay in step.
+where it is READ, not where it is used — the check has to happen while the answer is still
+classifiable. The two regexps must stay in step.
 
 `creds.resolve` classifies each of its failure branches, and the splits are deliberate. A connection
 row with an EMPTY credential blob is permanently unusable as it stands, so it carries
@@ -368,8 +510,9 @@ account-agnostic: it asks which customer ids the CREDENTIAL reaches, so an accou
 a narrower version of the question, it is a different one.
 
 Both lifecycles are now SUPPORTED. `GoogleAdsConnectionConfig` no longer declares
-`Required("account_id")` (Google Ads alone — it is the only provider with a discovery endpoint,
-so the only one where a caller can create a connection and then find out what to put in it), so
+`Required("account_id")` (Google Ads alone — Meta has a discovery endpoint too as of LFXV2-3062,
+but a credentials-first row also needs the account-needing paths to fail with
+`account_not_selected`, which Meta's campaign create does not yet do), so
 this endpoint serves BOTH re-pointing an existing connection ("which other customer ids does this
 credential reach?") and first-time bootstrap:
 

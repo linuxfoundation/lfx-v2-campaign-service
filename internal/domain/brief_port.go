@@ -18,6 +18,26 @@ type BriefReader interface {
 	// ErrNotFound when none exists. ErrNotFound is an ORDINARY outcome here, not a failure:
 	// it is how the caller learns this event has no brief yet and one should be generated.
 	FindBriefByEventSlug(ctx context.Context, projectID, eventSlug string) (*model.CampaignBrief, error)
+	// ConfirmBriefApproved reports nil when the brief is STILL approved at expectedVersion,
+	// ErrStaleApproval when it is not, and ErrNotFound when it is missing or archived.
+	//
+	// It exists because GetBrief cannot answer this question safely. GetBrief is a plain
+	// SELECT, so under READ COMMITTED it returns the last COMMITTED row and an in-flight
+	// ReplaceBrief — updated, not yet committed — is invisible to it. A caller that reads
+	// "still approved" and then does something irreversible (creating real HubSpot lists)
+	// can therefore act on an approval that is already being withdrawn in another
+	// transaction, and lose the race by milliseconds.
+	//
+	// Implementations must take a ROW LOCK (`SELECT ... FOR UPDATE`) so the read serializes
+	// against brief mutations: an in-flight writer blocks this read until it commits, and
+	// the value read afterwards is the writer's. That converts a silent stale read into the
+	// correct ErrStaleApproval.
+	//
+	// It cannot close the window entirely — the lock is released when the confirming
+	// transaction ends, and holding a database transaction open across an upstream HTTP call
+	// is not an option. What it removes is the ALREADY-DECIDED case: a withdrawal that has
+	// happened and simply has not committed yet no longer reads as an approval.
+	ConfirmBriefApproved(ctx context.Context, projectID, id string, expectedVersion int64) error
 }
 
 // BriefWriter mutates campaign briefs.
@@ -142,6 +162,17 @@ type CampaignWriter interface {
 	// holder's own connection for this write MUST use lockToken's own handle, never a lookup by
 	// campaign ID, so a write can never attach to a different claimant's connection.
 	ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64, lockToken CampaignLockToken, indexPayload CampaignIndexPayloadFunc) (*model.Campaign, error)
+	// VerifyClaimedVersion checks that a row still matches the version claimed under
+	// lockToken, without modifying it. Used after a platform call to detect if the claimed
+	// connection died and the row was modified by a successor between the platform call and
+	// the persist. Returns the current campaign row if the version still matches, or
+	// ErrPreconditionFailed if the version has changed, or ErrNotFound if the row is gone.
+	//
+	// lockToken MUST be the token from the preceding ClaimCampaignVersion call for the same
+	// campaign. Implementations MUST use the claimed connection (the one holding the lock),
+	// never a separate connection, so a pool under pressure cannot starve the verification
+	// behind the claimed write.
+	VerifyClaimedVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64, lockToken CampaignLockToken) (*model.Campaign, error)
 	// ClaimCampaignVersion reserves EXCLUSIVE write ownership of a campaign row, gated on
 	// expectedVersion, and returns the row plus a CampaignLockToken. It returns
 	// ErrPreconditionFailed if expectedVersion is stale, or ErrNotFound if the row is gone;

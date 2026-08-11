@@ -12,6 +12,16 @@ const (
 	EnvJWKSURL  = "JWKS_URL"
 	EnvAudience = "JWT_AUDIENCE"
 	EnvIssuer   = "JWT_ISSUER"
+	// EnvMockLocalPrincipal DISABLES JWT verification and treats every request as the
+	// named principal. Local development only. The chart declares it with no value and
+	// the chart parity test pins it as deliberately not deployable, so setting it is a
+	// choice someone has to make on a laptop, never something a deploy can do by default.
+	EnvMockLocalPrincipal = "JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL"
+	// EnvKubernetesServiceHost is set by the kubelet in every pod. It is read ONLY to
+	// refuse EnvMockLocalPrincipal in a deployment: the chart declares that key under
+	// app.environment, so an override could otherwise ship a pod with authentication
+	// switched off. Nothing in the chart can set or clear this one.
+	EnvKubernetesServiceHost = "KUBERNETES_SERVICE_HOST"
 	// EnvNATSURL is the NATS server URL used to publish Query Service index updates.
 	// Empty DISABLES indexing: every endpoint still serves and campaigns still dispatch;
 	// only the search index stops being fed (the Query Service rebuilds a resource's
@@ -50,6 +60,15 @@ const (
 	// Default-off keeps that from reaching anyone until the contract is verified against a
 	// live Reddit ad account, at which point the default flips and this constant goes away.
 	EnvRedditMetricsEnabled = "REDDIT_METRICS_ENABLED"
+
+	// LLM settings, used ONLY to generate email copy (LFXV2-2775). Optional as a GROUP:
+	// with url or key unset, the GenerateEmailCopy endpoint returns 503 (service unavailable).
+	// The service itself starts successfully with or without these configured.
+	// The secret is the LF LiteLLM proxy's own key — the proxy holds the Bedrock credentials.
+	// AI_MODEL is not a secret; unset selects llm.DefaultModel.
+	EnvAIProxyURL = "AI_PROXY_URL"
+	EnvAIAPIKey   = "AI_API_KEY"
+	EnvAIModel    = "AI_MODEL"
 
 	// Snowflake (read-only) settings, used ONLY to resolve an event's past editions when
 	// building an audience. All are OPTIONAL: with none set, audience building still works

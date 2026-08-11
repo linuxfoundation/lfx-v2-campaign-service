@@ -301,9 +301,8 @@ func TestLinkedInAds_RoundTripsOrgID(t *testing.T) {
 
 func TestJWTAuth_ExtractsActorFromToken(t *testing.T) {
 	s := newTestService(t, newFakeRepo())
-	// payload {"email":"a@b.com","preferred_username":"abc"} base64url-encoded.
-	payload := "eyJlbWFpbCI6ImFAYi5jb20iLCJwcmVmZXJyZWRfdXNlcm5hbWUiOiJhYmMifQ"
-	ctx, err := s.JWTAuth(context.Background(), "h."+payload+".s", nil)
+	s.SetTokenVerifier(verifierFor("abc-token", &model.Actor{Username: "abc", Email: "a@b.com"}))
+	ctx, err := s.JWTAuth(context.Background(), "abc-token", nil)
 	if err != nil {
 		t.Fatalf("JWTAuth: %v", err)
 	}

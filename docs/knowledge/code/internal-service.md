@@ -88,11 +88,27 @@ cannot be safely resumed without provider idempotency keys).
 {active|paused}) pauses/resumes a campaign ON THE PLATFORM, then persists. Unlike
 `UpdateCampaign` (DB-only), the platform call happens FIRST via
 `Orchestrator.ToggleCampaignStatus` → the platform's `StatusToggler`; the DB row is written
-only after the platform confirms. Only a fully-created campaign (`created`, or one already `active`/`paused`) may be toggled
-(`model.CampaignStatusToggleable`); a `pending` ambiguous orphan or a `created_degraded`
-campaign is rejected 409 — toggling one would activate an incomplete campaign and/or
-overwrite its reconciliation marker with the run state (a non-empty `PlatformCampaignID`
-alone is not sufficient, since a partial/degraded campaign can carry an upstream id).
+only after the platform confirms. Only a fully-created campaign (`created`, or one already
+`active`/`paused`) may be toggled FREELY (`model.CampaignStatusToggleable`); a `pending`
+ambiguous orphan or a `created_degraded` campaign is rejected 409 on ACTIVATE — activating one
+would put an incomplete campaign in front of an audience and overwrite its reconciliation
+marker with the run state (a non-empty `PlatformCampaignID` alone is not sufficient, since a
+partial/degraded campaign can carry an upstream id).
+
+**PAUSE is the one exception, and only for `created_degraded`.** That status means the campaign
+definitely EXISTS upstream while the service does not know its full wiring — and an ADOPTED
+campaign (LFXV2-3042) reaches it by binding a campaign the lookup found, where `ENABLED` and
+`PAUSED` are alike live. So an adopted campaign can already be serving and spending, and
+refusing every toggle made the campaign most likely to need stopping the one campaign the
+service could not stop, even though the dispatchers explicitly support pausing a campaign with
+no child ids. A pause costs the guard nothing: it cannot activate anything. **The marker is
+preserved rather than written over** — pausing reconciles nothing, so the row keeps
+`created_degraded` (no version bump, no index event) and the response reports that unchanged
+status. The exception lives at the call site, not inside `CampaignStatusToggleable`, which
+stays direction-blind: a `toggleable(status, direction)` shape would invite an unrelated caller
+to pass the wrong direction and silently gain the exception. `pending` and the partial-orphan
+statuses stay refused in BOTH directions — they do not mean "exists upstream", so there is
+nothing for a pause to act on.
 Write ownership of the row is claimed via `CampaignRepo.ClaimCampaignVersion` BEFORE the
 paid platform call, not by comparing the read-time version in memory (LFXV2-2901): an
 in-memory comparison only rejects a stale caller, it does nothing to stop a SECOND
@@ -187,8 +203,20 @@ campaign fail with a guaranteed 400.
 ## Account discovery
 
 `ConnectionService.ListGoogleAdsAccounts` (backing `GET .../connection-google-ads/accounts`)
-enumerates the ad accounts reachable UPSTREAM with the connection's stored credential, so an
-operator can pick one instead of pasting a customer id by hand. It is a live read on the same
+and `ListMetaAdsAccounts` (`GET .../connection-meta-ads/accounts`) enumerate the ad accounts
+reachable UPSTREAM with the connection's stored credential, so an operator can pick one instead
+of pasting an account id by hand.
+
+**Both handlers are three lines over one `listAccounts` helper**, parameterized by an
+`accountDiscovery{provider, displayName, notUsableRemedy}` value. The mapping below encodes
+several judgements that are individually easy to get wrong — 404 rather than 503 for a missing
+connection, a 500 that logs but never echoes a decryption failure, a 400 rather than 503 for a
+connection no waiting will fix — and a second copy is where one of them quietly diverges. What
+IS per-provider is the caller-facing text: Meta's remedy names `access_token`, Google's names
+`login_customer_id`, and pointing the second handler at the first's `accountDiscovery` would
+tell a Meta operator to check a field their connection does not have.
+`TestListMetaAdsAccounts_MessagesNameMetaNotGoogleAds` is the test for exactly that, because
+every status-code assertion passes with the wiring wrong. It is a live read on the same
 never-persisted discipline as `GetCampaignMetrics`, and `Orchestrator.ReadAccounts` uses the
 same optional-capability pattern: it type-asserts the platform's dispatcher for `AccountLister`
 at call time and returns `ErrAccountsUnsupported` (400) without contacting the platform when
@@ -219,8 +247,12 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   value such as a dashed `login_customer_id`. The platform is never contacted. This arm is what
   keeps the 503 below honest: a 503 promises that waiting might help, and none of these conditions
   change until a human edits the connection. The distinction cannot be made here — a setup failure
-  and an upstream one arrive as the same type — so `internal/dispatch/googleads.go` wraps the
-  pre-send failures with the sentinel and this arm reads it. The wrap has two owners:
+  and an upstream one arrive as the same type — so the dispatch layer wraps the pre-send failures
+  with the sentinel and this arm reads it. Four adapters do:
+  `internal/dispatch/{googleads,reddit,twitter,microsoft}.go`, each in its own shared
+  resolve/validate helper, so every path through an adapter is covered rather than just the one
+  that happened to be fixed. Meta and LinkedIn do NOT yet — their equivalent checks are still bare
+  and still fall to the 503 arm below (LFXV2-3069 part 2). In Google Ads the wrap has three owners:
   `validateGoogleAdsCredentials` tags the credential-state three (inactive, undecodable,
   incomplete), which is why they reach callers beyond discovery — but the SHAPE they reach them in
   depends on whether the caller is synchronous. The **status toggle** and the **metrics read**
@@ -229,7 +261,9 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   polled job result, never as a 409 — see `docs/api-catalog.md`. Do not describe "campaign
   dispatch" as receiving a 409; the dispatch layer produces the error, and only the two
   synchronous readers turn it into a status code.
-  `resolveGoogleAdsDiscoveryClient` tags the dashed `login_customer_id`. Neither the cause NOR its text leaves this function — not in the response and not in
+  `validatedLoginCustomerID` in `internal/dispatch/googleads.go` tags the dashed `login_customer_id`,
+  and it is now called by all three readers (toggle resolver, discovery resolver, and create dispatcher).
+  Neither the cause NOR its text leaves the dispatch layer — not in the response and not in
   the log line. One of the wrapped errors is computed over the decrypted credential blob, and
   `encoding/json` quotes its input, so logging the cause would put credential-derived bytes into
   centralized logs for exactly the connection whose credentials are malformed. What the log line
@@ -285,10 +319,22 @@ connection is exactly what makes the bootstrap work, since discovery is how the 
 the account to select. Discovery's 400 is reserved for its *other* unusable states (inactive,
 credential blob absent/incomplete/malformed, provider config invalid).
 
-The distinction is carried in the response **message**, not a field. `ConflictError` is a shared
-Goa type with exactly `code` and `message`, so exposing a machine-readable `reason` would mean
-changing a type every 409 in this service returns; the reason token reaches operators through
-the log instead.
+The distinction here is carried in the response **message**, not a field, and that is now a
+choice rather than a limitation. `ConflictError` (`design/connection.go`) carries an OPTIONAL
+`reason` slug alongside `code` and `message`; being optional is what let it be added without
+touching the eighteen other sites that construct the shared type. The audience build populates
+it — three 409s with three opposite remedies — and these connection-usability 409s do not,
+because their remedy is the same one in every case (fix the connection, the message says how)
+and a slug per unusable state would be a taxonomy with no client reading it. The reason token
+reaches operators here through the log. A client must treat an absent `reason` as "unspecified
+conflict"; see `mapAudienceErr` in `internal/service/audience.go` for the populated case.
+
+**The message names no accounts endpoint**, and that constraint is load-bearing rather than
+stylistic. Only Google Ads has one (`design/connection.go`, `list-google-ads-accounts`), and
+since Reddit, X/Twitter and Microsoft Ads tag this defect too they reach the same arm — a
+message pointing them at `.../accounts` would prescribe a route that 404s, which reads as a
+service bug rather than a value the caller has to supply. "Save an ad account id on the
+connection" is true of every provider. `assertNoAccountsEndpointPromised` pins it.
 
 Two DIFFERENT guards protect the empty-vs-nil distinction, and they fail in opposite directions —
 document them separately so a future change preserves each for its own reason:
@@ -363,5 +409,50 @@ default branch returns a FIXED message rather than formatting the cause: `eventu
 URL-free messages because they are rendered to callers and to logs, and an unrecognized
 error is exactly the one whose text nothing vouched for. Forbidden maps to 400 and not
 403: nothing about the caller is at issue, so 403 would send an operator to look at tokens.
+
+## Authentication is one guard, embedded three times (LFXV2-3053)
+
+`JWTAuth` used to base64-decode the token payload and believe it. It now calls
+[internal/infrastructure/auth](internal-infrastructure-auth.md) and refuses anything that
+does not verify. `authGuard` (`auth.go`) holds the verifier and is EMBEDDED in the three
+authenticated services — Goa wires a security handler per service, and three copies of a
+security check is three places to drift; each keeps a thin `JWTAuth` only because the
+error type is generated per package.
+
+Two details that look incidental and are not. The mutex is `authMu`, not `mu`: every
+embedding service already has a `mu`, and two same-named fields at different depths
+resolve **silently** to the outer one, so a lock taken in the wrong place would compile
+and protect nothing. And a nil verifier REJECTS, making missing wiring an outage rather
+than a silent return to trusting unverified claims —
+`TestNewContainer_AllPathsInjectTheTokenVerifier` pins that all three services get one on
+the boot paths a test can reach — no-database and 503-mode — which is the only place that
+bug is visible at runtime. It cannot reach the LIVE path: `wireLiveBackends` needs a
+reachable PostgreSQL and constructs all three services independently, so "every boot path"
+was a claim about code that had been read, not tested.
+`TestNoServiceIsConstructedOutsideItsVerifierInjectingHelper` closes that half in the
+source instead: it parses the `container` package and fails if any non-test call to
+`service.NewBriefService` / `NewConnectionService` / `NewAudienceService` sits outside its
+verifier-injecting helper. Reachability is a source property, so a new construction site is
+caught whether or not a unit test can boot the path it is on.
+
+Rejections are 400, not 401: the design declares no Unauthorized type and
+`commonBriefErrors` documents 400 as the JWTAuth rejection status (401 is a follow-up).
+
+But not every rejection is about the token. `authenticate` returns a third value, an
+`unavailable bool`, saying whose fault the failure is: true when THIS service could not
+perform the check — no verifier wired, or Heimdall's JWKS unreachable
+(`domain.ErrKeyUnavailable`) — false when the token itself was refused. The three `JWTAuth`
+impls map the first to `ConnServiceUnavailableError` (**503**) and the second to
+`BadRequestError` (400). Both were 400 before, which answered a JWKS outage by telling every
+caller holding a valid credential that theirs was bad, and telling them not to retry.
+The verdict is returned separately rather than sniffed from the message: "invalid bearer
+token" is deliberately the *same* string for every token-side refusal, so it cannot carry
+the distinction. The nil-actor branch — a verifier that accepts but names nobody — stays on
+the 400 side on purpose: it is indistinguishable from a refusal seen from outside, and
+`TestAuthenticate_RejectionMessagesAreOpaque` pins that a caller cannot learn which of the
+two happened.
+`attributedActor` still warns on a nil actor although no served route can reach it with
+one — a tripwire for a future entry point wired without the security scheme, which would
+present only as NULL attribution.
 
 See [internal/service](../../../internal/service).

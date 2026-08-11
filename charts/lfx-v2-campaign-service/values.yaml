@@ -187,8 +187,23 @@ app:
     JWT_AUDIENCE:
       value: lfx-v2-campaign-service
 
-    # JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL is used for local development to bypass JWT validation
-    # Optional, local dev only. Set to a principal name to enable mock authentication
+    # JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL disables JWT validation entirely and treats every
+    # request as the named principal. Local development only, and ENFORCED as such at two
+    # layers. (1) Template time: the guard at the top of templates/deployment.yaml FAILS the
+    # render if this is given a non-empty value, so a deploy carrying the bypass cannot be
+    # produced at all. (2) Runtime: a pod that somehow starts with it set REFUSES TO BOOT and
+    # logs which key to unset.
+    #
+    # The runtime half depends on the service knowing it is in a cluster, and that is NOT
+    # from KUBERNETES_SERVICE_HOST alone. This chart renders every app.environment key and
+    # appends app.extraEnv verbatim, and an explicit container env entry overrides the
+    # kubelet's — so that variable IS chart-settable, and one override could otherwise both
+    # enable the bypass and hide the cluster. The template guard therefore also rejects any
+    # KUBERNETES_* name in either input, and the service ORs in a second signal the
+    # environment cannot express (the projected service-account directory).
+    #
+    # Leave it empty. It stays declared only so the key is discoverable; the empty default is
+    # pinned by the parity test's exempt list.
     JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL:
       value: ''
 
@@ -283,6 +298,28 @@ app:
     SNOWFLAKE_WAREHOUSE:
       value: ''
     SNOWFLAKE_ROLE:
+      value: ''
+
+    # AI_* configure the LF LiteLLM proxy used to GENERATE email copy (subject, preheader,
+    # body, CTA) via the POST /projects/{id}/briefs/{id}/email-copy endpoint. Optional as a
+    # GROUP: with either URL or key missing, the endpoint returns 503 (service unavailable).
+    # The credential is the PROXY's key, not a Bedrock or Anthropic key. Rollout
+    # prerequisite: secret sync must provision `ai-proxy-url` and `ai-api-key` on
+    # lfx-v2-campaign-service-secrets before copy generation will be available.
+    AI_PROXY_URL:
+      valueFrom:
+        secretKeyRef:
+          name: lfx-v2-campaign-service-secrets
+          key: ai-proxy-url
+          optional: true
+    AI_API_KEY:
+      valueFrom:
+        secretKeyRef:
+          name: lfx-v2-campaign-service-secrets
+          key: ai-api-key
+          optional: true
+    # Not a secret: the model id the proxy routes on. Empty selects llm.DefaultModel.
+    AI_MODEL:
       value: ''
 
     # INDEXER_SERVICE_TOKEN is the SERVICE credential the index relay stamps onto

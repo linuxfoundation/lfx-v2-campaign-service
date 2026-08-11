@@ -177,7 +177,16 @@ one of the same name — different signature — in `audience_actor_live_test.go
 and the package stops compiling.
 
 Confirmed by grepping both worktrees; the two differ only in whether they return the brief's
-version. Renamed this branch's to `insertApprovedBriefVersioned`.
+version. Renamed this branch's to `insertApprovedBriefVersioned` to keep the merge mechanical.
+
+**Resolved on the merge, and the rename turned out to be temporary.** #106 landed first and
+took `CreateAudienceForApprovedBrief`'s `expectedVersion` PARAMETER away with it — the brief
+version is now the method's second RETURN value, observed under its own lock. With nothing left
+to pass a version into, the only reason this branch's helper returned one disappeared, so the
+two folded into #106's `insertApprovedBrief` and `insertApprovedBriefVersioned` was deleted
+rather than carried. Worth noting for the next collision of this shape: the cheap defensive
+rename was still the right first move, because it made the merge a deletion instead of a
+redesign.
 
 **What makes this worth recording is that no test could have caught it.** Every gate on both
 branches is green, because neither tree contains both files — the defect exists only in a

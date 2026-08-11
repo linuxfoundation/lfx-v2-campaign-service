@@ -288,6 +288,20 @@ type GetCampaignMetricsResponseBody struct {
 	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
 }
 
+// GenerateEmailCopyResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body.
+type GenerateEmailCopyResponseBody struct {
+	// Email subject line
+	Subject *string `form:"subject,omitempty" json:"subject,omitempty" xml:"subject,omitempty"`
+	// Email preheader text (preview summary)
+	Preheader *string `form:"preheader,omitempty" json:"preheader,omitempty" xml:"preheader,omitempty"`
+	// Email body HTML (the main content)
+	Body *string `form:"body,omitempty" json:"body,omitempty" xml:"body,omitempty"`
+	// Call-to-action button text
+	Cta *string `form:"cta,omitempty" json:"cta,omitempty" xml:"cta,omitempty"`
+}
+
 // UpdateCampaignResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
 // response body.
@@ -363,6 +377,9 @@ type CreateBriefConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateBriefServiceUnavailableResponseBody is the type of the
@@ -413,6 +430,9 @@ type FindBriefConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // FindBriefServiceUnavailableResponseBody is the type of the
@@ -463,6 +483,9 @@ type GetBriefConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // GetBriefServiceUnavailableResponseBody is the type of the
@@ -513,6 +536,9 @@ type UpdateBriefConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // UpdateBriefServiceUnavailableResponseBody is the type of the
@@ -583,6 +609,9 @@ type ApproveBriefConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // ApproveBriefServiceUnavailableResponseBody is the type of the
@@ -653,6 +682,9 @@ type DeleteBriefConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // DeleteBriefServiceUnavailableResponseBody is the type of the
@@ -703,6 +735,9 @@ type FetchEventURLConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // FetchEventURLServiceUnavailableResponseBody is the type of the
@@ -753,6 +788,9 @@ type CreateCampaignsConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateCampaignsServiceUnavailableResponseBody is the type of the
@@ -803,6 +841,9 @@ type GetCampaignConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // GetCampaignServiceUnavailableResponseBody is the type of the
@@ -853,6 +894,9 @@ type GetCampaignMetricsConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // GetCampaignMetricsServiceUnavailableResponseBody is the type of the
@@ -885,6 +929,59 @@ type GetCampaignMetricsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GenerateEmailCopyBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body for the "BadRequest" error.
+type GenerateEmailCopyBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GenerateEmailCopyConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body for the "Conflict" error.
+type GenerateEmailCopyConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GenerateEmailCopyServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type GenerateEmailCopyServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GenerateEmailCopyInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body for the "InternalServerError" error.
+type GenerateEmailCopyInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GenerateEmailCopyNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body for the "NotFound" error.
+type GenerateEmailCopyNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // UpdateCampaignBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -903,6 +1000,9 @@ type UpdateCampaignConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // UpdateCampaignServiceUnavailableResponseBody is the type of the
@@ -973,6 +1073,9 @@ type ToggleCampaignStatusConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // ToggleCampaignStatusServiceUnavailableResponseBody is the type of the
@@ -1043,6 +1146,9 @@ type DeleteCampaignConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // DeleteCampaignServiceUnavailableResponseBody is the type of the
@@ -1113,6 +1219,9 @@ type GetJobConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // GetJobServiceUnavailableResponseBody is the type of the
@@ -1306,6 +1415,7 @@ func NewCreateBriefConflict(body *CreateBriefConflictResponseBody) *lfxv2campaig
 	v := &lfxv2campaignservicebriefs.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -1388,6 +1498,7 @@ func NewFindBriefConflict(body *FindBriefConflictResponseBody) *lfxv2campaignser
 	v := &lfxv2campaignservicebriefs.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -1470,6 +1581,7 @@ func NewGetBriefConflict(body *GetBriefConflictResponseBody) *lfxv2campaignservi
 	v := &lfxv2campaignservicebriefs.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -1552,6 +1664,7 @@ func NewUpdateBriefConflict(body *UpdateBriefConflictResponseBody) *lfxv2campaig
 	v := &lfxv2campaignservicebriefs.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -1656,6 +1769,7 @@ func NewApproveBriefConflict(body *ApproveBriefConflictResponseBody) *lfxv2campa
 	v := &lfxv2campaignservicebriefs.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -1733,6 +1847,7 @@ func NewDeleteBriefConflict(body *DeleteBriefConflictResponseBody) *lfxv2campaig
 	v := &lfxv2campaignservicebriefs.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -1805,6 +1920,7 @@ func NewFetchEventURLConflict(body *FetchEventURLConflictResponseBody) *lfxv2cam
 	v := &lfxv2campaignservicebriefs.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -1876,6 +1992,7 @@ func NewCreateCampaignsConflict(body *CreateCampaignsConflictResponseBody) *lfxv
 	v := &lfxv2campaignservicebriefs.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -1950,6 +2067,7 @@ func NewGetCampaignConflict(body *GetCampaignConflictResponseBody) *lfxv2campaig
 	v := &lfxv2campaignservicebriefs.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -2022,6 +2140,7 @@ func NewGetCampaignMetricsConflict(body *GetCampaignMetricsConflictResponseBody)
 	v := &lfxv2campaignservicebriefs.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -2054,6 +2173,77 @@ func NewGetCampaignMetricsInternalServerError(body *GetCampaignMetricsInternalSe
 // NewGetCampaignMetricsNotFound builds a lfx-v2-campaign-service-briefs
 // service get-campaign-metrics endpoint NotFound error.
 func NewGetCampaignMetricsNotFound(body *GetCampaignMetricsNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGenerateEmailCopyEmailCopyOK builds a "lfx-v2-campaign-service-briefs"
+// service "generate-email-copy" endpoint result from a HTTP "OK" response.
+func NewGenerateEmailCopyEmailCopyOK(body *GenerateEmailCopyResponseBody) *lfxv2campaignservicebriefs.EmailCopy {
+	v := &lfxv2campaignservicebriefs.EmailCopy{
+		Subject:   *body.Subject,
+		Preheader: *body.Preheader,
+		Body:      *body.Body,
+		Cta:       *body.Cta,
+	}
+
+	return v
+}
+
+// NewGenerateEmailCopyBadRequest builds a lfx-v2-campaign-service-briefs
+// service generate-email-copy endpoint BadRequest error.
+func NewGenerateEmailCopyBadRequest(body *GenerateEmailCopyBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGenerateEmailCopyConflict builds a lfx-v2-campaign-service-briefs service
+// generate-email-copy endpoint Conflict error.
+func NewGenerateEmailCopyConflict(body *GenerateEmailCopyConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewGenerateEmailCopyServiceUnavailable builds a
+// lfx-v2-campaign-service-briefs service generate-email-copy endpoint
+// ServiceUnavailable error.
+func NewGenerateEmailCopyServiceUnavailable(body *GenerateEmailCopyServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGenerateEmailCopyInternalServerError builds a
+// lfx-v2-campaign-service-briefs service generate-email-copy endpoint
+// InternalServerError error.
+func NewGenerateEmailCopyInternalServerError(body *GenerateEmailCopyInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGenerateEmailCopyNotFound builds a lfx-v2-campaign-service-briefs service
+// generate-email-copy endpoint NotFound error.
+func NewGenerateEmailCopyNotFound(body *GenerateEmailCopyNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
 		Code:    *body.Code,
 		Message: *body.Message,
@@ -2097,6 +2287,7 @@ func NewUpdateCampaignConflict(body *UpdateCampaignConflictResponseBody) *lfxv2c
 	v := &lfxv2campaignservicebriefs.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -2193,6 +2384,7 @@ func NewToggleCampaignStatusConflict(body *ToggleCampaignStatusConflictResponseB
 	v := &lfxv2campaignservicebriefs.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -2274,6 +2466,7 @@ func NewDeleteCampaignConflict(body *DeleteCampaignConflictResponseBody) *lfxv2c
 	v := &lfxv2campaignservicebriefs.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -2374,6 +2567,7 @@ func NewGetJobConflict(body *GetJobConflictResponseBody) *lfxv2campaignservicebr
 	v := &lfxv2campaignservicebriefs.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -2675,6 +2869,44 @@ func ValidateGetCampaignMetricsResponseBody(body *GetCampaignMetricsResponseBody
 	return
 }
 
+// ValidateGenerateEmailCopyResponseBody runs the validations defined on
+// Generate-Email-CopyResponseBody
+func ValidateGenerateEmailCopyResponseBody(body *GenerateEmailCopyResponseBody) (err error) {
+	if body.Subject == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("subject", "body"))
+	}
+	if body.Preheader == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("preheader", "body"))
+	}
+	if body.Body == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("body", "body"))
+	}
+	if body.Cta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cta", "body"))
+	}
+	if body.Subject != nil {
+		if utf8.RuneCountInString(*body.Subject) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.subject", *body.Subject, utf8.RuneCountInString(*body.Subject), 200, false))
+		}
+	}
+	if body.Preheader != nil {
+		if utf8.RuneCountInString(*body.Preheader) > 150 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.preheader", *body.Preheader, utf8.RuneCountInString(*body.Preheader), 150, false))
+		}
+	}
+	if body.Body != nil {
+		if utf8.RuneCountInString(*body.Body) > 8000 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.body", *body.Body, utf8.RuneCountInString(*body.Body), 8000, false))
+		}
+	}
+	if body.Cta != nil {
+		if utf8.RuneCountInString(*body.Cta) > 50 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.cta", *body.Cta, utf8.RuneCountInString(*body.Cta), 50, false))
+		}
+	}
+	return
+}
+
 // ValidateUpdateCampaignResponseBody runs the validations defined on
 // Update-CampaignResponseBody
 func ValidateUpdateCampaignResponseBody(body *UpdateCampaignResponseBody) (err error) {
@@ -2774,6 +3006,11 @@ func ValidateCreateBriefConflictResponseBody(body *CreateBriefConflictResponseBo
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
 	return
 }
 
@@ -2833,6 +3070,11 @@ func ValidateFindBriefConflictResponseBody(body *FindBriefConflictResponseBody) 
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
 	}
 	return
 }
@@ -2894,6 +3136,11 @@ func ValidateGetBriefConflictResponseBody(body *GetBriefConflictResponseBody) (e
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
 	return
 }
 
@@ -2953,6 +3200,11 @@ func ValidateUpdateBriefConflictResponseBody(body *UpdateBriefConflictResponseBo
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
 	}
 	return
 }
@@ -3038,6 +3290,11 @@ func ValidateApproveBriefConflictResponseBody(body *ApproveBriefConflictResponse
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
 	return
 }
 
@@ -3122,6 +3379,11 @@ func ValidateDeleteBriefConflictResponseBody(body *DeleteBriefConflictResponseBo
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
 	return
 }
 
@@ -3181,6 +3443,11 @@ func ValidateFetchEventURLConflictResponseBody(body *FetchEventURLConflictRespon
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
 	}
 	return
 }
@@ -3242,6 +3509,11 @@ func ValidateCreateCampaignsConflictResponseBody(body *CreateCampaignsConflictRe
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
 	return
 }
 
@@ -3301,6 +3573,11 @@ func ValidateGetCampaignConflictResponseBody(body *GetCampaignConflictResponseBo
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
 	}
 	return
 }
@@ -3362,6 +3639,11 @@ func ValidateGetCampaignMetricsConflictResponseBody(body *GetCampaignMetricsConf
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
 	return
 }
 
@@ -3401,6 +3683,71 @@ func ValidateGetCampaignMetricsNotFoundResponseBody(body *GetCampaignMetricsNotF
 	return
 }
 
+// ValidateGenerateEmailCopyBadRequestResponseBody runs the validations defined
+// on generate-email-copy_BadRequest_response_body
+func ValidateGenerateEmailCopyBadRequestResponseBody(body *GenerateEmailCopyBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGenerateEmailCopyConflictResponseBody runs the validations defined
+// on generate-email-copy_Conflict_response_body
+func ValidateGenerateEmailCopyConflictResponseBody(body *GenerateEmailCopyConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
+	return
+}
+
+// ValidateGenerateEmailCopyServiceUnavailableResponseBody runs the validations
+// defined on generate-email-copy_ServiceUnavailable_response_body
+func ValidateGenerateEmailCopyServiceUnavailableResponseBody(body *GenerateEmailCopyServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGenerateEmailCopyInternalServerErrorResponseBody runs the
+// validations defined on generate-email-copy_InternalServerError_response_body
+func ValidateGenerateEmailCopyInternalServerErrorResponseBody(body *GenerateEmailCopyInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGenerateEmailCopyNotFoundResponseBody runs the validations defined
+// on generate-email-copy_NotFound_response_body
+func ValidateGenerateEmailCopyNotFoundResponseBody(body *GenerateEmailCopyNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateUpdateCampaignBadRequestResponseBody runs the validations defined on
 // update-campaign_BadRequest_response_body
 func ValidateUpdateCampaignBadRequestResponseBody(body *UpdateCampaignBadRequestResponseBody) (err error) {
@@ -3421,6 +3768,11 @@ func ValidateUpdateCampaignConflictResponseBody(body *UpdateCampaignConflictResp
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
 	}
 	return
 }
@@ -3505,6 +3857,11 @@ func ValidateToggleCampaignStatusConflictResponseBody(body *ToggleCampaignStatus
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
 	}
 	return
 }
@@ -3594,6 +3951,11 @@ func ValidateDeleteCampaignConflictResponseBody(body *DeleteCampaignConflictResp
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
 	return
 }
 
@@ -3677,6 +4039,11 @@ func ValidateGetJobConflictResponseBody(body *GetJobConflictResponseBody) (err e
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
 	}
 	return
 }

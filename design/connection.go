@@ -26,8 +26,13 @@ import (
 )
 
 // JWTAuth is the JWT security scheme. Tokens are issued by Heimdall at the
-// gateway (audience = this service) and validated in-app. Authorization on the
-// campaign_manager relation is enforced at the gateway, not here.
+// gateway (audience = this service) and verified in-app against Heimdall's JWKS:
+// signature, issuer, audience and expiry, plus a non-empty principal claim. The
+// gateway checks the same token, so this is not the happy path working twice — the
+// gateway's guarantee stops at the cluster boundary, and these claims become the
+// created_by / updated_by of records that say who authorized paid ad spend. See
+// internal/infrastructure/auth. Authorization on the campaign_manager relation is
+// still enforced at the gateway, not here.
 var JWTAuth = JWTSecurity("jwt", func() {
 	Description("JWT issued by Heimdall; audience is this service.")
 })
@@ -96,8 +101,46 @@ var NotFoundError = Type("not-found-error", func() {
 	errorAttrs("404", "The connection was not found.")
 })
 
+// ConflictError carries an OPTIONAL reason on top of the standard code/message pair.
+//
+// Several endpoints return 409 for genuinely different situations that call for
+// different client behaviour — retry after a refresh, wait and poll, or stop and
+// surface the collision. Distinguishing them by the message text means a client
+// pattern-matches English prose that this repo edits freely for operator clarity, so
+// the first reworded message silently breaks it. `reason` is the part that is promised
+// not to change.
+//
+// It is deliberately NOT Required, because ConflictError is shared by every endpoint in
+// the API and the slugs are being introduced group by group rather than all at once.
+// Today only the audiences group populates it: `mapAudienceErr` sets a reason on all
+// three of its 409s, which is where the need was sharpest — those three carry OPPOSITE
+// remedies. The briefs group also distinguishes many conflicts, but does so in message
+// prose only and sets no reason yet; that is a gap to close, not the intended end state.
+// Until it is closed a client must treat an absent reason as "unspecified conflict" and
+// fall back to the message, which is what the message already says. Making the field
+// Required now would force a slug onto every 409 in one change and invent a taxonomy
+// nobody has agreed to maintain.
+//
+// The example on `reason` is chosen to AGREE with the message example already on the type.
+// ConflictError is the 409 body for every endpoint in the API, so the object-level example
+// Goa publishes is ONE instance standing in for twenty-nine different conflicts — which is
+// what makes the choice awkward, and why omitting it is not the safe option it looks like.
+//
+// Leaving `Example` off does not produce an example-free schema. Goa fills the gap from the
+// Enum, and it picks the first member: `audience_build_in_flight`, which the generated
+// contract then pairs with "A connection for this provider already exists". That publishes a
+// mapping between two unrelated endpoints, which is worse than a value belonging to one of
+// them. `already_exists` is the reason that actually accompanies this message, so the
+// published instance is at least internally true.
+//
+// The Enum is what publishes the full vocabulary, and that — not the example — is the part
+// clients are entitled to rely on.
 var ConflictError = Type("conflict-error", func() {
 	errorAttrs("409", "A connection for this provider already exists on the project.")
+	Attribute("reason", String, "Stable machine-readable discriminator, present only where an endpoint returns more than one kind of conflict. Absent means unspecified.", func() {
+		Enum("stale_approval", "audience_build_in_flight", "already_exists")
+		Example("already_exists")
+	})
 })
 
 var PreconditionFailedError = Type("precondition-failed-error", func() {
@@ -173,6 +216,14 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			Required("project_id", "config", "credentials")
 		})
 		Result(result)
+		// BadRequest on THIS method also covers payload validation, but that is not why
+		// every method below declares it too. JWTAuth returns *conn.BadRequestError when
+		// a token is refused, and Goa generates the error encoder from THIS list: a
+		// method that omits BadRequest has no case for it, so the typed 400 falls through
+		// to the generic encoder and reaches the caller as a 500 — undocumented in
+		// OpenAPI, and telling a client with a bad credential to treat it as a server
+		// fault. The declaration is what makes JWTAuth's mapping real, so it is required
+		// on every method carrying bearerToken(), payload or no payload.
 		Error("BadRequest", BadRequestError, "Bad request")
 		Error("Conflict", ConflictError, "A connection already exists for this provider on the project")
 		Error("InternalServerError", InternalServerError, "Internal server error")
@@ -198,6 +249,10 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			Required("project_id")
 		})
 		Result(result)
+		// BadRequest is declared on EVERY secured method, including the reads and the
+		// delete, because JWTAuth can now refuse a token — and a refusal it cannot encode
+		// becomes a 500. See the comment on the create method's copy.
+		Error("BadRequest", BadRequestError, "Bad request")
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -207,6 +262,7 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			Response(StatusOK, func() {
 				Header("etag:ETag")
 			})
+			Response("BadRequest", StatusBadRequest)
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
@@ -257,6 +313,10 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			projectIDAttr()
 			Required("project_id")
 		})
+		// BadRequest is declared on EVERY secured method, including the reads and the
+		// delete, because JWTAuth can now refuse a token — and a refusal it cannot encode
+		// becomes a 500. See the comment on the create method's copy.
+		Error("BadRequest", BadRequestError, "Bad request")
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -264,6 +324,7 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			DELETE("/projects/{project_id}/connection-" + key)
 			Header("bearer_token:Authorization")
 			Response(StatusNoContent)
+			Response("BadRequest", StatusBadRequest)
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
@@ -278,6 +339,10 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			Required("project_id")
 		})
 		Result(TestResult)
+		// BadRequest is declared on EVERY secured method, including the reads and the
+		// delete, because JWTAuth can now refuse a token — and a refusal it cannot encode
+		// becomes a 500. See the comment on the create method's copy.
+		Error("BadRequest", BadRequestError, "Bad request")
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -285,6 +350,7 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			POST("/projects/{project_id}/connection-" + key + "/test")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
+			Response("BadRequest", StatusBadRequest)
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
@@ -327,9 +393,15 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 })
 
 // GoogleAdsConnectionConfig is the ONE provider config where account_id is optional, and
-// the reason is specific rather than a general loosening: Google Ads is the only provider
-// with an account-DISCOVERY endpoint, so it is the only one where a caller can create a
-// connection without an account id and then find out what to put there.
+// the reason is specific rather than a general loosening: a caller may only create a
+// connection without an account id where there is an account-DISCOVERY endpoint to find out
+// what to put there afterwards.
+//
+// Discovery is a NECESSARY condition, not a sufficient one, which is why Google Ads is still
+// alone here now that Meta has a discovery endpoint too (LFXV2-3062). The other half is that
+// the operations needing an account id must fail with reason=account_not_selected rather than
+// a generic error; Meta's campaign create does not yet, so LFXV2-3061 covers both halves and
+// this config stays the only relaxed one until it lands.
 //
 // That is the bootstrap this enables — credentials first, account chosen afterwards:
 //
@@ -341,11 +413,26 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // exists to produce, which made discovery useful only for RE-POINTING a connection that was
 // already complete.
 //
-// The other providers keep Required("account_id") deliberately. Relaxing it for them would
-// create a connection that can never be finished from inside this API — there is no list to
-// choose from, so the operator would have to obtain the id out-of-band anyway, and the only
-// thing gained is a half-configured row. Add the requirement back for Google Ads, or drop it
-// for another provider, only together with that provider's discovery endpoint.
+// The other providers keep Required("account_id") deliberately, but for two different reasons
+// now, and conflating them would hide which of the two is actually load-bearing.
+//
+// For LinkedIn, Microsoft, Reddit and X there is still no list to choose from, so relaxing the
+// requirement would create a connection that can never be finished from inside this API: the
+// operator has to obtain the id out-of-band anyway, and the only thing gained is a
+// half-configured row.
+//
+// Meta is NOT in that position as of this endpoint — an account-less Meta connection can be
+// completed through this API, by discovery followed by PUT. It stays required because the
+// second half is missing: Meta's Dispatch answers an empty account id with a generic error
+// rather than reason=account_not_selected. Campaign create is the only Meta path that needs
+// the id at all — the status toggle and the metrics read address the campaign node by id —
+// and campaign create is ASYNCHRONOUS: it answers 202, so what a caller who created the row
+// and stopped there actually meets is not an HTTP status but the polled job result, carrying
+// a message that neither names the missing choice nor points at the list that would supply
+// it. That is a tagging gap with a ticket (LFXV2-3061), not a structural one.
+//
+// Add the requirement back for Google Ads, or drop it for another provider, only together with
+// that provider's discovery endpoint AND its account_not_selected tagging.
 //
 // A connection in this state stays status=active, and account_id comes back as "". See
 // docs/knowledge/code/internal-service.md — "active" says the connection is ENABLED for
@@ -367,8 +454,29 @@ var GoogleAdsConnection = Type("google-ads-connection", func() {
 
 // AccessibleAccount represents an ad account reachable via the connection's
 // stored credential. Returned by account discovery operations.
+//
+// No Example on `id`, deliberately, and the examples live on the two METHODS instead. The
+// type is shared by every provider's discovery method and Goa copies an attribute-level
+// example into each one's schema, so a single value cannot be right: Google Ads mints bare
+// digits, Meta mints `act_`-prefixed ids, and the Meta method below promises the prefix in its
+// own description. Pinning Google's `8666746580` published a Meta example that Meta's own
+// connection validation rejects.
+//
+// Deleting it is not sufficient on its own: Goa fabricates a lorem-ipsum example for any
+// attribute that lacks one, so a bare type published `id: Iste et aspernatur delectus.` to both
+// providers — no longer a wrong claim about a real format, but still not the documented one.
+// Each method therefore carries its own result-level example, which is per-provider without
+// splitting the element type the shared handler is built on.
+//
+// The generated `AccessibleAccount` COMPONENT schema still carries Goa's fabricated example,
+// and that is left as it is. Every response that returns the type overrides it with the right
+// one, so the fabricated value only survives where no provider is in scope — and there, a
+// visibly fake string is the safer artifact: a reader cannot copy it into a connection, whereas
+// a plausible `8666746580` in a provider-less context is exactly the wrong claim to publish to
+// the Meta half of the callers. The description on `id` carries both formats, which is where
+// the contract belongs.
 var AccessibleAccount = Type("accessible-account", func() {
-	Attribute("id", String, "Account identifier in the ad platform's namespace", func() { Example("8666746580") })
+	Attribute("id", String, "Account identifier in the ad platform's own namespace, ready to store as the connection's account_id. Google Ads: bare digits (8666746580). Meta: act_-prefixed (act_8666746580).")
 	Attribute("label", String, "Human-readable account name or label")
 	Required("id")
 })
@@ -586,8 +694,10 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	connectionMethods("microsoft-ads", "Microsoft Ads", MicrosoftAdsConnectionConfig, MicrosoftAdsCredentials, MicrosoftAdsConnection)
 	connectionMethods("hubspot", "HubSpot", HubSpotConnectionConfig, HubSpotCredentials, HubSpotConnection)
 
-	// Google Ads specific: account discovery (not in connectionMethods, as other providers
-	// will add their own account-discovery methods in follow-up PRs).
+	// Account discovery is declared per provider rather than inside connectionMethods:
+	// only providers whose dispatcher implements the AccountLister interface have one, and
+	// a generated method for a provider that cannot answer it would be a 400 by
+	// construction. LinkedIn, X, Reddit and Microsoft follow in their own tickets.
 	Method("list-google-ads-accounts", func() {
 		Description("Enumerate the Google Ads ad accounts accessible via the stored connection credential.")
 		Payload(func() {
@@ -596,7 +706,18 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Required("project_id")
 		})
 		Result(func() {
-			Attribute("accounts", ArrayOf(AccessibleAccount))
+			// The example lives on the METHOD's result, not on the shared element type.
+			// Goa fabricates lorem-ipsum ("Iste et aspernatur delectus.") for any attribute
+			// left without one, so removing the type-level example did not stop an example
+			// being published — it only stopped a TRUE one being published. Anchoring it
+			// here gives each provider its own id format without splitting the element type,
+			// which the shared listAccounts handler depends on.
+			Attribute("accounts", ArrayOf(AccessibleAccount), func() {
+				Example([]map[string]any{
+					{"id": "8666746580", "label": "Linux Foundation"},
+					{"id": "1234567890", "label": "CNCF"},
+				})
+			})
 			Required("accounts")
 		})
 		Error("NotFound", NotFoundError, "Resource not found")
@@ -605,6 +726,44 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
 			GET("/projects/{project_id}/connection-google-ads/accounts")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("BadRequest", StatusBadRequest)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("list-meta-ads-accounts", func() {
+		Description("Enumerate the Meta ad accounts accessible via the stored connection credential. " +
+			"Returns act_-prefixed account ids, ready to store as the connection's account_id. " +
+			"Accounts Meta reports as disabled, unsettled or closed are included with the reason " +
+			"in their label rather than filtered out, so the caller can see why an account they " +
+			"expected cannot be used.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Required("project_id")
+		})
+		Result(func() {
+			// Meta's own ids, for the reason given on the Google Ads method above: the
+			// `act_` prefix is what this method's description promises and what Meta's
+			// connection validation accepts.
+			Attribute("accounts", ArrayOf(AccessibleAccount), func() {
+				Example([]map[string]any{
+					{"id": "act_8666746580", "label": "Linux Foundation"},
+					{"id": "act_1234567890", "label": "CNCF (unsettled)"},
+				})
+			})
+			Required("accounts")
+		})
+		Error("NotFound", NotFoundError, "Resource not found")
+		Error("BadRequest", BadRequestError, "Bad request")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-meta-ads/accounts")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)

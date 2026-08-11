@@ -27,9 +27,26 @@ mismatch). PATCH takes a dedicated `AudienceUpdateInput` (all fields optional, n
 immutable `platform`) rather than the create-time `AudienceInput` (where `platform`
 is required) — so a status-only or suppression-only patch is valid without resending
 the immutable platform. Every method is gated on `campaign_manager` at the gateway via
-`JWTAuth`, which can reject any request with a `BadRequest` (400) — so every brief
-and audience method declares `BadRequest` regardless of whether it accepts a body.
-The binding `platforms` selection is constrained to the known provider enum.
+`JWTAuth`, which can reject any request with a `BadRequest` (400) — so every brief,
+audience **and connection** method declares `BadRequest` regardless of whether it accepts
+a body. The binding `platforms` selection is constrained to the known provider enum.
+
+**A declared error is not documentation; it is the encoder.** Goa builds each method's
+error encoder from that method's `Error(...)` list, so a typed error the method does not
+declare has no `case` and falls through to the generic encoder — the caller gets **500**,
+and the real status appears nowhere in OpenAPI. Nothing on the Go side shows it: the code
+compiles, the handler returns the correct typed error, and only the wire status is wrong.
+`JWTAuth`'s refusal is exactly such an error, which is why the declaration follows the
+security scheme rather than the payload: a bodyless `GET` needs it as much as a create.
+`TestEveryConnectionMethodEncodesBadRequest`
+(`internal/service/connection_badrequest_encoder_test.go`) pins this by parsing the
+**generated** encoders and requiring a `case "BadRequest"` in every `Encode*Error` — it
+reads generated source rather than driving a list of encoders because the case that must
+fail is a *newly added* provider method, which no hand-maintained list would contain.
+`commonBriefErrors()`/`briefErrorResponses()` take no arguments for the same reason: an
+earlier `withBadRequest bool` that had stopped gating anything was removed rather than kept
+for call-site readability, since a parameter that could be passed `false` is a way back to
+the defect.
 
 **Adding a method to a service design is not a separable change.** `make apigen`
 (`Makefile:63-68`) puts the new method on the generated `<service>.Service` interface,

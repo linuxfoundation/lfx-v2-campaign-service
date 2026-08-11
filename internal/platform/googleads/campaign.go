@@ -418,30 +418,41 @@ func resourceID(resourceName string) string {
 	return resourceName[i+1:]
 }
 
-// CreateCampaign creates a PAUSED Google Ads search campaign as a four-resource
-// cascade: a non-shared campaign budget, a campaign referencing that budget, an ad
-// group under the campaign, and a responsive search ad in that ad group. Everything
-// is created PAUSED so nothing serves until a human enables it.
+// campaignPreflight is everything CreateCampaign validates and computes BEFORE its first
+// mutate. It exists as a type so the checks can have a second caller without being written
+// twice — see ValidateCampaignInput.
+type campaignPreflight struct {
+	amountMicros     int64
+	budgetName       string
+	campaignName     string
+	finalURL         string
+	adGroupName      string
+	headlines        []string
+	descriptions     []string
+	keywords         []Keyword
+	audienceSegments []string
+}
+
+// ValidateCampaignInput runs exactly the input validation CreateCampaign runs before it
+// touches Google, and reports the first failure. It mutates nothing and sends nothing.
 //
-// Each stage may leave a PARTIAL result: the returned *CampaignResult is populated
-// as far as the cascade got, and past the campaign stage a failure is returned
-// ALONGSIDE a non-nil result rather than as (nil, err), so the caller can record
-// what exists upstream. See the ad group/ad stage below for that contract.
+// It exists for the ADOPTION path. A dispatch that finds an existing campaign by name
+// returns before CreateCampaign is ever called, so without this the same input would be
+// accepted or rejected depending on whether a same-name campaign happened to exist — a
+// bad budget or an invalid registration URL would fail cleanly on a first dispatch and
+// silently succeed on a retry. Validity is a property of the request; it cannot depend on
+// hidden state at the far end.
 //
-// Because :mutate has no idempotency key, every failure is classified by whether
-// the request may have committed upstream (createOutcomeAmbiguous). An ambiguous
-// budget/campaign failure — a mutating 3xx/5xx or a transport error, or a 2xx with
-// no resourceName — is reported UNCONFIRMED (verify before retrying) rather than a
-// clean failure, and once the budget exists its id is returned in a partial result
-// so the orphan is reconcilable. A definite 4xx means only THAT mutate was rejected,
-// NOT that nothing was created: a 4xx on the SECOND (campaign) mutate still leaves
-// the budget from the FIRST mutate committed, and the returned partial result
-// carries that budget id so the caller can reconcile the orphan. (Only a 4xx on the
-// first/budget mutate means nothing was created.) A DUPLICATE_NAME 4xx on a retry
-// with a stable NameSuffix is surfaced as UNCONFIRMED-already-exists (the resource
-// likely exists from a prior attempt; reconcile by name rather than treating it as
-// created here).
-func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
+// It delegates to the SAME helper CreateCampaign uses rather than repeating the checks,
+// because a second copy would pass review once and drift on the next change to either.
+func (c *Client) ValidateCampaignInput(in CampaignInput) error {
+	_, err := c.preflightCampaign(in)
+	return err
+}
+
+// preflightCampaign validates the input and computes the derived values. Non-mutating: it
+// performs no I/O, so a caller may run it to decide whether a request is well-formed.
+func (c *Client) preflightCampaign(in CampaignInput) (*campaignPreflight, error) {
 	if err := c.validateAccountIDs(); err != nil {
 		return nil, err
 	}
@@ -478,8 +489,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, fmt.Errorf("google-ads campaign budget must be > 0 (rounds to %d micros), got %.6f", amountMicros, in.Budget)
 	}
 
-	budgetName := composeName("Budget", in)
-	campaignName := composeName("Search Campaign", in)
+	budgetName := ComposeName("Budget", in)
+	campaignName := ComposeName("Search Campaign", in)
 	// Budget name is limited in UTF-8 BYTES (len is the byte count); campaign name in
 	// CHARACTERS (utf8.RuneCountInString). See maxBudgetNameBytes/maxCampaignNameRunes.
 	if err := validateEntityName("budget", budgetName, len(budgetName), maxBudgetNameBytes, "UTF-8 bytes"); err != nil {
@@ -498,6 +509,52 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, err
 	}
+
+	return &campaignPreflight{
+		amountMicros:     amountMicros,
+		budgetName:       budgetName,
+		campaignName:     campaignName,
+		finalURL:         finalURL,
+		adGroupName:      adGroupName,
+		headlines:        headlines,
+		descriptions:     descriptions,
+		keywords:         keywords,
+		audienceSegments: audienceSegments,
+	}, nil
+}
+
+// CreateCampaign creates a PAUSED Google Ads search campaign as a four-resource
+// cascade: a non-shared campaign budget, a campaign referencing that budget, an ad
+// group under the campaign, and a responsive search ad in that ad group. Everything
+// is created PAUSED so nothing serves until a human enables it.
+//
+// Each stage may leave a PARTIAL result: the returned *CampaignResult is populated
+// as far as the cascade got, and past the campaign stage a failure is returned
+// ALONGSIDE a non-nil result rather than as (nil, err), so the caller can record
+// what exists upstream. See the ad group/ad stage below for that contract.
+//
+// Because :mutate has no idempotency key, every failure is classified by whether
+// the request may have committed upstream (createOutcomeAmbiguous). An ambiguous
+// budget/campaign failure — a mutating 3xx/5xx or a transport error, or a 2xx with
+// no resourceName — is reported UNCONFIRMED (verify before retrying) rather than a
+// clean failure, and once the budget exists its id is returned in a partial result
+// so the orphan is reconcilable. A definite 4xx means only THAT mutate was rejected,
+// NOT that nothing was created: a 4xx on the SECOND (campaign) mutate still leaves
+// the budget from the FIRST mutate committed, and the returned partial result
+// carries that budget id so the caller can reconcile the orphan. (Only a 4xx on the
+// first/budget mutate means nothing was created.) A DUPLICATE_NAME 4xx on a retry
+// with a stable NameSuffix is surfaced as UNCONFIRMED-already-exists (the resource
+// likely exists from a prior attempt; reconcile by name rather than treating it as
+// created here).
+func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
+	pf, err := c.preflightCampaign(in)
+	if err != nil {
+		return nil, err
+	}
+	amountMicros, budgetName, campaignName := pf.amountMicros, pf.budgetName, pf.campaignName
+	finalURL, adGroupName := pf.finalURL, pf.adGroupName
+	headlines, descriptions := pf.headlines, pf.descriptions
+	keywords, audienceSegments := pf.keywords, pf.audienceSegments
 
 	var steps []string
 	googleAdsURL := "https://ads.google.com/aw/campaigns?ocid=" + c.account.CustomerID
@@ -701,10 +758,12 @@ func (c *Client) validateResourceKind(kind, resourceName string, requireNumericI
 	return nil
 }
 
-// composeName builds a deterministic budget/campaign name from the input. The
+// ComposeName builds a deterministic budget/campaign name from the input. The
 // NameSuffix (when supplied) makes it unique+stable per logical campaign so a retry
-// collides on DUPLICATE_NAME rather than silently double-creating.
-func composeName(kind string, in CampaignInput) string {
+// collides on DUPLICATE_NAME rather than silently double-creating. It is exported so
+// the dispatcher can compute the campaign name before calling FindCampaignByName, for
+// adopt-on-create idempotency (LFXV2-3042).
+func ComposeName(kind string, in CampaignInput) string {
 	parts := []string{"LFX", kind}
 	if p := sanitizeNamePart(in.Project); p != "" {
 		parts = append(parts, p)

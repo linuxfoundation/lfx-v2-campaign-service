@@ -234,6 +234,7 @@ func EncodeGetGoogleAdsRequest(encoder func(*http.Request) goahttp.Encoder) func
 // lfx-v2-campaign-service-connections get-google-ads endpoint. restoreBody
 // controls whether the response body should be restored after having been read.
 // DecodeGetGoogleAdsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -279,6 +280,20 @@ func DecodeGetGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder, re
 			}
 			res := NewGetGoogleAdsGoogleAdsConnectionOK(&body, etag)
 			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetGoogleAdsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-google-ads", err)
+			}
+			err = ValidateGetGoogleAdsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-google-ads", err)
+			}
+			return nil, NewGetGoogleAdsBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body GetGoogleAdsServiceUnavailableResponseBody
@@ -577,6 +592,7 @@ func EncodeDeleteGoogleAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 // restoreBody controls whether the response body should be restored after
 // having been read.
 // DecodeDeleteGoogleAdsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -598,6 +614,20 @@ func DecodeDeleteGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 		switch resp.StatusCode {
 		case http.StatusNoContent:
 			return nil, nil
+		case http.StatusBadRequest:
+			var (
+				body DeleteGoogleAdsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-google-ads", err)
+			}
+			err = ValidateDeleteGoogleAdsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-google-ads", err)
+			}
+			return nil, NewDeleteGoogleAdsBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body DeleteGoogleAdsServiceUnavailableResponseBody
@@ -697,6 +727,7 @@ func EncodeTestGoogleAdsRequest(encoder func(*http.Request) goahttp.Encoder) fun
 // lfx-v2-campaign-service-connections test-google-ads endpoint. restoreBody
 // controls whether the response body should be restored after having been read.
 // DecodeTestGoogleAdsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -731,6 +762,20 @@ func DecodeTestGoogleAdsResponse(decoder func(*http.Response) goahttp.Decoder, r
 			}
 			res := NewTestGoogleAdsConnectionTestResultOK(&body)
 			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body TestGoogleAdsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-google-ads", err)
+			}
+			err = ValidateTestGoogleAdsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-google-ads", err)
+			}
+			return nil, NewTestGoogleAdsBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body TestGoogleAdsServiceUnavailableResponseBody
@@ -1134,6 +1179,7 @@ func EncodeGetLinkedinAdsRequest(encoder func(*http.Request) goahttp.Encoder) fu
 // lfx-v2-campaign-service-connections get-linkedin-ads endpoint. restoreBody
 // controls whether the response body should be restored after having been read.
 // DecodeGetLinkedinAdsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -1179,6 +1225,20 @@ func DecodeGetLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decoder, 
 			}
 			res := NewGetLinkedinAdsLinkedinAdsConnectionOK(&body, etag)
 			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetLinkedinAdsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-linkedin-ads", err)
+			}
+			err = ValidateGetLinkedinAdsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-linkedin-ads", err)
+			}
+			return nil, NewGetLinkedinAdsBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body GetLinkedinAdsServiceUnavailableResponseBody
@@ -1477,6 +1537,7 @@ func EncodeDeleteLinkedinAdsRequest(encoder func(*http.Request) goahttp.Encoder)
 // restoreBody controls whether the response body should be restored after
 // having been read.
 // DecodeDeleteLinkedinAdsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -1498,6 +1559,20 @@ func DecodeDeleteLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decode
 		switch resp.StatusCode {
 		case http.StatusNoContent:
 			return nil, nil
+		case http.StatusBadRequest:
+			var (
+				body DeleteLinkedinAdsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-linkedin-ads", err)
+			}
+			err = ValidateDeleteLinkedinAdsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-linkedin-ads", err)
+			}
+			return nil, NewDeleteLinkedinAdsBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body DeleteLinkedinAdsServiceUnavailableResponseBody
@@ -1598,6 +1673,7 @@ func EncodeTestLinkedinAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 // restoreBody controls whether the response body should be restored after
 // having been read.
 // DecodeTestLinkedinAdsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -1632,6 +1708,20 @@ func DecodeTestLinkedinAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 			}
 			res := NewTestLinkedinAdsConnectionTestResultOK(&body)
 			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body TestLinkedinAdsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-linkedin-ads", err)
+			}
+			err = ValidateTestLinkedinAdsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-linkedin-ads", err)
+			}
+			return nil, NewTestLinkedinAdsBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body TestLinkedinAdsServiceUnavailableResponseBody
@@ -2035,6 +2125,7 @@ func EncodeGetMetaAdsRequest(encoder func(*http.Request) goahttp.Encoder) func(*
 // lfx-v2-campaign-service-connections get-meta-ads endpoint. restoreBody
 // controls whether the response body should be restored after having been read.
 // DecodeGetMetaAdsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -2080,6 +2171,20 @@ func DecodeGetMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, rest
 			}
 			res := NewGetMetaAdsMetaAdsConnectionOK(&body, etag)
 			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetMetaAdsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-meta-ads", err)
+			}
+			err = ValidateGetMetaAdsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-meta-ads", err)
+			}
+			return nil, NewGetMetaAdsBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body GetMetaAdsServiceUnavailableResponseBody
@@ -2376,6 +2481,7 @@ func EncodeDeleteMetaAdsRequest(encoder func(*http.Request) goahttp.Encoder) fun
 // lfx-v2-campaign-service-connections delete-meta-ads endpoint. restoreBody
 // controls whether the response body should be restored after having been read.
 // DecodeDeleteMetaAdsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -2397,6 +2503,20 @@ func DecodeDeleteMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, r
 		switch resp.StatusCode {
 		case http.StatusNoContent:
 			return nil, nil
+		case http.StatusBadRequest:
+			var (
+				body DeleteMetaAdsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-meta-ads", err)
+			}
+			err = ValidateDeleteMetaAdsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-meta-ads", err)
+			}
+			return nil, NewDeleteMetaAdsBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body DeleteMetaAdsServiceUnavailableResponseBody
@@ -2496,6 +2616,7 @@ func EncodeTestMetaAdsRequest(encoder func(*http.Request) goahttp.Encoder) func(
 // lfx-v2-campaign-service-connections test-meta-ads endpoint. restoreBody
 // controls whether the response body should be restored after having been read.
 // DecodeTestMetaAdsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -2530,6 +2651,20 @@ func DecodeTestMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, res
 			}
 			res := NewTestMetaAdsConnectionTestResultOK(&body)
 			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body TestMetaAdsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-meta-ads", err)
+			}
+			err = ValidateTestMetaAdsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-meta-ads", err)
+			}
+			return nil, NewTestMetaAdsBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body TestMetaAdsServiceUnavailableResponseBody
@@ -2933,6 +3068,7 @@ func EncodeGetRedditAdsRequest(encoder func(*http.Request) goahttp.Encoder) func
 // lfx-v2-campaign-service-connections get-reddit-ads endpoint. restoreBody
 // controls whether the response body should be restored after having been read.
 // DecodeGetRedditAdsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -2978,6 +3114,20 @@ func DecodeGetRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder, re
 			}
 			res := NewGetRedditAdsRedditAdsConnectionOK(&body, etag)
 			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetRedditAdsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads", err)
+			}
+			err = ValidateGetRedditAdsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads", err)
+			}
+			return nil, NewGetRedditAdsBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body GetRedditAdsServiceUnavailableResponseBody
@@ -3276,6 +3426,7 @@ func EncodeDeleteRedditAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 // restoreBody controls whether the response body should be restored after
 // having been read.
 // DecodeDeleteRedditAdsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -3297,6 +3448,20 @@ func DecodeDeleteRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 		switch resp.StatusCode {
 		case http.StatusNoContent:
 			return nil, nil
+		case http.StatusBadRequest:
+			var (
+				body DeleteRedditAdsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-reddit-ads", err)
+			}
+			err = ValidateDeleteRedditAdsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-reddit-ads", err)
+			}
+			return nil, NewDeleteRedditAdsBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body DeleteRedditAdsServiceUnavailableResponseBody
@@ -3396,6 +3561,7 @@ func EncodeTestRedditAdsRequest(encoder func(*http.Request) goahttp.Encoder) fun
 // lfx-v2-campaign-service-connections test-reddit-ads endpoint. restoreBody
 // controls whether the response body should be restored after having been read.
 // DecodeTestRedditAdsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -3430,6 +3596,20 @@ func DecodeTestRedditAdsResponse(decoder func(*http.Response) goahttp.Decoder, r
 			}
 			res := NewTestRedditAdsConnectionTestResultOK(&body)
 			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body TestRedditAdsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-reddit-ads", err)
+			}
+			err = ValidateTestRedditAdsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-reddit-ads", err)
+			}
+			return nil, NewTestRedditAdsBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body TestRedditAdsServiceUnavailableResponseBody
@@ -3833,6 +4013,7 @@ func EncodeGetTwitterAdsRequest(encoder func(*http.Request) goahttp.Encoder) fun
 // lfx-v2-campaign-service-connections get-twitter-ads endpoint. restoreBody
 // controls whether the response body should be restored after having been read.
 // DecodeGetTwitterAdsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -3878,6 +4059,20 @@ func DecodeGetTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder, r
 			}
 			res := NewGetTwitterAdsTwitterAdsConnectionOK(&body, etag)
 			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetTwitterAdsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-twitter-ads", err)
+			}
+			err = ValidateGetTwitterAdsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-twitter-ads", err)
+			}
+			return nil, NewGetTwitterAdsBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body GetTwitterAdsServiceUnavailableResponseBody
@@ -4176,6 +4371,7 @@ func EncodeDeleteTwitterAdsRequest(encoder func(*http.Request) goahttp.Encoder) 
 // restoreBody controls whether the response body should be restored after
 // having been read.
 // DecodeDeleteTwitterAdsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -4197,6 +4393,20 @@ func DecodeDeleteTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder
 		switch resp.StatusCode {
 		case http.StatusNoContent:
 			return nil, nil
+		case http.StatusBadRequest:
+			var (
+				body DeleteTwitterAdsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-twitter-ads", err)
+			}
+			err = ValidateDeleteTwitterAdsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-twitter-ads", err)
+			}
+			return nil, NewDeleteTwitterAdsBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body DeleteTwitterAdsServiceUnavailableResponseBody
@@ -4296,6 +4506,7 @@ func EncodeTestTwitterAdsRequest(encoder func(*http.Request) goahttp.Encoder) fu
 // lfx-v2-campaign-service-connections test-twitter-ads endpoint. restoreBody
 // controls whether the response body should be restored after having been read.
 // DecodeTestTwitterAdsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -4330,6 +4541,20 @@ func DecodeTestTwitterAdsResponse(decoder func(*http.Response) goahttp.Decoder, 
 			}
 			res := NewTestTwitterAdsConnectionTestResultOK(&body)
 			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body TestTwitterAdsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-twitter-ads", err)
+			}
+			err = ValidateTestTwitterAdsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-twitter-ads", err)
+			}
+			return nil, NewTestTwitterAdsBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body TestTwitterAdsServiceUnavailableResponseBody
@@ -4734,6 +4959,7 @@ func EncodeGetMicrosoftAdsRequest(encoder func(*http.Request) goahttp.Encoder) f
 // restoreBody controls whether the response body should be restored after
 // having been read.
 // DecodeGetMicrosoftAdsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -4779,6 +5005,20 @@ func DecodeGetMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decoder,
 			}
 			res := NewGetMicrosoftAdsMicrosoftAdsConnectionOK(&body, etag)
 			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetMicrosoftAdsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-microsoft-ads", err)
+			}
+			err = ValidateGetMicrosoftAdsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads", err)
+			}
+			return nil, NewGetMicrosoftAdsBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body GetMicrosoftAdsServiceUnavailableResponseBody
@@ -5077,6 +5317,7 @@ func EncodeDeleteMicrosoftAdsRequest(encoder func(*http.Request) goahttp.Encoder
 // restoreBody controls whether the response body should be restored after
 // having been read.
 // DecodeDeleteMicrosoftAdsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -5098,6 +5339,20 @@ func DecodeDeleteMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decod
 		switch resp.StatusCode {
 		case http.StatusNoContent:
 			return nil, nil
+		case http.StatusBadRequest:
+			var (
+				body DeleteMicrosoftAdsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-microsoft-ads", err)
+			}
+			err = ValidateDeleteMicrosoftAdsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-microsoft-ads", err)
+			}
+			return nil, NewDeleteMicrosoftAdsBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body DeleteMicrosoftAdsServiceUnavailableResponseBody
@@ -5198,6 +5453,7 @@ func EncodeTestMicrosoftAdsRequest(encoder func(*http.Request) goahttp.Encoder) 
 // restoreBody controls whether the response body should be restored after
 // having been read.
 // DecodeTestMicrosoftAdsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -5232,6 +5488,20 @@ func DecodeTestMicrosoftAdsResponse(decoder func(*http.Response) goahttp.Decoder
 			}
 			res := NewTestMicrosoftAdsConnectionTestResultOK(&body)
 			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body TestMicrosoftAdsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-microsoft-ads", err)
+			}
+			err = ValidateTestMicrosoftAdsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-microsoft-ads", err)
+			}
+			return nil, NewTestMicrosoftAdsBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body TestMicrosoftAdsServiceUnavailableResponseBody
@@ -5635,6 +5905,7 @@ func EncodeGetHubspotRequest(encoder func(*http.Request) goahttp.Encoder) func(*
 // lfx-v2-campaign-service-connections get-hubspot endpoint. restoreBody
 // controls whether the response body should be restored after having been read.
 // DecodeGetHubspotResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -5680,6 +5951,20 @@ func DecodeGetHubspotResponse(decoder func(*http.Response) goahttp.Decoder, rest
 			}
 			res := NewGetHubspotHubspotConnectionOK(&body, etag)
 			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetHubspotBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-hubspot", err)
+			}
+			err = ValidateGetHubspotBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-hubspot", err)
+			}
+			return nil, NewGetHubspotBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body GetHubspotServiceUnavailableResponseBody
@@ -5976,6 +6261,7 @@ func EncodeDeleteHubspotRequest(encoder func(*http.Request) goahttp.Encoder) fun
 // lfx-v2-campaign-service-connections delete-hubspot endpoint. restoreBody
 // controls whether the response body should be restored after having been read.
 // DecodeDeleteHubspotResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -5997,6 +6283,20 @@ func DecodeDeleteHubspotResponse(decoder func(*http.Response) goahttp.Decoder, r
 		switch resp.StatusCode {
 		case http.StatusNoContent:
 			return nil, nil
+		case http.StatusBadRequest:
+			var (
+				body DeleteHubspotBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "delete-hubspot", err)
+			}
+			err = ValidateDeleteHubspotBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "delete-hubspot", err)
+			}
+			return nil, NewDeleteHubspotBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body DeleteHubspotServiceUnavailableResponseBody
@@ -6096,6 +6396,7 @@ func EncodeTestHubspotRequest(encoder func(*http.Request) goahttp.Encoder) func(
 // lfx-v2-campaign-service-connections test-hubspot endpoint. restoreBody
 // controls whether the response body should be restored after having been read.
 // DecodeTestHubspotResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
 //   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
 //   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
 //   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
@@ -6130,6 +6431,20 @@ func DecodeTestHubspotResponse(decoder func(*http.Response) goahttp.Decoder, res
 			}
 			res := NewTestHubspotConnectionTestResultOK(&body)
 			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body TestHubspotBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "test-hubspot", err)
+			}
+			err = ValidateTestHubspotBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "test-hubspot", err)
+			}
+			return nil, NewTestHubspotBadRequest(&body)
 		case http.StatusServiceUnavailable:
 			var (
 				body TestHubspotServiceUnavailableResponseBody
@@ -6464,6 +6779,155 @@ func DecodeListGoogleAdsAccountsResponse(decoder func(*http.Response) goahttp.De
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-google-ads-accounts", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildListMetaAdsAccountsRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "list-meta-ads-accounts" endpoint
+func (c *Client) BuildListMetaAdsAccountsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.ListMetaAdsAccountsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", "*lfxv2campaignserviceconnections.ListMetaAdsAccountsPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ListMetaAdsAccountsLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeListMetaAdsAccountsRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-connections list-meta-ads-accounts server.
+func EncodeListMetaAdsAccountsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.ListMetaAdsAccountsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", "*lfxv2campaignserviceconnections.ListMetaAdsAccountsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		return nil
+	}
+}
+
+// DecodeListMetaAdsAccountsResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-connections list-meta-ads-accounts endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeListMetaAdsAccountsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - error: internal error
+func DecodeListMetaAdsAccountsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ListMetaAdsAccountsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", err)
+			}
+			err = ValidateListMetaAdsAccountsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", err)
+			}
+			res := NewListMetaAdsAccountsResultOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ListMetaAdsAccountsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", err)
+			}
+			err = ValidateListMetaAdsAccountsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", err)
+			}
+			return nil, NewListMetaAdsAccountsBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ListMetaAdsAccountsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", err)
+			}
+			err = ValidateListMetaAdsAccountsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", err)
+			}
+			return nil, NewListMetaAdsAccountsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ListMetaAdsAccountsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", err)
+			}
+			err = ValidateListMetaAdsAccountsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", err)
+			}
+			return nil, NewListMetaAdsAccountsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ListMetaAdsAccountsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", err)
+			}
+			err = ValidateListMetaAdsAccountsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", err)
+			}
+			return nil, NewListMetaAdsAccountsNotFound(&body)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", resp.StatusCode, string(body))
 		}
 	}
 }

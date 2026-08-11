@@ -19,6 +19,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
 
 	"goa.design/goa/v3/security"
 )
@@ -32,6 +33,8 @@ import (
 // place rather than swap the instance. Handlers snapshot the collaborators under the
 // lock (deps) and never dereference the fields directly.
 type BriefService struct {
+	authGuard
+
 	mu        sync.RWMutex
 	briefs    domain.BriefRepository
 	campaigns domain.CampaignRepository
@@ -48,6 +51,9 @@ type BriefService struct {
 	// does not call SetEventURL, which is why that handler checks them rather than ready().
 	eventFetcher EventFetcher
 	eventParser  EventParser
+	// llmClient backs GenerateEmailCopy. Nil in every construction that does not call
+	// SetLLMClient, which is why that handler checks it rather than ready().
+	llmClient *llm.Client
 }
 
 var (
@@ -64,6 +70,18 @@ func (s *BriefService) SetIndexer(p indexer.Publisher) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.indexer = p
+}
+
+// SetLLMClient injects the AI model client for email copy generation. Separate from the constructor
+// so the existing NewBriefService call sites are unaffected; a BriefService without this still serves
+// every other method. GenerateEmailCopy reports 503 rather than nil-panicking when it's missing.
+func (s *BriefService) SetLLMClient(c *llm.Client) {
+	if c == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.llmClient = c
 }
 
 // DisableIndexing marks indexing as DELIBERATELY off, so writes skip the outbox entirely.
@@ -192,14 +210,20 @@ func (s *BriefService) ready() (domain.BriefRepository, domain.CampaignRepositor
 	return b, c, j, orch, nil
 }
 
-// JWTAuth mirrors the connection service: it records the authenticated actor
-// (validated by Heimdall at the gateway) into the context for attribution.
+// JWTAuth mirrors the connection service: it verifies the bearer token against
+// Heimdall's JWKS and records the authenticated actor into the context for
+// attribution.
 func (s *BriefService) JWTAuth(ctx context.Context, token string, _ *security.JWTScheme) (context.Context, error) {
-	if token == "" {
-		return ctx, &briefs.BadRequestError{Code: "400", Message: "missing bearer token"}
-	}
-	if a := actorFromToken(token); a != nil {
-		ctx = context.WithValue(ctx, actorCtxKey{}, a)
+	ctx, msg, unavailable := s.authenticate(ctx, token)
+	switch {
+	case unavailable:
+		// The check could not be PERFORMED — no verifier wired, or Heimdall's JWKS is
+		// unreachable. Nothing was established about the caller's token, so 400 would
+		// blame a caller who may be holding a perfectly good one and tell them not to
+		// retry an outage that clears on its own.
+		return ctx, &briefs.ConnServiceUnavailableError{Code: "503", Message: msg}
+	case msg != "":
+		return ctx, &briefs.BadRequestError{Code: "400", Message: msg}
 	}
 	return ctx, nil
 }
@@ -585,10 +609,15 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			// a shared Goa type with exactly code and message (design/brief.go), so there is no
 			// machine-readable reason to populate without changing a type every 409 in this
 			// service returns. The reason token still reaches operators through the log.
+			//
+			// The message names no accounts endpoint. Only Google Ads has one
+			// (design/connection.go, list-google-ads-accounts); every other provider reaching
+			// this arm would be sent to a route that does not exist, which is a worse remedy
+			// than none. Saving the id directly works on all of them, so that is what it says.
 			slog.WarnContext(ctx, "campaign metrics read blocked: no ad account selected on the project's connection",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "reason", unusableConnectionReason(merr))
-			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection has no ad account selected — choose one from the connection's accounts endpoint and save it before reading metrics"}
+			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection has no ad account selected — save an ad account id on the connection before reading metrics"}
 		case errors.Is(merr, domain.ErrConnectionNotUsable):
 			// Everything else that makes the connection unusable: inactive, credentials
 			// absent/incomplete/malformed, provider config invalid. The platform was never
@@ -770,14 +799,31 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 		return nil, &briefs.PreconditionFailedError{Code: "412", Message: "the supplied ETag does not match the current version"}
 	}
 
-	// Only a fully-created campaign (or one already in a run state) may be toggled. A
+	// Only a fully-created campaign (or one already in a run state) may be ACTIVATED. A
 	// "pending" ambiguous orphan or a "created_degraded" campaign (a sub-step still needs
-	// reconciliation) must NOT be toggled: doing so would activate an incomplete campaign
-	// and/or OVERWRITE the reconciliation status with the run state, erasing the signal. A
-	// non-empty PlatformCampaignID alone is not enough — a degraded/partial campaign can
-	// carry an upstream id. Reject with 409 (the state must be reconciled first).
-	if !model.CampaignStatusToggleable(existing.Status) {
-		return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not in a toggleable state (it is still provisioning or needs reconciliation); resolve its status before toggling"}
+	// reconciliation) must not be: doing so would put an incomplete campaign in front of an
+	// audience. A non-empty PlatformCampaignID alone is not enough — a degraded/partial
+	// campaign can carry an upstream id. Reject with 409 (the state must be reconciled first).
+	//
+	// PAUSE is the exception, and only for created_degraded. That status means the campaign
+	// definitely EXISTS upstream and this service does not know its full wiring — and an
+	// ADOPTED campaign (LFXV2-3042) can already be ENABLED and spending, because the adoption
+	// lookup treats ENABLED and PAUSED alike as live. Refusing to pause those made the one
+	// campaign most likely to need stopping the one campaign this service could not stop,
+	// while the dispatchers explicitly support pausing a campaign with no child ids (see
+	// GoogleAdsDispatcher.ToggleStatus). A pause costs nothing this guard was protecting: it
+	// cannot activate anything, and the reconciliation marker is preserved below rather than
+	// overwritten with the run state.
+	//
+	// The other markers stay refused in BOTH directions: 'pending' and the partial-orphan
+	// statuses may have no upstream campaign at all, so there is nothing for a pause to act on.
+	pauseDegraded := existing.Status == model.CampaignStatusCreatedDegraded && p.Status == model.CampaignRunPaused
+	if !model.CampaignStatusToggleable(existing.Status) && !pauseDegraded {
+		msg := "campaign is not in a toggleable state (it is still provisioning or needs reconciliation); resolve its status before toggling"
+		if existing.Status == model.CampaignStatusCreatedDegraded {
+			msg = "campaign still needs reconciliation, so it cannot be activated; it can be PAUSED to stop any spend, but resolve its status before resuming it"
+		}
+		return nil, &briefs.ConflictError{Code: "409", Message: msg}
 	}
 
 	// VALIDATION MUST HAPPEN BEFORE CLAIMING, for the same reason as UpdateCampaign above:
@@ -892,11 +938,12 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			// always wrapped alongside ErrConnectionNotUsable, so a broad match would swallow
 			// it and hand back the ambiguous "or its credentials need attention" message for a
 			// connection whose credentials are fine. The distinction rides in the message
-			// because ConflictError carries only code and message.
+			// because ConflictError carries only code and message. The message names no
+			// accounts endpoint — see the metrics arm for why.
 			slog.WarnContext(ctx, "campaign status toggle blocked: no ad account selected on the project's connection",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "status", p.Status, "reason", unusableConnectionReason(terr))
-			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection has no ad account selected — choose one from the connection's accounts endpoint and save it before changing campaign status"}
+			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection has no ad account selected — save an ad account id on the connection before changing campaign status"}
 		case errors.Is(terr, domain.ErrConnectionNotUsable):
 			// Credential resolution refused the connection BEFORE the platform was contacted,
 			// so — like the branches above — nothing changed upstream and this is decidable
@@ -958,6 +1005,58 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 	// context so the write completes; the read/guard above already ran on the live ctx. The
 	// detached write is BOUNDED by persistResultTimeout (mirrors the orchestrator's
 	// post-provider persists) so a stuck DB can't hang shutdown grace indefinitely.
+	if pauseDegraded {
+		// The pause committed upstream, and the row is deliberately NOT rewritten. Overwriting
+		// 'created_degraded' with 'paused' would erase the only record that this campaign's
+		// wiring is unverified, and pausing reconciles nothing — it stops spend. So the status
+		// this endpoint would normally persist is exactly the one that must not be persisted
+		// here; the campaign comes back at its unchanged status and version because that is
+		// what the row now says. The platform call is declarative, so a repeat pause is a
+		// no-op upstream and this stays idempotent without a version to compare.
+		//
+		// DURABILITY: before returning success with the platform changed, verify that the
+		// row version has not changed since we claimed it. If the claimed connection died
+		// and a successor modified the row, surface the platform/DB divergence instead of
+		// returning stale data. Use the live context (not persistCtx) for the verification:
+		// the claim was also acquired on the live context, so the two share a consistent
+		// view and this check can tell if the row was modified during this request.
+		verified, verifyErr := campaignRepo.VerifyClaimedVersion(
+			ctx, p.ProjectID, p.BriefID, p.CampaignID, version, lockToken)
+		if verifyErr != nil {
+			if errors.Is(verifyErr, domain.ErrPreconditionFailed) {
+				// The row's version changed since we claimed it. The platform was updated
+				// but the local row was modified by someone else — a divergence that should
+				// not happen under normal operation, but must be surfaced (it is NOT a 409
+				// retry; the caller got the platform change but has a stale row).
+				slog.ErrorContext(ctx, "campaign status changed on the platform but the DB row was modified by another writer (platform/DB diverged)",
+					"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+					"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,
+					"requested_status", p.Status, "expected_version", version)
+				return nil, &briefs.ConflictError{Code: "409", Message: "this campaign was modified by another request while its status was being changed on the ad platform; verify the campaign status before retrying"}
+			}
+			if errors.Is(verifyErr, domain.ErrNotFound) {
+				// The row was deleted between claim and now. The platform was changed but
+				// the local row is gone — another kind of divergence.
+				slog.ErrorContext(ctx, "campaign status changed on the platform but the DB row was deleted (platform/DB diverged)",
+					"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+					"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,
+					"requested_status", p.Status, "error", verifyErr)
+				return nil, &briefs.ConflictError{Code: "409", Message: "this campaign was deleted while its status was being changed on the ad platform; verify the campaign status before retrying"}
+			}
+			// A read error (transient DB failure, etc). Surface it so the caller retries
+			// after backoff, not immediately.
+			slog.ErrorContext(ctx, "failed to verify row version after platform pause (platform/DB divergence detection failed)",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,
+				"error", verifyErr)
+			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the campaign status was changed on the ad platform, but verifying the local row failed; verify in the platform and retry"}
+		}
+		slog.InfoContext(ctx, "paused a campaign that still needs reconciliation; the reconciliation marker is preserved",
+			"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+			"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,
+			"status", existing.Status)
+		return campaignResult(verified), nil
+	}
 	existing.Status = p.Status
 	// Resolve the actor from the LIVE ctx, before persistCtx replaces it below. A
 	// context.WithoutCancel derivative keeps the values, so this would work either way —

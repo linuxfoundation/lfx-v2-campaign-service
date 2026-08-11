@@ -43,14 +43,27 @@ type Service interface {
 	// per-platform: a campaign whose platform has no metrics-read dispatcher wired
 	// returns 400.
 	GetCampaignMetrics(context.Context, *GetCampaignMetricsPayload) (res *CampaignMetrics, err error)
+	// Generate AI-written email copy (subject, preheader, body, CTA) for a
+	// campaign brief. Returns immediately with generated text; does NOT persist to
+	// the brief. The AI model is optional — without it configured this endpoint
+	// returns 503.
+	GenerateEmailCopy(context.Context, *GenerateEmailCopyPayload) (res *EmailCopy, err error)
 	// Replace a campaign (requires If-Match).
 	UpdateCampaign(context.Context, *UpdateCampaignPayload) (res *Campaign, err error)
 	// Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist
 	// the new status. Unlike update-campaign (which only writes the DB row), this
 	// dispatches the status change to the platform and updates the row only after
 	// the platform confirms. Support is per-platform: a campaign whose platform
-	// has no status-toggle dispatcher wired returns 400 (Reddit is wired in this
-	// change; other platforms follow).
+	// has no status-toggle dispatcher wired returns 400. Reddit, LinkedIn, Meta,
+	// X, Google Ads and Microsoft Ads are wired; HubSpot is not, because an email
+	// send has no run state to pause. ONE EXCEPTION to the persist: pausing a
+	// campaign in 'created_degraded' pauses it upstream and returns 200 with the
+	// status and ETag UNCHANGED. 'created_degraded' records that the campaign's
+	// wiring was never verified, and this schema has one status column, so writing
+	// 'paused' would spend the reconciliation marker to record a run state the
+	// platform already holds authoritatively. Resuming such a campaign is refused
+	// outright (409). Read the pause's effect from the ad platform, not from this
+	// row.
 	ToggleCampaignStatus(context.Context, *ToggleCampaignStatusPayload) (res *Campaign, err error)
 	// Delete a campaign (soft delete, requires If-Match). LOCAL ONLY: this removes
 	// the campaign from this service and frees its (brief, platform) slot so the
@@ -84,7 +97,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [14]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "create-campaigns", "get-campaign", "get-campaign-metrics", "update-campaign", "toggle-campaign-status", "delete-campaign", "get-job"}
+var MethodNames = [15]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "create-campaigns", "get-campaign", "get-campaign-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "delete-campaign", "get-job"}
 
 // ApproveBriefPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service approve-brief method.
@@ -259,6 +272,19 @@ type DeleteCampaignPayload struct {
 	IfMatch *string
 }
 
+// EmailCopy is the result type of the lfx-v2-campaign-service-briefs service
+// generate-email-copy method.
+type EmailCopy struct {
+	// Email subject line
+	Subject string
+	// Email preheader text (preview summary)
+	Preheader string
+	// Email body HTML (the main content)
+	Body string
+	// Call-to-action button text
+	Cta string
+}
+
 // EventDetails is the result type of the lfx-v2-campaign-service-briefs
 // service fetch-event-url method.
 type EventDetails struct {
@@ -306,6 +332,17 @@ type FindBriefPayload struct {
 	ProjectID string
 	// Event slug derived from the event page URL.
 	EventSlug string
+}
+
+// GenerateEmailCopyPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service generate-email-copy method.
+type GenerateEmailCopyPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
 }
 
 // GetBriefPayload is the payload type of the lfx-v2-campaign-service-briefs
@@ -456,6 +493,9 @@ type ConflictError struct {
 	Code string
 	// Error message
 	Message string
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string
 }
 
 type ConnServiceUnavailableError struct {

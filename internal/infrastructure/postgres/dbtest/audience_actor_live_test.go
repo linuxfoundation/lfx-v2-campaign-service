@@ -8,42 +8,10 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/dbtest"
 )
-
-// insertApprovedBriefVersioned creates the APPROVED parent CreateAudienceForApprovedBrief
-// requires and returns its id, project and VERSION. insertBrief leaves the row at its default
-// status, which that method rejects with ErrStaleApproval before it ever reaches the INSERT —
-// a test built on it would pass without exercising the statement under test at all.
-//
-// The name carries the `Versioned` suffix to stay out of the way of PR #106, which lands a
-// two-value `insertApprovedBrief` in this same `dbtest_test` package. This branch merges after
-// #106, so the plain name would be a redeclaration and the package would not compile — a
-// collision no test on either branch can catch, since neither tree contains both files.
-// Once both are on main the two should be folded into one (this one, with #106's callers
-// discarding the version); keeping them separate here is about making the merge mechanical.
-func insertApprovedBriefVersioned(ctx context.Context, t *testing.T, pool *pgxpool.Pool) (string, string, int64) {
-	t.Helper()
-
-	id := dbtest.UniqueID(t, "brief")
-	var (
-		briefID   string
-		projectID string
-		version   int64
-	)
-	err := pool.QueryRow(ctx, `
-		INSERT INTO campaign_briefs (project_id, program_type, event_slug, status)
-		VALUES ($1, 'events', $2, 'approved')
-		RETURNING id, project_id, version`, id, id).Scan(&briefID, &projectID, &version)
-	if err != nil {
-		t.Fatalf("insert approved parent brief: %v", err)
-	}
-	return briefID, projectID, version
-}
 
 // TestCreateAudienceForApprovedBrief_EmptyRawJSONIsNotAFailedInsert pins what nullJSON is
 // actually load-bearing for on this path, which is not what it looks like.
@@ -82,14 +50,14 @@ func TestCreateAudienceForApprovedBrief_EmptyRawJSONIsNotAFailedInsert(t *testin
 	}
 	for name, v := range cases {
 		t.Run(name, func(t *testing.T) {
-			briefID, projectID, version := insertApprovedBriefVersioned(ctx, t, pool)
-			created, err := repo.CreateAudienceForApprovedBrief(ctx, &model.CampaignAudience{
+			briefID, projectID := insertApprovedBrief(ctx, t, pool)
+			created, _, err := repo.CreateAudienceForApprovedBrief(ctx, &model.CampaignAudience{
 				ProjectID:          projectID,
 				BriefID:            briefID,
 				Platform:           model.ProviderHubSpot,
 				CreatedBy:          v,
 				SuppressionListIDs: v,
-			}, version)
+			})
 			if err != nil {
 				t.Fatalf("CreateAudienceForApprovedBrief(%s): %v — an absent actor must store "+
 					"as SQL NULL, not abort the build. The row is the audience the caller is "+
