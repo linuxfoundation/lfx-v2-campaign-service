@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -1858,4 +1860,94 @@ func TestOrchestrator_ReadAccountsBoundsThePlatformCall(t *testing.T) {
 		t.Errorf("deadline %v not within [%v, %v] (call bracket + accountsCallTimeout=%v)",
 			disp.gotDeadline, expectedMin, expectedMax, accountsCallTimeout)
 	}
+}
+
+// accountNotSelectedErr is the shape Meta's requireMetaAccountID (and Google Ads' connection
+// validator) produce for a connection parked in the credentials-only bootstrap state: a
+// pre-create fault carrying the ErrConnectionNotUsable / ErrAccountNotSelected pair.
+// It models internal/dispatch's preCreateError faithfully, Unwrap included — without that
+// method errors.Is cannot reach the sentinels and unusableConnectionReason answers
+// "unclassified" no matter what the production code does, which would make this test pass
+// against the very thing it exists to pin.
+type accountNotSelectedErr struct{ err error }
+
+func (e accountNotSelectedErr) Error() string        { return e.err.Error() }
+func (e accountNotSelectedErr) Unwrap() error        { return e.err }
+func (accountNotSelectedErr) NoUpstreamCreate() bool { return true }
+
+type accountNotSelectedDispatcher struct{}
+
+func (accountNotSelectedDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return nil, accountNotSelectedErr{err: fmt.Errorf("%w: %w: meta connection has no ad account selected",
+		domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected)}
+}
+
+// TestOrchestrator_PreCreateFailureLogsAClassifiedReason pins the ONLY place the
+// account_not_selected classification is observable on the path that actually creates
+// campaigns.
+//
+// Every mention of that token — Meta's requireMetaAccountID, Google Ads' connection
+// validator, design/connection.go's rule for relaxing Required("account_id"), and the
+// api-catalog paragraph that justifies credentials-only connections — rests on an operator
+// being able to tell a missing account selection apart from a bad credential. None of them
+// can rest on the job result: dispatchPlatform sets it to "platform campaign creation
+// failed" for every dispatcher error alike. So the log line is the whole mechanism, and
+// before this it carried only err.Error() — the classification existed in prose describing a
+// field that was never emitted.
+//
+// Asserting the ATTRIBUTE rather than the message text is the point: err.Error() happens to
+// contain the sentinel's own wording, so a test that grepped the rendered line would pass
+// against the unclassified version and prove nothing.
+func TestOrchestrator_PreCreateFailureLogsAClassifiedReason(t *testing.T) {
+	h := &capturingHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(&fakeCampaignRepo{}, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderMetaAds: accountNotSelectedDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderMetaAds}, nil)
+	j := waitForTerminal(t, jobs, id)
+
+	// The job result stays generic — that is the premise, not a defect, and the docs now say
+	// so. If this ever starts carrying the reason, the docs asserting otherwise are stale.
+	if strings.Contains(string(j.Result), "account_not_selected") || strings.Contains(j.Error, "account_not_selected") {
+		t.Errorf("job result = %q / error = %q; the reason is documented as absent from the polled "+
+			"result, so the api-catalog and design/connection.go paragraphs saying the detail is "+
+			"log-only need revisiting", string(j.Result), j.Error)
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, rec := range h.recs {
+		if !strings.Contains(rec.Message, "before upstream create") {
+			continue
+		}
+		// Filtered by job id: slog.Default is process-wide and a sibling test's dispatch
+		// goroutine can still be draining into this handler.
+		var reason, gotJob string
+		rec.Attrs(func(a slog.Attr) bool {
+			switch a.Key {
+			case "reason":
+				reason = a.Value.String()
+			case "job_id":
+				gotJob = a.Value.String()
+			}
+			return true
+		})
+		if gotJob != id {
+			continue
+		}
+		if reason != "account_not_selected" {
+			t.Fatalf("pre-create dispatch failure logged reason=%q, want \"account_not_selected\". "+
+				"Without a structured reason the classification reaches nothing at all: the job "+
+				"result is collapsed to a fixed string, so this attribute is the only thing that "+
+				"distinguishes an unselected account from an unusable credential", reason)
+		}
+		return
+	}
+	t.Fatal("no \"before upstream create\" log record was emitted, so the reason has nowhere to live")
 }

@@ -96,3 +96,49 @@ calls `connsrv.ValidateCreateMetaAdsRequestBody` directly — the same pattern
 `TestValidateCreateGoogleAds_AccountIDIsOptionalAtTheTransport` already established — with a
 second sub-test asserting `page_id` is still required, so the two attributes' presence checks
 can't drift together undetected.
+
+## Round: the reason token that four documents cited and nothing emitted
+
+**Kind:** Fix
+
+Copilot, on `internal/dispatch/meta.go`, `docs/api-catalog.md` and `design/connection.go`
+simultaneously — three places asserting that a connection parked in the credentials-only state
+reports `reason=account_not_selected`.
+
+Verified, and it was worse than the report. A previous round had already corrected these from
+"the polled job result names the fault" to "the LOG names it", on the true observation that
+`dispatchPlatform` collapses every dispatcher error into `platform campaign creation failed`.
+But the log did not name it either: the pre-create branch logged `"error", derr` and nothing
+else, and `unusableConnectionReason`'s only callers were `internal/service/brief.go`'s
+SYNCHRONOUS handlers — the status toggle and the metrics read. Campaign creation is async and is
+the only path that creates a campaign, so on the path the whole bootstrap argument is about, the
+classification reached nothing at all.
+
+That is the shape worth naming: **the first correction moved the claim to a place it was also
+false, because "not the job result" was verified and "the log" was assumed.** Ruling out one
+destination is not evidence for another.
+
+Fixed by emitting it rather than by deleting the promise, because the promise is this PR's
+justification: a connection that can be created without an account id is only acceptable if an
+operator can tell that state apart from a broken credential. `dispatchPlatform`'s pre-create
+branch now carries `"reason", unusableConnectionReason(derr)`. That branch only — the retained
+branches describe a provider failure, not a connection, and would log `"unclassified"` on every
+record, which reads like a classification was attempted and came back empty.
+
+`docs/api-catalog.md` and `design/connection.go` now say plainly that the polled result is
+generic and the detail is a log field, and that the rule for relaxing `Required("account_id")`
+asks for a DIAGNOSABLE half-configured connection, not a bespoke API code.
+
+**Regression Guard** — `TestOrchestrator_PreCreateFailureLogsAClassifiedReason` asserts the
+`reason` slog ATTRIBUTE, not the rendered line: `err.Error()` happens to contain the sentinel's
+own wording, so a text match would have passed against the unclassified version and proved
+nothing. It also asserts the job result does NOT carry the token, so the docs saying it is
+log-only fail a test if that ever changes. Revert-verified: dropping the attribute gives
+`logged reason="", want "account_not_selected"`.
+
+One note on building it. The first fake embedded `error` and got `reason="unclassified"` —
+looking exactly like a production defect. The cause was the fake: `internal/dispatch`'s real
+`preCreateError` has `Unwrap`, an embedded interface does not, and without it `errors.Is` cannot
+reach the sentinels. Had the assertion been weaker the fake would have passed against the fix and
+against its absence alike. **A fake that omits `Unwrap` silently disables every `errors.Is` in
+the code under test.**

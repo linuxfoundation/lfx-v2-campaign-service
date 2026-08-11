@@ -351,12 +351,18 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // Meta no longer requires it either, as of LFXV2-3061. Both halves the rule below asks for
 // are now present: the discovery endpoint arrived with LFXV2-3062, and Meta's Dispatch tags
 // an empty account id with domain.ErrAccountNotSelected via requireMetaAccountID
-// (internal/dispatch/meta.go), so a connection parked mid-bootstrap reports
-// reason=account_not_selected rather than a generic error. Campaign create remains the only
-// Meta path that needs the id at all — the status toggle and the metrics read address the
-// campaign node by id — and it is ASYNCHRONOUS, so what a caller who created the row and
-// stopped there meets is the polled job result rather than an HTTP status; the tagging is
-// what makes that result name the missing choice.
+// (internal/dispatch/meta.go), so a connection parked mid-bootstrap is classified rather than
+// left an unclassified error. Campaign create remains the only Meta path that needs the id at
+// all — the status toggle and the metrics read address the campaign node by id — and it is
+// ASYNCHRONOUS, so what a caller who created the row and stopped there meets is the polled job
+// result rather than an HTTP status.
+//
+// That result is GENERIC, and the rule below does not ask otherwise. dispatchPlatform collapses
+// every dispatcher error into "platform campaign creation failed", so no tagging can make the
+// polled result name the missing choice; what the tagging buys is a fixed-vocabulary
+// reason=account_not_selected on the dispatch-failure log line, which is where an operator tells
+// this apart from a bad credential. The requirement the rule states is that a half-configured
+// connection is DIAGNOSABLE, not that the API returns a bespoke code for it.
 //
 // LinkedIn, Microsoft, Reddit and X keep Required("account_id"). For them there is still no
 // list to choose from, so relaxing the requirement would create a connection that can never

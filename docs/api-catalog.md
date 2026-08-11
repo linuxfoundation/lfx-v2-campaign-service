@@ -511,9 +511,14 @@ missing/malformed/over-long value is a 4xx there, not a runtime dispatch failure
 mirroring the Google Ads bootstrap (see the Platform Connections section) — so a connection can
 be created with credentials only, then have an account chosen via `GET
 .../connection-meta-ads/accounts` and set with `PUT`. Only the campaign-create job (async — 202,
-then the polled result) checks account selection: it fails pre-create with
-`reason=account_not_selected` when none is chosen, never a 503, since waiting cannot fix a choice
-only a human can make. The status toggle and metrics read do NOT require an account id — both
+then the polled result) checks account selection: it fails pre-create when none is chosen, never a
+503, since waiting cannot fix a choice only a human can make. **The polled result does not say
+which fault it was** — `dispatchPlatform` collapses every dispatcher error into the single string
+`platform campaign creation failed`, so a client sees only that the platform create failed. The
+classification lives in the service LOG, as a `reason=account_not_selected` field on the
+"platform dispatch failed before upstream create" line; that is what an operator reads to tell a
+missing account selection apart from a bad credential. A UI that wants to name the fault to a user
+must read the connection's state, not the job. The status toggle and metrics read do NOT require an account id — both
 target an existing campaign by its platform id and never read `AccountConfig.AccountID` — so an
 account selection cleared after the campaign was created does not block pausing/resuming it or
 reading its metrics. All three do share the credential-state checks (active connection, decodable
