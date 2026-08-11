@@ -250,7 +250,13 @@ ten.** The other nine were never judged less important — they were just not wh
 looking at. The seven connection entries are therefore GENERATED from the table list rather
 than written out, so an eighth provider added to the schema and the list is covered without
 anyone remembering, and `TestMigrateRefusesEachDroppedSingletonIndex` drops each one against
-a live database and requires `Migrate` to refuse.
+a live database and requires `Migrate` to refuse. The counts above are the ten that existed
+when the list was written; 000020's `uq_campaigns_platform_campaign_live` is the eleventh,
+and it arrived by exactly the route this paragraph warns about — the index was created on one
+branch while the list was introduced on another, so neither tree was wrong on its own and the
+schema-wide check in `TestEveryUniquePartialIndexIsRequired` is what caught it. That test
+enumerates unique PARTIAL indexes from `pg_index` rather than from any hand-written list,
+which is why a count stated in prose can go stale here without the guard going stale with it.
 The parser matches the CREATE, not the name anywhere in the file, so a migration that
 DROPs an index is not reported as the version to force back to; where two migrations
 create one name, the highest wins. `TestMigrationIndexOwners_FindsEveryCreatedIndex`
@@ -947,7 +953,11 @@ Two guards live in the same transaction as the insert, and neither can be enforc
   unapproved brief — the approval gate defeated by latency alone.
 - **`uq_campaigns_platform_campaign_live`** (migration 000020), keyed
   `(platform, platform_campaign_id)` over live rows **restricted to
-  `platform = 'google-ads'`**. 000013's index answers only
+  `platform = 'google-ads'`**. It is registered in `requiredIndexes`, so its definition —
+  uniqueness, both keys and the three-conjunct predicate — is re-asserted at every boot and
+  not only at migration time. That matters more here than for the other entries: 000020
+  deliberately omits `IF NOT EXISTS`, which protects the FIRST build from a same-named
+  leftover but says nothing about a later `DROP INDEX`. 000013's index answers only
   "does this BRIEF have a campaign here"; adoption names an arbitrary upstream campaign, so
   without this a second brief can bind the same one and the two rows toggle it against each
   other. The index is deliberately not scoped by project and equally deliberately scoped to one
