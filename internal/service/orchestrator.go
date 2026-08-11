@@ -875,10 +875,22 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			// promised it. A structured reason is what makes "the operator learns
 			// account_not_selected" a true statement about an ASYNC dispatch, which is the
 			// only path on which a campaign is ever created.
+			// The reason arm logs the token INSTEAD of the cause, not alongside it, and
+			// that substitution is the whole point of the vocabulary existing. Two
+			// conditions in it are detected by decoding the DECRYPTED credential blob
+			// (credentials_undecodable, credentials_incomplete), and an encoding/json
+			// error quotes its input — so rendering derr here would put decrypted
+			// credential material into the log on a path an operator is expected to read.
+			// internal/dispatch/creds.go says so at the point the 400 is built ("it logs a
+			// fixed reason token and nothing else ... Do not 'restore' logging of the cause
+			// on the 400 path"), and unusableConnectionReason's own doc comment gives the
+			// same reason for existing at all. The retained-claim branches below and the
+			// else arm here keep the cause because those errors describe the PROVIDER's
+			// response, which never passed through the credential blob.
 			const preCreateMsg = "platform dispatch failed before upstream create (claim released)"
 			if errors.Is(derr, domain.ErrConnectionNotUsable) {
 				slog.ErrorContext(ctx, preCreateMsg,
-					"platform", p, "job_id", jobID, "reason", unusableConnectionReason(derr), "error", derr)
+					"platform", p, "job_id", jobID, "reason", unusableConnectionReason(derr))
 			} else {
 				slog.ErrorContext(ctx, preCreateMsg, "platform", p, "job_id", jobID, "error", derr)
 			}

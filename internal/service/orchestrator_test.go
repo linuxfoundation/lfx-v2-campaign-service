@@ -1950,6 +1950,96 @@ func TestOrchestrator_PreCreateFailureLogsAClassifiedReason(t *testing.T) {
 	t.Fatal("no \"before upstream create\" log record was emitted, so the reason has nowhere to live")
 }
 
+// undecodableCredsDispatcher fails the way the credential path actually fails: the blob
+// decrypted fine and then would not JSON-decode, so the error text is an encoding/json
+// message — and encoding/json QUOTES ITS INPUT. The canary below stands in for what that
+// quoting drags along, which on this path is decrypted credential material.
+type undecodableCredsDispatcher struct{}
+
+const credentialCanary = "sk_live_CANARY_DO_NOT_LOG"
+
+func (undecodableCredsDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return nil, accountNotSelectedErr{err: fmt.Errorf(
+		"decoding meta credentials: invalid character 'x' looking for beginning of value in %q: %w: %w",
+		credentialCanary, domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable)}
+}
+
+// TestOrchestrator_ClassifiedPreCreateFailureLogsNoCause is the other half of the reason
+// gate, and the half that makes the substitution real rather than decorative.
+//
+// The reason token is logged INSTEAD of the cause, not alongside it. That is not a style
+// choice: two conditions in the vocabulary — credentials_undecodable and
+// credentials_incomplete — are detected by decoding the DECRYPTED blob, and an
+// encoding/json error quotes its input. internal/dispatch/creds.go states the rule at the
+// point the 400 is built, in the imperative, because the tempting edit is precisely to add
+// the cause back for debuggability: "it logs a fixed reason token and nothing else ... Do
+// not 'restore' logging of the cause on the 400 path."
+//
+// A prose rule with no test is a rule that gets undone by the next person who wants a
+// better error message — this PR's first draft of the gate is the proof, since it added
+// "error", derr to exactly this arm. So the assertion sweeps EVERY attribute's rendered
+// value for the canary rather than checking that one key is absent: the leak does not care
+// which key carries it.
+func TestOrchestrator_ClassifiedPreCreateFailureLogsNoCause(t *testing.T) {
+	h := &capturingHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(&fakeCampaignRepo{}, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderMetaAds: undecodableCredsDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderMetaAds}, nil)
+	j := waitForTerminal(t, jobs, id)
+
+	// The polled result is collapsed to a fixed string by dispatchPlatform, so it cannot
+	// leak either — but assert it, because that collapse is what makes the log the only
+	// channel and a future change there would move the leak rather than remove it.
+	if strings.Contains(string(j.Result), credentialCanary) || strings.Contains(j.Error, credentialCanary) {
+		t.Errorf("job result = %q / error = %q carries the credential canary", string(j.Result), j.Error)
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, rec := range h.recs {
+		if !strings.Contains(rec.Message, "before upstream create") {
+			continue
+		}
+		var reason, gotJob string
+		var leaked []string
+		rec.Attrs(func(a slog.Attr) bool {
+			switch a.Key {
+			case "reason":
+				reason = a.Value.String()
+			case "job_id":
+				gotJob = a.Value.String()
+			}
+			if strings.Contains(a.Value.String(), credentialCanary) {
+				leaked = append(leaked, a.Key)
+			}
+			return true
+		})
+		if gotJob != id {
+			continue
+		}
+		if reason != "credentials_undecodable" {
+			t.Fatalf("logged reason=%q, want \"credentials_undecodable\"", reason)
+		}
+		if len(leaked) != 0 {
+			t.Fatalf("attribute(s) %v carry the decrypted-credential canary %q. The reason token "+
+				"replaces the cause on this arm precisely so a json decode error cannot quote the "+
+				"blob it failed on into an operator-facing log", leaked, credentialCanary)
+		}
+		if strings.Contains(rec.Message, credentialCanary) {
+			t.Fatalf("the log MESSAGE carries the canary: %q", rec.Message)
+		}
+		return
+	}
+	t.Fatal("no \"before upstream create\" log record was emitted")
+}
+
 type malformedConfigDispatcher struct{}
 
 func (malformedConfigDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {

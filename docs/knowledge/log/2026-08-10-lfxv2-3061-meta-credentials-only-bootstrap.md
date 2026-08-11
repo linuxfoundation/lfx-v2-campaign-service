@@ -143,3 +143,39 @@ looking exactly like a production defect. The cause was the fake: `internal/disp
 reach the sentinels. Had the assertion been weaker the fake would have passed against the fix and
 against its absence alike. **A fake that omits `Unwrap` silently disables every `errors.Is` in
 the code under test.**
+
+## Round: the fix for the missing reason leaked the cause it replaced
+
+**Kind:** Fix
+
+Copilot, on `internal/service/orchestrator.go` — the gate added by the round above logged
+`"reason", unusableConnectionReason(derr)` **and** `"error", derr` on the
+`ErrConnectionNotUsable` arm.
+
+Verified, and the cited proof is real and stronger than the report. `internal/dispatch/creds.go`
+states the rule in the imperative at the point the 400 is built — the 400 arm "logs a fixed
+reason token and nothing else ... Do not 'restore' logging of the cause on the 400 path" —
+and `unusableConnectionReason`'s doc comment gives the same rule as its reason for existing:
+"the errors themselves cannot be logged: one of these conditions is detected by decoding the
+decrypted credential blob, and an `encoding/json` error quotes its input."
+`docs/knowledge/code/internal-service.md` had already been written to say neither the cause nor
+its text leaves the dispatch layer, "not in the response and not in the log line". The code was
+the only thing disagreeing.
+
+The token is logged **instead of** the cause, not alongside it — the substitution is the
+mechanism, and adding the cause back dissolves it while leaving every citation of the reason
+vocabulary still technically true.
+
+That is the shape worth naming, and it is the second time in this fragment that a fix created
+the next finding: **a rule that is only prose gets undone by the next person improving an error
+message — and the person most likely to do it is whoever just read the prose and is adding the
+field it governs.** The previous round was about a promise nothing emitted; this one is about
+emitting it and helpfully bringing along the thing the promise existed to exclude.
+
+**Regression Guard** — `TestOrchestrator_ClassifiedPreCreateFailureLogsNoCause` drives the
+failure the way it actually happens: a blob that decrypted and then would not JSON-decode, so
+the error text is an `encoding/json` message quoting its input. It sweeps EVERY attribute's
+rendered value for a canary rather than asserting one key is absent, because the leak does not
+care which key carries it, and checks the message text and the polled job result too.
+Revert-verified: restoring `"error", derr` gives
+`attribute(s) [error] carry the decrypted-credential canary`.
