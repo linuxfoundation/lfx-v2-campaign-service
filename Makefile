@@ -106,8 +106,18 @@ test: ## Run tests
 	# strictly one at a time, closing the race at its source instead of retrying past it
 	# (a retry after a failed CONCURRENTLY build risks finding the index already present
 	# and INVALID under IF NOT EXISTS, which checkNoInvalidIndexes then fails permanently).
-	go test -v -race -p 1 -coverprofile=coverage-postgres.out ./internal/infrastructure/postgres/...
-	go test -v -race -coverprofile=coverage.out $$(go list ./... | grep -v -E '/internal/infrastructure/postgres(/|$$)')
+	#
+	# Both halves run even when the first fails, and the target's status is the OR of the
+	# two. As two plain recipe lines, a red postgres suite aborted the target and the
+	# remaining ~40 packages were never built or run — so one live-database failure hid
+	# every unrelated failure until somebody ran the suite again. `go test ./...` did not
+	# have that property, and splitting it should not have cost it.
+	@rc=0; \
+	echo "==> go test ./internal/infrastructure/postgres/... (live database, -p 1)"; \
+	go test -v -race -p 1 -coverprofile=coverage-postgres.out ./internal/infrastructure/postgres/... || rc=1; \
+	echo "==> go test (all other packages)"; \
+	go test -v -race -coverprofile=coverage.out $$(go list ./... | grep -v -E '/internal/infrastructure/postgres(/|$$)') || rc=1; \
+	exit $$rc
 
 .PHONY: build
 build: ## Build the application for local OS

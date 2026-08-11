@@ -116,6 +116,16 @@ therefore goes through `releaseUnstartedClaim` — nothing exists upstream on th
 there is nothing to reconcile first, and a `building` row left behind by a request that gave
 up would block every later build of the brief behind a 409 until an operator intervened.
 
+`releaseUnstartedClaim` calls `ReleaseAudienceBuildLease`, **not** `UpdateAudience`, and the
+difference is the whole point. `UpdateAudience` is version-gated on the version the claim was
+taken at, and a concurrent `PATCH` that leaves the row `building` while editing any other field
+still bumps that version — so the release comes back `ErrPreconditionFailed`, is logged as a
+best-effort failure, and the row stays `building` forever. That is the exact stranded lease this
+path exists to prevent, so the release is gated on the STATUS instead, by the same statement that
+performs it. `TestBuildAudience_ReleasesTheLeaseAfterAConcurrentPatchBumpsTheVersion` bumps the
+stored version mid-build and asserts the row still lands in `failed`; against the version-gated
+call it fails with `expected "failed", actual "building"`.
+
 One more thing had to move with it. The claim gates on approval itself, so a brief that was
 never approved and a brief that moved mid-build both come back as `ErrStaleApproval` — a 409
 about versions, which is right for the race and wrong for the ordinary case of someone

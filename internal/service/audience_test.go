@@ -25,6 +25,9 @@ type fakeAudienceRepo struct {
 	// broke, so the row cannot carry the created list ids and the caller's error is the only
 	// remaining channel for them.
 	updateE error
+	// releaseE, when set, makes every ReleaseAudienceBuildLease fail, so the lease-release
+	// paths can be driven into their best-effort log-and-continue arm.
+	releaseE error
 	// briefs is the SAME brief store the service reads. The real
 	// CreateAudienceForApprovedBrief locks the parent brief and gates on it, so a fake
 	// holding its own private notion of approval could not express the thing these tests
@@ -50,9 +53,9 @@ func newFakeAudienceRepo() *fakeAudienceRepo {
 // CreateAudience stores a COPY and returns a SECOND copy, for the same reason GetAudience
 // does. Handing the caller the stored pointer makes every later in-place mutation of the
 // returned row visible in the store without any repository call, and that silently converts
-// the lease tests into tautologies: releaseUnstartedClaim sets row.Status = FAILED before it
-// calls UpdateAudience, so a shared pointer makes `rows()[0].Status == AudienceFailed` true
-// whether or not the release is ever persisted. PostgreSQL cannot do that; neither may this.
+// the lease tests into tautologies: any in-place `row.Status = FAILED` on the service side
+// would make `rows()[0].Status == AudienceFailed` true through a shared pointer whether or not
+// the release was ever persisted. PostgreSQL cannot do that; neither may this.
 func (r *fakeAudienceRepo) CreateAudience(_ context.Context, a *model.CampaignAudience) (*model.CampaignAudience, error) {
 	if r.createE != nil {
 		return nil, r.createE
@@ -145,6 +148,24 @@ func (r *fakeAudienceRepo) UpdateAudience(_ context.Context, a *model.CampaignAu
 	r.items[a.ID] = &stored
 	out := stored
 	return &out, nil
+}
+
+// ReleaseAudienceBuildLease models the real predicate rather than a convenient one: scoped by
+// tenant, gated on the STATUS, and a silent no-op for anything else. A fake that keyed off the
+// version instead — or that released unconditionally — would make
+// TestBuildAudience_ReleasesTheLeaseAfterAConcurrentPatchBumpsTheVersion vacuous, since that
+// test exists precisely to pin that the release does not consult the version.
+func (r *fakeAudienceRepo) ReleaseAudienceBuildLease(_ context.Context, projectID, briefID, id string) error {
+	if r.releaseE != nil {
+		return r.releaseE
+	}
+	cur, ok := r.items[id]
+	if !ok || cur.ProjectID != projectID || cur.BriefID != briefID || cur.Status != model.AudienceBuilding {
+		return nil
+	}
+	cur.Status = model.AudienceFailed
+	cur.Version++
+	return nil
 }
 
 func strptr(s string) *string { return &s }

@@ -704,14 +704,48 @@ is there to bound the cost on the path where nothing is wrong: retrying to the t
 add five seconds to every genuinely-rolled-back commit, which during a database outage means
 every failing request holding its goroutine five times longer.
 
-Giving up after the last attempt logs at **warn**, not error. The overwhelmingly likely
-reading of "still no row" is that the commit really did roll back, and an error on every
-rolled-back commit is an error nobody reads — but it is logged, because the other reading
-strands a lease that no automatic path will release (migration 000018's escape hatch is
-deliberately manual, since the row may own real HubSpot lists). The whole path is otherwise
-best-effort and log-only, matching `releaseUnstartedClaim`'s error handling for the same
-reason: the caller is already returning an error from `CreateAudienceForApprovedBrief` and has
-no better path to report a second failure on top of the first.
+**Each attempt runs the release TWICE before reporting the row absent.** Observing `building`
+from the classifying SELECT after a zero-row UPDATE is not a contradiction — the two statements
+run on separately-pooled connections with their own snapshots, so it means the row became
+visible *between* them and the UPDATE merely ran too early. An immediate second pass settles it.
+Without that pass the attempt returns "not seen", which is harmless on any attempt that has a
+successor and is not harmless on the LAST one (or when the reconcile context is already done):
+there a row this process had just CONFIRMED holding the lease got abandoned to the manual
+escape hatch. `tryReleaseAudienceBuildLease` therefore returns a tri-state —
+`audienceReconcileUnseen` / `Settled` / `Held` — rather than a bool, and only `Unseen` is worth
+waiting on.
+
+Giving up after the last attempt logs at **warn** *when no attempt ever saw the row*, and at
+**error** when one did. The two endings are different events and collapsing them was the defect:
+"never saw a row" is the overwhelmingly likely reading — the commit really did roll back, which
+is what "no row" means every other time — and an error on every rolled-back commit is an error
+nobody reads. "Saw the row, still `building`" is a lease this process knows is held, that no
+automatic path will release (migration 000018's escape hatch is deliberately manual, since the
+row may own real HubSpot lists), so it is an error and its wording states the fact instead of
+hedging with the other case's "if the commit did land". `reportUnreconciledAudience` owns that
+choice and is pinned by
+`TestReportUnreconciledAudience_SeparatesAConfirmedHeldLeaseFromAProbableRollback` — a plain
+unit test, because reaching `Held` through the database would need the row to become visible in
+the microseconds between one attempt's two statements, on the last attempt, which nothing can
+schedule into. The outcomes that *are* reachable are pinned live by
+`TestTryReleaseAudienceBuildLease_ClassifiesEachOutcome`.
+
+The whole path is otherwise best-effort and log-only, matching `releaseUnstartedClaim`'s error
+handling for the same reason: the caller is already returning an error from
+`CreateAudienceForApprovedBrief` and has no better path to report a second failure on top of the
+first.
+
+## ReleaseAudienceBuildLease is unversioned on purpose
+
+`AudienceRepo.ReleaseAudienceBuildLease` shares its statement with the reconcile above and
+exists so the service layer's `releaseUnstartedClaim` stops routing through `UpdateAudience`.
+`UpdateAudience` is version-gated, and the version is exactly the wrong thing to gate a release
+on: a concurrent `PATCH` that leaves the row `building` while changing another field still bumps
+it, so the release returns `ErrPreconditionFailed` and the row stays `building` **forever** —
+the identical bug the reconcile's status predicate was written to avoid, reintroduced one layer
+up. Gating on `status='building'` instead makes the condition that decides the outcome the same
+statement that performs it, and makes the call idempotent under retry: a row already `failed`,
+already `built`, or gone matches nothing and returns `nil` rather than an error.
 
 ## DeleteCampaign's guards
 

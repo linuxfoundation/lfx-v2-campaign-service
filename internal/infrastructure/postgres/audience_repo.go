@@ -166,32 +166,31 @@ func reconcileAmbiguousAudienceCommit(ctx context.Context, pool *Pool, row *mode
 	defer cancel()
 
 	delay := ambiguousCommitReconcileMinDelay
+	// Remembers whether any attempt CONFIRMED the row present and still 'building'. It is what
+	// separates the two ways this loop can run out, and they are not the same event: "never saw
+	// a row" is the ordinary rolled-back commit, while "saw the row, still building" is a lease
+	// this process knows is held and could not release. Reporting the second as the first is
+	// how a real stranded lease gets logged at warn and read as routine.
+	confirmedHeld := false
 	for attempt := 1; ; attempt++ {
-		settled, err := tryReleaseAudienceBuildLease(rctx, pool, row)
+		outcome, err := tryReleaseAudienceBuildLease(rctx, pool, row)
 		if err != nil {
 			slog.ErrorContext(ctx, "failed to reconcile an audience build row after an ambiguous commit error",
 				"audience_id", row.ID, "attempt", attempt, "error", err)
 		}
-		if settled {
+		if outcome == audienceReconcileSettled {
 			return
 		}
+		confirmedHeld = confirmedHeld || outcome == audienceReconcileHeld
 		if attempt >= ambiguousCommitReconcileAttempts {
-			// Not necessarily a problem: the overwhelmingly likely reading is that the commit
-			// really did roll back, which is what "no row" means every other time. Logged at
-			// warn rather than error for exactly that reason — an error on every rolled-back
-			// commit is an error nobody reads — but logged, because the other reading strands
-			// a lease that no automatic path will release (the migration's escape hatch is
-			// deliberately manual, since the row may own real HubSpot lists).
-			slog.WarnContext(ctx, "could not confirm an audience row's fate after an ambiguous commit error; "+
-				"if the commit did land, its build lease is held until an operator PATCHes the row to 'failed'",
-				"audience_id", row.ID, "brief_id", row.BriefID, "project_id", row.ProjectID,
-				"platform", string(row.Platform), "attempts", attempt)
+			reportUnreconciledAudience(ctx, row, attempt, confirmedHeld,
+				"could not confirm an audience row's fate after an ambiguous commit error")
 			return
 		}
 		select {
 		case <-rctx.Done():
-			slog.WarnContext(ctx, "ran out of time confirming an audience row's fate after an ambiguous commit error",
-				"audience_id", row.ID, "brief_id", row.BriefID, "project_id", row.ProjectID, "attempts", attempt)
+			reportUnreconciledAudience(ctx, row, attempt, confirmedHeld,
+				"ran out of time confirming an audience row's fate after an ambiguous commit error")
 			return
 		case <-time.After(delay):
 		}
@@ -201,58 +200,134 @@ func reconcileAmbiguousAudienceCommit(ctx context.Context, pool *Pool, row *mode
 	}
 }
 
-// tryReleaseAudienceBuildLease performs one attempt of the reconcile above. It reports settled
-// when the row's fate is KNOWN — released by this call, or already in a terminal state — and
-// leaves settled false only for "no row visible yet", the outcome the caller retries.
+// reportUnreconciledAudience logs the end of a reconcile that never settled.
+//
+// The two ways it can end are different events and get different levels. "Never saw a row" is
+// the overwhelmingly likely reading — the commit really did roll back, which is what "no row"
+// means every other time — so it is a warn: an error on every rolled-back commit is an error
+// nobody reads. "Saw the row, still building" is not that. It is a confirmed held lease that
+// no automatic path will release, since migration 000018's escape hatch is deliberately manual
+// (the row may own real HubSpot lists), so it is an error and it states the fact rather than
+// hedging it.
+func reportUnreconciledAudience(ctx context.Context, row *model.CampaignAudience, attempts int, confirmedHeld bool, what string) {
+	attrs := []any{
+		"audience_id", row.ID, "brief_id", row.BriefID, "project_id", row.ProjectID,
+		"platform", string(row.Platform), "attempts", attempts,
+	}
+	if confirmedHeld {
+		slog.ErrorContext(ctx, what+"; the row was CONFIRMED present and still 'building', so its "+
+			"build lease is held and blocks every later build of this (brief, platform) until an "+
+			"operator PATCHes the row to 'failed'", attrs...)
+		return
+	}
+	slog.WarnContext(ctx, what+"; if the commit did land, its build lease is held until an "+
+		"operator PATCHes the row to 'failed'", attrs...)
+}
+
+// audienceReconcileOutcome is what one release attempt learned about the row.
+type audienceReconcileOutcome int
+
+const (
+	// audienceReconcileUnseen: no row is visible at that id. Either the commit rolled back or
+	// it has not landed yet, and nothing here can tell those apart — the only outcome worth
+	// waiting on.
+	audienceReconcileUnseen audienceReconcileOutcome = iota
+	// audienceReconcileSettled: the row's fate is KNOWN — released by this attempt, or already
+	// in a terminal state that holds no lease.
+	audienceReconcileSettled
+	// audienceReconcileHeld: the row is confirmed present and still 'building' after this
+	// attempt tried twice to release it. Distinct from Unseen because the caller must not
+	// report it as a probable rollback.
+	audienceReconcileHeld
+)
+
+// tryReleaseAudienceBuildLease performs one attempt of the reconcile above.
 //
 // An error is returned for the caller to log but never settles anything: this runs precisely
 // when the connection is known to be unreliable, so a failed query is the least trustworthy
 // evidence of absence there is.
-func tryReleaseAudienceBuildLease(ctx context.Context, pool *Pool, row *model.CampaignAudience) (bool, error) {
-	// The release is ONE statement, not a SELECT followed by an UPDATE. The `status='building'`
-	// predicate is what enforces the do-not-downgrade invariant, and it has to be part of the
-	// write to enforce it at all: a separate status read is a TOCTOU window in which a concurrent
-	// PATCH can land, and a version predicate does not close it — a PATCH that edits another
-	// field while leaving the status 'building' still bumps the version, so the UPDATE would
-	// match zero rows, report no error, and abandon the row holding the lease forever.
-	// Predicating on the status instead of the version is also what makes the write
-	// idempotent under retry, which this now depends on.
-	//
-	// Scoped by brief_id and project_id too, matching UpdateAudience's predicate — id alone
-	// would still be correct (it's the primary key), but every other write to this table
-	// carries the tenant scope, and this is a write path: worth keeping the pattern uniform
-	// rather than carving out a silent exception here.
-	updateQ := `UPDATE campaign_audiences SET status='failed', version=version+1, updated_at=now()
-		WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND status=$4`
-	tag, err := pool.Exec(ctx, updateQ, row.ID, row.BriefID, row.ProjectID, string(model.AudienceBuilding))
-	if err != nil {
-		return false, fmt.Errorf("release audience build lease: %w", err)
-	}
-	if tag.RowsAffected() > 0 {
-		return true, nil
-	}
+func tryReleaseAudienceBuildLease(ctx context.Context, pool *Pool, row *model.CampaignAudience) (audienceReconcileOutcome, error) {
+	// Two passes, not one. Observing 'building' after a zero-row UPDATE means the row became
+	// visible BETWEEN this attempt's two statements — they run on separately-pooled connections
+	// with their own snapshots — so the UPDATE merely ran too early and an immediate second one
+	// matches. Leaving that to the caller's next attempt was a real gap: on the LAST attempt, or
+	// when the reconcile context is already done, there is no next attempt, and a row this
+	// process had just CONFIRMED was holding the lease got abandoned to the manual escape hatch.
+	// Retrying here costs one statement and closes it without touching the retry budget, which
+	// exists for a different question (has the commit landed at all?).
+	for pass := 0; pass < 2; pass++ {
+		// The release is ONE statement, not a SELECT followed by an UPDATE. The
+		// `status='building'` predicate is what enforces the do-not-downgrade invariant, and it
+		// has to be part of the write to enforce it at all: a separate status read is a TOCTOU
+		// window in which a concurrent PATCH can land, and a version predicate does not close it
+		// — a PATCH that edits another field while leaving the status 'building' still bumps the
+		// version, so the UPDATE would match zero rows, report no error, and abandon the row
+		// holding the lease forever. Predicating on the status instead of the version is also
+		// what makes the write idempotent under retry, which this depends on twice over now.
+		//
+		// Scoped by brief_id and project_id too, matching UpdateAudience's predicate — id alone
+		// would still be correct (it's the primary key), but every other write to this table
+		// carries the tenant scope, and this is a write path: worth keeping the pattern uniform
+		// rather than carving out a silent exception here.
+		tag, err := pool.Exec(ctx, releaseAudienceBuildLeaseQ,
+			row.ID, row.BriefID, row.ProjectID, string(model.AudienceBuilding))
+		if err != nil {
+			return audienceReconcileUnseen, fmt.Errorf("release audience build lease: %w", err)
+		}
+		if tag.RowsAffected() > 0 {
+			return audienceReconcileSettled, nil
+		}
 
-	// Zero rows has two meanings and they need opposite handling, so ask which one it was.
-	// This read is NOT the TOCTOU the single-statement write above avoids: it runs only after
-	// the write declined to match, it decides nothing about what to write, and its failure
-	// modes all fall through to another attempt rather than to an early return.
-	var status string
-	switch err := pool.QueryRow(ctx,
-		`SELECT status FROM campaign_audiences WHERE id=$1 AND brief_id=$2 AND project_id=$3`,
-		row.ID, row.BriefID, row.ProjectID).Scan(&status); {
-	case errors.Is(err, pgx.ErrNoRows):
-		// Rolled back, or not yet visible. Indistinguishable here; the caller retries.
-		return false, nil
-	case err != nil:
-		return false, fmt.Errorf("check audience row after a zero-row reconcile: %w", err)
-	case status == string(model.AudienceBuilding):
-		// It became visible between the two statements, so the UPDATE simply ran too early.
-		// Another attempt will match it.
-		return false, nil
-	default:
-		// 'built' or 'failed': a stable end state that holds no lease and must not be touched.
-		return true, nil
+		// Zero rows has two meanings and they need opposite handling, so ask which one it was.
+		// This read is NOT the TOCTOU the single-statement write above avoids: it runs only
+		// after the write declined to match, it decides nothing about what to write, and its
+		// failure modes all fall through to another attempt rather than to an early return.
+		var status string
+		switch err := pool.QueryRow(ctx,
+			`SELECT status FROM campaign_audiences WHERE id=$1 AND brief_id=$2 AND project_id=$3`,
+			row.ID, row.BriefID, row.ProjectID).Scan(&status); {
+		case errors.Is(err, pgx.ErrNoRows):
+			// Rolled back, or not yet visible. Indistinguishable here; the caller retries.
+			return audienceReconcileUnseen, nil
+		case err != nil:
+			return audienceReconcileUnseen, fmt.Errorf("check audience row after a zero-row reconcile: %w", err)
+		case status != string(model.AudienceBuilding):
+			// 'built' or 'failed': a stable end state that holds no lease and must not be
+			// touched. Re-read on the second pass too, so a concurrent PATCH landing between
+			// the passes is reported as settled rather than as a held lease.
+			return audienceReconcileSettled, nil
+		}
+		// Still 'building'. Fall through to the second pass, or out of the loop.
 	}
+	return audienceReconcileHeld, nil
+}
+
+// releaseAudienceBuildLeaseQ moves a 'building' audience row to 'failed', releasing the
+// (brief_id, platform) build lease from migration 000018.
+//
+// It is shared by the ambiguous-commit reconcile and by ReleaseAudienceBuildLease so the two
+// cannot drift: both need the same status predicate for the same reason, and a second copy of
+// this statement gated on the version instead is exactly the defect the predicate exists to
+// prevent.
+const releaseAudienceBuildLeaseQ = `UPDATE campaign_audiences
+	SET status='failed', version=version+1, updated_at=now()
+	WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND status=$4`
+
+// ReleaseAudienceBuildLease implements domain.AudienceRepository.
+func (r *AudienceRepo) ReleaseAudienceBuildLease(ctx context.Context, projectID, briefID, id string) error {
+	// Status-gated and unversioned, which is the whole point of it existing separately from
+	// UpdateAudience: the caller is releasing a lease it has given up on, and gating that on a
+	// version it read earlier means a concurrent PATCH — which bumps the version even when it
+	// leaves the status 'building' — turns the release into a no-op and strands the lease.
+	//
+	// Silent no-op on zero rows, deliberately. The row being absent or already terminal are
+	// both "the lease is not held", which is the caller's goal; reporting either as an error
+	// would only produce a log line for a state nobody needs to act on.
+	if _, err := r.db.Exec(ctx, releaseAudienceBuildLeaseQ,
+		id, briefID, projectID, string(model.AudienceBuilding)); err != nil {
+		return fmt.Errorf("release audience build lease: %w", err)
+	}
+	return nil
 }
 
 func (r *AudienceRepo) CreateAudience(ctx context.Context, a *model.CampaignAudience) (*model.CampaignAudience, error) {

@@ -42,4 +42,15 @@ type AudienceRepository interface {
 	// when the stored version differs and ErrNotFound when the row is absent. On
 	// success it bumps the version and returns the updated row.
 	UpdateAudience(ctx context.Context, a *model.CampaignAudience, expectedVersion int64) (*model.CampaignAudience, error)
+	// ReleaseAudienceBuildLease moves a 'building' audience row to 'failed', releasing the
+	// (brief_id, platform) build lease. It exists separately from UpdateAudience because it
+	// must NOT be version-gated: a caller releasing a lease it has given up on holds a version
+	// it read before the failure, and a concurrent PATCH bumps that version even when it leaves
+	// the status 'building' — so a version-gated release turns into ErrPreconditionFailed and
+	// strands the row 'building' forever, blocking every later build of that (brief, platform).
+	// The status predicate does the same job without that hole and is idempotent under retry.
+	//
+	// It is a no-op, not an error, when the row is absent or already in a terminal status:
+	// both mean the lease is not held, which is all the caller wanted.
+	ReleaseAudienceBuildLease(ctx context.Context, projectID, briefID, id string) error
 }

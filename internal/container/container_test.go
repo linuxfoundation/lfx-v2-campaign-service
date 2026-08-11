@@ -487,6 +487,10 @@ func (fakeAudienceRepo) UpdateAudience(_ context.Context, a *model.CampaignAudie
 	return a, nil
 }
 
+func (fakeAudienceRepo) ReleaseAudienceBuildLease(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
 // TestNewAudienceBuilder_SnowflakeOptional pins that an unconfigured or misconfigured warehouse
 // does NOT block audience building. Snowflake only enriches an audience with past editions; the
 // country-scoped group needs no warehouse, so failing here would take the whole email channel

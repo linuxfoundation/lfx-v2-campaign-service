@@ -395,3 +395,139 @@ func TestReconcileAmbiguousAudienceCommit_LeaveBuiltRowsUnchanged(t *testing.T) 
 		t.Errorf("fresh build should be able to take the lease: insert failed: %v", err)
 	}
 }
+
+// TestTryReleaseAudienceBuildLease_ClassifiesEachOutcome pins the tri-state the retry loop reads.
+//
+// The loop's two exits are only as truthful as this classification: it is what lets
+// reconcileAmbiguousAudienceCommit tell "no row is visible" (keep waiting; report the ordinary
+// probable-rollback warn if time runs out) from "row is present and still 'building'" (a lease
+// this process knows is held). Collapsing the two — which is what returning a bare bool did —
+// is the Cursor finding on PR #106, and it is the reason a genuinely stranded lease read as
+// routine. The wording and level that follow from it are covered in
+// TestReportUnreconciledAudience_SeparatesAConfirmedHeldLeaseFromAProbableRollback.
+//
+// Note what is deliberately NOT asserted here: audienceReconcileHeld. Producing it requires the
+// row to become visible between an attempt's two statements, which nothing can schedule into.
+func TestTryReleaseAudienceBuildLease_ClassifiesEachOutcome(t *testing.T) {
+	pool := reconcileTestPool(t)
+	ctx := context.Background()
+
+	briefID, projectID := insertReconcileTestBrief(ctx, t, pool)
+
+	// A 'built' row must carry a master-list pointer (check constraint
+	// campaign_audiences_built_needs_master_list), so the helper supplies one for that status
+	// and leaves it NULL otherwise.
+	insert := func(t *testing.T, status string) *model.CampaignAudience {
+		t.Helper()
+		row := &model.CampaignAudience{
+			ProjectID: projectID,
+			BriefID:   briefID,
+			Platform:  model.ProviderHubSpot,
+		}
+		var masterListID *string
+		if status == "built" {
+			id := "master-list-" + reconcileUniqueID(t, "c")
+			masterListID = &id
+			row.PlatformMasterListID = id
+		}
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO campaign_audiences (project_id, brief_id, platform, platform_master_list_id, status)
+			VALUES ($1, $2, $3, $4, $5)
+			RETURNING id, version`,
+			projectID, briefID, string(model.ProviderHubSpot), masterListID, status).
+			Scan(&row.ID, &row.Version); err != nil {
+			t.Fatalf("insert %q audience row: %v", status, err)
+		}
+		return row
+	}
+
+	t.Run("an absent row is unseen, not settled", func(t *testing.T) {
+		// The id is well-formed but names nothing — exactly the shape of a commit that really
+		// did roll back. Calling this settled would end the retry loop on the one outcome that
+		// is worth waiting on.
+		row := &model.CampaignAudience{
+			ID:        "00000000-0000-0000-0000-000000000000",
+			ProjectID: projectID,
+			BriefID:   briefID,
+			Platform:  model.ProviderHubSpot,
+		}
+		outcome, err := tryReleaseAudienceBuildLease(ctx, pool, row)
+		if err != nil {
+			t.Fatalf("classifying an absent row must not error: %v", err)
+		}
+		if outcome != audienceReconcileUnseen {
+			t.Errorf("outcome = %d, want audienceReconcileUnseen (%d) — an absent row is the case "+
+				"the loop must keep waiting on", outcome, audienceReconcileUnseen)
+		}
+	})
+
+	t.Run("a building row is released and settled", func(t *testing.T) {
+		row := insert(t, "building")
+		outcome, err := tryReleaseAudienceBuildLease(ctx, pool, row)
+		if err != nil {
+			t.Fatalf("releasing a building row must not error: %v", err)
+		}
+		if outcome != audienceReconcileSettled {
+			t.Errorf("outcome = %d, want audienceReconcileSettled (%d)", outcome, audienceReconcileSettled)
+		}
+		var status string
+		if err := pool.QueryRow(ctx, `SELECT status FROM campaign_audiences WHERE id=$1`, row.ID).
+			Scan(&status); err != nil {
+			t.Fatalf("read back the released row: %v", err)
+		}
+		if status != "failed" {
+			t.Errorf("status = %q, want %q — the lease is still held", status, "failed")
+		}
+	})
+
+	t.Run("a terminal row is settled without being touched", func(t *testing.T) {
+		row := insert(t, "built")
+		outcome, err := tryReleaseAudienceBuildLease(ctx, pool, row)
+		if err != nil {
+			t.Fatalf("classifying a built row must not error: %v", err)
+		}
+		if outcome != audienceReconcileSettled {
+			t.Errorf("outcome = %d, want audienceReconcileSettled (%d) — a terminal row holds no "+
+				"lease, so its fate is known and there is nothing left to wait for",
+				outcome, audienceReconcileSettled)
+		}
+		var status string
+		var version int64
+		if err := pool.QueryRow(ctx, `SELECT status, version FROM campaign_audiences WHERE id=$1`, row.ID).
+			Scan(&status, &version); err != nil {
+			t.Fatalf("read back the built row: %v", err)
+		}
+		if status != "built" || version != row.Version {
+			t.Errorf("built row was modified: status=%q version=%d, want %q and %d",
+				status, version, "built", row.Version)
+		}
+	})
+
+	t.Run("another tenant's row is unseen", func(t *testing.T) {
+		// Both statements are scoped by (id, brief_id, project_id). A row that exists but
+		// belongs to a different tenant must classify as absent, never as something this
+		// caller may release.
+		row := insert(t, "building")
+		otherBriefID, otherProjectID := insertReconcileTestBrief(ctx, t, pool)
+		probe := *row
+		probe.ProjectID = otherProjectID
+		probe.BriefID = otherBriefID
+
+		outcome, err := tryReleaseAudienceBuildLease(ctx, pool, &probe)
+		if err != nil {
+			t.Fatalf("classifying another tenant's row must not error: %v", err)
+		}
+		if outcome != audienceReconcileUnseen {
+			t.Errorf("outcome = %d, want audienceReconcileUnseen (%d)", outcome, audienceReconcileUnseen)
+		}
+		var status string
+		if err := pool.QueryRow(ctx, `SELECT status FROM campaign_audiences WHERE id=$1`, row.ID).
+			Scan(&status); err != nil {
+			t.Fatalf("read back the other tenant's row: %v", err)
+		}
+		if status != "building" {
+			t.Errorf("status = %q, want %q — a cross-tenant reconcile released a row it does not own",
+				status, "building")
+		}
+	})
+}

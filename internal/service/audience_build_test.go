@@ -706,6 +706,53 @@ func TestBuildAudience_StaleApprovalIsRejected(t *testing.T) {
 			"nothing to reconcile before failing it")
 }
 
+// TestBuildAudience_ReleasesTheLeaseAfterAConcurrentPatchBumpsTheVersion pins that abandoning a
+// claim does not consult the version the claim was inserted at.
+//
+// releaseUnstartedClaim used to go through UpdateAudience, which is version-gated, holding the
+// version CreateAudienceForApprovedBrief returned. Any concurrent PATCH bumps that version — and
+// a PATCH may leave the row 'building' while changing something else entirely, so it is not even
+// a competing writer for the lease. The release then came back ErrPreconditionFailed, was
+// swallowed by the best-effort log, and the row stayed 'building' forever: every later build of
+// this (brief, platform) answers 409 until an operator PATCHes the row by hand.
+//
+// The setup is the one that makes it inevitable rather than likely: the version is bumped inside
+// the warehouse call, which is squarely between the claim and the release. Note the assertion is
+// on the STORED row — the fake hands out copies precisely so an in-memory status the service
+// never persisted cannot satisfy it.
+//
+// Revert-verified: with releaseUnstartedClaim back on UpdateAudience(row, row.Version) this fails
+// with `status building, want failed`.
+func TestBuildAudience_ReleasesTheLeaseAfterAConcurrentPatchBumpsTheVersion(t *testing.T) {
+	b := &fakeBuilder{}
+	s, arepo, brepo := newBuildService(t, b, `{"eventName":"KubeCon Korea 2026","country":"South Korea"}`)
+
+	brief := brepo.briefs[briefKey("cncf", "brief-1")]
+	brief.Version = 3
+	b.duringResolve = func() {
+		// A PATCH to the audience row that leaves it 'building' — an edited inclusion summary,
+		// say. It touches nothing the lease is about and still invalidates any version-gated
+		// write the build was holding.
+		for _, stored := range arepo.items {
+			stored.Version++
+		}
+		// And the brief moves, so the build gives up and the release path runs at all.
+		brief.Status = model.BriefDraft
+		brief.Version = 4
+	}
+
+	_, err := s.BuildAudience(context.Background(), &audiences.BuildAudiencePayload{
+		ProjectID: "cncf", BriefID: "brief-1",
+	})
+	require.Error(t, err, "a brief that moved mid-build must not produce an audience")
+
+	rows := arepo.rows()
+	require.Len(t, rows, 1, "the claim was taken before the brief moved, so its row exists")
+	assert.Equal(t, model.AudienceFailed, rows[0].Status,
+		"the lease must be released on a status predicate, not on the version the claim was "+
+			"taken at; a concurrent PATCH bumping that version must not strand the row 'building'")
+}
+
 // TestBuildAudience_ApprovalMovingBeforeTheClaimIsAPlain400 keeps the ordinary user error
 // ordinary. The claim gates on approval itself, so a draft brief is refused by the repository
 // with ErrStaleApproval — the sentinel whose message is about versions and whose status is 409.

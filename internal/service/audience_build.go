@@ -439,11 +439,18 @@ func confirmStillApproved(ctx context.Context, briefs domain.BriefRepository, pr
 // unlike the partial-build paths there is nothing upstream to reconcile first. Detached and
 // bounded for the same reason the other persists are — a client disconnect must not be the
 // reason a lease stays held.
+//
+// It releases through ReleaseAudienceBuildLease rather than UpdateAudience, and the difference
+// is the whole point. UpdateAudience is version-gated, and row.Version was read when the row was
+// inserted: a concurrent PATCH that changes any other field while leaving the status 'building'
+// bumps that version, so the release would come back ErrPreconditionFailed and the abandoned row
+// would stay 'building' forever — the exact failure the repository's own ambiguous-commit
+// reconcile avoids by predicating on the STATUS instead. Gating on the status also makes this
+// a no-op when the row is already terminal, which is the correct outcome rather than a race.
 func releaseUnstartedClaim(ctx context.Context, repo domain.AudienceRepository, row *model.CampaignAudience, cause error) {
-	row.Status = model.AudienceFailed
 	relCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), audiencePersistTimeout)
 	defer cancel()
-	if _, uerr := repo.UpdateAudience(relCtx, row, row.Version); uerr != nil {
+	if uerr := repo.ReleaseAudienceBuildLease(relCtx, row.ProjectID, row.BriefID, row.ID); uerr != nil {
 		// Best effort by construction: the caller is already returning an error, so there is
 		// nothing better to do than name the row an operator will have to fail by hand.
 		slog.ErrorContext(ctx, "failed to release an audience build claim that never started",
