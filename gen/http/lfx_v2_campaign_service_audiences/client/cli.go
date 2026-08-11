@@ -23,7 +23,7 @@ func BuildCreateAudiencePayload(lfxV2CampaignServiceAudiencesCreateAudienceBody 
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudiencesCreateAudienceBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"audience\": {\n         \"inclusion_summary\": \"Quia enim illo et eligendi.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Ut quia harum.\",\n         \"status\": \"failed\",\n         \"suppression_list_ids\": [\n            \"Expedita omnis.\",\n            \"Id ut aut.\",\n            \"Sit similique ut minima ut.\",\n            \"Voluptatum officia quod error amet quia inventore.\"\n         ]\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"audience\": {\n         \"inclusion_summary\": \"Sit similique ut minima ut.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Rerum sunt eum et qui.\",\n         \"status\": \"failed\",\n         \"suppression_list_ids\": [\n            \"Ut quia harum.\",\n            \"Voluptas expedita omnis ex.\",\n            \"Ut aut.\"\n         ]\n      }\n   }'")
 		}
 		if body.Audience == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("audience", "body"))

@@ -181,13 +181,26 @@ func campaignFromMicrosoft(ctx context.Context, r *microsoft.CampaignResult, cfg
 // The account id is trimmed ONCE and the trimmed value returned, so a whitespace-padded id
 // can't pass the empty check here and then fail the client's digits-only validation as a
 // confusing downstream error.
-func validateMicrosoftConnection(projectID string, res *resolved) (microsoftCreds, string, error) {
-	var creds microsoftCreds
+// Every defect below is tagged for its AUDIENCE here, at the point of detection, following
+// validateGoogleAdsCredentials. Untagged, all four fell to each handler's default arm and
+// answered 503 — "the platform did not respond" about a platform that was never contacted,
+// with a remedy (retry) that no amount of waiting can satisfy, since only a human editing
+// the connection can fix it. The 409 arm at internal/service/brief.go is the correct answer.
+// Tagging HERE rather than in each caller is what keeps Dispatch and ToggleStatus from
+// having to agree about it; the named return plus defer means a return site added later
+// cannot forget to re-attribute the error to the LF system row.
+func validateMicrosoftConnection(projectID string, res *resolved) (creds microsoftCreds, accountID string, err error) {
+	defer func() { err = res.systemScoped(err) }()
 	if res.status != model.StatusActive {
-		return creds, "", fmt.Errorf("microsoft connection for project %s is %s, not active", projectID, res.status)
+		return creds, "", fmt.Errorf("%w: %w: microsoft connection for project %s is %s, not active",
+			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
 	}
 	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return creds, "", fmt.Errorf("decode microsoft credentials: %w", err)
+		// The unmarshal error is DROPPED, not wrapped: it is derived from the DECRYPTED
+		// credential blob and encoding/json quotes its input. Full rationale on
+		// validateGoogleAdsCredentials, which this follows.
+		return creds, "", fmt.Errorf("%w: %w: microsoft credentials for project %s are not valid JSON",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, projectID)
 	}
 	// TRIM before the completeness check and RETURN the trimmed values. Without the trim a
 	// whitespace-only credential passes as "present", so CreateCampaign runs and its first
@@ -199,11 +212,15 @@ func validateMicrosoftConnection(projectID string, res *resolved) (microsoftCred
 	creds.DeveloperToken = strings.TrimSpace(creds.DeveloperToken)
 	creds.RefreshToken = strings.TrimSpace(creds.RefreshToken)
 	if creds.ClientID == "" || creds.ClientSecret == "" || creds.DeveloperToken == "" || creds.RefreshToken == "" {
-		return creds, "", fmt.Errorf("microsoft credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)")
+		return creds, "", fmt.Errorf("%w: %w: microsoft credentials are incomplete (need clientId, clientSecret, developerToken, refreshToken)",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
 	}
-	accountID := strings.TrimSpace(res.accountID)
+	accountID = strings.TrimSpace(res.accountID)
 	if accountID == "" {
-		return creds, "", fmt.Errorf("microsoft connection for project %s has no account id (customer account id)", projectID)
+		// BOTH sentinels: ErrConnectionNotUsable decides the HTTP status, ErrAccountNotSelected
+		// names the reason for the log line's fixed vocabulary (unusableConnectionReason).
+		return creds, "", fmt.Errorf("%w: %w: microsoft connection for project %s has no account id (customer account id)",
+			domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected, projectID)
 	}
 	return creds, accountID, nil
 }

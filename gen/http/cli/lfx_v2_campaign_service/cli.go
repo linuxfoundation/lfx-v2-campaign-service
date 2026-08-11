@@ -28,14 +28,14 @@ func UsageCommands() []string {
 	return []string{
 		"lfx-v2-campaign-service-audiences (create-audience|get-audience|list-audiences|update-audience|build-audience)",
 		"lfx-v2-campaign-service-briefs (create-brief|find-brief|get-brief|update-brief|approve-brief|delete-brief|fetch-event-url|create-campaigns|get-campaign|get-campaign-metrics|generate-email-copy|update-campaign|toggle-campaign-status|delete-campaign|get-job)",
-		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts)",
+		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts|list-meta-ads-accounts)",
 		"lfx-v2-campaign-service-svc (readyz|livez)",
 	}
 }
 
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
-	return os.Args[0] + " " + "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Quia enim illo et eligendi.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Ut quia harum.\",\n         \"status\": \"failed\",\n         \"suppression_list_ids\": [\n            \"Expedita omnis.\",\n            \"Id ut aut.\",\n            \"Sit similique ut minima ut.\",\n            \"Voluptatum officia quod error amet quia inventore.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"93fb037a-6e71-4acb-8c44-d771d5edc77f\" --bearer-token \"eyJhbGci...\"" + "\n" +
+	return os.Args[0] + " " + "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Sit similique ut minima ut.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Rerum sunt eum et qui.\",\n         \"status\": \"failed\",\n         \"suppression_list_ids\": [\n            \"Ut quia harum.\",\n            \"Voluptas expedita omnis ex.\",\n            \"Ut aut.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"e219e8ee-5d10-4530-b6a6-1512a972107c\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-briefs create-brief --body '{\n      \"brief\": {\n         \"copy\": \"Ut quo iure.\",\n         \"event_details\": \"Magnam ut similique ea minima magnam.\",\n         \"event_slug\": \"k\",\n         \"keywords\": \"Sit est dolores est et.\",\n         \"platforms\": [\n            \"Dolorem qui explicabo consequuntur repellat non suscipit.\",\n            \"Sit tempore.\"\n         ],\n         \"program_type\": \"education\",\n         \"targeting\": \"Nihil porro perferendis.\",\n         \"url\": \"Qui a necessitatibus molestiae qui unde.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-connections create-google-ads --body '{\n      \"config\": {\n         \"account_id\": \"8666746580\",\n         \"label\": \"TLF Main\",\n         \"login_customer_id\": \"9746983954\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Deleniti sint reiciendis odit eos et quidem.\",\n         \"client_secret\": \"Atque hic quam impedit placeat.\",\n         \"developer_token\": \"Voluptatibus aliquam et.\",\n         \"refresh_token\": \"Qui modi consequatur molestias et.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-svc readyz" + "\n" +
@@ -378,6 +378,10 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsListGoogleAdsAccountsProjectIDFlag   = lfxV2CampaignServiceConnectionsListGoogleAdsAccountsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
 		lfxV2CampaignServiceConnectionsListGoogleAdsAccountsBearerTokenFlag = lfxV2CampaignServiceConnectionsListGoogleAdsAccountsFlags.String("bearer-token", "", "")
 
+		lfxV2CampaignServiceConnectionsListMetaAdsAccountsFlags           = flag.NewFlagSet("list-meta-ads-accounts", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsListMetaAdsAccountsProjectIDFlag   = lfxV2CampaignServiceConnectionsListMetaAdsAccountsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsListMetaAdsAccountsBearerTokenFlag = lfxV2CampaignServiceConnectionsListMetaAdsAccountsFlags.String("bearer-token", "", "")
+
 		lfxV2CampaignServiceSvcFlags = flag.NewFlagSet("lfx-v2-campaign-service-svc", flag.ContinueOnError)
 
 		lfxV2CampaignServiceSvcReadyzFlags = flag.NewFlagSet("readyz", flag.ExitOnError)
@@ -452,6 +456,7 @@ func ParseEndpoint(
 	lfxV2CampaignServiceConnectionsTestHubspotFlags.Usage = lfxV2CampaignServiceConnectionsTestHubspotUsage
 	lfxV2CampaignServiceConnectionsSetCredentialHubspotFlags.Usage = lfxV2CampaignServiceConnectionsSetCredentialHubspotUsage
 	lfxV2CampaignServiceConnectionsListGoogleAdsAccountsFlags.Usage = lfxV2CampaignServiceConnectionsListGoogleAdsAccountsUsage
+	lfxV2CampaignServiceConnectionsListMetaAdsAccountsFlags.Usage = lfxV2CampaignServiceConnectionsListMetaAdsAccountsUsage
 
 	lfxV2CampaignServiceSvcFlags.Usage = lfxV2CampaignServiceSvcUsage
 	lfxV2CampaignServiceSvcReadyzFlags.Usage = lfxV2CampaignServiceSvcReadyzUsage
@@ -694,6 +699,9 @@ func ParseEndpoint(
 			case "list-google-ads-accounts":
 				epf = lfxV2CampaignServiceConnectionsListGoogleAdsAccountsFlags
 
+			case "list-meta-ads-accounts":
+				epf = lfxV2CampaignServiceConnectionsListMetaAdsAccountsFlags
+
 			}
 
 		case "lfx-v2-campaign-service-svc":
@@ -926,6 +934,9 @@ func ParseEndpoint(
 			case "list-google-ads-accounts":
 				endpoint = c.ListGoogleAdsAccounts()
 				data, err = lfxv2campaignserviceconnectionsc.BuildListGoogleAdsAccountsPayload(*lfxV2CampaignServiceConnectionsListGoogleAdsAccountsProjectIDFlag, *lfxV2CampaignServiceConnectionsListGoogleAdsAccountsBearerTokenFlag)
+			case "list-meta-ads-accounts":
+				endpoint = c.ListMetaAdsAccounts()
+				data, err = lfxv2campaignserviceconnectionsc.BuildListMetaAdsAccountsPayload(*lfxV2CampaignServiceConnectionsListMetaAdsAccountsProjectIDFlag, *lfxV2CampaignServiceConnectionsListMetaAdsAccountsBearerTokenFlag)
 			}
 		case "lfx-v2-campaign-service-svc":
 			c := lfxv2campaignservicesvcc.NewClient(scheme, host, doer, enc, dec, restore)
@@ -980,7 +991,7 @@ func lfxV2CampaignServiceAudiencesCreateAudienceUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Quia enim illo et eligendi.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Ut quia harum.\",\n         \"status\": \"failed\",\n         \"suppression_list_ids\": [\n            \"Expedita omnis.\",\n            \"Id ut aut.\",\n            \"Sit similique ut minima ut.\",\n            \"Voluptatum officia quod error amet quia inventore.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"93fb037a-6e71-4acb-8c44-d771d5edc77f\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Sit similique ut minima ut.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Rerum sunt eum et qui.\",\n         \"status\": \"failed\",\n         \"suppression_list_ids\": [\n            \"Ut quia harum.\",\n            \"Voluptas expedita omnis ex.\",\n            \"Ut aut.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"e219e8ee-5d10-4530-b6a6-1512a972107c\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudiencesGetAudienceUsage() {
@@ -1004,7 +1015,7 @@ func lfxV2CampaignServiceAudiencesGetAudienceUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences get-audience --project-id \"cncf\" --brief-id \"04ee4aec-2997-4eb6-ba92-7d86d6323fc7\" --audience-id \"91cc6bc7-ad0c-4c14-a733-1cb84746187f\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences get-audience --project-id \"cncf\" --brief-id \"78908c93-b7ac-48a8-9a67-fb5417364ea0\" --audience-id \"b79d3d90-197d-41d1-84c9-2fb606714237\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudiencesListAudiencesUsage() {
@@ -1026,7 +1037,7 @@ func lfxV2CampaignServiceAudiencesListAudiencesUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences list-audiences --project-id \"cncf\" --brief-id \"71a95a4e-6e06-44b3-8181-b7c2390c3a88\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences list-audiences --project-id \"cncf\" --brief-id \"fd82b66c-f6b1-44f8-a9a1-ed83ba03f61a\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudiencesUpdateAudienceUsage() {
@@ -1513,6 +1524,7 @@ func lfxV2CampaignServiceConnectionsUsage() {
 	fmt.Fprintln(os.Stderr, `    test-hubspot: Verify the stored HubSpot credential against the provider.`)
 	fmt.Fprintln(os.Stderr, `    set-credential-hubspot: Replace the stored (encrypted) HubSpot credential. Separate from update so credential replacement is independently permissioned and audited. Not a rotate — the service does not generate or swap secrets upstream.`)
 	fmt.Fprintln(os.Stderr, `    list-google-ads-accounts: Enumerate the Google Ads ad accounts accessible via the stored connection credential.`)
+	fmt.Fprintln(os.Stderr, `    list-meta-ads-accounts: Enumerate the Meta ad accounts accessible via the stored connection credential. Returns act_-prefixed account ids, ready to store as the connection's account_id. Accounts Meta reports as disabled, unsettled or closed are included with the reason in their label rather than filtered out, so the caller can see why an account they expected cannot be used.`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s lfx-v2-campaign-service-connections COMMAND --help\n", os.Args[0])
@@ -2431,6 +2443,26 @@ func lfxV2CampaignServiceConnectionsListGoogleAdsAccountsUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections list-google-ads-accounts --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsListMetaAdsAccountsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections list-meta-ads-accounts", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Enumerate the Meta ad accounts accessible via the stored connection credential. Returns act_-prefixed account ids, ready to store as the connection's account_id. Accounts Meta reports as disabled, unsettled or closed are included with the reason in their label rather than filtered out, so the caller can see why an account they expected cannot be used.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections list-meta-ads-accounts --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 // lfxV2CampaignServiceSvcUsage displays the usage of the

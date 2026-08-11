@@ -52,8 +52,13 @@ enforced on the system row:
 
 `accountID` and `providerConfig` are tri-state, and which state an omission stands for depends on
 whether the row already exists. On a FIRST install an omitted `-account-id` is the credentials-first
-state, legal only where a dispatcher can discover the account afterwards (`accountDiscoveryProviders`,
-Google Ads alone). On a ROTATION the same omission means KEEP, because a rotation should not have to
+state, legal only where the account can be chosen afterwards (`accountDiscoveryProviders`, Google
+Ads alone). Membership is narrower than "the dispatcher can discover accounts": Meta gained a
+discovery endpoint in LFXV2-3062 and is still deliberately excluded, because the other half of a
+completable lifecycle is that the path needing an account id fails in a way that NAMES the missing
+choice, and Meta's `Dispatch` still returns a generic error for an empty id instead of tagging it
+with `domain.ErrAccountNotSelected` (LFXV2-3061). Until that lands, an account-less Meta row is a
+dead row, so the map keeps it out — see the comment on the map itself for the full reasoning. On a ROTATION the same omission means KEEP, because a rotation should not have to
 restate the whole row.
 
 Preserve-by-default cannot express a removal, and this scope has no other writer that could —
