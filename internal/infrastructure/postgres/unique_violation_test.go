@@ -22,9 +22,18 @@ import (
 // runs everywhere, so degrading the helper cannot reach main through a green-looking run
 // that exercised nothing.
 //
-// The wrapped case is not decoration. Every production caller reaches this helper with an
-// error that pgx has already wrapped at least once, so a version matching on the concrete
-// type rather than via errors.As would pass a bare-value test and fail on every real row.
+// The wrapped case does NOT reproduce the current production path, and saying so is the
+// point of stating it. Measured by printing the chain at the call site against a real
+// 23505: the helper receives a bare *pgconn.PgError, one layer, unwrapped — all three
+// callers hand it the error scanAudience returns, and scanAudience returns row.Scan's
+// error unchanged. A version matching with a type assertion instead of errors.As would
+// therefore pass today.
+//
+// It is here because that is a property of today's call sites, not of the helper's
+// contract. The helper takes an `error`, and the first caller to add context to one — a
+// retry wrapper, a %w on the way out of a transaction — would silently stop matching. The
+// case costs one line and pins errors.As as part of the contract rather than an
+// implementation detail that happens to be unobservable.
 func TestIsUniqueViolationOn(t *testing.T) {
 	const want = "uq_campaign_audiences_brief_platform_building"
 

@@ -114,10 +114,17 @@ cannot quietly make this a place an arbitrary string reaches DDL.
 a partial unique index populates `ConstraintName` — but it SKIPS when `TEST_DATABASE_URL` is unset,
 and a skipped test prints `ok`. `TestIsUniqueViolationOn` is a table-driven unit test over synthetic
 `*pgconn.PgError` values (matching name, a different name under the same 23505, an empty name, the
-right name under 23514, a 23503, a non-`PgError`, nil) that runs everywhere. It includes a wrapped
-case deliberately: every production caller reaches the helper through at least one `%w`, so a
-version matching on the concrete type would pass a bare-value test and fail on every real row.
-Degrading the helper to SQLSTATE-only fails two of its subtests.
+right name under 23514, a 23503, a non-`PgError`, nil) that runs everywhere. Degrading the helper
+to SQLSTATE-only fails two of its subtests.
+
+It also covers a wrapped error, and the reason is worth recording because the first version of this
+paragraph got it backwards. It claimed every production caller reaches the helper through a `%w`.
+That is false, and Copilot caught it. Measured by printing the chain at the call site against a
+real 23505: the helper receives a bare `*pgconn.PgError`, one layer, unwrapped — all three callers
+pass the error `scanAudience` returns, and that is `row.Scan`'s error unchanged. A type assertion
+would pass today. The case stays because the helper's parameter is an `error`, so `errors.As` is
+part of its contract rather than a detail that happens to be unobservable; the first caller to add
+context would otherwise silently stop matching.
 
 ## Verification
 
