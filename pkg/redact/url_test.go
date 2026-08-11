@@ -153,15 +153,16 @@ func TestURLUserinfo_Shapes(t *testing.T) {
 		// for the last '@' redacts this to 'https://***@b.example' — no leak, but the host
 		// and path that are the only reason to log a URL are gone, and the operator reading
 		// it concludes the endpoint is misconfigured.
-		{"https://idp.example.com/jwks?contact=ops@b.example", "https://idp.example.com/jwks"},
-		// The host is kept because `idp.example.com` is a well-formed authority, so the `/`
-		// after it can only start a path.
-		//
-		// An explicit port takes that away, numeric or not: `idp.example.com:8443` is also a
-		// legal `user:password`, so the `/` may be inside the password and the `?` with it. The
-		// diagnostic cost is narrow — it is paid only by a value that ALSO has an `@` past its
-		// `?`, which is why the far commoner `…:8443/jwks?access_token=…` below keeps its host.
+		{"https://idp.example.com/jwks?contact=ops@b.example", "https://***"},
+		// The host goes with it. `idp.example.com` LOOKS like a well-formed authority, and
+		// that was once taken as proof the `/` could only start a path — but userinfo does not
+		// have to contain a `:`, so a colonless region is just as legal a token-only userinfo
+		// (`nats://token@host`, a documented NATS form) as it is a host. Neither reading is
+		// disqualified, so neither is chosen. An explicit port changes nothing either way.
 		{"https://idp.example.com:8443/jwks?contact=ops@b.example", "https://***"},
+		// The diagnostic cost is narrow: it is paid only by a value that ALSO has an `@` past
+		// its `?`, which is why the far commoner `…/jwks?access_token=…` keeps its host.
+		{"https://idp.example.com/jwks?access_token=s3cret", "https://idp.example.com/jwks"},
 		{"https://idp.example.com:8443/jwks?access_token=s3cret", "https://idp.example.com:8443/jwks"},
 		{"https://[::1]:8443/jwks?contact=ops@b.example", "https://[::1]:8443/jwks"},
 		// The bracketed forms a real authority takes, all of which must still keep their host
@@ -203,8 +204,13 @@ func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
 			// out on `&access_token=`. A redirect parameter is ordinary in an OIDC
 			// deployment, and `Config.String` sends JWKS URLs through here.
 			name:    "query holding a URL with an @ is one URL, not two",
+			// The host now goes too, because an unbracketed region before the `/` is as legal
+			// a token-only userinfo as it is an authority (see "a token-only userinfo is not
+			// a host"). What this case pins is unchanged and is the part that matters: the
+			// `://` in the query does not make this two URLs, so the value is never rebuilt
+			// from the `@` in `x@y.example` — which is what let the token ride out.
 			in:      "https://idp.example.com/jwks?redirect=https://x@y.example&access_token=s3cret", // secretlint-disable-line
-			want:    "https://idp.example.com/jwks",
+			want:    "https://***",
 			secrets: []string{"s3cret", "access_token"},
 		},
 		{
@@ -360,6 +366,24 @@ func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
 			in:      "nats://u:1234/path?x@host:4222", // secretlint-disable-line
 			want:    "nats://***",
 			secrets: []string{"u:1234", ":1234", "/path"},
+		},
+		{
+			// The mirror of the case above, and the reason the colon test was not the fix
+			// either. Userinfo does not need a `:`: `nats://token@host:4222` is a documented
+			// NATS form that this service's own config accepts, so a colonless `s3cret` is a
+			// WHOLE credential rather than a username missing its other half. "No colon, so
+			// nothing that could be a password" read it as a bare host, called the `?`
+			// genuine, and logged `nats://s3cret/path`.
+			//
+			// Both readings put a `/` and a `?` inside userinfo, which RFC 3986 §3.2.1
+			// excludes — neither is more malformed than the other, so an unbracketed region
+			// is refused whatever it contains. A bracketed host still keeps its host (rows
+			// above): `[` and `]` are gen-delims §3.2.1 excludes from userinfo, which is a
+			// proof about the grammar rather than a guess about the bytes.
+			name:    "a token-only userinfo is not a host",
+			in:      "nats://s3cret/path?x@host:4222", // secretlint-disable-line
+			want:    "nats://***",
+			secrets: []string{"s3cret", "/path"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

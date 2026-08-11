@@ -264,23 +264,34 @@ func queryIsGenuine(u string, q int) bool {
 // shape; in the first, `u:p/path?x` is the password and `host` the host, and cutting at the
 // `?` prints `nats://u:p`.
 //
-// What separates them is what the `/` closes. `idp` is a well-formed authority, so the `/`
-// after it can only begin a path. `u:p` is not: `p` is not a port, so the sole reading that
-// makes `u:p` legal is userinfo — and then the `/` is inside the password and the `?` may be
-// too.
+// What separates them has to be a STRUCTURAL proof that the region before the `/` could not be
+// userinfo — and only one thing in this position is such a proof. Two weaker tells were tried
+// and both leaked:
 //
-// An unbracketed `:` is therefore refused WHATEVER follows it, including a decimal port. Reading
-// only a non-numeric right-hand side as the tell still leaked, because a numeric PASSWORD is
-// equally legal: `nats://u:1234/path?x@host:4222` has `u:1234` before the `/`, and `u`-host-
-// port-1234 and `u`-user-password-1234 are the same eleven bytes. Nothing in the value chooses,
-// so the `?` was called genuine, the value cut there, and `nats://u:1234/path` logged with the
-// password in it. `isPort` answers a question this position cannot ask.
+//   - "the right-hand side of the `:` is not a port". A numeric PASSWORD is equally legal:
+//     `nats://u:1234/path?x@host:4222` has `u:1234` before the `/`, and `u`-host-port-1234 and
+//     `u`-user-password-1234 are the same eleven bytes. Nothing in the value chooses, so the `?`
+//     was called genuine and `nats://u:1234/path` was logged with the password in it.
+//   - "there is no `:` at all, so there is nothing that could be a password". Userinfo does not
+//     need a colon. `nats://token@host:4222` is a documented NATS form and this service's own
+//     config accepts it, so a bare `s3cret` is a whole credential rather than a username missing
+//     its other half — and `nats://s3cret/path?x@host:4222` printed `nats://s3cret/path`.
+//
+// The shared error is treating the absence of a disqualifying feature as proof of an authority.
+// Both malformed readings put a `/` and a `?` inside userinfo, which RFC 3986 §3.2.1 excludes;
+// neither is more malformed than the other, so accepting one and refusing the other was never
+// principled. An unbracketed region is therefore refused whatever it contains.
+//
+// A bracketed host is the exception, and the only one, because `[` and `]` are gen-delims
+// §3.2.1 excludes from userinfo: a value that opens with `[` CANNOT be userinfo, so there the
+// authority reading is not the likelier one but the only one. That is a proof about the
+// grammar rather than a guess about the bytes, which is what the other two lacked.
 //
 // The cost is confined and it is the right way round: only a value that ALSO carries an `@` past
-// its `?` ever consults this (see redactOne), so what is lost is the host of an explicit-port URL
-// with an `@` in its query, and what is kept is every numeric password. A bracketed IPv6 host
-// keeps its port test, because `[` and `]` are gen-delims RFC 3986 §3.2.1 excludes from userinfo:
-// there the authority reading is the only one.
+// its `?` ever consults this (see redactOne), so what is lost is the host of an unbracketed URL
+// with an `@` in its query — `https://idp/jwks?contact=ops@b.example` redacts whole — and what is
+// kept is every credential. The package doc already promises best-effort identity rather than
+// format preservation; this is where that promise is spent.
 func pathClosesAuthority(seg string) bool {
 	slash := strings.IndexByte(seg, '/')
 	if slash < 0 {
@@ -299,10 +310,7 @@ func pathClosesAuthority(seg string) bool {
 	if strings.HasPrefix(host, "[") {
 		return bracketedHostCloses(host)
 	}
-	if strings.ContainsRune(host, ':') {
-		return false // host:port and user:password are the same bytes here; refuse rather than guess
-	}
-	return true // a bare host holds nothing that could be a password
+	return false // an unbracketed authority and a userinfo are the same bytes here
 }
 
 // bracketedHostCloses reports whether host is a well-formed `[IPv6]` or `[IPv6]:port`

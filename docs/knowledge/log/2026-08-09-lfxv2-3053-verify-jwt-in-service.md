@@ -707,3 +707,35 @@ and the leak is a revert-verified case in `TestURLUserinfo_NeverEmitsACredential
 This is the same class as the three above and it is the fourth instance: a rule that inferred
 structure from a value whose structure is untrustworthy. The pattern in the resolutions is
 consistent too — each one ends by giving up a distinction rather than making a finer one.
+
+## Round 6: userinfo does not need a colon
+
+Copilot found that round 5's fix left the mirror-image branch leaking. `pathClosesAuthority`
+refused an unbracketed `:` whatever followed it, and then returned `true` for a region with no
+`:` at all, on the reasoning that a bare host "holds nothing that could be a password".
+
+Userinfo does not need a colon. `nats://token@host:4222` is a documented NATS form and this
+service's own `NATS_URL` accepts it, so a colonless region is a WHOLE credential rather than a
+username missing its other half. `nats://s3cret/path?x@host:4222` therefore printed
+`nats://s3cret/path`.
+
+Both malformed readings — `u:p/path?x` and `s3cret/path?x` as userinfo — put a `/` and a `?`
+inside userinfo, which RFC 3986 §3.2.1 excludes. Neither is more malformed than the other, so
+refusing one and accepting the other was never principled; the rule had simply not been asked
+about the second shape. An unbracketed region before the path is now refused whatever it
+contains, which reduces `pathClosesAuthority` to its one real proof: a bracketed host, because
+`[` and `]` are gen-delims §3.2.1 excludes from userinfo, so a value opening with `[` CANNOT be
+userinfo. That is a fact about the grammar; the two rules that leaked were guesses about bytes.
+
+The cost is the same shape as round 5's and slightly wider. Only a value carrying an `@` past
+its `?` consults this, so what is lost is now the host of ANY unbracketed URL in that class:
+`https://idp.example.com/jwks?contact=ops@b.example` prints `https://***`. The commoner
+`https://idp.example.com/jwks?access_token=…` has no `@` and never reaches the test — both are
+pinned in `TestURLUserinfo_Shapes`. The leak is a revert-verified case in
+`TestURLUserinfo_NeverEmitsACredential` ("a token-only userinfo is not a host"): restoring the
+colon test there prints `nats://s3cret/path`.
+
+Fifth instance of the class, and the second in a row where the FIX was the next leak. The tell
+both times was the same: the rule proved an authority from the ABSENCE of a disqualifying
+feature (a non-numeric port; then a colon), which proves nothing about a value whose structure is
+untrustworthy. Only the bracket test ever argued from presence, and it is the one still standing.
