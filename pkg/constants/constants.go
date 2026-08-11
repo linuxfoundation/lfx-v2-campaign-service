@@ -51,6 +51,15 @@ const (
 	// live Reddit ad account, at which point the default flips and this constant goes away.
 	EnvRedditMetricsEnabled = "REDDIT_METRICS_ENABLED"
 
+	// LLM settings, used ONLY to generate email copy (LFXV2-2775). Optional as a GROUP:
+	// with url or key unset, the GenerateEmailCopy endpoint returns 503 (service unavailable).
+	// The service itself starts successfully with or without these configured.
+	// The secret is the LF LiteLLM proxy's own key — the proxy holds the Bedrock credentials.
+	// AI_MODEL is not a secret; unset selects llm.DefaultModel.
+	EnvAIProxyURL = "AI_PROXY_URL"
+	EnvAIAPIKey   = "AI_API_KEY"
+	EnvAIModel    = "AI_MODEL"
+
 	// Snowflake (read-only) settings, used ONLY to resolve an event's past editions when
 	// building an audience. All are OPTIONAL: with none set, audience building still works
 	// and produces a country-only audience, recording the narrower scope in its summary.

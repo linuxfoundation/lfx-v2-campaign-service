@@ -58,6 +58,10 @@ type Client struct {
 	// get-campaign-metrics endpoint.
 	GetCampaignMetricsDoer goahttp.Doer
 
+	// GenerateEmailCopy Doer is the HTTP client used to make requests to the
+	// generate-email-copy endpoint.
+	GenerateEmailCopyDoer goahttp.Doer
+
 	// UpdateCampaign Doer is the HTTP client used to make requests to the
 	// update-campaign endpoint.
 	UpdateCampaignDoer goahttp.Doer
@@ -104,6 +108,7 @@ func NewClient(
 		CreateCampaignsDoer:      doer,
 		GetCampaignDoer:          doer,
 		GetCampaignMetricsDoer:   doer,
+		GenerateEmailCopyDoer:    doer,
 		UpdateCampaignDoer:       doer,
 		ToggleCampaignStatusDoer: doer,
 		DeleteCampaignDoer:       doer,
@@ -351,6 +356,30 @@ func (c *Client) GetCampaignMetrics() goa.Endpoint {
 		resp, err := c.GetCampaignMetricsDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "get-campaign-metrics", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// GenerateEmailCopy returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service generate-email-copy server.
+func (c *Client) GenerateEmailCopy() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeGenerateEmailCopyRequest(c.encoder)
+		decodeResponse = DecodeGenerateEmailCopyResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildGenerateEmailCopyRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.GenerateEmailCopyDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "generate-email-copy", err)
 		}
 		return decodeResponse(resp)
 	}
