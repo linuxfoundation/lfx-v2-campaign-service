@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -1907,4 +1908,341 @@ func TestOrchestrator_ReadAccountsBoundsThePlatformCall(t *testing.T) {
 		t.Errorf("deadline %v not within [%v, %v] (call bracket + accountsCallTimeout=%v)",
 			disp.gotDeadline, expectedMin, expectedMax, accountsCallTimeout)
 	}
+}
+
+// accountNotSelectedErr is the shape Meta's requireMetaAccountID (and Google Ads' connection
+// validator) produce for a connection parked in the credentials-only bootstrap state: a
+// pre-create fault carrying the ErrConnectionNotUsable / ErrAccountNotSelected pair.
+// It models internal/dispatch's preCreateError faithfully, Unwrap included — without that
+// method errors.Is cannot reach the sentinels and unusableConnectionReason answers
+// "unclassified" no matter what the production code does, which would make this test pass
+// against the very thing it exists to pin.
+type accountNotSelectedErr struct{ err error }
+
+func (e accountNotSelectedErr) Error() string        { return e.err.Error() }
+func (e accountNotSelectedErr) Unwrap() error        { return e.err }
+func (accountNotSelectedErr) NoUpstreamCreate() bool { return true }
+
+type accountNotSelectedDispatcher struct{}
+
+func (accountNotSelectedDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return nil, accountNotSelectedErr{err: fmt.Errorf("%w: %w: meta connection has no ad account selected",
+		domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected)}
+}
+
+// TestOrchestrator_PreCreateFailureLogsAClassifiedReason pins the ONLY place the
+// account_not_selected classification is observable on the path that actually creates
+// campaigns.
+//
+// Every mention of that token — Meta's requireMetaAccountID, Google Ads' connection
+// validator, design/connection.go's rule for relaxing Required("account_id"), and the
+// api-catalog paragraph that justifies credentials-only connections — rests on an operator
+// being able to tell a missing account selection apart from a bad credential. None of them
+// can rest on the job result: dispatchPlatform sets it to "platform campaign creation
+// failed" for every dispatcher error alike. So the log line is the whole mechanism, and
+// before this it carried only err.Error() — the classification existed in prose describing a
+// field that was never emitted.
+//
+// Asserting the ATTRIBUTE rather than the message text is the point: err.Error() happens to
+// contain the sentinel's own wording, so a test that grepped the rendered line would pass
+// against the unclassified version and prove nothing.
+func TestOrchestrator_PreCreateFailureLogsAClassifiedReason(t *testing.T) {
+	h := &capturingHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(&fakeCampaignRepo{}, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderMetaAds: accountNotSelectedDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderMetaAds}, nil)
+	j := waitForTerminal(t, jobs, id)
+
+	// The job result stays generic — that is the premise, not a defect, and the docs now say
+	// so. If this ever starts carrying the reason, the docs asserting otherwise are stale.
+	if strings.Contains(string(j.Result), "account_not_selected") || strings.Contains(j.Error, "account_not_selected") {
+		t.Errorf("job result = %q / error = %q; the reason is documented as absent from the polled "+
+			"result, so the api-catalog and design/connection.go paragraphs saying the detail is "+
+			"log-only need revisiting", string(j.Result), j.Error)
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, rec := range h.recs {
+		if !strings.Contains(rec.Message, "before upstream create") {
+			continue
+		}
+		// Filtered by job id: slog.Default is process-wide and a sibling test's dispatch
+		// goroutine can still be draining into this handler.
+		var reason, gotJob, gotProject string
+		rec.Attrs(func(a slog.Attr) bool {
+			switch a.Key {
+			case "reason":
+				reason = a.Value.String()
+			case "job_id":
+				gotJob = a.Value.String()
+			case "project_id":
+				gotProject = a.Value.String()
+			}
+			return true
+		})
+		if gotJob != id {
+			continue
+		}
+		// The reason names the DEFECT; the project names the connection carrying it. run is
+		// parented on o.rootCtx (Start), so nothing request-scoped survives into this record
+		// and the attribute has to be passed explicitly — without it an operator holding
+		// reason=account_not_selected still has to resolve the job id against the database
+		// before they can repair anything.
+		if gotProject != brief.ProjectID {
+			t.Errorf("pre-create dispatch failure logged project_id=%q, want %q", gotProject, brief.ProjectID)
+		}
+		if reason != "account_not_selected" {
+			t.Fatalf("pre-create dispatch failure logged reason=%q, want \"account_not_selected\". "+
+				"Without a structured reason the classification reaches nothing at all: the job "+
+				"result is collapsed to a fixed string, so this attribute is the only thing that "+
+				"distinguishes an unselected account from an unusable credential", reason)
+		}
+		return
+	}
+	t.Fatal("no \"before upstream create\" log record was emitted, so the reason has nowhere to live")
+}
+
+// undecodableCredsDispatcher fails the way the credential path actually fails: the blob
+// decrypted fine and then would not JSON-decode, so the error text is an encoding/json
+// message — and encoding/json QUOTES ITS INPUT. The canary below stands in for what that
+// quoting drags along, which on this path is decrypted credential material.
+type undecodableCredsDispatcher struct{}
+
+const credentialCanary = "sk_live_CANARY_DO_NOT_LOG"
+
+func (undecodableCredsDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return nil, accountNotSelectedErr{err: fmt.Errorf(
+		"decoding meta credentials: invalid character 'x' looking for beginning of value in %q: %w: %w",
+		credentialCanary, domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable)}
+}
+
+// TestOrchestrator_ClassifiedPreCreateFailureLogsNoCause is the other half of the reason
+// gate, and the half that makes the substitution real rather than decorative.
+//
+// The reason token is logged INSTEAD of the cause, not alongside it. That is not a style
+// choice: two conditions in the vocabulary — credentials_undecodable and
+// credentials_incomplete — are detected by decoding the DECRYPTED blob, and an
+// encoding/json error quotes its input. internal/dispatch/creds.go states the rule at the
+// point the 400 is built, in the imperative, because the tempting edit is precisely to add
+// the cause back for debuggability: "it logs a fixed reason token and nothing else ... Do
+// not 'restore' logging of the cause on the 400 path."
+//
+// A prose rule with no test is a rule that gets undone by the next person who wants a
+// better error message — this PR's first draft of the gate is the proof, since it added
+// "error", derr to exactly this arm. So the assertion sweeps EVERY attribute's rendered
+// value for the canary rather than checking that one key is absent: the leak does not care
+// which key carries it.
+func TestOrchestrator_ClassifiedPreCreateFailureLogsNoCause(t *testing.T) {
+	h := &capturingHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(&fakeCampaignRepo{}, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderMetaAds: undecodableCredsDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderMetaAds}, nil)
+	j := waitForTerminal(t, jobs, id)
+
+	// The polled result is collapsed to a fixed string by dispatchPlatform, so it cannot
+	// leak either — but assert it, because that collapse is what makes the log the only
+	// channel and a future change there would move the leak rather than remove it.
+	if strings.Contains(string(j.Result), credentialCanary) || strings.Contains(j.Error, credentialCanary) {
+		t.Errorf("job result = %q / error = %q carries the credential canary", string(j.Result), j.Error)
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, rec := range h.recs {
+		if !strings.Contains(rec.Message, "before upstream create") {
+			continue
+		}
+		var reason, gotJob string
+		var leaked []string
+		rec.Attrs(func(a slog.Attr) bool {
+			switch a.Key {
+			case "reason":
+				reason = a.Value.String()
+			case "job_id":
+				gotJob = a.Value.String()
+			}
+			if strings.Contains(a.Value.String(), credentialCanary) {
+				leaked = append(leaked, a.Key)
+			}
+			return true
+		})
+		if gotJob != id {
+			continue
+		}
+		if reason != "credentials_undecodable" {
+			t.Fatalf("logged reason=%q, want \"credentials_undecodable\"", reason)
+		}
+		if len(leaked) != 0 {
+			t.Fatalf("attribute(s) %v carry the decrypted-credential canary %q. The reason token "+
+				"replaces the cause on this arm precisely so a json decode error cannot quote the "+
+				"blob it failed on into an operator-facing log", leaked, credentialCanary)
+		}
+		if strings.Contains(rec.Message, credentialCanary) {
+			t.Fatalf("the log MESSAGE carries the canary: %q", rec.Message)
+		}
+		return
+	}
+	t.Fatal("no \"before upstream create\" log record was emitted")
+}
+
+// systemCredsDispatcher fails exactly as undecodableCredsDispatcher does, but on the
+// LF-owned SYSTEM row rather than on the project's own connection.
+//
+// The sentinel order is the point. internal/dispatch/creds.go:188-191 wraps
+// ErrSystemConnectionNotUsable ALONGSIDE ErrConnectionNotUsable rather than instead of it —
+// domain/errors.go says so in as many words — so errors.Is reports BOTH, and a single broad
+// arm matches first and answers a question nobody asked.
+type systemCredsDispatcher struct{}
+
+func (systemCredsDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return nil, accountNotSelectedErr{err: fmt.Errorf(
+		"decoding meta credentials: invalid character 'x' looking for beginning of value in %q: %w: %w: %w",
+		credentialCanary, domain.ErrSystemConnectionNotUsable, domain.ErrConnectionNotUsable,
+		domain.ErrCredentialsUndecodable)}
+}
+
+// TestOrchestrator_SystemConnectionPreCreateFailurePagesTheOperator pins the OTHER thing the
+// reason gate must not throw away.
+//
+// Suppressing the cause is what that arm exists for. Suppressing the SCOPE was collateral:
+// once every ErrConnectionNotUsable took one branch, a broken LF fallback row — which
+// domain.ErrSystemConnectionNotUsable defines as the operator's page, and which means every
+// project without its own connection is failing — logged identically to one project's
+// misconfigured connection. The synchronous handlers had always split the two
+// (brief.go:577, brief.go:914, connection.go:276); the asynchronous path is the only one on
+// which a campaign is ever created, and it did not.
+//
+// The assertions are deliberately paired: the scope must be distinguished AND the cause must
+// still be gone. A split that reintroduced the raw error on the new arm would be a
+// regression of the fix this test sits next to, so the canary sweep runs here too.
+func TestOrchestrator_SystemConnectionPreCreateFailurePagesTheOperator(t *testing.T) {
+	h := &capturingHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(&fakeCampaignRepo{}, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderMetaAds: systemCredsDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderMetaAds}, nil)
+	waitForTerminal(t, jobs, id)
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, rec := range h.recs {
+		var reason, gotJob string
+		var leaked []string
+		rec.Attrs(func(a slog.Attr) bool {
+			switch a.Key {
+			case "reason":
+				reason = a.Value.String()
+			case "job_id":
+				gotJob = a.Value.String()
+			}
+			if strings.Contains(a.Value.String(), credentialCanary) {
+				leaked = append(leaked, a.Key)
+			}
+			return true
+		})
+		if gotJob != id {
+			continue
+		}
+		if !strings.Contains(rec.Message, "the LF system connection is not usable") {
+			t.Fatalf("logged message = %q, want the LF-system wording. A system-row defect that "+
+				"reads like one project's broken connection sends nobody to the row that is "+
+				"actually broken, and every project without its own connection is failing", rec.Message)
+		}
+		if reason != "credentials_undecodable" {
+			t.Fatalf("logged reason=%q, want \"credentials_undecodable\"", reason)
+		}
+		if len(leaked) != 0 || strings.Contains(rec.Message, credentialCanary) {
+			t.Fatalf("attribute(s) %v (message %q) carry the decrypted-credential canary %q on the "+
+				"system arm — splitting the scope out must not restore the cause", leaked, rec.Message, credentialCanary)
+		}
+		return
+	}
+	t.Fatal("no pre-create failure log record was emitted for this job")
+}
+
+type malformedConfigDispatcher struct{}
+
+func (malformedConfigDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	// Deliberately NOT an ErrConnectionNotUsable chain: a malformed platform config is
+	// pre-create (nothing was sent upstream) but says nothing about the connection.
+	return nil, accountNotSelectedErr{err: errors.New("metaConfig is not valid JSON")}
+}
+
+// TestOrchestrator_UnclassifiablePreCreateFailureOmitsTheReason is the other half of the
+// contract pinned above, and the half that is easy to lose.
+//
+// dispatchErrIsPreCreate keys on NoUpstreamCreate, which is set by more than connection
+// faults — a malformed platform config, a brief-validation failure and a
+// connection-repository error all release the claim too. unusableConnectionReason is
+// defined over ErrConnectionNotUsable chains, so emitting it unconditionally would stamp
+// reason="unclassified" on every one of those.
+//
+// That is worse than carrying no attribute, which is why it is worth a test rather than a
+// comment: an alert or dashboard grouping by `reason` cannot tell "we classified this and
+// learned nothing" from "no classification applies here" — the first invents a bucket that
+// looks like a real finding and grows with unrelated traffic. Omitting the key says which
+// one it is.
+func TestOrchestrator_UnclassifiablePreCreateFailureOmitsTheReason(t *testing.T) {
+	h := &capturingHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(&fakeCampaignRepo{}, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderMetaAds: malformedConfigDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderMetaAds}, nil)
+	waitForTerminal(t, jobs, id)
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, rec := range h.recs {
+		if !strings.Contains(rec.Message, "before upstream create") {
+			continue
+		}
+		var reason, gotJob string
+		var hasReason bool
+		rec.Attrs(func(a slog.Attr) bool {
+			switch a.Key {
+			case "reason":
+				reason, hasReason = a.Value.String(), true
+			case "job_id":
+				gotJob = a.Value.String()
+			}
+			return true
+		})
+		if gotJob != id {
+			continue
+		}
+		if hasReason {
+			t.Fatalf("a non-connection pre-create failure logged reason=%q; it must carry no "+
+				"reason attribute at all. unusableConnectionReason has no vocabulary for this "+
+				"error, so any value it returns is a classification that was never made", reason)
+		}
+		return
+	}
+	t.Fatal("no \"before upstream create\" log record was emitted for the unclassifiable error")
 }

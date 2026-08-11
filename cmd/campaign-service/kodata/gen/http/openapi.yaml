@@ -6648,7 +6648,7 @@ definitions:
         properties:
             account_id:
                 type: string
-                description: Meta ad account ID
+                description: 'Meta ad account ID. Optional: omit it (while still supplying credentials and page_id) to defer account selection, then list the reachable accounts with GET /projects/{project_id}/connection-meta-ads/accounts and set the chosen id with PUT.'
                 example: act_193556282970417
                 pattern: ^act_[0-9]+$
                 maxLength: 64
@@ -6672,7 +6672,6 @@ definitions:
             label: Sapiente quam deserunt.
             page_id: "123456789012345"
         required:
-            - account_id
             - page_id
     MetaAdsCredentials:
         title: MetaAdsCredentials

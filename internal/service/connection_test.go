@@ -459,6 +459,46 @@ func TestCreateGoogleAds_WithoutAccountID(t *testing.T) {
 	}
 }
 
+// TestCreateMetaAds_WithoutAccountID is the Meta counterpart, and the half the transport test
+// does not reach: that test proves Goa ACCEPTS an omitted `account_id`, which is a statement
+// about the generated decoder, not about what this service then persists and returns.
+//
+// The assertions are the Google Ads three, and each means something slightly different here:
+//
+//  1. Accepted with the key OMITTED, which is what the bootstrap flow sends. An explicit
+//     `"account_id": ""` always got through the Required presence check, so only omission
+//     distinguishes the loosened contract from the old one.
+//  2. status is ACTIVE. resolveMetaCredentials refuses a non-active connection, so any other
+//     status would make GET .../connection-meta-ads/accounts unreachable and dead-end the
+//     bootstrap at step two — the same trap as Google Ads, via a different helper.
+//  3. account_id round-trips as "". `page_id` is supplied because it stays Required: it names
+//     a Facebook page the operator already controls, so discovery never resolves it and it is
+//     not part of what deferring account selection defers.
+func TestCreateMetaAds_WithoutAccountID(t *testing.T) {
+	s := newTestService(t, newFakeRepo())
+	res, err := s.CreateMetaAds(context.Background(), &conn.CreateMetaAdsPayload{
+		ProjectID: "cncf",
+		// AccountID is nil EXPLICITLY — the absence is the subject of this test.
+		Config: &conn.MetaAdsConnectionConfig{
+			Label: strPtr("TLF Main"), AccountID: nil, PageID: "page-1",
+		},
+		Credentials: &conn.MetaAdsCredentials{AccessToken: "at", AppSecret: "as"},
+	})
+	if err != nil {
+		t.Fatalf("a credentials-only connection must be creatable: %v", err)
+	}
+	if res.AccountID != "" {
+		t.Errorf("account_id = %q, want the empty string", res.AccountID)
+	}
+	if res.Status != string(model.StatusActive) {
+		t.Errorf("status = %q, want %q — resolveMetaCredentials refuses a non-active connection, "+
+			"so any other status would make the account unchoosable", res.Status, model.StatusActive)
+	}
+	if !res.HasCredentials {
+		t.Error("expected has_credentials = true: the credentials are exactly what WAS supplied")
+	}
+}
+
 // TestUpdateGoogleAds_BindsDiscoveredAccountToCredentialsOnlyRow is the second half of the
 // credentials-first bootstrap, and the step the existing update tests never exercised: they
 // only cover missing and stale If-Match. Here the stored row is the state a POST-with-
@@ -526,6 +566,108 @@ func TestUpdateGoogleAds_OmittedAccountIDClearsTheSelection(t *testing.T) {
 	}
 	if res.AccountID != "" {
 		t.Errorf("account_id = %q, want an omitted account_id to clear the selection", res.AccountID)
+	}
+	if repo.gotUpdateCreds != nil {
+		t.Errorf("Update was passed credentials %q; a config-only PUT must leave the column alone",
+			repo.gotUpdateCreds)
+	}
+	if repo.gotUpdateVersion != 7 {
+		t.Errorf("expected version passed to Update = %d, want 7 from If-Match", repo.gotUpdateVersion)
+	}
+}
+
+// TestUpdateMetaAds_BindsDiscoveredAccountToCredentialsOnlyRow is the second half of the
+// Meta credentials-first bootstrap, and the step the existing update tests never exercised: they
+// only cover missing and stale If-Match. Here the stored row is the state a POST-with-
+// credentials leaves behind — active, credentials present, account_id empty — and the PUT
+// carries the id the operator picked from the accounts endpoint.
+//
+// The credential assertion is on the ARGUMENT, not the stored row: preserving the column is
+// the repository's job in SQL, and the fake reproduces that, so asserting the stored value
+// would pass against a handler that overwrote it. What the service layer owns is not SENDING
+// a credential — PUT deliberately does not accept one (set-credential is separately
+// permissioned) — and a handler that populated the field with the payload's zero value would
+// blank the very credentials that made discovery possible, dead-ending the bootstrap one step
+// from the end.
+func TestUpdateMetaAds_BindsDiscoveredAccountToCredentialsOnlyRow(t *testing.T) {
+	repo := newFakeRepo()
+	repo.store[repoKey("cncf", model.ProviderMetaAds)] = &model.Connection{
+		ProjectID: "cncf", Provider: model.ProviderMetaAds, Status: model.StatusActive,
+		AccountID: "", Version: 4, EncryptedCredentials: []byte("ciphertext"),
+	}
+	s := newTestService(t, repo)
+	ifMatch := "4"
+
+	res, err := s.UpdateMetaAds(context.Background(), &conn.UpdateMetaAdsPayload{
+		ProjectID: "cncf",
+		Config: &conn.MetaAdsConnectionConfig{
+			AccountID: strPtr("act_123456789"),
+			// page_id is Required on the config type, and the config type is shared by
+			// POST and PUT (gen/.../server/types.go ValidateUpdateMetaAdsRequestBody calls
+			// the same ValidateMetaAdsConnectionConfigRequestBody). Omitting it here would
+			// build a payload the transport rejects — and worse, PageID is a plain string
+			// rather than a pointer, so the omission would silently write page_id="" and
+			// the test would pin a state no request can produce.
+			PageID: "123456789012345",
+		},
+		IfMatch: &ifMatch,
+	})
+	if err != nil {
+		t.Fatalf("UpdateMetaAds: %v", err)
+	}
+	if res.AccountID != "act_123456789" {
+		t.Errorf("account_id = %q, want the discovered id to be bound", res.AccountID)
+	}
+	// Binding the account must not cost the page: a PUT that blanked page_id would leave
+	// the connection unable to attach the promoted object, i.e. unable to dispatch — the
+	// same dead end this whole bootstrap exists to avoid.
+	if derefStr(res.PageID) != "123456789012345" {
+		t.Errorf("page_id = %q, want the PUT to carry it through", derefStr(res.PageID))
+	}
+	if repo.gotUpdateCreds != nil {
+		t.Errorf("Update was passed credentials %q; a config-only PUT must leave the column to the repository",
+			repo.gotUpdateCreds)
+	}
+	if repo.gotUpdateVersion != 4 {
+		t.Errorf("expected version passed to Update = %d, want 4 from If-Match", repo.gotUpdateVersion)
+	}
+}
+
+// TestUpdateMetaAds_OmittedAccountIDClearsTheSelection pins the other direction, which the
+// handler documents as intentional: PUT is a full replace, so omitting account_id UN-selects
+// the account rather than leaving the previous one in place. That is the only way to undo a
+// selection, and it is easy to "fix" into a merge by someone who reads the omission as
+// "unchanged" — hence a test rather than only a comment. The credential and version
+// assertions are on the Update ARGUMENT, for the reason given above.
+func TestUpdateMetaAds_OmittedAccountIDClearsTheSelection(t *testing.T) {
+	repo := newFakeRepo()
+	repo.store[repoKey("cncf", model.ProviderMetaAds)] = &model.Connection{
+		ProjectID: "cncf", Provider: model.ProviderMetaAds, Status: model.StatusActive,
+		AccountID: "act_123456789", Version: 7, EncryptedCredentials: []byte("ciphertext"),
+	}
+	s := newTestService(t, repo)
+	ifMatch := "7"
+
+	res, err := s.UpdateMetaAds(context.Background(), &conn.UpdateMetaAdsPayload{
+		ProjectID: "cncf",
+		Config: &conn.MetaAdsConnectionConfig{
+			Label: strPtr("relabelled"),
+			// Required on the shared config type; see the sibling test above.
+			PageID: "123456789012345",
+		},
+		IfMatch: &ifMatch,
+	})
+	if err != nil {
+		t.Fatalf("UpdateMetaAds: %v", err)
+	}
+	if res.AccountID != "" {
+		t.Errorf("account_id = %q, want an omitted account_id to clear the selection", res.AccountID)
+	}
+	// The clear is scoped to account_id alone. Supplying page_id is what makes that a real
+	// assertion: with it omitted, "page_id survived" and "page_id was blanked" are the same
+	// observation, and the test could not tell a targeted clear from a full wipe.
+	if derefStr(res.PageID) != "123456789012345" {
+		t.Errorf("page_id = %q, want clearing account_id to leave the page alone", derefStr(res.PageID))
 	}
 	if repo.gotUpdateCreds != nil {
 		t.Errorf("Update was passed credentials %q; a config-only PUT must leave the column alone",

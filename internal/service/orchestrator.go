@@ -890,7 +890,82 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// input/config validation), in which case releasing the claim to allow a
 		// retry is safe.
 		if dispatchErrIsPreCreate(derr) {
-			slog.ErrorContext(ctx, "platform dispatch failed before upstream create (claim released)", "platform", p, "job_id", jobID, "error", derr)
+			// The reason token is carried on THIS branch only, and only for the errors it
+			// has a vocabulary for. Pre-create is where the connection faults land — a
+			// resolve that could not produce a usable client never reached the provider —
+			// but it is NOT only connection faults: dispatchErrIsPreCreate keys on
+			// NoUpstreamCreate, which a malformed platform config, a brief-validation
+			// failure and a connection-repository error all set too. unusableConnectionReason
+			// is defined over ErrConnectionNotUsable chains, so those would every one log
+			// "unclassified".
+			//
+			// Hence the errors.Is gate rather than an unconditional attribute. A field that
+			// is constant is not a field, and one that is constant only where nothing can be
+			// learned is worse, because it reads like a classification was attempted and
+			// came back empty — which is exactly what a reason-based alert would then be
+			// filtering on. Omitting the attribute says "not classified here"; emitting
+			// "unclassified" says "classified, and the answer is nothing". The retained
+			// branches carry no reason for the same reason: there the error describes the
+			// provider, not the connection.
+			//
+			// Without this the token reached NOTHING. res.Error below collapses every
+			// dispatcher error to one string, and this line logged only err.Error() — so the
+			// classification that several dispatchers and the Meta credentials-only
+			// bootstrap all cite as the operator's signal existed solely in prose that
+			// promised it. A structured reason is what makes "the operator learns
+			// account_not_selected" a true statement about an ASYNC dispatch, which is the
+			// only path on which a campaign is ever created.
+			// The reason arm logs the token INSTEAD of the cause, not alongside it, and
+			// that substitution is the whole point of the vocabulary existing. Two
+			// conditions in it are detected by decoding the DECRYPTED credential blob
+			// (credentials_undecodable, credentials_incomplete), and an encoding/json
+			// error quotes its input — so rendering derr here would put decrypted
+			// credential material into the log on a path an operator is expected to read.
+			// internal/dispatch/creds.go says so at the point the 400 is built ("it logs a
+			// fixed reason token and nothing else ... Do not 'restore' logging of the cause
+			// on the 400 path"), and unusableConnectionReason's own doc comment gives the
+			// same reason for existing at all. The retained-claim branches below and the
+			// else arm here keep the cause because those errors describe the PROVIDER's
+			// response, which never passed through the credential blob.
+			//
+			// The system arm sits ABOVE the broad one, for the reason brief.go:577
+			// states at the synchronous split: systemScoped WRAPS rather than
+			// replaces, so errors.Is still reports ErrConnectionNotUsable and a broad
+			// match would win. Collapsing the two loses the only thing that says WHO
+			// can fix it — a broken LF fallback row would read exactly like one
+			// project's misconfigured connection, when domain.ErrSystemConnectionNotUsable
+			// is defined as the operator's page and means every project without its own
+			// connection is failing. Suppressing the cause is what the arm is for;
+			// suppressing the scope was not.
+			//
+			// The scope is carried by the MESSAGE rather than by a new attribute
+			// because that is how both synchronous splits already carry it
+			// (brief.go:577, brief.go:914, connection.go:276) and this line pages the
+			// same operator with the same distinction.
+			//
+			// project_id is on every arm because `run` is parented on o.rootCtx
+			// (Start, above: "the only context in play is o.rootCtx"), so these
+			// records inherit NO request-scoped fields — unlike the synchronous
+			// counterpart at connection.go:312, which gets its project from the
+			// request. Without it, `reason=account_not_selected` names a defect
+			// but not the connection to repair, and an operator has to resolve the
+			// job id against the database to act. The slug is safe to log: it is a
+			// URL path segment, not credential-derived, and the synchronous split
+			// already logs it beside the same reason token.
+			const preCreateMsg = "platform dispatch failed before upstream create (claim released)"
+			switch {
+			case errors.Is(derr, domain.ErrSystemConnectionNotUsable):
+				slog.ErrorContext(ctx, "the LF system connection is not usable; platform campaign creation is failing for every project without its own connection (claim released)",
+					"platform", p, "job_id", jobID, "project_id", brief.ProjectID,
+					"reason", unusableConnectionReason(derr))
+			case errors.Is(derr, domain.ErrConnectionNotUsable):
+				slog.ErrorContext(ctx, preCreateMsg,
+					"platform", p, "job_id", jobID, "project_id", brief.ProjectID,
+					"reason", unusableConnectionReason(derr))
+			default:
+				slog.ErrorContext(ctx, preCreateMsg,
+					"platform", p, "job_id", jobID, "project_id", brief.ProjectID, "error", derr)
+			}
 			releaseClaim()
 		} else {
 			// The claim is RETAINED (outcome unknown, blind retry could double-create).
@@ -1133,10 +1208,18 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// unclassified and fell through to 503. LFXV2-3052 hoisted it into a helper both resolvers
 	// call, which is why the list above is once again the whole list rather than a subset.
 	//
-	// Meta and LinkedIn still return bare errors that fall through to the caller's default
-	// 503 arm. Tagging theirs is LFXV2-3069 part 2, and it is an extraction rather than an
-	// annotation: neither adapter has a shared resolve/validate helper to put the tagging in,
-	// so the defects are detected at each call site.
+	// LinkedIn is now the ONLY toggle-capable adapter still returning bare errors that fall
+	// through to the caller's default 503 arm. Every other one tags: Google Ads, Microsoft and
+	// X through their validate<Provider>Connection helpers, Reddit inline in
+	// resolveRedditClient, and Meta in resolveMetaCredentials (internal/dispatch/meta.go).
+	// Tagging LinkedIn's is the remainder of LFXV2-3069 part 2, and it is an extraction rather
+	// than an annotation — LinkedInDispatcher.ToggleStatus validates the connection inline at
+	// four call sites (inactive status, credential decode, incomplete credentials, missing
+	// account id) with no shared resolve/validate helper to put the tagging in.
+	//
+	// Meta's tagging deliberately stops short of a missing account id HERE, because
+	// ToggleStatus never reads AccountConfig.AccountID (a status update targets the campaign
+	// node by id); that guard is requireMetaAccountID and lives only on the Dispatch path.
 	//
 	// Bound the
 	// whole (possibly multi-PATCH, each with its own retry budget) cascade with a total

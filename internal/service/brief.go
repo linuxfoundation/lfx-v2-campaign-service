@@ -806,10 +806,17 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			// machine-readable reason to populate without changing a type every 409 in this
 			// service returns. The reason token still reaches operators through the log.
 			//
-			// The message names no accounts endpoint. Only Google Ads has one
-			// (design/connection.go, list-google-ads-accounts); every other provider reaching
-			// this arm would be sent to a route that does not exist, which is a worse remedy
-			// than none. Saving the id directly works on all of them, so that is what it says.
+			// The message names no accounts endpoint, even though two now exist
+			// (design/connection.go: list-google-ads-accounts and list-meta-ads-accounts).
+			// Naming one would mean naming the RIGHT one per provider, and the providers that
+			// can actually reach this arm — Google Ads, Microsoft, Reddit, Twitter, the four
+			// whose ToggleStatus/ReadMetrics credential resolution tags the sentinel — are
+			// mostly not the two with discovery routes. Meta, which has a route, cannot reach
+			// this arm at all: its toggle and metrics reads address the campaign node by id
+			// and never require an account. So a per-provider remedy string would be three
+			// parts dead wording for one part correct, and getting it wrong sends an operator
+			// to a route that does not exist, which is a worse remedy than none. Saving the id
+			// directly works on every provider, so that is what it says.
 			slog.WarnContext(ctx, "campaign metrics read blocked: no ad account selected on the project's connection",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "reason", unusableConnectionReason(merr))

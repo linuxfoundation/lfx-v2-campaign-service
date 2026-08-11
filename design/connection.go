@@ -392,16 +392,25 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 	Required("refresh_token", "client_id", "client_secret", "developer_token")
 })
 
-// GoogleAdsConnectionConfig is the ONE provider config where account_id is optional, and
+// GoogleAdsConnectionConfig is the FIRST provider config where account_id is optional, and
 // the reason is specific rather than a general loosening: a caller may only create a
 // connection without an account id where there is an account-DISCOVERY endpoint to find out
 // what to put there afterwards.
 //
-// Discovery is a NECESSARY condition, not a sufficient one, which is why Google Ads is still
-// alone here now that Meta has a discovery endpoint too (LFXV2-3062). The other half is that
-// the operations needing an account id must fail with reason=account_not_selected rather than
-// a generic error; Meta's campaign create does not yet, so LFXV2-3061 covers both halves and
-// this config stays the only relaxed one until it lands.
+// Discovery is a NECESSARY condition, not a sufficient one. The other half is that the
+// operations needing an account id must fail with reason=account_not_selected rather than a
+// generic error, so that a connection parked mid-bootstrap is DIAGNOSABLE as such rather than
+// indistinguishable from a bad credential. Where the operation is synchronous that reason
+// reaches the caller; where it is asynchronous it reaches the dispatch-failure log instead,
+// which is the Meta case spelled out below. Google Ads had both
+// from the start. Meta is the one provider where the halves came apart — it gained discovery
+// in LFXV2-3062 and stayed required here until LFXV2-3061 supplied the tagging; see the
+// paragraph below MetaAdsConnectionConfig's own godoc. None of the remaining four has BOTH:
+// all four lack discovery, and Microsoft, Reddit and X already tag a missing account with
+// domain.ErrAccountNotSelected (validateMicrosoftConnection, resolveRedditClient, validateTwitterConnection), so LinkedIn
+// alone is missing the tagging as well. Naming the halves separately matters because the bar
+// is the conjunction — a provider that gains discovery tomorrow becomes eligible immediately
+// if it is one of those three, and needs a second change if it is LinkedIn.
 //
 // That is the bootstrap this enables — credentials first, account chosen afterwards:
 //
@@ -413,26 +422,31 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // exists to produce, which made discovery useful only for RE-POINTING a connection that was
 // already complete.
 //
-// The other providers keep Required("account_id") deliberately, but for two different reasons
-// now, and conflating them would hide which of the two is actually load-bearing.
+// Meta no longer requires it either, as of LFXV2-3061. Both halves the rule below asks for
+// are now present: the discovery endpoint arrived with LFXV2-3062, and Meta's Dispatch tags
+// an empty account id with domain.ErrAccountNotSelected via requireMetaAccountID
+// (internal/dispatch/meta.go), so a connection parked mid-bootstrap is classified rather than
+// left an unclassified error. Campaign create remains the only Meta path that needs the id at
+// all — the status toggle and the metrics read address the campaign node by id — and it is
+// ASYNCHRONOUS, so what a caller who created the row and stopped there meets is the polled job
+// result rather than an HTTP status.
 //
-// For LinkedIn, Microsoft, Reddit and X there is still no list to choose from, so relaxing the
-// requirement would create a connection that can never be finished from inside this API: the
-// operator has to obtain the id out-of-band anyway, and the only thing gained is a
-// half-configured row.
+// That result is GENERIC, and the rule below does not ask otherwise. dispatchPlatform collapses
+// every dispatcher error into "platform campaign creation failed", so no tagging can make the
+// polled result name the missing choice; what the tagging buys is a fixed-vocabulary
+// reason=account_not_selected on the dispatch-failure log line, which is where an operator tells
+// this apart from a bad credential. The requirement the rule states is that a half-configured
+// connection is DIAGNOSABLE, not that the API returns a bespoke code for it.
 //
-// Meta is NOT in that position as of this endpoint — an account-less Meta connection can be
-// completed through this API, by discovery followed by PUT. It stays required because the
-// second half is missing: Meta's Dispatch answers an empty account id with a generic error
-// rather than reason=account_not_selected. Campaign create is the only Meta path that needs
-// the id at all — the status toggle and the metrics read address the campaign node by id —
-// and campaign create is ASYNCHRONOUS: it answers 202, so what a caller who created the row
-// and stopped there actually meets is not an HTTP status but the polled job result, carrying
-// a message that neither names the missing choice nor points at the list that would supply
-// it. That is a tagging gap with a ticket (LFXV2-3061), not a structural one.
+// LinkedIn, Microsoft, Reddit and X keep Required("account_id"). For them there is still no
+// list to choose from, so relaxing the requirement would create a connection that can never
+// be finished from inside this API: the operator has to obtain the id out-of-band anyway, and
+// the only thing gained is a half-configured row.
 //
-// Add the requirement back for Google Ads, or drop it for another provider, only together with
-// that provider's discovery endpoint AND its account_not_selected tagging.
+// Add the requirement back for Google Ads or Meta, or drop it for another provider, only
+// together with that provider's discovery endpoint AND its account_not_selected tagging.
+// Discovery capability and credentials-first bootstrap are not the same thing, and shipping
+// one without the other hides which half is missing.
 //
 // A connection in this state stays status=active, and account_id comes back as "". See
 // docs/knowledge/code/internal-service.md — "active" says the connection is ENABLED for
@@ -525,13 +539,30 @@ var MetaAdsCredentials = Type("meta-ads-credentials", func() {
 	Required("access_token", "app_secret")
 })
 
+// MetaAdsConnectionConfig is the second provider config where account_id is optional,
+// for the same reason as GoogleAdsConnectionConfig above: a caller can create the
+// connection with credentials only, defer account selection, and set the chosen id
+// afterwards with PUT (discovery via GET .../connection-meta-ads/accounts, added in
+// LFXV2-3062 and declared below as list-meta-ads-accounts, same pattern as Google Ads'
+// list-google-ads-accounts).
+// page_id stays Required — it names a Facebook page the operator already controls,
+// not something the token's reachable-account list resolves, so there is nothing for
+// discovery to do about it.
+//
+// A connection in this state stays status=active with account_id "", same caveat as
+// Google Ads: "active" means enabled for credential-based operations (discovery), not
+// that the credentials were verified. Readiness to CREATE a campaign is account_id being
+// non-empty — the dispatch path says so with reason=account_not_selected. Status-toggle
+// and metrics-read do NOT require it: both target an existing campaign by platform id and
+// never read the connection's account_id, so they keep working on a connection whose
+// account was cleared after the campaign was created.
 var MetaAdsConnectionConfig = Type("meta-ads-connection-config", func() {
 	Attribute("label", String, "Optional friendly name")
 	// account_id must be the canonical Meta format act_<digits>: the Meta client
 	// rejects anything else before dispatch, so a non-conforming value (e.g. "foo",
 	// whitespace, or a bare number) stored on an active connection could never create a
 	// campaign. Validating the same Pattern here rejects it as a 4xx at creation.
-	Attribute("account_id", String, "Meta ad account ID", func() {
+	Attribute("account_id", String, "Meta ad account ID. Optional: omit it (while still supplying credentials and page_id) to defer account selection, then list the reachable accounts with GET /projects/{project_id}/connection-meta-ads/accounts and set the chosen id with PUT.", func() {
 		Example("act_193556282970417")
 		Pattern(`^act_[0-9]+$`)
 		// The pattern bounds shape but not length; cap the stored size so an arbitrarily
@@ -553,8 +584,9 @@ var MetaAdsConnectionConfig = Type("meta-ads-connection-config", func() {
 	// page_id is required at connection time: the Meta dispatcher needs it to attach
 	// the promoted-object page, so an active connection without it would always fail
 	// dispatch. Requiring it here surfaces the error as a 4xx at connection creation
-	// rather than a silent runtime dispatch failure.
-	Required("account_id", "page_id")
+	// rather than a silent runtime dispatch failure. account_id is deliberately NOT
+	// required — see the type comment above.
+	Required("page_id")
 })
 
 var MetaAdsConnection = Type("meta-ads-connection", func() {
