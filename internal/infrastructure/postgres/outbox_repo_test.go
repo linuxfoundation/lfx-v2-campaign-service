@@ -258,18 +258,93 @@ func TestMigrations_UniqueNumbering(t *testing.T) {
 	require.NotEmpty(t, versions)
 }
 
+// TestMigration000020_HasNoIfNotExists pins the one index in this chain built WITHOUT
+// `IF NOT EXISTS`, because the clause looks like an omission and the next person to touch
+// this file will want to add it back.
+//
+// A failed CONCURRENTLY build leaves an INVALID index holding the name. The version is then
+// dirty, so the recovery is to force back to 19 and re-run — and with `IF NOT EXISTS` that
+// re-run sees the name, skips the build, and records version 20 CLEAN over an index that
+// enforces nothing. 000013 has the same clause and survives only because 000014 follows it
+// with an explicit indisvalid + definition guard. Nothing follows 000020, so its protection
+// has to be the absence of the clause: the retry fails with 42P07 until the debris is
+// dropped. golang-migrate runs each version exactly once, so there is no legitimate re-run
+// the clause would be protecting.
+func TestMigration000020_HasNoIfNotExists(t *testing.T) {
+	const name = "000020_campaigns_unique_platform_campaign.up.sql"
+	b, err := os.ReadFile(filepath.Join("migrations", name))
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	// Only the statement, not the comment above it that explains the choice.
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "--") {
+			continue
+		}
+		if strings.Contains(strings.ToUpper(line), "IF NOT EXISTS") {
+			t.Fatalf("%s uses IF NOT EXISTS: %q\n"+
+				"That makes a retry after a failed CONCURRENTLY build record version 20 clean "+
+				"over an INVALID index, leaving adoption's uniqueness guard unenforced. Either "+
+				"drop the clause or add a follow-up migration that checks indisvalid, as 000014 "+
+				"does for 000013.", name, strings.TrimSpace(line))
+		}
+	}
+}
+
+// TestMigration000020_ScopesTheIndexToGoogleAds pins the `platform = 'google-ads'` term in
+// 000020's predicate, because the index reads as a general one-upstream-campaign-one-brief
+// guard and the scope looks like a limitation someone would helpfully remove.
+//
+// The global key is correct ONLY for Google Ads, and only because Google Ads is one shared
+// customer id across every foundation — two projects there really are the same account.
+// Microsoft campaign ids are ACCOUNT-scoped and this service supports separate per-project
+// Microsoft connections, so an unscoped index raises 23505 when account B mints an id
+// account A already used. That is an ordinary dispatch, not a conflict, and only
+// AdoptCampaign classifies 23505 as adoption-specific — on the dispatch path it surfaces as
+// a generic 409 and leaves an UNCONFIRMED partial behind. The live-db counterpart is
+// TestLiveOneUpstreamCampaignBindsToOneBrief/"microsoft is not constrained"; this test runs
+// without a database so the scope is pinned even where the live suite is skipped.
+func TestMigration000020_ScopesTheIndexToGoogleAds(t *testing.T) {
+	const name = "000020_campaigns_unique_platform_campaign.up.sql"
+	b, err := os.ReadFile(filepath.Join("migrations", name))
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	// Only the statement, not the comment above it that explains the choice.
+	var stmt []string
+	for _, line := range strings.Split(string(b), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" && !strings.HasPrefix(trimmed, "--") {
+			stmt = append(stmt, trimmed)
+		}
+	}
+	joined := strings.Join(stmt, " ")
+	if !strings.Contains(joined, "platform = 'google-ads'") {
+		t.Fatalf("%s statement is missing the google-ads scope: %q\n"+
+			"Without it the index covers every provider. Microsoft campaign ids are "+
+			"account-scoped, so two per-project Microsoft accounts minting the same id "+
+			"collide on an ordinary dispatch — a 23505 that surfaces as a generic 409 and "+
+			"strands an UNCONFIRMED partial. A second provider needs its own constraint; do "+
+			"not widen this predicate.", name, joined)
+	}
+}
+
 // allowedVersionGaps records gaps that are KNOWN and transitional: versions claimed by a
 // sibling PR that has not merged yet. A gap listed here is a merge-ORDERING obligation, not a
 // numbering bug — this branch must not merge before the PR that fills it, or those migrations
 // are skipped forever. The list must shrink to empty as siblings land.
+// Empty is the resting state: TestMigrations_AllowedVersionGapsAreStillOpen fails on a stale
+// entry, so the merge that closes a gap cannot be green while its excuse survives.
 var allowedVersionGaps = map[int]string{
-	// 18 — REMOVED (LFXV2-3055). 000018_audience_build_lease was claimed by PR #106
+	// 19 — REMOVED (LFXV2-3056). 000019_audience_actor_columns was claimed by PR #103
+	// (LFXV2-3055) while it was unmerged, and this entry excused the gap so this branch could
+	// stay green ahead of it. #103 has merged, so 000019 exists in the tree and the ordering
+	// obligation is discharged.
+	// 18 — REMOVED (LFXV2-3056). 000018_audience_build_lease was claimed by PR #106
 	// (LFXV2-3059) while it was unmerged, and this entry excused the gap so this branch could
 	// stay green ahead of it. #106 has merged, so 000018 exists in the tree and the ordering
 	// obligation is discharged. This branch's own migration moved 000017 -> 000018 -> 000019
-	// as #93 merged and then as #106's number was found: this branch is the one that
-	// renumbers, because its migration is named only in its own test and two doc lines, which
-	// is the cheaper of the two edits.
+	// -> 000020 as those siblings landed: this branch is the one that renumbers, because its
+	// migration is named only in its own test and two doc lines, which is the cheaper edit.
 	// 16 — REMOVED (LFXV2-3068). 000016_campaign_actor_columns was claimed by PR #95
 	// (LFXV2-3038) while it was unmerged, and this entry excused the gap so #93 could stay
 	// green. #95 has merged, so 000016 exists in the tree, the ordering obligation is

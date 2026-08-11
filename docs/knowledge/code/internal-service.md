@@ -216,6 +216,92 @@ unreachable there (see `internal/platform/twitter` and `internal/dispatch/twitte
 below). A single global default would make every omitted-window request against an X
 campaign fail with a guaranteed 400.
 
+## Campaign adoption
+
+`BriefService.AdoptCampaign` (backing `POST .../campaigns/adopt`) binds a campaign that ALREADY
+exists on the ad platform to an approved brief; its one platform call is a read. Without it,
+campaigns launched in a platform's own console are unreachable by the metrics read, the toggle
+and delete, all of which resolve a campaign through its stored row.
+
+`Orchestrator.LookupPlatformCampaign` discovers the optional `CampaignAdopter` capability by
+type assertion (see `internal-dispatch.md`) and bounds the call with `adoptLookupTimeout`
+(20s, matching `metricsCallTimeout`).
+
+**Absence and unverifiability are distinct, and that is the whole design.** The
+`CampaignAdopter` contract says `(nil, nil)` means the platform ANSWERED and there is no such
+campaign; every other failure is an error. `LookupPlatformCampaign` converts a nil ref into
+`ErrPlatformCampaignAbsent` at the boundary so no caller can dereference nil on a nil error,
+and the handler maps that sentinel — and only that sentinel — to 404; everything unclassified
+becomes 503. An operator told "no such campaign" goes and creates one, so a false absence
+costs a duplicate PAID campaign while a false 503 costs a retry.
+
+Every check that can be made locally precedes the platform call: project slug, platform
+validity, a `TrimSpace` re-check of `platform_campaign_id` (the design's `MinLength(1)`
+rejects `""` but not `" "`, and an effectively-empty filter on a lenient client returns
+somebody else's campaign as the adoption target), then the brief load and its approved gate.
+Loading the brief first stops adoption being an oracle for campaign ids on an ad account the
+caller cannot otherwise see, and stops approval being bypassed.
+
+What gets persisted:
+
+- **`ref.ID`, which `LookupPlatformCampaign` has already proven equal to the requested id.**
+  The first version of this rule was "record what the platform echoed, not what was asked for",
+  which sounds like faithfulness and is not: a lookup answering with a DIFFERENT campaign then
+  produced a 201 binding a real paid campaign nobody named. A mismatch is refused, and refused
+  as UNVERIFIABLE rather than as a 404 — nothing in that response establishes the requested
+  campaign is missing, and 404 is the answer an operator resolves by creating a duplicate. The
+  Google Ads lookup already errors when its own id filter comes back unhonoured, so this is the
+  second of two checks on the same hazard, in the layer that owns the contract rather than in
+  one adapter. The comparison is `TrimSpace` on both sides and nothing else: any looser rule
+  would be this service inventing an equivalence between two ids in the platform's vocabulary.
+- **`Status` is `model.CampaignStatusCreated`, never the platform's run state.** That column is
+  this service's lifecycle vocabulary, which `CampaignStatusDeletable` and
+  `CampaignStatusNeedsReconciliation` both default-deny on an unknown value, so a stored
+  `ENABLED` would be undeletable AND never reconciled. `model.PlatformCampaignRef` therefore
+  carries no status: adoptability is the ADAPTER's decision, in its own vocabulary.
+- **`ref.Result`, the adapter's provenance blob, and the adopting actor.** Google Ads puts the
+  resolved customer id in `Result`; `googleAdsCreationCustomerID` reads it back on every later
+  toggle and metrics read, and an empty `Result` reads there as "unknown", which those guards
+  treat as permission to proceed. `created_by`/`updated_by` are stamped from
+  `attributedActor`, as on every other campaign write.
+
+Persistence goes through `CampaignRepository.AdoptCampaign`, deliberately not `UpsertCampaign`
+— see `internal-infrastructure-postgres.md`. An already-live `(brief, platform)` pair is a 409.
+The connection arms are ordered as in the metrics and toggle switches, and for the same reason:
+`ErrAccountNotSelected` (409) then the broad `ErrConnectionNotUsable` (409) — WRAPPED alongside
+each other, so a broad match placed first wins and names a scope the caller cannot address.
+Ahead of both sits `ErrAdoptionRequiresOwnConnection` (409), which is not a defect at all: the
+project has no connection of its own and adoption alone cannot accept the shared LF account
+(`internal-dispatch.md` has the isolation argument). Placing it first keeps the connection arms
+from sending an operator to repair something that is working as designed.
+
+This switch has NO `ErrSystemConnectionNotUsable` arm, and that is the one place it departs from
+the metrics and toggle switches. Those resolve with the LF system fallback, so a defect in the LF
+row genuinely reaches their callers and earns a 500 aimed at an operator. Adoption resolves the
+project scope only (`credsSource.resolveOwned`), so the LF row is never loaded on this path and
+cannot fail on it. An arm would be unreachable — and wrong even so, since it would answer a
+caller whose remedy is "connect your own ad account" with a 500 about a row they do not own.
+The arm existed until review caught it; it survived because
+`TestAdoptCampaign_ConnectionDefectsAreDistinguished` injects errors straight into the adopter
+fake, which asserts a switch's behaviour without establishing that anything can produce the
+input. The mechanism is now pinned where it is real, in
+`dispatch.TestAdoptionRefusesTheSystemFallback`, which asserts the system scope is never read.
+`ErrInvalidPlatformCampaignID`
+is a 400: the adapter rejected the id locally and issued no query, so the 503 would invite a
+retry of input that can never succeed. Two more 409s come back from the repository, which is
+where they can be checked atomically: `ErrPlatformCampaignAlreadyBound` (the campaign is bound
+to a different brief) and `ErrStaleApproval` (the brief lost approval during the platform read).
+The handler passes `brief.Version` down for the second, and answers the first ahead of the plain
+`ErrConflict` arm so the message names the OTHER binding rather than this brief.
+
+What adoption does NOT buy is activation. On Google Ads the toggle refuses `ACTIVATE` unless the
+row carries the ad-group, ad and keyword-criterion ids that prove targeting was provisioned, and
+adoption records only the campaign it was asked about — it does not walk that campaign's
+children. So an adopted row supports metrics, delete and pause, and answers
+`ErrCampaignNotProvisioned` on activate. That is the guard working, not a gap in it: this service
+has not verified the campaign can deliver, and reporting a successful activation of something
+that cannot serve is exactly what the sentinel exists to prevent.
+
 ## Account discovery
 
 `ConnectionService.ListGoogleAdsAccounts` (backing `GET .../connection-google-ads/accounts`)
@@ -264,19 +350,26 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   keeps the 503 below honest: a 503 promises that waiting might help, and none of these conditions
   change until a human edits the connection. The distinction cannot be made here — a setup failure
   and an upstream one arrive as the same type — so the dispatch layer wraps the pre-send failures
-  with the sentinel and this arm reads it. Four adapters do:
-  `internal/dispatch/{googleads,reddit,twitter,microsoft}.go`, each in its own shared
+  with the sentinel and this arm reads it. Five adapters do:
+  `internal/dispatch/{googleads,reddit,twitter,microsoft,meta}.go`, each in its own shared
   resolve/validate helper, so every path through an adapter is covered rather than just the one
-  that happened to be fixed. Meta and LinkedIn do NOT yet — their equivalent checks are still bare
-  and still fall to the 503 arm below (LFXV2-3069 part 2). In Google Ads the wrap has three owners:
+  that happened to be fixed. Meta joined them in LFXV2-3061 (`resolveMetaCredentials` for the
+  credential-state three, `requireMetaAccountID` for the missing account). LinkedIn does NOT yet —
+  its equivalent checks are still bare and still fall to the 503 arm below (LFXV2-3069 part 2). In Google Ads the wrap has three owners:
   `validateGoogleAdsCredentials` tags the credential-state three (inactive, undecodable,
   incomplete), which is why they reach callers beyond discovery — but the SHAPE they reach them in
   depends on whether the caller is synchronous. The **status toggle** and the **metrics read**
   (`internal/service/brief.go`) are synchronous, so they answer a **409** off this same sentinel.
-  **Campaign create is not**: it answers `202` and the identical failure surfaces later in the
-  polled job result, never as a 409 — see `docs/api-catalog.md`. Do not describe "campaign
-  dispatch" as receiving a 409; the dispatch layer produces the error, and only the two
-  synchronous readers turn it into a status code.
+  **Campaign create is not**: it answers `202`, so the same failure can only surface later, in
+  the polled job result, never as a 409 — see `docs/api-catalog.md`. Be precise about what
+  reaches that result, because it is less than the sentinel carries:
+  `Orchestrator.dispatchPlatform` collapses every dispatcher error into one generic string, so
+  the job result says the platform dispatch failed and does NOT say which of the classified
+  reasons it was. The reason token survives only in that path's log line, via
+  `unusableConnectionReason`. Do not describe "campaign dispatch" as receiving a 409; the
+  dispatch layer produces the error, only the two synchronous readers turn it into a status
+  code, and the async path turns it into a log attribute rather than into anything the caller
+  polling the job can read.
   `validatedLoginCustomerID` in `internal/dispatch/googleads.go` tags the dashed `login_customer_id`,
   and it is now called by all three readers (toggle resolver, discovery resolver, and create dispatcher).
   Neither the cause NOR its text leaves the dispatch layer — not in the response and not in
@@ -317,8 +410,11 @@ it, and the bootstrap would dead-end at step two. Readiness to run a campaign is
 derived fact — `account_id` being non-empty — and the operations that need it report its absence
 with this reason rather than inventing a second status to carry the same bit.
 
-**Only the two campaign handlers see this sentinel, and both answer 409.** The campaign status
-toggle and the per-campaign metrics read each match `ErrAccountNotSelected` *before* the general
+**Only the two campaign handlers MAP this sentinel to a status, and both answer 409.** They are
+not its only consumers — the asynchronous pre-create dispatch path reads it too (see the
+job-result paragraph above), but it runs after the 202 and so records the reason in its log
+rather than in any response. What follows is about the two that do answer a caller. The campaign
+status toggle and the per-campaign metrics read each match `ErrAccountNotSelected` *before* the general
 `ErrConnectionNotUsable` arm — it is always wrapped alongside that sentinel, so a broad match
 would swallow it and return the ambiguous "no account selected, or the credentials need
 attention" message for a connection whose credentials are fine. The CAMPAIGN is the resource
@@ -346,8 +442,9 @@ reaches operators here through the log. A client must treat an absent `reason` a
 conflict"; see `mapAudienceErr` in `internal/service/audience.go` for the populated case.
 
 **The message names no accounts endpoint**, and that constraint is load-bearing rather than
-stylistic. Only Google Ads has one (`design/connection.go`, `list-google-ads-accounts`), and
-since Reddit, X/Twitter and Microsoft Ads tag this defect too they reach the same arm — a
+stylistic. Only Google Ads and Meta have one (`design/connection.go`, `list-google-ads-accounts`
+and `list-meta-ads-accounts`), and since Reddit, X/Twitter and Microsoft Ads tag this defect too
+they reach the same arm — a
 message pointing them at `.../accounts` would prescribe a route that 404s, which reads as a
 service bug rather than a value the caller has to supply. "Save an ad account id on the
 connection" is true of every provider. `assertNoAccountsEndpointPromised` pins it.

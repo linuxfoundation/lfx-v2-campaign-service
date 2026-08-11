@@ -291,8 +291,14 @@ var (
 	// reaches by doing exactly what the API told them to do.
 	//
 	// It became a SUPPORTED state when GoogleAdsConnectionConfig dropped
-	// Required("account_id") to allow credentials-first bootstrap (design/connection.go).
-	// It was not, however, previously impossible: Required checked only that the JSON key
+	// Required("account_id") to allow credentials-first bootstrap (design/connection.go),
+	// and MetaAdsConnectionConfig now does the same — it requires only page_id, so a Meta
+	// connection can be created with credentials alone and its account chosen afterwards
+	// from GET .../connection-meta-ads/accounts. Do not read this sentinel as Google-only:
+	// it is the shared name for an unfinished connection on every provider that supports a
+	// credentials-first create, and the list is expected to keep growing.
+	//
+	// On Google Ads it was not, however, previously impossible: Required checked only that the JSON key
 	// was present (the generated validator was `if body.AccountID == nil`) and the Go field
 	// is a plain string, so `"account_id": ""` was accepted and stored. The guard that
 	// produces this sentinel was therefore reachable before — via an unintended, unnamed
@@ -306,15 +312,80 @@ var (
 	// ErrConnectionNotUsable selects the HTTP status, this one supplies the reason token
 	// (unusableConnectionReason -> "account_not_selected") and the specific message.
 	//
-	// It reaches exactly two handlers, the campaign status toggle and the per-campaign
-	// metrics read, both of which answer 409: the campaign is the resource there, and an
-	// unfinished connection is a precondition conflict, matching how those handlers already
-	// classify ErrCampaignNotProvisioned. Non-retryable is the property that actually
-	// matters and the one 503 got wrong.
+	// It reaches two SYNCHRONOUS handlers, the campaign status toggle and the per-campaign
+	// metrics read (internal/service/brief.go), both of which answer 409: the campaign is
+	// the resource there, and an unfinished connection is a precondition conflict, matching
+	// how those handlers already classify ErrCampaignNotProvisioned. Non-retryable is the
+	// property that actually matters and the one 503 got wrong. Those two are fed by the
+	// credential resolution behind ToggleStatus and ReadMetrics — Google Ads, Microsoft,
+	// Reddit and Twitter all tag the sentinel there.
 	//
-	// Account discovery does NOT map this sentinel. It calls validateGoogleAdsCredentials,
-	// which deliberately omits the account-id check — accepting an account-less connection
-	// is precisely what makes the bootstrap possible, since discovery is how the operator
-	// finds the account to select. Discovery's own 400 covers its other unusable states.
+	// 409 is NOT this sentinel's universal fate, and code that maps errors must not assume
+	// it is. Meta tags it from requireMetaAccountID (internal/dispatch/meta.go), whose only
+	// caller is Dispatch — queued work, where dispatchPlatform collapses every dispatcher
+	// error into one job-result string. On that path the sentinel is a CLASSIFICATION whose
+	// reason token reaches an operator through the dispatch-failure log line and nothing
+	// else; no status code is derived from it and no caller sees its text. Meta has no
+	// synchronous producer at all today, because its toggle and metrics reads target the
+	// campaign node by id and need no account id.
+	//
+	// Account discovery does NOT map this sentinel, on any provider, because no discovery
+	// path produces it: Google's calls validateGoogleAdsCredentials, which deliberately
+	// omits the account-id check, and Meta's resolveMetaDiscoveryClient simply never calls
+	// requireMetaAccountID. Accepting an account-less connection is precisely what makes the
+	// bootstrap possible, since discovery is how the operator finds the account to select.
+	// Discovery's own 400 covers its other unusable states.
 	ErrAccountNotSelected = errors.New("no ad account has been selected for the stored connection")
+
+	// ErrAdoptionUnsupported indicates the platform has no campaign-adoption capability
+	// wired (no dispatcher, or the dispatcher is not a CampaignAdopter). The platform is
+	// never contacted. Maps to 400, exactly as ErrMetricsUnsupported and
+	// ErrAccountsUnsupported do for their capabilities, and it lives here for the same
+	// reason: a platform dispatcher can return it without importing the orchestration layer.
+	ErrAdoptionUnsupported = errors.New("campaign adoption is not supported for this platform")
+
+	// ErrPlatformCampaignAbsent indicates the platform answered the lookup and there is no
+	// such campaign under the project's connection. Maps to 404.
+	//
+	// It exists to keep ABSENCE separate from UNVERIFIABLE, which is the whole safety
+	// property of verify-before-bind. Every other lookup failure — a transport error, a
+	// malformed row, a filter the platform did not honour — must surface as an ordinary
+	// error (503), because binding is a claim about upstream reality and an unanswered
+	// question is not evidence. Only this sentinel means "we asked, and the answer was no".
+	ErrPlatformCampaignAbsent = errors.New("no such campaign exists on the ad platform")
+
+	// ErrInvalidPlatformCampaignID indicates the id could not name a campaign on that
+	// platform at all, so no query was issued. A PERMANENT input fault (400), never the
+	// "could not verify" 503 — retrying malformed input can only fail the same way.
+	ErrInvalidPlatformCampaignID = errors.New("not a valid platform campaign id")
+
+	// ErrPlatformCampaignAlreadyBound indicates ANOTHER live row already binds the same
+	// upstream campaign. Distinct from the ordinary ErrConflict this brief gets for its own
+	// platform slot: the 409 has to name the OTHER brief's binding, or the caller reads
+	// "already has a campaign" about a brief that does not.
+	//
+	// The other row need not be in the caller's project. Google Ads is one shared upstream
+	// account across every foundation, so a project-scoped guard would let two projects bind
+	// one live campaign; the 409 message says so without identifying the other project, which
+	// the caller may not be able to see. Maps to 409.
+	ErrPlatformCampaignAlreadyBound = errors.New("this platform campaign is already bound to another brief")
+
+	// ErrAdoptionRequiresOwnConnection indicates the project has no ad-platform connection of
+	// its own. Maps to 409.
+	//
+	// It does NOT mean the credentials resolved to the shared LF system account: adoption calls
+	// credsSource.resolveOwned, which consults the project scope alone, so the LF row is never
+	// loaded on this path. The sentinel means the project-scoped lookup found nothing, and the
+	// fallback that every other platform call would have taken was declined rather than taken
+	// and rejected — see internal/dispatch for why resolving it first would misreport a broken
+	// LF row as this project's problem.
+	//
+	// Every other platform call names a campaign the project already has a ROW for, and the
+	// row is the authorization. Adoption's caller names an ARBITRARY upstream id, so under the
+	// system fallback — where many projects share ONE account — it would let any project bind,
+	// meter and pause a campaign another project created there. Upstream metadata cannot settle
+	// ownership either: names, labels and budgets are all set by whoever created the campaign.
+	// The refusal costs nothing real, because a project with no ad account of its own has no
+	// campaign of its own to adopt.
+	ErrAdoptionRequiresOwnConnection = errors.New("adoption requires a connection owned by this project")
 )

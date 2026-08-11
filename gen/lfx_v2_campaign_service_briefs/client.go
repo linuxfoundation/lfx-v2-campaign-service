@@ -23,6 +23,7 @@ type Client struct {
 	DeleteBriefEndpoint          goa.Endpoint
 	FetchEventURLEndpoint        goa.Endpoint
 	CreateCampaignsEndpoint      goa.Endpoint
+	AdoptCampaignEndpoint        goa.Endpoint
 	GetCampaignEndpoint          goa.Endpoint
 	GetCampaignMetricsEndpoint   goa.Endpoint
 	GenerateEmailCopyEndpoint    goa.Endpoint
@@ -34,7 +35,7 @@ type Client struct {
 
 // NewClient initializes a "lfx-v2-campaign-service-briefs" service client
 // given the endpoints.
-func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, createCampaigns, getCampaign, getCampaignMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, deleteCampaign, getJob goa.Endpoint) *Client {
+func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, createCampaigns, adoptCampaign, getCampaign, getCampaignMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, deleteCampaign, getJob goa.Endpoint) *Client {
 	return &Client{
 		CreateBriefEndpoint:          createBrief,
 		FindBriefEndpoint:            findBrief,
@@ -44,6 +45,7 @@ func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, dele
 		DeleteBriefEndpoint:          deleteBrief,
 		FetchEventURLEndpoint:        fetchEventURL,
 		CreateCampaignsEndpoint:      createCampaigns,
+		AdoptCampaignEndpoint:        adoptCampaign,
 		GetCampaignEndpoint:          getCampaign,
 		GetCampaignMetricsEndpoint:   getCampaignMetrics,
 		GenerateEmailCopyEndpoint:    generateEmailCopy,
@@ -196,6 +198,24 @@ func (c *Client) CreateCampaigns(ctx context.Context, p *CreateCampaignsPayload)
 		return
 	}
 	return ires.(*JobCreateResponse), nil
+}
+
+// AdoptCampaign calls the "adopt-campaign" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// AdoptCampaign may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) AdoptCampaign(ctx context.Context, p *AdoptCampaignPayload) (res *Campaign, err error) {
+	var ires any
+	ires, err = c.AdoptCampaignEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*Campaign), nil
 }
 
 // GetCampaign calls the "get-campaign" endpoint of the

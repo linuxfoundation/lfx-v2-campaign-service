@@ -53,12 +53,20 @@ enforced on the system row:
 `accountID` and `providerConfig` are tri-state, and which state an omission stands for depends on
 whether the row already exists. On a FIRST install an omitted `-account-id` is the credentials-first
 state, legal only where the account can be chosen afterwards (`accountDiscoveryProviders`, Google
-Ads alone). Membership is narrower than "the dispatcher can discover accounts": Meta gained a
-discovery endpoint in LFXV2-3062 and is still deliberately excluded, because the other half of a
-completable lifecycle is that the path needing an account id fails in a way that NAMES the missing
-choice, and Meta's `Dispatch` still returns a generic error for an empty id instead of tagging it
-with `domain.ErrAccountNotSelected` (LFXV2-3061). Until that lands, an account-less Meta row is a
-dead row, so the map keeps it out — see the comment on the map itself for the full reasoning. On a ROTATION the same omission means KEEP, because a rotation should not have to
+Ads and — since LFXV2-3061 — Meta). Membership is narrower than "the dispatcher can discover
+accounts": the other half of a completable lifecycle is that the path needing an account id fails
+in a way that NAMES the missing choice. Meta is the one provider where the halves ever came
+apart — it gained a discovery endpoint in LFXV2-3062 and was still excluded, because its
+`Dispatch` returned a generic error for an empty id. LFXV2-3061 added the tagging
+(`requireMetaAccountID` → `domain.ErrAccountNotSelected`, reported by `unusableConnectionReason`
+as `account_not_selected`) and Meta joined the map. That token reaches an operator through the
+dispatch-failure LOG LINE rather than the polled job result, because `dispatchPlatform` collapses
+every dispatcher error into `"platform campaign creation failed"`; Meta's toggle and metrics need
+no account id, so create — the asynchronous path — is its only account-needing one. None of
+LinkedIn, Microsoft, Reddit and X has BOTH halves: all four lack discovery, and Microsoft, Reddit
+and X already tag a missing account with `domain.ErrAccountNotSelected`, so LinkedIn alone is
+missing the tagging too. Either way an account-less row for them stays a dead row and the map
+keeps them out — see the comment on the map itself for the full reasoning. On a ROTATION the same omission means KEEP, because a rotation should not have to
 restate the whole row.
 
 Preserve-by-default cannot express a removal, and this scope has no other writer that could —

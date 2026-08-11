@@ -62,28 +62,117 @@ func NewMetaDispatcher(repo connReader, enc domain.Encryptor, opts ...meta.Optio
 	return &MetaDispatcher{creds: newCredsSource(repo, enc), opts: opts}
 }
 
-// Dispatch implements service.PlatformDispatcher for Meta.
-func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
-	res, err := d.creds.resolve(ctx, brief.ProjectID, platform)
+// resolveMetaCredentials fetches the project's Meta connection and validates it is usable
+// for ANY Meta operation — active status, decodable credentials, non-empty access token —
+// tagging each defect with domain.ErrConnectionNotUsable plus a reason sentinel. The pattern —
+// named returns, defer systemScoped, a reason sentinel under ErrConnectionNotUsable — ORIGINATES
+// in Google Ads' validateGoogleAdsCredentials; resolveRedditClient adopted it from there and
+// says so, and is the nearest sibling to read alongside this one. Cite the origin rather than
+// the sibling: which adapter you copy from is a detail, which one DEFINES the shape is not.
+// It deliberately does NOT check account_id: only Dispatch needs it (a
+// campaign create builds Graph paths as /{accountID}/campaigns etc. — see
+// internal/platform/meta/client.go's AccountID checks ahead of CreateCampaign). ToggleStatus
+// and ReadMetrics target an existing campaign by id (POST /{campaignID}, GET
+// /{campaignID}/insights) and never read AccountConfig.AccountID at all, so requiring one
+// there would refuse a perfectly servable pause/metrics-read on a connection whose account
+// selection was later cleared via PUT.
+func (d *MetaDispatcher) resolveMetaCredentials(ctx context.Context, projectID string, platform model.Provider) (res *resolved, creds metaCreds, err error) {
+	res, err = d.creds.resolve(ctx, projectID, platform)
 	if err != nil {
-		return nil, err // preCreateError
+		return nil, metaCreds{}, err
 	}
+	// The defer closes over `conn`, NOT the named return `res`. Every not-usable return
+	// below sets res to nil before the defer runs, and systemScoped is a no-op on a nil
+	// receiver — so reading the named return here would silently drop the system-row
+	// attribution from exactly the errors that need it, on every caller: dispatch, toggle,
+	// metrics and discovery alike. Failing open like that is the whole defect systemScoped
+	// exists to prevent, and it leaves no trace, because the error is still correct in
+	// every other respect. Bind the resolved connection once and read that.
+	conn := res
+	defer func() { err = conn.systemScoped(err) }()
 	if res.status != model.StatusActive {
-		return nil, notCreated(fmt.Errorf("meta connection for project %s is %s, not active", brief.ProjectID, res.status))
+		return nil, metaCreds{}, fmt.Errorf("%w: %w: meta connection for project %s is %s, not active",
+			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
 	}
-
-	var creds metaCreds
-	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return nil, notCreated(fmt.Errorf("decode meta credentials: %w", err))
+	if uerr := json.Unmarshal(res.plaintext, &creds); uerr != nil {
+		// The cause is DROPPED, not wrapped. It is the only value here derived from the
+		// DECRYPTED credential blob, and encoding/json quotes its input in
+		// *json.SyntaxError / *json.UnmarshalTypeError. Today's stdlib happens not to quote
+		// the offending bytes for a struct of string fields — it reports "invalid character
+		// 'T' after object key:value pair", not the input — but that is a behaviour, not a
+		// documented guarantee, and it does not hold for every field type: a number decoded
+		// into a numeric field appears in the message verbatim. Dropping the cause removes
+		// the whole class rather than resting on a property of the stdlib nobody here
+		// controls, and it costs nothing, because the sentinel already names the only thing
+		// an operator can act on: this connection's stored credential has to be re-entered.
+		// The project id below is not plaintext-derived and stays. Matches
+		// resolveRedditClient's decode error. This reaches the discovery handler too, which
+		// logs it and describes the not-usable arm to the caller.
+		return nil, metaCreds{}, fmt.Errorf("%w: %w: meta credentials for project %s are not valid JSON",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, projectID)
 	}
 	if strings.TrimSpace(creds.AccessToken) == "" {
-		return nil, notCreated(fmt.Errorf("meta credentials are incomplete (need accessToken)"))
+		return nil, metaCreds{}, fmt.Errorf("%w: %w: meta credentials are incomplete (need accessToken)",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
 	}
+	return res, creds, nil
+}
 
+// requireMetaAccountID returns res.accountID trimmed, or — when it is empty — an error
+// naming the missing choice: domain.ErrAccountNotSelected alongside
+// domain.ErrConnectionNotUsable, which unusableConnectionReason reports as
+// "account_not_selected". That pair is a CLASSIFICATION, not a status code, and the reason
+// token reaches an operator through the LOG — not the job result. Be precise about this,
+// because the natural assumption is wrong: the only caller is Dispatch, which is queued work,
+// and dispatchPlatform collapses EVERY dispatcher error into the same
+// "platform campaign creation failed" job result (internal/service/orchestrator.go). Nothing
+// returned here reaches the caller as text. Google Ads' create path is in exactly the same
+// position and says so at validateGoogleAdsConnection's call site; classification there buys
+// log hygiene and claim semantics, and it buys the same here.
+//
+// The same sentinels DO drive a synchronous 409 (internal/service/brief.go) — which is why
+// they are used rather than a bespoke error — but only from the status toggle and metrics
+// read, and only for providers whose toggle/metrics need an account id. Meta's do not (they
+// target the campaign node by id), so for Meta this sentinel has no synchronous call site at
+// all today. Its value is that the fixed-vocabulary reason token identifies the missing
+// choice in the dispatch-failure log line instead of leaving an unclassified error there.
+//
+// An account-id-less connection (the credentials-only bootstrap state — see
+// MetaAdsConnectionConfig in design/connection.go) can create no campaign, and this refuses
+// it HERE, before an empty AccountConfig.AccountID can reach the Meta client and fail
+// opaquely with a malformed "//campaigns" request instead of a reason naming the fix.
+// ToggleStatus and ReadMetrics do not call this — see resolveMetaCredentials for why.
+func requireMetaAccountID(res *resolved, projectID string) (string, error) {
 	accountID := strings.TrimSpace(res.accountID)
+	if accountID == "" {
+		return "", res.systemScoped(fmt.Errorf("%w: %w: meta connection for project %s has no account id selected",
+			domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected, projectID))
+	}
+	return accountID, nil
+}
+
+// Dispatch implements service.PlatformDispatcher for Meta.
+func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (*model.Campaign, error) {
+	res, creds, err := d.resolveMetaCredentials(ctx, brief.ProjectID, platform)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	accountID, err := requireMetaAccountID(res, brief.ProjectID)
+	if err != nil {
+		return nil, notCreated(err)
+	}
 	pageID := strings.TrimSpace(res.providerConfig["page_id"])
-	if accountID == "" || pageID == "" {
-		return nil, notCreated(fmt.Errorf("meta connection for project %s is missing account id or page id", brief.ProjectID))
+	if pageID == "" {
+		// page_id is Required at connection creation (design/connection.go), so this is
+		// unreachable through normal API validation; it only fires if a row somehow
+		// stored an empty value. CreateCampaigns already returned 202 by the time Dispatch
+		// runs, so this can't surface as a synchronous 4xx — notCreated marks it
+		// NoUpstreamCreate so the orchestrator releases the pending claim instead of
+		// retaining it for a create that may have partially landed, and the sentinel/reason
+		// chain (ErrConnectionNotUsable/ErrProviderConfigInvalid) is what a human reads back
+		// from the async job's failure log, same as every other stored-state defect here.
+		return nil, notCreated(res.systemScoped(fmt.Errorf("%w: %w: meta connection for project %s is missing page id",
+			domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid, brief.ProjectID)))
 	}
 
 	var cfg metaConfig
@@ -162,35 +251,28 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 }
 
 // ToggleStatus pauses or resumes an existing Meta campaign on the platform. It resolves the
-// connection (an inactive/undecryptable/incomplete connection is a clean error), builds the
-// client, and CASCADES the status to the campaign, its ad set, and every ad — Meta's create
-// PAUSES all three, so toggling only the campaign to ACTIVE would not serve. campaign is the
-// persisted row; the ad set id is read from its CampaignResult (Meta persists the ad set id
-// but not the individual ad ids, which the client discovers via GET /{adSetID}/ads). status
-// is model.CampaignRunActive or model.CampaignRunPaused. Returns nil only when the platform
-// confirms; an UNCONFIRMED outcome (including a partial cascade) is wrapped so the caller
-// reports "verify before retry" (via the Unconfirmed() behavioral interface).
+// connection (an inactive/undecryptable/incomplete connection is a clean 409, not a 503 —
+// see resolveMetaCredentials), builds the client, and CASCADES the status to the campaign,
+// its ad set, and every ad — Meta's create PAUSES all three, so toggling only the campaign
+// to ACTIVE would not serve. campaign is the persisted row; the ad set id is read from its
+// CampaignResult (Meta persists the ad set id but not the individual ad ids, which the
+// client discovers via GET /{adSetID}/ads). status is model.CampaignRunActive or
+// model.CampaignRunPaused. Returns nil only when the platform confirms; an UNCONFIRMED
+// outcome (including a partial cascade) is wrapped so the caller reports "verify before
+// retry" (via the Unconfirmed() behavioral interface).
 func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
 	metaStatus, err := metaRunStatus(status)
 	if err != nil {
 		return err
 	}
-	res, err := d.creds.resolve(ctx, projectID, platform)
+	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform)
 	if err != nil {
 		return err
 	}
-	if res.status != model.StatusActive {
-		return fmt.Errorf("meta connection for project %s is %s, not active", projectID, res.status)
-	}
-	var creds metaCreds
-	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return fmt.Errorf("decode meta credentials: %w", err)
-	}
-	if strings.TrimSpace(creds.AccessToken) == "" {
-		return fmt.Errorf("meta credentials are incomplete (need accessToken)")
-	}
-	// A status update targets the campaign node by id (POST /{campaignID}); it needs no
-	// account id or page id, so those are not required here (unlike Dispatch).
+	// A status update targets the campaign node by id (POST /{campaignID}); it needs
+	// neither page id nor account id (unlike Dispatch — see resolveMetaCredentials), so an
+	// account cleared via PUT after the campaign was created does not block pausing or
+	// resuming it.
 	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{AccountID: strings.TrimSpace(res.accountID), Label: res.label}, d.opts...)
 	// Cascade to the ad set (and its ads) as well as the campaign: CreateCampaign PAUSES the
 	// campaign, ad set, and every ad, so toggling only the campaign to ACTIVE would not serve.
@@ -246,24 +328,15 @@ func metaMetricsWindow(w model.MetricsWindow) (meta.MetricsWindow, error) {
 }
 
 // ReadMetrics implements service.MetricsReader for Meta. It resolves the same connection
-// ToggleStatus does (no account id or page id required — a metrics read targets the
-// campaign node by id, like the status update) and reads the campaign's live Insights
-// metrics, mapping the platform-agnostic window to Meta's own vocabulary via
-// metaMetricsWindow before calling the client.
+// ToggleStatus does (no page id or account id required — a metrics read targets the
+// campaign node by id via GET /{campaignID}/insights, like the status update; see
+// resolveMetaCredentials) and reads the campaign's live Insights metrics, mapping the
+// platform-agnostic window to Meta's own vocabulary via metaMetricsWindow before calling
+// the client.
 func (d *MetaDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
-	res, err := d.creds.resolve(ctx, projectID, platform)
+	res, creds, err := d.resolveMetaCredentials(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
-	}
-	if res.status != model.StatusActive {
-		return nil, fmt.Errorf("meta connection for project %s is %s, not active", projectID, res.status)
-	}
-	var creds metaCreds
-	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return nil, fmt.Errorf("decode meta credentials: %w", err)
-	}
-	if strings.TrimSpace(creds.AccessToken) == "" {
-		return nil, fmt.Errorf("meta credentials are incomplete (need accessToken)")
 	}
 	metaWindow, err := metaMetricsWindow(window)
 	if err != nil {
@@ -349,75 +422,32 @@ func campaignFromMeta(ctx context.Context, r *meta.CampaignResult, cfg metaConfi
 
 // resolveMetaDiscoveryClient builds a Meta client for the ACCOUNT-DISCOVERY path.
 //
-// It applies the same stored-state checks the dispatch and metrics paths apply — the
-// connection must be active, the decrypted blob must decode, and the access token must be
-// present — and deliberately does NOT require an account id. That omission is the point:
-// the endpoint exists to answer "which ad account should this connection use?", so
-// demanding one would make it reachable only by connections that no longer need it.
+// The stored-state checks are resolveMetaCredentials' — active status, decodable blob,
+// non-empty access token, each tagged with domain.ErrConnectionNotUsable plus its reason
+// sentinel and passed through systemScoped. This function deliberately does not repeat
+// them. It did once, and that duplication was the defect: the two copies classified the
+// same three conditions, so a later change to either — a fourth check, a different sentinel,
+// a message that stops dropping the decode cause — would have silently applied to only one
+// of "can this connection dispatch?" and "can this connection be asked what it reaches?".
+// One source, one error contract, and the discovery endpoint's 400-vs-503 mapping stays
+// pinned to the same sentinels the dispatch path answers with.
 //
-// The lifecycle this serves TODAY is re-pointing: reading the choices before a PUT moves an
-// existing connection to a different account. First-time bootstrap — creating a connection
-// with credentials only and choosing an account afterwards, the way Google Ads works — is
-// NOT reachable for Meta, because MetaAdsConnectionConfig still declares
-// Required("account_id") and the create is rejected as a 400 before this code is involved.
-// Google Ads dropped that requirement precisely because it had a discovery endpoint; Meta
-// now has one too, but the change is not free here. Dispatch — the ONE Meta path that needs
-// an account id, since ToggleStatus and ReadMetrics both target the campaign node by id and
-// say so — would have to tag its empty-id failure with domain.ErrAccountNotSelected the way
-// resolveGoogleAdsClient does, or a connection parked mid-bootstrap answers a create with a
-// generic error instead of one that names the missing choice. That is tracked separately
-// (LFXV2-3061); this resolver is
-// already correct for it, which is why the account id is not consulted here.
+// What IS specific to discovery is what is not required: no account id. That omission is the
+// point of the endpoint — it exists to answer "which ad account should this connection
+// use?", so demanding one would make it reachable only by connections that no longer need
+// it. resolveMetaCredentials never consults the account id (see its godoc for why the
+// metrics and toggle paths do not either); Dispatch adds that requirement separately with
+// requireMetaAccountID, and this path simply does not call it. That is exactly what makes
+// credentials-only bootstrap work: a connection created with an access token and a page id
+// but no account_id is usable HERE, which is how its owner discovers the id to PUT.
 //
 // AccountConfig is left ZERO for the same reason. GET /me/adaccounts is account-agnostic:
 // it asks what the TOKEN reaches, so scoping the client to one of the answers would narrow
 // the response to a subset of the question.
-//
-// Every check here inspects stored state, before any request exists, so a failure means
-// the connection needs EDITING rather than retrying — each is tagged with
-// domain.ErrConnectionNotUsable alongside the sentinel naming the specific defect, which
-// is what the handler classifies on to answer 400 instead of 503. Errors from
-// creds.resolve are deliberately left untagged: that layer distinguishes ErrNotFound (no
-// connection at all — a 404) from a storage failure (genuinely transient — a 503), and
-// flattening both into "not usable" would lose it.
-//
-// Every not-usable return below also passes through res.systemScoped, via a named return and
-// a defer, for the reason validateGoogleAdsCredentials documents: the three defects here are
-// in STORED STATE, and on a project that owns no connection that stored state belongs to the
-// LF system row it fell back to. Untagged, the shared handler answers such a project a 400
-// telling it to go and edit a connection it does not have and cannot address, instead of the
-// 500 that pages whoever installed the system credential. The defer rather than three call
-// sites is deliberate: this is a defect class the Google Ads path already had and fixed once
-// by exactly this means, and a fourth return added later must not be able to forget.
-// systemScoped is a no-op for project-owned rows and idempotent, so it costs nothing here.
-func (d *MetaDispatcher) resolveMetaDiscoveryClient(ctx context.Context, projectID string, platform model.Provider) (client *meta.Client, err error) {
-	res, err := d.creds.resolve(ctx, projectID, platform)
+func (d *MetaDispatcher) resolveMetaDiscoveryClient(ctx context.Context, projectID string, platform model.Provider) (*meta.Client, error) {
+	_, creds, err := d.resolveMetaCredentials(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
-	}
-	defer func() { err = res.systemScoped(err) }()
-	if res.status != model.StatusActive {
-		return nil, fmt.Errorf("%w: %w: meta connection for project %s is %s, not active",
-			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
-	}
-	var creds metaCreds
-	if uerr := json.Unmarshal(res.plaintext, &creds); uerr != nil {
-		// The unmarshal error is DROPPED, not wrapped. It is the only value in this
-		// function derived from the DECRYPTED credential blob, and this error reaches the
-		// discovery handler, which logs it and describes the not-usable arm to the caller.
-		// Today's encoding/json happens not to quote the offending bytes for a struct of
-		// string fields — it reports "invalid character 'T' after object key:value pair",
-		// not the input — but that is a behaviour, not a documented guarantee, and it does
-		// not hold for every field type: a number decoded into a numeric field appears in
-		// the message verbatim. Dropping the cause removes the whole class instead of
-		// resting on a property of the stdlib nobody here controls, and it costs nothing:
-		// the sentinel already names the only thing an operator can act on, which is that
-		// this connection's stored credential has to be re-entered.
-		return nil, fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable)
-	}
-	if strings.TrimSpace(creds.AccessToken) == "" {
-		return nil, fmt.Errorf("%w: %w: meta credentials need accessToken",
-			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
 	}
 	return meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{}, d.opts...), nil
 }

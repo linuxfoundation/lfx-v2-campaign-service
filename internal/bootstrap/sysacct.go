@@ -220,26 +220,38 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // accountDiscoveryProviders are the providers for which a credentials-first row is a real
 // lifecycle state rather than a dead row.
 //
-// The distinction is not cosmetic. Every other adapter refuses an empty account id outright —
-// internal/dispatch/{linkedin,meta,reddit,twitter,microsoft}.go each guard on it — so an
+// The distinction is not cosmetic. The remaining adapters refuse an empty account id outright —
+// internal/dispatch/{linkedin,reddit,twitter,microsoft}.go each guard on it — so an
 // account-less system row for one of them is installable, reports success, and then fails
 // every dispatch with no path to completion. That is exactly the failure requiredConfigKeys
 // above exists to prevent, applied to the one column that is not part of ProviderConfig.
 //
 // **Membership is NOT "the dispatcher implements the service-side AccountLister".** (The
 // interface lives in internal/service/orchestrator.go; internal/domain owns only the
-// ErrAccountsUnsupported sentinel it is paired with.) Meta implements it, as of the
-// discovery endpoint added in LFXV2-3062, and is deliberately still absent here. Discovery is
-// only half of a completable lifecycle: the other half is that the path which DOES need an
-// account id fails in a way that names the missing choice, and Meta's Dispatch still returns
-// a generic error for an empty id rather than tagging it with domain.ErrAccountNotSelected.
-// (Only Dispatch — Meta's ToggleStatus and ReadMetrics target the campaign node by id and
-// document that they need no account id, so there is nothing to tag there.) Until that lands
-// (LFXV2-3061), an account-less Meta row is still a dead row — it just has a way to find out
-// what it is missing that nothing tells the operator to go and use. Add Meta here in that
-// ticket, with the tagging, not before.
+// ErrAccountsUnsupported sentinel it is paired with.) Discovery is only half of a completable
+// lifecycle: the other half is that the path which DOES need an account id fails in a way that
+// names the missing choice, so the operator is told what to go and use the discovery endpoint
+// for. Meta had the first half from LFXV2-3062 and was deliberately excluded here until it had
+// the second; LFXV2-3061 added it — internal/dispatch/meta.go's requireMetaAccountID tags an
+// empty id with domain.ErrAccountNotSelected, which unusableConnectionReason reports as
+// "account_not_selected". (Only Dispatch needs it: Meta's ToggleStatus and ReadMetrics target
+// the campaign node by id and document that they need no account id, so there is nothing to tag
+// there.) Both halves are present, so an account-less Meta system row is now a completable
+// state rather than a dead one.
+//
+// Be exact about WHERE the naming lands, because Meta's only account-needing path is the
+// asynchronous one and that changes the answer. dispatchPlatform collapses every dispatcher
+// error into the same "platform campaign creation failed" job result, so the reason token
+// reaches the operator in the dispatch-failure LOG LINE, not by polling the job. Google Ads
+// is identical on its create path; what differs is that Google Ads' toggle and metrics need
+// the account id too and answer a synchronous 409, and Meta's do not. Log-only is still the
+// second half — an unclassified error names nothing at all — but it is a weaker signal than
+// the Google Ads case, and someone weighing the next provider should weigh the real one.
+//
+// The bar for adding a provider here is those two halves together, not either alone.
 var accountDiscoveryProviders = map[model.Provider]bool{
 	model.ProviderGoogleAds: true,
+	model.ProviderMetaAds:   true,
 }
 
 // requireAccountID checks the value about to be WRITTEN, for the same reason requireConfig

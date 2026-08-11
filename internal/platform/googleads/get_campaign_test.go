@@ -6,6 +6,7 @@ package googleads
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -118,6 +119,12 @@ func TestGetCampaign_RejectsUnusableIDs(t *testing.T) {
 			}
 			if q := query(); q != "" {
 				t.Errorf("GetCampaign(%q) reached the API: %s", tc.id, q)
+			}
+			// Tagged, not merely non-nil: the adopt handler answers 400 off this sentinel,
+			// and an untagged error falls through to "the platform could not be reached",
+			// telling the caller to retry input that can never succeed.
+			if !errors.Is(err, ErrNotACampaignID) {
+				t.Errorf("GetCampaign(%q) error is not ErrNotACampaignID: %v", tc.id, err)
 			}
 		})
 	}

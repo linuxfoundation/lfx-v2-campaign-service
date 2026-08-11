@@ -63,10 +63,13 @@ func (s *ConnectionService) CreateGoogleAds(ctx context.Context, p *conn.CreateG
 		ProjectID: p.ProjectID,
 		Provider:  model.ProviderGoogleAds,
 		Label:     strVal(cfg.Label),
-		// Optional for Google Ads alone (design/connection.go explains why): omitting it
-		// stores "" and creates a credentials-only connection, which is the first step of
-		// the discovery bootstrap. The column is NOT NULL TEXT, so "" is a legal value and
-		// no migration is involved — "unfinished" is spelled as an empty string, not NULL.
+		// Optional for Google Ads and, as of LFXV2-3061, Meta — the two providers with an
+		// account-discovery endpoint to finish the bootstrap from (design/connection.go
+		// explains why the other four still require it; see CreateMetaAds below for the
+		// sibling). Omitting it stores "" and creates a credentials-only connection, which
+		// is the first step of the discovery bootstrap. The column is NOT NULL TEXT, so ""
+		// is a legal value and no migration is involved — "unfinished" is spelled as an
+		// empty string, not NULL.
 		AccountID: strVal(cfg.AccountID),
 		ProviderConfig: map[string]string{
 			"login_customer_id": strVal(cfg.LoginCustomerID),
@@ -124,10 +127,18 @@ func (s *ConnectionService) SetCredentialGoogleAds(ctx context.Context, p *conn.
 }
 
 // unusableConnectionReason maps an ErrConnectionNotUsable chain onto the fixed vocabulary
-// logged by the handlers that surface such a chain: account discovery, and the synchronous
-// campaign handlers (metrics and status toggle). Discovery is not the only consumer, and one
-// case below — account_not_selected — is unreachable from discovery, which skips the
-// account-ID check by design.
+// logged by the callers that surface such a chain. There are three, and they do NOT all
+// answer a status code: account discovery, the synchronous campaign handlers (metrics and
+// status toggle), and — since LFXV2-3061 — the ASYNCHRONOUS pre-create dispatch path
+// (Orchestrator.dispatchPlatform). Discovery is not the only consumer, and one case below —
+// account_not_selected — is unreachable from discovery, which skips the account-ID check by
+// design.
+//
+// The async caller is the one that makes this function load-bearing rather than convenient.
+// dispatchPlatform runs after the 202, so it has no response to classify: it collapses every
+// dispatcher error into one generic string in the job result, and the reason token produced
+// here is the ONLY place the specific defect is recorded. For the synchronous two a wrong or
+// missing reason costs log quality; for that path it costs the diagnosis outright.
 //
 // It exists because the errors themselves cannot be logged: one
 // of these conditions is detected by decoding the decrypted credential blob, and an
@@ -462,7 +473,10 @@ func (s *ConnectionService) CreateMetaAds(ctx context.Context, p *conn.CreateMet
 		ProjectID: p.ProjectID,
 		Provider:  model.ProviderMetaAds,
 		Label:     strVal(cfg.Label),
-		AccountID: cfg.AccountID,
+		// Optional for Meta too (design/connection.go explains why): omitting it stores
+		// "" and creates a credentials-only connection, the first step of the discovery
+		// bootstrap — same semantics as Google Ads' AccountID above.
+		AccountID: strVal(cfg.AccountID),
 		ProviderConfig: map[string]string{
 			"page_id": cfg.PageID, // required by the design
 			"app_id":  strVal(cfg.AppID),
@@ -490,7 +504,10 @@ func (s *ConnectionService) UpdateMetaAds(ctx context.Context, p *conn.UpdateMet
 		ProjectID: p.ProjectID,
 		Provider:  model.ProviderMetaAds,
 		Label:     strVal(cfg.Label),
-		AccountID: cfg.AccountID,
+		// PUT is a full replace, so omitting account_id CLEARS a previously chosen one —
+		// same semantics as Google Ads' AccountID above, and the second half of the
+		// bootstrap: the caller PUTs back the id chosen from discovery.
+		AccountID: strVal(cfg.AccountID),
 		ProviderConfig: map[string]string{
 			"page_id": cfg.PageID, // required by the design
 			"app_id":  strVal(cfg.AppID),

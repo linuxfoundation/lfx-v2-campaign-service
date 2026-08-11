@@ -153,9 +153,9 @@ Two properties of this pattern are easy to lose and worth stating outright:
 - **The tagging belongs in the SHARED resolve/validate helper, not at each call site.** Where an
   adapter HAS one — Google Ads, Reddit, X/Twitter and Microsoft Ads each route Dispatch,
   `ToggleStatus` and (where wired) `ReadMetrics` through a single helper — tagging it once covers
-  every path. Meta and LinkedIn have no such helper yet; see below. Tagging per-path is how Google
-  Ads ended up correct on discovery while its other callers were still bare, before the helper
-  absorbed it.
+  every path. Meta gained one in LFXV2-3061 (`resolveMetaCredentials`); LinkedIn still has none,
+  see below. Tagging per-path is how Google Ads ended up correct on discovery while its other
+  callers were still bare, before the helper absorbed it.
 
 Which adapters honour it today:
 
@@ -165,7 +165,7 @@ Which adapters honour it today:
 | Reddit | yes | `resolveRedditClient` — dispatch, toggle, metrics |
 | X/Twitter | yes | `validateTwitterConnection` — dispatch, toggle, metrics |
 | Microsoft Ads | yes | `validateMicrosoftConnection` — dispatch, toggle (no metrics; async Reporting API) |
-| Meta | **no** | still bare, still 503 — LFXV2-3069 part 2 |
+| Meta | yes | `resolveMetaCredentials` — dispatch, toggle, metrics (LFXV2-3061) |
 | LinkedIn | **no** | still bare, still 503 — LFXV2-3069 part 2 |
 | HubSpot (email) | **n/a** | out of scope — see below |
 
@@ -178,9 +178,10 @@ between a 409 and a 503 the way the six above are. Tagging them would change wha
 result says, which is worth doing, but it is a separate question from the status mapping this
 section is about — do not read the empty cell as work queued behind LFXV2-3069 part 2.
 
-Meta and LinkedIn each inline `d.creds.resolve(...)` at more than one call site with no shared
-helper, so tagging them is an extraction rather than an annotation, and it collides with open work
-on those files. Until it lands, their four defects continue to answer 503.
+LinkedIn still inlines `d.creds.resolve(...)` at more than one call site with no shared helper,
+so tagging it is an extraction rather than an annotation. Meta was in the same state until
+LFXV2-3061 performed exactly that extraction, which is what the entry below describes; until
+LinkedIn's lands, its defects continue to answer 503.
 
 The full rationale for the classification — including why a decrypt failure splits into two
 sentinels, and why an inactive row is refused rather than treated as "pending" — lives in the
@@ -494,6 +495,54 @@ fails. The error names the field and the rule but never echoes the VALUE: a mana
 account-identifying configuration, this error reaches a log, and the rest of this path keeps
 error text to a fixed sentinel vocabulary with no payload attached.
 
+### Meta
+
+`MetaDispatcher.ListAccounts` follows the same contract, through
+`resolveMetaDiscoveryClient`, and the differences are the interesting part.
+
+**The account id is not consulted, and `AccountConfig` is left zero.** Graph
+`GET /me/adaccounts` asks what the TOKEN reaches, so scoping the client to one of the answers
+would narrow the response to a subset of the question. Requiring an account id would also make
+the endpoint reachable only by connections that no longer need it.
+
+**Both lifecycles are reachable as of LFXV2-3061.** The resolver was already correct for
+first-time bootstrap — credentials stored, account chosen afterwards, the way Google Ads
+works — and `MetaAdsConnectionConfig` no longer declares `Required("account_id")`. Closing it
+was not a one-line loosening: an empty account id had to be tagged first, or a Meta connection
+parked mid-bootstrap would fail `Dispatch` with an error nothing classifies — the caller would
+learn that the campaign did not launch, not that the reason is a choice they have not made.
+`requireMetaAccountID` supplies that tagging. Note the shape of that answer: campaign create is ASYNCHRONOUS (`design/brief.go`
+answers `StatusAccepted`), so no error of any kind surfaces as a 409 — `docs/api-catalog.md`
+records the same split for Google Ads. Nor does the reason reach the polled job result:
+`dispatchPlatform` collapses every dispatcher error into the fixed string
+`"platform campaign creation failed"` (`internal/service/orchestrator.go`), so the job says the
+create failed and never says why. The synchronous 409 that
+names the missing account belongs to `ToggleStatus` and `ReadMetrics`, and neither needs
+anything here: both target the campaign node by id and document that they need no account id
+(`internal/dispatch/meta.go`), so they already work on an account-less row. `Dispatch` is
+therefore the only exit tagged, and what the tagging improves is the dispatch-failure LOG LINE —
+the orchestrator splits on the reason before collapsing the result, so `account_not_selected`
+reaches an operator reading logs and no caller-facing surface at all. `internal/bootstrap` records
+the same for the system row. Delivered by LFXV2-3061.
+
+**The unmarshal cause on the decrypted blob is DROPPED, not wrapped.** It is the only value in
+the resolver derived from decrypted plaintext, and this error is logged and, on the not-usable
+arm, described to the caller. Today's `encoding/json` happens not to quote the offending bytes
+for a struct of string fields, but that is a behaviour rather than a documented guarantee and
+it does not hold for every field type. `TestMeta_ListAccounts_UndecodableBlobDropsTheUnmarshalCause`
+asserts the error text EXACTLY, against the two sentinels plus the resolver's own project context
+(`": meta credentials for project proj are not valid JSON"`) — that suffix is built from the
+project id, never from plaintext. Equality is the binding form: asserting merely that the text
+does not contain the secret would pass with the cause appended.
+
+**Known-bad accounts are returned, not filtered.** Disabled, unsettled, pending-review,
+pending-settlement, grace-period and closed accounts come back with the reason in the label
+(`"LF Events (disabled)"`). This is a picker: dropping them answers "your token reaches no ad
+accounts" about an account sitting right there. The label reuses
+`inactiveAccountStatusLabels`, the same map `CreateCampaign`'s preflight refuses on, so the
+picker and the create path cannot disagree about which accounts are known-bad. `account_status`
+0 means the field was absent, which is not a claim of disabled, and gets no label.
+
 The manager-id check is duplicated on purpose. `Client.validateLoginCustomerID` still validates it
 (the backstop for every other caller), but it does so inside the same call that talks to Google, so
 by the time it fires the error is indistinguishable at this boundary from a genuine upstream
@@ -516,9 +565,9 @@ account-agnostic: it asks which customer ids the CREDENTIAL reaches, so an accou
 a narrower version of the question, it is a different one.
 
 Both lifecycles are now SUPPORTED. `GoogleAdsConnectionConfig` no longer declares
-`Required("account_id")` (Google Ads alone — Meta has a discovery endpoint too as of LFXV2-3062,
-but a credentials-first row also needs the account-needing paths to fail with
-`account_not_selected`, which Meta's campaign create does not yet do), so
+`Required("account_id")` (Meta joined it in LFXV2-3061, which added the `account_not_selected`
+tagging its campaign create was missing — a credentials-first row needs both the discovery
+endpoint and account-needing paths that name the missing choice), so
 this endpoint serves BOTH re-pointing an existing connection ("which other customer ids does this
 credential reach?") and first-time bootstrap:
 
@@ -550,6 +599,40 @@ stored value, which is why the design change above was all that bootstrap additi
   set, body bounding, retry gating, and `apiError`/`transportError` classification. The
   `login-customer-id` header is still attached and still validated (`validateLoginCustomerID`).
 
+**Meta shares the same bootstrap shape as of LFXV2-3061**, now that its own account-picker
+endpoint (`GET .../connection-meta-ads/accounts`, LFXV2-3062) exists to complete it:
+`MetaAdsConnectionConfig` no longer declares `Required("account_id")` either (`page_id` stays
+required — it names a Facebook page the operator already controls, not something discovery
+resolves). The credential-state checks that used to be inlined at each of `Dispatch`,
+`ToggleStatus`, and `ReadMetrics` are now `resolveMetaCredentials`, a single helper in the shape
+`validateGoogleAdsCredentials` established and `resolveRedditClient` adopted — active status,
+decodable blob, non-empty access token, each
+tagged with `domain.ErrConnectionNotUsable` plus its reason sentinel, and a `defer` that runs
+every return path through `systemScoped`. That `defer` closes over a plain local bound once
+(`conn := res`), NOT over the named return: every not-usable path returns a nil connection, and
+`systemScoped` is a no-op on a nil receiver, so reading the named return there would silently
+drop the system-row attribution from exactly the errors that need it. It deliberately does not check
+`account_id`: that is `requireMetaAccountID`, called ONLY by `Dispatch`, right after credential
+resolution, because campaign creation builds Graph paths as `/{accountID}/campaigns` and needs a
+real account id (Meta has no discovery for `page_id`, the other prerequisite `Dispatch` checks).
+`ToggleStatus` and `ReadMetrics` do NOT call it: both target an existing campaign by platform id
+(`POST /{campaignID}`, `GET /{campaignID}/insights`) and never read `AccountConfig.AccountID` at
+all, so requiring a selected account for either would refuse a perfectly servable pause/resume
+or metrics-read on a connection whose account selection was later cleared via `PUT`.
+`requireMetaAccountID` wraps an empty account the same way Google Ads does: `ErrConnectionNotUsable`
+selects the status, `domain.ErrAccountNotSelected` supplies the `account_not_selected` reason
+token, and it is matched before the general unusable-connection arm.
+
+**A CONFIRMED default is the reason to reject this without discovery, not just the goal to
+build toward it.** The Google Ads log entry documenting its own bootstrap states the general
+rule as "an optional `account_id` and a discovery endpoint ship together or not at all" — the
+worry being a connection an operator cannot finish from inside this API. For Meta specifically
+that risk did not materialize: LFXV2-3062 (the discovery endpoint) was built as the deliberate
+first half of this same two-PR sequence, so by the time `Required("account_id")` was dropped
+here, the completion path already existed in review, and a generic `PUT
+/connection-meta-ads` (every provider gets one via `connectionMethods`) lets an operator set
+`account_id` manually even on a day the discovery PR is still queued behind reviewer bandwidth.
+
 **A manager credential needs the hierarchy walked, because the flat list does not do it.**
 `customers:listAccessibleCustomers` returns the accounts the authenticated user can act on
 DIRECTLY; a `login-customer-id` header does not make it enumerate that manager's children. On an
@@ -563,48 +646,6 @@ first create. Only `status = 'ENABLED'` clients are requested. The expansion als
 `descriptive_name`, which the flat endpoint does not return at all — so labels appear only for
 accounts reached this way. Without a manager id there is no hierarchy root to walk and the direct
 list is the whole answer.
-
-### Meta
-
-`MetaDispatcher.ListAccounts` follows the same contract, through
-`resolveMetaDiscoveryClient`, and the differences are the interesting part.
-
-**The account id is not consulted, and `AccountConfig` is left zero.** Graph
-`GET /me/adaccounts` asks what the TOKEN reaches, so scoping the client to one of the answers
-would narrow the response to a subset of the question. Requiring an account id would also make
-the endpoint reachable only by connections that no longer need it.
-
-**Only re-pointing is reachable today.** The resolver is already correct for first-time
-bootstrap — credentials stored, account chosen afterwards, the way Google Ads works — but
-`MetaAdsConnectionConfig` still declares `Required("account_id")`, so that create is a 400
-before any of this code runs. Closing it is not a one-line loosening: only
-`resolveGoogleAdsClient` tags an empty account id with `domain.ErrAccountNotSelected`, so a
-Meta connection parked mid-bootstrap would fail `Dispatch` with an error nothing classifies —
-the caller learns that the campaign did not launch, not that the reason is a choice they have
-not made. Note the shape of that answer: campaign create is ASYNCHRONOUS (`design/brief.go`
-answers `StatusAccepted`), so the untagged error surfaces in the polled job result, never as a
-409 — `docs/api-catalog.md` records the same split for Google Ads. The synchronous 409 that
-names the missing account belongs to `ToggleStatus` and `ReadMetrics`, and neither needs
-anything here: both target the campaign node by id and document that they need no account id
-(`internal/dispatch/meta.go`), so they already work on an account-less row. `Dispatch` is
-therefore the only exit to tag, and tagging it improves a job result rather than a status code.
-Tracked as LFXV2-3061.
-
-**The unmarshal cause on the decrypted blob is DROPPED, not wrapped.** It is the only value in
-the resolver derived from decrypted plaintext, and this error is logged and, on the not-usable
-arm, described to the caller. Today's `encoding/json` happens not to quote the offending bytes
-for a struct of string fields, but that is a behaviour rather than a documented guarantee and
-it does not hold for every field type. `TestMeta_ListAccounts_UndecodableBlobDropsTheUnmarshalCause`
-asserts the error text is EXACTLY the two sentinels — asserting merely that it does not contain
-the secret would not bind, because it passes with the cause appended.
-
-**Known-bad accounts are returned, not filtered.** Disabled, unsettled, pending-review,
-pending-settlement, grace-period and closed accounts come back with the reason in the label
-(`"LF Events (disabled)"`). This is a picker: dropping them answers "your token reaches no ad
-accounts" about an account sitting right there. The label reuses
-`inactiveAccountStatusLabels`, the same map `CreateCampaign`'s preflight refuses on, so the
-picker and the create path cannot disagree about which accounts are known-bad. `account_status`
-0 means the field was absent, which is not a claim of disabled, and gets no label.
 
 ### Shared: credential resolution and decrypt classification
 
@@ -741,3 +782,69 @@ falls back to a case-insensitive match that cannot bridge the underscore in the 
 snake_case wire form. The config an adapter refuses to create without (LinkedIn `org_id`, Meta
 `page_id`, X `funding_instrument_id`) is required of the map about to be WRITTEN — on rotation the
 existing columns MERGED with the flags, since `Update` rewrites every config column.
+
+## `CampaignAdopter` (optional capability)
+
+`CampaignAdopter` is a fourth OPTIONAL dispatcher interface, alongside `StatusToggler`,
+`MetricsReader` and `AccountLister`, declared in `internal/service/orchestrator.go` and
+discovered by the same type assertion. A dispatcher that does not implement it makes the
+platform answer `ErrAdoptionUnsupported` (400) with no network call. **Google Ads is the
+only implementation today.**
+
+```go
+LookupCampaign(ctx, projectID, platform, platformCampaignID) (*model.PlatformCampaignRef, error)
+```
+
+The contract has one rule that matters more than the signature: **`(nil, nil)` means the
+platform answered and the campaign is genuinely absent.** Anything an adapter could not
+verify — a transport failure, an unhonoured filter, an undecodable row, a status outside the
+known set — must be an ERROR, because the service turns absence into a 404 and an operator
+acts on a 404 by creating a duplicate paid campaign. Never reduce an unverifiable response to
+a clean absence (the `continue`-on-mismatch shape: skipping every non-matching row yields zero
+matches, exactly the licence-to-create answer the check existed to prevent).
+
+`GoogleAdsDispatcher.LookupCampaign` resolves through `resolveOwnedGoogleAdsClient`, which is the
+ordinary `resolveGoogleAdsClient` with the LF system fallback removed: it calls
+`credsSource.resolveOwned`, which consults the project's own scope and nothing else, and reports
+the resulting absence as `domain.ErrAdoptionRequiresOwnConnection` (409). Two separate isolation
+problems sit behind that. Discovery credentials see every account the login
+customer administers, so adopting through them could bind a campaign belonging to a different
+project — which is why this is not the discovery client. And the system fallback puts MANY
+projects inside ONE LF-owned ad account, where an endpoint that takes a caller-supplied arbitrary
+campaign id lets project A bind, meter and pause a campaign project B created there; the
+account-mismatch guard cannot see it, because both projects resolve to the same customer id.
+No upstream metadata settles ownership either — a campaign's name, labels and budget are set by
+whoever created it. Requiring a project-owned connection is what this layer can enforce, and it
+forbids nothing real: a project with no ad account of its own has no campaign to adopt. It is not
+an ownership PROOF, and must not be read as one — inside a shared customer, a project holding its
+own connection can still name a campaign another project created. Nothing here can prevent that,
+because the project's credential already confers read and pause on every campaign in that customer
+straight through the provider's API, and adoption cannot be more restrictive than the credential it
+uses; account tenancy is where that boundary lives (see migration 000020). What the gate does
+guarantee is narrower and still worth having: adoption never borrows the LF fallback, so it can
+never reach an account the project has no credential of its own for. Every
+OTHER platform call keeps the fallback, because each names a campaign this service already has a
+project-scoped row for, and that row is the authorization.
+
+Declining to RESOLVE the fallback, rather than resolving it and rejecting a `resolved.fromSystem`
+value, is load-bearing rather than stylistic. `resolve` loads, validates and DECRYPTS the LF row
+before returning, so an LF connection with no credential blob — or one that no longer decrypts —
+comes back as `domain.ErrSystemConnectionNotUsable` INSTEAD of a value, and the ownership gate
+never runs. Under the earlier `fromSystem` shape that surfaced as a 500 blaming an LF row for a
+request whose remedy was "connect your own ad account", and about a row adoption would have
+refused in perfect health. `resolveOwned` makes the refusal independent of the fallback's state,
+so no future failure mode of the system scope can leak onto this path and need a new sentinel arm.
+`TestAdoptionRefusesTheSystemFallback` pins the outcome for an unusable system row AND, more
+strongly, that `Get(model.SystemProjectID)` is never called at all — the second assertion is what
+keeps the first true for failure modes nobody has thought of yet.
+
+It drops the platform's `ENABLED`/`PAUSED` — reaching the mapping already means the
+campaign is live, since `googleads.GetCampaign` filters `REMOVED` server-side and errors on any
+status outside its known set — and it fills `PlatformCampaignRef.Result` with the resolved
+customer id, so the adopted row records the account it was verified under and the existing
+`googleAdsCreationCustomerID` mismatch guards keep working for adopted rows. A
+`googleads.ErrNotACampaignID` is re-tagged `domain.ErrInvalidPlatformCampaignID` (400): it was
+rejected locally with no network call, so it is permanent input, not an unreachable platform.
+**Campaign ID validation happens before resolving the connection, so a malformed ID always returns
+400 regardless of connection state — the permanent input fault masks any contingent connection fault.**
+

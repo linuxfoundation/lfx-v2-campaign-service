@@ -1981,6 +1981,76 @@ func TestGoogleAds_Adoption_DoesNotBypassInputValidation(t *testing.T) {
 	}
 }
 
+// TestGoogleAds_LookupCampaign_MalformedIDIs400EvenWithUnusableConnection validates that
+// a malformed platform campaign ID (e.g., "007") is rejected with a 400 error BEFORE the
+// connection state is checked. This ensures permanent input faults are not masked by
+// contingent connection faults: a malformed ID should produce the same 400 whether the
+// connection is missing, broken, or perfectly good.
+//
+// This test uses the REAL dispatcher with a bad connection (deliberately rejects account
+// validation) so the malformed ID check happens before any connection resolution succeeds.
+// A test that only mocked GetCampaign would not catch a regression where ID validation
+// moves AFTER the resolution.
+func TestGoogleAds_LookupCampaign_MalformedIDIs400EvenWithUnusableConnection(t *testing.T) {
+	// Set up servers with deliberately broken account configuration.
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	t.Cleanup(tokenSrv.Close)
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// If this is reached, the test fails: malformed input must be rejected BEFORE
+		// any call to the platform, so the connection's unusable state should never matter.
+		t.Errorf("malformed id must be rejected before any platform call, got %s", r.URL.Path)
+		http.Error(w, "should not reach here", http.StatusInternalServerError)
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	// Create a dispatcher with a connection that has no customer_id or invalid one,
+	// so resolveOwnedGoogleAdsClient would fail. This isolates the test to checking
+	// that ID validation happens BEFORE that resolution attempt.
+	badConn := &model.Connection{
+		Provider:             model.ProviderGoogleAds,
+		AccountID:            "", // Empty account ID will cause resolution to fail
+		EncryptedCredentials: []byte(goodGoogleAdsCreds),
+		ProviderConfig:       map[string]string{}, // Missing login_customer_id
+		Status:               model.StatusActive,
+	}
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: badConn},
+		identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL),
+		googleads.WithBaseURL(apiSrv.URL),
+	)
+
+	// Test with several malformed IDs that should all be rejected the same way.
+	testCases := []string{
+		"007",                 // Leading zero
+		"0",                   // Zero
+		"abc",                 // Non-numeric
+		"9223372036854775808", // Past math.MaxInt64
+		"",                    // Empty
+	}
+
+	for _, malformedID := range testCases {
+		t.Run("malformed="+malformedID, func(t *testing.T) {
+			ref, err := d.LookupCampaign(context.Background(), "proj", model.ProviderGoogleAds, malformedID)
+
+			// Must return a 400-class error (ErrInvalidPlatformCampaignID).
+			if err == nil {
+				t.Errorf("LookupCampaign(%q) must fail with invalid ID, got nil", malformedID)
+			}
+			if !errors.Is(err, domain.ErrInvalidPlatformCampaignID) {
+				t.Errorf("LookupCampaign(%q) error = %v, want ErrInvalidPlatformCampaignID", malformedID, err)
+			}
+			if ref != nil {
+				t.Errorf("LookupCampaign(%q) returned non-nil ref on error: %+v", malformedID, ref)
+			}
+		})
+	}
+}
+
 // TestGoogleAds_ListAccounts_EmptyUpstreamIsEmptySliceNotNil pins the empty-discovery
 // case end to end through the real dispatcher and the real client. A credential that
 // legitimately reaches zero ad accounts must produce an EMPTY slice, not nil: the two
