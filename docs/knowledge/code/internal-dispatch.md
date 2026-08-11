@@ -417,21 +417,28 @@ was not a one-line loosening: an empty account id had to be tagged first, or a M
 parked mid-bootstrap would fail `Dispatch` with an error nothing classifies — the caller would
 learn that the campaign did not launch, not that the reason is a choice they have not made.
 `requireMetaAccountID` supplies that tagging. Note the shape of that answer: campaign create is ASYNCHRONOUS (`design/brief.go`
-answers `StatusAccepted`), so the untagged error surfaces in the polled job result, never as a
-409 — `docs/api-catalog.md` records the same split for Google Ads. The synchronous 409 that
+answers `StatusAccepted`), so no error of any kind surfaces as a 409 — `docs/api-catalog.md`
+records the same split for Google Ads. Nor does the reason reach the polled job result:
+`dispatchPlatform` collapses every dispatcher error into the fixed string
+`"platform campaign creation failed"` (`internal/service/orchestrator.go`), so the job says the
+create failed and never says why. The synchronous 409 that
 names the missing account belongs to `ToggleStatus` and `ReadMetrics`, and neither needs
 anything here: both target the campaign node by id and document that they need no account id
 (`internal/dispatch/meta.go`), so they already work on an account-less row. `Dispatch` is
-therefore the only exit tagged, and the tagging improves a job result rather than a status code.
-Delivered by LFXV2-3061.
+therefore the only exit tagged, and what the tagging improves is the dispatch-failure LOG LINE —
+the orchestrator splits on the reason before collapsing the result, so `account_not_selected`
+reaches an operator reading logs and no caller-facing surface at all. `internal/bootstrap` records
+the same for the system row. Delivered by LFXV2-3061.
 
 **The unmarshal cause on the decrypted blob is DROPPED, not wrapped.** It is the only value in
 the resolver derived from decrypted plaintext, and this error is logged and, on the not-usable
 arm, described to the caller. Today's `encoding/json` happens not to quote the offending bytes
 for a struct of string fields, but that is a behaviour rather than a documented guarantee and
 it does not hold for every field type. `TestMeta_ListAccounts_UndecodableBlobDropsTheUnmarshalCause`
-asserts the error text is EXACTLY the two sentinels — asserting merely that it does not contain
-the secret would not bind, because it passes with the cause appended.
+asserts the error text EXACTLY, against the two sentinels plus the resolver's own project context
+(`": meta credentials for project proj are not valid JSON"`) — that suffix is built from the
+project id, never from plaintext. Equality is the binding form: asserting merely that the text
+does not contain the secret would pass with the cause appended.
 
 **Known-bad accounts are returned, not filtered.** Disabled, unsettled, pending-review,
 pending-settlement, grace-period and closed accounts come back with the reason in the label
