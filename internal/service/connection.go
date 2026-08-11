@@ -127,10 +127,18 @@ func (s *ConnectionService) SetCredentialGoogleAds(ctx context.Context, p *conn.
 }
 
 // unusableConnectionReason maps an ErrConnectionNotUsable chain onto the fixed vocabulary
-// logged by the handlers that surface such a chain: account discovery, and the synchronous
-// campaign handlers (metrics and status toggle). Discovery is not the only consumer, and one
-// case below — account_not_selected — is unreachable from discovery, which skips the
-// account-ID check by design.
+// logged by the callers that surface such a chain. There are three, and they do NOT all
+// answer a status code: account discovery, the synchronous campaign handlers (metrics and
+// status toggle), and — since LFXV2-3061 — the ASYNCHRONOUS pre-create dispatch path
+// (Orchestrator.dispatchPlatform). Discovery is not the only consumer, and one case below —
+// account_not_selected — is unreachable from discovery, which skips the account-ID check by
+// design.
+//
+// The async caller is the one that makes this function load-bearing rather than convenient.
+// dispatchPlatform runs after the 202, so it has no response to classify: it collapses every
+// dispatcher error into one generic string in the job result, and the reason token produced
+// here is the ONLY place the specific defect is recorded. For the synchronous two a wrong or
+// missing reason costs log quality; for that path it costs the diagnosis outright.
 //
 // It exists because the errors themselves cannot be logged: one
 // of these conditions is detected by decoding the decrypted credential blob, and an

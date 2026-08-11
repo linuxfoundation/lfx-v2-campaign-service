@@ -258,10 +258,16 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   incomplete), which is why they reach callers beyond discovery — but the SHAPE they reach them in
   depends on whether the caller is synchronous. The **status toggle** and the **metrics read**
   (`internal/service/brief.go`) are synchronous, so they answer a **409** off this same sentinel.
-  **Campaign create is not**: it answers `202` and the identical failure surfaces later in the
-  polled job result, never as a 409 — see `docs/api-catalog.md`. Do not describe "campaign
-  dispatch" as receiving a 409; the dispatch layer produces the error, and only the two
-  synchronous readers turn it into a status code.
+  **Campaign create is not**: it answers `202`, so the same failure can only surface later, in
+  the polled job result, never as a 409 — see `docs/api-catalog.md`. Be precise about what
+  reaches that result, because it is less than the sentinel carries:
+  `Orchestrator.dispatchPlatform` collapses every dispatcher error into one generic string, so
+  the job result says the platform dispatch failed and does NOT say which of the classified
+  reasons it was. The reason token survives only in that path's log line, via
+  `unusableConnectionReason`. Do not describe "campaign dispatch" as receiving a 409; the
+  dispatch layer produces the error, only the two synchronous readers turn it into a status
+  code, and the async path turns it into a log attribute rather than into anything the caller
+  polling the job can read.
   `validatedLoginCustomerID` in `internal/dispatch/googleads.go` tags the dashed `login_customer_id`,
   and it is now called by all three readers (toggle resolver, discovery resolver, and create dispatcher).
   Neither the cause NOR its text leaves the dispatch layer — not in the response and not in
@@ -302,8 +308,11 @@ it, and the bootstrap would dead-end at step two. Readiness to run a campaign is
 derived fact — `account_id` being non-empty — and the operations that need it report its absence
 with this reason rather than inventing a second status to carry the same bit.
 
-**Only the two campaign handlers see this sentinel, and both answer 409.** The campaign status
-toggle and the per-campaign metrics read each match `ErrAccountNotSelected` *before* the general
+**Only the two campaign handlers MAP this sentinel to a status, and both answer 409.** They are
+not its only consumers — the asynchronous pre-create dispatch path reads it too (see the
+job-result paragraph above), but it runs after the 202 and so records the reason in its log
+rather than in any response. What follows is about the two that do answer a caller. The campaign
+status toggle and the per-campaign metrics read each match `ErrAccountNotSelected` *before* the general
 `ErrConnectionNotUsable` arm — it is always wrapped alongside that sentinel, so a broad match
 would swallow it and return the ambiguous "no account selected, or the credentials need
 attention" message for a connection whose credentials are fine. The CAMPAIGN is the resource
