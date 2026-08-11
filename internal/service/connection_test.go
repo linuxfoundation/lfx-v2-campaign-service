@@ -561,14 +561,29 @@ func TestUpdateMetaAds_BindsDiscoveredAccountToCredentialsOnlyRow(t *testing.T) 
 
 	res, err := s.UpdateMetaAds(context.Background(), &conn.UpdateMetaAdsPayload{
 		ProjectID: "cncf",
-		Config:    &conn.MetaAdsConnectionConfig{AccountID: strPtr("act_123456789")},
-		IfMatch:   &ifMatch,
+		Config: &conn.MetaAdsConnectionConfig{
+			AccountID: strPtr("act_123456789"),
+			// page_id is Required on the config type, and the config type is shared by
+			// POST and PUT (gen/.../server/types.go ValidateUpdateMetaAdsRequestBody calls
+			// the same ValidateMetaAdsConnectionConfigRequestBody). Omitting it here would
+			// build a payload the transport rejects — and worse, PageID is a plain string
+			// rather than a pointer, so the omission would silently write page_id="" and
+			// the test would pin a state no request can produce.
+			PageID: "123456789012345",
+		},
+		IfMatch: &ifMatch,
 	})
 	if err != nil {
 		t.Fatalf("UpdateMetaAds: %v", err)
 	}
 	if res.AccountID != "act_123456789" {
 		t.Errorf("account_id = %q, want the discovered id to be bound", res.AccountID)
+	}
+	// Binding the account must not cost the page: a PUT that blanked page_id would leave
+	// the connection unable to attach the promoted object, i.e. unable to dispatch — the
+	// same dead end this whole bootstrap exists to avoid.
+	if derefStr(res.PageID) != "123456789012345" {
+		t.Errorf("page_id = %q, want the PUT to carry it through", derefStr(res.PageID))
 	}
 	if repo.gotUpdateCreds != nil {
 		t.Errorf("Update was passed credentials %q; a config-only PUT must leave the column to the repository",
@@ -596,14 +611,24 @@ func TestUpdateMetaAds_OmittedAccountIDClearsTheSelection(t *testing.T) {
 
 	res, err := s.UpdateMetaAds(context.Background(), &conn.UpdateMetaAdsPayload{
 		ProjectID: "cncf",
-		Config:    &conn.MetaAdsConnectionConfig{Label: strPtr("relabelled")},
-		IfMatch:   &ifMatch,
+		Config: &conn.MetaAdsConnectionConfig{
+			Label: strPtr("relabelled"),
+			// Required on the shared config type; see the sibling test above.
+			PageID: "123456789012345",
+		},
+		IfMatch: &ifMatch,
 	})
 	if err != nil {
 		t.Fatalf("UpdateMetaAds: %v", err)
 	}
 	if res.AccountID != "" {
 		t.Errorf("account_id = %q, want an omitted account_id to clear the selection", res.AccountID)
+	}
+	// The clear is scoped to account_id alone. Supplying page_id is what makes that a real
+	// assertion: with it omitted, "page_id survived" and "page_id was blanked" are the same
+	// observation, and the test could not tell a targeted clear from a full wipe.
+	if derefStr(res.PageID) != "123456789012345" {
+		t.Errorf("page_id = %q, want clearing account_id to leave the page alone", derefStr(res.PageID))
 	}
 	if repo.gotUpdateCreds != nil {
 		t.Errorf("Update was passed credentials %q; a config-only PUT must leave the column alone",
