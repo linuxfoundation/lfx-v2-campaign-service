@@ -326,16 +326,17 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 	Required("refresh_token", "client_id", "client_secret", "developer_token")
 })
 
-// GoogleAdsConnectionConfig is the ONE provider config where account_id is optional, and
+// GoogleAdsConnectionConfig is the FIRST provider config where account_id is optional, and
 // the reason is specific rather than a general loosening: a caller may only create a
 // connection without an account id where there is an account-DISCOVERY endpoint to find out
 // what to put there afterwards.
 //
-// Discovery is a NECESSARY condition, not a sufficient one, which is why Google Ads is still
-// alone here now that Meta has a discovery endpoint too (LFXV2-3062). The other half is that
-// the operations needing an account id must fail with reason=account_not_selected rather than
-// a generic error; Meta's campaign create does not yet, so LFXV2-3061 covers both halves and
-// this config stays the only relaxed one until it lands.
+// Discovery is a NECESSARY condition, not a sufficient one. The other half is that the
+// operations needing an account id must fail with reason=account_not_selected rather than a
+// generic error, so the caller is told what to go and use discovery FOR. Google Ads had both
+// from the start. Meta is the one provider where the halves came apart — it gained discovery
+// in LFXV2-3062 and stayed required here until LFXV2-3061 supplied the tagging; see the
+// paragraph below MetaAdsConnectionConfig's own godoc. The remaining four have neither.
 //
 // That is the bootstrap this enables — credentials first, account chosen afterwards:
 //

@@ -415,7 +415,7 @@ func campaignFromMeta(ctx context.Context, r *meta.CampaignResult, cfg metaConfi
 //
 // The stored-state checks are resolveMetaCredentials' — active status, decodable blob,
 // non-empty access token, each tagged with domain.ErrConnectionNotUsable plus its reason
-// sentinel and passed through res.systemScoped. This function deliberately does not repeat
+// sentinel and passed through systemScoped. This function deliberately does not repeat
 // them. It did once, and that duplication was the defect: the two copies classified the
 // same three conditions, so a later change to either — a fourth check, a different sentinel,
 // a message that stops dropping the decode cause — would have silently applied to only one

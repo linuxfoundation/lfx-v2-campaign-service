@@ -552,8 +552,11 @@ resolves). The credential-state checks that used to be inlined at each of `Dispa
 `ToggleStatus`, and `ReadMetrics` are now `resolveMetaCredentials`, a single helper in the shape
 `validateGoogleAdsCredentials` established and `resolveRedditClient` adopted — active status,
 decodable blob, non-empty access token, each
-tagged with `domain.ErrConnectionNotUsable` plus its reason sentinel, and a named-return
-`defer` that runs every return path through `res.systemScoped`. It deliberately does not check
+tagged with `domain.ErrConnectionNotUsable` plus its reason sentinel, and a `defer` that runs
+every return path through `systemScoped`. That `defer` closes over a plain local bound once
+(`conn := res`), NOT over the named return: every not-usable path returns a nil connection, and
+`systemScoped` is a no-op on a nil receiver, so reading the named return there would silently
+drop the system-row attribution from exactly the errors that need it. It deliberately does not check
 `account_id`: that is `requireMetaAccountID`, called ONLY by `Dispatch`, right after credential
 resolution, because campaign creation builds Graph paths as `/{accountID}/campaigns` and needs a
 real account id (Meta has no discovery for `page_id`, the other prerequisite `Dispatch` checks).
