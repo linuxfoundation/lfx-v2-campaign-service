@@ -114,23 +114,64 @@ func destinationPath(link string) string {
 // discriminator — it is what an entity has and a bare ampersand does not.
 var entityRefPattern = regexp.MustCompile(`&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);`)
 
-// hasEntityRef reports whether a destination carries an HTML character reference.
+// hasEntityRef reports whether a destination's PATH carries an HTML character reference.
 //
-// This validator does not decode entities, so such a destination has to be rejected at the
-// format stage: `thing&#46;md` renders as `thing.md` but is read here as a path, and every
-// entity form fails the same silent way. A NUMERIC reference is truncated at its own `#` to
-// `thing&`; a NAMED one survives whole as `thing&period;md`. Either way the ".md" suffix test
-// fails and the bullet is skipped without a word, which is exactly the opt-out the format
-// check exists to prevent.
+// This validator does not decode entities, so such a path has to be rejected at the format
+// stage: `thing&#46;md` renders as `thing.md` but is read here as a path, and every entity form
+// fails the same silent way. A NUMERIC reference is truncated at its own `#` to `thing&`; a
+// NAMED one survives whole as `thing&period;md`. Either way the ".md" suffix test fails and the
+// bullet is skipped without a word, which is exactly the opt-out the format check exists to
+// prevent.
 //
-// A bare `&` is NOT one, and rejecting it was an over-rejection with real cost: `&` is a
-// legal path character, so a concept file named `research&development.md` with a correct
-// bare link was refused with a message about an entity it does not contain. It is also a
-// legal query separator (`thing.md?v=1&lang=en`), which is why indexBulletPattern's
-// destination class admits `&` and this check runs against the RAW destination rather than
-// destinationPath — a numeric reference hides behind the same `#` that truncation uses.
+// Everything this refuses is something it MUST refuse, and nothing more. Two over-rejections
+// have been priced here already, and both cost a link that would have synced correctly:
+//
+//   - A bare `&` is not an entity. `&` is a legal path character, so a concept file named
+//     `research&development.md` with a correct bare link was refused with a message about an
+//     entity it does not contain. The closing `;` is the discriminator.
+//   - An entity outside the path is not this check's business. `&` is also a legal query
+//     separator, and a query is stripped before the path is resolved, so `thing.md?a=1&amp;b=2`
+//     resolves exactly as `thing.md` does. Refusing it refuses nothing dangerous. The same
+//     holds for a fragment.
+//
+// Which is why this cannot simply run on destinationPath, and cannot simply run on the raw
+// destination either. destinationPath cuts at the first `#`, and a numeric reference hides
+// behind that very character — `thing&#46;md` reaches it as `thing&`. The raw destination
+// keeps the numeric form visible but drags the query and fragment in with it. pathRegion is
+// the boundary both want: cut at the query, and at the first `#` that does not itself begin a
+// character reference.
 func hasEntityRef(link string) bool {
-	return entityRefPattern.MatchString(link)
+	return entityRefPattern.MatchString(pathRegion(link))
+}
+
+// pathRegion returns the part of a destination that could name a file, for the purpose of
+// looking for character references in it.
+//
+// It differs from destinationPath in exactly one way, and only for a destination this
+// validator is about to reject anyway: the `#` of a numeric character reference is not a
+// fragment marker. Resolution never sees such a path — the bullet is refused first — so
+// destinationPath is left alone rather than taught a distinction its own callers never need.
+func pathRegion(link string) string {
+	if i := strings.IndexByte(link, '?'); i >= 0 {
+		link = link[:i]
+	}
+	// Spans of the remaining text that are character references. A `#` inside one belongs to
+	// the reference, not to a fragment.
+	refs := entityRefPattern.FindAllStringIndex(link, -1)
+	inRef := func(i int) bool {
+		for _, r := range refs {
+			if i >= r[0] && i < r[1] {
+				return true
+			}
+		}
+		return false
+	}
+	for i := 0; i < len(link); i++ {
+		if link[i] == '#' && !inRef(i) {
+			return link[:i]
+		}
+	}
+	return link
 }
 
 // validateIndex checks OKF §9 rule 3 & the §6 bullet format: no

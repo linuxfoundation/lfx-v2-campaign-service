@@ -535,6 +535,68 @@ func TestValidateIndexBulletAcceptsALiteralAmpersandInThePath(t *testing.T) {
 	}
 }
 
+// TestValidateIndexBulletAcceptsAnEntityOutsideThePath is the second over-rejection the entity
+// guard has had to price, found by Cursor Bugbot on PR #115 immediately after the first.
+//
+// Scoping the check to the RAW destination fixed the numeric form — `thing&#46;md` hides its
+// reference behind the same `#` destinationPath truncates at — but dragged the query and the
+// fragment in with it. Neither reaches path resolution: checkBulletDescription strips both
+// before looking anything up, so `thing.md?a=1&amp;b=2` resolves exactly as `thing.md` does and
+// refusing it refuses nothing dangerous. That is the same argument that motivated the bare-`&`
+// fix one commit earlier, applied to the region the fix moved the check into.
+//
+// Both fixtures carry a DRIFTED description, so the assertion is that the link was resolved and
+// compared — not merely that no format error was raised, which would also hold if the bullet had
+// been skipped for a different reason.
+func TestValidateIndexBulletAcceptsAnEntityOutsideThePath(t *testing.T) {
+	for name, link := range map[string]string{
+		"an entity in the query":    "thing.md?a=1&amp;b=2",
+		"an entity in the fragment": "thing.md#sec&amp;more",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeConcept(t, filepath.Join(dir, "thing.md"), "Does the thing.")
+			writeFile(t, filepath.Join(dir, "index.md"),
+				"# Bundle\n\n* [Thing]("+link+") - Says something else.\n")
+
+			errs := Validate(dir)
+			if len(errs) != 1 {
+				t.Fatalf("Validate() = %v, want exactly the description-drift error — an entity "+
+					"outside the path never reaches resolution, so the bullet must be resolved "+
+					"and compared like any other", errs)
+			}
+			if strings.Contains(errs[0].Error(), "HTML entity") {
+				t.Fatalf("Validate() error = %q, want the description diagnostic: this link "+
+					"resolves correctly and is being refused for an entity that cannot affect it",
+					errs[0])
+			}
+			if !strings.Contains(errs[0].Error(), "description") {
+				t.Errorf("Validate() error = %q, want the description-sync diagnostic", errs[0])
+			}
+		})
+	}
+}
+
+// TestValidateIndexBulletRejectsANumericEntityBeforeAFragment is why the boundary is computed
+// rather than taken from strings.IndexAny(link, "#?"). A numeric reference's own `#` is not a
+// fragment marker, so a destination carrying both has to have the reference found in what
+// precedes the REAL fragment. Scoping the check to destinationPath would miss this; scoping it
+// to the raw destination would catch it for the wrong reason and catch the test above with it.
+func TestValidateIndexBulletRejectsANumericEntityBeforeAFragment(t *testing.T) {
+	dir := t.TempDir()
+	writeConcept(t, filepath.Join(dir, "thing.md"), "Does the thing.")
+	writeFile(t, filepath.Join(dir, "index.md"),
+		"# Bundle\n\n* [Thing](thing&#46;md#sec) - Does the thing.\n")
+
+	errs := Validate(dir)
+	if len(errs) != 1 {
+		t.Fatalf("Validate() = %v, want the escaped destination to be reported", errs)
+	}
+	if !strings.Contains(errs[0].Error(), "HTML entity") {
+		t.Errorf("Validate() error = %q, want the HTML-entity diagnostic", errs[0])
+	}
+}
+
 // TestValidateIndexBulletTrailingSpaceIsNotTolerated pins the symmetric half of the
 // verbatim invariant. Padded FRONTMATTER was already rejected; a padded BULLET was
 // not, because the line was trimmed on both sides before matching.

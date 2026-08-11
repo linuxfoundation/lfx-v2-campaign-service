@@ -65,3 +65,34 @@ the ".md" suffix test whole and misses it. Both forms are rejected.
 rather than merely tolerated. Verified via revert: with the old one-rune check restored it
 fails with the exact false diagnostic. `TestValidateIndexBulletRejectsEscapedDestinations`
 gains `thing&period;md` and `thing&#x2e;md` alongside the decimal case.
+
+## Follow-up 2: the fix for the over-rejection over-rejected somewhere else
+
+**Kind:** Fix
+
+Cursor Bugbot, on the commit that fixed the bare-`&` over-rejection above. Moving the check off
+`destinationPath` and onto the RAW destination made the numeric form visible — it hides behind
+the same `#` that truncation cuts at — but dragged the query and the fragment in with it. Neither
+reaches path resolution: `checkBulletDescription` strips both before looking anything up, so
+`thing.md?a=1&amp;b=2` resolves exactly as `thing.md` does. Refusing it refuses nothing.
+
+That is the same argument as the round before, applied to the region the round before moved the
+check into. Worth naming as a shape rather than an incident: **a fix that widens a guard's INPUT
+to catch a missed case widens what it can wrongly catch by exactly the same amount.** Both rounds
+here were one guard reaching for a cheap boundary — first `destinationPath`, then the whole
+string — when neither boundary is the one the question needs.
+
+The boundary that is: `pathRegion` cuts at the first `?`, then at the first `#` that does not
+itself begin a character reference. `destinationPath` is deliberately left alone; the only
+destinations where the two differ are ones this validator is about to refuse, so resolution never
+sees the distinction and its callers do not need it.
+
+**Regression Guard** — `TestValidateIndexBulletAcceptsAnEntityOutsideThePath` covers an entity in
+the query and one in the fragment, both with DRIFTED descriptions so the assertion is that the
+link was resolved and compared rather than merely not format-rejected.
+`TestValidateIndexBulletRejectsANumericEntityBeforeAFragment` pins the case that rules out the
+easy boundary in the other direction: `thing&#46;md#sec` carries both a numeric reference and a
+real fragment. Revert-verified both ways — matching on the raw destination fails the accept test
+with the "has an HTML entity" diagnostic on a link that resolves fine; matching on
+`destinationPath` fails the numeric cases with `Validate() = []`, the silent skip the whole guard
+exists to prevent.
