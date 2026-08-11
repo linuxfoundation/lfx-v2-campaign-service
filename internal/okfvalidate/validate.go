@@ -81,18 +81,43 @@ func validateConcept(path string) error {
 	return nil
 }
 
-// The destination excludes whitespace, angle brackets, backslashes, and ampersands
-// deliberately. CommonMark also accepts `(<thing.md>)` and `(thing.md "Title")`, and
-// a looser class would capture the brackets or the title as part of the path — which
-// then fails the ".md" suffix test in checkBulletDescription and skips the bullet
-// silently. A link that looks valid would quietly opt out of the description-sync
-// invariant. Backslash and ampersand are CommonMark escape sequences
-// (`\.` → `.`, `&#46;` → `.`): excluding them forces escaped/entity-encoded
-// destinations to be rejected at the format stage with a diagnostic, rather than
-// silently skipped when the validator's naive matching doesn't decode them.
-// Rejecting these forms outright is cheaper than parsing them: okfgen emits bare
-// paths, and the OKF §6 format documents only that form.
-var indexBulletPattern = regexp.MustCompile(`^\* \[([^\]]+)\]\(([^)\s<>&\\]+)\) - (.+)$`)
+// The destination excludes whitespace, angle brackets and backslashes deliberately.
+// CommonMark also accepts `(<thing.md>)` and `(thing.md "Title")`, and a looser class
+// would capture the brackets or the title as part of the path — which then fails the
+// ".md" suffix test in checkBulletDescription and skips the bullet silently. A link
+// that looks valid would quietly opt out of the description-sync invariant. Backslash
+// is a CommonMark escape (`\.` → `.`) that this validator never decodes, so excluding
+// it forces such a destination to be rejected here with a diagnostic rather than
+// silently skipped downstream. Rejecting it outright is cheaper than parsing it:
+// okfgen emits bare paths, and the OKF §6 format documents only that form.
+//
+// The ampersand is NOT excluded here, even though `&#46;` is the entity spelling of
+// the same escape. A query string legitimately carries one (`thing.md?v=1&lang=en`),
+// and checkBulletDescription strips the query before resolving the path — so a class
+// that banned every `&` would reject a destination this validator otherwise supports.
+// The entity form is caught by hasEntityInPath instead, which looks only where an `&`
+// cannot be anything else.
+var indexBulletPattern = regexp.MustCompile(`^\* \[([^\]]+)\]\(([^)\s<>\\]+)\) - (.+)$`)
+
+// destinationPath returns the part of a markdown link destination that names a file:
+// everything before the first fragment or query marker. Both are properties of the
+// reference, not of the path it denotes.
+func destinationPath(link string) string {
+	if i := strings.IndexAny(link, "#?"); i >= 0 {
+		return link[:i]
+	}
+	return link
+}
+
+// hasEntityInPath reports whether a destination carries an ampersand in its PATH, where
+// it can only be an HTML entity — `thing&#46;md` renders as `thing.md`. This validator
+// does not decode entities, so such a destination has to be rejected at the format stage:
+// left alone it is truncated at the `#` to `thing&`, fails the ".md" suffix test, and is
+// skipped without a word, which is exactly the silent opt-out the format check exists to
+// prevent. An ampersand after the `?` or `#` is an ordinary query separator and fine.
+func hasEntityInPath(link string) bool {
+	return strings.ContainsRune(destinationPath(link), '&')
+}
 
 // validateIndex checks OKF §9 rule 3 & the §6 bullet format: no
 // frontmatter (except an optional okf_version at the bundle root), any
@@ -140,7 +165,11 @@ func validateIndex(bundleDir, path string, isRoot bool) []error {
 		}
 		m := indexBulletPattern.FindStringSubmatch(trimmed)
 		if m == nil {
-			errs = append(errs, fmt.Errorf("%s: bullet %q does not match \"* [Title](url) - description\" (the url must be a bare path: no spaces, angle brackets, link title, backslash escapes, or HTML entities)", path, trimmed))
+			errs = append(errs, fmt.Errorf("%s: bullet %q does not match \"* [Title](url) - description\" (the url must be a bare path: no spaces, angle brackets, link title, or backslash escapes)", path, trimmed))
+			continue
+		}
+		if hasEntityInPath(m[2]) {
+			errs = append(errs, fmt.Errorf("%s: bullet %q has an HTML entity in its link destination path; write the path literally", path, trimmed))
 			continue
 		}
 		// The pattern's "(.+)$" only requires one character, so a bullet ending
@@ -191,10 +220,7 @@ func validateIndex(bundleDir, path string, isRoot bool) []error {
 func checkBulletDescription(bundleDir, indexPath, link, bulletDesc string) error {
 	// Anchors and query strings are not part of the path; a bare fragment
 	// ("#section") points inside this same index, which has no frontmatter.
-	target := link
-	if i := strings.IndexAny(target, "#?"); i >= 0 {
-		target = target[:i]
-	}
+	target := destinationPath(link)
 	// Parse BEFORE any test on the destination's shape, because a markdown link
 	// destination is a URL reference and every test below is about the path it
 	// denotes, not about its spelling. Percent escapes are the whole reason the

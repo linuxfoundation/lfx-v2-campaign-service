@@ -414,16 +414,31 @@ func TestValidateIndexBulletRejectsNonBareDestinations(t *testing.T) {
 	}
 }
 
-// CommonMark interprets backslash and ampersand escapes in link destinations:
-// `thing\.md` becomes `thing.md`, `thing&#46;md` becomes `thing.md`. This validator
-// does not decode them, so both pass the naive ".md" suffix test if allowed through
-// the regex, then silently fail when filepath.Join and os.ReadFile can't find a
-// file with the escaped spelling. Both must be rejected at the bullet-format check
-// to ensure a broken destination gets a diagnostic, not a silent skip.
+// CommonMark interprets backslash and entity escapes in link destinations: `thing\.md`
+// renders as `thing.md`, and so does `thing&#46;md`. This validator decodes neither, and
+// each is silently skipped for its OWN reason — which is why they are two cases and not
+// one row of a table:
+//
+//   - `thing\.md` survives to checkBulletDescription intact, passes the naive ".md" suffix
+//     test, and then fails at filepath.Join/os.ReadFile, which find no file spelled with
+//     the backslash.
+//   - `thing&#46;md` never gets that far. The literal `#` reads as the start of a fragment,
+//     so the target is truncated to `thing&`, which fails the ".md" suffix test and is
+//     dropped before any file is looked up.
+//
+// Both end as a working link that quietly opted out of the description-sync invariant, so
+// both must be rejected up front with a diagnostic — but by different guards, and the
+// assertions below name which.
 func TestValidateIndexBulletRejectsEscapedDestinations(t *testing.T) {
-	for name, link := range map[string]string{
-		"backslash-escape": `thing\.md`,
-		"html-entity":      `thing&#46;md`,
+	for name, tc := range map[string]struct {
+		link string
+		// want is the fragment of the diagnostic that identifies WHICH guard fired. The
+		// backslash is excluded by the destination character class; the entity is caught
+		// by hasEntityInPath, because the class must admit `&` for query strings.
+		want string
+	}{
+		"backslash-escape": {link: `thing\.md`, want: "does not match"},
+		"html-entity":      {link: `thing&#46;md`, want: "HTML entity"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -432,16 +447,50 @@ func TestValidateIndexBulletRejectsEscapedDestinations(t *testing.T) {
 			// and its destination resolved, the drift below would be reported instead,
 			// and this assertion on the format error would still be the thing that broke.
 			writeConcept(t, filepath.Join(dir, "thing.md"), "Does the thing.")
-			writeFile(t, filepath.Join(dir, "index.md"), "# Bundle\n\n* [Thing]("+link+") - Does something else.\n")
+			writeFile(t, filepath.Join(dir, "index.md"), "# Bundle\n\n* [Thing]("+tc.link+") - Does something else.\n")
 
 			errs := Validate(dir)
 			if len(errs) != 1 {
 				t.Fatalf("Validate() = %v, want the escaped destination to be rejected", errs)
 			}
-			if !strings.Contains(errs[0].Error(), "does not match") {
-				t.Errorf("Validate() error = %q, want the bullet-format diagnostic", errs[0])
+			if !strings.Contains(errs[0].Error(), tc.want) {
+				t.Errorf("Validate() error = %q, want it to contain %q", errs[0], tc.want)
 			}
 		})
+	}
+}
+
+// TestValidateIndexBulletAcceptsAMultiParameterQuery is the other half of the entity
+// guard, and the reason that guard cannot just be an `&` banned from the whole
+// destination. checkBulletDescription documents query strings as supported and strips
+// them before resolving the path, so a second query parameter — which can only be
+// introduced by an `&` — must reach the description comparison like any bare path.
+// Excluding `&` in the destination character class rejected this bullet at the FORMAT
+// stage, contradicting the behaviour the resolver goes out of its way to support.
+func TestValidateIndexBulletAcceptsAMultiParameterQuery(t *testing.T) {
+	dir := t.TempDir()
+	writeConcept(t, filepath.Join(dir, "thing.md"), "Does the thing.")
+	writeFile(t, filepath.Join(dir, "index.md"),
+		"# Bundle\n\n* [Thing](thing.md?v=1&lang=en) - Does the thing.\n")
+
+	if errs := Validate(dir); len(errs) != 0 {
+		t.Fatalf("Validate() = %v, want a multi-parameter query to be accepted", errs)
+	}
+
+	// And the query really is stripped rather than tolerated: the same destination with a
+	// bullet that DISAGREES with the frontmatter must still be caught, or the test above
+	// would pass just as well for a destination nothing ever resolved.
+	drift := t.TempDir()
+	writeConcept(t, filepath.Join(drift, "thing.md"), "Does the thing.")
+	writeFile(t, filepath.Join(drift, "index.md"),
+		"# Bundle\n\n* [Thing](thing.md?v=1&lang=en) - Does something else.\n")
+
+	errs := Validate(drift)
+	if len(errs) != 1 {
+		t.Fatalf("Validate() = %v, want the drifted description to be reported", errs)
+	}
+	if !strings.Contains(errs[0].Error(), "description") {
+		t.Errorf("Validate() error = %q, want the description-sync diagnostic", errs[0])
 	}
 }
 
