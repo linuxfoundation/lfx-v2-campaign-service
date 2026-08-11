@@ -753,6 +753,9 @@ type CreateGoogleAdsConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateGoogleAdsServiceUnavailableResponseBody is the type of the
@@ -1013,6 +1016,9 @@ type CreateLinkedinAdsConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateLinkedinAdsServiceUnavailableResponseBody is the type of the
@@ -1273,6 +1279,9 @@ type CreateMetaAdsConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateMetaAdsServiceUnavailableResponseBody is the type of the
@@ -1533,6 +1542,9 @@ type CreateRedditAdsConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateRedditAdsServiceUnavailableResponseBody is the type of the
@@ -1793,6 +1805,9 @@ type CreateTwitterAdsConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateTwitterAdsServiceUnavailableResponseBody is the type of the
@@ -2053,6 +2068,9 @@ type CreateMicrosoftAdsConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateMicrosoftAdsServiceUnavailableResponseBody is the type of the
@@ -2313,6 +2331,9 @@ type CreateHubspotConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateHubspotServiceUnavailableResponseBody is the type of the
@@ -3094,6 +3115,7 @@ func NewCreateGoogleAdsConflict(body *CreateGoogleAdsConflictResponseBody) *lfxv
 	v := &lfxv2campaignserviceconnections.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -3465,6 +3487,7 @@ func NewCreateLinkedinAdsConflict(body *CreateLinkedinAdsConflictResponseBody) *
 	v := &lfxv2campaignserviceconnections.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -3837,6 +3860,7 @@ func NewCreateMetaAdsConflict(body *CreateMetaAdsConflictResponseBody) *lfxv2cam
 	v := &lfxv2campaignserviceconnections.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -4207,6 +4231,7 @@ func NewCreateRedditAdsConflict(body *CreateRedditAdsConflictResponseBody) *lfxv
 	v := &lfxv2campaignserviceconnections.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -4576,6 +4601,7 @@ func NewCreateTwitterAdsConflict(body *CreateTwitterAdsConflictResponseBody) *lf
 	v := &lfxv2campaignserviceconnections.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -4947,6 +4973,7 @@ func NewCreateMicrosoftAdsConflict(body *CreateMicrosoftAdsConflictResponseBody)
 	v := &lfxv2campaignserviceconnections.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -5321,6 +5348,7 @@ func NewCreateHubspotConflict(body *CreateHubspotConflictResponseBody) *lfxv2cam
 	v := &lfxv2campaignserviceconnections.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -6514,6 +6542,11 @@ func ValidateCreateGoogleAdsConflictResponseBody(body *CreateGoogleAdsConflictRe
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
 	return
 }
 
@@ -6827,6 +6860,11 @@ func ValidateCreateLinkedinAdsConflictResponseBody(body *CreateLinkedinAdsConfli
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
 	}
 	return
 }
@@ -7142,6 +7180,11 @@ func ValidateCreateMetaAdsConflictResponseBody(body *CreateMetaAdsConflictRespon
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
 	return
 }
 
@@ -7455,6 +7498,11 @@ func ValidateCreateRedditAdsConflictResponseBody(body *CreateRedditAdsConflictRe
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
 	}
 	return
 }
@@ -7770,6 +7818,11 @@ func ValidateCreateTwitterAdsConflictResponseBody(body *CreateTwitterAdsConflict
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
 	return
 }
 
@@ -8083,6 +8136,11 @@ func ValidateCreateMicrosoftAdsConflictResponseBody(body *CreateMicrosoftAdsConf
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
 	}
 	return
 }
@@ -8398,6 +8456,11 @@ func ValidateCreateHubspotConflictResponseBody(body *CreateHubspotConflictRespon
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
 	}
 	return
 }

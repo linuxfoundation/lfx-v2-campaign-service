@@ -73,6 +73,87 @@ orphaning a real master list while the row still reads `building` — a build th
 the platform and looks failed in the database. Same reasoning as the orchestrator's post-create
 persist, bounded so it cannot hang shutdown.
 
+## One build at a time per (brief, platform)
+
+Every list this package creates is a REAL, billable object in the HubSpot portal, and the
+build makes them before it could possibly learn a sibling build is doing the same. They cannot
+even collide by name: the plan's `BuildRef` is the audience row's own id, chosen so a later
+build never adopts an earlier one's lists — which means two concurrent builds leave two
+complete, indistinguishable sets and nothing downstream notices.
+
+The lease closing that window is migration `000018`, a partial unique index over
+`(brief_id, platform) WHERE status = 'building'`. The loser's insert is rejected by the
+database and surfaces as `domain.ErrAudienceBuildInFlight`, a 409 in its own right rather than
+the generic `ErrConflict`. The distinction is the instruction: "the resource already exists"
+tells a caller to stop asking for something that exists, when nothing it asked for exists yet.
+It must equally not be confused with the stale-approval 409, whose remedy is the opposite —
+that one says refresh and rebuild, and rebuilding is precisely what duplicates the in-flight
+build's lists.
+
+**An index only serializes builds whose rows overlap, so WHEN the row is inserted is part of
+the lease.** `BuildAudience` originally resolved past editions — a Snowflake round-trip, by far
+the slowest thing it does — before inserting, and everything ahead of that insert is a window in
+which a second request finds no row to conflict with. A double-click whose second request was
+delayed there long enough for the first to finish would insert cleanly against a now-`built`
+row and create a whole second set.
+
+Moving the claim ahead of the warehouse read fixed the biggest window and left the argument
+in the wrong shape: EVERY blocking call ahead of the insert is a window, and the next one
+along — `briefs.GetBrief` — is a database round-trip rather than a Snowflake one. That is a
+smaller window, not a bound, and "small enough" is a claim about latency that no test pins
+and the next edit can quietly falsify. So the claim is now the FIRST thing `BuildAudience`
+does after resolving its dependencies: the brief read, plan validation and the warehouse call
+all happen under it, and the ordering stops depending on how fast the steps ahead of it
+happen to be. `TestBuildAudience_SecondRequestIsRejectedWhileTheFirstReadsTheBrief` holds one
+build inside its `GetBrief` and runs another to completion against it; concurrent repository
+inserts cannot catch this, because in the broken ordering the two requests never reach the
+repository at the same time.
+
+Claiming before validating has a visible consequence, and it is accepted rather than worked
+around: a brief that cannot be planned at all now leaves a released `failed` row where it
+previously left nothing. Every early return between the claim and the first upstream call
+therefore goes through `releaseUnstartedClaim` — nothing exists upstream on those paths, so
+there is nothing to reconcile first, and a `building` row left behind by a request that gave
+up would block every later build of the brief behind a 409 until an operator intervened.
+
+`releaseUnstartedClaim` calls `ReleaseAudienceBuildLease`, **not** `UpdateAudience`, and the
+difference is the whole point. `UpdateAudience` is version-gated on the version the claim was
+taken at, and a concurrent `PATCH` that leaves the row `building` while editing any other field
+still bumps that version — so the release comes back `ErrPreconditionFailed`, is logged as a
+best-effort failure, and the row stays `building` forever. That is the exact stranded lease this
+path exists to prevent, so the release is gated on the STATUS instead, by the same statement that
+performs it. `TestBuildAudience_ReleasesTheLeaseAfterAConcurrentPatchBumpsTheVersion` bumps the
+stored version mid-build and asserts the row still lands in `failed`; against the version-gated
+call it fails with `expected "failed", actual "building"`.
+
+One more thing had to move with it. The claim gates on approval itself, so a brief that was
+never approved and a brief that moved mid-build both come back as `ErrStaleApproval` — a 409
+about versions, which is right for the race and wrong for the ordinary case of someone
+building a draft. `refusedClaimErr` re-reads the brief on the FAILURE path only and renders
+that case as the 400 it was before, naming the status. A brief that cannot be re-read is
+reported as THE READ'S OWN failure — `mapAudienceErr(berr)`, not a mapping of the claim error:
+guessing 400 there would blame the caller for the service's own inability to look, and falling
+back to the 409 would be worse still (see below).
+
+A build that dies holding the lease keeps blocking rebuilds. That is intended: its lists exist
+upstream, so the old answer of building again is what duplicated them. An operator reconciles
+the portal FIRST and only then `PATCH update-audience`es the row to `failed`. That order is not
+stylistic: failing the row frees the slot immediately, so doing it first admits the next build
+while the dead build's lists are still in the portal — the duplicate set the lease exists to
+prevent, arrived at by following the remedy for it. The 409's message states the reconciliation
+first for the same reason.
+
+**"Reconcile the portal" cannot mean "read `inclusion_summary`".** A row that is genuinely stuck
+is the one least likely to have recorded anything: the claim inserts with an empty summary and
+the ids are written only once `createPlanLists` returns, so the crash-mid-build case leaves real
+lists upstream and an empty row. An operator who reads the summary, finds it empty and concludes
+there is nothing to reconcile will fail the row and let the next build duplicate them — again
+by following the remedy. The durable handle is the NAME: every list a build creates carries the
+first 8 characters of its audience row id in parentheses (`Plan.BuildRef`, the same suffix that
+stops a rebuild adopting an earlier build's lists), and that is true whether or not the row ever
+recorded an id. The 409 and `docs/api-catalog.md` both name the prefix first and treat
+`inclusion_summary` as a supplement.
+
 ## The event NAME decides the edition year
 
 `eventFamily` takes the year from the event name when it has one, and only falls back to the
@@ -90,9 +171,65 @@ to draft and bump its version in that window. The plain `CreateAudience` only ga
 `status <> 'archived'`, so the build would then create REAL HubSpot lists from a stale approved
 snapshot.
 
-`CreateAudienceForApprovedBrief` gates the insert on the brief still being approved AT the
-version observed by the check, returning `ErrStaleApproval` (→ 409) otherwise. Same shape as
-`JobRepo.CreateJobForApprovedBrief`, which closed this race for campaign creation.
+`CreateAudienceForApprovedBrief` gates the insert on the brief being approved, locking the
+brief row inside its own transaction, and reports back the VERSION it observed under that
+lock. It takes no expected version, and that is the point: running first is what makes the
+lease a bound, and running first means there is no earlier read for a caller to have pinned.
+Same shape as `JobRepo.CreateJobForApprovedBrief`, which closed this race for campaign
+creation, though not the same signature.
+
+**The claim's gate and the pre-upstream re-check are not redundant.** Moving the claim ahead
+of the warehouse read moved its approval gate there too, so on its own the gate now says the
+brief was approved BEFORE the slowest call in the build rather than after it — which is
+nothing at all about the brief at the moment lists are created, and that moment is what the
+gate exists for. `confirmStillApproved` runs as the last thing before the first HubSpot call
+and re-reads the brief, failing unless it is still approved at the version the claim locked.
+The two guards answer different questions: the claim's gate SERIALIZES builds, this one DATES the
+approval. A read failure here is reported as-is and never treated as "probably still fine" —
+the caller is about to create real lists, and the only safe reading of "could not check" is
+that the check did not pass.
+
+**A non-approved status seen AFTER the claim is a 409, not the 400.** The two look like the
+same condition and are not, and the claim itself is what tells them apart: reaching this guard
+means the claim SUCCEEDED, and the claim gates on approval, so the brief was approved when the
+row was locked. Anything else observed now happened in the interval since — which is a
+retraction mid-build, exactly what `ErrStaleApproval` names. Answering 400 ("approve the brief
+first") would be a false accusation: the caller did approve it, and telling them to fix input
+they got right sends them looking in the wrong place while the actual event — somebody
+withdrawing an approval under a running build — goes unnamed. `refusedClaimErr` produces the
+400 for the case that genuinely is pre-claim; this branch is its complement.
+
+**The re-check has to LOCK, which is why it is a repository operation.** Its first form read
+the brief with `GetBrief` and compared in the service, and that cannot answer the question it
+was asked. `GetBrief` is a plain `SELECT`, so under READ COMMITTED it returns the last
+COMMITTED row: a `ReplaceBrief` that has updated the row and not yet committed is invisible
+to it. The check would pass, the withdrawal would commit, and the lists would be created
+from an approval the operator had already revoked — with nothing afterwards to tell those
+lists from a legitimate build's. `BriefReader.ConfirmBriefApproved` does the read under
+`SELECT ... FOR UPDATE` inside its own transaction, so the confirmation QUEUES behind such a
+writer instead of reading around it and sees the writer's row once it commits. It does not
+close the window (the lock is released when that transaction ends, and holding a transaction
+open across an HTTP call to HubSpot is not an option) — what it removes is the
+already-decided case, where the withdrawal has happened and merely has not committed yet.
+
+**A brief that is not there is a 404, not the stale-approval 409.** The claim's gate cannot
+find a missing or archived brief either, so it too refuses with `ErrStaleApproval` — and left
+to that mapping the caller is told to refresh and rebuild a brief that does not exist, about a
+race they were not in. Before the claim moved ahead of the brief read this was a plain 404, and
+`refusedClaimErr` keeps it one by re-reading and treating `ErrNotFound` as the definite answer
+it is. A brief that cannot be re-read AT ALL is different: "I could not look" must not be
+reported as "it is not there."
+
+And it must not be reported as the 409 either, which is the sharper version of the same rule
+and the one that was actually wrong. `ErrNotFound` was handled and every OTHER read failure —
+the pool drops between the two calls, the deadline expires — fell back to mapping the claim
+error, i.e. to `ErrStaleApproval`'s "the brief changed; refresh and rebuild". **A 409 here is a
+factual claim about what somebody ELSE did**, and this function was making it on no evidence:
+the read that would have shown a change is the read that failed. The switch now returns
+`mapAudienceErr(berr)` for any `berr != nil`, so the 409 can only be produced from a read that
+succeeded. `TestBuildAudience_UnreadableBriefIsNotAStaleApproval` pins it with a plain
+`connection reset by peer`, which is deliberately not `ErrNotFound` — the bug lived entirely in
+the errors that were not the one anybody thought about.
 
 ## Only approved briefs
 

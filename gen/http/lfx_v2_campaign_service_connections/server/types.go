@@ -753,6 +753,9 @@ type CreateGoogleAdsConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateGoogleAdsServiceUnavailableResponseBody is the type of the
@@ -1013,6 +1016,9 @@ type CreateLinkedinAdsConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateLinkedinAdsServiceUnavailableResponseBody is the type of the
@@ -1273,6 +1279,9 @@ type CreateMetaAdsConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateMetaAdsServiceUnavailableResponseBody is the type of the
@@ -1533,6 +1542,9 @@ type CreateRedditAdsConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateRedditAdsServiceUnavailableResponseBody is the type of the
@@ -1793,6 +1805,9 @@ type CreateTwitterAdsConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateTwitterAdsServiceUnavailableResponseBody is the type of the
@@ -2053,6 +2068,9 @@ type CreateMicrosoftAdsConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateMicrosoftAdsServiceUnavailableResponseBody is the type of the
@@ -2313,6 +2331,9 @@ type CreateHubspotConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateHubspotServiceUnavailableResponseBody is the type of the
@@ -3307,6 +3328,7 @@ func NewCreateGoogleAdsConflictResponseBody(res *lfxv2campaignserviceconnections
 	body := &CreateGoogleAdsConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -3593,6 +3615,7 @@ func NewCreateLinkedinAdsConflictResponseBody(res *lfxv2campaignserviceconnectio
 	body := &CreateLinkedinAdsConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -3879,6 +3902,7 @@ func NewCreateMetaAdsConflictResponseBody(res *lfxv2campaignserviceconnections.C
 	body := &CreateMetaAdsConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -4165,6 +4189,7 @@ func NewCreateRedditAdsConflictResponseBody(res *lfxv2campaignserviceconnections
 	body := &CreateRedditAdsConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -4451,6 +4476,7 @@ func NewCreateTwitterAdsConflictResponseBody(res *lfxv2campaignserviceconnection
 	body := &CreateTwitterAdsConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -4737,6 +4763,7 @@ func NewCreateMicrosoftAdsConflictResponseBody(res *lfxv2campaignserviceconnecti
 	body := &CreateMicrosoftAdsConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -5023,6 +5050,7 @@ func NewCreateHubspotConflictResponseBody(res *lfxv2campaignserviceconnections.C
 	body := &CreateHubspotConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }

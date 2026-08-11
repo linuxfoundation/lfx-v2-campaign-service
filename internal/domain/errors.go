@@ -27,6 +27,17 @@ var (
 	// to 409. Maps to 409.
 	ErrStaleApproval = errors.New("brief is no longer approved at the expected version")
 
+	// ErrAudienceBuildInFlight indicates another build for the same (brief, platform)
+	// is already in progress — the 'building' row holds the lease (migration 000018).
+	// Distinct from ErrConflict, which both map to 409, because the remedy is
+	// different and the generic "resource already exists" is actively misleading here:
+	// nothing the caller asked for exists yet, and the answer is to wait for the
+	// in-flight build rather than to change the request. A build that DIED holding the
+	// lease reports the same thing, which is intended — its HubSpot lists exist, so the
+	// operator must reconcile the portal and fail the row rather than build again.
+	// Maps to 409.
+	ErrAudienceBuildInFlight = errors.New("an audience build for this brief and platform is already in progress")
+
 	// ErrPreconditionFailed indicates an optimistic-concurrency version
 	// mismatch on a conditional update (stale If-Match). Maps to 412.
 	ErrPreconditionFailed = errors.New("version precondition failed")

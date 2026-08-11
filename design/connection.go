@@ -101,8 +101,46 @@ var NotFoundError = Type("not-found-error", func() {
 	errorAttrs("404", "The connection was not found.")
 })
 
+// ConflictError carries an OPTIONAL reason on top of the standard code/message pair.
+//
+// Several endpoints return 409 for genuinely different situations that call for
+// different client behaviour — retry after a refresh, wait and poll, or stop and
+// surface the collision. Distinguishing them by the message text means a client
+// pattern-matches English prose that this repo edits freely for operator clarity, so
+// the first reworded message silently breaks it. `reason` is the part that is promised
+// not to change.
+//
+// It is deliberately NOT Required, because ConflictError is shared by every endpoint in
+// the API and the slugs are being introduced group by group rather than all at once.
+// Today only the audiences group populates it: `mapAudienceErr` sets a reason on all
+// three of its 409s, which is where the need was sharpest — those three carry OPPOSITE
+// remedies. The briefs group also distinguishes many conflicts, but does so in message
+// prose only and sets no reason yet; that is a gap to close, not the intended end state.
+// Until it is closed a client must treat an absent reason as "unspecified conflict" and
+// fall back to the message, which is what the message already says. Making the field
+// Required now would force a slug onto every 409 in one change and invent a taxonomy
+// nobody has agreed to maintain.
+//
+// The example on `reason` is chosen to AGREE with the message example already on the type.
+// ConflictError is the 409 body for every endpoint in the API, so the object-level example
+// Goa publishes is ONE instance standing in for twenty-nine different conflicts — which is
+// what makes the choice awkward, and why omitting it is not the safe option it looks like.
+//
+// Leaving `Example` off does not produce an example-free schema. Goa fills the gap from the
+// Enum, and it picks the first member: `audience_build_in_flight`, which the generated
+// contract then pairs with "A connection for this provider already exists". That publishes a
+// mapping between two unrelated endpoints, which is worse than a value belonging to one of
+// them. `already_exists` is the reason that actually accompanies this message, so the
+// published instance is at least internally true.
+//
+// The Enum is what publishes the full vocabulary, and that — not the example — is the part
+// clients are entitled to rely on.
 var ConflictError = Type("conflict-error", func() {
 	errorAttrs("409", "A connection for this provider already exists on the project.")
+	Attribute("reason", String, "Stable machine-readable discriminator, present only where an endpoint returns more than one kind of conflict. Absent means unspecified.", func() {
+		Enum("stale_approval", "audience_build_in_flight", "already_exists")
+		Example("already_exists")
+	})
 })
 
 var PreconditionFailedError = Type("precondition-failed-error", func() {

@@ -65,4 +65,39 @@ container boots in 503 mode and retries the pool in the background (see the
 `internal/container` concept), so `/readyz` stays 503 and the pod is kept alive
 across the window rather than crash-looping.
 
+**Rolling back is not the deploy run backwards.** `pool.go` only ever calls `m.Up()`,
+so reverting the image leaves the schema at whatever version the newer binary migrated it
+to. That is harmless for a migration that only ADDS a column the old code ignores, and it
+is not harmless for one that adds a CONSTRAINT the old code has no error mapping for: the
+old binary meets a 23505 it was never written to see and answers 500 where the new one
+answers 409. The audience build lease (`000018`) is the current example.
+
+So for `000018` the order is **database first, then image**: run its `.down.sql` (via
+`migrate ... goto 17`) while the new image is still serving, then roll the Deployment
+back. The reverse order leaves a window whose length is however long the rollback takes
+to notice. `000018`'s down uses `DROP INDEX CONCURRENTLY` precisely so the drop does not
+block writes from the pod still serving during that window.
+
+**Database-first is a property of the individual down migration, not a rule for the
+repo.** It is safe exactly when the down is benign to the binary STILL SERVING during the
+window — and database-first is the ordering that maximises that window, so a down that is
+not benign is worst run first. `000018` qualifies: dropping the lease returns the new
+binary to the old behaviour (two concurrent builds for one brief each create a full set of
+HubSpot lists) without breaking any statement it issues. Others plainly do not.
+`000005_create_campaign_audiences_table.down.sql` does `DROP TABLE campaign_audiences`,
+and `000015_brief_actor_columns.down.sql` drops `created_by` / `updated_by` on
+`campaign_briefs` — both remove schema the current binary reads and writes, so running
+either ahead of the image rollback turns the whole window into 500s. (`000015`'s own
+header already says it exists for migration symmetry, not as a routine operation: the
+actor is recorded nowhere else, so its down destroys the audit trail outright.) Rollback
+ORDER has to be decided per migration, and for a multi-version `goto` per migration
+CROSSED — `goto 17` from 18 runs one down; `goto 4` runs fourteen, and the order is only
+as safe as the least benign of them.
+
+Two things this does not mean. It is not an argument for skipping the down migration and
+leaving the constraint in place, which trades a documented procedure for a silent
+error-surface regression. And it is not a claim that the newer schema is what makes the
+old binary unsafe — the old binary's behaviour on the old schema is by definition what
+rolling back is asking for, including whatever the new constraint existed to prevent.
+
 See [charts/lfx-v2-campaign-service/templates/deployment.yaml](../../../charts/lfx-v2-campaign-service/templates/deployment.yaml).

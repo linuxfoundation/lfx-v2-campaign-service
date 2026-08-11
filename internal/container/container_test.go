@@ -474,8 +474,8 @@ func (fakeAudienceRepo) CreateAudience(_ context.Context, a *model.CampaignAudie
 	return a, nil
 }
 
-func (fakeAudienceRepo) CreateAudienceForApprovedBrief(_ context.Context, a *model.CampaignAudience, _ int64) (*model.CampaignAudience, error) {
-	return a, nil
+func (fakeAudienceRepo) CreateAudienceForApprovedBrief(_ context.Context, a *model.CampaignAudience) (*model.CampaignAudience, int64, error) {
+	return a, 1, nil
 }
 
 func (fakeAudienceRepo) GetAudience(_ context.Context, _, _, _ string) (*model.CampaignAudience, error) {
@@ -488,6 +488,10 @@ func (fakeAudienceRepo) ListAudiences(_ context.Context, _, _ string) ([]*model.
 
 func (fakeAudienceRepo) UpdateAudience(_ context.Context, a *model.CampaignAudience, _ int64) (*model.CampaignAudience, error) {
 	return a, nil
+}
+
+func (fakeAudienceRepo) ReleaseAudienceBuildLease(_ context.Context, _, _, _ string) error {
+	return nil
 }
 
 // TestNewAudienceBuilder_SnowflakeOptional pins that an unconfigured or misconfigured warehouse
