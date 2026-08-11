@@ -225,6 +225,15 @@ const jwksErrorBodyPeek = 512
 // the empty-set failure in slow motion.
 const jwksMaxBody = 1 << 20
 
+// jwksMaxRedirects bounds the redirect chain this transport follows on its own.
+//
+// It is http.Client's default limit in all but name, and the number is unremarkable; what
+// matters is that the bound has to live HERE now, because the Client no longer does the
+// following (see redirectTarget). Without it an endpoint that redirects to itself is an
+// unbounded loop inside one RoundTrip, held under jwksFetchTimeout rather than refused —
+// and every token verification in the process waits it out.
+const jwksMaxRedirects = 10
+
 // jwksStatusGuard rejects a non-2xx JWKS response BEFORE the provider decodes it.
 //
 // go-jwt-middleware v2.3.1 does not check the status: jwks.Provider.KeyFunc goes straight
@@ -318,31 +327,34 @@ func (g *jwksStatusGuard) RoundTrip(req *http.Request) (*http.Response, error) {
 	// redacted anyway so this line stays correct if that ever stops being true, and so the
 	// guard is safe when constructed without an outbound URL.
 	shown := redact.URL(req.URL)
-	resp, err := g.next.RoundTrip(g.credentialed(req))
-	if err != nil {
-		return nil, err
+	cur := g.credentialed(req)
+	for hop := 0; ; hop++ {
+		resp, err := g.next.RoundTrip(cur)
+		if err != nil {
+			return nil, scrubURLError(err)
+		}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return g.checkKeys(shown, resp)
+		}
+		next := redirectTarget(cur, resp)
+		if next == nil {
+			return nil, reportNon2xx(shown, resp)
+		}
+		drainAndClose(resp)
+		if hop >= jwksMaxRedirects {
+			return nil, fmt.Errorf("JWKS endpoint %s exceeded %d redirects", shown, jwksMaxRedirects)
+		}
+		cur = next
 	}
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return g.checkKeys(shown, resp)
-	}
-	if isFollowableRedirect(resp) {
-		// A RoundTripper sits BELOW http.Client's redirect handling: the Client only follows a
-		// 3xx it is handed, and an error returned here means it never sees one. Treating a
-		// redirect as a failure would turn an ordinary http->https upgrade or a CDN hop into a
-		// permanent auth outage, since every refresh takes the same path. Hand it back instead.
-		//
-		// Following is safe. credentialed dresses the first hop only, so the operator's
-		// credential does not travel to the redirect target; the Client's own 10-hop limit
-		// bounds the chain; and whatever finally answers 2xx still comes back through this
-		// method and is gated by checkKeys.
-		return resp, nil
-	}
+}
+
+// reportNon2xx closes resp and turns it into the error the provider will propagate.
+func reportNon2xx(shown string, resp *http.Response) error {
 	// We are returning an error instead of the response, so nothing downstream will close
 	// this body. Drain a bounded prefix for the diagnostic, then close: draining also lets
 	// net/http return the connection to the idle pool instead of tearing down TCP+TLS,
 	// which matters because a misconfigured endpoint fails on EVERY refresh.
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, jwksErrorBodyPeek))
-	_ = resp.Body.Close()
+	drainAndClose(resp)
 	// The body is discarded, not recorded anywhere. An earlier version logged a bounded
 	// prefix of it at debug, with a comment arguing that bounding the length and naming the
 	// origin made it safe — which conceded the premise and then ignored it. Length is not
@@ -352,33 +364,99 @@ func (g *jwksStatusGuard) RoundTrip(req *http.Request) (*http.Response, error) {
 	// log store. The status and the redacted URL identify the misconfiguration on their own.
 	slog.Debug("JWKS endpoint returned a non-2xx response",
 		"url", shown, "status", resp.StatusCode)
-	return nil, fmt.Errorf("JWKS endpoint %s returned HTTP %d", shown, resp.StatusCode)
+	return fmt.Errorf("JWKS endpoint %s returned HTTP %d", shown, resp.StatusCode)
 }
 
-// isFollowableRedirect reports whether http.Client will actually FOLLOW resp, rather than
-// hand it to the caller as the final answer.
+// drainAndClose reads a bounded prefix of a body being abandoned, then closes it, so
+// net/http can return the connection to the idle pool instead of tearing down TCP+TLS.
+func drainAndClose(resp *http.Response) {
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, jwksErrorBodyPeek))
+	_ = resp.Body.Close()
+}
+
+// redirectTarget resolves resp's Location into the next request, or returns nil when resp is
+// not a redirect this transport should follow.
 //
-// The pass-through above is justified entirely by "the Client will follow it and we will see
-// the real response again". Where that is false the justification evaporates, and a plain
-// `300 <= status < 400` test makes it false in two reachable ways. `net/http` only redirects
-// on 301, 302, 303, 307 and 308, so a 304 — not a redirect at all — is returned unchanged;
-// and for a redirect status with no `Location` header, `Response.Location` reports
-// ErrNoLocation and the Client likewise returns the response as-is.
+// Redirects are followed HERE, and that placement is the point rather than a convenience.
+// http.Client builds the redirect request from the Location header itself and then names
+// that URL in every error it constructs — a *url.Error rendered with net/http's own
+// stripPassword, which masks the password and keeps the USERNAME and the WHOLE QUERY. So an
+// upstream Location of `https://svc:pw@idp/jwks?access_token=s3cret` whose fetch then fails
+// prints as `https://svc:***@idp/jwks?access_token=s3cret`, and this package's contract —
+// userinfo goes entirely, and the query goes with it (see pkg/redact) — is broken by a
+// string it never formatted. Every redaction here runs on values this package builds; none
+// of them can reach one net/http built.
 //
-// Either way the response reaches the JWKS provider, which decides on the BODY and ignores
-// the status: a JSON error object decodes to a key set with no keys, and that empty set is
-// then cached for the provider's whole TTL. Every token signed by a real key is rejected as
-// invalid until it expires — an outage sourced to "bad token" rather than to the endpoint.
-// So only a redirect the Client can act on is passed through; every other 3xx falls to the
-// error path below, where it is reported as what it is.
-func isFollowableRedirect(resp *http.Response) bool {
+// CheckRedirect does not help and is strictly worse: refusing a redirect there produces a
+// *url.Error carrying the target URL with no redaction at all, not even stripPassword's.
+// The only fix that covers the class is to keep the 3xx away from the Client entirely. Then
+// every hop is a request this transport built, every error is one this transport returns,
+// and `shown` — the first hop, redacted — is the sole URL any diagnostic on this path names.
+// A redirect target's own URL is used and never printed.
+//
+// Only the statuses net/http itself redirects on are followed, and only with a Location.
+// A 304 is not a redirect at all, and a 3xx without a usable Location has nowhere to go;
+// both belong on the error path, because the alternative is that the response reaches the
+// JWKS provider, which decides on the BODY and ignores the status — a JSON error object
+// decodes to a key set with no keys and is then cached for the provider's whole TTL, so
+// every token signed by a real key is rejected as invalid until that TTL expires.
+//
+// The Authorization header is dropped on every hop. credentialed dresses the first hop only,
+// and net/http's own rule drops the header across hosts; dropping it unconditionally also
+// covers the same-host, different-path redirect that rule would forward. The credential
+// belongs to the endpoint the operator configured, not to wherever that endpoint points next.
+func redirectTarget(cur *http.Request, resp *http.Response) *http.Request {
 	switch resp.StatusCode {
 	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
 		http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
-		return resp.Header.Get("Location") != ""
 	default:
-		return false
+		return nil
 	}
+	raw := resp.Header.Get("Location")
+	if raw == "" {
+		return nil
+	}
+	// Resolved against the CURRENT hop rather than read from resp.Request, so a relative
+	// Location works without depending on a field only http.Transport populates.
+	loc, err := cur.URL.Parse(raw)
+	if err != nil {
+		return nil
+	}
+	if loc.Scheme != "https" && loc.Scheme != "http" {
+		return nil
+	}
+	next := cur.Clone(cur.Context())
+	next.URL = loc
+	next.Host = "" // derive Host from the new URL rather than carrying the previous hop's
+	next.Header.Del("Authorization")
+	// A JWKS fetch is a GET, so there is no body to replay and no 307/308 method
+	// preservation to get wrong. Stating it keeps a future non-GET from silently re-sending
+	// a body to a host the upstream chose.
+	next.Method = http.MethodGet
+	next.Body = nil
+	next.GetBody = nil
+	next.ContentLength = 0
+	return next
+}
+
+// scrubURLError rebuilds a *url.Error found anywhere in err's chain around a redacted URL.
+//
+// It is a default-deny rather than a fix for a known path: http.Transport does not construct
+// a *url.Error today, because that wrapping is http.Client's job and RoundTrip runs below it.
+// It is here because RoundTrip now issues requests to URLs it did not choose — a redirect
+// target comes from an upstream header and may carry userinfo or a token query — and the one
+// thing that must not happen is such a URL reaching a log through an error this package
+// returned.
+//
+// The rebuilt error replaces the whole chain rather than the matched layer, because an outer
+// wrapper's own message can quote the URL too, and there is no way to rewrite text this
+// package did not format. Anything with no *url.Error in it is passed through untouched.
+func scrubURLError(err error) error {
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		return err
+	}
+	return &url.Error{Op: ue.Op, URL: redact.URLUserinfo(ue.URL), Err: ue.Err}
 }
 
 // checkKeys reads a 2xx JWKS body, refuses one with no keys in it, and replays the bytes

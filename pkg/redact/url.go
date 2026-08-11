@@ -277,19 +277,89 @@ func pathClosesAuthority(seg string) bool {
 	host := seg[:slash]
 	// An IPv6 literal is bracketed, so its colons are inside the brackets and none of them
 	// separates a port. Without this it would be read as a non-numeric port and refused.
-	if strings.HasSuffix(host, "]") {
-		return true
+	//
+	// The test is the WHOLE bracketed form, not a trailing `]`. A suffix test alone accepts
+	// any password that happens to END in one, and that leaked: `nats://u:secret]/path?x@host`
+	// has `u:secret]` before the `/`, which a suffix test calls an IPv6 host and therefore a
+	// closed authority — so the `?` reads as a genuine query, the value is cut there, and
+	// `nats://u:secret]` goes to the log with the password in it. Requiring the opening
+	// bracket costs nothing a real IPv6 authority has.
+	if strings.HasPrefix(host, "[") {
+		return bracketedHostCloses(host)
 	}
 	colon := strings.LastIndexByte(host, ':')
 	if colon < 0 {
 		return true // a bare host holds nothing that could be a password
 	}
-	port := host[colon+1:]
-	if port == "" {
+	return isPort(host[colon+1:])
+}
+
+// bracketedHostCloses reports whether host is a well-formed `[IPv6]` or `[IPv6]:port`
+// authority (RFC 3986 §3.2.2).
+//
+// The bracket contents are checked against the characters an IPv6 literal can be built
+// from rather than parsed into an address. The question here is only whether the value could
+// be a host at all, and a literal that is well-formed but not routable is still not a
+// password.
+//
+// The ADDRESS is hex digits, `:`, and `.` for an IPv4-mapped tail. The ZONE ID after a `%25`
+// (RFC 6874) is not: it is an interface name, so `eth0` and `en0` are the ordinary cases and
+// a hex-only rule would refuse every one of them. It gets the looser unreserved set, and it
+// is looser SAFELY because the address in front of it has already had to pass.
+//
+// At least one `:` is required in the address, because every IPv6 literal has one and
+// nothing else that reaches here does. It is what separates a real `[::1]` from `[secret]` —
+// a userinfo that merely opens with a bracket, which the prefix test alone would wave
+// through exactly as the old suffix test waved through one that closed with it. Default-deny
+// past that: anything after the `]` must be `:port` and nothing else.
+func bracketedHostCloses(host string) bool {
+	end := strings.IndexByte(host, ']')
+	if end < 0 {
+		return false // unterminated: not an authority this package will vouch for
+	}
+	addr, zone := host[1:end], ""
+	if pct := strings.IndexByte(addr, '%'); pct >= 0 {
+		addr, zone = addr[:pct], addr[pct:]
+	}
+	if !strings.ContainsRune(addr, ':') {
 		return false
 	}
-	for i := 0; i < len(port); i++ {
-		if port[i] < '0' || port[i] > '9' {
+	for i := 0; i < len(addr); i++ {
+		c := addr[i]
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		case c == ':', c == '.':
+		default:
+			return false
+		}
+	}
+	for i := 0; i < len(zone); i++ {
+		c := zone[i]
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
+		case c == '%', c == '.', c == '-', c == '_', c == '~':
+		default:
+			return false
+		}
+	}
+	switch rest := host[end+1:]; {
+	case rest == "":
+		return true
+	case rest[0] != ':':
+		return false
+	default:
+		return isPort(rest[1:])
+	}
+}
+
+// isPort reports whether p is a non-empty decimal port. An EMPTY port is refused rather than
+// treated as "absent", since `u:` is a likelier empty password than a real authority.
+func isPort(p string) bool {
+	if p == "" {
+		return false
+	}
+	for i := 0; i < len(p); i++ {
+		if p[i] < '0' || p[i] > '9' {
 			return false
 		}
 	}

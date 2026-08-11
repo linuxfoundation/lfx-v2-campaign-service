@@ -159,6 +159,13 @@ func TestURLUserinfo_Shapes(t *testing.T) {
 		// because then userinfo is the only legal reading and the `/` is inside the password.
 		{"https://idp.example.com:8443/jwks?contact=ops@b.example", "https://idp.example.com:8443/jwks"},
 		{"https://[::1]:8443/jwks?contact=ops@b.example", "https://[::1]:8443/jwks"},
+		// The bracketed forms a real authority takes, all of which must still keep their host
+		// now that the literal is validated rather than sniffed by its last byte: no port, an
+		// IPv4-mapped tail, and a zone id, whose interface name is not hex and so needs a
+		// looser rule than the address in front of it.
+		{"https://[::1]/jwks?contact=ops@b.example", "https://[::1]/jwks"},
+		{"https://[::ffff:127.0.0.1]/jwks?contact=ops@b.example", "https://[::ffff:127.0.0.1]/jwks"},
+		{"https://[fe80::1%25eth0]/jwks?contact=ops@b.example", "https://[fe80::1%25eth0]/jwks"},
 		{"https://svc:pw@idp.example.com/jwks?contact=ops@b.example", "https://***@idp.example.com/jwks"}, // secretlint-disable-line
 		// The scheme must START a segment, not merely appear in it — the narrowing that closes
 		// `allSchemed`'s hole directly. Here `x/y://b@c` carries a `://` but begins with a path
@@ -315,6 +322,27 @@ func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
 			in:      "nats://a:4222,https://idp.example/jwks?contact=ops@b.example&access_token=s3cret", // secretlint-disable-line
 			want:    "nats://a:4222,https://idp.example/jwks",
 			secrets: []string{"s3cret", "access_token"},
+		},
+		{
+			// The IPv6 exemption in pathClosesAuthority was a `HasSuffix(host, "]")`, and a
+			// password is free to end in a bracket. `u:secret]` then read as an IPv6 host, so
+			// the `/` looked like it closed an authority, so the `?` looked like a genuine
+			// query — and cutting there printed the password. The opening bracket is what
+			// makes it a literal; requiring it costs nothing a real IPv6 authority has.
+			name:    "a password ending in a bracket is not an IPv6 host",
+			in:      "nats://u:secret]/path?x@host:4222", // secretlint-disable-line
+			want:    "nats://***",
+			secrets: []string{"secret]", "/path"},
+		},
+		{
+			// Requiring the opening bracket alone would have swapped one suffix test for one
+			// prefix test. A userinfo that merely OPENS with a bracket has to be refused on the
+			// same terms, and the address is what tells them apart: every IPv6 literal has a
+			// colon in it and this does not.
+			name:    "a bracketed value with no colon is not an IPv6 host",
+			in:      "nats://[secret]/path?x@host:4222", // secretlint-disable-line
+			want:    "nats://***",
+			secrets: []string{"secret]", "/path"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

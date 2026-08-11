@@ -904,22 +904,22 @@ func TestVerifyActor_FollowsAJWKSRedirectWithoutForwardingCredentials(t *testing
 	}
 }
 
-// TestVerifyActor_RefusesA3xxTheClientWillNotFollow covers the two 3xx shapes that reach the
-// caller UNFOLLOWED, which is what makes passing every 3xx through unsafe.
+// TestVerifyActor_RefusesA3xxTheClientWillNotFollow covers the two 3xx shapes that are not
+// redirects the transport can act on, which is what makes treating every 3xx as one unsafe.
 //
-// The pass-through above rests entirely on "the Client will follow it and we will see the real
-// response again". net/http redirects only on 301/302/303/307/308, and only with a Location
-// header it can parse; a 304, or a 302 with no Location, is handed back as the final response.
-// It then reaches the JWKS provider, which decides on the BODY and ignores the status — so a
-// JSON error object decodes to a key set with zero keys, which is cached for the provider's
-// whole TTL. Every token signed by a live key is rejected as invalid until it expires.
+// Following rests entirely on "there is somewhere to go and we will see the real response
+// again". net/http redirects only on 301/302/303/307/308, and only with a Location header it
+// can parse; a 304, or a 302 with no Location, is neither. Handed onward it would reach the
+// JWKS provider, which decides on the BODY and ignores the status — so a JSON error object
+// decodes to a key set with zero keys, which is cached for the provider's whole TTL. Every
+// token signed by a live key is rejected as invalid until it expires.
 //
 // The assertion is on the ERROR, not merely on failure: an implementation that passed these
 // through would also "fail", but with ErrInvalidToken blaming the caller's credential, which
 // is the outcome this exists to prevent. It must be ErrKeyUnavailable — the endpoint's fault,
 // retryable, and mapped to 503 rather than 400.
 //
-// 304 is the third shape isFollowableRedirect rejects and the one case NOT in the table: a
+// 304 is the third shape redirectTarget rejects and the one case NOT in the table: a
 // 304 carries no body by definition, and net/http strips one that is written anyway, so the
 // provider fails on the empty body regardless of what this guard does. Adding it here would
 // pass against a guard that lets every 3xx through — a case that cannot be made to fail is
@@ -1027,6 +1027,100 @@ func TestVerifyActor_JWKSURLCredentialsNeverReachTheError(t *testing.T) {
 	if !strings.Contains(err.Error(), host) {
 		t.Errorf("err = %v, want the JWKS host %s named: without it the operator cannot tell "+
 			"which endpoint is down", err, host)
+	}
+}
+
+// TestVerifyActor_RedirectTargetCredentialsNeverReachTheError is the sibling of the test
+// above for the URL this service does NOT choose.
+//
+// Swapping the configured URL for a sanitized one keeps the operator's own credential out of
+// http.Client's *url.Error. It does nothing for a redirect: the Location header is upstream
+// text, and while the Client was the thing following redirects it built the next request
+// from that header itself, so a failure at the target produced a *url.Error naming a URL
+// this package never formatted — rendered by net/http's stripPassword, which masks the
+// password and keeps the USERNAME and the WHOLE QUERY. `svc` and `access_token=s3cret` both
+// survived. CheckRedirect is not the fix and is worse: refusing there yields a *url.Error
+// carrying the target completely unredacted.
+//
+// So the transport follows redirects itself and the Client never sees a 3xx. This test is
+// what distinguishes that from the version that passed the 3xx up: the Location points at a
+// dead address carrying credentials, and after the fetch fails nothing in the error chain may
+// quote them. It goes through VerifyActor for the same reason the test above does — a direct
+// RoundTrip call never constructs the wrapper the leak lived in.
+func TestVerifyActor_RedirectTargetCredentialsNeverReachTheError(t *testing.T) {
+	s := newSigner(t)
+	token := s.sign(t, nil)
+
+	// A server closed before use: a well-formed address with nothing listening on it.
+	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	deadTarget := credentialedJWKSURL(t, dead.URL)
+	dead.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Set directly rather than via http.Redirect, which would sanitize nothing but does
+		// its own escaping; the point is that the header is upstream text taken as given.
+		w.Header().Set("Location", deadTarget)
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer srv.Close()
+
+	v, err := New(Config{JWKSURL: srv.URL, Audience: testAudience, Issuer: testIssuer})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err = v.VerifyActor(context.Background(), token); !errors.Is(err, ErrKeyUnavailable) {
+		t.Fatalf("err = %v, want ErrKeyUnavailable when the redirect target cannot be reached", err)
+	}
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		msg := e.Error()
+		for _, secret := range []string{"svc", "pw", "s3cret", "access_token"} {
+			if strings.Contains(msg, secret) {
+				t.Fatalf("error layer %T leaks %q from the REDIRECT TARGET: %s", e, secret, msg)
+			}
+		}
+	}
+	// The configured endpoint is still named, because that is the one an operator can act on;
+	// an error that leaked nothing by saying nothing would satisfy the loop above.
+	if host := strings.TrimPrefix(srv.URL, "http://"); !strings.Contains(err.Error(), host) {
+		t.Errorf("err = %v, want the configured JWKS host %s named", err, host)
+	}
+}
+
+// TestVerifyActor_RefusesARedirectLoop pins the bound that had to move into this package
+// along with the following.
+//
+// http.Client stops at ten hops. Once the transport follows redirects itself, that limit is
+// no longer in play, and an endpoint pointing at itself becomes an unbounded loop inside one
+// RoundTrip — held only by jwksFetchTimeout, with every token verification in the process
+// waiting it out. The assertion is on ErrKeyUnavailable rather than merely on failure: a
+// timeout would produce that too, so the test also caps the hops the server will serve and
+// fails if the transport ever exceeds them.
+func TestVerifyActor_RefusesARedirectLoop(t *testing.T) {
+	s := newSigner(t)
+	token := s.sign(t, nil)
+
+	var hops atomic.Int32
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		if n := hops.Add(1); n > jwksMaxRedirects+1 {
+			t.Errorf("served %d hops, want at most %d: the redirect chain is not bounded",
+				n, jwksMaxRedirects+1)
+			http.Error(w, "loop", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Location", srv.URL+"/again")
+		w.WriteHeader(http.StatusFound)
+	})
+
+	v, err := New(Config{JWKSURL: srv.URL, Audience: testAudience, Issuer: testIssuer})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := v.VerifyActor(context.Background(), token); !errors.Is(err, ErrKeyUnavailable) {
+		t.Errorf("err = %v, want ErrKeyUnavailable: a redirect loop is an endpoint failure, "+
+			"not a bad token", err)
 	}
 }
 

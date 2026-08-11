@@ -126,24 +126,36 @@ only say "no signing keys", which describes a healthy issuer mid-rotation just a
 it describes a wrong URL. `TestVerifyActor_UndecodableSuccessBodyIsUnavailable` and
 `TestVerifyActor_OversizeKeySetIsRefused` cover the other two 2xx shapes.
 
-## Redirects are followed; credentials are not
+## Redirects are followed inside the transport; credentials are not
 
-Everything that is not 2xx used to become an error, and a 3xx is not a failure. **An
-`http.RoundTripper` sits below `http.Client`'s redirect handling**: the Client only follows a
-3xx it is handed, so returning an error means it never sees one and never follows. An ordinary
-http→https upgrade or a CDN hop then becomes a permanent `ErrKeyUnavailable` — every refresh
-takes the same path. A 3xx the Client will actually follow is passed straight back instead.
+Everything that is not 2xx used to become an error, and a 3xx is not a failure — an ordinary
+http→https upgrade or a CDN hop became a permanent `ErrKeyUnavailable`, and every refresh took
+the same path. So a redirect is followed. **It is followed HERE, in `RoundTrip`'s own loop,
+rather than by handing the 3xx back to `http.Client`.**
 
-Only such a 3xx, which is narrower than "any 3xx" — the pass-through is justified entirely by
-"the Client follows it and we see the real response again", and `isFollowableRedirect` refuses
-the shapes where that is false. `net/http` redirects on 301/302/303/307/308 and no others, and
-only with a `Location` it can parse. A 304, a 399, or a 302 with no `Location` is handed back
-to the caller as the final response — and it reaches the JWKS provider, which decides on the
-**body** and ignores the status. A gateway's JSON error object decodes to a key set with zero
-keys, which is then cached for the provider's whole TTL, and every token signed by a live key
-is refused as invalid until it expires. That surfaces as `ErrUnauthenticated`/400 blaming the
-caller's credential, when the endpoint is what is broken. Non-followable 3xx therefore takes
-the error path, where it becomes `ErrKeyUnavailable`/503.
+That placement is the whole point, and the reason is redaction. Hand the 3xx up and the Client
+builds the next request from the upstream `Location` **itself**, and then names that URL in
+every error it constructs. A `*url.Error` renders through `net/http`'s `stripPassword`, which
+masks the password and keeps the **username** and the **entire query** — so a `Location` of
+`https://svc:pw@host/jwks?access_token=…` reaches the operator's log as
+`Get "https://svc:***@host/jwks?access_token=…"`. Nothing in this service chose that URL, and
+[`pkg/redact`](pkg-redact.md) never sees it. `CheckRedirect` is strictly **worse**, not a fix:
+returning an error from it yields a `*url.Error` whose `URL` is the target with **no** redaction
+at all. Following in the transport is the only shape where the Client never learns the target.
+
+`redirectTarget` resolves the next hop, or returns nil when there is not one to act on.
+`net/http` redirects on 301/302/303/307/308 and no others, and only with a `Location` it can
+parse, so those are the statuses followed. A 304, a 399, or a 302 with no `Location` is not a
+redirect — and passed onward it reaches the JWKS provider, which decides on the **body** and
+ignores the status. A gateway's JSON error object decodes to a key set with zero keys, which is
+then cached for the provider's whole TTL, and every token signed by a live key is refused as
+invalid until it expires. That surfaces as `ErrUnauthenticated`/400 blaming the caller's
+credential, when the endpoint is what is broken. Those shapes therefore take the error path,
+where they become `ErrKeyUnavailable`/503.
+
+The `Location` is resolved against the **current hop** (`cur.URL.Parse`) rather than read from
+`resp.Request`, which only `http.Transport` populates — a relative `Location` must work under a
+fake transport in a test too. Non-`http(s)` schemes are refused rather than followed.
 
 `TestVerifyActor_RefusesA3xxTheClientWillNotFollow` pins it on the error identity, not merely
 on failure — passing these through also "fails", with the wrong verdict. 304 is deliberately
@@ -151,26 +163,36 @@ absent from its table: `net/http` strips a 304's body, so the provider fails on 
 either way and the case cannot be made to fail against a guard that lets every 3xx through.
 
 Following is safe because the credential does not travel with it. `credentialed` dresses the
-**first hop only**, matching `req.URL` against the sanitized URL handed to the provider. Two
-things depend on that gate:
+**first hop only**, matching `req.URL` against the sanitized URL handed to the provider; each
+subsequent hop is built from the resolved `Location`, which carries no userinfo of ours, and
+has its `Authorization` deleted outright. The operator's credentials belong to the host they
+configured — `net/http` would drop `Authorization` across hosts on its own, and this drops it
+on a same-host redirect to a different path as well, along with the operator's query, which
+`net/http` does not drop.
 
-- `RoundTrip` runs once per hop, so a guard that swapped unconditionally would rewrite every
-  hop's URL back to the configured endpoint — an immediate loop to the Client's redirect limit,
-  re-sending the credential each time.
-- The operator's credentials belong to the host they configured. `net/http` drops
-  `Authorization` across hosts on its own; the gate additionally withholds it (and the
-  operator's query, which `net/http` does not drop) from a same-host redirect to a different
-  path.
-
-The chain is bounded by the Client's own 10-hop limit, and whatever finally answers 2xx still
-comes back through `RoundTrip` and is gated by `checkKeys`.
+The hop count is bounded **here** now, by `jwksMaxRedirects`. That bound has to move with the
+following: without it an endpoint that redirects to itself is an unbounded loop inside one
+`RoundTrip`, held only by `jwksFetchTimeout`, and every token verification in the process waits
+it out. `TestVerifyActor_RefusesARedirectLoop` counts the hops a self-redirecting handler sees
+and fails if the loop runs past the limit. Each abandoned response is drained to a bounded
+prefix before closing (`drainAndClose`) so the connection returns to the idle pool instead of
+re-doing TCP and TLS on the next hop. Whatever finally answers 2xx is still gated by
+`checkKeys`.
 
 `TestVerifyActor_FollowsAJWKSRedirectWithoutForwardingCredentials` pins both halves — each
 alone is satisfied by a broken version. It asserts the configured endpoint *does* receive the
 credentials, the redirect target is hit exactly once, resolution succeeds, and the target sees
-neither an `Authorization` header nor the operator's query. Reverting the 3xx pass-through
-fails it with `returned HTTP 302`; removing the first-hop gate fails it with
-`stopped after 10 redirects`.
+neither an `Authorization` header nor the operator's query.
+`TestVerifyActor_RedirectTargetCredentialsNeverReachTheError` covers the leak the placement
+exists to prevent: a `Location` pointing at a dead host **with** userinfo and an `access_token`
+query, asserted absent from **every** `errors.Unwrap` layer — while the configured host is
+still named, since an error that identifies nothing is not an improvement. It fails against a
+pass-through implementation with the target's username visible in a `*fmt.wrapError`.
+
+`scrubURLError` is the backstop for the same class: any `*url.Error` in the chain is rebuilt
+around `redact.URLUserinfo(ue.URL)`. It is default-deny rather than a fix for a known path —
+`RoundTrip` now issues requests to URLs it did not choose, so the transport below it can name
+one in an error, and the rebuilt error replaces the whole chain rather than one matched layer.
 
 ## Empty config defaults; a wrong one fails the pod
 

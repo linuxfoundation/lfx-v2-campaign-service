@@ -107,6 +107,20 @@ pre-slash host whose right side is not a decimal port; a bare host (`idp.example
 port (`:8443`) and a bracketed IPv6 literal all keep their host and path. The multi-URL branch's
 `passwordCouldSpanQuery` asks the same question for the same reason — it had the identical hole.
 
+The IPv6 exemption is the delicate part, because a bracket is an ordinary password character.
+It was first written as "the pre-slash host ends in `]`", and that suffix test leaked:
+`nats://u:secret]/path?x@host:4222` has `u:secret]` before the `/`, which a suffix test calls
+an IPv6 host and therefore a closed authority — so the `?` reads as a genuine query, the value
+is cut there, and `nats://u:secret]` goes to the log with the password in it. Requiring the
+opening bracket too is not enough on its own: `[secret]` has both. `bracketedHostCloses`
+validates the **whole** bracketed form instead — the address is hex digits, `:` and `.`, with
+at least one `:`, since every IPv6 literal has one and nothing else reaching here does, and any
+trailing `:port` is decimal. The zone id after a `%25` (RFC 6874) gets a **looser** rule than
+the address, and must: it is an interface name, so `eth0` and `en0` are the ordinary cases and
+a hex-only rule refuses every real one. It is loose safely because the address in front of it
+has already had to pass. `TestURLUserinfo_Shapes` carries `[::1]`, `[::ffff:127.0.0.1]` and
+`[fe80::1%25eth0]` so the tightening cannot start discarding legitimate hosts unnoticed.
+
 ### When the whole-value fallback runs
 
 `redactOne` bounds userinfo to the authority, and that bound is only trustworthy while the
