@@ -116,6 +116,23 @@ func (r *AudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *mo
 // be the reason a possibly-committed lease stays held.
 const ambiguousCommitReconcileTimeout = 5 * time.Second
 
+// Retry schedule for the one outcome that is NOT self-evident: zero rows updated AND no row
+// visible at that id. See reconcileAmbiguousAudienceCommit for why that outcome is ambiguous.
+//
+// The attempt cap, not the timeout, is what normally ends the loop, and it exists to bound
+// what this costs on the path where nothing is wrong. A commit the server already accepted
+// becomes visible in single-digit milliseconds; 25ms doubling to 500ms over 6 attempts spans
+// ~1.2s, roughly two orders of magnitude of headroom over that. The alternative — retrying
+// until the 5s timeout — would add five seconds to EVERY genuinely-rolled-back commit, which
+// during a database outage means every failing request holds its goroutine five times longer
+// while the database is already the bottleneck. The timeout stays as the hard ceiling for the
+// case the queries themselves are slow.
+const (
+	ambiguousCommitReconcileAttempts = 6
+	ambiguousCommitReconcileMinDelay = 25 * time.Millisecond
+	ambiguousCommitReconcileMaxDelay = 500 * time.Millisecond
+)
+
 // reconcileAmbiguousAudienceCommit runs after tx.Commit returns an error that does not prove
 // the transaction rolled back. If it actually committed, the row may be in ANY status
 // (building, built, or failed) — CreateAudienceForApprovedBrief and CreateAudience return
@@ -128,28 +145,78 @@ const ambiguousCommitReconcileTimeout = 5 * time.Second
 //   - If the row is 'built' or 'failed': do NOT move it. A 'built' row is a successful build
 //     with a valid master-list pointer; a 'failed' row is already terminal. Both are stable
 //     end states that must not be corrupted.
-//   - If the commit genuinely rolled back, no row exists at that id and the UPDATE affects zero
-//     rows — a harmless no-op, not an error.
+//   - If the commit genuinely rolled back, no row exists at that id and there is nothing to
+//     reconcile.
+//
+// The last of those is the one that cannot be decided by a single statement, and it is why
+// this retries. A zero-row UPDATE does not prove a rollback. The commit whose result we never
+// received may still have been IN PROGRESS on the server when this runs: it executes on a
+// different pooled connection, so it takes its own snapshot, and under READ COMMITTED a row
+// inserted by a transaction that has not yet committed is not merely locked but invisible —
+// the UPDATE does not block on it, it matches nothing and returns. Milliseconds later the
+// commit lands and the row is there, 'building', holding the (brief_id, platform) lease from
+// migration 000018 that only a manual PATCH to 'failed' can then release. That window is
+// precisely the one this function exists for, so treating the first zero-row result as final
+// leaves it blind to a subset of its own reason for existing.
+//
+// Retrying "no visible row" is therefore the fix, and only that outcome is retried: a row
+// observed in 'built' or 'failed' is a stable end state and settles the question immediately.
 func reconcileAmbiguousAudienceCommit(ctx context.Context, pool *Pool, row *model.CampaignAudience) {
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ambiguousCommitReconcileTimeout)
 	defer cancel()
 
-	// ONE statement, not a SELECT followed by an UPDATE. The `status='building'` predicate
-	// is what enforces the do-not-downgrade invariant, and it has to be part of the write to
-	// enforce it at all: a separate status read is a TOCTOU window in which a concurrent
+	delay := ambiguousCommitReconcileMinDelay
+	for attempt := 1; ; attempt++ {
+		settled, err := tryReleaseAudienceBuildLease(rctx, pool, row)
+		if err != nil {
+			slog.ErrorContext(ctx, "failed to reconcile an audience build row after an ambiguous commit error",
+				"audience_id", row.ID, "attempt", attempt, "error", err)
+		}
+		if settled {
+			return
+		}
+		if attempt >= ambiguousCommitReconcileAttempts {
+			// Not necessarily a problem: the overwhelmingly likely reading is that the commit
+			// really did roll back, which is what "no row" means every other time. Logged at
+			// warn rather than error for exactly that reason — an error on every rolled-back
+			// commit is an error nobody reads — but logged, because the other reading strands
+			// a lease that no automatic path will release (the migration's escape hatch is
+			// deliberately manual, since the row may own real HubSpot lists).
+			slog.WarnContext(ctx, "could not confirm an audience row's fate after an ambiguous commit error; "+
+				"if the commit did land, its build lease is held until an operator PATCHes the row to 'failed'",
+				"audience_id", row.ID, "brief_id", row.BriefID, "project_id", row.ProjectID,
+				"platform", string(row.Platform), "attempts", attempt)
+			return
+		}
+		select {
+		case <-rctx.Done():
+			slog.WarnContext(ctx, "ran out of time confirming an audience row's fate after an ambiguous commit error",
+				"audience_id", row.ID, "brief_id", row.BriefID, "project_id", row.ProjectID, "attempts", attempt)
+			return
+		case <-time.After(delay):
+		}
+		if delay *= 2; delay > ambiguousCommitReconcileMaxDelay {
+			delay = ambiguousCommitReconcileMaxDelay
+		}
+	}
+}
+
+// tryReleaseAudienceBuildLease performs one attempt of the reconcile above. It reports settled
+// when the row's fate is KNOWN — released by this call, or already in a terminal state — and
+// leaves settled false only for "no row visible yet", the outcome the caller retries.
+//
+// An error is returned for the caller to log but never settles anything: this runs precisely
+// when the connection is known to be unreliable, so a failed query is the least trustworthy
+// evidence of absence there is.
+func tryReleaseAudienceBuildLease(ctx context.Context, pool *Pool, row *model.CampaignAudience) (bool, error) {
+	// The release is ONE statement, not a SELECT followed by an UPDATE. The `status='building'`
+	// predicate is what enforces the do-not-downgrade invariant, and it has to be part of the
+	// write to enforce it at all: a separate status read is a TOCTOU window in which a concurrent
 	// PATCH can land, and a version predicate does not close it — a PATCH that edits another
 	// field while leaving the status 'building' still bumps the version, so the UPDATE would
 	// match zero rows, report no error, and abandon the row holding the lease forever.
 	// Predicating on the status instead of the version is also what makes the write
-	// idempotent under retry.
-	//
-	// Every outcome is already correct without a prior read:
-	//   - no such row      -> 0 rows. The commit rolled back; nothing to reconcile.
-	//   - status 'building'-> 1 row.  Released, which is the whole point of this function.
-	//   - 'built'/'failed' -> 0 rows. A stable end state, left untouched.
-	// The old SELECT could only ADD a failure mode: this function runs precisely when the
-	// connection is already known to be unreliable, and any non-ErrNoRows error from that
-	// extra query returned early, skipping the lease-releasing UPDATE entirely.
+	// idempotent under retry, which this now depends on.
 	//
 	// Scoped by brief_id and project_id too, matching UpdateAudience's predicate — id alone
 	// would still be correct (it's the primary key), but every other write to this table
@@ -157,9 +224,34 @@ func reconcileAmbiguousAudienceCommit(ctx context.Context, pool *Pool, row *mode
 	// rather than carving out a silent exception here.
 	updateQ := `UPDATE campaign_audiences SET status='failed', version=version+1, updated_at=now()
 		WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND status=$4`
-	if _, err := pool.Exec(rctx, updateQ, row.ID, row.BriefID, row.ProjectID, string(model.AudienceBuilding)); err != nil {
-		slog.ErrorContext(ctx, "failed to reconcile an audience build row after an ambiguous commit error",
-			"audience_id", row.ID, "error", err)
+	tag, err := pool.Exec(ctx, updateQ, row.ID, row.BriefID, row.ProjectID, string(model.AudienceBuilding))
+	if err != nil {
+		return false, fmt.Errorf("release audience build lease: %w", err)
+	}
+	if tag.RowsAffected() > 0 {
+		return true, nil
+	}
+
+	// Zero rows has two meanings and they need opposite handling, so ask which one it was.
+	// This read is NOT the TOCTOU the single-statement write above avoids: it runs only after
+	// the write declined to match, it decides nothing about what to write, and its failure
+	// modes all fall through to another attempt rather than to an early return.
+	var status string
+	switch err := pool.QueryRow(ctx,
+		`SELECT status FROM campaign_audiences WHERE id=$1 AND brief_id=$2 AND project_id=$3`,
+		row.ID, row.BriefID, row.ProjectID).Scan(&status); {
+	case errors.Is(err, pgx.ErrNoRows):
+		// Rolled back, or not yet visible. Indistinguishable here; the caller retries.
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("check audience row after a zero-row reconcile: %w", err)
+	case status == string(model.AudienceBuilding):
+		// It became visible between the two statements, so the UPDATE simply ran too early.
+		// Another attempt will match it.
+		return false, nil
+	default:
+		// 'built' or 'failed': a stable end state that holds no lease and must not be touched.
+		return true, nil
 	}
 }
 

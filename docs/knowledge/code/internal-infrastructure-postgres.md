@@ -679,18 +679,39 @@ do-not-downgrade invariant it looks like it enforces: a concurrent `PATCH` that 
 other field while leaving the status at `building` still bumps `version`, so the UPDATE
 would match zero rows, report no error, and abandon the row holding the lease forever.
 Predicating on `status='building'` closes that hole and makes the write idempotent under
-retry. It is one statement rather than a SELECT-then-UPDATE for the same reason — a
-separate status read is a TOCTOU window, and it could only add a failure mode on a path
-that runs precisely when the connection is already known to be unreliable. The tenant
+retry. The *write* is one statement rather than a SELECT-then-UPDATE for the same reason — a
+status read taken before the write is a TOCTOU window, and it could only add a failure mode on
+a path that runs precisely when the connection is already known to be unreliable. (The
+classification read described below is not that read: it runs only after the write declined to
+match, it decides nothing about what to write, and every one of its failure modes falls through
+to another attempt rather than to an early return.) The tenant
 columns match `UpdateAudience`'s predicate; `id` alone would be correct (it is the primary
 key) but every other write to this table carries the tenant scope.
 
-Every outcome is right without a prior read: no such row ⇒ 0 rows (the commit rolled back,
-nothing to reconcile); `building` ⇒ 1 row (released, the point of the function);
-`built`/`failed` ⇒ 0 rows (a stable end state, left untouched). It is best-effort and only logs on
-failure, matching `releaseUnstartedClaim`'s own error handling for the same reason: the
-caller is already returning an error from `CreateAudienceForApprovedBrief` and has no
-better path to report a second failure on top of the first.
+**A zero-row UPDATE does not settle the question, so it retries.** Three of the four outcomes
+are self-evident from the write alone: `building` ⇒ 1 row (released, the point of the
+function); `built`/`failed` ⇒ 0 rows plus a visible row (a stable end state, left untouched).
+The fourth — 0 rows and no visible row — has two readings, and the write cannot tell them
+apart. The commit whose result was never received may still be IN PROGRESS: the reconcile runs
+on a different pooled connection, so it takes its own snapshot, and under READ COMMITTED a row
+inserted by a not-yet-committed transaction is *invisible*, not locked. The UPDATE does not
+block on it; it matches nothing and returns. Milliseconds later the commit lands and the row
+is there in `building`, holding the lease — the exact case the function exists for, missed by
+the function. So that one outcome is retried (`ambiguousCommitReconcileAttempts = 6`, 25ms
+doubling to a 500ms cap, ~1.2s in total) while a row observed in a terminal state settles
+immediately. The attempt cap rather than the 5s timeout is what normally ends the loop, and it
+is there to bound the cost on the path where nothing is wrong: retrying to the timeout would
+add five seconds to every genuinely-rolled-back commit, which during a database outage means
+every failing request holding its goroutine five times longer.
+
+Giving up after the last attempt logs at **warn**, not error. The overwhelmingly likely
+reading of "still no row" is that the commit really did roll back, and an error on every
+rolled-back commit is an error nobody reads — but it is logged, because the other reading
+strands a lease that no automatic path will release (migration 000018's escape hatch is
+deliberately manual, since the row may own real HubSpot lists). The whole path is otherwise
+best-effort and log-only, matching `releaseUnstartedClaim`'s error handling for the same
+reason: the caller is already returning an error from `CreateAudienceForApprovedBrief` and has
+no better path to report a second failure on top of the first.
 
 ## DeleteCampaign's guards
 

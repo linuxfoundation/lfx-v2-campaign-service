@@ -254,6 +254,84 @@ func TestReconcileAmbiguousAudienceCommit_ReleasesTheLeaseAfterAConcurrentVersio
 	}
 }
 
+// TestReconcileAmbiguousAudienceCommit_WaitsForACommitStillInFlight is the regression test for
+// the Copilot finding on PR #106: a zero-row UPDATE does not prove the commit rolled back.
+//
+// It reproduces the exact window reconcile exists for, which is only observable against a real
+// database because the mechanism is MVCC visibility. The row is inserted by a transaction that
+// has NOT committed yet — the shape the real caller is always in, since it holds the id from the
+// INSERT's RETURNING while its Commit is the thing that errored. reconcile runs on a different
+// pooled connection, so its statement takes its own snapshot; under READ COMMITTED an
+// uncommitted INSERT is invisible rather than locked, so the UPDATE does not block, matches
+// nothing, and returns. The previous implementation stopped there and called it a rollback. The
+// commit then lands, and the row sits in 'building' holding the (brief, platform) lease with no
+// automatic path left to release it.
+//
+// Running this against that implementation is the mutation check: it leaves the row 'building'.
+func TestReconcileAmbiguousAudienceCommit_WaitsForACommitStillInFlight(t *testing.T) {
+	pool := reconcileTestPool(t)
+	ctx := context.Background()
+
+	briefID, projectID := insertReconcileTestBrief(ctx, t, pool)
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin the in-flight transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var row model.CampaignAudience
+	row.ProjectID = projectID
+	row.BriefID = briefID
+	row.Platform = model.ProviderHubSpot
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO campaign_audiences (project_id, brief_id, platform, status)
+		VALUES ($1, $2, $3, 'building')
+		RETURNING id, version`, projectID, briefID, string(model.ProviderHubSpot)).
+		Scan(&row.ID, &row.Version); err != nil {
+		t.Fatalf("insert the building row inside the uncommitted transaction: %v", err)
+	}
+
+	// The commit lands while reconcile is already running — the server finishing work whose
+	// result the caller never received. 150ms is comfortably inside the retry schedule
+	// (attempts at ~0, 25, 75, 175, 375 and 775ms) and far outside any plausible scheduling
+	// jitter, so the test neither races nor depends on the exact backoff constants.
+	var commitErr error
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		time.Sleep(150 * time.Millisecond)
+		commitErr = tx.Commit(ctx)
+	}()
+
+	reconcileAmbiguousAudienceCommit(ctx, pool, &row)
+	wg.Wait()
+	if commitErr != nil {
+		t.Fatalf("the in-flight transaction failed to commit, so the case under test never happened: %v", commitErr)
+	}
+
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM campaign_audiences WHERE id = $1`, row.ID).
+		Scan(&status); err != nil {
+		t.Fatalf("read back the reconciled row: %v", err)
+	}
+	if status != "failed" {
+		t.Errorf("status = %q, want %q — reconcile read the row before the commit became visible "+
+			"and treated the absence as a rollback, so the build lease is held with nothing left to release it",
+			status, "failed")
+	}
+
+	// The lease is the thing that actually matters: prove a fresh build can take it.
+	var newID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO campaign_audiences (project_id, brief_id, platform, status)
+		VALUES ($1, $2, $3, 'building')
+		RETURNING id`, projectID, briefID, string(model.ProviderHubSpot)).Scan(&newID); err != nil {
+		t.Errorf("lease still held after reconcile: rebuild insert failed: %v", err)
+	}
+}
+
 // TestReconcileAmbiguousAudienceCommit_LeaveBuiltRowsUnchanged covers the fix for the Cursor
 // Bugbot finding on PR #106: reconcileAmbiguousAudienceCommit must not downgrade a successfully
 // built row to 'failed'. The reconcile path is called when tx.Commit returns an error that does
