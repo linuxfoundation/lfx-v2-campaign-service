@@ -310,8 +310,12 @@ type CampaignJob struct {
 // It carries NO live status, deliberately. Campaign.Status is this service's own lifecycle
 // vocabulary that CampaignStatusDeletable and CampaignStatusNeedsReconciliation switch on;
 // a platform's ENABLED/PAUSED is a different axis, and writing one into the other yields a
-// row both predicates default-deny — undeletable and never reconciled. The upstream run
-// state is served by the metrics read and the status toggle. Whether a campaign is
+// row both predicates default-deny — undeletable and never reconciled. Nor is the upstream
+// run state readable anywhere else here: the metrics read carries impressions, clicks, cost
+// and CTR and no run-state field at all. It is only ever SET, by the status toggle, which
+// persists this service's own active/paused on the row once the platform confirms — so the
+// row records the last toggle this service made, and a change in the platform's own console
+// is visible only there. Whether a campaign is
 // adoptable at all is the ADAPTER's decision, in the platform's own vocabulary: a lookup
 // returns nil for a removed or otherwise unbindable campaign rather than handing the
 // service a status string it would have to learn every dialect to interpret.
