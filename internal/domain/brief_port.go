@@ -18,6 +18,26 @@ type BriefReader interface {
 	// ErrNotFound when none exists. ErrNotFound is an ORDINARY outcome here, not a failure:
 	// it is how the caller learns this event has no brief yet and one should be generated.
 	FindBriefByEventSlug(ctx context.Context, projectID, eventSlug string) (*model.CampaignBrief, error)
+	// ConfirmBriefApproved reports nil when the brief is STILL approved at expectedVersion,
+	// ErrStaleApproval when it is not, and ErrNotFound when it is missing or archived.
+	//
+	// It exists because GetBrief cannot answer this question safely. GetBrief is a plain
+	// SELECT, so under READ COMMITTED it returns the last COMMITTED row and an in-flight
+	// ReplaceBrief — updated, not yet committed — is invisible to it. A caller that reads
+	// "still approved" and then does something irreversible (creating real HubSpot lists)
+	// can therefore act on an approval that is already being withdrawn in another
+	// transaction, and lose the race by milliseconds.
+	//
+	// Implementations must take a ROW LOCK (`SELECT ... FOR UPDATE`) so the read serializes
+	// against brief mutations: an in-flight writer blocks this read until it commits, and
+	// the value read afterwards is the writer's. That converts a silent stale read into the
+	// correct ErrStaleApproval.
+	//
+	// It cannot close the window entirely — the lock is released when the confirming
+	// transaction ends, and holding a database transaction open across an upstream HTTP call
+	// is not an option. What it removes is the ALREADY-DECIDED case: a withdrawal that has
+	// happened and simply has not committed yet no longer reads as an approval.
+	ConfirmBriefApproved(ctx context.Context, projectID, id string, expectedVersion int64) error
 }
 
 // BriefWriter mutates campaign briefs.

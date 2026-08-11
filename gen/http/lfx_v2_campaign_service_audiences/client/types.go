@@ -151,6 +151,9 @@ type CreateAudienceConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateAudienceServiceUnavailableResponseBody is the type of the
@@ -201,6 +204,9 @@ type GetAudienceConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // GetAudienceServiceUnavailableResponseBody is the type of the
@@ -251,6 +257,9 @@ type ListAudiencesConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // ListAudiencesServiceUnavailableResponseBody is the type of the
@@ -301,6 +310,9 @@ type UpdateAudienceConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // UpdateAudienceServiceUnavailableResponseBody is the type of the
@@ -371,6 +383,9 @@ type BuildAudienceConflictResponseBody struct {
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // BuildAudienceServiceUnavailableResponseBody is the type of the
@@ -524,6 +539,7 @@ func NewCreateAudienceConflict(body *CreateAudienceConflictResponseBody) *lfxv2c
 	v := &lfxv2campaignserviceaudiences.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -605,6 +621,7 @@ func NewGetAudienceConflict(body *GetAudienceConflictResponseBody) *lfxv2campaig
 	v := &lfxv2campaignserviceaudiences.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -676,6 +693,7 @@ func NewListAudiencesConflict(body *ListAudiencesConflictResponseBody) *lfxv2cam
 	v := &lfxv2campaignserviceaudiences.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -757,6 +775,7 @@ func NewUpdateAudienceConflict(body *UpdateAudienceConflictResponseBody) *lfxv2c
 	v := &lfxv2campaignserviceaudiences.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -863,6 +882,7 @@ func NewBuildAudienceConflict(body *BuildAudienceConflictResponseBody) *lfxv2cam
 	v := &lfxv2campaignserviceaudiences.ConflictError{
 		Code:    *body.Code,
 		Message: *body.Message,
+		Reason:  body.Reason,
 	}
 
 	return v
@@ -1076,6 +1096,11 @@ func ValidateCreateAudienceConflictResponseBody(body *CreateAudienceConflictResp
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
 	return
 }
 
@@ -1135,6 +1160,11 @@ func ValidateGetAudienceConflictResponseBody(body *GetAudienceConflictResponseBo
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
 	}
 	return
 }
@@ -1196,6 +1226,11 @@ func ValidateListAudiencesConflictResponseBody(body *ListAudiencesConflictRespon
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
 	return
 }
 
@@ -1255,6 +1290,11 @@ func ValidateUpdateAudienceConflictResponseBody(body *UpdateAudienceConflictResp
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
 	}
 	return
 }
@@ -1339,6 +1379,11 @@ func ValidateBuildAudienceConflictResponseBody(body *BuildAudienceConflictRespon
 	}
 	if body.Message == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
 	}
 	return
 }

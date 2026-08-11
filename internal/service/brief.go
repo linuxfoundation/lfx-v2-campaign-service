@@ -19,6 +19,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
 
 	"goa.design/goa/v3/security"
 )
@@ -32,6 +33,8 @@ import (
 // place rather than swap the instance. Handlers snapshot the collaborators under the
 // lock (deps) and never dereference the fields directly.
 type BriefService struct {
+	authGuard
+
 	mu        sync.RWMutex
 	briefs    domain.BriefRepository
 	campaigns domain.CampaignRepository
@@ -48,6 +51,9 @@ type BriefService struct {
 	// does not call SetEventURL, which is why that handler checks them rather than ready().
 	eventFetcher EventFetcher
 	eventParser  EventParser
+	// llmClient backs GenerateEmailCopy. Nil in every construction that does not call
+	// SetLLMClient, which is why that handler checks it rather than ready().
+	llmClient *llm.Client
 }
 
 var (
@@ -64,6 +70,18 @@ func (s *BriefService) SetIndexer(p indexer.Publisher) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.indexer = p
+}
+
+// SetLLMClient injects the AI model client for email copy generation. Separate from the constructor
+// so the existing NewBriefService call sites are unaffected; a BriefService without this still serves
+// every other method. GenerateEmailCopy reports 503 rather than nil-panicking when it's missing.
+func (s *BriefService) SetLLMClient(c *llm.Client) {
+	if c == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.llmClient = c
 }
 
 // DisableIndexing marks indexing as DELIBERATELY off, so writes skip the outbox entirely.
@@ -192,14 +210,20 @@ func (s *BriefService) ready() (domain.BriefRepository, domain.CampaignRepositor
 	return b, c, j, orch, nil
 }
 
-// JWTAuth mirrors the connection service: it records the authenticated actor
-// (validated by Heimdall at the gateway) into the context for attribution.
+// JWTAuth mirrors the connection service: it verifies the bearer token against
+// Heimdall's JWKS and records the authenticated actor into the context for
+// attribution.
 func (s *BriefService) JWTAuth(ctx context.Context, token string, _ *security.JWTScheme) (context.Context, error) {
-	if token == "" {
-		return ctx, &briefs.BadRequestError{Code: "400", Message: "missing bearer token"}
-	}
-	if a := actorFromToken(token); a != nil {
-		ctx = context.WithValue(ctx, actorCtxKey{}, a)
+	ctx, msg, unavailable := s.authenticate(ctx, token)
+	switch {
+	case unavailable:
+		// The check could not be PERFORMED — no verifier wired, or Heimdall's JWKS is
+		// unreachable. Nothing was established about the caller's token, so 400 would
+		// blame a caller who may be holding a perfectly good one and tell them not to
+		// retry an outage that clears on its own.
+		return ctx, &briefs.ConnServiceUnavailableError{Code: "503", Message: msg}
+	case msg != "":
+		return ctx, &briefs.BadRequestError{Code: "400", Message: msg}
 	}
 	return ctx, nil
 }

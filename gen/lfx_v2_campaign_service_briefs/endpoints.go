@@ -27,6 +27,7 @@ type Endpoints struct {
 	AdoptCampaign        goa.Endpoint
 	GetCampaign          goa.Endpoint
 	GetCampaignMetrics   goa.Endpoint
+	GenerateEmailCopy    goa.Endpoint
 	UpdateCampaign       goa.Endpoint
 	ToggleCampaignStatus goa.Endpoint
 	DeleteCampaign       goa.Endpoint
@@ -50,6 +51,7 @@ func NewEndpoints(s Service) *Endpoints {
 		AdoptCampaign:        NewAdoptCampaignEndpoint(s, a.JWTAuth),
 		GetCampaign:          NewGetCampaignEndpoint(s, a.JWTAuth),
 		GetCampaignMetrics:   NewGetCampaignMetricsEndpoint(s, a.JWTAuth),
+		GenerateEmailCopy:    NewGenerateEmailCopyEndpoint(s, a.JWTAuth),
 		UpdateCampaign:       NewUpdateCampaignEndpoint(s, a.JWTAuth),
 		ToggleCampaignStatus: NewToggleCampaignStatusEndpoint(s, a.JWTAuth),
 		DeleteCampaign:       NewDeleteCampaignEndpoint(s, a.JWTAuth),
@@ -71,6 +73,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.AdoptCampaign = m(e.AdoptCampaign)
 	e.GetCampaign = m(e.GetCampaign)
 	e.GetCampaignMetrics = m(e.GetCampaignMetrics)
+	e.GenerateEmailCopy = m(e.GenerateEmailCopy)
 	e.UpdateCampaign = m(e.UpdateCampaign)
 	e.ToggleCampaignStatus = m(e.ToggleCampaignStatus)
 	e.DeleteCampaign = m(e.DeleteCampaign)
@@ -327,6 +330,29 @@ func NewGetCampaignMetricsEndpoint(s Service, authJWTFn security.AuthJWTFunc) go
 			return nil, err
 		}
 		return s.GetCampaignMetrics(ctx, p)
+	}
+}
+
+// NewGenerateEmailCopyEndpoint returns an endpoint function that calls the
+// method "generate-email-copy" of service "lfx-v2-campaign-service-briefs".
+func NewGenerateEmailCopyEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*GenerateEmailCopyPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.GenerateEmailCopy(ctx, p)
 	}
 }
 

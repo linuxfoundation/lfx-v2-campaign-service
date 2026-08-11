@@ -1964,6 +1964,171 @@ func DecodeGetCampaignMetricsResponse(decoder func(*http.Response) goahttp.Decod
 	}
 }
 
+// BuildGenerateEmailCopyRequest instantiates a HTTP request object with method
+// and path set to call the "lfx-v2-campaign-service-briefs" service
+// "generate-email-copy" endpoint
+func (c *Client) BuildGenerateEmailCopyRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+		briefID   string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.GenerateEmailCopyPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "generate-email-copy", "*lfxv2campaignservicebriefs.GenerateEmailCopyPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: GenerateEmailCopyLfxV2CampaignServiceBriefsPath(projectID, briefID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "generate-email-copy", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeGenerateEmailCopyRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs generate-email-copy server.
+func EncodeGenerateEmailCopyRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.GenerateEmailCopyPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "generate-email-copy", "*lfxv2campaignservicebriefs.GenerateEmailCopyPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		return nil
+	}
+}
+
+// DecodeGenerateEmailCopyResponse returns a decoder for responses returned by
+// the lfx-v2-campaign-service-briefs generate-email-copy endpoint. restoreBody
+// controls whether the response body should be restored after having been read.
+// DecodeGenerateEmailCopyResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - error: internal error
+func DecodeGenerateEmailCopyResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body GenerateEmailCopyResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "generate-email-copy", err)
+			}
+			err = ValidateGenerateEmailCopyResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "generate-email-copy", err)
+			}
+			res := NewGenerateEmailCopyEmailCopyOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GenerateEmailCopyBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "generate-email-copy", err)
+			}
+			err = ValidateGenerateEmailCopyBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "generate-email-copy", err)
+			}
+			return nil, NewGenerateEmailCopyBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body GenerateEmailCopyConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "generate-email-copy", err)
+			}
+			err = ValidateGenerateEmailCopyConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "generate-email-copy", err)
+			}
+			return nil, NewGenerateEmailCopyConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body GenerateEmailCopyServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "generate-email-copy", err)
+			}
+			err = ValidateGenerateEmailCopyServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "generate-email-copy", err)
+			}
+			return nil, NewGenerateEmailCopyServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body GenerateEmailCopyInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "generate-email-copy", err)
+			}
+			err = ValidateGenerateEmailCopyInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "generate-email-copy", err)
+			}
+			return nil, NewGenerateEmailCopyInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body GenerateEmailCopyNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "generate-email-copy", err)
+			}
+			err = ValidateGenerateEmailCopyNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "generate-email-copy", err)
+			}
+			return nil, NewGenerateEmailCopyNotFound(&body)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "generate-email-copy", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildUpdateCampaignRequest instantiates a HTTP request object with method
 // and path set to call the "lfx-v2-campaign-service-briefs" service
 // "update-campaign" endpoint

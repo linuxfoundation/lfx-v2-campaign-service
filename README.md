@@ -83,11 +83,26 @@ openssl rand -base64 32
   (CLI flag `-bind`)
 - `DEBUG` (unset) — set to `true` to enable debug logging
   (CLI flag `-d`)
-- `JWKS_URL` — JWT JWKS endpoint (reserved for auth; defaults to
-  Heimdall JWKS URL in-cluster)
-- `JWT_AUDIENCE` (default `lfx-v2-campaign-service`) — expected JWT
-  audience
-- `JWT_ISSUER` (default `heimdall`) — expected JWT issuer
+- `JWKS_URL` — key set every bearer token is verified against (defaults
+  to the in-cluster Heimdall JWKS URL). Set but not an absolute URL
+  fails startup rather than degrading verification.
+- `JWT_AUDIENCE` (default `lfx-v2-campaign-service`) — required audience
+- `JWT_ISSUER` (default `heimdall`) — required issuer
+- `JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL` (default unset) — local
+  development only: when non-empty it **disables JWT verification** and
+  attributes every request to this principal, logging a `WARN` on every
+  boot that sets it. Two independent guards keep it out of a deployed
+  environment: the chart refuses to render it, and at runtime the pod fails
+  startup rather than degrading whenever it detects it is running in a
+  cluster — so the failure is a crash-loop, not a silently unauthenticated
+  service. Worth knowing before debugging a rollout that will not come up.
+  The runtime guard is a detection, not a proof: it looks for
+  `KUBERNETES_SERVICE_HOST` and the service-account directory, so a manifest
+  applied outside the chart that both sets this variable and suppresses those
+  two signals (an explicit empty `KUBERNETES_SERVICE_HOST` plus
+  `automountServiceAccountToken: false`) is not caught. That combination is
+  three deliberate, visible changes rather than one env line, which is the
+  bar the guard is built to — see `internal/infrastructure/config/config.go`.
 - `NATS_URL` — NATS server URL (reserved for messaging; defaults to
   in-cluster NATS URL)
 - `EVENT_URL_NAT64_PREFIXES` (default unset) — comma-separated
@@ -136,6 +151,23 @@ rather than making it correct.
 - `SNOWFLAKE_WAREHOUSE` — optional warehouse; the account default is used when
   omitted
 - `SNOWFLAKE_ROLE` — optional role; the user's default is used when omitted
+
+### LLM / email copy (optional, `AI_*`)
+
+The LF **LiteLLM proxy**, used ONLY to generate email copy — subject, preheader,
+body and CTA — via the POST `/projects/{id}/briefs/{id}/email-copy` endpoint
+(LFXV2-2775). Optional as a GROUP: unless BOTH `AI_PROXY_URL` and `AI_API_KEY`
+are set, the endpoint returns 503 (service unavailable). The pod starts successfully
+with or without these values configured.
+
+- `AI_PROXY_URL` — LiteLLM proxy base URL; `/chat/completions` is appended
+- `AI_API_KEY` — the **proxy's** key, not a Bedrock or Anthropic credential (the
+  proxy holds those), so it cannot be replayed against a model provider directly
+- `AI_MODEL` — optional, not a secret; the model id the proxy routes on. Empty
+  selects `llm.DefaultModel`.
+
+In-cluster the two secrets come from the same ExternalSecret-managed secret as
+the rest; `AI_MODEL` is a plain chart value.
 
 ### Observability (`OTEL_*`)
 

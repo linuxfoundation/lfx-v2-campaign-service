@@ -335,8 +335,12 @@ func TestMigration000020_ScopesTheIndexToGoogleAds(t *testing.T) {
 // Empty is the resting state: TestMigrations_AllowedVersionGapsAreStillOpen fails on a stale
 // entry, so the merge that closes a gap cannot be green while its excuse survives.
 var allowedVersionGaps = map[int]string{
-	18: "PR #106 (feat/LFXV2-3059-audience-build-lease) — 000018_audience_build_lease",
 	19: "PR #103 (feat/LFXV2-3055-audience-actor-attribution) — 000019_audience_actor_columns",
+	// 18 — REMOVED (LFXV2-3056). 000018_audience_build_lease was claimed by PR #106
+	// (LFXV2-3059) while it was unmerged, and this entry excused the gap so this branch could
+	// stay green ahead of it. #106 has merged, so 000018 exists in the tree and the ordering
+	// obligation is discharged. The 19 entry above stays: #103 is still open, so that gap is
+	// still genuine and still transitional.
 	// 16 — REMOVED (LFXV2-3068). 000016_campaign_actor_columns was claimed by PR #95
 	// (LFXV2-3038) while it was unmerged, and this entry excused the gap so #93 could stay
 	// green. #95 has merged, so 000016 exists in the tree, the ordering obligation is

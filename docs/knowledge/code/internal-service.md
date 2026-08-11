@@ -405,10 +405,15 @@ connection is exactly what makes the bootstrap work, since discovery is how the 
 the account to select. Discovery's 400 is reserved for its *other* unusable states (inactive,
 credential blob absent/incomplete/malformed, provider config invalid).
 
-The distinction is carried in the response **message**, not a field. `ConflictError` is a shared
-Goa type with exactly `code` and `message`, so exposing a machine-readable `reason` would mean
-changing a type every 409 in this service returns; the reason token reaches operators through
-the log instead.
+The distinction here is carried in the response **message**, not a field, and that is now a
+choice rather than a limitation. `ConflictError` (`design/connection.go`) carries an OPTIONAL
+`reason` slug alongside `code` and `message`; being optional is what let it be added without
+touching the eighteen other sites that construct the shared type. The audience build populates
+it — three 409s with three opposite remedies — and these connection-usability 409s do not,
+because their remedy is the same one in every case (fix the connection, the message says how)
+and a slug per unusable state would be a taxonomy with no client reading it. The reason token
+reaches operators here through the log. A client must treat an absent `reason` as "unspecified
+conflict"; see `mapAudienceErr` in `internal/service/audience.go` for the populated case.
 
 **The message names no accounts endpoint**, and that constraint is load-bearing rather than
 stylistic. Only Google Ads has one (`design/connection.go`, `list-google-ads-accounts`), and
@@ -490,5 +495,50 @@ default branch returns a FIXED message rather than formatting the cause: `eventu
 URL-free messages because they are rendered to callers and to logs, and an unrecognized
 error is exactly the one whose text nothing vouched for. Forbidden maps to 400 and not
 403: nothing about the caller is at issue, so 403 would send an operator to look at tokens.
+
+## Authentication is one guard, embedded three times (LFXV2-3053)
+
+`JWTAuth` used to base64-decode the token payload and believe it. It now calls
+[internal/infrastructure/auth](internal-infrastructure-auth.md) and refuses anything that
+does not verify. `authGuard` (`auth.go`) holds the verifier and is EMBEDDED in the three
+authenticated services — Goa wires a security handler per service, and three copies of a
+security check is three places to drift; each keeps a thin `JWTAuth` only because the
+error type is generated per package.
+
+Two details that look incidental and are not. The mutex is `authMu`, not `mu`: every
+embedding service already has a `mu`, and two same-named fields at different depths
+resolve **silently** to the outer one, so a lock taken in the wrong place would compile
+and protect nothing. And a nil verifier REJECTS, making missing wiring an outage rather
+than a silent return to trusting unverified claims —
+`TestNewContainer_AllPathsInjectTheTokenVerifier` pins that all three services get one on
+the boot paths a test can reach — no-database and 503-mode — which is the only place that
+bug is visible at runtime. It cannot reach the LIVE path: `wireLiveBackends` needs a
+reachable PostgreSQL and constructs all three services independently, so "every boot path"
+was a claim about code that had been read, not tested.
+`TestNoServiceIsConstructedOutsideItsVerifierInjectingHelper` closes that half in the
+source instead: it parses the `container` package and fails if any non-test call to
+`service.NewBriefService` / `NewConnectionService` / `NewAudienceService` sits outside its
+verifier-injecting helper. Reachability is a source property, so a new construction site is
+caught whether or not a unit test can boot the path it is on.
+
+Rejections are 400, not 401: the design declares no Unauthorized type and
+`commonBriefErrors` documents 400 as the JWTAuth rejection status (401 is a follow-up).
+
+But not every rejection is about the token. `authenticate` returns a third value, an
+`unavailable bool`, saying whose fault the failure is: true when THIS service could not
+perform the check — no verifier wired, or Heimdall's JWKS unreachable
+(`domain.ErrKeyUnavailable`) — false when the token itself was refused. The three `JWTAuth`
+impls map the first to `ConnServiceUnavailableError` (**503**) and the second to
+`BadRequestError` (400). Both were 400 before, which answered a JWKS outage by telling every
+caller holding a valid credential that theirs was bad, and telling them not to retry.
+The verdict is returned separately rather than sniffed from the message: "invalid bearer
+token" is deliberately the *same* string for every token-side refusal, so it cannot carry
+the distinction. The nil-actor branch — a verifier that accepts but names nobody — stays on
+the 400 side on purpose: it is indistinguishable from a refusal seen from outside, and
+`TestAuthenticate_RejectionMessagesAreOpaque` pins that a caller cannot learn which of the
+two happened.
+`attributedActor` still warns on a nil actor although no served route can reach it with
+one — a tripwire for a future entry point wired without the security scheme, which would
+present only as NULL attribution.
 
 See [internal/service](../../../internal/service).

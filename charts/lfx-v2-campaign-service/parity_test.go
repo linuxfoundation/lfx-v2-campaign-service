@@ -540,6 +540,16 @@ func TestEveryConfiguredEnvVarIsWiredInTheChart(t *testing.T) {
 		// one edit away.
 		"JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL": "local dev only; deliberately not deployable",
 
+		// Injecting this would DEFEAT it. It is one discriminator that lets auth.New refuse
+		// the mock principal in a deployment: the same override that would enable the bypass
+		// must not also be able to conceal the cluster. A chart entry — even one rendering
+		// the right value — would put "unset it" back within reach of whoever set the bypass.
+		//
+		// Absence from the DEFAULT values is not the guarantee, though; an operator override
+		// renders just as readily. TestDeploymentRejectsReservedAndBypassEnv pins the
+		// template-time guard that refuses the name outright.
+		"KUBERNETES_SERVICE_HOST": "kubelet-injected; chart-settable would defeat the auth-bypass guard",
+
 		// Have working in-code defaults, and the chart's own values (service.port, the
 		// container's listen address) are the source of truth. Injecting them would create two
 		// places to change one setting.
@@ -552,9 +562,12 @@ func TestEveryConfiguredEnvVarIsWiredInTheChart(t *testing.T) {
 		// DATABASE_URL would defeat that.
 		"DATABASE_URL": "superseded by PGHOST/PGUSER/PGPASSWORD/PGDATABASE from the secret",
 
-		// Optional JWT claim check. Empty means "do not verify the issuer", which is the
-		// intended default for the platform's Heimdall-issued tokens.
-		"JWT_ISSUER": "optional claim check; empty means no issuer verification",
+		// Defaulted in code to the platform issuer ("heimdall"), which is the only issuer
+		// this service accepts. Empty does NOT mean "skip the issuer check" — the check is
+		// unconditional; leaving the var unset simply selects the default. Injecting it
+		// would create a second place to change one value, and a wrong value there would
+		// reject every real token.
+		"JWT_ISSUER": "defaulted in code to the platform issuer; the check is unconditional",
 	}
 
 	for _, m := range names {
@@ -569,5 +582,173 @@ func TestEveryConfiguredEnvVarIsWiredInTheChart(t *testing.T) {
 				"Add it to app.environment in values.yaml, or add it to the exempt map with a reason.",
 				name)
 		}
+	}
+}
+
+// TestDeploymentRejectsReservedAndBypassEnv pins the template-time guard.
+//
+// The runtime refuses to boot with JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL set only when it
+// also detects a cluster, and one of the signals it uses for that is
+// KUBERNETES_SERVICE_HOST. Because app.environment renders every key it is handed and
+// app.extraEnv is appended verbatim, an override could otherwise supply BOTH — the bypass
+// plus an explicit empty KUBERNETES_SERVICE_HOST, which takes precedence over the
+// kubelet's — and get a pod that accepts any token as the named principal. The render has
+// to fail instead, in every input that reaches the container's env.
+func TestDeploymentRejectsReservedAndBypassEnv(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skipf("helm not on PATH; skipping chart guard test: %v", err)
+	}
+
+	const bypassKey = "JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL"
+	cases := []struct {
+		name string
+		set  string
+		want string
+	}{
+		{
+			name: "environment declares the kubelet variable",
+			set:  "app.environment.KUBERNETES_SERVICE_HOST.value=",
+			want: "is reserved",
+		},
+		{
+			// The empty value is the dangerous one, so it gets its own case: a guard keyed on
+			// truthiness rather than on the NAME would let this through.
+			name: "environment declares a sibling KUBERNETES_ variable",
+			set:  "app.environment.KUBERNETES_SERVICE_PORT.value=443",
+			want: "is reserved",
+		},
+		{
+			name: "environment sets the auth bypass",
+			set:  "app.environment." + bypassKey + ".value=someone@example.com",
+			want: "must stay empty",
+		},
+		{
+			name: "extraEnv declares the kubelet variable",
+			set:  "app.extraEnv[0].name=KUBERNETES_SERVICE_HOST,app.extraEnv[0].value=",
+			want: "is reserved",
+		},
+		{
+			name: "extraEnv sets the auth bypass",
+			set:  "app.extraEnv[0].name=" + bypassKey + ",app.extraEnv[0].value=someone@example.com",
+			want: "may not set",
+		},
+		{
+			// valueFrom is the same hole through a different door. Both env inputs support
+			// it (see the `else if $config.valueFrom` branch in the container env loop), and
+			// the value lives in a Secret the template cannot read -- so a guard that only
+			// inspects `.value` sees nothing and renders a Deployment whose principal is
+			// sourced at runtime. The whole form is refused for this key rather than
+			// inspected, because "the template cannot see it" must not read as "it is empty".
+			name: "environment sources the auth bypass from a secret",
+			set: "app.environment." + bypassKey + ".valueFrom.secretKeyRef.name=creds," +
+				"app.environment." + bypassKey + ".valueFrom.secretKeyRef.key=principal",
+			want: "may not use valueFrom",
+		},
+		{
+			name: "extraEnv sources the auth bypass from a secret",
+			set: "app.extraEnv[0].name=" + bypassKey + "," +
+				"app.extraEnv[0].valueFrom.secretKeyRef.name=creds," +
+				"app.extraEnv[0].valueFrom.secretKeyRef.key=principal",
+			want: "may not set",
+		},
+		// Helm's scalar typing is the third door. `--set ...value=false` is parsed as a
+		// BOOLEAN, and Helm's `default ""` treats boolean false and numeric 0 as empty — so
+		// a guard written as `default "" .value` saw nothing while the renderer went on to
+		// emit `value: "false"`, a perfectly non-empty container env var. These four cases
+		// exist because that bypass was real: it rendered a Deployment carrying the bypass
+		// key, which the runtime then refuses to boot with, turning a template-time
+		// rejection into a CrashLoopBackOff. Both scalars, both env inputs.
+		{
+			name: "environment sets the auth bypass to boolean false",
+			set:  "app.environment." + bypassKey + ".value=false",
+			want: "must stay empty",
+		},
+		{
+			name: "environment sets the auth bypass to numeric zero",
+			set:  "app.environment." + bypassKey + ".value=0",
+			want: "must stay empty",
+		},
+		{
+			name: "extraEnv sets the auth bypass to boolean false",
+			set:  "app.extraEnv[0].name=" + bypassKey + ",app.extraEnv[0].value=false",
+			want: "may not set",
+		},
+		{
+			name: "extraEnv sets the auth bypass to numeric zero",
+			set:  "app.extraEnv[0].name=" + bypassKey + ",app.extraEnv[0].value=0",
+			want: "may not set",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := exec.Command("helm", "template", chartDir,
+				"--show-only", "templates/deployment.yaml", "--set", tc.set).CombinedOutput()
+			if err == nil {
+				t.Fatalf("helm template SUCCEEDED with --set %s; the deployment renders an env "+
+					"block that can disable authentication:\n%s", tc.set, out)
+			}
+			if !strings.Contains(string(out), tc.want) {
+				t.Errorf("render failed, but not on the guard: want a message containing %q, got:\n%s",
+					tc.want, out)
+			}
+		})
+	}
+}
+
+// TestDeploymentStillRendersWithOrdinaryOverrides is the other half: a guard that rejected
+// everything would pass the test above while breaking every real deploy.
+func TestDeploymentStillRendersWithOrdinaryOverrides(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skipf("helm not on PATH; skipping chart guard test: %v", err)
+	}
+	out, err := exec.Command("helm", "template", chartDir,
+		"--show-only", "templates/deployment.yaml",
+		"--set", "app.environment.LOG_LEVEL.value=debug",
+		"--set", "app.extraEnv[0].name=MY_EXTRA,app.extraEnv[0].value=x",
+		// valueFrom is refused only for the bypass key. An ordinary secret-sourced variable
+		// is the normal way to inject a credential, so rejecting the FORM rather than the
+		// key would break every real deploy — the failure mode a one-sided guard invites.
+		"--set", "app.environment.DB_PASSWORD.valueFrom.secretKeyRef.name=creds",
+		"--set", "app.environment.DB_PASSWORD.valueFrom.secretKeyRef.key=password",
+		"--set", "app.extraEnv[1].name=MY_SECRET",
+		"--set", "app.extraEnv[1].valueFrom.secretKeyRef.name=creds",
+		"--set", "app.extraEnv[1].valueFrom.secretKeyRef.key=other",
+		// The empty default must keep rendering — it is declared so the key is discoverable.
+		"--set", "app.environment.JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL.value=",
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template failed on ordinary overrides: %v\n%s", err, out)
+	}
+	for _, want := range []string{"name: LOG_LEVEL", "name: MY_EXTRA", "name: DB_PASSWORD", "name: MY_SECRET"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("rendered deployment is missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestWhitespaceOnlyBypassValueStillRenders is a SEPARATE render invocation on purpose.
+// Helm's --set is last-write-wins, so setting the same key twice in one command silently
+// discards the earlier value: folded into the test above, the whitespace case would never
+// have reached the guard and the trim would have gone untested while appearing covered.
+//
+// A whitespace-only bypass value belongs with the acceptances rather than the rejections,
+// because it is NOT a bypass: config.LoadConfig applies strings.TrimSpace, so " " leaves
+// MockLocalPrincipal empty and verification fully on. The guard trims for exactly that
+// reason — it has to judge the value the same way the service will, and failing the render
+// for a value the service treats as unset would block a deploy over nothing.
+func TestWhitespaceOnlyBypassValueStillRenders(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skipf("helm not on PATH; skipping chart guard test: %v", err)
+	}
+	out, err := exec.Command("helm", "template", chartDir,
+		"--show-only", "templates/deployment.yaml",
+		"--set", "app.environment.JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL.value= ",
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template failed on a whitespace-only bypass value: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "name: JWT_AUTH_DISABLED_MOCK_LOCAL_PRINCIPAL") {
+		t.Errorf("rendered deployment is missing the bypass key entirely:\n%s", out)
 	}
 }

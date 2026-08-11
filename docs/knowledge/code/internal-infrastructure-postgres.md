@@ -87,17 +87,17 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   expose it under the wrong tenant. The API create path already guards this (`INSERT …
   WHERE EXISTS` an active brief scoped by project+brief); the FK makes the datastore the
   source of truth for all writers.
-- `000010` / `000011` — campaign SOFT DELETE. `000002`'s full
+- `000013` / `000014` — campaign SOFT DELETE. `000002`'s full
   `UNIQUE (brief_id, platform)` made a campaign row occupy its brief's slot for that
   platform PERMANENTLY, so a campaign created with the wrong budget (or one whose
   upstream create failed ambiguously) blocked that pair forever with no recovery.
-  `000010` creates the partial unique index `uq_campaigns_brief_platform_live`
-  (`(brief_id, platform) WHERE status <> 'deleted'`) and `000011` drops the old
+  `000013` creates the partial unique index `uq_campaigns_brief_platform_live`
+  (`(brief_id, platform) WHERE status <> 'deleted'`) and `000014` drops the old
   constraint — mirroring what `000003` did for briefs on archive. Deleting a campaign
   now frees the slot for a re-dispatch while two LIVE campaigns for the pair are still
   rejected.
 
-  The split into two versions is required, not stylistic: `000010` uses
+  The split into two versions is required, not stylistic: `000013` uses
   `CREATE INDEX CONCURRENTLY` (migrations run during a ROLLING startup, so a blocking
   build could stall an in-flight dispatch claim), which cannot share a file with other
   statements — a multi-statement migration is batched, reintroducing the implicit
@@ -105,7 +105,7 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   free: golang-migrate applies versions ascending, so the replacement index always
   exists before the constraint it replaces is dropped. Dropping first would open a
   window with NO uniqueness, during which two concurrent claims could both win and
-  double-create a paid campaign upstream. `000011` is a guarded `DO` block that
+  double-create a paid campaign upstream. `000014` is a guarded `DO` block that
   REFUSES to drop the constraint unless the new index is present, `indisvalid`, and
   matches its required DEFINITION, because a failed CONCURRENTLY build does not roll
   back — it leaves an INVALID index that `IF NOT EXISTS` would silently skip rebuilding.
@@ -113,8 +113,8 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   correct outcome.
 
   The guard checks the definition, not just the name, and that distinction is
-  load-bearing. Because `000010` builds with `IF NOT EXISTS`, ANY pre-existing index
-  carrying the name `uq_campaigns_brief_platform_live` makes `000010` a silent no-op —
+  load-bearing. Because `000013` builds with `IF NOT EXISTS`, ANY pre-existing index
+  carrying the name `uq_campaigns_brief_platform_live` makes `000013` a silent no-op —
   and a name-only guard then accepts it and drops the sole real uniqueness constraint,
   leaving the pair with none: every claim wins and concurrent retries double-create paid
   campaigns, silently. So the guard proves `indrelid = public.campaigns`, `indisunique`,
@@ -125,10 +125,10 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   wrong predicate, an index on another table, and an INVALID index; an equivalent
   predicate spelled `!=` or with an explicit `::text` cast still passes, since the
   comparison uses the text Postgres itself deparses. Pinned by
-  `TestMigration000011_GuardChecksIndexDefinition`.
+  `TestMigration000014_GuardChecksIndexDefinition`.
 
   **The two versions cannot be staged apart, and the rollout strategy carries the
-  ordering instead.** Deferring `000011`'s drop to a later release (the usual
+  ordering instead.** Deferring `000014`'s drop to a later release (the usual
   expand/contract remedy for a backward-incompatible change) does not work here: the old
   full constraint still covers soft-deleted rows, so a re-dispatch after a delete hits
   `ON CONFLICT ... DO NOTHING` and is SILENTLY swallowed — `RowsAffected` is 0, which
@@ -169,6 +169,263 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   across the dispatch path. Ordering matters — `000016` must reach `main` AFTER `000015`,
   because golang-migrate tracks a single version integer and would step straight past a
   lower version that appeared later.
+
+- `000018` — the AUDIENCE BUILD LEASE: partial unique index
+  `uq_campaign_audiences_brief_platform_building` on `(brief_id, platform)
+  WHERE status = 'building'`. `BuildAudience` creates real HubSpot lists before it can
+  possibly know a sibling build is doing the same, and the two cannot collide by list
+  NAME because the plan's `BuildRef` is the audience row's own id — chosen precisely so
+  a later build does not adopt an earlier one's lists. So two concurrent builds for one
+  brief produced two complete, indistinguishable sets of lists in the portal, and
+  nothing downstream noticed. The index makes the second insert fail with SQLSTATE
+  23505, which `audience_repo.go` maps to `domain.ErrAudienceBuildInFlight`.
+
+  The predicate covers `'building'` ONLY, and deliberately not the `status <> 'deleted'`
+  shape `000013` uses for campaigns. A brief has exactly one LIVE campaign per platform,
+  but `000005` records that it may have MANY audiences over time, and constraining
+  `'built'` rows would make the first successful build permanent and every rebuild a
+  409. The lease is about concurrency, not history.
+
+  A build that DIES holding the lease keeps blocking rebuilds, and that is the intended
+  outcome rather than a gap: its HubSpot lists exist, so the old "just build again"
+  answer is what duplicated them. `PATCH update-audience` moving the row to `failed`
+  frees the slot, and is the escape hatch an operator uses AFTER reconciling the portal.
+  Automatic stale-lease takeover is deliberately absent — taking over a row that may own
+  real lists re-creates exactly the duplication the lease closes.
+
+  Single statement per file for the same reason `000013` is: `CREATE INDEX
+  CONCURRENTLY` cannot run inside a transaction, and the pgx/v5 golang-migrate driver
+  only avoids one because it issues a bare `ExecContext`; a second statement would be
+  batched and reintroduce it. Unlike `000013` there is no constraint to drop, so no
+  guarded `DO` block follows — but the INVALID-index hazard is the same, and
+  `TestAudienceBuildLeaseIndexIsValid` in `dbtest` asserts `indisvalid`/`indisready`
+  rather than mere existence, because a failed concurrent build leaves the NAME in place
+  and `IF NOT EXISTS` would then skip the rebuild while reporting success.
+
+### `Migrate` refuses to succeed over an INVALID index
+
+The hazard above cannot be closed by a test alone, because it is a SEQUENCE that ends in
+production catalog state: a `CREATE INDEX CONCURRENTLY` fails, leaving the index present
+and invalid while golang-migrate marks the version dirty; an operator reconciles the data
+and forces the version back; the re-run finds the NAME, does nothing, reports success. The
+version is then clean over an index that enforces nothing — and every assertion that looks
+the index up by name still passes. Migration tests run on a fresh database and can never
+see it.
+
+So `Migrate` ends with `checkNoInvalidIndexes`, a catalog read for
+`pg_index.indisvalid = false` in the current schema. The scan is schema-wide, not scoped
+to names this repo knows: an invalid index is never an intended state, and every future
+CONCURRENTLY migration gets the check for free. That breadth is also why the RECOVERY
+advice is attached per NAME rather than to the sentence. Dropping the debris is always
+step one, but "then force `<version-1>`" is only right for an index a migration creates —
+a hand-built index, another tool's, or two hits from different migrations each make one
+blanket version wrong, and forcing an unrelated version replays unrelated DDL.
+`describeInvalid` therefore annotates each name with its owning migration and tells the
+operator to leave the version alone for anything else.
+
+Ownership comes from the MIGRATIONS themselves — `migrationIndexOwners` parses every
+`*.up.sql` in the embedded FS for its `CREATE … INDEX` statements — and not from
+`requiredIndexes`. That distinction is the whole safety of the advice, not a style
+preference. `requiredIndexes` is deliberately narrow: it lists only indexes whose ABSENCE
+is silent, so most migration-created indexes are legitimately absent from it —
+`idx_campaigns_stuck_claims` (000008) among them, a performance index whose loss makes the
+stuck-claim scan full-scan forever. Derive ownership from that list and an operator holding
+an invalid copy of it is told to drop it and leave the schema version alone, which deletes
+the index permanently and boots clean. **Any list narrower than "every index a migration
+creates" produces that class of answer; the migrations are the only set that is not.** The
+narrowness is not incidental either: `requiredIndexes` grows only when an index's absence
+would be silent, and the invalid-index scan must keep annotating correctly for every index
+it does not list, both today's and the ones added after this code was written.
+
+**Narrow is not the same as short, and the first draft of the list confused the two.** It
+held one entry — the index the change at hand created — while the rule it stated ("a unique
+index standing in for a constraint") admits ten. The seven per-provider connection indexes
+from 000001 and `uq_campaign_briefs_project_event` from 000003 are exposed identically:
+000001 declares no table-level UNIQUE constraint at all, and 000003 DROPs
+`campaign_briefs_project_id_event_slug_key` before creating its replacement, so in each case
+the partial index IS the constraint. The failure mode this produces is worth naming, because
+it is invisible from inside the change that produces it: **a guard that covers one of ten
+identically-exposed cases reads, from the boot log, exactly like a guard that covers all
+ten.** The other nine were never judged less important — they were just not what anyone was
+looking at. The seven connection entries are therefore GENERATED from the table list rather
+than written out, so an eighth provider added to the schema and the list is covered without
+anyone remembering, and `TestMigrateRefusesEachDroppedSingletonIndex` drops each one against
+a live database and requires `Migrate` to refuse.
+The parser matches the CREATE, not the name anywhere in the file, so a migration that
+DROPs an index is not reported as the version to force back to; where two migrations
+create one name, the highest wins. `TestMigrationIndexOwners_FindsEveryCreatedIndex`
+re-derives the names a different way and fails if the map misses any.
+
+**"Creates" means creates UNCONDITIONALLY, which is why `executableSQL` strips the body of
+every dollar-quoted block before the scan.** The remedy this map feeds is "DROP the index,
+then force back so the migration RUNS again" — and that only recovers the index if the
+CREATE fires against a schema where the index is ABSENT. A `DO $$ … $$` block exists
+precisely to make DDL conditional, and 000009's condition is "an INVALID copy is present":
+the operator's drop, the first half of the remedy, is exactly what makes it false. Count
+that rebuild as ownership and an operator is told to force 8, watches 000009 no-op, and
+boots clean with `idx_campaigns_stuck_claims` gone for good — the stuck-claim scan silently
+full-scanning forever, the very failure 000008 and 000009 exist to prevent. Skipping the
+block hands them 000008, whose plain `CREATE INDEX CONCURRENTLY … IF NOT EXISTS` does fire
+once the name is gone; forcing one version further back replays 000009 too, which then
+correctly no-ops. The general rule: **ownership means "re-running this migration against a
+schema missing the index rebuilds it". A conditional create cannot promise that — it is
+repair, and repair is not a recovery target.**
+
+`executableSQL` also strips `--` comments, because these migrations DISCUSS the statements
+they avoid: 000009's header contains the phrase "a failed CREATE INDEX CONCURRENTLY", from
+which the regexp reads the index name `does`. Inert — nothing is called that — but a scan
+whose output depends on prose is one comment edit away from claiming a migration owns an
+index it never touches. The block stripping pairs delimiters in CODE rather than in one
+pattern because a `$tag$…$tag$` regexp needs a BACKREFERENCE and RE2 has none; a
+tag-agnostic pattern would close one block on the next block's OPENING delimiter and delete
+the executable statements between them.
+
+Any hit returns `ErrInvalidIndex`,
+which `IsPermanentMigrationErr` reports as permanent — and "permanent" here means the
+container stops trying, not that it keeps trying. Retrying rebuilds nothing, so both
+startup paths refuse rather than loop: `NewContainer` returns the error, which crashes the
+pod loudly on initial startup, and the background initializer that runs after a TRANSIENT
+failure logs at ERROR and RETURNS, leaving `/readyz` at 503 with no live pool and no
+further attempts. Either outcome is better than serving over a lost UNIQUE constraint, and
+both are better than a boot-loop: an operator has to force the migration version by hand,
+and a restart cycle would only bury that fact under repeated startup noise. The check is
+schema-wide rather than scoped to one index name — an invalid index is never an intended
+state, and every future `CONCURRENTLY` migration inherits the guard instead of needing its
+own assertion. It also runs on the `ErrNoChange` path, so a pod booting against an already
+damaged schema refuses rather than quietly accepting what the index was added to prevent.
+A connect/query failure inside the check is NOT wrapped in the sentinel, so ordinary
+unreachability stays retryable. `TestMigrateRefusesAnInvalidIndex` provokes a genuine
+invalid index (a unique `CONCURRENTLY` build over duplicate rows) and asserts the refusal.
+
+### …and refuses to succeed with the index MISSING, which is where its own remedy leads
+
+The instruction "drop the invalid index and re-run" is only half a recovery, and the other
+half is not optional. Once the drop is done, migration 18 is still recorded CLEAN, so
+`Up()` returns `ErrNoChange`, nothing rebuilds the index, the invalid-index scan finds
+nothing wrong, and boot succeeds against a schema with **no uniqueness at all** — the same
+silent loss the scan exists to prevent, arrived at by following the scan's own advice. The
+index has to be rebuilt, which the error message now says by emitting the index's own
+`CREATE ... INDEX` statement per name — see *A required index recovers by REBUILD* below for
+why that superseded the "force the version back" advice this paragraph used to carry.
+
+Instruction alone is not a control, so detection changed shape: not "nothing is invalid"
+but "the index that enforces the invariant is PRESENT and valid". `requiredIndexes` names
+them and `ErrMissingRequiredIndex` reports a gap, permanent for the same reason — the
+recorded version is already correct, so `Up()` returns `ErrNoChange` forever and no retry
+rebuilds anything until an operator runs the emitted DDL.
+
+Membership in that list is deliberately narrow: an index belongs only if its absence is
+SILENT, meaning it stands in for a constraint and every write it was serializing succeeds
+without it. A performance index going missing makes the service slow, not wrong, and does
+not qualify. The hand-maintained list is kept honest by
+`TestMigrateRefusesADroppedRequiredIndex`, which drops each name and requires `Migrate` to
+notice — an entry naming an index no migration creates fails there rather than sitting in
+the list as decoration.
+
+Ten indexes qualify, and the count is worth stating because the list started at one. Three
+are written out by hand and the other seven are generated by `connectionSingletonIndexes` —
+one per provider connection table, all identical but for the table and the name, generated
+precisely so the eighth provider cannot be added to the schema and forgotten here.
+`uq_campaign_briefs_project_event` (000003) keeps one live brief per (project, event slug).
+`uq_campaign_audiences_brief_platform_building` (000018) is the
+audience-build lease. `uq_campaigns_brief_platform_live` (000013) is the arbiter of
+`ClaimCampaignDispatch`, and since 000014 dropped `campaigns_brief_id_platform_key` it is
+the **only** thing enforcing at most one live campaign per `(brief_id, platform)`. 000014's
+drop-guard pins that same definition — deliberately, not redundantly: the guard runs once,
+at migration time, and cannot speak for the schema a year of operations later. Two checks
+on one definition is the design.
+
+### A required index recovers by REBUILD, never by `migrate force`
+
+The recovery advice in these errors has been wrong twice, in two different ways, and the
+second correction is the one that matters because it changed the KIND of advice rather than
+its accuracy.
+
+**Round one — per message.** The missing-index error ended in a single
+`migrate force <version-1>`. Correct while the registry held one entry, wrong the moment it
+held two, because the two are created by different migrations: an operator missing
+`uq_campaigns_brief_platform_live` who follows that sentence to force 17 replays 000018,
+rebuilds the *audience* index, and boots against a campaigns table that still enforces
+nothing — having done exactly what the message said. Advice that is right for the first name
+in a list and wrong for the second is worse than no advice, because it gets followed.
+
+**Round two — per name, and still unsafe.** Annotating each name with its own owning
+migration fixed the mis-targeting and left the real hazard untouched: `migrate force N`
+followed by `Up()` replays **every migration above N**, not just the one that owns the index.
+This chain is not uniformly replay-safe. `000006` and `000007` carry bare
+`ALTER TABLE … ADD CONSTRAINT`, and PostgreSQL has no `ADD CONSTRAINT IF NOT EXISTS`, so
+replaying them against a schema that already has those constraints fails with **42710** and
+leaves the version DIRTY. The hazard therefore scales with the DISTANCE forced back — which
+is precisely why it stayed invisible: while every annotated index came from 000013 or later,
+the replayed range was all `IF NOT EXISTS` DDL and the advice happened to work. It became
+unsound the moment the seven `000001` connection indexes and `000003`'s brief index joined
+the registry, because their annotation is "force 0" — replay everything.
+
+That is a property of the RANGE, not of the index, so no amount of more careful annotation
+fixes it.
+
+**What it is now.** Every `requiredIndex` carries uniqueness, table, key order and deparsed
+predicate — enough to emit the index's own DDL. `createSQL` does, `indexRecovery` prefers it
+for any name in the registry, and both messages print it: the missing-index error says "run
+each statement below", the wrong-definition error says "DROP each index listed and then run
+the statement beside it". A rebuild restores exactly the missing thing, replays nothing, and
+needs no version change — the recorded version was never wrong, the schema drifted underneath
+it. The force branch survives only for a name the registry has no DDL for, which is what
+`describeInvalid` still needs: the invalid-index scan is schema-wide and turns up indexes like
+`idx_campaigns_stuck_claims` that no `requiredIndex` describes.
+
+**The advice is now checkable, and that is the actual win.** A version number is not
+executable, so nothing could ever confirm that following it recovered anything — and it did
+not. `TestRequiredIndexCreateSQL_RebuildsAnIndexTheCheckAccepts` drops each required index
+against a live database, runs the exact statement the error prints, and requires the next
+`Migrate` to succeed. `TestRequiredIndexes_RecoverByRebuildNotByForce` fails if any entry's
+recovery ever contains the word `force` again.
+
+Three generalisations worth keeping:
+
+- **Advice that names a version is advice about a RANGE.** Ask what else replays before
+  concluding a force is safe, and re-ask it whenever an entry from an older migration joins
+  the list — the answer is not a property of the entry.
+- **Prefer remedies that can be executed by a test.** The per-name annotation was defensible
+  in review for two rounds precisely because nothing could run it.
+- **Any sentence that refers the reader to an annotation must be tested against a message
+  that carries one.** The wrong-definition path spent a round telling operators to force "the
+  version annotated against it" while printing no annotation at all — advice that cannot be
+  followed, which reads as correct in review and is useless in an incident.
+
+### The check is on the DEFINITION, because the name is what IF NOT EXISTS matches
+
+"Present and valid" under the right name is still not enough, and the reason is the same
+`IF NOT EXISTS` that produced the invalid-index case. Any index carrying the name makes
+migration 000018's `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS` a silent no-op — so a
+non-unique index, one on a superset of the keys, or one with a different predicate leaves
+the real constraint unbuilt and then *satisfies* a name-only check. Boot succeeds,
+concurrent builds are unconstrained, nothing reports it.
+
+This is not a hypothetical: migration 000014's drop-guard was written to close exactly this
+hole, and `TestMigration000014_GuardChecksIndexDefinition` records the PostgreSQL 16.10 run
+where a same-named NON-unique index passed the name-only form. Each `requiredIndex` entry
+therefore carries uniqueness, relation, key columns in order, and the predicate **as
+Postgres deparses it** — comparing against the deparsed form is what lets an equivalent
+spelling (an explicit `::text` cast, different whitespace) compare equal instead of raising
+a false alarm. `indisready` is checked alongside `indisvalid` because the two fail apart: a
+`CONCURRENTLY` build that dies between phases can leave an index valid but not ready.
+
+Absent and wrong-definition are **separate sentinels** (`ErrMissingRequiredIndex`,
+`ErrRequiredIndexMismatch`) because their recovery differs in a way an operator cannot
+guess. An absent index needs only its rebuild statement run. An impostor must be DROPPED
+*first* — rebuild without dropping and `CREATE` finds the name taken, leaving the operator
+exactly where they started. The message names every
+defect it found, not the first: told only "wrong definition", an operator rebuilds
+something that is still wrong.
+
+One consequence worth stating for anyone writing a live test against this schema: a
+cleanup that restores the lease index must **not** use `Migrate`'s return value as its
+success signal. `Migrate` answering "clean" is precisely the regression these tests exist
+to catch, so a cleanup that trusts it restores nothing when the guard is weakened, and
+every later lease test in that database then passes against an unconstrained table.
+`restoreLeaseIndex` drops, re-creates, and verifies against `pg_index` — and drops rather
+than using `IF NOT EXISTS`, since an impostor carries the right name.
 
 ### Version gaps are exempted, then the exemption is retired
 
@@ -399,6 +656,133 @@ difference. It runs `EXPLAIN` with `enable_seqscan = off` and fails on a survivi
 Turning seqscan off does not force an index to be used — it cannot be, if none applies — it
 only removes the reason a usable index would be passed over on a table this small. Dropping the
 six indexes turns all six sub-tests red with the plan printed, which is the revert-check.
+
+The build-lease tests (`audience_lease_live_test.go`) are the same kind of claim and show why
+a fake cannot substitute. The arbitration IS the index: eight goroutines call
+`CreateAudienceForApprovedBrief` together and exactly one may get a row, which is only true
+because PostgreSQL serialises them. They also need an APPROVED parent — `insertBrief` creates
+a DRAFT, which `CreateAudienceForApprovedBrief` rejects with `ErrStaleApproval` before the
+lease is ever consulted, so a test built on it would pass for the wrong reason and
+`insertApprovedBrief` exists for that alone.
+
+**`reconcileAmbiguousAudienceCommit` cannot be tested from `dbtest_test`, and its own live
+test cannot import `dbtest` either — both for the same import cycle.** `dbtest.go` is a
+non-test file that imports `internal/infrastructure/postgres` (production) to build its
+fixtures, so `package postgres`'s own test files cannot import `dbtest` back (`go vet`
+reports `import cycle not allowed in test` if one tries). The function is also unexported,
+which rules out testing it from the external `dbtest_test` package regardless.
+`audience_reconcile_live_test.go` (`package postgres`) works around both constraints at
+once: it calls `Migrate` and `NewPool` directly — the same two calls `dbtest.Pool` makes
+internally — rather than going through `dbtest`, giving it its own live pool with no import
+of the `dbtest` package at all. It duplicates `dbtest.UniqueID`'s shape (name prefix + a
+`crypto/rand` suffix) for the same reason `dbtest` uses that shape: the schema is shared and
+never dropped between runs.
+
+## `CreateAudienceForApprovedBrief`'s ambiguous-commit path
+
+A `tx.Commit(ctx)` failure does not prove PostgreSQL rolled back — the server can commit the
+row before the client's acknowledgement of the commit itself is lost (a dropped connection,
+a timeout on the ack). If that happens here, the INSERT's `building` row is real and holds
+the `(brief_id, platform)` build lease (migration 000018) — but `CreateAudienceForApprovedBrief`
+returns `nil` for the created row on this path, so the service layer's `releaseUnstartedClaim`
+(`internal/service/audience_build.go`) has no row to call `UpdateAudience` on. Nothing would
+ever release that lease.
+
+`reconcileAmbiguousAudienceCommit` closes the gap directly in the repo, using the row the
+INSERT's `RETURNING` clause already observed inside the (possibly-rolled-back) transaction:
+a bounded (`ambiguousCommitReconcileTimeout = 5s`), detached (`context.WithoutCancel`)
+`UPDATE ... WHERE id=$1 AND brief_id=$2 AND project_id=$3 AND status='building'` that moves
+the row to `failed`.
+
+**The predicate is the status, NOT the version.** A version predicate does not enforce the
+do-not-downgrade invariant it looks like it enforces: a concurrent `PATCH` that edits some
+other field while leaving the status at `building` still bumps `version`, so the UPDATE
+would match zero rows, report no error, and abandon the row holding the lease forever.
+Predicating on `status='building'` closes that hole and makes the write idempotent under
+retry. The *write* is one statement rather than a SELECT-then-UPDATE for the same reason — a
+status read taken before the write is a TOCTOU window, and it could only add a failure mode on
+a path that runs precisely when the connection is already known to be unreliable. (The
+classification read described below is not that read: it runs only after the write declined to
+match, it decides nothing about what to write, and every one of its failure modes falls through
+to another attempt rather than to an early return.) The tenant
+columns match `UpdateAudience`'s predicate; `id` alone would be correct (it is the primary
+key) but every other write to this table carries the tenant scope.
+
+**A zero-row UPDATE does not settle the question, so it retries.** Three of the four outcomes
+are self-evident from the write alone: `building` ⇒ 1 row (released, the point of the
+function); `built`/`failed` ⇒ 0 rows plus a visible row (a stable end state, left untouched).
+The fourth — 0 rows and no visible row — has two readings, and the write cannot tell them
+apart. The commit whose result was never received may still be IN PROGRESS: the reconcile runs
+on a different pooled connection, so it takes its own snapshot, and under READ COMMITTED a row
+inserted by a not-yet-committed transaction is *invisible*, not locked. The UPDATE does not
+block on it; it matches nothing and returns. Milliseconds later the commit lands and the row
+is there in `building`, holding the lease — the exact case the function exists for, missed by
+the function. So that one outcome is retried (`ambiguousCommitReconcileAttempts = 7`, 25ms
+doubling to a 500ms cap: 25+50+100+200+400+500 = 1275ms in total) while a row observed in a
+terminal state settles immediately. N attempts sleep N-1 times, so the count is one more than
+the number of delays — it was 6, which spans 775ms and never reaches the documented cap at all.
+`TestAmbiguousCommitReconcileScheduleSpans` now derives the sum from the three constants so the
+prose cannot drift from them again. The attempt cap rather than the 5s timeout is what normally ends the loop, and it
+is there to bound the cost on the path where nothing is wrong: retrying to the timeout would
+add five seconds to every genuinely-rolled-back commit, which during a database outage means
+every failing request holding its goroutine five times longer.
+
+**Each attempt runs the release TWICE before reporting the row absent.** Observing `building`
+from the classifying SELECT after a zero-row UPDATE is not a contradiction — the two statements
+run on separately-pooled connections with their own snapshots, so it means the row became
+visible *between* them and the UPDATE merely ran too early. An immediate second pass settles it.
+Without that pass the attempt returns "not seen", which is harmless on any attempt that has a
+successor and is not harmless on the LAST one (or when the reconcile context is already done):
+there a row this process had just CONFIRMED holding the lease got abandoned to the manual
+escape hatch. `tryReleaseAudienceBuildLease` therefore returns a tri-state —
+`audienceReconcileUnseen` / `Settled` / `Held` — rather than a bool, and only `Unseen` is worth
+waiting on.
+
+**An attempt's ERROR paths carry what that attempt already observed.** Both error returns handed
+back `audienceReconcileUnseen` — the zero value — which reintroduced the same collapse through
+the back door: once the first pass has read the row as `building`, this process KNOWS the lease
+is held, and a second-pass query failing afterwards does not unlearn it. The retry loop's
+`confirmedHeld` stayed false, so a confirmed stranded lease was logged at warn in the hedged
+"if the commit did land" wording. The attempt now promotes its unsettled outcome to `Held` the
+moment it observes `building`, and never demotes: absence is evidence only until the row is
+seen. A FIRST-pass failure still reports `Unseen`, because it observed nothing.
+
+`tryReleaseAudienceBuildLease` takes an `audienceReconcileDB` interface (`Exec`/`QueryRow`,
+satisfied by `*Pool`) so both of those paths are unit-testable. They have to be: reaching them
+requires the row to become visible in the microseconds *between* an attempt's two statements,
+which nothing can schedule into against a live database — the live tests say as much.
+
+Giving up after the last attempt logs at **warn** *when no attempt ever saw the row*, and at
+**error** when one did. The two endings are different events and collapsing them was the defect:
+"never saw a row" is the overwhelmingly likely reading — the commit really did roll back, which
+is what "no row" means every other time — and an error on every rolled-back commit is an error
+nobody reads. "Saw the row, still `building`" is a lease this process knows is held, that no
+automatic path will release (migration 000018's escape hatch is deliberately manual, since the
+row may own real HubSpot lists), so it is an error and its wording states the fact instead of
+hedging with the other case's "if the commit did land". `reportUnreconciledAudience` owns that
+choice and is pinned by
+`TestReportUnreconciledAudience_SeparatesAConfirmedHeldLeaseFromAProbableRollback` — a plain
+unit test, because reaching `Held` through the database would need the row to become visible in
+the microseconds between one attempt's two statements, on the last attempt, which nothing can
+schedule into. The outcomes that *are* reachable are pinned live by
+`TestTryReleaseAudienceBuildLease_ClassifiesEachOutcome`.
+
+The whole path is otherwise best-effort and log-only, matching `releaseUnstartedClaim`'s error
+handling for the same reason: the caller is already returning an error from
+`CreateAudienceForApprovedBrief` and has no better path to report a second failure on top of the
+first.
+
+## ReleaseAudienceBuildLease is unversioned on purpose
+
+`AudienceRepo.ReleaseAudienceBuildLease` shares its statement with the reconcile above and
+exists so the service layer's `releaseUnstartedClaim` stops routing through `UpdateAudience`.
+`UpdateAudience` is version-gated, and the version is exactly the wrong thing to gate a release
+on: a concurrent `PATCH` that leaves the row `building` while changing another field still bumps
+it, so the release returns `ErrPreconditionFailed` and the row stays `building` **forever** —
+the identical bug the reconcile's status predicate was written to avoid, reintroduced one layer
+up. Gating on `status='building'` instead makes the condition that decides the outcome the same
+statement that performs it, and makes the call idempotent under retry: a row already `failed`,
+already `built`, or gone matches nothing and returns `nil` rather than an error.
 
 ## DeleteCampaign's guards
 

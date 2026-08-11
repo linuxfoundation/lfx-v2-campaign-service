@@ -43,6 +43,11 @@ type fakeBriefRepo struct {
 	// createErr, when set, fails CreateBrief BEFORE it stores anything — the shape of a
 	// version conflict or a database error, where the handler ran but no row committed.
 	createErr error
+	// getErr, when set, fails every GetBrief. It is deliberately NOT ErrNotFound: it models
+	// the case where the service cannot tell what the brief's state is (pool exhausted,
+	// deadline expired), which must never be answered with a claim about what somebody else
+	// did to the brief.
+	getErr error
 }
 
 func newFakeBriefRepo() *fakeBriefRepo {
@@ -50,6 +55,19 @@ func newFakeBriefRepo() *fakeBriefRepo {
 }
 
 func briefKey(projectID, id string) string { return projectID + "|" + id }
+
+// snapshot reads a brief WITHOUT firing onGet. The audience fake's claim uses it because the
+// real claim reads the brief inside its own transaction, under a row lock — that read is not
+// a window a second request can be delayed in, so a test hook that pretends it is would model
+// a race the database does not have.
+func (r *fakeBriefRepo) snapshot(projectID, id string) (*model.CampaignBrief, bool) {
+	b, ok := r.briefs[briefKey(projectID, id)]
+	if !ok {
+		return nil, false
+	}
+	cp := *b
+	return &cp, true
+}
 
 // FindBriefByEventSlug scans for a non-archived brief matching the slug, mirroring the
 // repo's partial-unique-index semantics (archived rows free the slug).
@@ -64,6 +82,9 @@ func (r *fakeBriefRepo) FindBriefByEventSlug(_ context.Context, projectID, event
 }
 
 func (r *fakeBriefRepo) GetBrief(_ context.Context, projectID, id string) (*model.CampaignBrief, error) {
+	if r.getErr != nil {
+		return nil, r.getErr
+	}
 	b, ok := r.briefs[briefKey(projectID, id)]
 	if !ok {
 		return nil, domain.ErrNotFound
@@ -80,6 +101,24 @@ func (r *fakeBriefRepo) GetBrief(_ context.Context, projectID, id string) (*mode
 		hook()
 	}
 	return &cp, nil
+}
+
+// ConfirmBriefApproved answers from the CURRENT stored row and does NOT fire onGet.
+//
+// Not firing it is the point. The real one holds a row lock, so an in-flight writer either
+// commits before this read (and is seen) or after it (and is a different race entirely) —
+// there is no moment inside the read for a hook to mutate. A fake that fired onGet here would
+// model a window the lock removes, and a test written against it would pass whether or not
+// the implementation locked at all.
+func (r *fakeBriefRepo) ConfirmBriefApproved(_ context.Context, projectID, id string, expectedVersion int64) error {
+	b, ok := r.snapshot(projectID, id)
+	if !ok || b.Status == model.BriefArchived {
+		return domain.ErrNotFound
+	}
+	if b.Status != model.BriefApproved || b.Version != expectedVersion {
+		return domain.ErrStaleApproval
+	}
+	return nil
 }
 
 func (r *fakeBriefRepo) CreateBrief(_ context.Context, b *model.CampaignBrief, indexPayload domain.IndexPayloadFunc) (*model.CampaignBrief, error) {
@@ -229,12 +268,38 @@ func TestBriefService_SetBackend_LateBinding(t *testing.T) {
 
 // A missing bearer token is a client-side problem and must map to 400, not 500
 // (a 500 misrepresents it as a server fault and can trigger ops alerting).
+//
+// The verifier has to be WIRED for this to be the case it claims. Without one the guard
+// takes its own no-verifier branch, which is a 503 — this service failing, not the caller
+// — and the assertion below would pass for the wrong reason before that split existed.
 func TestBriefService_JWTAuth_EmptyTokenIsBadRequest(t *testing.T) {
 	s := NewBriefService(nil, nil, nil, nil)
+	s.SetTokenVerifier(&stubVerifier{})
 	_, err := s.JWTAuth(context.Background(), "", nil)
 	if _, ok := err.(*briefs.BadRequestError); !ok {
 		t.Fatalf("expected *briefs.BadRequestError for empty token, got %T (%v)", err, err)
 	}
+}
+
+// TestBriefService_JWTAuth_UnverifiableIsUnavailable pins the other half at the boundary
+// the client actually sees. A JWKS outage and an unwired verifier are both this service
+// unable to CHECK the token; 400 would blame the caller for it and tell them not to retry.
+func TestBriefService_JWTAuth_UnverifiableIsUnavailable(t *testing.T) {
+	t.Run("no verifier wired", func(t *testing.T) {
+		s := NewBriefService(nil, nil, nil, nil)
+		_, err := s.JWTAuth(context.Background(), "any-token", nil)
+		if _, ok := err.(*briefs.ConnServiceUnavailableError); !ok {
+			t.Fatalf("err = %T (%v), want *briefs.ConnServiceUnavailableError", err, err)
+		}
+	})
+	t.Run("signing keys unavailable", func(t *testing.T) {
+		s := NewBriefService(nil, nil, nil, nil)
+		s.SetTokenVerifier(&stubVerifier{err: fmt.Errorf("fetch jwks: %w", domain.ErrKeyUnavailable)})
+		_, err := s.JWTAuth(context.Background(), "a-perfectly-good-token", nil)
+		if _, ok := err.(*briefs.ConnServiceUnavailableError); !ok {
+			t.Fatalf("err = %T (%v), want *briefs.ConnServiceUnavailableError", err, err)
+		}
+	})
 }
 
 func isBriefUnavailable(err error) bool {
