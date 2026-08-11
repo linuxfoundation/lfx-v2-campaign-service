@@ -832,3 +832,30 @@ leaked before or after; they were the diagnostic benefit the rule was bought for
 One process note. `docs/knowledge/code/pkg-redact.md` still described `passwordCouldSpanQuery`,
 which round 7 had deleted — the code and its knowledge doc were fixed in the same commit and the
 doc was not re-read. A doc that lags one round behind the code is a doc that argues for the bug.
+
+## Round 9: the prose that round 8 left behind
+
+**Kind:** Docs
+
+Round 8 deleted five rules and the last exception with them. Copilot's next pass found three
+places still describing the code as it was, all of them promises the package no longer keeps:
+
+- `URLUserinfo`'s own doc comment opened "removes any `user:pass@` from a URL STRING, keeping
+  scheme, host and path" — flat, unqualified, and false for the one shape both branches refuse.
+- `pkg-redact.md` said "The host and path always survive" three lines after the package concept
+  it belongs to, contradicting the "undecidable shape" section further down the same file.
+- `pkg-redact.md`'s fallback section still explained the `:`-in-the-owning-segment rule and the
+  which-segment-owns-the-`?` refinement that supported it. Both were deleted in round 8; the
+  first is row three of that file's own leak table.
+
+None of this changes behaviour, and that is the point worth recording. A doc that lags the code
+argues for the bug — round 8 already made that note about `pkg-redact.md` being one round stale,
+and then shipped a fix that left it stale again in three new places. The recurring failure is
+narrow and mechanical: deleting a rule leaves every sentence that JUSTIFIED it standing, and
+those sentences read as current design. After deleting a rule, grep the docs for the words that
+only that rule could have motivated, not just for its identifier.
+
+The qualified wording is also worth keeping precise rather than merely softer. "Best-effort"
+alone would understate it in the other direction: host and path are spent in exactly one shape,
+an `@` occurring only past the `?`, and the credential guarantee remains unconditional. Both
+rewrites say which of the two promises is absolute.

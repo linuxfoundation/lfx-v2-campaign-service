@@ -19,8 +19,11 @@ carries a username issued alongside the password as half of one credential, so p
 narrows an attacker's search rather than telling them nothing. The contract here is stricter:
 userinfo goes entirely.
 
-The host and path always survive. They are the whole diagnostic value of printing the URL,
-and a redactor that eats them gets replaced by a raw print at the next outage.
+The host and path survive wherever they can be identified. They are the whole diagnostic value
+of printing the URL, and a redactor that eats them gets replaced by a raw print at the next
+outage — so the design spends them only where keeping them would risk a credential. Exactly one
+shape costs them (see "The undecidable shape" below), and there the whole value collapses to its
+scheme. The guarantee that is unconditional is the other one: no credential escapes.
 
 ## The two entry points
 
@@ -155,17 +158,22 @@ path bounds it: an `@` inside a query is not userinfo, and rebuilding around it 
 and everything before, leaving the query trim nothing to cut. Bounding it re-opened the mirror
 image, though — with no `@` before the bound the value falls through to the query trim, which
 cuts at the `?`, and for `nats://u:p?x@a,nats://b` that prints `nats://u:p`. So the fallback
-refuses that shape too, on narrower terms than the single-URL path: refusing there costs one
-host, refusing here costs every host in the list, so it additionally requires a `:` in the
-segment that owns the `?` — a password is what makes truncation dangerous, and userinfo
-carrying one must have a `:` before the delimiter. `nats://b?access_token=x@secret,nats://c`
-has none and keeps its hosts.
+refuses that shape too, on **exactly** the terms the single-URL path uses: an `@` past the `?`
+means nothing after the scheme is printed.
 
-**Which segment owns the `?` is not the first one.** In a list only the LAST segment can, since
-every comma from the query onward belongs to it, so the scan for the deciding `/` starts at the
-comma before the delimiter. Scanning from the start of the value finds the `/` in an earlier
-segment's path — `https://a/b,nats://u:p?x@host` — and calls the query genuine, which is exactly
-the fallthrough that leaked.
+It did not always. A narrower rule lived here, on the argument that refusing costs one host in a
+single URL and every host in a list, so a list should pay for a sharper discriminator — it
+additionally required a `:` in the segment that owns the `?`, on the theory that a password is
+what makes truncation dangerous. That rule is row three of the table above, and it leaked here
+for the same reason it leaked there: `nats://s3cret/path?x@host:4222,nats://c` has no `:` in the
+owning segment and printed `nats://s3cret/path`. Its companion refinement — that the segment
+owning the `?` is the LAST one, since every comma from the query onward belongs to it — was a
+correct observation about a rule that should not have existed. Both are gone.
+
+The generalisation is the one the table teaches: **cheapness is not a reason to accept an
+unsound rule.** "Refusing costs more here than there" is an argument about the price of being
+right, not about what is true, and it bought a discriminator already known to leak one caller
+away.
 
 ### Opaque URIs collapse to their scheme
 

@@ -25,7 +25,14 @@ import (
 	"strings"
 )
 
-// URLUserinfo removes any `user:pass@` from a URL STRING, keeping scheme, host and path.
+// URLUserinfo removes any `user:pass@` from a URL STRING, keeping scheme, host and path where
+// it can.
+//
+// "Where it can" is load-bearing, not hedging. One input shape — an `@` that occurs only PAST
+// the `?` — is genuinely undecidable from the bytes (a query `@`, or a password containing a
+// `?`), and both branches below refuse it outright: `nats://u:p?x@host:4222` renders as
+// `nats://***`. Callers get best-effort diagnostics and a hard guarantee about credentials, in
+// that order; see the package doc for why no test on those bytes can decide it.
 //
 // It is string-based rather than parse-based because its callers include the path where
 // `url.Parse` itself FAILED: the parse error embeds the whole raw URL, so the raw string is
