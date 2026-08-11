@@ -171,10 +171,12 @@ func WithRequestTimeout(d time.Duration) Option {
 
 // NewClient builds a client from injected config. A missing URL or key fails HERE
 // rather than at call time, so a deployment without a model wired is discovered
-// once at construction. The contract for the part-2 consumer that will wire this
-// into HubSpot dispatch is that ErrNotConfigured is a DEGRADE signal, not a fatal
-// one: copy generation is an enrichment, so the composition root logs it and
-// proceeds without a client. No such consumer exists in this PR.
+// once at construction. ErrNotConfigured is a DEGRADE signal, not a fatal one, and
+// Container.newLLMClient is what honours it: copy generation is an enrichment rather
+// than a core platform feature, so a deployment with no model wired logs a warning
+// and injects a nil client instead of failing the pod's boot. The cost of that choice
+// is paid at the endpoint, where BriefService.GenerateEmailCopy answers 503 for a nil
+// client — one route unavailable, every other brief route unaffected.
 func NewClient(cfg Config, opts ...Option) (*Client, error) {
 	// Normalize before validating, and STORE the normalized form — mirroring the
 	// hubspot/meta/twitter clients. Trimming only for the emptiness check would let a
@@ -433,11 +435,14 @@ func (c *Client) Complete(ctx context.Context, systemPrompt, userPrompt string) 
 // The field was previously decoded and DISCARDED, which made "length" — the max_tokens
 // truncation — indistinguishable from a clean answer at every call site, and removed the
 // only signal a caller could have used to refuse partial copy. Returning an error rather
-// than the reason keeps Complete's signature at (string, error). The contract this sets
-// for the part-2 consumer is that a truncated completion is unusable — it must not fall
-// back to the returned string — and one that later wants the reason itself can match the
-// sentinel. This package has no non-test caller yet, so nothing exercises that path
-// today.
+// than the reason keeps Complete's signature at (string, error). The contract it sets for
+// callers is that a truncated completion is unusable — it must not fall back to the returned
+// string — and one that later wants the reason itself can match the sentinel.
+//
+// BriefService.GenerateEmailCopy is that caller. It does not read the returned string on a
+// non-nil error at all: every Complete failure, this one included, is mapped to the 503
+// "email copy could not be generated from the AI platform", so a completion cut off at
+// max_tokens is refused rather than shipped as half an email.
 //
 // An EMPTY reason is accepted. The field is optional in practice — OpenAI-compatible
 // proxies fronting other providers do omit it — so rejecting on absence would make this

@@ -171,9 +171,16 @@ be log-safe while answering nothing.
 mid-sentence, so `Complete` checks it and returns `ErrIncompleteCompletion` rather than the
 partial string with a nil error. This is the opposite shape from `ErrEmptyCompletion` and the
 more dangerous one: there is no empty value to notice, just real, plausible-looking output —
-half an email reads like an email, and the caller landing in part 2 would send it. The two are
-separate sentinels because a caller may reasonably fall back to the cloned template's own body
-on a truncation while treating an empty completion as a proxy defect.
+half an email reads like an email, and a caller that shipped it would ship it silently. The two
+are separate sentinels because a caller may reasonably fall back to the cloned template's own
+body on a truncation while treating an empty completion as a proxy defect.
+
+The one caller today does not take that fork. `BriefService.GenerateEmailCopy` never reads the
+returned string on a non-nil error, and maps every `Complete` failure — this one included — onto
+the same 503, so a truncated completion is refused rather than returned as half an email. The
+sentinels stay distinct anyway: they describe the proxy's behaviour, and collapsing them would
+mean the next caller has to re-derive the distinction from a status code that no longer carries
+it.
 
 The two sentinels OVERLAP on one response shape — empty content plus a stopped reason — and
 the order of the two checks is what decides which the caller sees. A content filter can leave

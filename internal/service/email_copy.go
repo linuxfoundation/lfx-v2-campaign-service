@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"unicode/utf8"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
@@ -227,21 +228,47 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 		location:  strings.TrimSpace(details.Location),
 		dates:     formatEventDates(details.StartDate, details.EndDate),
 	}
-	systemPrompt, userPrompt := composeEmailCopyPrompt(promptVars)
-
-	// Enforce a bound on the composed prompt size to prevent unbounded input-token cost and
-	// large allocations. Only three strings from event_details reach the prompt — eventName,
+	// Enforce a bound on the prompt size to prevent unbounded input-token cost and large
+	// allocations. Only three strings from event_details reach the prompt — eventName,
 	// location and the formatted dates — but `event_details` is declared `Any` in
 	// design/brief.go, so none of the three carries a length constraint of its own and a
 	// single one of them can be arbitrarily large.
 	//
-	// MEASURED, not estimated: the fixed system prompt is 962 chars and a realistic user
+	// MEASURED, not estimated: the fixed system prompt is 962 runes and a realistic user
 	// prompt ("KubeCon + CloudNativeCon North America 2026", "Salt Lake City, Utah",
-	// "November 10-13, 2026") is 245, for 1207 total. 3000 leaves roughly 1800 chars of
+	// "November 10-13, 2026") is 245, for 1207 total. 3000 leaves roughly 1800 runes of
 	// headroom across the three fields — far above any real event name, far below a payload
 	// worth paying input tokens for. Oversized prompts are rejected as 400 BadRequest.
-	const maxPromptSize = 3000 // chars
-	totalPromptSize := len(systemPrompt) + len(userPrompt)
+	//
+	// RUNES, not bytes. The limit is stated to the caller and logged as a character count,
+	// and every other limit in this file counts runes (parseEmailCopyResponse's body bound,
+	// truncateString). Counting bytes here rejected a name in Japanese or an accented
+	// location at a third of the advertised budget, and only for those callers — a limit
+	// that means something different depending on the alphabet the event is named in.
+	const maxPromptSize = 3000 // runes
+
+	// Checked BEFORE composing, and again after. The pre-check is what makes the bound real:
+	// composeEmailCopyPrompt formats these three unbounded fields into a new string, so a
+	// 50MB stored eventName is copied in full before a post-hoc check could reject it — the
+	// allocation this guard exists to prevent, performed by the guard's own input. The three
+	// fields alone cannot exceed the total, so this is a sound necessary condition; it is not
+	// sufficient, because the fixed template counts too, which is what the second check is
+	// for. Rejecting here bounds the compose to O(maxPromptSize).
+	inputSize := utf8.RuneCountInString(promptVars.eventName) +
+		utf8.RuneCountInString(promptVars.location) + utf8.RuneCountInString(promptVars.dates)
+	if inputSize > maxPromptSize {
+		slog.WarnContext(ctx, "email copy generation blocked: event details exceed prompt size limit",
+			"project_id", p.ProjectID, "brief_id", p.BriefID,
+			"input_size", inputSize, "limit", maxPromptSize)
+		return nil, &briefs.BadRequestError{
+			Code:    "400",
+			Message: "brief's event details are too large; reduce the event name, location, or dates",
+		}
+	}
+
+	systemPrompt, userPrompt := composeEmailCopyPrompt(promptVars)
+
+	totalPromptSize := utf8.RuneCountInString(systemPrompt) + utf8.RuneCountInString(userPrompt)
 	if totalPromptSize > maxPromptSize {
 		slog.WarnContext(ctx, "email copy generation blocked: composed prompt exceeds size limit",
 			"project_id", p.ProjectID, "brief_id", p.BriefID,
@@ -284,7 +311,16 @@ func (s *BriefService) GenerateEmailCopy(ctx context.Context, p *briefs.Generate
 	}
 
 	// Validate the required fields are present and non-empty.
-	if copy.Subject == "" || copy.Preheader == "" || copy.Body == "" || copy.Cta == "" {
+	//
+	// TRIMMED, because the point is whether a human receives usable copy, and a body of
+	// "   " is as unusable as an absent one. The distinction is not academic for `body`
+	// specifically: it is the one field parseEmailCopyResponse deliberately does NOT put
+	// through truncateString (truncating HTML corrupts markup), and truncateString is what
+	// strips trailing whitespace. So a whitespace-only body was the one shape that reached
+	// here non-empty, and the endpoint answered 200 with a blank email. The other three are
+	// trimmed for the same reason rather than relying on truncateString to have done it.
+	if strings.TrimSpace(copy.Subject) == "" || strings.TrimSpace(copy.Preheader) == "" ||
+		strings.TrimSpace(copy.Body) == "" || strings.TrimSpace(copy.Cta) == "" {
 		slog.WarnContext(ctx, "email copy generation: model response missing required fields",
 			"project_id", p.ProjectID, "brief_id", p.BriefID)
 		return nil, &briefs.ConnServiceUnavailableError{

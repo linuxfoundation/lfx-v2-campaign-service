@@ -4,14 +4,17 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -448,6 +451,18 @@ func TestGenerateEmailCopy_RejectsIncompleteCopy(t *testing.T) {
 		{"preheader", `{"subject":"Join us","preheader":"","body":"<p>x</p>","cta":"Register"}`},
 		{"body", `{"subject":"Join us","preheader":"x","body":"","cta":"Register"}`},
 		{"cta", `{"subject":"Join us","preheader":"x","body":"<p>x</p>","cta":""}`},
+		// Whitespace-only, which is a different case for exactly one field. truncateString
+		// strips trailing whitespace, so a blank-but-not-empty subject, preheader or CTA has
+		// already arrived here empty and the == "" test caught it. The body does NOT go
+		// through truncateString — an oversized body is rejected rather than cut, because
+		// truncating HTML at a rune boundary corrupts markup — so a body of spaces was the
+		// one shape that reached this check non-empty, passed it, and returned 200 with a
+		// blank email. All four are exercised so the trim cannot later be narrowed to body
+		// alone and still pass.
+		{"whitespace subject", `{"subject":"   ","preheader":"x","body":"<p>x</p>","cta":"Register"}`},
+		{"whitespace preheader", `{"subject":"Join us","preheader":"  ","body":"<p>x</p>","cta":"Register"}`},
+		{"whitespace body", `{"subject":"Join us","preheader":"x","body":"   \n\t ","cta":"Register"}`},
+		{"whitespace cta", `{"subject":"Join us","preheader":"x","body":"<p>x</p>","cta":" "}`},
 	} {
 		t.Run("blank "+tc.name, func(t *testing.T) {
 			repo := newFakeBriefRepo()
@@ -664,5 +679,114 @@ func TestGenerateEmailCopy_AcceptsSizeablePrompt(t *testing.T) {
 	}
 	if result == nil {
 		t.Error("expected non-nil result on success")
+	}
+}
+
+// TestGenerateEmailCopy_PromptLimitCountsRunesNotBytes pins the unit of the prompt bound.
+//
+// The limit is stated to the caller as a character count and every other bound in this file
+// counts runes, but the check was written with len(), which counts BYTES. The gap is invisible
+// in ASCII and total elsewhere: a Japanese event name costs three bytes per character, so a
+// caller naming their event in Japanese got a third of the advertised budget, and a caller
+// naming it in English got all of it. The name below is 998 runes and 2994 bytes: composed with
+// the 962-rune system prompt and the user template it is ~2100 runes — comfortably inside the
+// limit — but ~4100 bytes, so counting bytes rejects a prompt well within the documented
+// allowance and the LLM is never called.
+func TestGenerateEmailCopy_PromptLimitCountsRunesNotBytes(t *testing.T) {
+	repo := newFakeBriefRepo()
+	// 998 runes / 2994 bytes (every rune here is three bytes in UTF-8).
+	multibyteName := repeatStr("東京開発者会議", 142) + "東京開発" // 142*7 + 4
+	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
+		ID:           "brief-456",
+		ProjectID:    "proj-123",
+		EventDetails: json.RawMessage(`{"eventName":"` + multibyteName + `"}`),
+	}
+
+	llmCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		llmCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		content := `{"subject":"Join Us","preheader":"Event details","body":"<p>Register now</p>","cta":"Register"}`
+		encoded, err := json.Marshal(content)
+		if err != nil {
+			t.Errorf("marshal fake LLM content: %v", err)
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(encoded) + `},"finish_reason":"stop"}]}`))
+	}))
+	defer srv.Close()
+
+	svc := newTestBriefService(repo)
+	svc.SetLLMClient(newTestLLMClient(t, srv))
+
+	result, err := svc.GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+		ProjectID:   "proj-123",
+		BriefID:     "brief-456",
+		BearerToken: strPtr("token"),
+	})
+	if err != nil {
+		t.Fatalf("GenerateEmailCopy() error = %v; a %d-rune (%d-byte) name is within the "+
+			"3000-CHARACTER limit and must not be rejected",
+			err, utf8.RuneCountInString(multibyteName), len(multibyteName))
+	}
+	if !llmCalled {
+		t.Error("the LLM was never called: the prompt bound rejected a prompt inside its own limit")
+	}
+	if result == nil {
+		t.Error("expected non-nil result for a prompt within the limit")
+	}
+}
+
+// TestGenerateEmailCopy_RejectsOversizedInputBeforeComposing pins WHERE the bound is enforced.
+//
+// A size guard placed after the formatting it protects performs the allocation it exists to
+// prevent: composeEmailCopyPrompt Sprintf's the three unbounded event-detail fields into a new
+// string, so a stored event name of arbitrary size is copied in full and only then measured and
+// refused. event_details is declared Any in design/brief.go, so nothing upstream bounds it.
+//
+// Both checks return the same 400 with the same message — deliberately, since the caller's
+// remedy is identical — so the outcome cannot distinguish them. The log line can: the
+// pre-composition check reports the size of the INPUT fields, the post-composition one the size
+// of the composed prompt. Asserting on the former is what makes deleting the pre-check fail.
+func TestGenerateEmailCopy_RejectsOversizedInputBeforeComposing(t *testing.T) {
+	repo := newFakeBriefRepo()
+	hugeName := repeatStr("KubeCon ", 500) // 4000 runes, over the 3000 limit on its own
+	repo.briefs[briefKey("proj-123", "brief-456")] = &model.CampaignBrief{
+		ID:           "brief-456",
+		ProjectID:    "proj-123",
+		EventDetails: json.RawMessage(`{"eventName":"` + hugeName + `"}`),
+	}
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	svc := newTestBriefService(repo)
+	svc.SetLLMClient(newTestLLMClient(t, httptest.NewServer(http.HandlerFunc(
+		func(http.ResponseWriter, *http.Request) {
+			t.Error("the LLM must not be called for an oversized prompt")
+		}))))
+
+	result, err := svc.GenerateEmailCopy(context.Background(), &briefs.GenerateEmailCopyPayload{
+		ProjectID:   "proj-123",
+		BriefID:     "brief-456",
+		BearerToken: strPtr("token"),
+	})
+	if result != nil {
+		t.Errorf("result = %+v, want nil for an oversized prompt", result)
+	}
+	var badReq *briefs.BadRequestError
+	if !errors.As(err, &badReq) {
+		t.Fatalf("err = %T (%v), want *briefs.BadRequestError", err, err)
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "event details exceed prompt size limit") {
+		t.Errorf("log = %q\nwant the PRE-composition rejection; the oversized name reached "+
+			"composeEmailCopyPrompt and was formatted into a new string before being refused", logged)
+	}
+	if !strings.Contains(logged, "input_size=") {
+		t.Errorf("log = %q, want an input_size field naming what was measured", logged)
 	}
 }
