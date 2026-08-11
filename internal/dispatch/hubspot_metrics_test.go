@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -313,6 +314,50 @@ func TestHubSpot_ReadMetricsRefusesWhenTheTokenReachesADifferentPortal(t *testin
 	}
 	if rec.Called() {
 		t.Error("the statistics endpoint was contacted despite the mismatch")
+	}
+}
+
+// The ORDER of the two provenance checks, pinned. Absent provenance is a purely local fact and
+// no token-info answer could change it, so it must be decided before the lookup — otherwise the
+// rows this guard exists for get the wrong answer in exactly the conditions that matter. With
+// the check placed after the lookup, a legacy row read while token-info is throttled or down
+// returns the transient 503 "cannot establish which portal this token authenticates against"
+// instead of the deterministic ErrCampaignProvenanceUnknown 409, so the handler offers "the
+// platform is unavailable, try later" for a row that no amount of retrying will fix, and hides
+// the one remedy that does fix it (re-dispatch, which writes the provenance).
+//
+// The assertion that the lookup was never CONTACTED is the load-bearing one: asserting only on
+// the sentinel would keep passing against an implementation that asks first and happens to get
+// an answer, which is the arrangement this test exists to forbid.
+func TestHubSpot_ReadMetricsRefusesUnrecordedProvenanceBeforeContactingHubSpot(t *testing.T) {
+	var tokenInfoCalls atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == accountDetailsPath {
+			tokenInfoCalls.Add(1)
+			// Throttled: the realistic form of "the lookup cannot answer right now".
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, statsResponse)
+	}))
+	t.Cleanup(srv.Close)
+
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL))
+	c := stagedEmail()
+	c.Result = json.RawMessage(`{"id":"4242"}`)
+
+	_, err := d.ReadMetrics(context.Background(), "proj-1", model.ProviderHubSpot, c, model.MetricsWindowLast30Days)
+	if err == nil {
+		t.Fatal("a row that names no portal was read anyway")
+	}
+	// The deterministic outcome, not the transient one the failing lookup would produce.
+	if !errors.Is(err, domain.ErrCampaignProvenanceUnknown) {
+		t.Fatalf("err = %v, want it to wrap ErrCampaignProvenanceUnknown — a failing portal lookup must not mask the row's own missing provenance", err)
+	}
+	if n := tokenInfoCalls.Load(); n != 0 {
+		t.Errorf("token-info was contacted %d times; a row with no recorded provenance is refusable locally, so the lookup must not run at all", n)
 	}
 }
 

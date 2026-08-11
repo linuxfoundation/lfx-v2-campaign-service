@@ -183,7 +183,7 @@ func TestAuthenticatedPortalID_MalformedResponseIsRedacted(t *testing.T) {
 
 	// Pin the message itself. Without this the test passes against an implementation that
 	// returns a bare "decode failed" — redacted, but useless to the operator reading it.
-	const want = "read hubspot account details: response is not valid JSON (32 bytes)"
+	const want = "read hubspot account details: response is not a valid token-info response (32 bytes)"
 	if err.Error() != want {
 		t.Errorf("error message = %q, want %q", err.Error(), want)
 	}

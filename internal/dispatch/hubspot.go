@@ -183,16 +183,6 @@ func (d *HubSpotDispatcher) ReadMetrics(ctx context.Context, projectID string, p
 	// DECLARES the change and stays silent on the undeclared token swap that is the actual
 	// risk.
 	//
-	// The lookup is bounded with its OWN short deadline, separate from the ambient context:
-	// the client's retry policy alone can wait up to retryMax*maxRetryWait (180s) on sustained
-	// throttling, which alone exceeds the whole metrics-call budget (20s) and would burn it
-	// before GetEmailMetrics even runs.
-	portalCtx, cancelPortal := context.WithTimeout(ctx, portalLookupTimeout)
-	current, perr := client.AuthenticatedPortalID(portalCtx)
-	cancelPortal()
-	if perr != nil {
-		return nil, fmt.Errorf("get email metrics from hubspot: cannot establish which portal this token authenticates against: %w", perr)
-	}
 	// An unrecorded creating portal is not permission to proceed. The id it would be
 	// compared against is meaningless outside its portal, so a row that cannot name one
 	// cannot be read safely at all — this refuses rather than guessing, which is the
@@ -202,10 +192,33 @@ func (d *HubSpotDispatcher) ReadMetrics(ctx context.Context, projectID string, p
 	// the honest outcome: nothing about such a row establishes which portal its id means,
 	// and reporting numbers that might belong to somebody else is not a better answer than
 	// saying so.
+	//
+	// Checked BEFORE the portal lookup, and deliberately so: absent provenance is a purely
+	// LOCAL fact, and no value the lookup could return would change the answer. Asking
+	// first inverted the outcome for exactly the rows this guard exists for — a legacy row
+	// read while token-info was throttled or down returned the transient 503 below instead
+	// of this deterministic 409, hiding the one remedy that fixes it (re-dispatch, which
+	// writes the provenance) behind an unrelated upstream failure that no amount of
+	// retrying the read will clear. It also spent up to portalLookupTimeout of the 20s
+	// metrics budget on a call whose result was already irrelevant.
+	//
+	// For the same reason the message names no current portal: there isn't one yet, and
+	// the defect is the missing record, not what it fails to match.
 	created := hubSpotCreationPortalID(campaign)
 	if created == "" {
-		return nil, fmt.Errorf("get email metrics from hubspot: campaign %s does not record which portal email %s was created in, so its id cannot be resolved against portal %s: %w",
-			campaign.ID, campaign.PlatformCampaignID, current, errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
+		return nil, fmt.Errorf("get email metrics from hubspot: campaign %s does not record which portal email %s was created in, so its id cannot be resolved against any portal: %w",
+			campaign.ID, campaign.PlatformCampaignID, errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
+	}
+
+	// The lookup is bounded with its OWN short deadline, separate from the ambient context:
+	// the client's retry policy alone can wait up to retryMax*maxRetryWait (180s) on sustained
+	// throttling, which alone exceeds the whole metrics-call budget (20s) and would burn it
+	// before GetEmailMetrics even runs.
+	portalCtx, cancelPortal := context.WithTimeout(ctx, portalLookupTimeout)
+	current, perr := client.AuthenticatedPortalID(portalCtx)
+	cancelPortal()
+	if perr != nil {
+		return nil, fmt.Errorf("get email metrics from hubspot: cannot establish which portal this token authenticates against: %w", perr)
 	}
 	if created != current {
 		return nil, fmt.Errorf("get email metrics from hubspot: email %s was created in portal %s but this project's token authenticates against portal %s: %w",

@@ -357,6 +357,19 @@ reports false numbers:
   `brief.go`'s status mapping checks `ErrCampaignProvenanceUnknown` FIRST (case order matters
   in that switch) to give the correct "must be re-dispatched" 409 message instead.
 
+  That absence is checked BEFORE `AuthenticatedPortalID` is called, and the order is
+  load-bearing rather than incidental. Absent provenance is a purely LOCAL fact — no value the
+  lookup could return would change the answer — so asking first inverted the outcome for exactly
+  the rows the guard exists for: a legacy row read while token-info was throttled or down
+  returned the transient "cannot establish which portal this token authenticates against" 503
+  instead of the deterministic `ErrCampaignProvenanceUnknown` 409, hiding the one remedy that
+  fixes it (re-dispatch, which writes the provenance) behind an upstream failure that no amount
+  of retrying the read will clear, and spending up to `portalLookupTimeout` of the 20s metrics
+  budget on a call whose result was already irrelevant. Pinned by
+  `TestHubSpot_ReadMetricsRefusesUnrecordedProvenanceBeforeContactingHubSpot`, which asserts the
+  lookup is never CONTACTED — asserting only on the sentinel would keep passing against an
+  implementation that asks first and happens to get an answer.
+
   The best-effort portal lookup in `Dispatch` is bounded by its OWN `portalLookupTimeout` (10s),
   not the caller's context: the HubSpot client's retry policy alone can wait up to
   `retryMax*maxRetryWait` (180s) under sustained throttling, which exceeds the entire 2-minute

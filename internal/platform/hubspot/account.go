@@ -63,7 +63,14 @@ func (c *Client) AuthenticatedPortalID(ctx context.Context) (string, error) {
 		// Dispatch's best-effort warning directly — so a wrapped cause here is a second
 		// path into the same log line statistics.go's decode error already avoids.
 		// Matches internal/platform/hubspot/statistics.go's decode error.
-		return "", fmt.Errorf("read hubspot account details: response is not valid JSON (%d bytes)", len(raw))
+		//
+		// Worded as "not a valid token-info response" rather than "not valid JSON"
+		// because this branch catches more than malformed JSON: `{"hubId":"abc"}` is
+		// syntactically valid and still fails here, because a non-numeric string cannot
+		// unmarshal into json.Number. Naming the syntax would misreport that case as a
+		// broken response body when the body parsed fine and simply said something this
+		// endpoint cannot mean.
+		return "", fmt.Errorf("read hubspot account details: response is not a valid token-info response (%d bytes)", len(raw))
 	}
 	// A zero or absent hubId is a successful call that established nothing, and the
 	// caller's whole reason for asking is to refuse when identity is unknown. Reporting
