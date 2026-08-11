@@ -129,6 +129,32 @@ func TestMeta_UnusableReasonsAreClassified(t *testing.T) {
 	}
 }
 
+// TestMeta_DispatchRequiresPageID pins the SENTINELS on the missing-page-id refusal, which
+// nothing else does. TestMeta_PreCreateErrorsReleaseClaim carries a "missing page id" case
+// but asserts only NoUpstreamCreate, and TestMeta_UnusableReasonsAreClassified excludes the
+// page-id check by design (it is Dispatch-only, so it is not part of the contract shared
+// across the three entry points). Between them, dropping either sentinel from the refusal
+// would leave the whole suite green while turning the async job's logged reason into
+// `unclassified` — and the reason token is the ONLY thing that reaches a human here, since
+// dispatchPlatform collapses every dispatcher error into one job-result string.
+func TestMeta_DispatchRequiresPageID(t *testing.T) {
+	conn := activeMetaConn(goodMetaCreds)
+	conn.ProviderConfig = nil
+	d := NewMetaDispatcher(fakeConnReader{conn: conn}, identityEncryptor{})
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, nil)
+	if !errors.Is(err, domain.ErrProviderConfigInvalid) {
+		t.Errorf("error = %v, want errors.Is(err, domain.ErrProviderConfigInvalid): without "+
+			"this sentinel the async failure log reads `unclassified` for a missing page id", err)
+	}
+	if !errors.Is(err, domain.ErrConnectionNotUsable) {
+		t.Errorf("error = %v, want errors.Is(err, domain.ErrConnectionNotUsable)", err)
+	}
+	var nuc interface{ NoUpstreamCreate() bool }
+	if !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+		t.Errorf("a missing page id must be NoUpstreamCreate, got %T: %v", err, err)
+	}
+}
+
 // TestMeta_DispatchRequiresAccountID proves Dispatch (unlike ToggleStatus/ReadMetrics)
 // refuses a connection with no account selected, tagged as account_not_selected — it builds
 // Graph paths as /{accountID}/campaigns and needs a real one.
