@@ -184,3 +184,38 @@ which is finite.
 One scan settles both, because they are the same question asked of each position: does a
 separator begin here, by spelling or by denotation? The two directions cancel — a reference is
 skipped whole where it merely SPELLS a `#`, and cuts the path where it DENOTES one.
+
+## Round: the classifier read a region resolution throws away
+
+**Fix** — `classifyDestination` was handed the WHOLE destination, so a `%` in a fragment made
+`url.Parse` fail and the bullet was refused as "not a URL reference" over text no later step reads.
+
+The sixth over-rejection, and the one that reached furthest past the path. `url.Parse` rejects a
+malformed percent-escape anywhere in its input, fragment included:
+
+```
+"thing.md#100%"   ERR  parse "thing.md#100%": invalid URL escape "%"
+"thing.md?pct=1%" ok   path="thing.md"
+"thing%.md"       ERR  parse "thing%.md": invalid URL escape "%.m"
+```
+
+`thing.md#100%` is a legal CommonMark link whose path is a bare `thing.md`, and
+`checkBulletDescription` strips the fragment before resolving — so the region that caused the
+refusal is one it discards a line later. Classification now runs on `pathRegion(decodeCharRefs(…))`.
+Nothing is lost: scheme, authority and leading slash all live before the first separator, so every
+arm of the switch still sees what it needs.
+
+The distinction the fix rests on, and the reason this is not a loosening: a `%` in the PATH really
+does defeat resolution and stays rejected — `thing%.md` still reports, pinned by
+`TestValidateIndexBulletRejectsAnUnparseableDestination`. The two tests have to be read as a pair.
+
+Revert-verified, and the measurement corrected the test rather than merely confirming it: of the
+three cases, only the two FRAGMENT ones fail with the old classification. The query case passes
+either way, because `url.Parse` tolerates a bare `%` in a query and never refused it. It is kept
+as a boundary marker — the query is the other region resolution discards — and labelled as one,
+because a subtest that cannot fail looks like evidence until someone checks.
+
+That is the sixth round of the same shape: a guard whose SCOPE was wider than the thing it guards.
+Each round so far narrowed scope by one region — path vs. query, denoted vs. spelt, raw vs.
+decoded — and none of the six was found by a test. They were found by reading what the next
+function does with the value.

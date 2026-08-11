@@ -389,7 +389,17 @@ func validateIndex(bundleDir, path string, isRoot bool) []error {
 		// with it. `&sol;spec.md` denotes the site root and so is out of scope, while
 		// `thing&#46;md` denotes a file in this bundle spelt in a way that defeats every
 		// path test below it.
-		kind := classifyDestination(decodeCharRefs(m[2]))
+		//
+		// Classification runs on the PATH REGION of the decoded destination, not the
+		// whole of it, and every arm below depends on that. The two facts that force it:
+		// `url.Parse` rejects a malformed percent-escape anywhere in its input, and a
+		// fragment is not a percent-encoded space — `thing.md#100%` is a legal CommonMark
+		// link, and `checkBulletDescription` strips the fragment before resolving anyway,
+		// so it resolves `thing.md` and compares its description. Classifying the whole
+		// destination reported that link as "not a URL reference", refusing a bullet over
+		// a region no later step reads. Scheme, authority and leading slash all live
+		// before the first separator, so nothing the classification needs is lost.
+		kind := classifyDestination(pathRegion(decodeCharRefs(m[2])))
 		switch {
 		case kind == destExternal:
 			// Nothing to resolve, nothing to compare, no format to hold it to.

@@ -784,6 +784,57 @@ func TestValidateIndexBulletRejectsAnUnparseableDestination(t *testing.T) {
 	}
 }
 
+// TestValidateIndexBulletResolvesThroughAFragmentThatCannotBeParsed prices the sixth
+// over-rejection in this class, and it is the one that reached furthest: it refused a bullet over
+// a region no step of this validator reads.
+//
+// url.Parse rejects a malformed percent-escape ANYWHERE in its input, fragment included, and
+// classifyDestination was handed the whole destination. So `thing.md#100%` — a legal CommonMark
+// link whose path is a bare `thing.md` — came back destUnparseable and was reported as "not a URL
+// reference". checkBulletDescription strips the fragment before resolving, so the region that
+// caused the refusal is one it would have discarded a line later.
+//
+// The distinction the fix rests on is between a `%` in the PATH and a `%` after it. The former
+// really does defeat resolution and stays rejected — TestValidateIndexBulletRejectsAnUnparseable-
+// Destination pins that direction, and the two tests must be read together or this one looks like
+// a loosening.
+//
+// Every fixture carries a DELIBERATELY WRONG description, so a silent pass would mean the bullet
+// was skipped rather than that it agreed with its target. The test demands the mismatch diagnostic
+// specifically: reaching the comparison is the property, not merely surviving classification.
+//
+// Only two of the three are regression witnesses, measured by reverting: the two fragment cases
+// fail with the false diagnostic, the query case passes either way because url.Parse tolerates a
+// bare `%` in a query and never did refuse it. It stays as a boundary marker — the query is the
+// other region resolution discards, and nothing but a test says the two are treated alike.
+func TestValidateIndexBulletResolvesThroughAFragmentThatCannotBeParsed(t *testing.T) {
+	for name, link := range map[string]string{
+		"a bare percent in the fragment": "thing.md#100%",
+		"an entity denoting one":         "thing.md#&percnt;",
+		"a bare percent in the query":    "thing.md?pct=100%",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeConcept(t, filepath.Join(dir, "thing.md"), "Does the thing.")
+			writeFile(t, filepath.Join(dir, "index.md"),
+				"# Bundle\n\n* [Thing]("+link+") - COMPLETELY DIFFERENT TEXT.\n")
+
+			errs := Validate(dir)
+			if len(errs) != 1 {
+				t.Fatalf("Validate() = %v, want exactly the description mismatch: the path region "+
+					"is a bare thing.md and resolves", errs)
+			}
+			if strings.Contains(errs[0].Error(), "not a URL reference") {
+				t.Fatalf("Validate() error = %q, want the bullet to reach description comparison "+
+					"rather than be refused over a region resolution discards", errs[0])
+			}
+			if !strings.Contains(errs[0].Error(), "frontmatter description") {
+				t.Errorf("Validate() error = %q, want the description-sync diagnostic", errs[0])
+			}
+		})
+	}
+}
+
 // TestValidateIndexBulletRejectsAnUnbalancedOpeningParen pins the destination class against the
 // opening parenthesis, whose omission let this validator see a link where CommonMark sees none.
 //
