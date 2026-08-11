@@ -76,6 +76,57 @@ func (r *BriefRepo) GetBrief(ctx context.Context, projectID, id string) (*model.
 	return b, nil
 }
 
+// ConfirmBriefApproved reports nil when the brief is still approved at expectedVersion,
+// domain.ErrStaleApproval when it is not, and domain.ErrNotFound when it is missing or
+// archived. See domain.BriefReader for why this is a repository operation rather than a
+// GetBrief plus a comparison in the caller.
+//
+// The whole point is `FOR UPDATE`. A plain SELECT reads the last committed row, so a
+// ReplaceBrief that has updated the row and not yet committed is invisible and the caller
+// gets back the approval that is in the act of being withdrawn. The lock request queues
+// behind that writer instead; when it commits, this read is re-evaluated against the
+// writer's row and the version no longer matches. When the writer rolls back, the read
+// proceeds against the unchanged row and the confirmation passes, which is also correct.
+//
+// The transaction WRITES NOTHING and is rolled back rather than committed — a rollback
+// releases the lock exactly as a commit would. It is held for the length of one indexed
+// lookup, so it never delays a brief mutation by anything measurable.
+//
+// "Writes nothing" and not "READ ONLY": the latter names a PostgreSQL transaction mode
+// this transaction is NOT in (`Begin` uses the read-write default) and, more to the
+// point, one it could not be — `SELECT ... FOR UPDATE` takes a row lock, which a
+// genuinely READ ONLY transaction rejects. Do not "make the comment true" by adding
+// pgx.TxOptions{AccessMode: pgx.ReadOnly}; it would break the lock this function exists
+// for.
+//
+// The archived predicate matches GetBrief's: an archived brief is ErrNotFound, not a
+// stale approval, because "refresh and rebuild" is the wrong instruction for a brief that
+// is gone.
+func (r *BriefRepo) ConfirmBriefApproved(ctx context.Context, projectID, id string, expectedVersion int64) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("confirm brief approved: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var (
+		status  model.BriefStatus
+		version int64
+	)
+	q := `SELECT status, version FROM campaign_briefs
+		WHERE id = $1 AND project_id = $2 AND status <> 'archived' FOR UPDATE`
+	if serr := tx.QueryRow(ctx, q, id, projectID).Scan(&status, &version); serr != nil {
+		if errors.Is(serr, pgx.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		return fmt.Errorf("confirm brief approved: %w", serr)
+	}
+	if status != model.BriefApproved || version != expectedVersion {
+		return domain.ErrStaleApproval
+	}
+	return nil
+}
+
 // classifyNoRowTx decides whether a guarded UPDATE that matched no row was a MISSING brief or a
 // STALE version, reading through the SAME transaction.
 //

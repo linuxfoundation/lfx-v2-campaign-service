@@ -19,11 +19,13 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/dispatch"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/auth"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/crypto"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/snowflake"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
@@ -183,6 +185,13 @@ type Container struct {
 	// reports a typed 503 and the audience CRUD routes are unaffected.
 	audienceBuilder service.AudienceBuilder
 
+	// tokenVerifier verifies the bearer token on every authenticated request. Built ONCE
+	// before any wiring branch and injected on every path — same rationale as
+	// indexPublisher, with a sharper failure mode: a service constructed without it
+	// REJECTS every request, so a missed injection is an outage rather than a quiet
+	// return to trusting unverified claims.
+	tokenVerifier service.TokenVerifier
+
 	// indexPublisher is built ONCE in NewContainer, before the fast-path/503-mode
 	// branch, and injected into every BriefService constructed on either path.
 	// Holding it here (rather than building it per-path) is what guarantees the
@@ -233,7 +242,7 @@ type Container struct {
 // repo so its routes stay mounted and return the typed 503 ServiceUnavailable
 // from the OpenAPI contract instead of a bare 404; the health endpoints report
 // ready in that mode.
-func NewContainer(cfg *config.Config) (*Container, error) {
+func NewContainer(cfg *config.Config) (container *Container, err error) {
 	slog.Info("initializing dependency container")
 
 	if err := cfg.ValidateDatabaseSettings(); err != nil {
@@ -253,6 +262,38 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 		return nil, iperr
 	}
 	c.indexPublisher = indexPub
+	// newIndexPublisher can return a LIVE NATS connection with a reconnect goroutine
+	// behind it, and every failure below returns a NIL container — which leaves the
+	// caller no handle to Close, and nothing else stops that goroutine. A long-lived
+	// caller (a test binary, most visibly) then leaks a connection and its background
+	// work per failed construction. Closing here on the error path, rather than at each
+	// return, is what keeps the next failure added below from reintroducing this.
+	defer func() {
+		if err != nil {
+			indexPub.Close()
+		}
+	}()
+
+	// Build the token verifier before any wiring branch, for the same reason and with
+	// one extra: an unusable JWKS configuration must stop the pod here. A verifier that
+	// cannot verify has only two possible behaviours and both are wrong — refusing
+	// everything is an outage with a confusing cause, allowing everything is the hole
+	// this closes — so the error surfaces as a failed start with the reason attached.
+	verifier, verr := auth.New(auth.Config{
+		JWKSURL:            cfg.JWKSUrl,
+		Audience:           cfg.Audience,
+		Issuer:             cfg.Issuer,
+		MockLocalPrincipal: cfg.MockLocalPrincipal,
+		InCluster:          cfg.InCluster,
+	})
+	if verr != nil {
+		return nil, fmt.Errorf("JWT verification configuration: %w", verr)
+	}
+	if cfg.MockLocalPrincipal != "" {
+		slog.Warn("JWT verification is DISABLED; every request is attributed to the mock principal",
+			"principal", cfg.MockLocalPrincipal, "env", constants.EnvMockLocalPrincipal)
+	}
+	c.tokenVerifier = verifier
 
 	if cfg.DatabaseURL == "" {
 		slog.Warn("database URL not set; connection and brief/campaign endpoints will return 503 Service Unavailable")
@@ -260,7 +301,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 		// Wire the connection + brief services with nil repos so their routes are
 		// still mounted and return the typed 503 ServiceUnavailable advertised by
 		// the OpenAPI contract, rather than a bare 404 from unmounted routes.
-		c.Connections = service.NewConnectionService(nil, nil)
+		c.Connections = c.newConnectionService(nil, nil)
 		c.Briefs = c.newBriefService(nil, nil, nil, nil)
 		c.Audiences = c.newAudienceService(nil, nil)
 		slog.Info("dependency container initialized (no database)")
@@ -312,7 +353,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 	// pool/repos into ALL THREE (connection, brief, health readiness) once it opens,
 	// so brief + job routes go live without a pod restart.
 	campaign := service.NewCampaignService(notReady{})
-	connections := service.NewConnectionService(nil, enc)
+	connections := c.newConnectionService(nil, enc)
 	briefs := c.newBriefService(nil, nil, nil, nil)
 	auds := c.newAudienceService(nil, nil)
 	c.Service = campaign
@@ -416,6 +457,16 @@ func newAudienceBuilder(repo *postgres.ConnectionRepo, enc domain.Encryptor, cfg
 	return dispatch.NewAudienceBuilder(repo, enc, snow), client
 }
 
+// newConnectionService constructs a ConnectionService with the shared token verifier
+// injected. Same one-helper rule as newBriefService, for the reason given on
+// Container.tokenVerifier: three call sites construct this service, and one that skipped
+// the verifier would reject every request to the connection routes.
+func (c *Container) newConnectionService(repo domain.ConnectionRepository, enc domain.Encryptor) *service.ConnectionService {
+	s := service.NewConnectionService(repo, enc)
+	s.SetTokenVerifier(c.tokenVerifier)
+	return s
+}
+
 // newAudienceService constructs an AudienceService with the audience-build dependencies
 // injected. EVERY construction in this file goes through it: the builder is opt-in via
 // SetBuilder, so a path that constructs the service directly still compiles and serves — the
@@ -425,6 +476,7 @@ func newAudienceBuilder(repo *postgres.ConnectionRepo, enc domain.Encryptor, cfg
 // and BuildAudience then returns the contract's typed 503 while the CRUD routes stay usable.
 func (c *Container) newAudienceService(repo domain.AudienceRepository, briefs domain.BriefRepository) *service.AudienceService {
 	s := service.NewAudienceService(repo)
+	s.SetTokenVerifier(c.tokenVerifier)
 	if briefs != nil {
 		s.SetBriefRepo(briefs)
 	}
@@ -637,7 +689,7 @@ func logMissingDispatchers(dispatchers map[model.Provider]service.PlatformDispat
 
 func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, cfg *config.Config) {
 	repo := postgres.NewConnectionRepo(pool)
-	c.Connections = service.NewConnectionService(repo, enc)
+	c.Connections = c.newConnectionService(repo, enc)
 	briefRepo := postgres.NewBriefRepo(pool)
 	campaignRepo := postgres.NewCampaignRepo(pool)
 	jobRepo := postgres.NewJobRepo(pool)
@@ -983,15 +1035,17 @@ func (c *Container) Close(ctx context.Context) error {
 }
 
 // newBriefService constructs a BriefService and injects the container's shared index
-// publisher. EVERY BriefService construction in this file must go through it: the
-// publisher is opt-in via SetIndexer (so the ~40 test call sites default to Noop), which
-// means a path that calls service.NewBriefService directly compiles, runs, serves traffic
-// and silently indexes NOTHING. Routing every path through one helper is what makes that
-// failure impossible rather than merely unlikely.
+// publisher, LLM client (if configured), and event URL fetcher. EVERY BriefService construction
+// in this file must go through it: the publisher is opt-in via SetIndexer (so the ~40 test call
+// sites default to Noop), which means a path that calls service.NewBriefService directly
+// compiles, runs, serves traffic and silently indexes NOTHING. Routing every path through one
+// helper is what makes that failure impossible rather than merely unlikely.
 func (c *Container) newBriefService(briefs domain.BriefRepository, campaigns domain.CampaignRepository, jobs domain.JobRepository, orch *service.Orchestrator) *service.BriefService {
 	s := service.NewBriefService(briefs, campaigns, jobs, orch)
+	s.SetTokenVerifier(c.tokenVerifier)
 	s.SetIndexer(c.indexPublisher)
 	s.SetEventURL(c.eventFetcher(), eventurl.NewParser())
+	s.SetLLMClient(c.newLLMClient())
 	if c.indexingDisabled() {
 		s.DisableIndexing()
 	}
@@ -1016,6 +1070,37 @@ func (c *Container) eventFetcher() *eventurl.Fetcher {
 		return eventurl.NewFetcher()
 	}
 	return eventurl.NewFetcher(eventurl.WithNAT64Prefixes(c.Config.EventURLNAT64Prefixes...))
+}
+
+// newLLMClient constructs the LLM client for email copy generation when configured.
+// Returns nil when the proxy URL or API key is missing (email copy generation degrades
+// to unavailable, not failing), matching the optional-GROUP pattern for Snowflake.
+//
+// A misconfiguration detected at construction (invalid URL format, empty credentials
+// after trimming) logs a warning and returns nil rather than failing the pod: email
+// copy generation is an enrichment, not a core platform feature, so degrading on
+// misconfiguration is safer than crashing boot over a non-fatal setting.
+func (c *Container) newLLMClient() *llm.Client {
+	if c.Config == nil {
+		return nil
+	}
+	if c.Config.AIProxyURL == "" || c.Config.AIAPIKey == "" {
+		return nil
+	}
+	cfg := llm.Config{
+		ProxyURL: c.Config.AIProxyURL,
+		APIKey:   c.Config.AIAPIKey,
+		Model:    c.Config.AIModel, // empty means llm.DefaultModel
+	}
+	client, err := llm.NewClient(cfg)
+	if err != nil {
+		// Log but don't fail: email generation is optional. The generation endpoint
+		// will return 503 ServiceUnavailable.
+		slog.Warn("llm client initialization failed; email copy generation will be unavailable",
+			"error", err)
+		return nil
+	}
+	return client
 }
 
 // indexingDisabled reports whether indexing is DELIBERATELY off, from CONFIG alone.

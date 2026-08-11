@@ -47,6 +47,11 @@ type Service interface {
 	// which emails are in scope by send date and the counters are those emails'
 	// totals to date.
 	GetCampaignMetrics(context.Context, *GetCampaignMetricsPayload) (res *CampaignMetrics, err error)
+	// Generate AI-written email copy (subject, preheader, body, CTA) for a
+	// campaign brief. Returns immediately with generated text; does NOT persist to
+	// the brief. The AI model is optional — without it configured this endpoint
+	// returns 503.
+	GenerateEmailCopy(context.Context, *GenerateEmailCopyPayload) (res *EmailCopy, err error)
 	// Replace a campaign (requires If-Match).
 	UpdateCampaign(context.Context, *UpdateCampaignPayload) (res *Campaign, err error)
 	// Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist
@@ -96,7 +101,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [14]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "create-campaigns", "get-campaign", "get-campaign-metrics", "update-campaign", "toggle-campaign-status", "delete-campaign", "get-job"}
+var MethodNames = [15]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "create-campaigns", "get-campaign", "get-campaign-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "delete-campaign", "get-job"}
 
 // ApproveBriefPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service approve-brief method.
@@ -282,6 +287,19 @@ type DeleteCampaignPayload struct {
 	IfMatch *string
 }
 
+// EmailCopy is the result type of the lfx-v2-campaign-service-briefs service
+// generate-email-copy method.
+type EmailCopy struct {
+	// Email subject line
+	Subject string
+	// Email preheader text (preview summary)
+	Preheader string
+	// Email body HTML (the main content)
+	Body string
+	// Call-to-action button text
+	Cta string
+}
+
 // Counters that only an email campaign has. NONE of them is scoped to the
 // requested window: the window selects which emails are in scope by their SEND
 // date, and every counter below is then that email's total to date. Rendering
@@ -351,6 +369,17 @@ type FindBriefPayload struct {
 	ProjectID string
 	// Event slug derived from the event page URL.
 	EventSlug string
+}
+
+// GenerateEmailCopyPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service generate-email-copy method.
+type GenerateEmailCopyPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
 }
 
 // GetBriefPayload is the payload type of the lfx-v2-campaign-service-briefs
@@ -501,6 +530,9 @@ type ConflictError struct {
 	Code string
 	// Error message
 	Message string
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string
 }
 
 type ConnServiceUnavailableError struct {

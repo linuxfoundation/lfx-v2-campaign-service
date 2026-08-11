@@ -237,6 +237,27 @@ var EmailMetrics = Type("email-metrics", func() {
 	Required("sent", "delivered", "opens", "clicks", "bounces", "unsubscribes")
 })
 
+// EmailCopy holds AI-generated email copy for a campaign brief.
+var EmailCopy = Type("email-copy", func() {
+	Attribute("subject", String, "Email subject line", func() {
+		MaxLength(200)
+		Example("Join Us at KubeCon 2026")
+	})
+	Attribute("preheader", String, "Email preheader text (preview summary)", func() {
+		MaxLength(150)
+		Example("Register now and shape the future of cloud native computing")
+	})
+	Attribute("body", String, "Email body HTML (the main content)", func() {
+		MaxLength(8000)
+		Example("<p>We're excited to invite you...</p>")
+	})
+	Attribute("cta", String, "Call-to-action button text", func() {
+		MaxLength(50)
+		Example("Register Now")
+	})
+	Required("subject", "preheader", "body", "cta")
+})
+
 // EventDetailsResult is what fetch-event-url returns: the metadata extracted from an
 // event page, plus where in the page it came from.
 //
@@ -298,12 +319,12 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "brief")
 		})
 		Result(Brief)
-		commonBriefErrors(true)
+		commonBriefErrors()
 		HTTP(func() {
 			POST("/projects/{project_id}/briefs")
 			Header("bearer_token:Authorization")
 			Response(StatusCreated, func() { Header("etag:ETag") })
-			briefErrorResponses(true)
+			briefErrorResponses()
 		})
 	})
 
@@ -333,7 +354,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "event_slug")
 		})
 		Result(Brief)
-		commonBriefErrors(false)
+		commonBriefErrors()
 		HTTP(func() {
 			// A query param, not a path segment: the slug is caller-derived free text, and
 			// a lookup that legitimately MISSES is the common case (404 = generate one).
@@ -341,7 +362,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Param("event_slug")
 			Header("bearer_token:Authorization")
 			Response(StatusOK, func() { Header("etag:ETag") })
-			briefErrorResponses(false)
+			briefErrorResponses()
 		})
 	})
 
@@ -354,12 +375,12 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "brief_id")
 		})
 		Result(Brief)
-		commonBriefErrors(false)
+		commonBriefErrors()
 		HTTP(func() {
 			GET("/projects/{project_id}/briefs/{brief_id}")
 			Header("bearer_token:Authorization")
 			Response(StatusOK, func() { Header("etag:ETag") })
-			briefErrorResponses(false)
+			briefErrorResponses()
 		})
 	})
 
@@ -374,7 +395,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "brief_id", "brief")
 		})
 		Result(Brief)
-		commonBriefErrors(true)
+		commonBriefErrors()
 		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
 		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
 		HTTP(func() {
@@ -382,7 +403,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Header("bearer_token:Authorization")
 			Header("if_match:If-Match")
 			Response(StatusOK, func() { Header("etag:ETag") })
-			briefErrorResponses(true)
+			briefErrorResponses()
 			Response("PreconditionFailed", StatusPreconditionFailed)
 			Response("PreconditionRequired", StatusPreconditionRequired)
 		})
@@ -401,7 +422,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "brief_id")
 		})
 		Result(Brief)
-		commonBriefErrors(false)
+		commonBriefErrors()
 		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
 		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
 		HTTP(func() {
@@ -409,7 +430,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Header("bearer_token:Authorization")
 			Header("if_match:If-Match")
 			Response(StatusOK, func() { Header("etag:ETag") })
-			briefErrorResponses(false)
+			briefErrorResponses()
 			Response("PreconditionFailed", StatusPreconditionFailed)
 			Response("PreconditionRequired", StatusPreconditionRequired)
 		})
@@ -423,12 +444,12 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			briefIDAttr()
 			Required("project_id", "brief_id")
 		})
-		commonBriefErrors(false)
+		commonBriefErrors()
 		HTTP(func() {
 			DELETE("/projects/{project_id}/briefs/{brief_id}")
 			Header("bearer_token:Authorization")
 			Response(StatusNoContent)
-			briefErrorResponses(false)
+			briefErrorResponses()
 		})
 	})
 
@@ -447,7 +468,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "url")
 		})
 		Result(EventDetailsResult)
-		commonBriefErrors(true)
+		commonBriefErrors()
 		HTTP(func() {
 			// POST, not GET, though it creates nothing: the URL is a request BODY
 			// parameter. As a query parameter it would be written verbatim into access
@@ -458,7 +479,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			POST("/projects/{project_id}/fetch-event-url")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
-			briefErrorResponses(true)
+			briefErrorResponses()
 		})
 	})
 
@@ -474,12 +495,12 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "brief_id", "input")
 		})
 		Result(JobCreateResponse)
-		commonBriefErrors(true)
+		commonBriefErrors()
 		HTTP(func() {
 			POST("/projects/{project_id}/briefs/{brief_id}/campaigns")
 			Header("bearer_token:Authorization")
 			Response(StatusAccepted)
-			briefErrorResponses(true)
+			briefErrorResponses()
 		})
 	})
 
@@ -493,12 +514,12 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "brief_id", "campaign_id")
 		})
 		Result(Campaign)
-		commonBriefErrors(false)
+		commonBriefErrors()
 		HTTP(func() {
 			GET("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}")
 			Header("bearer_token:Authorization")
 			Response(StatusOK, func() { Header("etag:ETag") })
-			briefErrorResponses(false)
+			briefErrorResponses()
 		})
 	})
 
@@ -513,13 +534,31 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "brief_id", "campaign_id")
 		})
 		Result(CampaignMetrics)
-		commonBriefErrors(false)
+		commonBriefErrors()
 		HTTP(func() {
 			GET("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/metrics")
 			Header("bearer_token:Authorization")
 			Param("window")
 			Response(StatusOK)
-			briefErrorResponses(false)
+			briefErrorResponses()
+		})
+	})
+
+	Method("generate-email-copy", func() {
+		Description("Generate AI-written email copy (subject, preheader, body, CTA) for a campaign brief. Returns immediately with generated text; does NOT persist to the brief. The AI model is optional — without it configured this endpoint returns 503.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			Required("project_id", "brief_id")
+		})
+		Result(EmailCopy)
+		commonBriefErrors()
+		HTTP(func() {
+			POST("/projects/{project_id}/briefs/{brief_id}/email-copy")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
 		})
 	})
 
@@ -535,7 +574,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "brief_id", "campaign_id", "campaign")
 		})
 		Result(Campaign)
-		commonBriefErrors(true)
+		commonBriefErrors()
 		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
 		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
 		HTTP(func() {
@@ -543,7 +582,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Header("bearer_token:Authorization")
 			Header("if_match:If-Match")
 			Response(StatusOK, func() { Header("etag:ETag") })
-			briefErrorResponses(true)
+			briefErrorResponses()
 			Response("PreconditionFailed", StatusPreconditionFailed)
 			Response("PreconditionRequired", StatusPreconditionRequired)
 		})
@@ -561,7 +600,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "brief_id", "campaign_id", "status")
 		})
 		Result(Campaign)
-		commonBriefErrors(true)
+		commonBriefErrors()
 		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
 		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
 		HTTP(func() {
@@ -569,7 +608,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Header("bearer_token:Authorization")
 			Header("if_match:If-Match")
 			Response(StatusOK, func() { Header("etag:ETag") })
-			briefErrorResponses(true)
+			briefErrorResponses()
 			Response("PreconditionFailed", StatusPreconditionFailed)
 			Response("PreconditionRequired", StatusPreconditionRequired)
 		})
@@ -585,7 +624,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			ifMatchAttr()
 			Required("project_id", "brief_id", "campaign_id")
 		})
-		commonBriefErrors(false)
+		commonBriefErrors()
 		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
 		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
 		HTTP(func() {
@@ -593,7 +632,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Header("bearer_token:Authorization")
 			Header("if_match:If-Match")
 			Response(StatusNoContent)
-			briefErrorResponses(false)
+			briefErrorResponses()
 			Response("PreconditionFailed", StatusPreconditionFailed)
 			Response("PreconditionRequired", StatusPreconditionRequired)
 		})
@@ -608,12 +647,12 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Required("project_id", "job_id")
 		})
 		Result(JobPollResponse)
-		commonBriefErrors(false)
+		commonBriefErrors()
 		HTTP(func() {
 			GET("/projects/{project_id}/jobs/{job_id}")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
-			briefErrorResponses(false)
+			briefErrorResponses()
 		})
 	})
 })
@@ -638,13 +677,19 @@ func metricsWindowEnum() {
 }
 
 // commonBriefErrors declares the standard error set for a brief method.
-// BadRequest is always declared: JWTAuth can reject any method with a 400
-// (malformed/invalid token) regardless of whether the method takes a body, so
-// every method's generated encoder must handle it. The withBadRequest parameter
-// is retained for call-site readability (true = the method also validates a body)
-// but no longer gates BadRequest.
-func commonBriefErrors(withBadRequest bool) {
-	_ = withBadRequest
+//
+// BadRequest is unconditional, and it takes no parameter deciding otherwise. JWTAuth
+// returns this service's own *briefs.BadRequestError for any refused token — Goa generates
+// one concrete type per service from the shared design type, so the connections service's
+// identically-shaped error is a DIFFERENT Go type and naming it here would send a reader to
+// the wrong package. Goa builds each method's
+// error encoder from its declared list — a method that omits BadRequest has no case
+// for it, so the typed 400 falls out of the generic encoder as a 500 and never appears
+// in OpenAPI. That is true of a bodyless GET exactly as much as of a create. An earlier
+// revision took a `withBadRequest bool` that had stopped gating anything; it is gone
+// rather than retained-and-ignored, because a boolean at 38 call sites that a reader
+// must check does nothing is an invitation to make it mean something again.
+func commonBriefErrors() {
 	Error("BadRequest", BadRequestError, "Bad request")
 	Error("NotFound", NotFoundError, "Resource not found")
 	Error("Conflict", ConflictError, "Conflict")
@@ -652,10 +697,12 @@ func commonBriefErrors(withBadRequest bool) {
 	Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 }
 
-// briefErrorResponses maps the standard errors to HTTP responses. BadRequest is
-// always mapped to match commonBriefErrors.
-func briefErrorResponses(withBadRequest bool) {
-	_ = withBadRequest
+// briefErrorResponses maps the standard errors to HTTP responses. Every error
+// commonBriefErrors declares is mapped here, unconditionally and in the same order:
+// a declared error with no Response mapping is the same 500 as an undeclared one, so
+// the two functions only work as a pair if neither can be called with a narrower set
+// than the other.
+func briefErrorResponses() {
 	Response("BadRequest", StatusBadRequest)
 	Response("NotFound", StatusNotFound)
 	Response("Conflict", StatusConflict)

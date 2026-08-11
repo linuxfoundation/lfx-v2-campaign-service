@@ -7,10 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/migrations"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -167,4 +170,244 @@ func TestCheckReady_PassesContextToPing(t *testing.T) {
 	})
 	require.False(t, ok)
 	assert.True(t, sawCanceled)
+}
+
+// migrationIndexOwners is what the invalid-index remedy turns into "force N", so a wrong
+// answer is worse than no answer: it replays unrelated DDL, or — the case this replaced —
+// tells an operator to DROP an index a migration owns and leave the version alone.
+//
+// The parser is pinned against the real embedded migrations rather than a fixture, because
+// the thing that can break it is the SQL this repo actually writes: a CONCURRENTLY, an
+// IF NOT EXISTS, a quoted name, a UNIQUE. Every index the migrations create must be found.
+func TestMigrationIndexOwners_FindsEveryCreatedIndex(t *testing.T) {
+	entries, err := fs.Glob(migrations.FS, "*.up.sql")
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+
+	owners := migrationIndexOwners()
+
+	// Independent of createIndexRe: find the names a different way (the token following
+	// "INDEX", after the optional modifiers) and require the map to know each one. A regex
+	// checked against itself proves nothing.
+	for _, e := range entries {
+		body, rerr := migrations.FS.ReadFile(e)
+		require.NoError(t, rerr)
+		for _, line := range strings.Split(string(body), "\n") {
+			u := strings.ToUpper(strings.TrimSpace(line))
+			if !strings.HasPrefix(u, "CREATE INDEX") && !strings.HasPrefix(u, "CREATE UNIQUE INDEX") {
+				continue
+			}
+			fields := strings.Fields(strings.TrimSpace(line))
+			var name string
+			for i, f := range fields {
+				if strings.EqualFold(f, "INDEX") {
+					rest := fields[i+1:]
+					for len(rest) > 0 && (strings.EqualFold(rest[0], "CONCURRENTLY") ||
+						strings.EqualFold(rest[0], "IF") || strings.EqualFold(rest[0], "NOT") ||
+						strings.EqualFold(rest[0], "EXISTS")) {
+						rest = rest[1:]
+					}
+					if len(rest) > 0 {
+						name = strings.Trim(rest[0], `"`)
+					}
+					break
+				}
+			}
+			if name == "" {
+				continue
+			}
+			v, ok := owners[name]
+			assert.Truef(t, ok, "%s creates index %q but migrationIndexOwners does not know it; "+
+				"an invalid copy would be reported as owned by no migration and an operator told "+
+				"to drop it permanently", e, name)
+			if ok {
+				want, cerr := strconv.Atoi(strings.SplitN(e, "_", 2)[0])
+				require.NoError(t, cerr)
+				assert.GreaterOrEqualf(t, v, want,
+					"index %q is created by %s but attributed to migration %06d", name, e, v)
+			}
+		}
+	}
+}
+
+// TestRequiredIndexes_CoversTheDispatchUniqueIndex pins the membership, not the message.
+//
+// uq_campaigns_brief_platform_live is the sole arbiter of (brief_id, platform) uniqueness
+// once 000014 drops campaigns_brief_id_platform_key, and 000014's guard checks it exactly
+// once — while 000014 runs. An index lost any time afterwards left a schema that booted
+// clean with concurrent claims free to double-create paid campaigns. Membership in
+// requiredIndexes is what makes every later boot re-check it, and the DEFINITION is
+// checked rather than the name because 000013 creates it with IF NOT EXISTS: any index
+// carrying the name makes that a no-op, and a name-only check then calls the schema
+// healthy (TestMigration000014_GuardChecksIndexDefinition records the PostgreSQL 16.10 run
+// where a same-named NON-unique index passed the name-only form of 000014's own guard).
+func TestRequiredIndexes_CoversTheDispatchUniqueIndex(t *testing.T) {
+	const dispatchUnique = "uq_campaigns_brief_platform_live"
+
+	var got *requiredIndex
+	for i, ri := range requiredIndexes {
+		if ri.name == dispatchUnique {
+			got = &requiredIndexes[i]
+		}
+	}
+	require.NotNilf(t, got, "%s is not in requiredIndexes: nothing re-checks the only "+
+		"index enforcing dispatch uniqueness after 000014 drops the constraint", dispatchUnique)
+
+	assert.Equal(t, "campaigns", got.table)
+	assert.True(t, got.unique, "a non-unique index of this name arbitrates nothing")
+	assert.Equal(t, []string{"brief_id", "platform"}, got.keys)
+	// Character-identical to the deparsed form 000014's guard compares against. Two
+	// checks on one definition are only two checks while they agree on what it is.
+	assert.Equal(t, "(status <> 'deleted'::text)", got.predicate)
+}
+
+// describeInvalid's annotation is derived from the migrations, not from requiredIndexes,
+// and that has to keep holding for indexes the registry does not name — otherwise an
+// operator holding an invalid copy of one is told to drop it and leave the schema version
+// alone, which removes it permanently. idx_campaigns_stuck_claims is such an index: 000008
+// creates it, nothing re-checks it at boot, and the stuck-claim scan degrades to a full
+// table scan without it.
+func TestDescribeInvalid_AnnotatesIndexesOutsideRequiredIndexes(t *testing.T) {
+	const stuck = "idx_campaigns_stuck_claims"
+	require.NotContains(t,
+		func() []string {
+			var n []string
+			for _, ri := range requiredIndexes {
+				n = append(n, ri.name)
+			}
+			return n
+		}(), stuck,
+		"this test is only meaningful while the index is outside requiredIndexes")
+
+	got := describeInvalid([]string{stuck})
+	assert.Containsf(t, got, stuck+" (migration 000008: force 7)",
+		"describeInvalid = %q, want the index annotated with the migration that "+
+			"unconditionally creates it", got)
+	assert.NotContains(t, got, "no migration creates this")
+}
+
+// The scan is schema-wide, so it does also turn up names no migration owns — a hand-built
+// index, an operator's experiment. Those must NOT carry force advice: the operator would
+// replay unrelated DDL to fix an index nothing will recreate. The live test builds exactly
+// such an index by hand.
+func TestDescribeInvalid_LeavesTrulyUnownedIndexesAlone(t *testing.T) {
+	// Deliberately an index OUTSIDE requiredIndexes: those now annotate to their own DDL,
+	// so they cannot witness the force branch this test is about.
+	const owned = "idx_campaigns_stuck_claims"
+	got := describeInvalid([]string{owned, "zz_hand_built_idx"})
+
+	assert.Containsf(t, got, owned+" (migration 000008: force 7)",
+		"describeInvalid = %q, want the owned index annotated with its version", got)
+	assert.Containsf(t, got, "zz_hand_built_idx (no migration creates this",
+		"describeInvalid = %q, want the unowned index told to leave the version alone", got)
+}
+
+// TestRequiredIndexes_RecoverByRebuildNotByForce pins that no entry in requiredIndexes is
+// ever answered with `migrate force`.
+//
+// Two earlier forms of this test were wrong, and both were wrong in the same direction —
+// asserting a property of the ADVICE rather than of the outcome the operator gets.
+//
+// The first asserted the per-name annotations were all DISTINCT, as a canary for a single
+// closing `force <version-1>` sentence being applied to entries from different migrations.
+// Distinctness was a proxy, and the seven connection indexes are the input that separated
+// proxy from property: all seven come from 000001, so all seven annotate identically, and
+// nothing is wrong with that.
+//
+// The second replaced it with "every entry annotates to force <its owner - 1>", on the
+// stated ground that forcing 0 replays 000001 and rebuilds all seven. That ground is FALSE,
+// and it is the finding that produced the shape being tested now: `Up()` after a force
+// replays every migration ABOVE the forced version, not just the one that owns the index.
+// 000006 and 000007 carry bare `ALTER TABLE … ADD CONSTRAINT` — PostgreSQL has no
+// `ADD CONSTRAINT IF NOT EXISTS` — so replaying them against a schema that already has
+// those constraints fails with 42710 and leaves the version DIRTY. An operator who follows
+// "force 0" to recover ONE missing index takes the whole schema down.
+//
+// The hazard is a property of the RANGE replayed, not of the index, so no amount of careful
+// per-name annotation fixes it. The fix is to stop naming a version at all: requiredIndexes
+// carries enough to emit the index's own DDL, which rebuilds exactly the missing thing and
+// replays nothing. That is what this asserts — and the live
+// TestRequiredIndexCreateSQL_RebuildsAnIndexTheCheckAccepts asserts the DDL actually works,
+// which no form of the force assertion could have done.
+func TestRequiredIndexes_RecoverByRebuildNotByForce(t *testing.T) {
+	require.NotEmpty(t, requiredIndexes)
+
+	for _, idx := range requiredIndexes {
+		got := indexRecovery(idx.name)
+		assert.NotContainsf(t, got, "force ",
+			"%s recovers via %q. A force replays every migration above the version named, "+
+				"and 000006/000007's bare ADD CONSTRAINT fail on replay (42710) and dirty "+
+				"the schema — use the index's own DDL", idx.name, got)
+		assert.Containsf(t, got, idx.createSQL(),
+			"%s recovers via %q, which is not the statement that rebuilds it", idx.name, got)
+	}
+}
+
+// The DDL still has to name a real migration's index — a derived name that nothing creates
+// would produce a statement that "works" and an index the migrations then never maintain.
+// This is the half of the old force test that was worth keeping.
+func TestRequiredIndexes_AreAllCreatedByAMigration(t *testing.T) {
+	owners := migrationIndexOwners()
+	for _, idx := range requiredIndexes {
+		// Deriving a name by convention — as the seven connection entries do — is exactly
+		// how an entry acquires a plausible name no migration owns.
+		_, ok := owners[idx.name]
+		assert.Truef(t, ok, "%s is in requiredIndexes but no migration CREATEs it: the "+
+			"service would refuse to boot on a schema the migrations consider complete",
+			idx.name)
+	}
+}
+
+// TestMigrationIndexOwners_IgnoresAConditionalRebuild is the finding that a CREATE inside a
+// DO block cannot be a recovery target.
+//
+// The remedy the map feeds is "DROP the index, then force back so the migration RUNS again".
+// 000009 rebuilds idx_campaigns_stuck_claims only IF an INVALID copy is present — and the
+// operator's drop, the first half of that remedy, is precisely what makes the condition
+// false. Attributing the index to 000009 would send them to force 8, watch 000009 no-op, and
+// boot clean with the index gone for good: the stuck-claim scan full-scanning forever, which
+// is the failure 000008 and 000009 exist to prevent. 000008's plain CREATE ... IF NOT EXISTS
+// does fire against a schema missing the name, so it is the answer.
+func TestMigrationIndexOwners_IgnoresAConditionalRebuild(t *testing.T) {
+	const stuck = "idx_campaigns_stuck_claims"
+
+	// The premise: 000009 really does contain a CREATE for this name, inside a DO block.
+	body, err := migrations.FS.ReadFile("000009_drop_invalid_stuck_claim_index.up.sql")
+	require.NoError(t, err)
+	require.Contains(t, string(body), "CREATE INDEX "+stuck,
+		"this test is only meaningful while 000009 rebuilds the index")
+
+	assert.Equalf(t, 8, migrationIndexOwners()[stuck],
+		"%s must be attributed to 000008, whose CREATE fires against a schema missing the "+
+			"index; 000009's rebuild is conditional on the invalid copy the remedy deletes", stuck)
+	assert.Contains(t, describeInvalid([]string{stuck}), stuck+" (migration 000008: force 7)")
+}
+
+// executableSQL is the reason the answer above is 8, and it strips two different things for
+// two different reasons. The prose case is not hypothetical: 000009's header contains the
+// phrase "a failed CREATE INDEX CONCURRENTLY", from which createIndexRe reads the index name
+// "does". Inert today — nothing is called that — but a scan whose output depends on comment
+// wording is one prose edit away from claiming a migration owns an index it never touches.
+func TestExecutableSQL(t *testing.T) {
+	for name, tc := range map[string]struct{ in, want string }{
+		"line comment": {"-- CREATE INDEX a\nCREATE INDEX b;", "\nCREATE INDEX b;"},
+		"dollar block": {"CREATE INDEX a;\nDO $$ CREATE INDEX b; $$;\n", "CREATE INDEX a;\nDO ;\n"},
+		"tagged block": {"A $tag$ hidden $tag$ B", "A  B"},
+		// Two blocks in a row: a tag-agnostic regexp would close the first on the second's
+		// OPENING delimiter and swallow the statement between them.
+		"two blocks":    {"$$x$$ CREATE INDEX keep; $$y$$", " CREATE INDEX keep; "},
+		"unterminated":  {"CREATE INDEX a; DO $$ CREATE INDEX b;", "CREATE INDEX a; DO "},
+		"no delimiters": {"CREATE INDEX a;", "CREATE INDEX a;"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, executableSQL(tc.in))
+		})
+	}
+
+	// And the property that matters, stated against the real file rather than a fixture.
+	body, err := migrations.FS.ReadFile("000009_drop_invalid_stuck_claim_index.up.sql")
+	require.NoError(t, err)
+	assert.NotContains(t, executableSQL(string(body)), "CREATE INDEX",
+		"000009 executes no unconditional CREATE INDEX; every one it contains is prose or "+
+			"inside the DO block")
 }

@@ -299,6 +299,20 @@ type GetCampaignMetricsResponseBody struct {
 	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
 }
 
+// GenerateEmailCopyResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body.
+type GenerateEmailCopyResponseBody struct {
+	// Email subject line
+	Subject string `form:"subject" json:"subject" xml:"subject"`
+	// Email preheader text (preview summary)
+	Preheader string `form:"preheader" json:"preheader" xml:"preheader"`
+	// Email body HTML (the main content)
+	Body string `form:"body" json:"body" xml:"body"`
+	// Call-to-action button text
+	Cta string `form:"cta" json:"cta" xml:"cta"`
+}
+
 // UpdateCampaignResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
 // response body.
@@ -374,6 +388,9 @@ type CreateBriefConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateBriefServiceUnavailableResponseBody is the type of the
@@ -424,6 +441,9 @@ type FindBriefConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // FindBriefServiceUnavailableResponseBody is the type of the
@@ -474,6 +494,9 @@ type GetBriefConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // GetBriefServiceUnavailableResponseBody is the type of the
@@ -524,6 +547,9 @@ type UpdateBriefConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // UpdateBriefServiceUnavailableResponseBody is the type of the
@@ -594,6 +620,9 @@ type ApproveBriefConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // ApproveBriefServiceUnavailableResponseBody is the type of the
@@ -664,6 +693,9 @@ type DeleteBriefConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // DeleteBriefServiceUnavailableResponseBody is the type of the
@@ -714,6 +746,9 @@ type FetchEventURLConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // FetchEventURLServiceUnavailableResponseBody is the type of the
@@ -764,6 +799,9 @@ type CreateCampaignsConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // CreateCampaignsServiceUnavailableResponseBody is the type of the
@@ -814,6 +852,9 @@ type GetCampaignConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // GetCampaignServiceUnavailableResponseBody is the type of the
@@ -864,6 +905,9 @@ type GetCampaignMetricsConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // GetCampaignMetricsServiceUnavailableResponseBody is the type of the
@@ -896,6 +940,59 @@ type GetCampaignMetricsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GenerateEmailCopyBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body for the "BadRequest" error.
+type GenerateEmailCopyBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GenerateEmailCopyConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body for the "Conflict" error.
+type GenerateEmailCopyConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GenerateEmailCopyServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type GenerateEmailCopyServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GenerateEmailCopyInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body for the "InternalServerError" error.
+type GenerateEmailCopyInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GenerateEmailCopyNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
+// response body for the "NotFound" error.
+type GenerateEmailCopyNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // UpdateCampaignBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "update-campaign" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -914,6 +1011,9 @@ type UpdateCampaignConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // UpdateCampaignServiceUnavailableResponseBody is the type of the
@@ -984,6 +1084,9 @@ type ToggleCampaignStatusConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // ToggleCampaignStatusServiceUnavailableResponseBody is the type of the
@@ -1054,6 +1157,9 @@ type DeleteCampaignConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // DeleteCampaignServiceUnavailableResponseBody is the type of the
@@ -1124,6 +1230,9 @@ type GetJobConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // GetJobServiceUnavailableResponseBody is the type of the
@@ -1423,6 +1532,19 @@ func NewGetCampaignMetricsResponseBody(res *lfxv2campaignservicebriefs.CampaignM
 	return body
 }
 
+// NewGenerateEmailCopyResponseBody builds the HTTP response body from the
+// result of the "generate-email-copy" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGenerateEmailCopyResponseBody(res *lfxv2campaignservicebriefs.EmailCopy) *GenerateEmailCopyResponseBody {
+	body := &GenerateEmailCopyResponseBody{
+		Subject:   res.Subject,
+		Preheader: res.Preheader,
+		Body:      res.Body,
+		Cta:       res.Cta,
+	}
+	return body
+}
+
 // NewUpdateCampaignResponseBody builds the HTTP response body from the result
 // of the "update-campaign" endpoint of the "lfx-v2-campaign-service-briefs"
 // service.
@@ -1496,6 +1618,7 @@ func NewCreateBriefConflictResponseBody(res *lfxv2campaignservicebriefs.Conflict
 	body := &CreateBriefConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -1551,6 +1674,7 @@ func NewFindBriefConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictEr
 	body := &FindBriefConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -1606,6 +1730,7 @@ func NewGetBriefConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictErr
 	body := &GetBriefConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -1661,6 +1786,7 @@ func NewUpdateBriefConflictResponseBody(res *lfxv2campaignservicebriefs.Conflict
 	body := &UpdateBriefConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -1738,6 +1864,7 @@ func NewApproveBriefConflictResponseBody(res *lfxv2campaignservicebriefs.Conflic
 	body := &ApproveBriefConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -1815,6 +1942,7 @@ func NewDeleteBriefConflictResponseBody(res *lfxv2campaignservicebriefs.Conflict
 	body := &DeleteBriefConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -1870,6 +1998,7 @@ func NewFetchEventURLConflictResponseBody(res *lfxv2campaignservicebriefs.Confli
 	body := &FetchEventURLConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -1925,6 +2054,7 @@ func NewCreateCampaignsConflictResponseBody(res *lfxv2campaignservicebriefs.Conf
 	body := &CreateCampaignsConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -1980,6 +2110,7 @@ func NewGetCampaignConflictResponseBody(res *lfxv2campaignservicebriefs.Conflict
 	body := &GetCampaignConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -2035,6 +2166,7 @@ func NewGetCampaignMetricsConflictResponseBody(res *lfxv2campaignservicebriefs.C
 	body := &GetCampaignMetricsConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -2072,6 +2204,62 @@ func NewGetCampaignMetricsNotFoundResponseBody(res *lfxv2campaignservicebriefs.N
 	return body
 }
 
+// NewGenerateEmailCopyBadRequestResponseBody builds the HTTP response body
+// from the result of the "generate-email-copy" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGenerateEmailCopyBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *GenerateEmailCopyBadRequestResponseBody {
+	body := &GenerateEmailCopyBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGenerateEmailCopyConflictResponseBody builds the HTTP response body from
+// the result of the "generate-email-copy" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGenerateEmailCopyConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *GenerateEmailCopyConflictResponseBody {
+	body := &GenerateEmailCopyConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGenerateEmailCopyServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "generate-email-copy" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGenerateEmailCopyServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *GenerateEmailCopyServiceUnavailableResponseBody {
+	body := &GenerateEmailCopyServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGenerateEmailCopyInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "generate-email-copy" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGenerateEmailCopyInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *GenerateEmailCopyInternalServerErrorResponseBody {
+	body := &GenerateEmailCopyInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGenerateEmailCopyNotFoundResponseBody builds the HTTP response body from
+// the result of the "generate-email-copy" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGenerateEmailCopyNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *GenerateEmailCopyNotFoundResponseBody {
+	body := &GenerateEmailCopyNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewUpdateCampaignBadRequestResponseBody builds the HTTP response body from
 // the result of the "update-campaign" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -2090,6 +2278,7 @@ func NewUpdateCampaignConflictResponseBody(res *lfxv2campaignservicebriefs.Confl
 	body := &UpdateCampaignConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -2167,6 +2356,7 @@ func NewToggleCampaignStatusConflictResponseBody(res *lfxv2campaignservicebriefs
 	body := &ToggleCampaignStatusConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -2244,6 +2434,7 @@ func NewDeleteCampaignConflictResponseBody(res *lfxv2campaignservicebriefs.Confl
 	body := &DeleteCampaignConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -2320,6 +2511,7 @@ func NewGetJobConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError
 	body := &GetJobConflictResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
+		Reason:  res.Reason,
 	}
 	return body
 }
@@ -2469,6 +2661,17 @@ func NewGetCampaignMetricsPayload(projectID string, briefID string, campaignID s
 	v.BriefID = briefID
 	v.CampaignID = campaignID
 	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGenerateEmailCopyPayload builds a lfx-v2-campaign-service-briefs service
+// generate-email-copy endpoint payload.
+func NewGenerateEmailCopyPayload(projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.GenerateEmailCopyPayload {
+	v := &lfxv2campaignservicebriefs.GenerateEmailCopyPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
 	v.BearerToken = bearerToken
 
 	return v

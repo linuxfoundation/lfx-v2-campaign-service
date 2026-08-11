@@ -26,8 +26,13 @@ import (
 )
 
 // JWTAuth is the JWT security scheme. Tokens are issued by Heimdall at the
-// gateway (audience = this service) and validated in-app. Authorization on the
-// campaign_manager relation is enforced at the gateway, not here.
+// gateway (audience = this service) and verified in-app against Heimdall's JWKS:
+// signature, issuer, audience and expiry, plus a non-empty principal claim. The
+// gateway checks the same token, so this is not the happy path working twice — the
+// gateway's guarantee stops at the cluster boundary, and these claims become the
+// created_by / updated_by of records that say who authorized paid ad spend. See
+// internal/infrastructure/auth. Authorization on the campaign_manager relation is
+// still enforced at the gateway, not here.
 var JWTAuth = JWTSecurity("jwt", func() {
 	Description("JWT issued by Heimdall; audience is this service.")
 })
@@ -96,8 +101,46 @@ var NotFoundError = Type("not-found-error", func() {
 	errorAttrs("404", "The connection was not found.")
 })
 
+// ConflictError carries an OPTIONAL reason on top of the standard code/message pair.
+//
+// Several endpoints return 409 for genuinely different situations that call for
+// different client behaviour — retry after a refresh, wait and poll, or stop and
+// surface the collision. Distinguishing them by the message text means a client
+// pattern-matches English prose that this repo edits freely for operator clarity, so
+// the first reworded message silently breaks it. `reason` is the part that is promised
+// not to change.
+//
+// It is deliberately NOT Required, because ConflictError is shared by every endpoint in
+// the API and the slugs are being introduced group by group rather than all at once.
+// Today only the audiences group populates it: `mapAudienceErr` sets a reason on all
+// three of its 409s, which is where the need was sharpest — those three carry OPPOSITE
+// remedies. The briefs group also distinguishes many conflicts, but does so in message
+// prose only and sets no reason yet; that is a gap to close, not the intended end state.
+// Until it is closed a client must treat an absent reason as "unspecified conflict" and
+// fall back to the message, which is what the message already says. Making the field
+// Required now would force a slug onto every 409 in one change and invent a taxonomy
+// nobody has agreed to maintain.
+//
+// The example on `reason` is chosen to AGREE with the message example already on the type.
+// ConflictError is the 409 body for every endpoint in the API, so the object-level example
+// Goa publishes is ONE instance standing in for twenty-nine different conflicts — which is
+// what makes the choice awkward, and why omitting it is not the safe option it looks like.
+//
+// Leaving `Example` off does not produce an example-free schema. Goa fills the gap from the
+// Enum, and it picks the first member: `audience_build_in_flight`, which the generated
+// contract then pairs with "A connection for this provider already exists". That publishes a
+// mapping between two unrelated endpoints, which is worse than a value belonging to one of
+// them. `already_exists` is the reason that actually accompanies this message, so the
+// published instance is at least internally true.
+//
+// The Enum is what publishes the full vocabulary, and that — not the example — is the part
+// clients are entitled to rely on.
 var ConflictError = Type("conflict-error", func() {
 	errorAttrs("409", "A connection for this provider already exists on the project.")
+	Attribute("reason", String, "Stable machine-readable discriminator, present only where an endpoint returns more than one kind of conflict. Absent means unspecified.", func() {
+		Enum("stale_approval", "audience_build_in_flight", "already_exists")
+		Example("already_exists")
+	})
 })
 
 var PreconditionFailedError = Type("precondition-failed-error", func() {
@@ -173,6 +216,14 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			Required("project_id", "config", "credentials")
 		})
 		Result(result)
+		// BadRequest on THIS method also covers payload validation, but that is not why
+		// every method below declares it too. JWTAuth returns *conn.BadRequestError when
+		// a token is refused, and Goa generates the error encoder from THIS list: a
+		// method that omits BadRequest has no case for it, so the typed 400 falls through
+		// to the generic encoder and reaches the caller as a 500 — undocumented in
+		// OpenAPI, and telling a client with a bad credential to treat it as a server
+		// fault. The declaration is what makes JWTAuth's mapping real, so it is required
+		// on every method carrying bearerToken(), payload or no payload.
 		Error("BadRequest", BadRequestError, "Bad request")
 		Error("Conflict", ConflictError, "A connection already exists for this provider on the project")
 		Error("InternalServerError", InternalServerError, "Internal server error")
@@ -198,6 +249,10 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			Required("project_id")
 		})
 		Result(result)
+		// BadRequest is declared on EVERY secured method, including the reads and the
+		// delete, because JWTAuth can now refuse a token — and a refusal it cannot encode
+		// becomes a 500. See the comment on the create method's copy.
+		Error("BadRequest", BadRequestError, "Bad request")
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -207,6 +262,7 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			Response(StatusOK, func() {
 				Header("etag:ETag")
 			})
+			Response("BadRequest", StatusBadRequest)
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
@@ -257,6 +313,10 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			projectIDAttr()
 			Required("project_id")
 		})
+		// BadRequest is declared on EVERY secured method, including the reads and the
+		// delete, because JWTAuth can now refuse a token — and a refusal it cannot encode
+		// becomes a 500. See the comment on the create method's copy.
+		Error("BadRequest", BadRequestError, "Bad request")
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -264,6 +324,7 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			DELETE("/projects/{project_id}/connection-" + key)
 			Header("bearer_token:Authorization")
 			Response(StatusNoContent)
+			Response("BadRequest", StatusBadRequest)
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
@@ -278,6 +339,10 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			Required("project_id")
 		})
 		Result(TestResult)
+		// BadRequest is declared on EVERY secured method, including the reads and the
+		// delete, because JWTAuth can now refuse a token — and a refusal it cannot encode
+		// becomes a 500. See the comment on the create method's copy.
+		Error("BadRequest", BadRequestError, "Bad request")
 		Error("NotFound", NotFoundError, "Resource not found")
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -285,6 +350,7 @@ func connectionMethods(key, title string, config, creds, result eval.Expression)
 			POST("/projects/{project_id}/connection-" + key + "/test")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
+			Response("BadRequest", StatusBadRequest)
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
