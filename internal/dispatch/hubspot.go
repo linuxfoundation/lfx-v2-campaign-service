@@ -19,12 +19,15 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/utm"
 )
 
-// portalLookupTimeout bounds the best-effort AuthenticatedPortalID call in Dispatch. It is
-// deliberately much shorter than providerCallTimeout (2m, see orchestrator.go): the HubSpot
-// client's own retry policy can wait up to retryMax*maxRetryWait (180s) under sustained
-// throttling, which alone exceeds the whole provider-call budget. A lookup whose failure is
-// only ever logged and shrugged off must not be able to consume the budget the mutating
-// CloneEmail/SetSendList calls need.
+// portalLookupTimeout bounds the AuthenticatedPortalID call on BOTH paths that make it:
+// Dispatch (best-effort, recording provenance) and ReadMetrics (load-bearing, checking it).
+// It is deliberately much shorter than either caller's budget — providerCallTimeout (2m) and
+// metricsCallTimeout (20s), both in orchestrator.go — because the HubSpot client's own retry
+// policy can wait up to retryMax*maxRetryWait (180s) under sustained throttling, which alone
+// exceeds both. The 20s metrics budget is the binding one: unbounded, a throttled provenance
+// lookup would consume the whole read and surface as "metrics are down" rather than as
+// throttling. On either path the lookup must not be able to consume the budget the real work
+// needs — the mutating CloneEmail/SetSendList calls, or GetEmailMetrics.
 const portalLookupTimeout = 10 * time.Second
 
 // hubspotCreds is the credential shape stored (encrypted) for a HubSpot connection. HubSpot
