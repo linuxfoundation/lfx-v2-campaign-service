@@ -1,7 +1,7 @@
 # 2026-08-11 — LFXV2-3106: the 23505 mapping now names the index it means
 
 **Fix** — three statements translated "some unique index on `campaign_audiences` fired" into
-`ErrAudienceBuildInFlight`, which is a claim about one specific index. Plus the four carried
+`ErrAudienceBuildInFlight`, which is a claim about one specific index. Plus the five carried
 nits from dealako's round-5 review on PR #106.
 
 This is LFXV2-3059's work arriving late. It was written on that branch and reviewed there, but
@@ -54,7 +54,7 @@ error is not `ErrAudienceBuildInFlight`. Two constraints shaped it:
   asserts the error is a 23505 naming the probe, which is what caught the bad premise.
 
 **Revert-verified in both directions.** Degrading the helper to SQLSTATE-only fails this test and
-only this test; the other five still pass. Making the comparison wrong *inside*
+`TestIsUniqueViolationOn` (added below) and nothing else; the other five lease tests still pass. Making the comparison wrong *inside*
 `isUniqueViolationOn` fails four live tests —
 `TestAudienceBuildLeaseAdmitsExactlyOneConcurrentBuild`, `...FreesOnCompletion`,
 `...RefusesPlainCreate`, `...RefusesUpdateBackToBuilding`. The first attempt at this verification
@@ -81,6 +81,43 @@ stated on the interface.
 
 **Two appended log sections used `**Kind:** Fix`** instead of this file's own `**Fix** — <what>`
 form. Reformatted.
+
+**A failure message named a migration that does not exist.** `TestEveryUniquePartialIndexIsRequired`
+said the schema "cannot be true while 000013 and 000020 exist"; the lease index is 000018 and there
+is no 000020. The number was wrong when it was written, and the message only ever prints on a
+failure — so the misdirection would land on whoever was already debugging a broken registry query.
+
+## The probe index had to be scoped, not just named
+
+Copilot caught this in the first version of the test above, as a suppressed comment. The probe was
+`CREATE UNIQUE INDEX ... ON campaign_audiences (brief_id) WHERE status = 'failed'` — a schema-wide
+object with a table-wide predicate, which is precisely the thing `dbtest.go:66-72` forbids: "Tests
+therefore share a schema and MUST NOT share rows — use UniqueID for every identifier a test writes."
+An index name and a predicate are both identifiers a test writes.
+
+Reachability measured rather than assumed, in both directions. No test in the suite leaves two
+failed audiences under one brief, so the unscoped form was not failing today. The mechanism is real
+though: two such rows are legal (the lease covers `'building'` only; nothing constrains `'failed'`),
+and with a pair present Postgres refuses — `could not create unique index ... Key (brief_id)=(...)
+is duplicated`. The first unrelated test to persist that pair would have broken this one for a
+reason having nothing to do with the mapping it pins.
+
+The predicate now also carries `AND brief_id = '<this brief>'::uuid` and the index name carries the
+brief id, so neither can collide with another test or an earlier run. The brief id is interpolated
+because `CREATE INDEX` takes no bind parameters; it is a UUID Postgres minted and the test read back
+through `RETURNING`, and it is re-parsed with `uuid.Parse` first so a later change to the helper
+cannot quietly make this a place an arbitrary string reaches DDL.
+
+## A unit test so the witness cannot skip
+
+`TestAudienceLeaseMappingIgnoresOtherUniqueIndexes` is the stronger test — only a real server proves
+a partial unique index populates `ConstraintName` — but it SKIPS when `TEST_DATABASE_URL` is unset,
+and a skipped test prints `ok`. `TestIsUniqueViolationOn` is a table-driven unit test over synthetic
+`*pgconn.PgError` values (matching name, a different name under the same 23505, an empty name, the
+right name under 23514, a 23503, a non-`PgError`, nil) that runs everywhere. It includes a wrapped
+case deliberately: every production caller reaches the helper through at least one `%w`, so a
+version matching on the concrete type would pass a bare-value test and fail on every real row.
+Degrading the helper to SQLSTATE-only fails two of its subtests.
 
 ## Verification
 

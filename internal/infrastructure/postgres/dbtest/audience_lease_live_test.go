@@ -6,10 +6,12 @@ package dbtest_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -302,6 +304,25 @@ func TestAudienceBuildLeaseRefusesUpdateBackToBuilding(t *testing.T) {
 // by platform instead would not work: migration 000006 CHECKs platform IN ('hubspot'),
 // so every audience row this table can hold shares the lease's second key column.
 //
+// The probe's predicate is ALSO pinned to this test's own brief, and its name carries that
+// brief's id, because an index is a schema-wide object while dbtest.go:66-72 requires the
+// opposite of every identifier a test writes: "Tests therefore share a schema and MUST NOT
+// share rows — use UniqueID for every identifier a test writes, so two tests (or two runs
+// against the same database) cannot collide." An unscoped `WHERE status = 'failed'` spans
+// every failed audience the shared database holds, including rows other tests and earlier
+// runs left behind, so it is exactly such a shared identifier.
+//
+// Be honest about the reachability, because it is not what the hazard sounds like: no test
+// in this suite leaves two failed audiences under ONE brief, so the unscoped form did not
+// actually fail — measured, not assumed. What was measured is the mechanism. Two failed
+// rows under one brief are legal (the lease covers 'building' only, and nothing else
+// constrains 'failed'), and with such a pair present CREATE UNIQUE INDEX refuses:
+// `could not create unique index ... Key (brief_id)=(...) is duplicated`. So this test
+// would have started failing on the first unrelated test that persisted that pair, for a
+// reason having nothing to do with the mapping it exists to pin. Scoping costs nothing —
+// the probe is still a second unique index on the table, and still the only thing that can
+// refuse the second insert — so there is no reason to leave that trap armed.
+//
 // Asserting only "not the sentinel" would pass if the insert failed for some unrelated
 // reason — that CHECK included — so the test also asserts the error really is a 23505
 // naming the probe.
@@ -324,11 +345,22 @@ func TestAudienceLeaseMappingIgnoresOtherUniqueIndexes(t *testing.T) {
 		t.Fatalf("first audience: %v", err)
 	}
 
-	// Created without IF NOT EXISTS: the package shares one migrated schema, so an index
-	// leaked by an earlier run must fail loudly here rather than be silently adopted.
-	const probeIndex = "uq_probe_second_unique_index_on_campaign_audiences"
+	// Created without IF NOT EXISTS, and named for this brief: a leftover index from an
+	// earlier run cannot be silently adopted as this one, and cannot collide with it either.
+	// The cleanup below still matters — a leak accumulates in the shared schema even though
+	// it can no longer break a later run.
+	//
+	// briefID is interpolated rather than bound: CREATE INDEX takes no parameters. It is a
+	// UUID Postgres itself minted and this test read straight back through RETURNING, never
+	// input from anywhere else, and it is re-parsed below so a change to that helper cannot
+	// quietly turn this into a place a string reaches DDL.
+	if _, err := uuid.Parse(briefID); err != nil {
+		t.Fatalf("brief id %q is not a UUID, so it cannot be interpolated into DDL: %v", briefID, err)
+	}
+	probeIndex := "uq_probe_second_unique_index_" + strings.ReplaceAll(briefID, "-", "")
 	if _, err := pool.Exec(ctx, `CREATE UNIQUE INDEX `+probeIndex+
-		` ON campaign_audiences (brief_id) WHERE status = 'failed'`); err != nil {
+		` ON campaign_audiences (brief_id) WHERE status = 'failed' AND brief_id = '`+
+		briefID+`'::uuid`); err != nil {
 		t.Fatalf("create the probe index: %v", err)
 	}
 	t.Cleanup(func() {
