@@ -41,7 +41,9 @@ no impact on existing documentation.
 
 ## Follow-up: the entity guard rejected every literal ampersand
 
-**Kind:** Fix
+**Fix** — the entity guard
+asked "is there an ampersand?" and reported the answer as "is this an entity?", so a concept
+file genuinely named with a bare `&` was refused for an entity it does not contain.
 
 The guard above was `strings.ContainsRune(destinationPath(link), '&')`, which asks "is
 there an ampersand?" and calls the answer "is this an entity?". Copilot found the gap in
@@ -71,7 +73,9 @@ gains `thing&period;md` and `thing&#x2e;md` alongside the decimal case.
 
 ## Follow-up 2: the fix for the over-rejection over-rejected somewhere else
 
-**Kind:** Fix
+**Fix** — moving
+the check onto the raw destination made the numeric entity visible, but dragged the query and
+the fragment in with it, refusing entities in the two regions that never reach path resolution.
 
 Cursor Bugbot, on the commit that fixed the bare-`&` over-rejection above. Moving the check off
 `destinationPath` and onto the RAW destination made the numeric form visible — it hides behind
@@ -101,6 +105,10 @@ with the "has an HTML entity" diagnostic on a link that resolves fine; matching 
 exists to prevent.
 
 ## Round: what a destination DENOTES decides scope; how it is SPELT decides workability
+
+**Fix** — `classifyDestination` judged the RAW text, so a destination that DENOTES a site-root or
+absolute URL through a character reference was classified local and refused by a guard that has
+no business there.
 
 The fifth over-rejection, and the first that was hiding a second, worse bug behind itself.
 
@@ -150,6 +158,9 @@ decode fails all three with "has an HTML entity in its link destination path", a
 somewhere harmless.
 
 ## Round: a separator can be spelt without being denoted, and denoted without being spelt
+
+**Fix** — `pathRegion` looked for `#` and `?` in the raw spelling, so an entity that denotes
+either one left the path region overrunning into a fragment or query the validator never resolves.
 
 Two more over-rejections, both about the boundary between a destination's path and everything
 after it, and both found by a reviewer rather than by the tests.
