@@ -7,10 +7,19 @@ are recorded here because the reasoning for the second one is the part worth kee
 (dealako, `internal/service/email_copy.go:159`)
 
 The body-length bound in `parseEmailCopyResponse` counted runes by materialising a `[]rune`
-— an allocation of 4 bytes per rune of an up-to-8000-rune body, thrown away one line later.
-Every other rune count in this file (the prompt bounds at lines 257, 258, 271) already used
-`utf8.RuneCountInString`, which counts without allocating. Same result, so this is style plus
-garbage, not a defect.
+— an allocation of 4 bytes per rune, thrown away one line later. Every other rune count in
+this file (the prompt bounds in `buildEmailCopyPrompt`) already used `utf8.RuneCountInString`,
+which counts without allocating. Same result.
+
+**8000 is the wrong number to size that allocation by**, which is the part worth writing down.
+`maxBodyRunes` bounds what the function ACCEPTS; it does not bound `parsed.Body`, because
+`parsed.Body` is whatever the model returned and the check exists precisely to reject it when
+it is larger. The real ceiling is `internal/platform/llm`'s `maxResponseBody = 8 << 20`, so the
+discarded slice could reach ~32 MiB — a thousandfold more than the accepted case, and reached
+on exactly the oversized-body path the guard is there for. So the allocation was proportional
+to model-controlled input rather than to the limit, which makes this a little more than style;
+still not a defect (the 8 MiB read cap keeps it bounded), but the reason it is worth removing
+is not the one the nit was filed under.
 
 ## 2. `llmCalled` is now an `atomic.Bool` (Cursor, `internal/service/email_copy_test.go`)
 
