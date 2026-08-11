@@ -1561,8 +1561,6 @@ func TestBriefETagIsQuoted(t *testing.T) {
 	}
 }
 
-func strPtr(s string) *string { return &s }
-
 // metricsOnlyDispatcher implements PlatformDispatcher + MetricsReader, recording the
 // ReadMetrics call. Dispatch is never expected to be exercised by these tests.
 type metricsOnlyDispatcher struct {
