@@ -8,7 +8,7 @@ are recorded here because the reasoning for the second one is the part worth kee
 
 The body-length bound in `parseEmailCopyResponse` counted runes by materialising a `[]rune`
 — an allocation of 4 bytes per rune, thrown away one line later. Every other rune count in
-this file (the prompt bounds in `buildEmailCopyPrompt`) already used `utf8.RuneCountInString`,
+this file (the prompt bounds in `GenerateEmailCopy`) already used `utf8.RuneCountInString`,
 which counts without allocating. Same result.
 
 **8000 is the wrong number to size that allocation by**, which is the part worth writing down.
