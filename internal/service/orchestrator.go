@@ -902,16 +902,29 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			// because that is how both synchronous splits already carry it
 			// (brief.go:577, brief.go:914, connection.go:276) and this line pages the
 			// same operator with the same distinction.
+			//
+			// project_id is on every arm because `run` is parented on o.rootCtx
+			// (Start, above: "the only context in play is o.rootCtx"), so these
+			// records inherit NO request-scoped fields — unlike the synchronous
+			// counterpart at connection.go:312, which gets its project from the
+			// request. Without it, `reason=account_not_selected` names a defect
+			// but not the connection to repair, and an operator has to resolve the
+			// job id against the database to act. The slug is safe to log: it is a
+			// URL path segment, not credential-derived, and the synchronous split
+			// already logs it beside the same reason token.
 			const preCreateMsg = "platform dispatch failed before upstream create (claim released)"
 			switch {
 			case errors.Is(derr, domain.ErrSystemConnectionNotUsable):
 				slog.ErrorContext(ctx, "the LF system connection is not usable; platform campaign creation is failing for every project without its own connection (claim released)",
-					"platform", p, "job_id", jobID, "reason", unusableConnectionReason(derr))
+					"platform", p, "job_id", jobID, "project_id", brief.ProjectID,
+					"reason", unusableConnectionReason(derr))
 			case errors.Is(derr, domain.ErrConnectionNotUsable):
 				slog.ErrorContext(ctx, preCreateMsg,
-					"platform", p, "job_id", jobID, "reason", unusableConnectionReason(derr))
+					"platform", p, "job_id", jobID, "project_id", brief.ProjectID,
+					"reason", unusableConnectionReason(derr))
 			default:
-				slog.ErrorContext(ctx, preCreateMsg, "platform", p, "job_id", jobID, "error", derr)
+				slog.ErrorContext(ctx, preCreateMsg,
+					"platform", p, "job_id", jobID, "project_id", brief.ProjectID, "error", derr)
 			}
 			releaseClaim()
 		} else {

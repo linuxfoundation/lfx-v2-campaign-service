@@ -1926,18 +1926,28 @@ func TestOrchestrator_PreCreateFailureLogsAClassifiedReason(t *testing.T) {
 		}
 		// Filtered by job id: slog.Default is process-wide and a sibling test's dispatch
 		// goroutine can still be draining into this handler.
-		var reason, gotJob string
+		var reason, gotJob, gotProject string
 		rec.Attrs(func(a slog.Attr) bool {
 			switch a.Key {
 			case "reason":
 				reason = a.Value.String()
 			case "job_id":
 				gotJob = a.Value.String()
+			case "project_id":
+				gotProject = a.Value.String()
 			}
 			return true
 		})
 		if gotJob != id {
 			continue
+		}
+		// The reason names the DEFECT; the project names the connection carrying it. run is
+		// parented on o.rootCtx (Start), so nothing request-scoped survives into this record
+		// and the attribute has to be passed explicitly — without it an operator holding
+		// reason=account_not_selected still has to resolve the job id against the database
+		// before they can repair anything.
+		if gotProject != brief.ProjectID {
+			t.Errorf("pre-create dispatch failure logged project_id=%q, want %q", gotProject, brief.ProjectID)
 		}
 		if reason != "account_not_selected" {
 			t.Fatalf("pre-create dispatch failure logged reason=%q, want \"account_not_selected\". "+
