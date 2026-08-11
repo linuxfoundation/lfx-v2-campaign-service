@@ -148,3 +148,28 @@ decode fails all three with "has an HTML entity in its link destination path", a
 "&sol;spec.md" ... but the file's frontmatter description is "The decoy the bullet never named."`
 — the wrong-file comparison, caught only because the decoy was placed at the trap rather than
 somewhere harmless.
+
+## Round: a separator can be spelt without being denoted, and denoted without being spelt
+
+Two more over-rejections, both about the boundary between a destination's path and everything
+after it, and both found by a reviewer rather than by the tests.
+
+`pathRegion` looked for `#` and `?` in the RAW spelling. `&num;` and `&quest;` denote those
+characters without spelling either, so CommonMark resolves `thing.md&num;usage` exactly like
+`thing.md#usage` — the reference lives in the fragment, the path is a bare `thing.md`, and the
+bullet resolves and compares with nothing decoded. Reporting a path entity there refused a link
+that works. This is the entity-in-the-query round again, and it opened the moment the previous
+round decided to decode for classification: deciding what a destination DENOTES raises the
+question of separators that are denoted rather than spelt.
+
+The mirror case is `&#00000046;`. CommonMark admits 1–7 decimal digits and 1–6 hexadecimal ones;
+`html.UnescapeString` decodes longer runs too. Eight digits therefore stay literal in a renderer
+and decoded here — so the validator saw a reference, and the renderer sees a `#` beginning a
+fragment over the path `thing&`, which names no concept file. The bullet was never this
+validator's business, and it was refused rather than skipped. `entityRefPattern` now carries
+CommonMark's bounds. Named references need none: `charRef` confirms them against the HTML5 table,
+which is finite.
+
+One scan settles both, because they are the same question asked of each position: does a
+separator begin here, by spelling or by denotation? The two directions cancel — a reference is
+skipped whole where it merely SPELLS a `#`, and cuts the path where it DENOTES one.

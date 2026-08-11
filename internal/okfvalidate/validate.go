@@ -171,7 +171,16 @@ func destinationPath(link string) string {
 // entity table, so that text stays literal and `research&notAnHtmlEntity;.md` is a path
 // this validator supports. Every match is therefore confirmed by charRef before it
 // counts.
-var entityRefPattern = regexp.MustCompile(`&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);`)
+//
+// The DIGIT COUNTS are CommonMark's, not Go's, and the difference is load-bearing.
+// CommonMark admits 1–7 decimal digits and 1–6 hexadecimal ones; html.UnescapeString
+// decodes longer runs too, so an unbounded pattern reported `thing&#00000046;md` as
+// carrying a reference. CommonMark leaves that text literal, which makes its `#` an
+// ordinary fragment marker and the path `thing&` — not a `.md` target, so the bullet was
+// never this validator's business and the rejection was a third over-rejection of the kind
+// hasEntityRef prices. Named references need no bound: charRef confirms them against the
+// HTML5 table, which is finite.
+var entityRefPattern = regexp.MustCompile(`&(#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]*);`)
 
 // charRef reports whether an entityRefPattern match is a real character reference rather
 // than merely one shaped like it.
@@ -271,29 +280,39 @@ func hasEntityRef(link string) bool {
 // pathRegion returns the part of a destination that could name a file, for the purpose of
 // looking for character references in it.
 //
-// It differs from destinationPath in exactly one way, and only for a destination this
-// validator is about to reject anyway: the `#` of a numeric character reference is not a
-// fragment marker. Resolution never sees such a path — the bullet is refused first — so
-// destinationPath is left alone rather than taught a distinction its own callers never need.
+// It differs from destinationPath in two ways, and a separator is at the heart of both: a
+// character reference DENOTES one separator it does not spell, and SPELLS one it does not
+// denote.
+//
+//   - The `#` of a numeric reference is spelt but not denoted. `thing&#46;md` reaches
+//     destinationPath as `thing&`, hiding the very form that must be reported. Resolution
+//     never sees such a path — the bullet is refused first — so destinationPath is left
+//     alone rather than taught a distinction its own callers never need.
+//   - `&num;` and `&quest;` denote `#` and `?` without spelling either. CommonMark resolves
+//     `thing.md&num;usage` exactly like `thing.md#usage`, so the reference sits in the
+//     FRAGMENT, not the path, and reporting it rejected a link that would have synced
+//     correctly — the same over-rejection class priced on hasEntityRef, arriving by a new
+//     route the moment classification began decoding.
+//
+// One scan settles both, because the two are the same question asked of each position: does
+// a separator BEGIN here, by spelling or by denotation?
 func pathRegion(link string) string {
-	if i := strings.IndexByte(link, '?'); i >= 0 {
-		link = link[:i]
-	}
-	// Spans of the remaining text that are character references. A `#` inside one belongs to
-	// the reference, not to a fragment. Shape-only matches are excluded for the same reason
-	// hasEntityRef excludes them: a `#` in something CommonMark leaves literal is a fragment
-	// marker like any other.
+	// Shape-only matches are excluded for the same reason hasEntityRef excludes them: text
+	// CommonMark leaves literal carries its `#` as a fragment marker like any other.
 	refs := charRefSpans(link)
-	inRef := func(i int) bool {
-		for _, r := range refs {
-			if i >= r[0] && i < r[1] {
-				return true
-			}
-		}
-		return false
+	refAt := make(map[int][]int, len(refs))
+	for _, r := range refs {
+		refAt[r[0]] = r
 	}
 	for i := 0; i < len(link); i++ {
-		if link[i] == '#' && !inRef(i) {
+		if r, ok := refAt[i]; ok {
+			if d := html.UnescapeString(link[r[0]:r[1]]); d == "#" || d == "?" {
+				return link[:i]
+			}
+			i = r[1] - 1 // Skip the reference whole; a `#` inside it belongs to the reference.
+			continue
+		}
+		if link[i] == '#' || link[i] == '?' {
 			return link[:i]
 		}
 	}

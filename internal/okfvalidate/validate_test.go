@@ -646,6 +646,89 @@ func TestValidateIndexBulletAcceptsAnEntityShapedLiteral(t *testing.T) {
 	}
 }
 
+// TestValidateIndexBulletAcceptsAnEntityDenotingASeparator pins the SIXTH over-rejection, and
+// the one this PR's own decoding work created the opening for.
+//
+// `&num;` and `&quest;` denote `#` and `?` without spelling either, so CommonMark resolves
+// `thing.md&num;usage` exactly like `thing.md#usage`: the reference sits in the FRAGMENT and the
+// path is a plain `thing.md` that this validator resolves and compares without decoding anything.
+// pathRegion looked for separators in the raw spelling alone, found none, and reported a path
+// entity in a link that works — the entity-in-the-query round again, arriving by the route that
+// opened the moment classification began decoding.
+//
+// The fixtures carry a DRIFTED description, so the assertion is that the link was resolved and
+// compared rather than merely not refused on format.
+func TestValidateIndexBulletAcceptsAnEntityDenotingASeparator(t *testing.T) {
+	for name, link := range map[string]string{
+		"a named fragment marker":   "thing.md&num;usage",
+		"a named query marker":      "thing.md&quest;v=2",
+		"a numeric fragment marker": "thing.md&#35;usage",
+		"a numeric query marker":    "thing.md&#63;v=2",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeConcept(t, filepath.Join(dir, "thing.md"), "Does the thing.")
+			writeFile(t, filepath.Join(dir, "index.md"),
+				"# Bundle\n\n* [Thing]("+link+") - Says something else.\n")
+
+			errs := Validate(dir)
+			if len(errs) != 1 {
+				t.Fatalf("Validate() = %v, want exactly the description-drift error — %q denotes a "+
+					"separator, so the path is a bare thing.md that resolves", errs, link)
+			}
+			if strings.Contains(errs[0].Error(), "HTML entity") {
+				t.Fatalf("Validate() error = %q, want the description diagnostic: the reference is in "+
+					"the fragment or query, not the path", errs[0])
+			}
+			if !strings.Contains(errs[0].Error(), "description") {
+				t.Errorf("Validate() error = %q, want the description-sync diagnostic", errs[0])
+			}
+		})
+	}
+}
+
+// TestValidateIndexBulletAcceptsAnOverlongNumericReference pins the FIFTH over-rejection: a
+// numeric reference longer than CommonMark admits.
+//
+// CommonMark takes 1–7 decimal digits and 1–6 hexadecimal ones. `&#00000046;` has eight, so it
+// stays literal — which makes its `#` an ordinary fragment marker and the destination's path
+// `thing&`, a target naming no concept file. Bullets pointing outside the bundle are skipped, and
+// this one should have been. html.UnescapeString decodes the longer run anyway, so an unbounded
+// pattern saw a reference where the renderer sees none and refused a bullet the validator has no
+// claim over.
+//
+// Zero errors is the whole assertion: the description is drifted precisely so that a bullet
+// wrongly treated as naming thing.md would be caught here too.
+func TestValidateIndexBulletAcceptsAnOverlongNumericReference(t *testing.T) {
+	for name, link := range map[string]string{
+		"eight decimal digits":  "thing&#00000046;md",
+		"seven hexadecimal":     "thing&#x000002e;md",
+		"a bounded one is real": "thing&#46;md",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeConcept(t, filepath.Join(dir, "thing.md"), "Does the thing.")
+			writeFile(t, filepath.Join(dir, "index.md"),
+				"# Bundle\n\n* [Thing]("+link+") - Says something else.\n")
+
+			errs := Validate(dir)
+			if name == "a bounded one is real" {
+				// The reverse direction, so the bound cannot be satisfied by dropping the guard.
+				if len(errs) != 1 || !strings.Contains(errs[0].Error(), "HTML entity") {
+					t.Fatalf("Validate() = %v, want the HTML-entity diagnostic: %q is within "+
+						"CommonMark's seven decimal digits and decodes to thing.md", errs, link)
+				}
+				return
+			}
+			if len(errs) != 0 {
+				t.Fatalf("Validate() = %v, want none — CommonMark leaves %q literal, so its `#` "+
+					"begins a fragment and the path is %q, which names no concept file",
+					errs, link, "thing&")
+			}
+		})
+	}
+}
+
 // TestValidateIndexBulletAcceptsAnEntityInAnExternalDestination is the entity guard's FOURTH
 // over-rejection, after the bare `&`, the entity in a query and the entity-shaped literal.
 //
