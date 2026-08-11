@@ -202,6 +202,21 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   rather than mere existence, because a failed concurrent build leaves the NAME in place
   and `IF NOT EXISTS` would then skip the rebuild while reporting success.
 
+- `000019` — `updated_by` JSONB on `campaign_audiences`. Only the one column: that table
+  has carried `created_by` since `000005`, and `000015` recorded the missing half as a
+  known gap. This version moved twice before landing, and the moves are the lesson.
+  Migrations are numbered against a snapshot of `main` that a concurrent branch can
+  invalidate, and golang-migrate records only the HIGHEST applied version — a lower number
+  arriving later is skipped silently and permanently, so a collision surfaces not as an
+  error but as a missing column. It was `000017` until #93 merged and took that number,
+  then `000018` until #106 (the lease above) was found to hold it. It moved rather than
+  #106's on the REFERENCE COUNT: #106's number is named in `pool.go`'s version-forcing
+  recovery path and in three of its tests (`migration 000018: force 17`), whereas this one
+  was named in a single test and two documentation lines. **Renumber the branch with the
+  fewest references to the number, not the branch you happen to be in** — a migration
+  version leaks into prose and recovery code, and the leak, not the file name, is the cost.
+  See *Migration numbering* below.
+
 ### `Migrate` refuses to succeed over an INVALID index
 
 The hazard above cannot be closed by a test alone, because it is a SEQUENCE that ends in
@@ -450,6 +465,8 @@ so every ad platform reports one identity no matter who acted. The platform can
 therefore never answer "who did this", and if this service does not record it, the
 information exists nowhere. `campaign_briefs.created_by` / `updated_by` are that record.
 
+### Briefs
+
 Both are JSONB holding a `model.Actor` (`{name, email, username}`), marshalled by the
 same `marshalActor`/`unmarshalActor` pair the connection tables use (`connection_repo.go`),
 and populated from `actorFromCtx` — the principal `JWTAuth` decodes out of the bearer token.
@@ -570,6 +587,47 @@ claims could not be decoded, still writes. Losing the attribution is bad; refusi
 write over it would turn a token-decoding regression into a total outage of brief
 creation. Neither column is exposed on the Goa surface or in the index payload, matching
 the existing `approved_by` precedent.
+
+### Audiences
+
+`campaign_audiences` carries the same pair and the same three properties, pinned by the
+same shape of test in `audience_repo_test.go`. `createAudienceQuery`,
+`createAudienceForApprovedBriefQuery` and `updateAudienceQuery` are package constants for
+exactly that reason.
+
+Two things are specific to this table:
+
+- **Both inserts stamp an actor, including the BUILD path.** `BuildAudience` runs under a
+  human's HTTP request, so the person who started a build that creates real HubSpot lists
+  — and spends money — is recorded. Treating it as a system write because a *background*
+  step follows would lose the only record of who started it.
+- **The build's progress writes carry the actor FORWARD rather than restamping.**
+  `BuildAudience` passes the row returned by the insert straight back to `UpdateAudience`,
+  so `updated_by` keeps naming the initiator. Moving the build off the request goroutine
+  would NOT by itself change that — campaign creation is already asynchronous and still
+  attributes correctly, by capturing the decoded actor while the request context is in hand
+  and threading it down (see the campaign pattern above). Detachment is not what breaks
+  attribution; absence of an initiator is. The column has to go NULL only where there was no
+  human request to capture from in the first place — a separately scheduled retry, a cron
+  sweep, a startup reconciliation — because there the alternative is asserting a person who
+  was not there.
+
+The service handler stamps the editor onto the row it LOADED, not onto the incoming patch:
+the loaded row already carries the PREVIOUS editor, so writing it back unchanged would
+silently re-assert them as the author of somebody else's edit. That is the failure mode the
+second edit in `TestAudienceActor_UpdateStampsTheEditorNotTheCreator` exists to catch —
+a fill-only-if-empty stamp passes a single-edit test and is wrong from the second edit on.
+
+## Migration numbering
+
+golang-migrate records only the HIGHEST applied version and never applies a lower one, so a
+branch that claims `000017` while an unmerged branch holds `000016` makes that migration
+unapplicable forever if it merges second — silently, since the tool reports success. The
+numbering guards live in `outbox_repo_test.go` (`TestMigrations_NoVersionGaps`,
+`TestMigrations_UniqueNumbering`), with `allowedVersionGaps` as the documented escape hatch
+for a transitional gap and `TestMigrations_AllowedVersionGapsAreStillOpen` to stop an entry
+outliving the branch that justified it. Choosing a version means checking every OPEN branch,
+not just `main`.
 
 ## Live-database tests (`dbtest/`)
 

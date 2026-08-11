@@ -436,8 +436,9 @@ make run           # build and run locally (needs PG* env; see above)
 
 ### MegaLinter (local)
 
-CI runs MegaLinter on pull requests (`.github/workflows/mega-linter.yaml`,
-Go flavor `v9.1.0`). Config lives in `.mega-linter.yml`. To reproduce
+CI runs MegaLinter on pull requests and merge-queue entries
+(`.github/workflows/mega-linter.yaml`, Go flavor `v9.1.0`). Config lives in
+`.mega-linter.yml`. To reproduce
 locally with Docker or OrbStack:
 
 ```sh

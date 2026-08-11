@@ -272,20 +272,31 @@ type GetCampaignResponseBody struct {
 type GetCampaignMetricsResponseBody struct {
 	// Campaign UUID
 	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
-	// ID returned by the ad platform
+	// The id the CHANNEL returned when the campaign was created. On an ad platform
+	// that is its campaign id; on the email channel it is the HubSpot
+	// marketing-email id of the cloned draft, which is what the metrics read
+	// queries by.
 	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
-	// Platform-agnostic reporting window the metrics were read for
+	// The reporting window that was REQUESTED. On the ad platforms it is also the
+	// period the counters cover. On the email channel it is not: it selects which
+	// emails are in scope by their send date, and the counters are then that
+	// email's totals to date — see the email object.
 	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
-	// Impressions in window
+	// Impressions over the window on an ad platform; opens to date on the email
+	// channel
 	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
-	// Clicks in window
+	// Clicks over the window on an ad platform; clicks to date on the email channel
 	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
-	// Cost in window, in micro-units of the platform's native currency
+	// Cost over the window, in micro-units of the platform's native currency
 	// (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter,
-	// etc.)
+	// etc.). Always 0 on the email channel, which bills no per-send cost — do not
+	// blend that 0 into a cross-channel cost-per-acquisition.
 	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
 	// Clicks/Impressions, 0 when Impressions is 0
 	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
+	// Email-channel counters. Present only for the email channel (HubSpot); absent
+	// for every ad platform.
+	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
 }
 
 // GenerateEmailCopyResponseBody is the type of the
@@ -1284,6 +1295,22 @@ type CampaignCreateInputRequestBody struct {
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 }
 
+// EmailMetricsResponseBody is used to define fields on response body types.
+type EmailMetricsResponseBody struct {
+	// Emails handed to the delivery pipeline, to date
+	Sent *int64 `form:"sent,omitempty" json:"sent,omitempty" xml:"sent,omitempty"`
+	// Emails the receiving server accepted, to date
+	Delivered *int64 `form:"delivered,omitempty" json:"delivered,omitempty" xml:"delivered,omitempty"`
+	// Opens to date (mirrors impressions)
+	Opens *int64 `form:"opens,omitempty" json:"opens,omitempty" xml:"opens,omitempty"`
+	// Clicks to date (mirrors clicks)
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Bounced emails, to date
+	Bounces *int64 `form:"bounces,omitempty" json:"bounces,omitempty" xml:"bounces,omitempty"`
+	// Unsubscribes, to date
+	Unsubscribes *int64 `form:"unsubscribes,omitempty" json:"unsubscribes,omitempty" xml:"unsubscribes,omitempty"`
+}
+
 // CampaignUpdateInputRequestBody is used to define fields on request body
 // types.
 type CampaignUpdateInputRequestBody struct {
@@ -2119,6 +2146,9 @@ func NewGetCampaignMetricsCampaignMetricsOK(body *GetCampaignMetricsResponseBody
 		CostMicros:         *body.CostMicros,
 		Ctr:                *body.Ctr,
 	}
+	if body.Email != nil {
+		v.Email = unmarshalEmailMetricsResponseBodyToLfxv2campaignservicebriefsEmailMetrics(body.Email)
+	}
 
 	return v
 }
@@ -2864,6 +2894,11 @@ func ValidateGetCampaignMetricsResponseBody(body *GetCampaignMetricsResponseBody
 	if body.Window != nil {
 		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days" || *body.Window == "last_14_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
+		}
+	}
+	if body.Email != nil {
+		if err2 := ValidateEmailMetricsResponseBody(body.Email); err2 != nil {
+			err = goa.MergeErrors(err, err2)
 		}
 	}
 	return
@@ -4109,6 +4144,30 @@ func ValidateCampaignCreateInputRequestBody(body *CampaignCreateInputRequestBody
 		if !(e == "google-ads" || e == "linkedin-ads" || e == "meta-ads" || e == "reddit-ads" || e == "twitter-ads" || e == "microsoft-ads" || e == "hubspot") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.platforms[*]", e, []any{"google-ads", "linkedin-ads", "meta-ads", "reddit-ads", "twitter-ads", "microsoft-ads", "hubspot"}))
 		}
+	}
+	return
+}
+
+// ValidateEmailMetricsResponseBody runs the validations defined on
+// email-metricsResponseBody
+func ValidateEmailMetricsResponseBody(body *EmailMetricsResponseBody) (err error) {
+	if body.Sent == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("sent", "body"))
+	}
+	if body.Delivered == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("delivered", "body"))
+	}
+	if body.Opens == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("opens", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.Bounces == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("bounces", "body"))
+	}
+	if body.Unsubscribes == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("unsubscribes", "body"))
 	}
 	return
 }
