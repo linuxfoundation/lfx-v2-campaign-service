@@ -100,12 +100,18 @@ func (r *fakeJobRepo) FailStuckJobs(_ context.Context, jobErr string) (int64, er
 type fakeCampaignRepo struct {
 	mu       sync.Mutex
 	upserted []*model.Campaign
+	// adopted records campaigns bound via AdoptCampaign, kept separate from upserted so a
+	// test can tell "bound an existing upstream campaign" from "wrote one we created".
+	adopted []*model.Campaign
 	// indexPayloads records the co-committed index messages, so a test can assert a campaign is
 	// indexed rather than only persisted.
 	indexPayloads [][]byte
 	// existing maps briefID+"|"+platform to a pre-existing campaign, letting a
 	// test simulate a brief already dispatched to a platform (idempotency guard).
 	existing map[string]*model.Campaign
+	// adoptBriefVersion, when non-zero, is the brief version AdoptCampaign's locked re-read
+	// would find. A mismatch against the caller's expectedVersion is ErrStaleApproval.
+	adoptBriefVersion int64
 	// byPlatformErr, when set, is returned by GetCampaignByPlatform to simulate a
 	// transient lookup failure.
 	byPlatformErr error
@@ -206,6 +212,50 @@ func (r *fakeCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, 
 	r.existing[c.BriefID+"|"+string(c.Platform)] = c
 	return c, nil
 }
+
+// AdoptCampaign mirrors CampaignRepo.AdoptCampaign: an INSERT that DECLINES rather than
+// updating when the (brief, platform) pair already has a live row. Modelling the refusal is
+// the point — a fake that simply overwrote, as UpsertCampaign does, would let a handler that
+// clobbers an existing binding pass every adoption test.
+// It also models the two guards the real statement gets from the database and not from Go: the
+// second live unique index (one upstream campaign, one live binding per project) and the locked
+// re-read of the brief's approval. A fake missing either lets a handler that skips them pass.
+func (r *fakeCampaignRepo) AdoptCampaign(_ context.Context, c *model.Campaign, expectedVersion int64, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.adoptBriefVersion != 0 && r.adoptBriefVersion != expectedVersion {
+		return nil, domain.ErrStaleApproval
+	}
+	key := c.BriefID + "|" + string(c.Platform)
+	if existing, ok := r.existing[key]; ok && existing.Status != "deleted" {
+		return nil, fmt.Errorf("%w: brief %s already has a live %s campaign", domain.ErrConflict, c.BriefID, c.Platform)
+	}
+	for _, other := range r.existing {
+		// No project comparison: 000020's index is keyed (platform, platform_campaign_id)
+		// only, and a fake that filtered by project would accept a binding the real schema
+		// rejects -- the exact cross-project collision the global key exists for.
+		if other.Status != "deleted" &&
+			other.Platform == c.Platform && other.PlatformCampaignID == c.PlatformCampaignID {
+			return nil, fmt.Errorf("%w: %s campaign %s is bound to brief %s",
+				domain.ErrPlatformCampaignAlreadyBound, c.Platform, c.PlatformCampaignID, other.BriefID)
+		}
+	}
+	c.Version = 1
+	if indexPayload != nil {
+		payload, perr := indexPayload(c)
+		if perr != nil {
+			return nil, perr
+		}
+		r.indexPayloads = append(r.indexPayloads, payload)
+	}
+	if r.existing == nil {
+		r.existing = map[string]*model.Campaign{}
+	}
+	r.existing[key] = c
+	r.adopted = append(r.adopted, c)
+	return c, nil
+}
+
 func (r *fakeCampaignRepo) ReplaceCampaign(context.Context, *model.Campaign, int64, domain.CampaignLockToken, domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	return nil, errors.New("unused")
 }

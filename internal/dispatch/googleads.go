@@ -515,6 +515,67 @@ func (d *GoogleAdsDispatcher) resolveGoogleAdsClient(ctx context.Context, projec
 	if err != nil {
 		return nil, err
 	}
+	return d.googleAdsClientFor(projectID, res)
+}
+
+// resolveOwnedGoogleAdsClient is resolveGoogleAdsClient for the one path that must NOT accept
+// the LF system fallback: adoption.
+//
+// Every other platform call names a campaign this project already has a ROW for, and the row —
+// scoped by project_id — is the authorization. Adoption's caller instead names an ARBITRARY
+// upstream id, and credsSource.resolve deliberately falls back to the single LF-owned system
+// account for any project with no connection of its own. Under that fallback every such project
+// shares ONE ad account, so project A could name a campaign project B created there, bind it to
+// its own brief, and thereafter read its spend and pause it. The account-mismatch guards do not
+// help: both projects resolve to the same customer id, which is the whole problem.
+//
+// It therefore calls resolveOwned, which does not consult the system scope, rather than calling
+// resolve and rejecting a result tagged fromSystem. The difference is not stylistic: resolve
+// loads, validates and DECRYPTS the LF row before returning, so an LF credential that is missing
+// or no longer decrypts comes back as an error INSTEAD of a resolved value — a 500 about a row
+// this path would have refused anyway, for a caller whose remedy is simply to connect their own
+// ad account. Not looking is the only version of the refusal that stays correct as the fallback
+// grows new failure modes.
+//
+// There is no upstream metadata that would fix this instead. A campaign's name, labels and
+// budget are all set by whoever created it, so none of them is evidence of which project owns
+// it. Requiring a project-owned connection is the check that holds here, and it costs nothing
+// real: a project with no ad account of its own has no campaign of its own to adopt.
+//
+// It is worth being exact about what that establishes, because it is less than it looks.
+// Google Ads is ONE shared customer across every foundation (docs/architecture.md, "Account
+// Tenancy"), so two projects with their own connections still resolve the same account, and
+// this check does not stop one from naming the other's campaign. It cannot: that project's
+// credential already grants read and pause on every campaign in the customer, straight
+// through Google's API, so no rule applied here can be more restrictive than the credential
+// the call is made with. Account tenancy is where that boundary lives. What this check
+// removes is the case where a project holds NO credential at all and the fallback would have
+// lent it one. The service's own invariant — one upstream campaign, one brief — is enforced
+// where it can be: migration 000020's index, keyed globally rather than per project for
+// exactly this reason.
+func (d *GoogleAdsDispatcher) resolveOwnedGoogleAdsClient(ctx context.Context, projectID string, platform model.Provider) (*googleads.Client, error) {
+	res, err := d.creds.resolveOwned(ctx, projectID, platform)
+	if err != nil {
+		// resolveOwned never consults the LF system scope, so an absence here means the
+		// PROJECT has no connection — the one thing adoption requires. Returned unchanged it
+		// would land in the adopt switch's default arm: a 503 telling the caller the platform
+		// could not be reached. It was never contacted, and no amount of retrying will change
+		// that; the remedy is permanent and actionable, so it gets the 409 sentinel. Every
+		// OTHER failure (a repo error, an unusable project connection) is passed through,
+		// because those are genuinely different remedies.
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, fmt.Errorf("%w: project %s has no %s connection, and adoption cannot fall back to the LF system account: %w",
+				domain.ErrAdoptionRequiresOwnConnection, projectID, platform, err)
+		}
+		return nil, err
+	}
+	return d.googleAdsClientFor(projectID, res)
+}
+
+// googleAdsClientFor validates an already-resolved connection and builds the client. Split out
+// so the owned-connection check above can run BETWEEN resolution and client construction without
+// resolving (and decrypting) twice.
+func (d *GoogleAdsDispatcher) googleAdsClientFor(projectID string, res *resolved) (*googleads.Client, error) {
 	creds, accountID, err := validateGoogleAdsConnection(projectID, res)
 	if err != nil {
 		return nil, err
@@ -791,6 +852,74 @@ func (d *GoogleAdsDispatcher) ReadMetrics(ctx context.Context, projectID string,
 		CostMicros:  m.CostMicros,
 		Ctr:         m.Ctr,
 	}, nil
+}
+
+// LookupCampaign implements service.CampaignAdopter for Google Ads: it confirms that
+// platformCampaignID names a real, live campaign under the PROJECT'S OWN connection, so an
+// existing campaign can be bound to a brief without creating anything.
+//
+// It resolves the ordinary (non-discovery) client deliberately. Discovery credentials can
+// reach every account the login customer administers; adoption must be scoped to the one
+// account this project is connected to, or a caller could bind a campaign belonging to a
+// different project — or a different foundation — and then read its spend through this
+// service. The account check that ReadMetrics performs after the fact is unnecessary here
+// for the same reason it is unavailable: there is no stored row yet to compare against, so
+// the connection IS the scope, and googleads.GetCampaign issues its query against exactly
+// that customer.
+//
+// (nil, nil) means the campaign is genuinely absent under this connection — that is
+// googleads.GetCampaign's contract, and it distinguishes absence from every unverifiable
+// answer, each of which it returns as an error rather than an empty result.
+func (d *GoogleAdsDispatcher) LookupCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) (*model.PlatformCampaignRef, error) {
+	// Validate the platform campaign ID BEFORE resolving the connection. A malformed id is
+	// a permanent input fault regardless of connection state, so it should produce the same
+	// 400 error either way. Validating first avoids decrypting credentials for a request
+	// that can never succeed and guarantees the permanent fault masks any contingent one
+	// (like a missing or unusable connection).
+	if err := googleads.ValidateCampaignID(platformCampaignID); err != nil {
+		return nil, fmt.Errorf("%w: %w", domain.ErrInvalidPlatformCampaignID, err)
+	}
+
+	client, err := d.resolveOwnedGoogleAdsClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	ref, err := client.GetCampaign(ctx, platformCampaignID)
+	if err != nil {
+		// A malformed id never reached the network, so it is a 400 rather than the
+		// default "the platform could not be reached" 503 the caller would retry.
+		//
+		// This branch is UNREACHABLE as written: ValidateCampaignID above is the only
+		// producer of ErrNotACampaignID, GetCampaign reaches it by calling that same
+		// function on the same string, so anything the pre-check admits GetCampaign
+		// admits too. It stays because it is the mapping that keeps the two honest —
+		// if GetCampaign ever grows a validation the pre-check does not mirror, the
+		// result is still a 400 here rather than a retryable 503 for input that can
+		// never succeed. Deleting it would make that divergence silent.
+		if errors.Is(err, googleads.ErrNotACampaignID) {
+			return nil, fmt.Errorf("%w: %w", domain.ErrInvalidPlatformCampaignID, err)
+		}
+		return nil, fmt.Errorf("look up google ads campaign: %w", err)
+	}
+	if ref == nil {
+		return nil, nil
+	}
+	// ref.Status (ENABLED/PAUSED) is deliberately not carried across: reaching this line
+	// at all already means the campaign is live, because GetCampaign filters REMOVED
+	// server-side and errors on any status outside its known set rather than passing it
+	// on. Adoptability is decided here, in Google's vocabulary; the service layer never
+	// sees it. See model.PlatformCampaignRef.
+	// The resolved customer id travels with the ref so the adopted row records the account
+	// it was verified under, exactly as a created row does. googleAdsCreationCustomerID
+	// reads this back; without it every adopted row answers "unknown" and the
+	// account-mismatch guards in ReadMetrics and ToggleStatus wave it through.
+	scope, merr := json.Marshal(struct {
+		CustomerID string `json:"customerId"`
+	}{CustomerID: client.CustomerID()})
+	if merr != nil {
+		return nil, fmt.Errorf("look up google ads campaign: record account scope: %w", merr)
+	}
+	return &model.PlatformCampaignRef{ID: ref.ID, Name: ref.Name, Result: scope}, nil
 }
 
 // googleAdsCreationCustomerID recovers the ad account the campaign was CREATED under from

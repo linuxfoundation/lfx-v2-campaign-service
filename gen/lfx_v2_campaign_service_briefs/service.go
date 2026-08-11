@@ -35,6 +35,18 @@ type Service interface {
 	FetchEventURL(context.Context, *FetchEventURLPayload) (res *EventDetails, err error)
 	// Create campaigns across the selected platforms (async -> job).
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
+	// Bind a campaign that ALREADY exists on the ad platform to this brief. The
+	// platform is read, never written: the campaign must already exist under the
+	// project's connection, and nothing is created upstream. Returns 404 when the
+	// platform holds no such campaign, 409 when this brief already has a live
+	// campaign on that platform / that campaign is already bound to another brief
+	// (in any project, since several foundations share one upstream ad account) /
+	// the brief lost approval during the read / the project has no ad-platform
+	// connection of its own, and 400 when the platform has no adoption capability
+	// wired. An adopted campaign supports metrics, delete and pause; activation is
+	// refused, because adoption does not verify the targeting the activate guard
+	// requires.
+	AdoptCampaign(context.Context, *AdoptCampaignPayload) (res *Campaign, err error)
 	// Get one campaign under a brief; returns ETag.
 	GetCampaign(context.Context, *GetCampaignPayload) (res *Campaign, err error)
 	// Read live performance metrics (impressions, clicks, cost, CTR) for one
@@ -101,7 +113,22 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [15]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "create-campaigns", "get-campaign", "get-campaign-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "delete-campaign", "get-job"}
+var MethodNames = [16]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "delete-campaign", "get-job"}
+
+// AdoptCampaignPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service adopt-campaign method.
+type AdoptCampaignPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Canonical LFX project slug (NOT a UUID) that scopes the resource
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Ad platform the campaign lives on
+	Platform string
+	// The ad platform's own id for the existing campaign
+	PlatformCampaignID string
+}
 
 // ApproveBriefPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service approve-brief method.
@@ -169,7 +196,7 @@ type BriefInput struct {
 }
 
 // Campaign is the result type of the lfx-v2-campaign-service-briefs service
-// get-campaign method.
+// adopt-campaign method.
 type Campaign struct {
 	// Campaign UUID
 	ID string

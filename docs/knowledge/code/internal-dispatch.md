@@ -774,3 +774,69 @@ falls back to a case-insensitive match that cannot bridge the underscore in the 
 snake_case wire form. The config an adapter refuses to create without (LinkedIn `org_id`, Meta
 `page_id`, X `funding_instrument_id`) is required of the map about to be WRITTEN — on rotation the
 existing columns MERGED with the flags, since `Update` rewrites every config column.
+
+## `CampaignAdopter` (optional capability)
+
+`CampaignAdopter` is a fourth OPTIONAL dispatcher interface, alongside `StatusToggler`,
+`MetricsReader` and `AccountLister`, declared in `internal/service/orchestrator.go` and
+discovered by the same type assertion. A dispatcher that does not implement it makes the
+platform answer `ErrAdoptionUnsupported` (400) with no network call. **Google Ads is the
+only implementation today.**
+
+```go
+LookupCampaign(ctx, projectID, platform, platformCampaignID) (*model.PlatformCampaignRef, error)
+```
+
+The contract has one rule that matters more than the signature: **`(nil, nil)` means the
+platform answered and the campaign is genuinely absent.** Anything an adapter could not
+verify — a transport failure, an unhonoured filter, an undecodable row, a status outside the
+known set — must be an ERROR, because the service turns absence into a 404 and an operator
+acts on a 404 by creating a duplicate paid campaign. Never reduce an unverifiable response to
+a clean absence (the `continue`-on-mismatch shape: skipping every non-matching row yields zero
+matches, exactly the licence-to-create answer the check existed to prevent).
+
+`GoogleAdsDispatcher.LookupCampaign` resolves through `resolveOwnedGoogleAdsClient`, which is the
+ordinary `resolveGoogleAdsClient` with the LF system fallback removed: it calls
+`credsSource.resolveOwned`, which consults the project's own scope and nothing else, and reports
+the resulting absence as `domain.ErrAdoptionRequiresOwnConnection` (409). Two separate isolation
+problems sit behind that. Discovery credentials see every account the login
+customer administers, so adopting through them could bind a campaign belonging to a different
+project — which is why this is not the discovery client. And the system fallback puts MANY
+projects inside ONE LF-owned ad account, where an endpoint that takes a caller-supplied arbitrary
+campaign id lets project A bind, meter and pause a campaign project B created there; the
+account-mismatch guard cannot see it, because both projects resolve to the same customer id.
+No upstream metadata settles ownership either — a campaign's name, labels and budget are set by
+whoever created it. Requiring a project-owned connection is what this layer can enforce, and it
+forbids nothing real: a project with no ad account of its own has no campaign to adopt. It is not
+an ownership PROOF, and must not be read as one — inside a shared customer, a project holding its
+own connection can still name a campaign another project created. Nothing here can prevent that,
+because the project's credential already confers read and pause on every campaign in that customer
+straight through the provider's API, and adoption cannot be more restrictive than the credential it
+uses; account tenancy is where that boundary lives (see migration 000020). What the gate does
+guarantee is narrower and still worth having: adoption never borrows the LF fallback, so it can
+never reach an account the project has no credential of its own for. Every
+OTHER platform call keeps the fallback, because each names a campaign this service already has a
+project-scoped row for, and that row is the authorization.
+
+Declining to RESOLVE the fallback, rather than resolving it and rejecting a `resolved.fromSystem`
+value, is load-bearing rather than stylistic. `resolve` loads, validates and DECRYPTS the LF row
+before returning, so an LF connection with no credential blob — or one that no longer decrypts —
+comes back as `domain.ErrSystemConnectionNotUsable` INSTEAD of a value, and the ownership gate
+never runs. Under the earlier `fromSystem` shape that surfaced as a 500 blaming an LF row for a
+request whose remedy was "connect your own ad account", and about a row adoption would have
+refused in perfect health. `resolveOwned` makes the refusal independent of the fallback's state,
+so no future failure mode of the system scope can leak onto this path and need a new sentinel arm.
+`TestAdoptionRefusesTheSystemFallback` pins the outcome for an unusable system row AND, more
+strongly, that `Get(model.SystemProjectID)` is never called at all — the second assertion is what
+keeps the first true for failure modes nobody has thought of yet.
+
+It drops the platform's `ENABLED`/`PAUSED` — reaching the mapping already means the
+campaign is live, since `googleads.GetCampaign` filters `REMOVED` server-side and errors on any
+status outside its known set — and it fills `PlatformCampaignRef.Result` with the resolved
+customer id, so the adopted row records the account it was verified under and the existing
+`googleAdsCreationCustomerID` mismatch guards keep working for adopted rows. A
+`googleads.ErrNotACampaignID` is re-tagged `domain.ErrInvalidPlatformCampaignID` (400): it was
+rejected locally with no network call, so it is permanent input, not an unreachable platform.
+**Campaign ID validation happens before resolving the connection, so a malformed ID always returns
+400 regardless of connection state — the permanent input fault masks any contingent connection fault.**
+

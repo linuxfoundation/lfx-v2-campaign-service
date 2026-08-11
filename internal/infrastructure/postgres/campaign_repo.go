@@ -411,6 +411,116 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 	return upserted, nil
 }
 
+// adoptCampaignQuery binds an already-existing upstream campaign to a (brief, platform)
+// pair that has none. It carries the SAME conflict target and predicate as
+// upsertCampaignQuery — see claimCampaignDispatchQuery for why the predicate is mandatory
+// — but DO NOTHING where the upsert does DO UPDATE.
+//
+// That one word is the whole point. Adoption's input is a caller-supplied platform
+// campaign id; letting it take the upsert's update arm would repoint an existing binding
+// at a different upstream campaign, orphaning the previous one — which keeps spending,
+// with nothing in this service left pointing at it. Zero rows back therefore means "this
+// pair is already bound", which AdoptCampaign reports as ErrConflict.
+//
+// A soft-deleted row sits outside the partial index, so a pair whose campaign was deleted
+// can be adopted afresh, exactly as it can be re-dispatched.
+const adoptCampaignQuery = `INSERT INTO campaigns
+	(project_id, brief_id, platform, platform_campaign_id, campaign_name, status, result, created_by, updated_by)
+	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
+	ON CONFLICT (brief_id, platform) WHERE status <> 'deleted' DO NOTHING
+	RETURNING ` + campaignCols
+
+// lockAdoptBriefQuery re-reads the brief's CURRENT committed state under a row-level exclusive
+// lock. Identical in purpose to CreateJobForApprovedBrief's lock: see the long comment there for
+// why FOR UPDATE — not a plain re-read, and not the single-statement atomicity of the INSERT — is
+// what makes a check-then-write atomic against a concurrent replace or archive.
+// Scoped by project_id for tenant isolation: if the brief exists but belongs to another project,
+// the lock returns no rows and the caller gets ErrStaleApproval (the existing sentinel for
+// "brief not found"), not a success path.
+const lockAdoptBriefQuery = `SELECT status, version FROM campaign_briefs WHERE id = $1 AND project_id = $2 FOR UPDATE`
+
+// AdoptCampaign inserts the campaign row binding an existing upstream campaign to a brief.
+//
+// It returns domain.ErrConflict when the (brief, platform) pair already has a live campaign,
+// domain.ErrPlatformCampaignAlreadyBound when a DIFFERENT live row already binds the same upstream
+// campaign -- in ANY project, since 000020's index is not project-scoped, and domain.ErrStaleApproval when the brief is no longer approved at
+// expectedVersion.
+func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("adopt campaign: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// The service checked approval BEFORE a platform lookup bounded at 20 seconds, so a
+	// ReplaceBrief or ArchiveBrief can commit inside that window and the insert below would
+	// bind a paid campaign to a brief that is no longer approved — the approval gate routed
+	// around by nothing more than latency. Re-check it here, under the lock, where the check
+	// and the insert are one transaction.
+	var (
+		status  string
+		version int64
+	)
+	if serr := tx.QueryRow(ctx, lockAdoptBriefQuery, c.BriefID, c.ProjectID).Scan(&status, &version); serr != nil {
+		if errors.Is(serr, pgx.ErrNoRows) {
+			// The brief was deleted between the service's read and this lock, or belongs to
+			// another project. There is nothing approved at expectedVersion to bind to, which
+			// is what stale means.
+			return nil, domain.ErrStaleApproval
+		}
+		return nil, fmt.Errorf("adopt campaign: lock brief: %w", serr)
+	}
+	if status != "approved" || version != expectedVersion {
+		return nil, domain.ErrStaleApproval
+	}
+
+	// Both actor columns from ONE value: adoption creates the row and is also the last
+	// thing to have touched it, so created_by and updated_by are the same actor. nil is an
+	// ordinary outcome and stores NULL — see ClaimCampaignDispatch for why.
+	adoptedBy, aerr := marshalActor(c.CreatedBy)
+	if aerr != nil {
+		return nil, fmt.Errorf("adopt campaign: %w", aerr)
+	}
+	row := tx.QueryRow(ctx, adoptCampaignQuery,
+		c.ProjectID, c.BriefID, string(c.Platform), nullStr(c.PlatformCampaignID),
+		c.CampaignName, c.Status, nullJSON(c.Result), adoptedBy,
+	)
+	adopted, err := scanCampaign(row)
+	if err != nil {
+		// The ON CONFLICT clause names ONE index, so uq_campaigns_platform_campaign_live
+		// is not swallowed by it — it raises an ordinary unique violation. That is the wanted
+		// behaviour and it must be classified separately: the DO NOTHING conflict means "this
+		// BRIEF is taken", the unique violation means "this upstream CAMPAIGN is taken", and
+		// reporting the second as the first sends the caller to look at the wrong brief.
+		if isUniqueViolation(err) {
+			// The other brief is deliberately not named, and neither is its project. The
+			// index is global (000020), so the conflicting row may belong to a project this
+			// caller cannot see — Google Ads is one shared upstream account across every
+			// foundation. Naming it would turn a 409 into a cross-project disclosure of
+			// which briefs exist elsewhere. The caller already knows the campaign id they
+			// asked for, which is the part they can act on.
+			return nil, fmt.Errorf("%w: %s campaign %s is already bound to a brief",
+				domain.ErrPlatformCampaignAlreadyBound, c.Platform, c.PlatformCampaignID)
+		}
+		// DO NOTHING returns no row on conflict, which pgx reports as ErrNoRows. That is
+		// the ONLY way this statement declines: the pair is already bound. Every other
+		// scan failure is a real error and must not be reported as a conflict, or a
+		// column/type defect would surface to the caller as "already adopted" and send
+		// them looking for a campaign that isn't there.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("%w: brief %s already has a live %s campaign", domain.ErrConflict, c.BriefID, c.Platform)
+		}
+		return nil, fmt.Errorf("adopt campaign: %w", err)
+	}
+	if eerr := enqueueCampaignIndex(ctx, tx, adopted, indexPayload); eerr != nil {
+		return nil, fmt.Errorf("adopt campaign: %w", eerr)
+	}
+	if cerr := tx.Commit(ctx); cerr != nil {
+		return nil, fmt.Errorf("adopt campaign: commit: %w", cerr)
+	}
+	return adopted, nil
+}
+
 // enqueueCampaignIndex writes a campaign's index message to the outbox inside tx.
 //
 // EVERY campaign write co-commits, exactly as the brief writes do. Mixing paths does not work:

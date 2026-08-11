@@ -222,14 +222,58 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 			// consult NoUpstreamCreate, so preserving it changes nothing for them.
 			// It names the PROJECT even though two lookups missed: which one was absent
 			// is an operator's question, and systemConn logs it.
-			return nil, notCreated(fmt.Errorf("no %s connection configured for project %s: %w", provider, projectID, domain.ErrNotFound))
+			return nil, noOwnConnection(projectID, provider)
 		}
-		// A repo error (DB down) is NOT a pre-create signal we can prove, but no
-		// upstream call was made either — the create never started. Treat as
-		// not-created so a transient DB blip doesn't wedge the claim.
-		return nil, notCreated(fmt.Errorf("load %s connection: %w", provider, err))
+		return nil, connLoadFailed(provider, err)
 	}
 	return s.resolveConn(ctx, projectID, conn, provider)
+}
+
+// resolveOwned is resolve WITHOUT the system fallback: it consults the project's own scope
+// and nothing else.
+//
+// It exists for adoption, and the reason it is a separate resolution rather than a check on
+// resolve's result is that the fallback's failures are not adoption's to report. resolve
+// LOADS, VALIDATES and DECRYPTS the system row before a caller can inspect `fromSystem`, so
+// an LF system connection that is missing its credential blob, or that no longer decrypts,
+// surfaces as ErrSystemConnectionNotUsable — a 500 that pages whoever installed the LF
+// credential. On this path that is the wrong answer twice over: the caller's own remedy is
+// the actionable 409 ("connect your own ad account"), and the row being complained about is
+// one adoption would have refused even in perfect health. Inspecting `fromSystem` after the
+// fact cannot fix it, because the error is returned INSTEAD of the resolved value.
+//
+// Declining to look is also the cheaper contract to keep: it makes the refusal independent of
+// the system row's state, so no future failure mode of the fallback can leak onto this path
+// and need a new sentinel arm here.
+func (s *credsSource) resolveOwned(ctx context.Context, projectID string, provider model.Provider) (*resolved, error) {
+	conn, err := s.repo.Get(ctx, projectID, provider)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, noOwnConnection(projectID, provider)
+		}
+		return nil, connLoadFailed(provider, err)
+	}
+	return s.resolveConn(ctx, projectID, conn, provider)
+}
+
+// noOwnConnection reports that the project has no connection of its own — after the fallback
+// declined to supply one (resolve) or was never offered (resolveOwned).
+//
+// It wraps the sentinel rather than dropping it: read-only callers such as account discovery
+// need to tell "this project has no connection" (404) apart from "the platform call failed"
+// (503), and adoption maps it to its own permanent refusal. The dispatch paths only consult
+// NoUpstreamCreate, so preserving it changes nothing for them. It names the PROJECT even
+// where two lookups missed: which one was absent is an operator's question, and systemConn
+// logs it.
+func noOwnConnection(projectID string, provider model.Provider) error {
+	return notCreated(fmt.Errorf("no %s connection configured for project %s: %w", provider, projectID, domain.ErrNotFound))
+}
+
+// connLoadFailed reports a repo failure loading a connection. A DB error is NOT a pre-create
+// signal we can prove, but no upstream call was made either — the create never started — so
+// it is not-created and a transient blip does not wedge the claim.
+func connLoadFailed(provider model.Provider, err error) error {
+	return notCreated(fmt.Errorf("load %s connection: %w", provider, err))
 }
 
 // systemConn loads the reserved system-scope connection: (nil, nil) when no system account
