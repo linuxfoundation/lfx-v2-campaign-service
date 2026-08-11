@@ -248,7 +248,7 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   keeps the 503 below honest: a 503 promises that waiting might help, and none of these conditions
   change until a human edits the connection. The distinction cannot be made here — a setup failure
   and an upstream one arrive as the same type — so the dispatch layer wraps the pre-send failures
-  with the sentinel and this arm reads it. Four adapters do:
+  with the sentinel and this arm reads it. Five adapters do:
   `internal/dispatch/{googleads,reddit,twitter,microsoft,meta}.go`, each in its own shared
   resolve/validate helper, so every path through an adapter is covered rather than just the one
   that happened to be fixed. Meta joined them in LFXV2-3061 (`resolveMetaCredentials` for the

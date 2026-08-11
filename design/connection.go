@@ -333,7 +333,10 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 //
 // Discovery is a NECESSARY condition, not a sufficient one. The other half is that the
 // operations needing an account id must fail with reason=account_not_selected rather than a
-// generic error, so the caller is told what to go and use discovery FOR. Google Ads had both
+// generic error, so that a connection parked mid-bootstrap is DIAGNOSABLE as such rather than
+// indistinguishable from a bad credential. Where the operation is synchronous that reason
+// reaches the caller; where it is asynchronous it reaches the dispatch-failure log instead,
+// which is the Meta case spelled out below. Google Ads had both
 // from the start. Meta is the one provider where the halves came apart — it gained discovery
 // in LFXV2-3062 and stayed required here until LFXV2-3061 supplied the tagging; see the
 // paragraph below MetaAdsConnectionConfig's own godoc. The remaining four have neither.

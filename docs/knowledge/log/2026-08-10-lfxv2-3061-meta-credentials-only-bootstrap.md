@@ -1,7 +1,8 @@
 # 2026-08-10 — Meta's connection bootstrap, and the helper that only checks half of it
 
-**Update** — `MetaAdsConnectionConfig` no longer declares `Required("account_id")`, so a Meta
-connection can be created with credentials alone and have its ad account chosen afterwards:
+**Update** — `MetaAdsConnectionConfig` no longer declares `Required("account_id")`. Only that
+one field became optional, so a Meta connection can now be created without knowing which ad
+account it will use and have that account chosen afterwards:
 
 ```
 POST   /projects/{id}/connection-meta-ads          (credentials + page_id, no account_id)
