@@ -6,6 +6,7 @@ name: "LFX V2 Campaign Service Build"
 
 "on":
   pull_request:
+  merge_group:
 
 permissions:
   contents: read

@@ -5,13 +5,15 @@ name: Validate OKF Knowledge Bundle
 
 "on":
   pull_request:
-    paths:
+    paths: &okf_paths
       - "docs/knowledge/**"
       - "cmd/okfgen/**"
       - "cmd/okfvalidate/**"
       - "internal/okf/**"
       - "internal/okfgen/**"
       - "internal/okfvalidate/**"
+  merge_group:
+    paths: *okf_paths
 
 permissions:
   contents: read
