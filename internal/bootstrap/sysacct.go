@@ -239,6 +239,15 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // there.) Both halves are present, so an account-less Meta system row is now a completable
 // state rather than a dead one.
 //
+// Be exact about WHERE the naming lands, because Meta's only account-needing path is the
+// asynchronous one and that changes the answer. dispatchPlatform collapses every dispatcher
+// error into the same "platform campaign creation failed" job result, so the reason token
+// reaches the operator in the dispatch-failure LOG LINE, not by polling the job. Google Ads
+// is identical on its create path; what differs is that Google Ads' toggle and metrics need
+// the account id too and answer a synchronous 409, and Meta's do not. Log-only is still the
+// second half — an unclassified error names nothing at all — but it is a weaker signal than
+// the Google Ads case, and someone weighing the next provider should weigh the real one.
+//
 // The bar for adding a provider here is those two halves together, not either alone.
 var accountDiscoveryProviders = map[model.Provider]bool{
 	model.ProviderGoogleAds: true,

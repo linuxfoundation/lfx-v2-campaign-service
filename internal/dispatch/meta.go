@@ -121,12 +121,21 @@ func (d *MetaDispatcher) resolveMetaCredentials(ctx context.Context, projectID s
 // requireMetaAccountID returns res.accountID trimmed, or — when it is empty — an error
 // naming the missing choice: domain.ErrAccountNotSelected alongside
 // domain.ErrConnectionNotUsable, which unusableConnectionReason reports as
-// "account_not_selected". That pair is a CLASSIFICATION, not a status code. Its only caller
-// is Dispatch, which runs asynchronously after CreateCampaigns has already answered 202, so
-// nothing this returns can surface as an HTTP response at all; it becomes the async job's
-// recorded failure, and the reason is what a human reads back from it. (The same sentinels
-// DO drive a 409 where a synchronous handler classifies on them — that is why they are used
-// here rather than a bespoke error — but this call site is not one of those.)
+// "account_not_selected". That pair is a CLASSIFICATION, not a status code, and the reason
+// token reaches an operator through the LOG — not the job result. Be precise about this,
+// because the natural assumption is wrong: the only caller is Dispatch, which is queued work,
+// and dispatchPlatform collapses EVERY dispatcher error into the same
+// "platform campaign creation failed" job result (internal/service/orchestrator.go). Nothing
+// returned here reaches the caller as text. Google Ads' create path is in exactly the same
+// position and says so at validateGoogleAdsConnection's call site; classification there buys
+// log hygiene and claim semantics, and it buys the same here.
+//
+// The same sentinels DO drive a synchronous 409 (internal/service/brief.go) — which is why
+// they are used rather than a bespoke error — but only from the status toggle and metrics
+// read, and only for providers whose toggle/metrics need an account id. Meta's do not (they
+// target the campaign node by id), so for Meta this sentinel has no synchronous call site at
+// all today. Its value is that the fixed-vocabulary reason token identifies the missing
+// choice in the dispatch-failure log line instead of leaving an unclassified error there.
 //
 // An account-id-less connection (the credentials-only bootstrap state — see
 // MetaAdsConnectionConfig in design/connection.go) can create no campaign, and this refuses

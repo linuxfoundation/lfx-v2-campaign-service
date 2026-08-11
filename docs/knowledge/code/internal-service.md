@@ -249,10 +249,11 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   change until a human edits the connection. The distinction cannot be made here — a setup failure
   and an upstream one arrive as the same type — so the dispatch layer wraps the pre-send failures
   with the sentinel and this arm reads it. Four adapters do:
-  `internal/dispatch/{googleads,reddit,twitter,microsoft}.go`, each in its own shared
+  `internal/dispatch/{googleads,reddit,twitter,microsoft,meta}.go`, each in its own shared
   resolve/validate helper, so every path through an adapter is covered rather than just the one
-  that happened to be fixed. Meta and LinkedIn do NOT yet — their equivalent checks are still bare
-  and still fall to the 503 arm below (LFXV2-3069 part 2). In Google Ads the wrap has three owners:
+  that happened to be fixed. Meta joined them in LFXV2-3061 (`resolveMetaCredentials` for the
+  credential-state three, `requireMetaAccountID` for the missing account). LinkedIn does NOT yet —
+  its equivalent checks are still bare and still fall to the 503 arm below (LFXV2-3069 part 2). In Google Ads the wrap has three owners:
   `validateGoogleAdsCredentials` tags the credential-state three (inactive, undecodable,
   incomplete), which is why they reach callers beyond discovery — but the SHAPE they reach them in
   depends on whether the caller is synchronous. The **status toggle** and the **metrics read**
@@ -325,8 +326,9 @@ changing a type every 409 in this service returns; the reason token reaches oper
 the log instead.
 
 **The message names no accounts endpoint**, and that constraint is load-bearing rather than
-stylistic. Only Google Ads has one (`design/connection.go`, `list-google-ads-accounts`), and
-since Reddit, X/Twitter and Microsoft Ads tag this defect too they reach the same arm — a
+stylistic. Only Google Ads and Meta have one (`design/connection.go`, `list-google-ads-accounts`
+and `list-meta-ads-accounts`), and since Reddit, X/Twitter and Microsoft Ads tag this defect too
+they reach the same arm — a
 message pointing them at `.../accounts` would prescribe a route that 404s, which reads as a
 service bug rather than a value the caller has to supply. "Save an ad account id on the
 connection" is true of every provider. `assertNoAccountsEndpointPromised` pins it.
