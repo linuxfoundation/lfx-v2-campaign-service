@@ -145,9 +145,19 @@ func (d *HubSpotDispatcher) resolveHubSpotClient(ctx context.Context, projectID 
 // an unsupported window is a permanent 400 whatever the connection looks like, so it must
 // not be maskable by a fault that depends on connection state. Resolving first would let
 // the connection answer instead — 409 for the not-usable defects resolveHubSpotClient tags
-// below, 404 when the project has no connection at all, 500 when it fell back to an
-// unusable system row — none of which tells the caller the thing they actually have to fix,
+// below, 500 when it fell back to an unusable system row, and 503 when the project has no
+// connection at all — none of which tells the caller the thing they actually have to fix,
 // which is the window they sent.
+//
+// That 503 is worth naming rather than rounding off, because it is the worst of the three to
+// be masked BY. GetCampaignMetrics has no domain.ErrNotFound arm: creds.resolve passes the
+// absence through untagged, so it reaches the handler's default and is reported as a
+// transient platform failure. Both halves of that are wrong for the caller — an absent
+// connection is a permanent configuration fault, and here it would be masking a permanent
+// input fault — so a caller who sent a bad window against a project with no HubSpot
+// connection would be told to retry, twice over, for a request that can never succeed.
+// Validating the window first means the 400 wins; the absent-connection mapping itself is a
+// contract question for every platform's metrics read, not this adapter's to change.
 //
 // Same ORDER as the linkedin and X adapters, but note the reason differs from linkedin's:
 // linkedin's resolve returns its inactive-connection error UNTAGGED, so there the masking
