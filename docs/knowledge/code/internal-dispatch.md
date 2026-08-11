@@ -153,9 +153,9 @@ Two properties of this pattern are easy to lose and worth stating outright:
 - **The tagging belongs in the SHARED resolve/validate helper, not at each call site.** Where an
   adapter HAS one — Google Ads, Reddit, X/Twitter and Microsoft Ads each route Dispatch,
   `ToggleStatus` and (where wired) `ReadMetrics` through a single helper — tagging it once covers
-  every path. Meta and LinkedIn have no such helper yet; see below. Tagging per-path is how Google
-  Ads ended up correct on discovery while its other callers were still bare, before the helper
-  absorbed it.
+  every path. Meta gained one in LFXV2-3061 (`resolveMetaCredentials`); LinkedIn still has none,
+  see below. Tagging per-path is how Google Ads ended up correct on discovery while its other
+  callers were still bare, before the helper absorbed it.
 
 Which adapters honour it today:
 
@@ -165,7 +165,7 @@ Which adapters honour it today:
 | Reddit | yes | `resolveRedditClient` — dispatch, toggle, metrics |
 | X/Twitter | yes | `validateTwitterConnection` — dispatch, toggle, metrics |
 | Microsoft Ads | yes | `validateMicrosoftConnection` — dispatch, toggle (no metrics; async Reporting API) |
-| Meta | **no** | still bare, still 503 — LFXV2-3069 part 2 |
+| Meta | yes | `resolveMetaCredentials` — dispatch, toggle, metrics (LFXV2-3061) |
 | LinkedIn | **no** | still bare, still 503 — LFXV2-3069 part 2 |
 | HubSpot (email) | **n/a** | out of scope — see below |
 
@@ -178,9 +178,10 @@ between a 409 and a 503 the way the six above are. Tagging them would change wha
 result says, which is worth doing, but it is a separate question from the status mapping this
 section is about — do not read the empty cell as work queued behind LFXV2-3069 part 2.
 
-Meta and LinkedIn each inline `d.creds.resolve(...)` at more than one call site with no shared
-helper, so tagging them is an extraction rather than an annotation, and it collides with open work
-on those files. Until it lands, their four defects continue to answer 503.
+LinkedIn still inlines `d.creds.resolve(...)` at more than one call site with no shared helper,
+so tagging it is an extraction rather than an annotation. Meta was in the same state until
+LFXV2-3061 performed exactly that extraction, which is what the entry below describes; until
+LinkedIn's lands, its defects continue to answer 503.
 
 The full rationale for the classification — including why a decrypt failure splits into two
 sentinels, and why an inactive row is refused rather than treated as "pending" — lives in the
@@ -409,21 +410,20 @@ error text to a fixed sentinel vocabulary with no payload attached.
 would narrow the response to a subset of the question. Requiring an account id would also make
 the endpoint reachable only by connections that no longer need it.
 
-**Only re-pointing is reachable today.** The resolver is already correct for first-time
-bootstrap — credentials stored, account chosen afterwards, the way Google Ads works — but
-`MetaAdsConnectionConfig` still declares `Required("account_id")`, so that create is a 400
-before any of this code runs. Closing it is not a one-line loosening: only
-`resolveGoogleAdsClient` tags an empty account id with `domain.ErrAccountNotSelected`, so a
-Meta connection parked mid-bootstrap would fail `Dispatch` with an error nothing classifies —
-the caller learns that the campaign did not launch, not that the reason is a choice they have
-not made. Note the shape of that answer: campaign create is ASYNCHRONOUS (`design/brief.go`
+**Both lifecycles are reachable as of LFXV2-3061.** The resolver was already correct for
+first-time bootstrap — credentials stored, account chosen afterwards, the way Google Ads
+works — and `MetaAdsConnectionConfig` no longer declares `Required("account_id")`. Closing it
+was not a one-line loosening: an empty account id had to be tagged first, or a Meta connection
+parked mid-bootstrap would fail `Dispatch` with an error nothing classifies — the caller would
+learn that the campaign did not launch, not that the reason is a choice they have not made.
+`requireMetaAccountID` supplies that tagging. Note the shape of that answer: campaign create is ASYNCHRONOUS (`design/brief.go`
 answers `StatusAccepted`), so the untagged error surfaces in the polled job result, never as a
 409 — `docs/api-catalog.md` records the same split for Google Ads. The synchronous 409 that
 names the missing account belongs to `ToggleStatus` and `ReadMetrics`, and neither needs
 anything here: both target the campaign node by id and document that they need no account id
 (`internal/dispatch/meta.go`), so they already work on an account-less row. `Dispatch` is
-therefore the only exit to tag, and tagging it improves a job result rather than a status code.
-Tracked as LFXV2-3061.
+therefore the only exit tagged, and the tagging improves a job result rather than a status code.
+Delivered by LFXV2-3061.
 
 **The unmarshal cause on the decrypted blob is DROPPED, not wrapped.** It is the only value in
 the resolver derived from decrypted plaintext, and this error is logged and, on the not-usable
@@ -510,9 +510,9 @@ account-agnostic: it asks which customer ids the CREDENTIAL reaches, so an accou
 a narrower version of the question, it is a different one.
 
 Both lifecycles are now SUPPORTED. `GoogleAdsConnectionConfig` no longer declares
-`Required("account_id")` (Google Ads alone — Meta has a discovery endpoint too as of LFXV2-3062,
-but a credentials-first row also needs the account-needing paths to fail with
-`account_not_selected`, which Meta's campaign create does not yet do), so
+`Required("account_id")` (Meta joined it in LFXV2-3061, which added the `account_not_selected`
+tagging its campaign create was missing — a credentials-first row needs both the discovery
+endpoint and account-needing paths that name the missing choice), so
 this endpoint serves BOTH re-pointing an existing connection ("which other customer ids does this
 credential reach?") and first-time bootstrap:
 

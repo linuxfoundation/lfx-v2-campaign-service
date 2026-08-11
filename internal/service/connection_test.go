@@ -460,6 +460,46 @@ func TestCreateGoogleAds_WithoutAccountID(t *testing.T) {
 	}
 }
 
+// TestCreateMetaAds_WithoutAccountID is the Meta counterpart, and the half the transport test
+// does not reach: that test proves Goa ACCEPTS an omitted `account_id`, which is a statement
+// about the generated decoder, not about what this service then persists and returns.
+//
+// The assertions are the Google Ads three, and each means something slightly different here:
+//
+//  1. Accepted with the key OMITTED, which is what the bootstrap flow sends. An explicit
+//     `"account_id": ""` always got through the Required presence check, so only omission
+//     distinguishes the loosened contract from the old one.
+//  2. status is ACTIVE. resolveMetaCredentials refuses a non-active connection, so any other
+//     status would make GET .../connection-meta-ads/accounts unreachable and dead-end the
+//     bootstrap at step two — the same trap as Google Ads, via a different helper.
+//  3. account_id round-trips as "". `page_id` is supplied because it stays Required: it names
+//     a Facebook page the operator already controls, so discovery never resolves it and it is
+//     not part of what deferring account selection defers.
+func TestCreateMetaAds_WithoutAccountID(t *testing.T) {
+	s := newTestService(t, newFakeRepo())
+	res, err := s.CreateMetaAds(context.Background(), &conn.CreateMetaAdsPayload{
+		ProjectID: "cncf",
+		// AccountID is nil EXPLICITLY — the absence is the subject of this test.
+		Config: &conn.MetaAdsConnectionConfig{
+			Label: strPtr("TLF Main"), AccountID: nil, PageID: "page-1",
+		},
+		Credentials: &conn.MetaAdsCredentials{AccessToken: "at", AppSecret: "as"},
+	})
+	if err != nil {
+		t.Fatalf("a credentials-only connection must be creatable: %v", err)
+	}
+	if res.AccountID != "" {
+		t.Errorf("account_id = %q, want the empty string", res.AccountID)
+	}
+	if res.Status != string(model.StatusActive) {
+		t.Errorf("status = %q, want %q — resolveMetaCredentials refuses a non-active connection, "+
+			"so any other status would make the account unchoosable", res.Status, model.StatusActive)
+	}
+	if !res.HasCredentials {
+		t.Error("expected has_credentials = true: the credentials are exactly what WAS supplied")
+	}
+}
+
 // TestUpdateGoogleAds_BindsDiscoveredAccountToCredentialsOnlyRow is the second half of the
 // credentials-first bootstrap, and the step the existing update tests never exercised: they
 // only cover missing and stale If-Match. Here the stored row is the state a POST-with-
