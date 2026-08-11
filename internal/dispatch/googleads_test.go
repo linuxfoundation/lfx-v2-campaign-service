@@ -2026,11 +2026,11 @@ func TestGoogleAds_LookupCampaign_MalformedIDIs400EvenWithUnusableConnection(t *
 
 	// Test with several malformed IDs that should all be rejected the same way.
 	testCases := []string{
-		"007",      // Leading zero
-		"0",        // Zero
-		"abc",      // Non-numeric
+		"007",                 // Leading zero
+		"0",                   // Zero
+		"abc",                 // Non-numeric
 		"9223372036854775808", // Past math.MaxInt64
-		"",         // Empty
+		"",                    // Empty
 	}
 
 	for _, malformedID := range testCases {
