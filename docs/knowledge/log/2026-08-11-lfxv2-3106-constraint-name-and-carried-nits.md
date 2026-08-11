@@ -111,8 +111,15 @@ cannot quietly make this a place an arbitrary string reaches DDL.
 ## A unit test so the witness cannot skip
 
 `TestAudienceLeaseMappingIgnoresOtherUniqueIndexes` is the stronger test — only a real server proves
-a partial unique index populates `ConstraintName` — but it SKIPS when `TEST_DATABASE_URL` is unset,
-and a skipped test prints `ok`. `TestIsUniqueViolationOn` is a table-driven unit test over synthetic
+a partial unique index populates `ConstraintName` — but it does not always run.
+
+The gap is narrower than "it skips", and worth stating precisely because dbtest already closed the
+dangerous half: `Pool`'s verdict (`dbtest.go:100-121`) splits on `$CI`, so an unset
+`TEST_DATABASE_URL` is a `t.Fatal` on a runner and only a skip locally. What remains is the local
+run — a laptop, a pre-commit hook, a container without the Postgres service and without `$CI` — where
+a skipped test prints `ok`. That is where most edits to this helper are first executed.
+
+`TestIsUniqueViolationOn` is a table-driven unit test over synthetic
 `*pgconn.PgError` values (matching name, a different name under the same 23505, an empty name, the
 right name under 23514, a 23503, a non-`PgError`, nil) that runs everywhere. Degrading the helper
 to SQLSTATE-only fails two of its subtests.

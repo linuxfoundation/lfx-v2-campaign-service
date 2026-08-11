@@ -17,10 +17,15 @@ import (
 // in the dbtest package, and it is the stronger test: it proves a REAL Postgres 23505 from
 // a second unique index carries that index's name in ConstraintName, which is the fact the
 // whole narrowing rests on and which no synthetic *pgconn.PgError can establish. But that
-// test SKIPS whenever TEST_DATABASE_URL is unset — including on a developer's machine and
-// in any CI job without the Postgres service — and a skipped test prints `ok`. This one
-// runs everywhere, so degrading the helper cannot reach main through a green-looking run
-// that exercised nothing.
+// test does not always run: dbtest.Pool skips when TEST_DATABASE_URL is unset, and a
+// skipped test prints `ok`.
+//
+// Be exact about where that gap is, because dbtest already closed half of it. Pool's
+// verdict (dbtest.go:100-121) splits on $CI: on a runner an unset database URL is a
+// t.Fatal, deliberately, so a misconfigured workflow cannot report success. The skip is
+// the LOCAL case — `go test ./...` on a laptop, a pre-commit hook, a container without
+// the Postgres service and without $CI set. That is where a degraded helper would go
+// unnoticed, and it is where most edits to it are first run. This test covers it.
 //
 // The wrapped case does NOT reproduce the current production path, and saying so is the
 // point of stating it. Measured by printing the chain at the call site against a real
@@ -52,7 +57,7 @@ func TestIsUniqueViolationOn(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "wrapped, which is how every caller actually sees it",
+			name: "wrapped, which no caller does today but the contract allows",
 			err:  fmt.Errorf("create audience: %w", pgErr("23505", want)),
 			want: true,
 		},
