@@ -381,3 +381,129 @@ func campaignFromMeta(ctx context.Context, r *meta.CampaignResult, cfg metaConfi
 	}
 	return c
 }
+
+// resolveMetaDiscoveryClient builds a Meta client for the ACCOUNT-DISCOVERY path.
+//
+// It applies the same stored-state checks the dispatch and metrics paths apply — the
+// connection must be active, the decrypted blob must decode, and the access token must be
+// present — and deliberately does NOT require an account id. That omission is the point:
+// the endpoint exists to answer "which ad account should this connection use?", so
+// demanding one would make it reachable only by connections that no longer need it.
+//
+// The lifecycle this serves TODAY is re-pointing: reading the choices before a PUT moves an
+// existing connection to a different account. First-time bootstrap — creating a connection
+// with credentials only and choosing an account afterwards, the way Google Ads works — is
+// NOT reachable for Meta, because MetaAdsConnectionConfig still declares
+// Required("account_id") and the create is rejected as a 400 before this code is involved.
+// Google Ads dropped that requirement precisely because it had a discovery endpoint; Meta
+// now has one too, but the change is not free here. Dispatch — the ONE Meta path that needs
+// an account id, since ToggleStatus and ReadMetrics both target the campaign node by id and
+// say so — would have to tag its empty-id failure with domain.ErrAccountNotSelected the way
+// resolveGoogleAdsClient does, or a connection parked mid-bootstrap answers a create with a
+// generic error instead of one that names the missing choice. That is tracked separately
+// (LFXV2-3061); this resolver is
+// already correct for it, which is why the account id is not consulted here.
+//
+// AccountConfig is left ZERO for the same reason. GET /me/adaccounts is account-agnostic:
+// it asks what the TOKEN reaches, so scoping the client to one of the answers would narrow
+// the response to a subset of the question.
+//
+// Every check here inspects stored state, before any request exists, so a failure means
+// the connection needs EDITING rather than retrying — each is tagged with
+// domain.ErrConnectionNotUsable alongside the sentinel naming the specific defect, which
+// is what the handler classifies on to answer 400 instead of 503. Errors from
+// creds.resolve are deliberately left untagged: that layer distinguishes ErrNotFound (no
+// connection at all — a 404) from a storage failure (genuinely transient — a 503), and
+// flattening both into "not usable" would lose it.
+//
+// Every not-usable return below also passes through res.systemScoped, via a named return and
+// a defer, for the reason validateGoogleAdsCredentials documents: the three defects here are
+// in STORED STATE, and on a project that owns no connection that stored state belongs to the
+// LF system row it fell back to. Untagged, the shared handler answers such a project a 400
+// telling it to go and edit a connection it does not have and cannot address, instead of the
+// 500 that pages whoever installed the system credential. The defer rather than three call
+// sites is deliberate: this is a defect class the Google Ads path already had and fixed once
+// by exactly this means, and a fourth return added later must not be able to forget.
+// systemScoped is a no-op for project-owned rows and idempotent, so it costs nothing here.
+func (d *MetaDispatcher) resolveMetaDiscoveryClient(ctx context.Context, projectID string, platform model.Provider) (client *meta.Client, err error) {
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = res.systemScoped(err) }()
+	if res.status != model.StatusActive {
+		return nil, fmt.Errorf("%w: %w: meta connection for project %s is %s, not active",
+			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
+	}
+	var creds metaCreds
+	if uerr := json.Unmarshal(res.plaintext, &creds); uerr != nil {
+		// The unmarshal error is DROPPED, not wrapped. It is the only value in this
+		// function derived from the DECRYPTED credential blob, and this error reaches the
+		// discovery handler, which logs it and describes the not-usable arm to the caller.
+		// Today's encoding/json happens not to quote the offending bytes for a struct of
+		// string fields — it reports "invalid character 'T' after object key:value pair",
+		// not the input — but that is a behaviour, not a documented guarantee, and it does
+		// not hold for every field type: a number decoded into a numeric field appears in
+		// the message verbatim. Dropping the cause removes the whole class instead of
+		// resting on a property of the stdlib nobody here controls, and it costs nothing:
+		// the sentinel already names the only thing an operator can act on, which is that
+		// this connection's stored credential has to be re-entered.
+		return nil, fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable)
+	}
+	if strings.TrimSpace(creds.AccessToken) == "" {
+		return nil, fmt.Errorf("%w: %w: meta credentials need accessToken",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
+	}
+	return meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, meta.AccountConfig{}, d.opts...), nil
+}
+
+// ListAccounts discovers the ad accounts reachable via the project's stored, encrypted
+// Meta connection credential, returning minimal identifying information (the act_-prefixed
+// account id and a display label).
+//
+// It satisfies the service-side AccountLister interface, which Orchestrator.ReadAccounts
+// type-asserts on the dispatcher for the requested platform; a platform whose dispatcher
+// does not implement it gets ErrAccountsUnsupported and the ad platform is never contacted.
+// The error contract of resolveMetaDiscoveryClient is what the endpoint's status mapping
+// relies on.
+func (d *MetaDispatcher) ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error) {
+	client, err := d.resolveMetaDiscoveryClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	adAccounts, lerr := client.ListAdAccounts(ctx)
+	if lerr != nil {
+		return nil, lerr
+	}
+	// make(..., 0, n) rather than a nil var: a token that legitimately reaches zero ad
+	// accounts is an empty list, not an error, and the two must stay distinguishable at
+	// the service boundary — Orchestrator.ReadAccounts rejects a nil result as a contract
+	// violation precisely so an empty answer keeps its meaning.
+	accounts := make([]model.AccessibleAccount, 0, len(adAccounts))
+	for _, a := range adAccounts {
+		accounts = append(accounts, model.AccessibleAccount{ID: a.ID, Label: metaAccountLabel(a)})
+	}
+	return accounts, nil
+}
+
+// metaAccountLabel builds the string a picker shows for one ad account.
+//
+// It never returns "" for an account that has any identifying information: an account with
+// no `name` falls back to its id, because a blank row in a picker is unpickable and the id
+// is what actually gets stored. A KNOWN-BAD account_status is appended in parentheses so
+// the user sees WHY the account they were about to choose will be refused by
+// CreateCampaign's preflight — which reads the same map — rather than choosing it and
+// meeting the refusal one step later, at dispatch, with no way back to this list.
+//
+// An unrecognized or absent status appends nothing. Meta omits account_status on accounts
+// it will not report on, and treating absence as a defect would label a working account.
+func metaAccountLabel(a meta.AdAccount) string {
+	label := a.Name
+	if label == "" {
+		label = a.ID
+	}
+	if reason := a.StatusLabel(); reason != "" {
+		label += " (" + reason + ")"
+	}
+	return label
+}

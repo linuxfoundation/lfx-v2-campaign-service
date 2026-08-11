@@ -728,6 +728,13 @@ type ListGoogleAdsAccountsResponseBody struct {
 	Accounts []*AccessibleAccountResponseBody `form:"accounts" json:"accounts" xml:"accounts"`
 }
 
+// ListMetaAdsAccountsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
+// endpoint HTTP response body.
+type ListMetaAdsAccountsResponseBody struct {
+	Accounts []*AccessibleAccountResponseBody `form:"accounts" json:"accounts" xml:"accounts"`
+}
+
 // CreateGoogleAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "create-google-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -2378,10 +2385,52 @@ type ListGoogleAdsAccountsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListMetaAdsAccountsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListMetaAdsAccountsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaAdsAccountsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListMetaAdsAccountsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaAdsAccountsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListMetaAdsAccountsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaAdsAccountsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
+// endpoint HTTP response body for the "NotFound" error.
+type ListMetaAdsAccountsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // AccessibleAccountResponseBody is used to define fields on response body
 // types.
 type AccessibleAccountResponseBody struct {
-	// Account identifier in the ad platform's namespace
+	// Account identifier in the ad platform's own namespace, ready to store as the
+	// connection's account_id. Google Ads: bare digits (8666746580). Meta:
+	// act_-prefixed (act_8666746580).
 	ID string `form:"id" json:"id" xml:"id"`
 	// Human-readable account name or label
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
@@ -2994,6 +3043,26 @@ func NewTestHubspotResponseBody(res *lfxv2campaignserviceconnections.ConnectionT
 // "lfx-v2-campaign-service-connections" service.
 func NewListGoogleAdsAccountsResponseBody(res *lfxv2campaignserviceconnections.ListGoogleAdsAccountsResult) *ListGoogleAdsAccountsResponseBody {
 	body := &ListGoogleAdsAccountsResponseBody{}
+	if res.Accounts != nil {
+		body.Accounts = make([]*AccessibleAccountResponseBody, len(res.Accounts))
+		for i, val := range res.Accounts {
+			if val == nil {
+				body.Accounts[i] = nil
+				continue
+			}
+			body.Accounts[i] = marshalLfxv2campaignserviceconnectionsAccessibleAccountToAccessibleAccountResponseBody(val)
+		}
+	} else {
+		body.Accounts = []*AccessibleAccountResponseBody{}
+	}
+	return body
+}
+
+// NewListMetaAdsAccountsResponseBody builds the HTTP response body from the
+// result of the "list-meta-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaAdsAccountsResponseBody(res *lfxv2campaignserviceconnections.ListMetaAdsAccountsResult) *ListMetaAdsAccountsResponseBody {
+	body := &ListMetaAdsAccountsResponseBody{}
 	if res.Accounts != nil {
 		body.Accounts = make([]*AccessibleAccountResponseBody, len(res.Accounts))
 		for i, val := range res.Accounts {
@@ -4824,6 +4893,50 @@ func NewListGoogleAdsAccountsNotFoundResponseBody(res *lfxv2campaignserviceconne
 	return body
 }
 
+// NewListMetaAdsAccountsBadRequestResponseBody builds the HTTP response body
+// from the result of the "list-meta-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaAdsAccountsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListMetaAdsAccountsBadRequestResponseBody {
+	body := &ListMetaAdsAccountsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaAdsAccountsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "list-meta-ads-accounts" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewListMetaAdsAccountsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListMetaAdsAccountsServiceUnavailableResponseBody {
+	body := &ListMetaAdsAccountsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaAdsAccountsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "list-meta-ads-accounts" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewListMetaAdsAccountsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListMetaAdsAccountsInternalServerErrorResponseBody {
+	body := &ListMetaAdsAccountsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaAdsAccountsNotFoundResponseBody builds the HTTP response body
+// from the result of the "list-meta-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMetaAdsAccountsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListMetaAdsAccountsNotFoundResponseBody {
+	body := &ListMetaAdsAccountsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewCreateGoogleAdsPayload builds a lfx-v2-campaign-service-connections
 // service create-google-ads endpoint payload.
 func NewCreateGoogleAdsPayload(body *CreateGoogleAdsRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.CreateGoogleAdsPayload {
@@ -5288,6 +5401,16 @@ func NewSetCredentialHubspotPayload(body *SetCredentialHubspotRequestBody, proje
 // service list-google-ads-accounts endpoint payload.
 func NewListGoogleAdsAccountsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListGoogleAdsAccountsPayload {
 	v := &lfxv2campaignserviceconnections.ListGoogleAdsAccountsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListMetaAdsAccountsPayload builds a lfx-v2-campaign-service-connections
+// service list-meta-ads-accounts endpoint payload.
+func NewListMetaAdsAccountsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListMetaAdsAccountsPayload {
+	v := &lfxv2campaignserviceconnections.ListMetaAdsAccountsPayload{}
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken
 
