@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"unicode/utf8"
 
@@ -652,9 +653,11 @@ func TestGenerateEmailCopy_AcceptsSizeablePrompt(t *testing.T) {
 		EventDetails: json.RawMessage(`{"eventName":"` + reasonablyLongName + `","location":"Barcelona","startDate":"2026-06-17"}`),
 	}
 
-	llmCalled := false
+	// atomic for the same reason as in TestGenerateEmailCopy_PromptLimitCountsRunesNotBytes:
+	// written on the handler's goroutine, read on the test's.
+	var llmCalled atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		llmCalled = true
+		llmCalled.Store(true)
 		w.Header().Set("Content-Type", "application/json")
 		content := `{"subject":"Join Us","preheader":"Event details","body":"<p>Register now</p>","cta":"Register"}`
 		encoded, _ := json.Marshal(content)
@@ -671,7 +674,7 @@ func TestGenerateEmailCopy_AcceptsSizeablePrompt(t *testing.T) {
 		BearerToken: strPtr("token"),
 	})
 
-	if !llmCalled {
+	if !llmCalled.Load() {
 		t.Error("LLM was not called; prompt size validation rejected a valid prompt")
 	}
 	if err != nil {
@@ -702,9 +705,15 @@ func TestGenerateEmailCopy_PromptLimitCountsRunesNotBytes(t *testing.T) {
 		EventDetails: json.RawMessage(`{"eventName":"` + multibyteName + `"}`),
 	}
 
-	llmCalled := false
+	// atomic, not a plain bool: the flag is written on the httptest handler's goroutine and
+	// read on the test's. The response body read does establish a happens-before edge in
+	// practice (50 runs under -race are clean), but the guarantee is net/http's internals
+	// rather than anything this test states, and the sibling internal/platform/llm tests
+	// already synchronize their recorders. Cheaper to hold the same discipline than to
+	// re-derive the edge every time someone reads this.
+	var llmCalled atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		llmCalled = true
+		llmCalled.Store(true)
 		w.Header().Set("Content-Type", "application/json")
 		content := `{"subject":"Join Us","preheader":"Event details","body":"<p>Register now</p>","cta":"Register"}`
 		encoded, err := json.Marshal(content)
@@ -729,7 +738,7 @@ func TestGenerateEmailCopy_PromptLimitCountsRunesNotBytes(t *testing.T) {
 			"3000-CHARACTER limit and must not be rejected",
 			err, utf8.RuneCountInString(multibyteName), len(multibyteName))
 	}
-	if !llmCalled {
+	if !llmCalled.Load() {
 		t.Error("the LLM was never called: the prompt bound rejected a prompt inside its own limit")
 	}
 	if result == nil {
