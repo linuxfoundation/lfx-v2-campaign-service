@@ -95,9 +95,17 @@ away the host and path that are the only reason to log a URL.
 
 One shape stays undecidable — no path, and the only `@` past a `?`. That is either a harmless
 query `@` or a malformed password containing a `?` (`nats://u:p?x@host`), and the two want
-opposite handling. A `/` before the query settles it, since a path has already closed the
+opposite handling. A path before the query settles it, since a path has already closed the
 authority; without one, nothing after the scheme is printed. `nats://u:p?x@host:4222` therefore
 renders as `nats://***`, losing the host. Lossy beats leaky, and the shapes it costs are rare.
+
+A bare `/` is **not** that path, and taking it for one leaked. `pathClosesAuthority` asks what
+the `/` closes, not whether one exists: `nats://u:p/path?x@host` has a `/`, but `u:p` is no
+authority for it to close (`p` is not a port), so the only legal reading is userinfo — the `/`
+is inside the password, and trimming at the `?` printed `nats://u:p`. The tell is a `:` in the
+pre-slash host whose right side is not a decimal port; a bare host (`idp.example.com`), a real
+port (`:8443`) and a bracketed IPv6 literal all keep their host and path. The multi-URL branch's
+`passwordCouldSpanQuery` asks the same question for the same reason — it had the identical hole.
 
 ### When the whole-value fallback runs
 

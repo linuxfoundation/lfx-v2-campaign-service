@@ -241,16 +241,59 @@ func redactOne(u string) string {
 // queryIsGenuine reports whether the `?` or `#` at index q really begins a query, rather than
 // being an ordinary character inside a password.
 //
-// The tell is a `/` in the authority that OWNS the delimiter. A path closes the authority
-// (RFC 3986 §3.2, §3.3), and an authority a path has already closed cannot extend past the
-// `?`. With no `/`, nothing in the value decides between `https://idp?contact=a@b` — a
-// harmless query `@` whose host and path are worth keeping — and `nats://u:p?x@host`, where
-// the `?` is inside the password and cutting at it logs half a secret. The two want opposite
-// handling, so the undecidable case is refused rather than guessed.
+// The tell is a path that CLOSES the authority owning the delimiter (RFC 3986 §3.2, §3.3):
+// an authority a path has already closed cannot extend past the `?`. With no such path,
+// nothing in the value decides between `https://idp?contact=a@b` — a harmless query `@` whose
+// host is worth keeping — and `nats://u:p?x@host`, where the `?` is inside the password and
+// cutting at it logs half a secret. The two want opposite handling, so the undecidable case
+// is refused rather than guessed.
 //
 // Which authority is asked is owningAuthority's problem, and in a list it is not the first one.
+// Whether its `/` really closes anything is pathClosesAuthority's.
 func queryIsGenuine(u string, q int) bool {
-	return strings.ContainsRune(owningAuthority(u, q), '/')
+	return pathClosesAuthority(owningAuthority(u, q))
+}
+
+// pathClosesAuthority reports whether the first `/` in seg — the region between a segment's
+// `://` and the delimiter — really ends an authority, rather than sitting inside a password.
+//
+// The bare presence of a `/` does not prove it, and treating it as proof leaked. RFC 3986
+// §3.2.1 excludes `/` from userinfo, so a value carrying one there is already malformed — and
+// malformed credential-bearing input is precisely what this package exists to refuse rather
+// than parse. `nats://u:p/path?x@host` and `https://idp/path?contact=a@b` have the identical
+// shape; in the first, `u:p/path?x` is the password and `host` the host, and cutting at the
+// `?` prints `nats://u:p`.
+//
+// What separates them is what the `/` closes. `idp` is a well-formed authority, so the `/`
+// after it can only begin a path. `u:p` is not: `p` is not a port, so the sole reading that
+// makes `u:p` legal is userinfo — and then the `/` is inside the password and the `?` may be
+// too. A `:` whose right-hand side is not a decimal port is therefore the tell, and an empty
+// port is refused with it, since `u:` is a likelier empty password than a real authority.
+func pathClosesAuthority(seg string) bool {
+	slash := strings.IndexByte(seg, '/')
+	if slash < 0 {
+		return false
+	}
+	host := seg[:slash]
+	// An IPv6 literal is bracketed, so its colons are inside the brackets and none of them
+	// separates a port. Without this it would be read as a non-numeric port and refused.
+	if strings.HasSuffix(host, "]") {
+		return true
+	}
+	colon := strings.LastIndexByte(host, ':')
+	if colon < 0 {
+		return true // a bare host holds nothing that could be a password
+	}
+	port := host[colon+1:]
+	if port == "" {
+		return false
+	}
+	for i := 0; i < len(port); i++ {
+		if port[i] < '0' || port[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // owningAuthority returns the part of the value between the `://` of the segment that owns the
@@ -281,9 +324,13 @@ func owningAuthority(u string, q int) string {
 // truncation dangerous, and userinfo carrying a password must contain a `:` before the
 // delimiter. `nats://b?access_token=x@live-secret,nats://c` has none — `b` could only ever be a
 // bare username — so its hosts are kept, while `nats://u:p?x@a,nats://b` is refused.
+//
+// It asks pathClosesAuthority rather than testing for a `/` directly, for the reason given
+// there: `nats://u:p/path?x@a,nats://b` carries a `/` and still has no authority the `/` could
+// close, so the plain test called it safe and printed `nats://u:p`.
 func passwordCouldSpanQuery(u string, q int) bool {
 	seg := owningAuthority(u, q)
-	return !strings.ContainsRune(seg, '/') && strings.ContainsRune(seg, ':')
+	return !pathClosesAuthority(seg) && strings.ContainsRune(seg, ':')
 }
 
 // trimQueryAndFragment drops everything from the first `?` or `#`.

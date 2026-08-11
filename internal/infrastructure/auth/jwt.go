@@ -325,7 +325,7 @@ func (g *jwksStatusGuard) RoundTrip(req *http.Request) (*http.Response, error) {
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return g.checkKeys(shown, resp)
 	}
-	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+	if isFollowableRedirect(resp) {
 		// A RoundTripper sits BELOW http.Client's redirect handling: the Client only follows a
 		// 3xx it is handed, and an error returned here means it never sees one. Treating a
 		// redirect as a failure would turn an ordinary http->https upgrade or a CDN hop into a
@@ -353,6 +353,32 @@ func (g *jwksStatusGuard) RoundTrip(req *http.Request) (*http.Response, error) {
 	slog.Debug("JWKS endpoint returned a non-2xx response",
 		"url", shown, "status", resp.StatusCode)
 	return nil, fmt.Errorf("JWKS endpoint %s returned HTTP %d", shown, resp.StatusCode)
+}
+
+// isFollowableRedirect reports whether http.Client will actually FOLLOW resp, rather than
+// hand it to the caller as the final answer.
+//
+// The pass-through above is justified entirely by "the Client will follow it and we will see
+// the real response again". Where that is false the justification evaporates, and a plain
+// `300 <= status < 400` test makes it false in two reachable ways. `net/http` only redirects
+// on 301, 302, 303, 307 and 308, so a 304 — not a redirect at all — is returned unchanged;
+// and for a redirect status with no `Location` header, `Response.Location` reports
+// ErrNoLocation and the Client likewise returns the response as-is.
+//
+// Either way the response reaches the JWKS provider, which decides on the BODY and ignores
+// the status: a JSON error object decodes to a key set with no keys, and that empty set is
+// then cached for the provider's whole TTL. Every token signed by a real key is rejected as
+// invalid until it expires — an outage sourced to "bad token" rather than to the endpoint.
+// So only a redirect the Client can act on is passed through; every other 3xx falls to the
+// error path below, where it is reported as what it is.
+func isFollowableRedirect(resp *http.Response) bool {
+	switch resp.StatusCode {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		return resp.Header.Get("Location") != ""
+	default:
+		return false
+	}
 }
 
 // checkKeys reads a 2xx JWKS body, refuses one with no keys in it, and replays the bytes

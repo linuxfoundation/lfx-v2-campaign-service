@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"math/big"
 	"net/http"
@@ -900,6 +901,70 @@ func TestVerifyActor_FollowsAJWKSRedirectWithoutForwardingCredentials(t *testing
 	if sawQuery.Load() {
 		t.Error("the redirect target received the operator's query: the guard must not rewrite a " +
 			"redirect hop's URL back to the configured endpoint")
+	}
+}
+
+// TestVerifyActor_RefusesA3xxTheClientWillNotFollow covers the two 3xx shapes that reach the
+// caller UNFOLLOWED, which is what makes passing every 3xx through unsafe.
+//
+// The pass-through above rests entirely on "the Client will follow it and we will see the real
+// response again". net/http redirects only on 301/302/303/307/308, and only with a Location
+// header it can parse; a 304, or a 302 with no Location, is handed back as the final response.
+// It then reaches the JWKS provider, which decides on the BODY and ignores the status — so a
+// JSON error object decodes to a key set with zero keys, which is cached for the provider's
+// whole TTL. Every token signed by a live key is rejected as invalid until it expires.
+//
+// The assertion is on the ERROR, not merely on failure: an implementation that passed these
+// through would also "fail", but with ErrInvalidToken blaming the caller's credential, which
+// is the outcome this exists to prevent. It must be ErrKeyUnavailable — the endpoint's fault,
+// retryable, and mapped to 503 rather than 400.
+//
+// 304 is the third shape isFollowableRedirect rejects and the one case NOT in the table: a
+// 304 carries no body by definition, and net/http strips one that is written anyway, so the
+// provider fails on the empty body regardless of what this guard does. Adding it here would
+// pass against a guard that lets every 3xx through — a case that cannot be made to fail is
+// not pinning anything, and asserting it would misreport this test's coverage.
+func TestVerifyActor_RefusesA3xxTheClientWillNotFollow(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	for _, tc := range []struct {
+		name     string
+		status   int
+		location bool
+	}{
+		// A redirect status net/http cannot act on: Response.Location reports ErrNoLocation
+		// and the Client returns the response as-is.
+		{name: "302 without a Location", status: http.StatusFound},
+		// The unregistered 3xx range: never followed.
+		{name: "399 is not a redirect status", status: 399, location: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.location {
+					w.Header().Set("Location", "/elsewhere")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				// The realistic body: a gateway's JSON error. It carries no `keys`, so a
+				// provider handed this decodes an EMPTY key set and caches it.
+				_, _ = io.WriteString(w, `{"error":"upstream unavailable"}`)
+			}))
+			defer srv.Close()
+
+			s := &signer{key: key, jwksURL: srv.URL}
+			token := s.sign(t, nil)
+
+			v, err := New(Config{JWKSURL: srv.URL, Audience: testAudience, Issuer: testIssuer})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if _, err := v.VerifyActor(context.Background(), token); !errors.Is(err, ErrKeyUnavailable) {
+				t.Errorf("VerifyActor error = %v, want ErrKeyUnavailable: a %d the client will not "+
+					"follow is an endpoint failure, not a bad token", err, tc.status)
+			}
+		})
 	}
 }
 

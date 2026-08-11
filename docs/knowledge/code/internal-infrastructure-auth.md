@@ -132,7 +132,23 @@ Everything that is not 2xx used to become an error, and a 3xx is not a failure. 
 `http.RoundTripper` sits below `http.Client`'s redirect handling**: the Client only follows a
 3xx it is handed, so returning an error means it never sees one and never follows. An ordinary
 http→https upgrade or a CDN hop then becomes a permanent `ErrKeyUnavailable` — every refresh
-takes the same path. A 3xx is passed straight back instead.
+takes the same path. A 3xx the Client will actually follow is passed straight back instead.
+
+Only such a 3xx, which is narrower than "any 3xx" — the pass-through is justified entirely by
+"the Client follows it and we see the real response again", and `isFollowableRedirect` refuses
+the shapes where that is false. `net/http` redirects on 301/302/303/307/308 and no others, and
+only with a `Location` it can parse. A 304, a 399, or a 302 with no `Location` is handed back
+to the caller as the final response — and it reaches the JWKS provider, which decides on the
+**body** and ignores the status. A gateway's JSON error object decodes to a key set with zero
+keys, which is then cached for the provider's whole TTL, and every token signed by a live key
+is refused as invalid until it expires. That surfaces as `ErrUnauthenticated`/400 blaming the
+caller's credential, when the endpoint is what is broken. Non-followable 3xx therefore takes
+the error path, where it becomes `ErrKeyUnavailable`/503.
+
+`TestVerifyActor_RefusesA3xxTheClientWillNotFollow` pins it on the error identity, not merely
+on failure — passing these through also "fails", with the wrong verdict. 304 is deliberately
+absent from its table: `net/http` strips a 304's body, so the provider fails on the empty body
+either way and the case cannot be made to fail against a guard that lets every 3xx through.
 
 Following is safe because the credential does not travel with it. `credentialed` dresses the
 **first hop only**, matching `req.URL` against the sanitized URL handed to the provider. Two

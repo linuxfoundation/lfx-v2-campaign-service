@@ -154,6 +154,11 @@ func TestURLUserinfo_Shapes(t *testing.T) {
 		// and path that are the only reason to log a URL are gone, and the operator reading
 		// it concludes the endpoint is misconfigured.
 		{"https://idp.example.com/jwks?contact=ops@b.example", "https://idp.example.com/jwks"},
+		// The host is kept because `idp.example.com` is a well-formed authority, so the `/`
+		// after it can only start a path. A port does not change that; a NON-numeric one does,
+		// because then userinfo is the only legal reading and the `/` is inside the password.
+		{"https://idp.example.com:8443/jwks?contact=ops@b.example", "https://idp.example.com:8443/jwks"},
+		{"https://[::1]:8443/jwks?contact=ops@b.example", "https://[::1]:8443/jwks"},
 		{"https://svc:pw@idp.example.com/jwks?contact=ops@b.example", "https://***@idp.example.com/jwks"}, // secretlint-disable-line
 		// The scheme must START a segment, not merely appear in it — the narrowing that closes
 		// `allSchemed`'s hole directly. Here `x/y://b@c` carries a `://` but begins with a path
@@ -228,6 +233,25 @@ func TestURLUserinfo_NeverEmitsACredential(t *testing.T) {
 			in:      "nats://u:p/x@host:4222", // secretlint-disable-line
 			want:    "nats://***@host:4222",
 			secrets: []string{"u:p"},
+		},
+		{
+			// The mirror of the case above. Once the search ran to the query, a `/` BEFORE the
+			// delimiter was taken as proof that the delimiter began a genuine query — but the
+			// `/` here is inside the password too, and `u:p` is no authority for it to close
+			// (`p` is not a port). The value was trimmed at the `?` and printed `nats://u:p`.
+			// Only an authority a path really closes settles it.
+			name:    "a slash inside userinfo does not make a query genuine",
+			in:      "nats://u:p/path?x@host:4222", // secretlint-disable-line
+			want:    "nats://***",
+			secrets: []string{"u:p", "/path"},
+		},
+		{
+			// The same hole in the multi-URL branch, which asks its own narrower question and
+			// so had to be fixed on the same terms rather than inheriting the answer.
+			name:    "a slash inside userinfo does not make a list's query genuine",
+			in:      "nats://u:p/path?x@a,nats://b:4222", // secretlint-disable-line
+			want:    "nats://***",
+			secrets: []string{"u:p", "/path"},
 		},
 		{
 			// Requiring every segment to carry its own `://` was meant to stop a token being
