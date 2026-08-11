@@ -12,6 +12,7 @@ name: Validate OKF Knowledge Bundle
       - "internal/okf/**"
       - "internal/okfgen/**"
       - "internal/okfvalidate/**"
+  merge_group:
 
 permissions:
   contents: read
