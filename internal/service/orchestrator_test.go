@@ -1949,3 +1949,69 @@ func TestOrchestrator_PreCreateFailureLogsAClassifiedReason(t *testing.T) {
 	}
 	t.Fatal("no \"before upstream create\" log record was emitted, so the reason has nowhere to live")
 }
+
+type malformedConfigDispatcher struct{}
+
+func (malformedConfigDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	// Deliberately NOT an ErrConnectionNotUsable chain: a malformed platform config is
+	// pre-create (nothing was sent upstream) but says nothing about the connection.
+	return nil, accountNotSelectedErr{err: errors.New("metaConfig is not valid JSON")}
+}
+
+// TestOrchestrator_UnclassifiablePreCreateFailureOmitsTheReason is the other half of the
+// contract pinned above, and the half that is easy to lose.
+//
+// dispatchErrIsPreCreate keys on NoUpstreamCreate, which is set by more than connection
+// faults — a malformed platform config, a brief-validation failure and a
+// connection-repository error all release the claim too. unusableConnectionReason is
+// defined over ErrConnectionNotUsable chains, so emitting it unconditionally would stamp
+// reason="unclassified" on every one of those.
+//
+// That is worse than carrying no attribute, which is why it is worth a test rather than a
+// comment: an alert or dashboard grouping by `reason` cannot tell "we classified this and
+// learned nothing" from "no classification applies here" — the first invents a bucket that
+// looks like a real finding and grows with unrelated traffic. Omitting the key says which
+// one it is.
+func TestOrchestrator_UnclassifiablePreCreateFailureOmitsTheReason(t *testing.T) {
+	h := &capturingHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(&fakeCampaignRepo{}, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderMetaAds: malformedConfigDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderMetaAds}, nil)
+	waitForTerminal(t, jobs, id)
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, rec := range h.recs {
+		if !strings.Contains(rec.Message, "before upstream create") {
+			continue
+		}
+		var reason, gotJob string
+		var hasReason bool
+		rec.Attrs(func(a slog.Attr) bool {
+			switch a.Key {
+			case "reason":
+				reason, hasReason = a.Value.String(), true
+			case "job_id":
+				gotJob = a.Value.String()
+			}
+			return true
+		})
+		if gotJob != id {
+			continue
+		}
+		if hasReason {
+			t.Fatalf("a non-connection pre-create failure logged reason=%q; it must carry no "+
+				"reason attribute at all. unusableConnectionReason has no vocabulary for this "+
+				"error, so any value it returns is a classification that was never made", reason)
+		}
+		return
+	}
+	t.Fatal("no \"before upstream create\" log record was emitted for the unclassifiable error")
+}

@@ -850,15 +850,23 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// input/config validation), in which case releasing the claim to allow a
 		// retry is safe.
 		if dispatchErrIsPreCreate(derr) {
-			// The reason token is carried on THIS branch only, and that is the point rather
-			// than an omission. Pre-create is where the connection faults land — a resolve
-			// that could not produce a usable client never reached the provider — so it is
-			// the one branch whose errors unusableConnectionReason has a vocabulary for. On
-			// the retained branches the error describes the provider, not the connection,
-			// and every one of them would log "unclassified": a field that is constant is
-			// not a field, and one that is constant only where nothing can be learned is
-			// worse, because it reads like a classification was attempted and came back
-			// empty.
+			// The reason token is carried on THIS branch only, and only for the errors it
+			// has a vocabulary for. Pre-create is where the connection faults land — a
+			// resolve that could not produce a usable client never reached the provider —
+			// but it is NOT only connection faults: dispatchErrIsPreCreate keys on
+			// NoUpstreamCreate, which a malformed platform config, a brief-validation
+			// failure and a connection-repository error all set too. unusableConnectionReason
+			// is defined over ErrConnectionNotUsable chains, so those would every one log
+			// "unclassified".
+			//
+			// Hence the errors.Is gate rather than an unconditional attribute. A field that
+			// is constant is not a field, and one that is constant only where nothing can be
+			// learned is worse, because it reads like a classification was attempted and
+			// came back empty — which is exactly what a reason-based alert would then be
+			// filtering on. Omitting the attribute says "not classified here"; emitting
+			// "unclassified" says "classified, and the answer is nothing". The retained
+			// branches carry no reason for the same reason: there the error describes the
+			// provider, not the connection.
 			//
 			// Without this the token reached NOTHING. res.Error below collapses every
 			// dispatcher error to one string, and this line logged only err.Error() — so the
@@ -867,8 +875,13 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			// promised it. A structured reason is what makes "the operator learns
 			// account_not_selected" a true statement about an ASYNC dispatch, which is the
 			// only path on which a campaign is ever created.
-			slog.ErrorContext(ctx, "platform dispatch failed before upstream create (claim released)",
-				"platform", p, "job_id", jobID, "reason", unusableConnectionReason(derr), "error", derr)
+			const preCreateMsg = "platform dispatch failed before upstream create (claim released)"
+			if errors.Is(derr, domain.ErrConnectionNotUsable) {
+				slog.ErrorContext(ctx, preCreateMsg,
+					"platform", p, "job_id", jobID, "reason", unusableConnectionReason(derr), "error", derr)
+			} else {
+				slog.ErrorContext(ctx, preCreateMsg, "platform", p, "job_id", jobID, "error", derr)
+			}
 			releaseClaim()
 		} else {
 			// The claim is RETAINED (outcome unknown, blind retry could double-create).
