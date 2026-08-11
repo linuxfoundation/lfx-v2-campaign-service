@@ -95,8 +95,8 @@ func validateConcept(path string) error {
 // the same escape. A query string legitimately carries one (`thing.md?v=1&lang=en`),
 // and checkBulletDescription strips the query before resolving the path — so a class
 // that banned every `&` would reject a destination this validator otherwise supports.
-// The entity form is caught by hasEntityInPath instead, which looks only where an `&`
-// cannot be anything else.
+// The entity form is caught by hasEntityRef instead, which keys on the closing `;`
+// rather than on the `&`.
 var indexBulletPattern = regexp.MustCompile(`^\* \[([^\]]+)\]\(([^)\s<>\\]+)\) - (.+)$`)
 
 // destinationPath returns the part of a markdown link destination that names a file:
@@ -109,14 +109,28 @@ func destinationPath(link string) string {
 	return link
 }
 
-// hasEntityInPath reports whether a destination carries an ampersand in its PATH, where
-// it can only be an HTML entity — `thing&#46;md` renders as `thing.md`. This validator
-// does not decode entities, so such a destination has to be rejected at the format stage:
-// left alone it is truncated at the `#` to `thing&`, fails the ".md" suffix test, and is
-// skipped without a word, which is exactly the silent opt-out the format check exists to
-// prevent. An ampersand after the `?` or `#` is an ordinary query separator and fine.
-func hasEntityInPath(link string) bool {
-	return strings.ContainsRune(destinationPath(link), '&')
+// entityRefPattern matches an HTML character reference: named (`&amp;`), decimal
+// (`&#46;`) or hexadecimal (`&#x2e;`). The closing `;` is required and is the whole
+// discriminator — it is what an entity has and a bare ampersand does not.
+var entityRefPattern = regexp.MustCompile(`&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);`)
+
+// hasEntityRef reports whether a destination carries an HTML character reference.
+//
+// This validator does not decode entities, so such a destination has to be rejected at the
+// format stage: `thing&#46;md` renders as `thing.md` but is read here as a path, and every
+// entity form fails the same silent way. A NUMERIC reference is truncated at its own `#` to
+// `thing&`; a NAMED one survives whole as `thing&period;md`. Either way the ".md" suffix test
+// fails and the bullet is skipped without a word, which is exactly the opt-out the format
+// check exists to prevent.
+//
+// A bare `&` is NOT one, and rejecting it was an over-rejection with real cost: `&` is a
+// legal path character, so a concept file named `research&development.md` with a correct
+// bare link was refused with a message about an entity it does not contain. It is also a
+// legal query separator (`thing.md?v=1&lang=en`), which is why indexBulletPattern's
+// destination class admits `&` and this check runs against the RAW destination rather than
+// destinationPath — a numeric reference hides behind the same `#` that truncation uses.
+func hasEntityRef(link string) bool {
+	return entityRefPattern.MatchString(link)
 }
 
 // validateIndex checks OKF §9 rule 3 & the §6 bullet format: no
@@ -168,7 +182,7 @@ func validateIndex(bundleDir, path string, isRoot bool) []error {
 			errs = append(errs, fmt.Errorf("%s: bullet %q does not match \"* [Title](url) - description\" (the url must be a bare path: no spaces, angle brackets, link title, or backslash escapes)", path, trimmed))
 			continue
 		}
-		if hasEntityInPath(m[2]) {
+		if hasEntityRef(m[2]) {
 			errs = append(errs, fmt.Errorf("%s: bullet %q has an HTML entity in its link destination path; write the path literally", path, trimmed))
 			continue
 		}

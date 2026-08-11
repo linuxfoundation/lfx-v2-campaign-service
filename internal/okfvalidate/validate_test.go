@@ -434,11 +434,16 @@ func TestValidateIndexBulletRejectsEscapedDestinations(t *testing.T) {
 		link string
 		// want is the fragment of the diagnostic that identifies WHICH guard fired. The
 		// backslash is excluded by the destination character class; the entity is caught
-		// by hasEntityInPath, because the class must admit `&` for query strings.
+		// by hasEntityRef, because the class must admit `&` for query strings.
 		want string
 	}{
 		"backslash-escape": {link: `thing\.md`, want: "does not match"},
 		"html-entity":      {link: `thing&#46;md`, want: "HTML entity"},
+		// A NAMED reference fails the same way for a different reason: nothing truncates
+		// it, so `thing&period;md` reaches the suffix test whole and misses ".md" — the
+		// same silent skip by another route, and the reason the guard is not numeric-only.
+		"named-entity": {link: `thing&period;md`, want: "HTML entity"},
+		"hex-entity":   {link: `thing&#x2e;md`, want: "HTML entity"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -484,6 +489,42 @@ func TestValidateIndexBulletAcceptsAMultiParameterQuery(t *testing.T) {
 	writeConcept(t, filepath.Join(drift, "thing.md"), "Does the thing.")
 	writeFile(t, filepath.Join(drift, "index.md"),
 		"# Bundle\n\n* [Thing](thing.md?v=1&lang=en) - Does something else.\n")
+
+	errs := Validate(drift)
+	if len(errs) != 1 {
+		t.Fatalf("Validate() = %v, want the drifted description to be reported", errs)
+	}
+	if !strings.Contains(errs[0].Error(), "description") {
+		t.Errorf("Validate() error = %q, want the description-sync diagnostic", errs[0])
+	}
+}
+
+// TestValidateIndexBulletAcceptsALiteralAmpersandInThePath is the over-rejection half of
+// the entity guard. The first version keyed on the `&` alone, which made "is this an
+// entity?" the same question as "is there an ampersand?" — and `&` is a perfectly legal
+// PATH character, so a concept file genuinely named `research&development.md`, linked
+// correctly and bare, was refused with a diagnostic about an entity it does not contain.
+//
+// Over-rejection is the more tempting mistake here because it looks conservative, and it
+// is not: the guard exists to stop a link SILENTLY opting out of description-sync, and
+// refusing a link that would have passed sync serves nothing. The closing `;` is what
+// separates the two — an entity has one, a bare ampersand does not.
+func TestValidateIndexBulletAcceptsALiteralAmpersandInThePath(t *testing.T) {
+	dir := t.TempDir()
+	writeConcept(t, filepath.Join(dir, "research&development.md"), "Covers R&D.")
+	writeFile(t, filepath.Join(dir, "index.md"),
+		"# Bundle\n\n* [R and D](research&development.md) - Covers R&D.\n")
+
+	if errs := Validate(dir); len(errs) != 0 {
+		t.Fatalf("Validate() = %v, want a literal ampersand in the path to be accepted", errs)
+	}
+
+	// And it is resolved, not merely tolerated: drift against the same destination must
+	// still be reported, or the assertion above would hold for a path nothing looked up.
+	drift := t.TempDir()
+	writeConcept(t, filepath.Join(drift, "research&development.md"), "Covers R&D.")
+	writeFile(t, filepath.Join(drift, "index.md"),
+		"# Bundle\n\n* [R and D](research&development.md) - Covers something else.\n")
 
 	errs := Validate(drift)
 	if len(errs) != 1 {
