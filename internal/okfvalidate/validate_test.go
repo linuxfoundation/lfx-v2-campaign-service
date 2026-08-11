@@ -577,6 +577,53 @@ func TestValidateIndexBulletAcceptsAnEntityOutsideThePath(t *testing.T) {
 	}
 }
 
+// TestValidateIndexBulletAcceptsAMalformedEscapeOutsideThePath pins the case that forced
+// classification into the path region in the first place.
+//
+// The entity fixtures above travel through `html.UnescapeString` and come out as ordinary
+// characters, so they never test what `url.Parse` does with input it considers malformed.
+// A percent sign that is not the start of a valid escape does: `url.Parse("thing.md#100%")`
+// returns `invalid URL escape "%"`, and it returns it for a percent ANYWHERE in the input,
+// fragment included. `100%` is a legal CommonMark fragment — a heading named "100%" gets
+// exactly that anchor — so classifying the whole destination reported a resolvable bullet as
+// "not a URL reference".
+//
+// The fixture carries a DRIFTED description for the same reason as the test above: asserting
+// only that no format error was raised would also pass if the bullet had been skipped.
+//
+// Revert-verified, and only the FRAGMENT case fails against the old classification. The query
+// case passes either way — `url.Parse` tolerates a bare `%` in a query and never refused it —
+// and is kept as a boundary marker for the other region resolution discards, labelled as one
+// because a subtest that cannot fail reads as evidence until someone checks.
+func TestValidateIndexBulletAcceptsAMalformedEscapeOutsideThePath(t *testing.T) {
+	for name, link := range map[string]string{
+		"a bare percent in the fragment":              "thing.md#100%",
+		"a bare percent in the query (boundary only)": "thing.md?pct=100%",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeConcept(t, filepath.Join(dir, "thing.md"), "Does the thing.")
+			writeFile(t, filepath.Join(dir, "index.md"),
+				"# Bundle\n\n* [Thing]("+link+") - Says something else.\n")
+
+			errs := Validate(dir)
+			if len(errs) != 1 {
+				t.Fatalf("Validate() = %v, want exactly the description-drift error — a malformed "+
+					"escape outside the path never reaches resolution, so the bullet must be "+
+					"resolved and compared like any other", errs)
+			}
+			if strings.Contains(errs[0].Error(), "not a URL reference") {
+				t.Fatalf("Validate() error = %q, want the description diagnostic: this link "+
+					"resolves correctly and is being refused for a region no later step reads",
+					errs[0])
+			}
+			if !strings.Contains(errs[0].Error(), "description") {
+				t.Errorf("Validate() error = %q, want the description-sync diagnostic", errs[0])
+			}
+		})
+	}
+}
+
 // TestValidateIndexBulletAcceptsAnEntityShapedLiteral is the THIRD over-rejection the entity
 // guard has had to price, and the one that shows shape was never the discriminator.
 //
