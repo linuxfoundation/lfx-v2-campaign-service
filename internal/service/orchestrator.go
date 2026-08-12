@@ -226,6 +226,28 @@ type AccountLister interface {
 	ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error)
 }
 
+// EmailSearcher is an OPTIONAL dispatcher capability: search the marketing emails reachable
+// through a project's stored connection. Discovered by type assertion like StatusToggler,
+// MetricsReader and AccountLister; a dispatcher that doesn't implement it yields a clean
+// "not supported" error (ErrEmailSearchUnsupported → 400). A pure read that never mutates
+// platform or DB state.
+//
+// Separate from AccountLister rather than folded into it: an ad platform's discovery answers
+// which ACCOUNT a credential may act as, and the answer is stored on the connection. This
+// answers which EMAIL a campaign should clone, and the answer travels per campaign in the
+// dispatch config. Only the email channel has the second question at all.
+type EmailSearcher interface {
+	// SearchEmails returns the marketing emails whose name or subject matches query,
+	// most-recently-updated first. An empty query lists the most recently updated emails.
+	//
+	// A successful call MUST return a NON-NIL slice, even when nothing matches — return an
+	// empty slice, not nil, for the same reason ListAccounts does: the caller cannot
+	// otherwise tell "the portal authoritatively has no such email" from an implementation
+	// that fell through a branch, and the two mean opposite things to someone staring at an
+	// empty picker.
+	SearchEmails(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.MarketingEmail, error)
+}
+
 // CampaignAdopter is an OPTIONAL dispatcher capability: look a campaign up BY ITS PLATFORM ID,
 // so an existing one can be bound to a brief without creating anything. Type-asserted like
 // StatusToggler, MetricsReader and AccountLister, so a dispatcher without it yields a clean
@@ -277,6 +299,9 @@ var (
 
 	// ErrAccountsUnsupported: the platform has no account-listing capability wired.
 	ErrAccountsUnsupported = domain.ErrAccountsUnsupported
+
+	// ErrEmailSearchUnsupported: the platform has no email-search capability wired.
+	ErrEmailSearchUnsupported = domain.ErrEmailSearchUnsupported
 
 	// ErrAdoptionUnsupported: the platform has no campaign-adoption capability wired.
 	ErrAdoptionUnsupported = domain.ErrAdoptionUnsupported
@@ -1345,4 +1370,32 @@ func (o *Orchestrator) ReadAccounts(ctx context.Context, projectID string, platf
 		return nil, fmt.Errorf("%s account lister returned a nil result with no error", platform)
 	}
 	return accounts, nil
+}
+
+// SearchEmails returns the marketing emails reachable through the project's stored connection
+// whose name or subject matches query, most-recently-updated first.
+//
+// Shares ReadAccounts' shape deliberately, including the (nil, nil) guard: an empty picker that
+// silently means "the searcher gave up" sends an operator hunting for a permissions problem in
+// their portal that does not exist. The same timeout applies — this is one bounded upstream read
+// on a request path, and the page cannot render until it answers.
+func (o *Orchestrator) SearchEmails(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.MarketingEmail, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrEmailSearchUnsupported, platform)
+	}
+	searcher, ok := d.(EmailSearcher)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrEmailSearchUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
+	defer cancel()
+	emails, serr := searcher.SearchEmails(callCtx, projectID, platform, query)
+	if serr != nil {
+		return nil, serr
+	}
+	if emails == nil {
+		return nil, fmt.Errorf("%s email searcher returned a nil result with no error", platform)
+	}
+	return emails, nil
 }

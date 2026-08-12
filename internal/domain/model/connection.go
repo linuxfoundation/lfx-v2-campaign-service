@@ -236,3 +236,28 @@ type AccessibleAccount struct {
 	// Label is a human-readable name or display label for the account.
 	Label string
 }
+
+// MarketingEmail is a minimal view of one marketing email reachable through a stored
+// connection, for a picker that has to choose which email a campaign will CLONE.
+//
+// Deliberately not an AccessibleAccount. Discovery on the ad platforms answers "which account
+// may this credential act as?", and the chosen id is stored on the connection. This answers
+// "which email should be cloned?", and the chosen id travels per campaign in the dispatch
+// config (hubspotConfig.SourceEmailID) — a different question with a different lifetime, so
+// sharing the type would only make two unrelated things look interchangeable.
+type MarketingEmail struct {
+	// ID is the HubSpot marketing-email id, in the form sourceEmailId expects.
+	ID string
+	// Name is the internal email name as it appears in the HubSpot email list.
+	Name string
+	// Subject is the subject line.
+	Subject string
+	// State is HubSpot's lifecycle state (DRAFT, PUBLISHED, ARCHIVED, …). Carried so a
+	// picker can warn before cloning something archived, rather than leaving the user to
+	// discover it after the clone has already landed in their portal.
+	State string
+	// UpdatedAt is the last-modified timestamp (ISO-8601). Results arrive ordered
+	// most-recently-updated first; this is carried anyway because two templates routinely
+	// share a name and the date is what distinguishes them in a list.
+	UpdatedAt string
+}

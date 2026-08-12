@@ -1449,3 +1449,31 @@ func BuildListMetaAdsAccountsPayload(lfxV2CampaignServiceConnectionsListMetaAdsA
 
 	return v, nil
 }
+
+// BuildListHubspotEmailsPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-hubspot-emails endpoint from CLI
+// flags.
+func BuildListHubspotEmailsPayload(lfxV2CampaignServiceConnectionsListHubspotEmailsProjectID string, lfxV2CampaignServiceConnectionsListHubspotEmailsQ string, lfxV2CampaignServiceConnectionsListHubspotEmailsBearerToken string) (*lfxv2campaignserviceconnections.ListHubspotEmailsPayload, error) {
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsListHubspotEmailsProjectID
+	}
+	var q *string
+	{
+		if lfxV2CampaignServiceConnectionsListHubspotEmailsQ != "" {
+			q = &lfxV2CampaignServiceConnectionsListHubspotEmailsQ
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListHubspotEmailsBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsListHubspotEmailsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListHubspotEmailsPayload{}
+	v.ProjectID = projectID
+	v.Q = q
+	v.BearerToken = bearerToken
+
+	return v, nil
+}

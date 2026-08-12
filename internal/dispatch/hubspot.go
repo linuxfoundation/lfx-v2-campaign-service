@@ -579,3 +579,45 @@ func hubSpotCreationPortalID(campaign *model.Campaign) string {
 	}
 	return strings.TrimSpace(blob.PortalID)
 }
+
+// SearchEmails implements service.EmailSearcher for the HubSpot email channel. It resolves the
+// same connection every other HubSpot path does — so the three stored-connection defects arrive
+// tagged with domain.ErrConnectionNotUsable and answer 409 rather than 503 — and searches the
+// portal's marketing emails by name or subject.
+//
+// This is a TEMPLATE picker, not an account picker. A HubSpot connection is already scoped to
+// the portal its private-app token authenticates against, so there is no account to choose; what
+// the caller must choose is the email to clone, because hubspotConfig.SourceEmailID is required
+// and has no default (see the Dispatch contract above).
+//
+// Archived and draft emails are RETURNED rather than filtered, for the same reason the Meta
+// account picker returns disabled accounts with the reason in the label: hiding the row the user
+// is looking for answers "your portal has no such email" about an email sitting right there. The
+// caller gets State and decides.
+func (d *HubSpotDispatcher) SearchEmails(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.MarketingEmail, error) {
+	client, err := d.resolveHubSpotClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+
+	emails, err := client.SearchEmails(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("search hubspot marketing emails: %w", err)
+	}
+
+	// make(..., 0, n), never a nil slice: service.EmailSearcher requires a non-nil result on
+	// success so "this portal has no matching email" stays distinguishable from "the searcher
+	// fell through a branch". Orchestrator.SearchEmails rejects (nil, nil) as a contract
+	// violation precisely so an empty picker cannot be reported as fact by accident.
+	out := make([]model.MarketingEmail, 0, len(emails))
+	for _, e := range emails {
+		out = append(out, model.MarketingEmail{
+			ID:        e.ID,
+			Name:      e.Name,
+			Subject:   e.Subject,
+			State:     e.State,
+			UpdatedAt: e.UpdatedAt,
+		})
+	}
+	return out, nil
+}

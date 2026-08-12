@@ -5490,6 +5490,120 @@ func EncodeListMetaAdsAccountsError(encoder func(context.Context, http.ResponseW
 	}
 }
 
+// EncodeListHubspotEmailsResponse returns an encoder for responses returned by
+// the lfx-v2-campaign-service-connections list-hubspot-emails endpoint.
+func EncodeListHubspotEmailsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceconnections.ListHubspotEmailsResult)
+		enc := encoder(ctx, w)
+		body := NewListHubspotEmailsResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeListHubspotEmailsRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-connections list-hubspot-emails endpoint.
+func DecodeListHubspotEmailsRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceconnections.ListHubspotEmailsPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceconnections.ListHubspotEmailsPayload, error) {
+		var payload *lfxv2campaignserviceconnections.ListHubspotEmailsPayload
+		var (
+			projectID   string
+			q           *string
+			bearerToken *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		qRaw := r.URL.Query().Get("q")
+		if qRaw != "" {
+			q = &qRaw
+		}
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		payload = NewListHubspotEmailsPayload(projectID, q, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeListHubspotEmailsError returns an encoder for errors returned by the
+// list-hubspot-emails lfx-v2-campaign-service-connections endpoint.
+func EncodeListHubspotEmailsError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListHubspotEmailsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListHubspotEmailsServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceconnections.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListHubspotEmailsInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceconnections.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewListHubspotEmailsNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // unmarshalGoogleAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsGoogleAdsConnectionConfig
 // builds a value of type
 // *lfxv2campaignserviceconnections.GoogleAdsConnectionConfig from a value of
@@ -5690,6 +5804,21 @@ func marshalLfxv2campaignserviceconnectionsAccessibleAccountToAccessibleAccountR
 	res := &AccessibleAccountResponseBody{
 		ID:    v.ID,
 		Label: v.Label,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceconnectionsMarketingEmailToMarketingEmailResponseBody
+// builds a value of type *MarketingEmailResponseBody from a value of type
+// *lfxv2campaignserviceconnections.MarketingEmail.
+func marshalLfxv2campaignserviceconnectionsMarketingEmailToMarketingEmailResponseBody(v *lfxv2campaignserviceconnections.MarketingEmail) *MarketingEmailResponseBody {
+	res := &MarketingEmailResponseBody{
+		ID:        v.ID,
+		Name:      v.Name,
+		Subject:   v.Subject,
+		State:     v.State,
+		UpdatedAt: v.UpdatedAt,
 	}
 
 	return res

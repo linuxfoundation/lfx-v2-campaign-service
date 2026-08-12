@@ -230,3 +230,8 @@ func ListGoogleAdsAccountsLfxV2CampaignServiceConnectionsPath(projectID string) 
 func ListMetaAdsAccountsLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/connection-meta-ads/accounts", projectID)
 }
+
+// ListHubspotEmailsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-hubspot-emails HTTP endpoint.
+func ListHubspotEmailsLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/connection-hubspot/emails", projectID)
+}

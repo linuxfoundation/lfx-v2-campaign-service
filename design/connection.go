@@ -495,6 +495,24 @@ var AccessibleAccount = Type("accessible-account", func() {
 	Required("id")
 })
 
+// MarketingEmail is one row of the HubSpot email picker. NOT an account: a HubSpot connection
+// is already scoped to the portal its private-app token authenticates against, so there is
+// nothing to choose there. What the caller must choose is which email to CLONE, because
+// hubspotConfig.SourceEmailID is required and has no default.
+var MarketingEmail = Type("marketing-email", func() {
+	Attribute("id", String, "HubSpot marketing-email id, ready to pass as the campaign config's sourceEmailId", func() { Example("112233445566") })
+	Attribute("name", String, "Internal email name, as it appears in the HubSpot email list")
+	Attribute("subject", String, "Subject line")
+	// Returned so a picker can warn before cloning something archived rather than leaving
+	// the user to discover it after the clone lands in HubSpot.
+	Attribute("state", String, "HubSpot lifecycle state of the email (e.g. DRAFT, PUBLISHED, ARCHIVED)")
+	// Ordering is already applied server-side (most-recently-updated first). It is returned
+	// anyway because two templates routinely share a name, and the date is what tells them
+	// apart in a list.
+	Attribute("updated_at", String, "Last-modified timestamp (ISO-8601)")
+	Required("id")
+})
+
 // ─── LinkedIn Ads ───
 
 var LinkedInAdsCredentials = Type("linkedin-ads-credentials", func() {
@@ -796,6 +814,48 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
 			GET("/projects/{project_id}/connection-meta-ads/accounts")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("BadRequest", StatusBadRequest)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("list-hubspot-emails", func() {
+		Description("Search the marketing emails reachable via the stored HubSpot connection, " +
+			"most-recently-updated first. This is a TEMPLATE picker, not an account picker: a " +
+			"HubSpot connection is already scoped to the portal its private-app token " +
+			"authenticates against, but staging an email campaign clones a caller-specified " +
+			"source email (sourceEmailId is required and has no default), so the caller has to " +
+			"be able to find one.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			// Optional: an absent query lists the most recently updated emails, which is the
+			// useful first screen for a picker. HubSpot matches name OR subject,
+			// case-insensitively.
+			Attribute("q", String, "Substring matched against email name and subject, case-insensitively. Omit to list the most recently updated emails.", func() {
+				Example("KubeCon")
+			})
+			Required("project_id")
+		})
+		Result(func() {
+			Attribute("emails", ArrayOf(MarketingEmail), func() {
+				Example([]map[string]any{
+					{"id": "112233445566", "name": "KubeCon EU 2026 — announce", "subject": "KubeCon EU 2026 registration is open", "state": "PUBLISHED", "updated_at": "2026-08-01T17:04:00Z"},
+				})
+			})
+			Required("emails")
+		})
+		Error("NotFound", NotFoundError, "Resource not found")
+		Error("BadRequest", BadRequestError, "Bad request")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-hubspot/emails")
+			Param("q")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)

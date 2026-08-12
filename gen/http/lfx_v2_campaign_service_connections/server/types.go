@@ -735,6 +735,13 @@ type ListMetaAdsAccountsResponseBody struct {
 	Accounts []*AccessibleAccountResponseBody `form:"accounts" json:"accounts" xml:"accounts"`
 }
 
+// ListHubspotEmailsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
+// HTTP response body.
+type ListHubspotEmailsResponseBody struct {
+	Emails []*MarketingEmailResponseBody `form:"emails" json:"emails" xml:"emails"`
+}
+
 // CreateGoogleAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "create-google-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -2656,6 +2663,46 @@ type ListMetaAdsAccountsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListHubspotEmailsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
+// HTTP response body for the "BadRequest" error.
+type ListHubspotEmailsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListHubspotEmailsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type ListHubspotEmailsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListHubspotEmailsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
+// HTTP response body for the "InternalServerError" error.
+type ListHubspotEmailsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListHubspotEmailsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
+// HTTP response body for the "NotFound" error.
+type ListHubspotEmailsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // AccessibleAccountResponseBody is used to define fields on response body
 // types.
 type AccessibleAccountResponseBody struct {
@@ -2665,6 +2712,21 @@ type AccessibleAccountResponseBody struct {
 	ID string `form:"id" json:"id" xml:"id"`
 	// Human-readable account name or label
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+}
+
+// MarketingEmailResponseBody is used to define fields on response body types.
+type MarketingEmailResponseBody struct {
+	// HubSpot marketing-email id, ready to pass as the campaign config's
+	// sourceEmailId
+	ID string `form:"id" json:"id" xml:"id"`
+	// Internal email name, as it appears in the HubSpot email list
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Subject line
+	Subject *string `form:"subject,omitempty" json:"subject,omitempty" xml:"subject,omitempty"`
+	// HubSpot lifecycle state of the email (e.g. DRAFT, PUBLISHED, ARCHIVED)
+	State *string `form:"state,omitempty" json:"state,omitempty" xml:"state,omitempty"`
+	// Last-modified timestamp (ISO-8601)
+	UpdatedAt *string `form:"updated_at,omitempty" json:"updated_at,omitempty" xml:"updated_at,omitempty"`
 }
 
 // GoogleAdsConnectionConfigRequestBody is used to define fields on request
@@ -3306,6 +3368,26 @@ func NewListMetaAdsAccountsResponseBody(res *lfxv2campaignserviceconnections.Lis
 		}
 	} else {
 		body.Accounts = []*AccessibleAccountResponseBody{}
+	}
+	return body
+}
+
+// NewListHubspotEmailsResponseBody builds the HTTP response body from the
+// result of the "list-hubspot-emails" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListHubspotEmailsResponseBody(res *lfxv2campaignserviceconnections.ListHubspotEmailsResult) *ListHubspotEmailsResponseBody {
+	body := &ListHubspotEmailsResponseBody{}
+	if res.Emails != nil {
+		body.Emails = make([]*MarketingEmailResponseBody, len(res.Emails))
+		for i, val := range res.Emails {
+			if val == nil {
+				body.Emails[i] = nil
+				continue
+			}
+			body.Emails[i] = marshalLfxv2campaignserviceconnectionsMarketingEmailToMarketingEmailResponseBody(val)
+		}
+	} else {
+		body.Emails = []*MarketingEmailResponseBody{}
 	}
 	return body
 }
@@ -5407,6 +5489,50 @@ func NewListMetaAdsAccountsNotFoundResponseBody(res *lfxv2campaignserviceconnect
 	return body
 }
 
+// NewListHubspotEmailsBadRequestResponseBody builds the HTTP response body
+// from the result of the "list-hubspot-emails" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListHubspotEmailsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListHubspotEmailsBadRequestResponseBody {
+	body := &ListHubspotEmailsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListHubspotEmailsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "list-hubspot-emails" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListHubspotEmailsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListHubspotEmailsServiceUnavailableResponseBody {
+	body := &ListHubspotEmailsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListHubspotEmailsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "list-hubspot-emails" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListHubspotEmailsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListHubspotEmailsInternalServerErrorResponseBody {
+	body := &ListHubspotEmailsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListHubspotEmailsNotFoundResponseBody builds the HTTP response body from
+// the result of the "list-hubspot-emails" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListHubspotEmailsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListHubspotEmailsNotFoundResponseBody {
+	body := &ListHubspotEmailsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewCreateGoogleAdsPayload builds a lfx-v2-campaign-service-connections
 // service create-google-ads endpoint payload.
 func NewCreateGoogleAdsPayload(body *CreateGoogleAdsRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceconnections.CreateGoogleAdsPayload {
@@ -5882,6 +6008,17 @@ func NewListGoogleAdsAccountsPayload(projectID string, bearerToken *string) *lfx
 func NewListMetaAdsAccountsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListMetaAdsAccountsPayload {
 	v := &lfxv2campaignserviceconnections.ListMetaAdsAccountsPayload{}
 	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListHubspotEmailsPayload builds a lfx-v2-campaign-service-connections
+// service list-hubspot-emails endpoint payload.
+func NewListHubspotEmailsPayload(projectID string, q *string, bearerToken *string) *lfxv2campaignserviceconnections.ListHubspotEmailsPayload {
+	v := &lfxv2campaignserviceconnections.ListHubspotEmailsPayload{}
+	v.ProjectID = projectID
+	v.Q = q
 	v.BearerToken = bearerToken
 
 	return v

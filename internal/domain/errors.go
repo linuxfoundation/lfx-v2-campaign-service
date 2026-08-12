@@ -131,6 +131,17 @@ var (
 	// correct client response is to retry shortly, not to refetch and rebuild the request.
 	ErrCampaignWriteInProgress = errors.New("another write to this campaign is already in progress")
 
+	// ErrEmailSearchUnsupported indicates the platform has no email-search capability
+	// wired. The platform is never contacted.
+	//
+	// `Orchestrator.SearchEmails` returns it when the platform's dispatcher does not
+	// implement the service-side `EmailSearcher` interface, and the handler maps it to 400 —
+	// as with account discovery, asking a platform this service cannot search is a caller
+	// error, not a transient upstream failure. Distinct from ErrAccountsUnsupported because
+	// the two capabilities are independent: HubSpot searches emails and has no ad accounts
+	// to enumerate, while every ad platform is the reverse.
+	ErrEmailSearchUnsupported = errors.New("email search is not supported for this platform")
+
 	// ErrAccountsUnsupported indicates the platform has no account-listing capability
 	// wired. The platform is never contacted.
 	//
