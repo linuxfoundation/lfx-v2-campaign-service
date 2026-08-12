@@ -696,6 +696,32 @@ func TestSearchEmails_UnfilteredCapSortsWhatItFetched(t *testing.T) {
 	}
 }
 
+func TestSearchEmails_UnfilteredCapTrimsAnOvershootingPage(t *testing.T) {
+	// The trim below the exit guard is only reachable when a page carries `out` PAST the cap.
+	// Every other test here uses perPage=100 against a cap of 500, an exact multiple, so `out`
+	// lands on exactly 500, the guard fires on equality, and `len(out) > 500` is never true —
+	// the trim is asserted by a comment no test backs.
+	//
+	// 150 per page overshoots: pages of 150 reach 600 on the fourth, so the trim runs. It
+	// defends against a server that ignores `limit`, and it must trim AFTER sorting — trimming
+	// first would drop the newest of what was fetched, which is the failure this pins.
+	perPage := 150
+	c, _ := emailPageServer(t, 10, perPage, "Email")
+
+	got, err := c.SearchEmails(context.Background(), "")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != maxUnfilteredEmails {
+		t.Fatalf("an overshooting page must be trimmed to the cap: got %d, want %d", len(got), maxUnfilteredEmails)
+	}
+	// The server emits oldest-first, so the newest of the 600 fetched are ids 599..100.
+	// Trimming before the sort would keep 0..499 instead.
+	if got[0].ID != strconv.Itoa(perPage*4-1) {
+		t.Errorf("the trim must keep the NEWEST of what was fetched: first is id %s, want %d", got[0].ID, perPage*4-1)
+	}
+}
+
 func TestSearchEmails_FilteredWalkIsNotCapped(t *testing.T) {
 	// The bound must NOT apply to a filtered search. A caller that searches for a name is
 	// looking one UP, and a truncated walk answers "no such email" about an email sitting

@@ -51,8 +51,7 @@ googleads/reddit/meta/twitter clients:
   `Error()` omits it. A round-trip failure after the request was plausibly sent, or a 2xx
   whose body can't be read, is a `transportError`; it is ambiguous ONLY for a
   MUTATING call (`IsUnconfirmed` returns `transportError.Mutating`) — an idempotent
-  read/search that failed in transit landed no mutation and is safely retryable.
- Its
+  read/search that failed in transit landed no mutation and is safely retryable. Its
   `Error()` peels
   every nested `*url.Error` layer (`safeCause`) so the request URL — which can carry
   query secrets — never leaks, while `Unwrap()` keeps the cause for `errors.Is/As`.

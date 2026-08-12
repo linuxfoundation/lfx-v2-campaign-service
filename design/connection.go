@@ -837,7 +837,13 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			bearerToken()
 			projectIDAttr()
 			// Optional: an absent query lists recent emails, the useful first screen for a
-			// picker. HubSpot matches name OR subject, case-insensitively.
+			// picker. The CLIENT matches name OR subject case-insensitively across every page —
+			// HubSpot's list endpoint is not queried by name or subject, and `q` never goes
+			// upstream (`SearchEmails` sends only limit, sort, includedProperties and after).
+			//
+			// That is why the walk and the maxUnfilteredEmails cap exist at all. Reading this as
+			// a server-side search parameter invites optimising the walk away, which
+			// reintroduces the false absence those guards prevent.
 			//
 			// The cap is part of the CONTRACT, not an implementation detail, because this
 			// endpoint has no pagination fields: without it a caller cannot tell a complete
