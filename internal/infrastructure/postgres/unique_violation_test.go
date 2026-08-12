@@ -130,10 +130,10 @@ func TestIsUniqueViolation(t *testing.T) {
 			err:  &pgconn.PgError{Code: "23505", ConstraintName: "uq_something_else"},
 			want: true,
 		},
-		"a different SQLSTATE": {err: &pgconn.PgError{Code: "23503"}, want: false},
-		"wrapped": {err: fmt.Errorf("insert: %w", &pgconn.PgError{Code: "23505"}), want: true},
+		"a different SQLSTATE":                   {err: &pgconn.PgError{Code: "23503"}, want: false},
+		"wrapped":                                {err: fmt.Errorf("insert: %w", &pgconn.PgError{Code: "23505"}), want: true},
 		"an error that is not a pg error at all": {err: errors.New("connection refused"), want: false},
-		"nil": {err: nil, want: false},
+		"nil":                                    {err: nil, want: false},
 	}
 
 	for name, tc := range tests {
