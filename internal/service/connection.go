@@ -240,10 +240,13 @@ var hubspotEmailDiscovery = accountDiscovery{
 	provider:    model.ProviderHubSpot,
 	displayName: "hubspot",
 	operation:   "email search",
-	// privateAppToken, not access_token: this names the PUBLISHED field of the HubSpot
-	// set-credential payload, which is the only name the caller can act on.
+	// private_app_token — the PUBLISHED wire name (`design/connection.go`'s
+	// HubSpotCredentials), not the Go/JSON shape `privateAppToken` the blob is persisted
+	// under. This string is the only actionable thing the caller is told, and it must name
+	// a field they can actually send; the persisted spelling would send them looking for a
+	// key that appears in no request they can make.
 	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
-		"with privateAppToken set",
+		"with private_app_token set",
 }
 
 // classifyDiscoveryError maps an orchestrator discovery error onto the connections API's

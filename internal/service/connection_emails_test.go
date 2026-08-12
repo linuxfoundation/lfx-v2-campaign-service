@@ -147,9 +147,10 @@ func TestListHubspotEmails_ClassifiesFailures(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected BadRequestError, got %T: %v", err, err)
 		}
-		// privateAppToken is the name on the wire; the caller can only act on that one.
-		if !strings.Contains(badReq.Message, "privateAppToken") {
-			t.Errorf("message = %q, want it to name privateAppToken", badReq.Message)
+		// private_app_token is the name on the WIRE (design/connection.go); the persisted Go
+		// shape is privateAppToken, and a caller cannot send that one.
+		if !strings.Contains(badReq.Message, "private_app_token") {
+			t.Errorf("message = %q, want it to name private_app_token, the field a caller can send", badReq.Message)
 		}
 	})
 
