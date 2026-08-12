@@ -426,8 +426,11 @@ func audienceLeaseNarrowingProbe(
 
 	// Created without IF NOT EXISTS, and named for this brief: a leftover index from an
 	// earlier run cannot be silently adopted as this one, and cannot collide with it either.
-	// The cleanup below still matters — a leak accumulates in the shared schema even though
-	// it can no longer break a later run.
+	// The cleanup below still matters — a leak accumulates in the shared schema — but it can no
+	// longer BREAK a later run, and that is a property of the index shape chosen below rather
+	// than of the naming. An earlier revision used a partial index and this comment claimed the
+	// same immunity, which was false: a leaked partial index fails
+	// `TestEveryUniquePartialIndexIsRequired` on the next run regardless of what it is called.
 	//
 	// briefID is interpolated rather than bound: CREATE INDEX takes no parameters. It is a
 	// UUID Postgres itself minted and this test read straight back through RETURNING, never
@@ -437,9 +440,20 @@ func audienceLeaseNarrowingProbe(
 		t.Fatalf("brief id %q is not a UUID, so it cannot be interpolated into DDL: %v", briefID, err)
 	}
 	probeIndex := "uq_probe_second_unique_index_" + strings.ReplaceAll(briefID, "-", "")
+	// An EXPRESSION index, not a partial one, and the distinction is not cosmetic.
+	// `TestEveryUniquePartialIndexIsRequired` enumerates every unique index with
+	// `indpred IS NOT NULL` and fails any that is not in `requiredIndexes`. A partial probe left
+	// behind by an interrupted run — where `t.Cleanup` never fires — is exactly that shape, so it
+	// would poison the shared schema and break an unrelated test on the next run. The UUID name
+	// does not help: the enumeration is by SHAPE, not by name.
+	//
+	// The expression form carries the predicate in its KEY instead: it returns brief_id for the
+	// rows the probe is about and NULL for everything else, and Postgres does not treat NULLs as
+	// equal, so uniqueness still applies only to this brief's 'failed' rows. `indpred` is NULL,
+	// so the enumeration does not see it at all.
 	if _, err := pool.Exec(ctx, `CREATE UNIQUE INDEX `+probeIndex+
-		` ON campaign_audiences (brief_id) WHERE status = 'failed' AND brief_id = '`+
-		briefID+`'::uuid`); err != nil {
+		` ON campaign_audiences ((CASE WHEN status = 'failed' AND brief_id = '`+
+		briefID+`'::uuid THEN brief_id END))`); err != nil {
 		t.Fatalf("create the probe index: %v", err)
 	}
 	t.Cleanup(func() {
