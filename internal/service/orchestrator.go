@@ -1377,8 +1377,19 @@ func (o *Orchestrator) ReadAccounts(ctx context.Context, projectID string, platf
 //
 // Shares ReadAccounts' shape deliberately, including the (nil, nil) guard: an empty picker that
 // silently means "the searcher gave up" sends an operator hunting for a permissions problem in
-// their portal that does not exist. The same timeout applies — this is one bounded upstream read
-// on a request path, and the page cannot render until it answers.
+// their portal that does not exist.
+//
+// It shares `accountsCallTimeout` too, but NOT because the work is equivalent. `SearchEmails`
+// walks cursor pages and can issue up to `maxListPages` (200) SEQUENTIAL HubSpot requests, so
+// the 20s here bounds a whole paginated walk rather than a single read — an earlier version of
+// this comment called it "one bounded upstream read", which describes ReadAccounts and not this.
+//
+// The deadline is shared anyway because what it protects is the same: a request path where the
+// page cannot render until this answers, so the ceiling has to be a human's patience, not the
+// walk's natural length. The consequence is worth stating rather than eliding — a portal large
+// enough to need many pages will hit the deadline MID-WALK and surface as a failure, not as a
+// truncated list. That is the correct direction (a silently short picker is worse than an
+// error), but it means the practical page ceiling is whatever fits in 20s, well under 200.
 func (o *Orchestrator) SearchEmails(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.MarketingEmail, error) {
 	d, ok := o.dispatchers[platform]
 	if !ok {

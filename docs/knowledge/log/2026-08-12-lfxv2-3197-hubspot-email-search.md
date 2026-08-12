@@ -193,3 +193,26 @@ not whether a concept still describes the code. Nothing failed for six rounds.
 Also corrected a paragraph in `internal-dispatch.md` that contradicted itself inside four lines:
 it stated archived rows are absent, then said the picker can warn before cloning an archived
 email. The second clause survived from the version written before round 3 established the first.
+
+## Round 7: "the same timeout applies" hid what it was bounding
+
+`SearchEmails` reuses `accountsCallTimeout`, and the comment justified it as "one bounded upstream
+read on a request path" — copied from `ReadAccounts`, where it is true. It is not true here.
+`Client.SearchEmails` follows `paging.next.after` and can issue up to `maxListPages` (200)
+SEQUENTIAL HubSpot requests, so the 20s bounds a whole paginated walk.
+
+Sharing the constant is still right, and for the reason the old comment gave badly: what the
+deadline protects is a request path where the page cannot render until this answers, so the
+ceiling has to be a human's patience rather than the walk's natural length. What was wrong was
+describing the work, which matters because the consequence follows from it — a portal large
+enough to need many pages hits the deadline MID-WALK and answers 503 rather than returning a
+short list.
+
+That is the correct direction and worth stating rather than eliding: a silently truncated picker
+is worse than an error, because the caller cannot distinguish a template that is missing from one
+that is merely past the cut. But it means the practical page ceiling is whatever fits in 20s,
+well under 200 — so `maxListPages` is a runaway backstop here, not the operative bound. Recorded
+in `docs/api-catalog.md` too, since it is the caller-visible half.
+
+The reusable shape: a comment copied along with the code it justifies keeps the ORIGINAL's
+reasoning. Reusing `accountsCallTimeout` was a decision; reusing its rationale was not.
