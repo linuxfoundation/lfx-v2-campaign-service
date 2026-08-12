@@ -440,7 +440,10 @@ func (s *ConnectionService) ListHubspotEmails(ctx context.Context, p *conn.ListH
 	}
 
 	// An omitted q lists the most recently updated emails, which is the useful first screen
-	// for a picker; HubSpot treats an empty query as "no name/subject filter".
+	// for a picker; HubSpot treats an empty query as "no name/subject filter". That screen
+	// is BOUNDED (hubspot.maxUnfilteredEmails) because an empty needle matches every row,
+	// so the default screen is the walk's worst case; a filtered search is not bounded,
+	// because truncating one would report an email that exists as absent.
 	query := ""
 	if p.Q != nil {
 		query = *p.Q

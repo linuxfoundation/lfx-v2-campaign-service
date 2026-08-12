@@ -85,9 +85,33 @@ type paging struct {
 // unbounded. 200 pages × 100/page = 20k records, well past any realistic portal.
 const maxListPages = 200
 
+// maxUnfilteredEmails bounds the UNFILTERED walk (an empty query — the picker's default
+// first screen). Without it the default screen is the worst case: every row in the portal
+// matches, so a large portal returns an enormous response or spends the orchestrator's
+// deadline mid-walk and 503s, precisely on the portals that most need a picker.
+//
+// It applies ONLY when there is no needle. A filtered search must still walk every page:
+// truncating it would answer "no such email" about an email sitting on page 50, and the
+// callers of a lookup act on that absence. An unfiltered walk has no such failure mode —
+// nothing is being looked UP, and the contract is already "the most recent ones".
+//
+// The cap is on ACCUMULATED RECORDS, not on pages, and the walk collects
+// unfilteredWalkSlack× the cap before truncating. Stopping at the first page that reaches
+// the cap would make the result depend on the server honouring `sort=-updatedAt`, which
+// this client treats as a hint rather than a guarantee (see sortEmailsByUpdatedDesc);
+// over-collecting and then sorting the aggregate keeps the ordering OURS.
+const maxUnfilteredEmails = 500
+
+// unfilteredWalkSlack is how many times maxUnfilteredEmails to collect before truncating.
+// At 3 the walk reads up to 1500 rows (15 pages) to return the newest 500, so the answer
+// stays correct even if the server returns rows in an unhelpful order.
+const unfilteredWalkSlack = 3
+
 // SearchEmails returns marketing emails whose name or subject contains query
-// (case-insensitive), most-recently-updated first. Read-only (idempotent). It follows
-// paging.next.after across ALL pages, so a match beyond the first page is not missed.
+// (case-insensitive), most-recently-updated first. Read-only (idempotent). A FILTERED
+// search follows paging.next.after across ALL pages, so a match beyond the first page is
+// not missed. An UNFILTERED one (empty query) is bounded to the newest
+// maxUnfilteredEmails — see that constant for why the two cases differ.
 func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error) {
 	// Trim before matching — a padded term like " kubecon " must still match
 	// "KubeCon Invite" rather than silently returning no results.
@@ -143,8 +167,14 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 				out = append(out, e)
 			}
 		}
-		if resp.Paging == nil || resp.Paging.Next == nil || resp.Paging.Next.After == "" {
+		// Two ways the walk ends: the server ran out of pages, or an unfiltered walk has
+		// collected enough to pick the newest maxUnfilteredEmails from.
+		lastPage := resp.Paging == nil || resp.Paging.Next == nil || resp.Paging.Next.After == ""
+		if lastPage || (needle == "" && len(out) >= maxUnfilteredEmails*unfilteredWalkSlack) {
 			sortEmailsByUpdatedDesc(out)
+			if needle == "" && len(out) > maxUnfilteredEmails {
+				out = out[:maxUnfilteredEmails]
+			}
 			return out, nil
 		}
 		// `paging.next.after` is an OPAQUE token from the JSON body — a JSON string field

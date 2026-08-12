@@ -733,7 +733,6 @@ result, so there is no row to carry a state. Anyone looking for one will not fin
 the endpoint has no way to say why — which is the honest limit of this contract rather than
 something `state` can express.
 
-
 ## Channel kinds: paid ads vs email
 
 `model.ChannelKind` classifies each provider as **`paid-ads`** or **`email`** (`Provider.Kind()`,

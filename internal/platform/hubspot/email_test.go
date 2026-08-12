@@ -6,9 +6,11 @@ package hubspot
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -581,5 +583,149 @@ func TestCloneEmail_TrimsSourceID(t *testing.T) {
 	}
 	if body["id"] != "src-42" {
 		t.Errorf("clone body id must be the trimmed source id, got %v", body["id"])
+	}
+}
+
+// emailPageServer serves `pages` pages of `perPage` rows each, cursor-paginated. Row i gets
+// updatedAt strictly increasing with i, so the server emits OLDEST first — the opposite of
+// the requested sort. That is deliberate: `sort=-updatedAt` is a hint this client does not
+// trust, so any bound that assumes page order is newest-first must fail here.
+//
+// The timestamp must be strictly monotonic in i for that to hold, hence the minute/second
+// split rather than a bare `i%60`: a second field that WRAPS makes id 959 (":59") newer
+// than id 1499 (":59" of a later minute only if the minute advances), and the ordering the
+// test asserts would then be an artefact of the generator rather than of the cap.
+func emailPageServer(t *testing.T, pages, perPage int, name string) (*Client, *int) {
+	t.Helper()
+	var requested int
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		page := 0
+		if a := r.URL.Query().Get("after"); a != "" {
+			if _, err := fmt.Sscanf(a, "P%d", &page); err != nil {
+				t.Errorf("unexpected cursor %q", a)
+			}
+		}
+		requested++
+		var b strings.Builder
+		b.WriteString(`{"results":[`)
+		for i := range perPage {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			n := page*perPage + i
+			fmt.Fprintf(&b, `{"id":"%d","name":"%s %d","subject":"s","updatedAt":"2026-01-01T%02d:%02d:%02dZ"}`,
+				n, name, n, n/3600, (n/60)%60, n%60)
+		}
+		b.WriteString(`]`)
+		if page+1 < pages {
+			fmt.Fprintf(&b, `,"paging":{"next":{"after":"P%d"}}`, page+1)
+		}
+		b.WriteString(`}`)
+		_, _ = io.WriteString(w, b.String())
+	})
+	return c, &requested
+}
+
+func TestSearchEmails_UnfilteredIsCapped(t *testing.T) {
+	// A portal far larger than the cap. An empty query matches every row, so without a
+	// bound this walks the whole portal and returns all of it.
+	perPage := 100
+	pages := maxUnfilteredEmails * unfilteredWalkSlack / perPage * 4
+	c, requested := emailPageServer(t, pages, perPage, "Email")
+
+	got, err := c.SearchEmails(context.Background(), "")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != maxUnfilteredEmails {
+		t.Fatalf("unfiltered result must be capped at %d, got %d", maxUnfilteredEmails, len(got))
+	}
+	// The walk must also STOP -- a cap applied only to the returned slice would still
+	// spend the whole deadline reading every page, which is the half of the finding that
+	// actually causes the 503.
+	if maxWalked := maxUnfilteredEmails * unfilteredWalkSlack / perPage; *requested > maxWalked+1 {
+		t.Errorf("walk must stop once enough rows are collected: read %d pages, want <= %d", *requested, maxWalked+1)
+	}
+}
+
+func TestSearchEmails_UnfilteredCapKeepsNewest(t *testing.T) {
+	// The server emits oldest-first, so the newest rows are on the LAST page collected.
+	// Truncating before sorting -- or trusting `sort=-updatedAt` and keeping page 1 --
+	// would return the OLDEST rows while still passing a length-only assertion.
+	perPage := 100
+	collected := maxUnfilteredEmails * unfilteredWalkSlack
+	c, _ := emailPageServer(t, collected/perPage, perPage, "Email")
+
+	got, err := c.SearchEmails(context.Background(), "")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != maxUnfilteredEmails {
+		t.Fatalf("want %d, got %d", maxUnfilteredEmails, len(got))
+	}
+	// updatedAt is strictly increasing in id, so the newest row the walk saw is the
+	// highest-numbered one.
+	if got[0].ID != strconv.Itoa(collected-1) {
+		t.Errorf("cap must retain the NEWEST rows: first is id %s, want %d", got[0].ID, collected-1)
+	}
+}
+
+func TestSearchEmails_FilteredWalkIsNotCapped(t *testing.T) {
+	// The bound must NOT apply to a filtered search. A caller that searches for a name is
+	// looking one UP, and a truncated walk answers "no such email" about an email sitting
+	// on a later page -- a false absence the callers act on destructively.
+	perPage := 100
+	pages := maxUnfilteredEmails * unfilteredWalkSlack / perPage * 2
+	target := pages*perPage - 1
+	var requested int
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		page := 0
+		if a := r.URL.Query().Get("after"); a != "" {
+			if _, err := fmt.Sscanf(a, "P%d", &page); err != nil {
+				t.Errorf("unexpected cursor %q", a)
+			}
+		}
+		requested++
+		var b strings.Builder
+		b.WriteString(`{"results":[`)
+		for i := range perPage {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			n := page*perPage + i
+			// EVERY row matches the needle, so the filtered accumulator grows exactly as
+			// fast as an unfiltered one would. A cap that keys on len(out) without
+			// checking the needle therefore DOES fire here -- which is the point. With
+			// only one matching row, `out` would stay far below the cap all walk and the
+			// test would pass against a cap applied to filtered searches too.
+			//
+			// The row under test is the last one, so a cap that stops the walk early
+			// drops it and the search reports an email that exists as absent.
+			name := fmt.Sprintf("KubeCon Filler %d", n)
+			if n == target {
+				name = "KubeCon Invite"
+			}
+			fmt.Fprintf(&b, `{"id":"%d","name":"%s","subject":"s","updatedAt":"2026-01-01T00:00:00Z"}`, n, name)
+		}
+		b.WriteString(`]`)
+		if page+1 < pages {
+			fmt.Fprintf(&b, `,"paging":{"next":{"after":"P%d"}}`, page+1)
+		}
+		b.WriteString(`}`)
+		_, _ = io.WriteString(w, b.String())
+	})
+
+	got, err := c.SearchEmails(context.Background(), "kubecon")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != pages*perPage {
+		t.Fatalf("a filtered walk must not be capped: got %d rows, want %d", len(got), pages*perPage)
+	}
+	if !slices.ContainsFunc(got, func(e Email) bool { return e.ID == strconv.Itoa(target) }) {
+		t.Fatalf("the match on the last page must not be truncated away")
+	}
+	if requested != pages {
+		t.Errorf("filtered walk must read every page: read %d, want %d", requested, pages)
 	}
 }
