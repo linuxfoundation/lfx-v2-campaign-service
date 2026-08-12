@@ -6,10 +6,13 @@ package dbtest_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -23,12 +26,21 @@ import (
 // exists for, and it can only be observed against a real database: the arbitration is the
 // index, and no fake repository has one.
 //
-// Two builds for the same (brief, platform) start together. One must get a row; the other
-// must get ErrAudienceBuildInFlight — NOT a second row, because a second row means a
+// Builds for the same (brief, platform) are released together. One must get a row; every
+// other must get ErrAudienceBuildInFlight — NOT a second row, because a second row means a
 // second complete set of HubSpot lists in the portal, indistinguishable from the first and
 // billable. They cannot collide by list NAME either: the plan's BuildRef is the row id,
 // chosen so a later build does not adopt an earlier one's lists, so nothing downstream
 // would notice the duplication.
+//
+// Be precise about WHERE they contend, because it is not where the name suggests. The
+// inserts are not concurrent: CreateAudienceForApprovedBrief opens with
+// `SELECT ... FOR UPDATE` on the brief, so the eight transactions queue at the BRIEF row
+// lock and each reaches its INSERT with the previous one already committed. What the index
+// decides is the OUTCOME — the second through eighth inserts see a committed 'building' row
+// and raise 23505 — not a race between simultaneous writes. That does not weaken the test:
+// the index is still what produces the outcome, and releasing the goroutines together is
+// what puts them in that queue at all.
 func TestAudienceBuildLeaseAdmitsExactlyOneConcurrentBuild(t *testing.T) {
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
@@ -57,7 +69,8 @@ func TestAudienceBuildLeaseAdmitsExactlyOneConcurrentBuild(t *testing.T) {
 				Status:    model.AudienceBuilding,
 			}
 			// The brief is untouched and approved, so all eight pass the approval guard
-			// and the ONLY thing that can separate them is the lease.
+			// once the brief row lock lets them through, and the ONLY thing left that can
+			// separate them is the lease.
 			created, _, err := repo.CreateAudienceForApprovedBrief(ctx, row)
 			mu.Lock()
 			defer mu.Unlock()
@@ -270,6 +283,213 @@ func TestAudienceBuildLeaseRefusesUpdateBackToBuilding(t *testing.T) {
 	if _, err := repo.UpdateAudience(ctx, failed, failed.Version); !errors.Is(err, domain.ErrAudienceBuildInFlight) {
 		t.Fatalf("PATCH a failed row back to building while the lease is held: got %v, want "+
 			"ErrAudienceBuildInFlight", err)
+	}
+}
+
+// TestAudienceLeaseMappingIgnoresOtherUniqueIndexes is the test the constraint-name
+// narrowing exists for, and the only one in this file that the SQLSTATE-only predicate
+// fails. Every other lease test fires the REAL lease index, so a mapping that matches
+// any 23505 on campaign_audiences answers them all correctly — which is precisely why
+// none of them binds the change.
+//
+// What the narrowing buys is the case below: a DIFFERENT unique index on the table
+// raises 23505, and the caller must NOT be told a build is already running. Today no
+// second unique index exists, so the case is unreachable in production and cannot be
+// reached by arranging rows — it has to be constructed. The probe index is that
+// construction, and it is the whole test: without one, the property has no witness and
+// the next migration to add a unique index inherits ErrAudienceBuildInFlight silently.
+//
+// The two indexes are separated by STATUS, not by their key columns. The lease is a partial
+// index over status = 'building'; the probe covers status = 'failed', so two failed rows under
+// one brief violate the probe and never enter the lease's predicate at all. Separating them
+// by platform instead would not work: migration 000006 CHECKs platform IN ('hubspot'),
+// so every audience row this table can hold shares the lease's second key column.
+//
+// They express that separation differently, and the asymmetry is deliberate. The lease uses a
+// WHERE predicate; the probe cannot, because a leaked partial index fails
+// `TestEveryUniquePartialIndexIsRequired` on the next run (see the CREATE below). The probe
+// therefore carries its condition in a CASE expression KEY instead — same scoping, no predicate.
+//
+// The probe's condition is ALSO pinned to this test's own brief, and its name carries that
+// brief's id, because an index is a schema-wide object while dbtest.go:66-72 requires the
+// opposite of every identifier a test writes: "Tests therefore share a schema and MUST NOT
+// share rows — use UniqueID for every identifier a test writes, so two tests (or two runs
+// against the same database) cannot collide." An unscoped `WHERE status = 'failed'` spans
+// every failed audience the shared database holds, including rows other tests and earlier
+// runs left behind, so it is exactly such a shared identifier.
+//
+// Be honest about the reachability, because it is not what the hazard sounds like: no test
+// in this suite leaves two failed audiences under ONE brief, so the unscoped form did not
+// actually fail — measured, not assumed. What was measured is the mechanism. Two failed
+// rows under one brief are legal (the lease covers 'building' only, and nothing else
+// constrains 'failed'), and with such a pair present CREATE UNIQUE INDEX refuses:
+// `could not create unique index ... Key (brief_id)=(...) is duplicated`. So this test
+// would have started failing on the first unrelated test that persisted that pair, for a
+// reason having nothing to do with the mapping it exists to pin. Scoping costs nothing —
+// the probe is still a second unique index on the table, and still the only thing that can
+// refuse the second insert — so there is no reason to leave that trap armed.
+//
+// Asserting only "not the sentinel" would pass if the insert failed for some unrelated
+// reason — that CHECK included — so the test also asserts the error really is a 23505
+// naming the probe.
+func TestAudienceLeaseMappingIgnoresOtherUniqueIndexes(t *testing.T) {
+	// All THREE migrated call sites, not just the plain create. Each maps a 23505 to
+	// ErrAudienceBuildInFlight, each was narrowed to the lease index by name, and each is a
+	// separate `isUniqueViolationOn` call that a later edit can widen back on its own — so a
+	// test driving one of them proves nothing about the other two.
+	//
+	// They differ in how they reach the uniqueness check — a plain create, a create gated on the
+	// brief being approved, and an UPDATE that moves an existing row across the lease predicate —
+	// which is why this drives the repository methods rather than the helper. The helper is
+	// already unit-tested; what is under test here is that each SITE passes the index name.
+	//
+	// The third is deliberately not an insert, which is why `seed` and `provoke` are separate
+	// callbacks below: a single insert-shaped callback could not express it, and an earlier
+	// version of this table silently covered two sites while claiming three.
+	for _, tc := range []struct {
+		name string
+		// seed puts a first row in place; provoke is the operation the probe must refuse.
+		// They are separate because the third site is not an insert: UpdateAudience moves an
+		// EXISTING row, so a single insert-shaped callback cannot express it — which is how
+		// the first version of this table ended up covering two sites while claiming three.
+		seed    func(context.Context, *postgres.AudienceRepo, *model.CampaignAudience) error
+		provoke func(context.Context, *postgres.AudienceRepo, *model.CampaignAudience) error
+	}{
+		{name: "CreateAudience", seed: createAudience, provoke: createAudience},
+		{name: "CreateAudienceForApprovedBrief", seed: createForApprovedBrief, provoke: createForApprovedBrief},
+		{
+			name: "UpdateAudience",
+			// Seeded as 'failed' like the others, so the probe's CASE key covers it.
+			seed: createAudience,
+			// A second row is created OUTSIDE the probe's reach ('building' is not 'failed'),
+			// then updated INTO 'failed' — where the probe refuses it. That is the real shape
+			// of this call site: a PATCH moving a row back across the predicate boundary.
+			provoke: func(ctx context.Context, r *postgres.AudienceRepo, a *model.CampaignAudience) error {
+				building := *a
+				building.Status = model.AudienceBuilding
+				created, err := r.CreateAudience(ctx, &building)
+				if err != nil {
+					return fmt.Errorf("seed the building row this case updates: %w", err)
+				}
+				created.Status = model.AudienceFailed
+				_, err = r.UpdateAudience(ctx, created, created.Version)
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			audienceLeaseNarrowingProbe(t, tc.seed, tc.provoke)
+		})
+	}
+}
+
+func createAudience(ctx context.Context, r *postgres.AudienceRepo, a *model.CampaignAudience) error {
+	_, err := r.CreateAudience(ctx, a)
+	return err
+}
+
+func createForApprovedBrief(ctx context.Context, r *postgres.AudienceRepo, a *model.CampaignAudience) error {
+	_, _, err := r.CreateAudienceForApprovedBrief(ctx, a)
+	return err
+}
+
+// audienceLeaseNarrowingProbe is the body shared by every call site above.
+//
+// It creates a SECOND unique index scoped to this brief and to a status outside the lease's
+// predicate, then
+// drives a write that only that index can refuse. A 23505 from it must NOT map to
+// ErrAudienceBuildInFlight, because the error did not come from the lease — that is the whole
+// point of naming the index in the check.
+//
+// Note the sentinel is wrong here for a reason that differs by case, which is worth stating
+// rather than over-generalising. In the two create cases nothing holds the lease at all: every
+// row is 'failed', outside its predicate. In the UpdateAudience case a 'building' row DOES exist
+// and does hold the lease — but the refusal still came from the probe, so reporting
+// "a build is in flight" would be attributing this failure to the wrong constraint.
+func audienceLeaseNarrowingProbe(
+	t *testing.T,
+	seed func(context.Context, *postgres.AudienceRepo, *model.CampaignAudience) error,
+	provoke func(context.Context, *postgres.AudienceRepo, *model.CampaignAudience) error,
+) {
+	t.Helper()
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+	repo := postgres.NewAudienceRepo(&postgres.Pool{Pool: pool})
+
+	briefID, projectID := insertApprovedBrief(ctx, t, pool)
+	newRow := func() *model.CampaignAudience {
+		return &model.CampaignAudience{
+			ProjectID: projectID,
+			BriefID:   briefID,
+			Platform:  model.ProviderHubSpot,
+			Status:    model.AudienceFailed,
+		}
+	}
+
+	if err := seed(ctx, repo, newRow()); err != nil {
+		t.Fatalf("first audience: %v", err)
+	}
+
+	// Created without IF NOT EXISTS, and named for this brief: a leftover index from an
+	// earlier run cannot be silently adopted as this one, and cannot collide with it either.
+	// The cleanup below still matters — a leak accumulates in the shared schema — but it can no
+	// longer BREAK a later run, and that is a property of the index shape chosen below rather
+	// than of the naming. An earlier revision used a partial index and this comment claimed the
+	// same immunity, which was false: a leaked partial index fails
+	// `TestEveryUniquePartialIndexIsRequired` on the next run regardless of what it is called.
+	//
+	// briefID is interpolated rather than bound: CREATE INDEX takes no parameters. It is a
+	// UUID Postgres itself minted and this test read straight back through RETURNING, never
+	// input from anywhere else, and it is re-parsed below so a change to that helper cannot
+	// quietly turn this into a place a string reaches DDL.
+	if _, err := uuid.Parse(briefID); err != nil {
+		t.Fatalf("brief id %q is not a UUID, so it cannot be interpolated into DDL: %v", briefID, err)
+	}
+	probeIndex := "uq_probe_second_unique_index_" + strings.ReplaceAll(briefID, "-", "")
+	// An EXPRESSION index, not a partial one, and the distinction is not cosmetic.
+	// `TestEveryUniquePartialIndexIsRequired` enumerates every unique index with
+	// `indpred IS NOT NULL` and fails any that is not in `requiredIndexes`. A partial probe left
+	// behind by an interrupted run — where `t.Cleanup` never fires — is exactly that shape, so it
+	// would poison the shared schema and break an unrelated test on the next run. The UUID name
+	// does not help: the enumeration is by SHAPE, not by name.
+	//
+	// The expression form carries the predicate in its KEY instead: it returns brief_id for the
+	// rows the probe is about and NULL for everything else, and Postgres does not treat NULLs as
+	// equal, so uniqueness still applies only to this brief's 'failed' rows. `indpred` is NULL,
+	// so the enumeration does not see it at all.
+	if _, err := pool.Exec(ctx, `CREATE UNIQUE INDEX `+probeIndex+
+		` ON campaign_audiences ((CASE WHEN status = 'failed' AND brief_id = '`+
+		briefID+`'::uuid THEN brief_id END))`); err != nil {
+		t.Fatalf("create the probe index: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `DROP INDEX `+probeIndex); err != nil {
+			t.Errorf("drop the probe index: %v — it is now visible to every later test "+
+				"in this package", err)
+		}
+	})
+
+	// 'failed' is outside the lease's predicate, so the lease cannot refuse this row and
+	// no build is in flight for it. Only the probe can refuse it.
+	err := provoke(ctx, repo, newRow())
+	if err == nil {
+		t.Fatal("second audience succeeded, so the probe index did not fire and the test " +
+			"proves nothing — check the probe's CASE key against the row being inserted")
+	}
+	// Checked before the shape assertion below: the sentinel is the defect under test, and
+	// mapping to it discards the *pgconn.PgError, so the shape check would otherwise fail
+	// first and report the wrong reason.
+	if errors.Is(err, domain.ErrAudienceBuildInFlight) {
+		t.Fatalf("a 23505 from %s was mapped to ErrAudienceBuildInFlight for brief %s, but "+
+			"that violation came from the PROBE index, not the lease. The sentinel names the "+
+			"wrong constraint: whether or not a build happens to hold the lease, this refusal "+
+			"was not it, and a caller told otherwise retries or reports an occupied slot on "+
+			"the strength of an unrelated uniqueness rule", probeIndex, briefID)
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" || pgErr.ConstraintName != probeIndex {
+		t.Fatalf("second audience: got %v, want a 23505 naming %s — the test must fail on "+
+			"the probe, not on something else", err, probeIndex)
 	}
 }
 

@@ -178,7 +178,10 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   a later build does not adopt an earlier one's lists. So two concurrent builds for one
   brief produced two complete, indistinguishable sets of lists in the portal, and
   nothing downstream noticed. The index makes the second insert fail with SQLSTATE
-  23505, which `audience_repo.go` maps to `domain.ErrAudienceBuildInFlight`.
+  23505, which `audience_repo.go` maps to `domain.ErrAudienceBuildInFlight` — matching
+  the index BY NAME (`isUniqueViolationOn`, not the SQLSTATE-only `isUniqueViolation`),
+  so the next unique index added to `campaign_audiences` does not inherit a sentinel
+  that means "a build is already running".
 
   The predicate covers `'building'` ONLY, and deliberately not the `status <> 'deleted'`
   shape `000013` uses for campaigns. A brief has exactly one LIVE campaign per platform,

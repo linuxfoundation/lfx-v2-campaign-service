@@ -317,7 +317,7 @@ func checkNoInvalidIndexes(dsn string) error {
 // judged less important; they were simply not what anyone was looking at.
 var requiredIndexes = []requiredIndex{{
 	// at most one audience per (brief, platform) in `building`.
-	name:   "uq_campaign_audiences_brief_platform_building",
+	name:   audienceBuildLeaseIndex,
 	table:  "campaign_audiences",
 	unique: true,
 	keys:   []string{"brief_id", "platform"},

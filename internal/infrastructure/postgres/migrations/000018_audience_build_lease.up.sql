@@ -60,8 +60,9 @@
 -- migrations finishing, so a slow blocking build is startup latency the pod cannot serve
 -- through. This is safe with our runner: the pgx/v5 golang-migrate driver executes each
 -- migration with a bare ExecContext and does NOT wrap it in a transaction, which
--- CONCURRENTLY forbids. Do NOT add a second statement to this file: a multi-statement
--- migration is batched and reintroduces the implicit transaction.
+-- CONCURRENTLY forbids. (The rule that follows from this — one statement per file — is
+-- restated immediately above the statement itself, where an editor adding a second one
+-- would actually be looking.)
 --
 -- A pre-existing duplicate makes this build FAIL rather than silently skip. That is
 -- intended: two live 'building' rows for one (brief, platform) means duplicate portal
@@ -78,6 +79,9 @@
 -- database, never have. TestAudienceBuildLeaseIndexIsValid still asserts indisvalid for
 -- THIS index, and TestMigrateRefusesAnInvalidIndex provokes a real invalid index and
 -- checks the runner refuses it.
+-- ⚠ THIS MUST REMAIN THE ONLY STATEMENT IN THIS FILE. golang-migrate batches a
+-- multi-statement migration into one implicit transaction, and CREATE INDEX CONCURRENTLY
+-- cannot run inside a transaction. Adding anything below turns this into a startup failure.
 CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_campaign_audiences_brief_platform_building
     ON campaign_audiences (brief_id, platform)
     WHERE status = 'building';
