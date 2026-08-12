@@ -587,9 +587,16 @@ func TestCloneEmail_TrimsSourceID(t *testing.T) {
 }
 
 // emailPageServer serves `pages` pages of `perPage` rows each, cursor-paginated. Row i gets
-// updatedAt strictly increasing with i, so the server emits OLDEST first — the opposite of
-// the requested sort. That is deliberate: `sort=-updatedAt` is a hint this client does not
-// trust, so any bound that assumes page order is newest-first must fail here.
+// updatedAt strictly increasing with i, so the server emits OLDEST first — the opposite of the
+// requested sort, i.e. a server that IGNORES `sort=-updatedAt`.
+//
+// What that proves has changed, and the earlier comment here still described the abandoned
+// design. It said the client does not trust server order and that any bound assuming page order
+// is newest-first must FAIL against this server. The bound now deliberately depends on that
+// order for SELECTION — under a cap the alternative is reading every page, and the two cannot
+// both hold — so this server is expected to pass. What it still proves is the part the client
+// does own: the rows it fetched come back correctly ordered among themselves, whatever order
+// they arrived in.
 //
 // The timestamp must be strictly monotonic in i for that to hold, hence the minute/second
 // split rather than a bare `i%60`: a second field that WRAPS makes id 959 (":59") newer
