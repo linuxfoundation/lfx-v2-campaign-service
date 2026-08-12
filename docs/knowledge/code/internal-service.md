@@ -465,8 +465,15 @@ convention has to hold on the service side rather than being checked there.
 
 Both cold-start guards on this handler return 503 but mean different things:
 `resolveBackendWithOrch` checks the repo first ("connection storage is unavailable") and the
-orchestrator second ("account discovery service is unavailable"). A test that leaves BOTH unset
-only ever exercises the first.
+orchestrator second. A test that leaves BOTH unset only ever exercises the first.
+
+The orchestrator message names the OPERATION the caller attempted — `"<operation> service is
+unavailable"` — rather than a fixed string. It was hard-coded to "account discovery" while that
+was the only caller, and the HubSpot email search (LFXV2-3197) inherited it: a search hitting the
+pre-wiring window was told about an operation it never performed. A 503 is read by someone
+deciding whether to retry, so naming the wrong one sends them to the wrong subsystem. Callers pass
+`accountDiscovery.label()`, the same value `classifyDiscoveryError` uses one layer up, so the two
+messages a single request can produce always agree.
 
 ## Campaign delete
 

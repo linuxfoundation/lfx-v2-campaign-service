@@ -18,12 +18,16 @@ chart↔route parity invariant — see [httproute.md](httproute.md)):
 
 1. **`openapi:get`** — `/_campaigns/openapi.*` docs are publicly readable
    (`oidc` + `anonymous_authenticator` → `allow_all` → `create_jwt`).
-2. **`project-api`** — every project-nested endpoint (`connection-*` — including
-   `connection-google-ads/accounts` and `connection-meta-ads/accounts`, ad-account
-   discovery, today the only provider-specific `connection-*` sub-path and ruled by
-   its own entry rather than by the shared `connection-*` family; the HTTPRoute regex
-   admits it for the same two providers, and `parity_test` fails if the two ever
-   disagree —
+2. **`project-api`** — every project-nested endpoint (`connection-*` — including two
+   provider-specific sub-paths that are ruled by their own entries rather than by the
+   shared `connection-*` family: `connection-google-ads/accounts` and
+   `connection-meta-ads/accounts` (ad-account discovery), and
+   `connection-hubspot/emails` (marketing-email search, LFXV2-3197). The HTTPRoute
+   regex spells out THREE branches for the same reason — google-ads|meta-ads with
+   `accounts`, hubspot with `emails`, and the remaining four providers with neither —
+   because folding them into one alternation would rule `/accounts` for hubspot and
+   `/emails` for google-ads, neither of which is served. `parity_test` fails if the
+   RuleSet and the regex ever disagree, in either direction —
    `briefs` [+ nested campaigns], `jobs`, `{provider}/metrics` for the five ad
    providers, `google-ads/keywords|audience`, `hubspot`). Gated on the project
    `campaign_manager` relation (D2 — reads AND writes; no read-only audience),

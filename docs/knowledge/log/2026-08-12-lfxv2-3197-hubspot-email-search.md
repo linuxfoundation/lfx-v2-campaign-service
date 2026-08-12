@@ -169,3 +169,27 @@ that copies the guard is added where the other copies already are. Revert-verifi
 guard fails the hubspot subtest with "got 503, want the system-scope rejection", and the other two
 still pass — which is what proves the case is specific to this endpoint rather than re-testing the
 shared helper.
+
+## Round 6: the log fragment is not the knowledge update
+
+Every round so far appended to THIS file and called the bundle updated. It was not.
+`CLAUDE.md` requires the relevant CONCEPTS to change alongside code and Helm, and three were
+still describing the world before this endpoint:
+
+- `docs/knowledge/code/internal-service.md` said the cold-start guard always emits "account
+  discovery service is unavailable" — the exact string round 4 parameterized.
+- `docs/knowledge/kubernetes/ruleset.md` called `/accounts` "today the only provider-specific
+  `connection-*` sub-path", which `/emails` falsified.
+- `docs/knowledge/kubernetes/httproute.md` described two alternation branches where there are
+  now three, and framed the rule as "add each further provider to the DISCOVERY branch" — which
+  is wrong advice for a provider whose extra sub-path is not `/accounts`. Branches group by
+  SHAPE, not by recency.
+
+The pattern is worth naming because it recurs: a dated log fragment is easy to write and feels
+like the documentation step, but it is the CHANGELOG. The concepts are what a reader consults,
+and they are the ones that go stale silently — `okfvalidate` checks frontmatter and the dated H1,
+not whether a concept still describes the code. Nothing failed for six rounds.
+
+Also corrected a paragraph in `internal-dispatch.md` that contradicted itself inside four lines:
+it stated archived rows are absent, then said the picker can warn before cloning an archived
+email. The second clause survived from the version written before round 3 established the first.

@@ -21,16 +21,26 @@ the token that distinguishes a campaign-service path (`connection-*`, `briefs`,
 sits *after* the variable `{projectId}` — which a `PathPrefix`/`Exact` match cannot
 reach past.
 
-**`connection-(google-ads|meta-ads)` is spelled out as its own alternation branch**,
-separate from the rest of the `connection-*` family. The family shares `/test` and
-`/set-credential`, but those two carry one more ruled sub-path the others do not have
-yet: **`/accounts`** (ad-account discovery — google-ads under LFXV2-2023, meta-ads
-under LFXV2-3062). Folding `/accounts` into the shared alternation would admit it for
-*every* provider, and a path the RuleSet does not rule is a route/rule parity
-violation — the `parity_test` exists to catch exactly that. As each further provider
-gains its own discovery endpoint, add it to the discovery branch rather than widening
-the shared one; collapsing the two branches back together is correct only once every
-provider has `/accounts` ruled.
+**The `connection-*` family is spelled out as THREE alternation branches**, not one. All
+seven providers share `/test` and `/set-credential`; what differs is the extra ruled
+sub-path each carries:
+
+- `connection-(google-ads|meta-ads)` add **`/accounts`** — ad-account discovery
+  (google-ads under LFXV2-2023, meta-ads under LFXV2-3062).
+- `connection-hubspot` adds **`/emails`** — marketing-email search (LFXV2-3197). NOT
+  `/accounts`: a HubSpot connection is already scoped to the portal its token
+  authenticates against, so there is no account to discover. What the caller picks is
+  which marketing email a campaign clones.
+- The remaining four carry neither.
+
+Folding these together would admit `/accounts` for hubspot and `/emails` for google-ads,
+neither of which is served — and a path the RuleSet does not rule is a route/rule parity
+violation, which is what `parity_test` exists to catch. It has both positive and negative
+rows for this reason: a widened alternation passes every positive test.
+
+As each further provider gains a sub-path, add it to the branch that matches its SHAPE
+rather than widening a shared one. Collapsing branches back together is correct only once
+the providers in them carry the same sub-paths.
 
 The route therefore uses a **`RegularExpression` path match** selecting
 exactly this service's project-nested subpaths; `project-service`'s `/projects/`

@@ -725,8 +725,13 @@ which X.
 
 **Draft emails are returned, with their state — archived ones are absent.** Same reasoning as Meta's disabled
 accounts: filtering the row the user is looking for answers "your portal has no such email"
-about an email sitting right there. The caller gets `state` and decides — including warning
-before a clone of something archived, which it cannot do about a row it never receives.
+about an email sitting right there. The caller gets `state` and decides — a DRAFT is the case
+worth surfacing, since cloning an unfinished template is the mistake a picker can prevent.
+
+Archived rows are a different matter and cannot be warned about at all: they are absent from the
+result, so there is no row to carry a state. Anyone looking for one will not find it here, and
+the endpoint has no way to say why — which is the honest limit of this contract rather than
+something `state` can express.
 
 
 ## Channel kinds: paid ads vs email
