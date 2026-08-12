@@ -51,8 +51,10 @@ func (a AdAccount) StatusLabel() string { return inactiveAccountStatusLabels[a.S
 // the client's AccountConfig is not consulted at all. That is what lets a connection with
 // no account id — or one being re-pointed at a different account — ask which accounts are
 // available. Which of those lifecycles a caller can actually reach is decided above this
-// package, by whether the connection's config requires an account id at create time; today
-// only re-pointing is reachable for Meta (LFXV2-3061).
+// package, by whether the connection's config requires an account id at create time. Both
+// are reachable for Meta as of LFXV2-3061: `MetaAdsConnectionConfig` requires only
+// `page_id`, so a credentials-only connection can be created and its account chosen
+// afterwards. Before that change only re-pointing was reachable, and this comment said so.
 //
 // Disabled, unsettled and closed accounts are RETURNED, not filtered. This is a picker:
 // a user whose only account is unsettled needs to see it and its reason, and dropping it

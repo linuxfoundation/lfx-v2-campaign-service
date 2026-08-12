@@ -1,0 +1,79 @@
+-- Copyright The Linux Foundation and each contributor to LFX.
+-- SPDX-License-Identifier: MIT
+
+-- Stop one upstream campaign from being bound to two briefs at once.
+--
+-- 000013's partial index keys (brief_id, platform), which answers "does this
+-- brief already have a live campaign here" and nothing else. Adoption asks the
+-- opposite question: the caller names an ARBITRARY upstream campaign, so two
+-- different briefs can each adopt the SAME one. Both rows then look provisioned,
+-- and the toggle and metrics reader on each act on the same paid campaign
+-- independently -- one brief pauses what the other just enabled, and neither
+-- operator can see why. Nothing in the service can detect that after the fact:
+-- the two rows are individually well-formed.
+--
+-- Keyed on (platform, platform_campaign_id) with a WHERE platform = 'google-ads' scope,
+-- and that is the whole of the reasoning worth reading.
+-- This index ONLY applies to adoption on google-ads, via the WHERE platform clause.
+-- The reasoning is multi-part. First, adoption is currently only implemented for
+-- Google Ads; when another provider joins, its adoption and any multiplicity
+-- requirement belong in a separate constraint. Second, Google Ads is one shared
+-- customer ID across every foundation (docs/channel-connections-schema.md);
+-- each project stores its own connection row pointing at the same customer. A
+-- global (platform, platform_campaign_id) index is therefore appropriate for
+-- Google Ads only: two projects ARE the same account, so two bindings would
+-- silently fight over the same paid campaign. Third, by contrast, Microsoft
+-- campaign IDs are account-scoped (not globally unique): the service supports
+-- separate per-project Microsoft connections (each account mints its own IDs),
+-- and a global index would false-reject a legitimate dispatch from account B
+-- because account A happened to mint the same ID — blocking normal campaign
+-- creation and retaining an UNCONFIRMED partial until an operator intervenes.
+-- Only AdoptCampaign classifies 23505 as adoption-specific 409; that error maps
+-- to a generic 409 on dispatch. The WHERE scope prevents a normal dispatch from
+-- ever seeing this index.
+--
+-- Keying globally can in principle reject a legitimate binding: two per-foundation
+-- accounts on the same provider minting the same numeric id. That collision has
+-- never been observed on any provider here -- Google Ads, LinkedIn, Meta, Reddit
+-- and X all mint ids that are unique well beyond one account -- and the two
+-- failures are not symmetric. A false reject is a loud 409 naming the conflicting
+-- campaign, recoverable the moment anyone looks at it. A false ACCEPT is two briefs
+-- silently fighting over live paid spend, with no error anywhere and no way to tell
+-- from either row that the other exists. Prefer the failure that announces itself.
+--
+-- What this index does NOT do is make adoption an ownership check, and it should
+-- not be read as one. Within a shared account, a project holding a connection can
+-- name a campaign another project created -- but that project's credential already
+-- confers read and pause on every campaign in that customer, directly against the
+-- provider's API. Adoption cannot be more restrictive than the credential it uses;
+-- account tenancy is where that boundary lives. What IS this service's to enforce
+-- is its own invariant -- one upstream campaign, one brief -- and that is what this
+-- index enforces, for all projects rather than one at a time.
+--
+-- platform_campaign_id IS NOT NULL keeps the index off rows that have no upstream
+-- campaign yet -- a dispatch claim inserts before the platform mints an id, and
+-- those rows are not bindings of anything.
+--
+-- status <> 'deleted' for the same reason as 000013: soft delete must free the
+-- slot, or a campaign deleted here could never be adopted again.
+--
+-- CONCURRENTLY, one statement per file, and no transaction -- see 000013 for why
+-- all three are required by this runner. A failed build leaves the index INVALID
+-- rather than rolling back; the deploy fails loudly instead of silently running
+-- without the guard.
+--
+-- NO `IF NOT EXISTS`, unlike 000013 and every other index in this chain, and the
+-- difference is deliberate. A failed CONCURRENTLY build leaves an INVALID index
+-- occupying this name. The recorded version is then DIRTY, so an operator forces
+-- back to 19 and re-runs -- and `IF NOT EXISTS` sees the name, skips the build,
+-- and records version 20 clean with an index Postgres will not use and that
+-- enforces nothing. Adoption then binds the same upstream campaign to two briefs
+-- with no error anywhere. 000013 survives that hole only because 000014 follows
+-- it with an explicit `indisvalid` + definition guard; nothing follows this
+-- migration, so the protection has to be in the statement itself. Without the
+-- clause the retry fails with 42P07 until the invalid index is dropped, which is
+-- the loud failure this whole file is arguing for. There is no legitimate re-run
+-- to protect: golang-migrate executes each version exactly once.
+CREATE UNIQUE INDEX CONCURRENTLY uq_campaigns_platform_campaign_live
+    ON campaigns (platform, platform_campaign_id)
+    WHERE status <> 'deleted' AND platform_campaign_id IS NOT NULL AND platform = 'google-ads';

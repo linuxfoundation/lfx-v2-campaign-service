@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -123,6 +124,19 @@ func canonicalCampaignID(s string) string {
 		return ""
 	}
 	return s
+}
+
+// ValidateCampaignID reports whether the provided campaign ID is valid in the
+// canonical base-10 spelling of a positive int64. A malformed id should be rejected
+// before credentials are resolved or queries are issued, because it is a permanent
+// input fault regardless of connection state.
+//
+// This function returns nil when the id is valid, and ErrNotACampaignID when it is not.
+func ValidateCampaignID(campaignID string) error {
+	if canonicalCampaignID(campaignID) == "" {
+		return fmt.Errorf("%w: %q (want the canonical base-10 spelling of a positive int64)", ErrNotACampaignID, campaignID)
+	}
+	return nil
 }
 
 // FindCampaignByName returns the numeric id of the single live campaign in this
@@ -368,6 +382,11 @@ type CampaignRef struct {
 	Status string // StatusEnabled or StatusPaused — a live campaign is never anything else here
 }
 
+// ErrNotACampaignID reports that the caller's id could not name a campaign at all, so no
+// query was issued. It is a PERMANENT input fault, distinct from every unreachable-platform
+// error: the adopt handler maps it to 400 rather than telling the caller to retry forever.
+var ErrNotACampaignID = errors.New("google-ads: not a campaign id")
+
 // GetCampaign returns the live campaign with this id in this account, or (nil, nil) when
 // no such campaign exists.
 //
@@ -396,8 +415,8 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 	// not just an optimisation: "007" would match campaign 7 server-side and then fail the
 	// echo check below as a disagreement, reporting a confusing conflict for what is really
 	// a malformed request.
-	if canonicalCampaignID(campaignID) == "" {
-		return nil, fmt.Errorf("google-ads: %q is not a campaign id (want the canonical base-10 spelling of a positive int64)", campaignID)
+	if err := ValidateCampaignID(campaignID); err != nil {
+		return nil, err
 	}
 
 	// campaign.id is an int64 in GAQL, so it is compared UNQUOTED — quoting it would make

@@ -344,6 +344,23 @@ var requiredIndexes = []requiredIndex{{
 	// Deparsed, and character-identical to the form 000014's guard compares against.
 	predicate: "(status <> 'deleted'::text)",
 }, {
+	// at most one live campaign per (platform, platform_campaign_id) — the guard that keeps
+	// adoption from binding one upstream Google Ads campaign to two briefs. 000020 creates
+	// it with no IF NOT EXISTS precisely because a same-named leftover would make the build
+	// a no-op; this entry is the other half of that argument, re-asserting the DEFINITION at
+	// every boot rather than only at migration time. Absent, adopt-campaign's pre-insert
+	// lookup and the INSERT race freely and the service ends up managing the same paid
+	// campaign from two briefs, each reporting its own status.
+	name:   "uq_campaigns_platform_campaign_live",
+	table:  "campaigns",
+	unique: true,
+	keys:   []string{"platform", "platform_campaign_id"},
+	// Deparsed. The three conjuncts are parenthesised individually and the whole is wrapped
+	// once — measured against PostgreSQL 16 rather than hand-derived, because a predicate
+	// this shape is where an assumed spelling silently becomes a boot-time false alarm.
+	predicate: "((status <> 'deleted'::text) AND (platform_campaign_id IS NOT NULL) AND " +
+		"(platform = 'google-ads'::text))",
+}, {
 	// at most one LIVE brief per (project, event slug). 000003 does not add this index
 	// alongside a constraint — it DROPs campaign_briefs_project_id_event_slug_key and
 	// replaces it, so from 000003 onward the index is the only thing there is. Absent, two

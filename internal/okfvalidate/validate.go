@@ -13,7 +13,9 @@ package okfvalidate
 
 import (
 	"fmt"
+	"html"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -45,7 +47,7 @@ func Validate(bundleDir string) []error {
 		switch d.Name() {
 		case "index.md":
 			isRoot := filepath.Clean(filepath.Dir(path)) == filepath.Clean(bundleDir)
-			errs = append(errs, validateIndex(path, isRoot)...)
+			errs = append(errs, validateIndex(bundleDir, path, isRoot)...)
 		case "log.md":
 			errs = append(errs, validateLog(path)...)
 		default:
@@ -80,12 +82,248 @@ func validateConcept(path string) error {
 	return nil
 }
 
-var indexBulletPattern = regexp.MustCompile(`^\* \[[^\]]+\]\([^)]+\) - .+$`)
+// The destination excludes whitespace, angle brackets, backslashes and parentheses
+// deliberately.
+// CommonMark also accepts `(<thing.md>)` and `(thing.md "Title")`, and a looser class
+// would capture the brackets or the title as part of the path — which then fails the
+// ".md" suffix test in checkBulletDescription and skips the bullet silently. A link
+// that looks valid would quietly opt out of the description-sync invariant. Backslash
+// is a CommonMark escape (`\.` → `.`) that this validator never decodes, so excluding
+// it forces such a destination to be rejected here with a diagnostic rather than
+// silently skipped downstream. Rejecting it outright is cheaper than parsing it:
+// okfgen emits bare paths, and the OKF §6 format documents only that form.
+//
+// The OPENING parenthesis is excluded for the same reason the closing one is, and its
+// omission was a bug. CommonMark permits `(` in an unbracketed destination only as part
+// of a BALANCED pair, so `* [Thing](thing(foo.md) - Summary.` is not a link at all — the
+// destination runs to a `)` that never comes. Accepting it here made this validator the
+// only reader that saw a link there, and it then resolved a path (`thing(foo.md`) that
+// cannot exist. Excluding `(` outright rather than counting pairs keeps the rule the
+// same shape as the rest of the class, and costs nothing: a balanced-paren filename is
+// legal CommonMark but okfgen never emits one, and refusing it yields a diagnostic
+// instead of a silent skip.
+//
+// The ampersand is NOT excluded here, even though `&#46;` is the entity spelling of
+// the same escape. A query string legitimately carries one (`thing.md?v=1&lang=en`),
+// and checkBulletDescription strips the query before resolving the path — so a class
+// that banned every `&` would reject a destination this validator otherwise supports.
+// The entity form is caught by hasEntityRef instead, which keys on the closing `;`
+// rather than on the `&`.
+var indexBulletPattern = regexp.MustCompile(`^\* \[([^\]]+)\]\(([^()\s<>\\]+)\) - (.+)$`)
+
+// destinationKind says what a link destination could denote, which is what decides
+// whether the format checks that run before description sync apply to it at all.
+type destinationKind int
+
+const (
+	// destExternal carries a scheme, an authority, or a site-root path, so it names no
+	// file in this bundle: never resolved, never compared, and nothing to hold to the
+	// format. The site root is somebody else's root — checkBulletDescription drops such
+	// a destination for the same reason it drops the other two.
+	destExternal destinationKind = iota
+	// destLocal is bundle-relative and may name a concept file.
+	destLocal
+	// destUnparseable is not a URL reference at all.
+	destUnparseable
+)
+
+// classifyDestination reports which of the three a destination is.
+//
+// destUnparseable is a DIAGNOSTIC outcome, not a skip. CommonMark's destination grammar
+// accepts a bare `%`, so `[Thing](thing%.md)` is a link — but `url.Parse` rejects it, and
+// treating that as "nothing to compare against" let such a bullet opt out of description
+// sync in silence, which is the very failure every other rule in this class exists to
+// prevent. okfgen never emits such a name, so refusing it costs nothing and says so.
+// The site-root arm keys on u.Path, the DECODED path, and not on the raw text — same
+// reason checkBulletDescription decodes before its own site-root test: "%2Fspec.md"
+// denotes "/spec.md" and has to be judged as the path it names, not as the way it was
+// spelled. Callers owe this the same treatment one level up, for character references:
+// see decodeCharRefs.
+func classifyDestination(target string) destinationKind {
+	u, err := url.Parse(target)
+	switch {
+	case err != nil:
+		return destUnparseable
+	case u.Scheme != "" || u.Host != "" || strings.HasPrefix(u.Path, "/"):
+		return destExternal
+	default:
+		return destLocal
+	}
+}
+
+// destinationPath returns the part of a markdown link destination that names a file:
+// everything before the first fragment or query marker. Both are properties of the
+// reference, not of the path it denotes.
+func destinationPath(link string) string {
+	if i := strings.IndexAny(link, "#?"); i >= 0 {
+		return link[:i]
+	}
+	return link
+}
+
+// entityRefPattern matches the SHAPE of an HTML character reference: named (`&amp;`),
+// decimal (`&#46;`) or hexadecimal (`&#x2e;`). The closing `;` is required — it is what
+// an entity has and a bare ampersand does not.
+//
+// Shape alone is not the discriminator, and treating it as one was an over-rejection of
+// exactly the kind priced below. `&notAnHtmlEntity;` has the shape and is not a
+// reference: CommonMark decodes a named reference only when the name is in the HTML5
+// entity table, so that text stays literal and `research&notAnHtmlEntity;.md` is a path
+// this validator supports. Every match is therefore confirmed by charRef before it
+// counts.
+//
+// The DIGIT COUNTS are CommonMark's, not Go's, and the difference is load-bearing.
+// CommonMark admits 1–7 decimal digits and 1–6 hexadecimal ones; html.UnescapeString
+// decodes longer runs too, so an unbounded pattern reported `thing&#00000046;md` as
+// carrying a reference. CommonMark leaves that text literal, which makes its `#` an
+// ordinary fragment marker and the path `thing&` — not a `.md` target, so the bullet was
+// never this validator's business and the rejection was a third over-rejection of the kind
+// hasEntityRef prices. Named references need no bound: charRef confirms them against the
+// HTML5 table, which is finite.
+var entityRefPattern = regexp.MustCompile(`&(#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]*);`)
+
+// charRef reports whether an entityRefPattern match is a real character reference rather
+// than merely one shaped like it.
+//
+// The test is whether the DECODE CONSUMED THE TRAILING `;`, which is the CommonMark rule
+// stated as an observation: in a genuine reference the semicolon is part of the reference
+// and disappears with it.
+//
+// It cannot simply be `html.UnescapeString(c) != c`. Go's decoder also honours the HTML5
+// LEGACY forms that need no semicolon, so it rewrites `&notAnHtmlEntity;` to
+// `¬AnHtmlEntity;` — a prefix match CommonMark does not perform. Comparing against the
+// decode of the candidate minus its `;` isolates precisely that: a legacy prefix match
+// decodes the same either way and only puts the literal `;` back, whereas a genuine
+// reference decodes differently because its `;` was consumed.
+//
+// Verified against both edge cases a cruder "the decode does not end in `;`" test gets
+// wrong: `&semi;` and `&#59;` decode TO a semicolon and are still reported genuine here.
+func charRef(c string) bool {
+	return html.UnescapeString(c) != html.UnescapeString(c[:len(c)-1])+";"
+}
+
+// decodeCharRefs replaces every genuine character reference in s with the character it
+// denotes, and leaves the shape-only lookalikes alone.
+//
+// This exists for classification, and only for classification. A character reference is
+// decoded by CommonMark inside a link destination, so `&sol;spec.md` IS the site-root path
+// `/spec.md` and `https&colon;//example.com/spec.md` IS an absolute URL — each names
+// nothing in this bundle, exactly like the literal spellings the arms above skip. Judging
+// them on their raw text put all three in destLocal, where the entity guard then refused a
+// link that renders perfectly: over-rejection number five, and the same one the percent
+// escapes already taught. It is also what this file's own argument for keeping the guard
+// unconditioned on the `.md` suffix demands — if an undecoded reference is the case where
+// the suffix cannot be trusted, then the scheme and the leading slash cannot be trusted
+// either, and the answer is to decode before deciding rather than to trust less.
+//
+// It is NOT html.UnescapeString: that also honours the HTML5 legacy semicolon-less forms,
+// which CommonMark does not, so it would rewrite the entity-SHAPED literal that charRef
+// exists to protect. Reusing charRefSpans keeps the two in exact agreement — what counts
+// as a reference for the guard is what counts as one here.
+func decodeCharRefs(s string) string {
+	spans := charRefSpans(s)
+	if len(spans) == 0 {
+		return s
+	}
+	var b strings.Builder
+	prev := 0
+	for _, r := range spans {
+		b.WriteString(s[prev:r[0]])
+		b.WriteString(html.UnescapeString(s[r[0]:r[1]]))
+		prev = r[1]
+	}
+	b.WriteString(s[prev:])
+	return b.String()
+}
+
+// charRefSpans returns the byte ranges of c that are genuine character references.
+func charRefSpans(s string) [][]int {
+	var out [][]int
+	for _, m := range entityRefPattern.FindAllStringIndex(s, -1) {
+		if charRef(s[m[0]:m[1]]) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// hasEntityRef reports whether a destination's PATH carries an HTML character reference.
+//
+// This validator does not decode entities, so such a path has to be rejected at the format
+// stage: `thing&#46;md` renders as `thing.md` but is read here as a path, and every entity form
+// fails the same silent way. A NUMERIC reference is truncated at its own `#` to `thing&`; a
+// NAMED one survives whole as `thing&period;md`. Either way the ".md" suffix test fails and the
+// bullet is skipped without a word, which is exactly the opt-out the format check exists to
+// prevent.
+//
+// Everything this refuses is something it MUST refuse, and nothing more. Two over-rejections
+// have been priced here already, and both cost a link that would have synced correctly:
+//
+//   - A bare `&` is not an entity. `&` is a legal path character, so a concept file named
+//     `research&development.md` with a correct bare link was refused with a message about an
+//     entity it does not contain. The closing `;` is the discriminator.
+//   - An entity outside the path is not this check's business. `&` is also a legal query
+//     separator, and a query is stripped before the path is resolved, so `thing.md?a=1&amp;b=2`
+//     resolves exactly as `thing.md` does. Refusing it refuses nothing dangerous. The same
+//     holds for a fragment.
+//
+// Which is why this cannot simply run on destinationPath, and cannot simply run on the raw
+// destination either. destinationPath cuts at the first `#`, and a numeric reference hides
+// behind that very character — `thing&#46;md` reaches it as `thing&`. The raw destination
+// keeps the numeric form visible but drags the query and fragment in with it. pathRegion is
+// the boundary both want: cut at the query, and at the first `#` that does not itself begin a
+// character reference.
+func hasEntityRef(link string) bool {
+	return len(charRefSpans(pathRegion(link))) > 0
+}
+
+// pathRegion returns the part of a destination that could name a file, for the purpose of
+// looking for character references in it.
+//
+// It differs from destinationPath in two ways, and a separator is at the heart of both: a
+// character reference DENOTES one separator it does not spell, and SPELLS one it does not
+// denote.
+//
+//   - The `#` of a numeric reference is spelt but not denoted. `thing&#46;md` reaches
+//     destinationPath as `thing&`, hiding the very form that must be reported. Resolution
+//     never sees such a path — the bullet is refused first — so destinationPath is left
+//     alone rather than taught a distinction its own callers never need.
+//   - `&num;` and `&quest;` denote `#` and `?` without spelling either. CommonMark resolves
+//     `thing.md&num;usage` exactly like `thing.md#usage`, so the reference sits in the
+//     FRAGMENT, not the path, and reporting it rejected a link that would have synced
+//     correctly — the same over-rejection class priced on hasEntityRef, arriving by a new
+//     route the moment classification began decoding.
+//
+// One scan settles both, because the two are the same question asked of each position: does
+// a separator BEGIN here, by spelling or by denotation?
+func pathRegion(link string) string {
+	// Shape-only matches are excluded for the same reason hasEntityRef excludes them: text
+	// CommonMark leaves literal carries its `#` as a fragment marker like any other.
+	refs := charRefSpans(link)
+	refAt := make(map[int][]int, len(refs))
+	for _, r := range refs {
+		refAt[r[0]] = r
+	}
+	for i := 0; i < len(link); i++ {
+		if r, ok := refAt[i]; ok {
+			if d := html.UnescapeString(link[r[0]:r[1]]); d == "#" || d == "?" {
+				return link[:i]
+			}
+			i = r[1] - 1 // Skip the reference whole; a `#` inside it belongs to the reference.
+			continue
+		}
+		if link[i] == '#' || link[i] == '?' {
+			return link[:i]
+		}
+	}
+	return link
+}
 
 // validateIndex checks OKF §9 rule 3 & the §6 bullet format: no
-// frontmatter (except an optional okf_version at the bundle root), and any
-// "* " line matches "* [Title](url) - description".
-func validateIndex(path string, isRoot bool) []error {
+// frontmatter (except an optional okf_version at the bundle root), any
+// "* " line matches "* [Title](url) - description", and each bullet's
+// description is verbatim the linked concept's frontmatter description.
+func validateIndex(bundleDir, path string, isRoot bool) []error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return []error{fmt.Errorf("%s: reading file: %w", path, err)}
@@ -114,15 +352,237 @@ func validateIndex(path string, isRoot bool) []error {
 
 	var errs []error
 	for _, line := range strings.Split(content, "\n") {
-		trimmed := strings.TrimSpace(line)
+		// Only LEADING whitespace is stripped. Trimming the right-hand side too
+		// would let a bullet ending in "Summary.   " satisfy a frontmatter
+		// description of "Summary." — a tolerance in the direction the invariant
+		// claims not to have one, and the asymmetric twin of the padded
+		// frontmatter that checkBulletDescription already rejects. No bullet in
+		// this bundle carries trailing space (markdownlint forbids it), so the
+		// strict form costs nothing and closes the hole.
+		trimmed := strings.TrimLeft(line, " \t")
 		if !strings.HasPrefix(trimmed, "* ") {
 			continue
 		}
-		if !indexBulletPattern.MatchString(trimmed) {
-			errs = append(errs, fmt.Errorf("%s: bullet %q does not match \"* [Title](url) - description\"", path, trimmed))
+		m := indexBulletPattern.FindStringSubmatch(trimmed)
+		if m == nil {
+			errs = append(errs, fmt.Errorf("%s: bullet %q does not match \"* [Title](url) - description\" (the url must be a bare path: no spaces, angle brackets, link title, or backslash escapes)", path, trimmed))
+			continue
+		}
+		// Classify BEFORE the entity guard. The guard exists because this validator
+		// cannot decode a reference and so cannot classify a path that carries one —
+		// but that argument is about a path in THIS bundle. An external destination
+		// names no concept file, is never resolved and is never compared, so an
+		// entity in one cannot bypass anything; refusing it reported a defect in a
+		// working link. That was this guard's fourth over-rejection, after the bare
+		// `&`, the entity in a query and the entity-SHAPED literal.
+		//
+		// The guard still runs for a bundle-relative destination whatever its
+		// extension, and that is deliberate rather than an oversight of the same
+		// argument: a non-`.md` target is out of scope only if the suffix can be
+		// trusted, and an undecoded reference is exactly the case where it cannot —
+		// `notes&#46;txt` and `notes&#46;md` are indistinguishable here. Declining to
+		// classify is the whole point of the guard.
+		//
+		// Classification runs on the DECODED destination and the guard on the raw one,
+		// and the split is the whole point: what a destination DENOTES decides whether
+		// it is in scope, and how it is SPELT decides whether this validator can work
+		// with it. `&sol;spec.md` denotes the site root and so is out of scope, while
+		// `thing&#46;md` denotes a file in this bundle spelt in a way that defeats every
+		// path test below it.
+		//
+		// Classification runs on the PATH REGION of the decoded destination, not the
+		// whole of it, and every arm below depends on that. The two facts that force it:
+		// `url.Parse` rejects a malformed percent-escape anywhere in its input, and a
+		// fragment is not a percent-encoded space — `thing.md#100%` is a legal CommonMark
+		// link, and `checkBulletDescription` strips the fragment before resolving anyway,
+		// so it resolves `thing.md` and compares its description. Classifying the whole
+		// destination reported that link as "not a URL reference", refusing a bullet over
+		// a region no later step reads. Scheme, authority and leading slash all live
+		// before the first separator, so nothing the classification needs is lost.
+		kind := classifyDestination(pathRegion(decodeCharRefs(m[2])))
+		switch {
+		case kind == destExternal:
+			// Nothing to resolve, nothing to compare, no format to hold it to.
+		case hasEntityRef(m[2]):
+			// Ahead of the unparseable arm because decoding can create the very
+			// character that arm reports: `thing&percnt;.md` becomes `thing%.md`. The
+			// author wrote an entity, so that is what the message should name.
+			errs = append(errs, fmt.Errorf("%s: bullet %q has an HTML entity in its link destination path; write the path literally", path, trimmed))
+			continue
+		case kind == destUnparseable:
+			errs = append(errs, fmt.Errorf("%s: bullet %q has a destination that is not a URL reference (most often a %% that does not begin a percent-escape); write the path literally", path, trimmed))
+			continue
+		}
+		// The pattern's "(.+)$" only requires one character, so a bullet ending
+		// in "- " plus trailing spaces still matches with a whitespace-only
+		// description. checkBulletDescription would otherwise miss that: it
+		// returns nil silently whenever the target is unreadable or has no
+		// frontmatter description, both deliberately (see its doc comment), so
+		// a malformed bullet pointing at such a target would never surface —
+		// not because the frontmatter agreed with it, but because nothing ever
+		// compared. Rejecting it here, before that lookup, closes the gap
+		// without adding a tolerance to the comparison itself.
+		if strings.TrimSpace(m[3]) == "" {
+			errs = append(errs, fmt.Errorf("%s: bullet %q has a blank description", path, trimmed))
+			continue
+		}
+		if e := checkBulletDescription(bundleDir, path, m[2], m[3]); e != nil {
+			errs = append(errs, e)
 		}
 	}
 	return errs
+}
+
+// checkBulletDescription requires an index bullet's description to be
+// verbatim the linked concept's frontmatter "description".
+//
+// The two are written at different times — a concept file is edited by the PR
+// that changes the behaviour it documents, its index bullet by whoever
+// remembers step 2 of the CLAUDE.md checklist — so they drift silently, and
+// the index is the surface an agent reads FIRST to decide which concept file
+// is worth opening. A stale bullet is therefore worse than a stale concept:
+// it does not merely say something out of date, it routes the reader away
+// from the file that would have corrected it. Twelve of this bundle's 47 bullets
+// had drifted by the time this check was written, in both directions —
+// sometimes the bullet was the current text and the frontmatter the stale one.
+//
+// Equality is required rather than some looser containment, because any
+// tolerance is a place drift can hide, and the cost of exactness is one
+// mechanical edit in the same PR that changed the description.
+//
+// A bullet is only checked when it resolves to a readable .md file inside the
+// bundle that declares a frontmatter description. That deliberately excludes
+// links to directories, to a sub-index (index.md carries no frontmatter at
+// all, by rule 3 above), and to anything outside the bundle. It does NOT
+// excuse a concept file that simply omits its description: every concept file
+// in this bundle declares one, and adding the "description" key to the
+// required set belongs with "type" in validateConcept rather than here, where
+// it would only be enforced for files that happen to be linked.
+func checkBulletDescription(bundleDir, indexPath, link, bulletDesc string) error {
+	// Anchors and query strings are not part of the path; a bare fragment
+	// ("#section") points inside this same index, which has no frontmatter.
+	//
+	// Character references are decoded first, and for this function that is a
+	// correctness requirement rather than tidiness. Its own external tests below
+	// run on the destination's shape, so an entity-encoded scheme or site root
+	// ("https&colon;//example.com/spec.md", "&sol;spec.md") reads here as a
+	// bundle-relative path and filepath.Join reinterprets it as one — the exact
+	// wrong-file comparison the block below exists to prevent, and the one it is
+	// least able to notice. Until the caller learned to decode, its entity guard
+	// was refusing these before they arrived, so nothing had ever exercised the
+	// path; decoding at both levels is what makes the two agree. Decoding also
+	// precedes destinationPath because a decoded "&num;" IS a fragment marker.
+	target := destinationPath(decodeCharRefs(link))
+	// Parse BEFORE any test on the destination's shape, because a markdown link
+	// destination is a URL reference and every test below is about the path it
+	// denotes, not about its spelling. Percent escapes are the whole reason the
+	// order matters: "thing%2Emd" does not end in ".md" and would be skipped,
+	// and "my%20thing.md" would be read as a filename containing a literal
+	// "%20" — both are working links to a concept file that would have opted
+	// out of description sync just by being written with an escape.
+	//
+	// Only a bundle-relative destination names a concept file. A "://" test is
+	// not enough: "//host/spec.md" (protocol-relative), "/spec.md" (site-root)
+	// and "mailto:notes.md" (a scheme with no authority) all lack it, and
+	// filepath.Join then reinterprets each as a path under this index's
+	// directory. That does not read outside the bundle — withinBundle still
+	// holds — but it compares the WRONG local concept whenever such a path
+	// happens to exist, which is the failure this check is least able to
+	// notice: it reports a mismatch against a file the bullet never named.
+	u, err := url.Parse(target)
+	if err != nil || u.Scheme != "" || u.Host != "" {
+		// An external destination names no concept file, so there is nothing to
+		// compare it against. An unparseable one is reported by the caller's
+		// classifyDestination arm and never reaches here; the check is kept so
+		// this function stays correct standing alone, but silence is no longer
+		// how that case is handled.
+		return nil
+	}
+	// u.Path is the DECODED path; the site-root test belongs here rather than on
+	// the raw text, so "%2Fspec.md" is judged as the "/spec.md" it denotes.
+	target = u.Path
+	if target == "" || strings.HasPrefix(target, "/") || !strings.HasSuffix(target, ".md") {
+		return nil
+	}
+
+	// "Inside the bundle" is a scope this check has to enforce, not assume:
+	// nothing upstream constrains a relative link, so "../../../etc/notes.md"
+	// resolves to a real file and its frontmatter description would be quoted
+	// back in a validation error — a file outside the bundle read, and partly
+	// disclosed, by a checker documented to stay within it.
+	resolved := filepath.Join(filepath.Dir(indexPath), filepath.FromSlash(target))
+	if !withinBundle(bundleDir, resolved) {
+		return nil
+	}
+
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		// A broken link is a real defect, but it is not this check's, and
+		// reporting it here would fire a second time for the same bullet
+		// once link checking lands. Silence keeps one defect to one error.
+		return nil
+	}
+	fm, _, err := okf.ParseFrontmatter(data)
+	if err != nil {
+		// Unparseable frontmatter is already reported against the concept
+		// file itself by validateConcept.
+		return nil
+	}
+	conceptDesc, ok := fm["description"].(string)
+	if !ok || strings.TrimSpace(conceptDesc) == "" {
+		return nil
+	}
+	// Compared raw, not trimmed. Trimming here would be the one tolerance this
+	// check claims not to have: a frontmatter description of " Summary. " would
+	// satisfy a "Summary." bullet, and the diagnostic — printing both sides
+	// trimmed — would then show two identical strings as a mismatch, or hide a
+	// real one as a match. The padding is itself the drift to report, and %q
+	// makes it visible. A padded BULLET is rejected by the same comparison —
+	// validateIndex strips only leading whitespace — so neither side of the
+	// equality has a whitespace tolerance the other lacks.
+	if conceptDesc != bulletDesc {
+		return fmt.Errorf("%s: bullet for %q describes it as %q, but the file's frontmatter description is %q — the two must match verbatim", indexPath, target, bulletDesc, conceptDesc)
+	}
+	return nil
+}
+
+// withinBundle reports whether target resolves to a path at or inside root.
+//
+// Symlinks are resolved on BOTH sides before comparing, because a lexical
+// check alone is defeated by a symlink inside the bundle pointing out of it —
+// and because the roots this runs against are themselves often symlinked
+// (macOS /var/folders temp dirs), so resolving only one side would report
+// every target as an escape.
+func withinBundle(root, target string) bool {
+	// Absolute BEFORE resolving, because EvalSymlinks preserves the relativeness of
+	// what it is given only until a symlink points somewhere absolute — and then the
+	// two sides disagree and filepath.Rel errors outright. The bundle root really is
+	// relative in normal use ("go run ./cmd/okfvalidate ./docs/knowledge"), so an
+	// in-bundle concept reached through an absolute symlink would otherwise be
+	// classified as an escape and silently skipped.
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	target, err = filepath.Abs(target)
+	if err != nil {
+		return false
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false
+	}
+	// A target that does not exist fails here rather than at ReadFile, and is
+	// skipped for the same reason: a broken link is someone else's error.
+	realTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(realRoot, realTarget)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 var logFragmentNamePattern = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})-[A-Za-z0-9][A-Za-z0-9._-]*\.md$`)

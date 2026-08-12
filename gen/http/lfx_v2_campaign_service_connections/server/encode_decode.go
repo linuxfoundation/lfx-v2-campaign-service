@@ -5551,7 +5551,7 @@ func unmarshalLinkedinAdsCredentialsRequestBodyToLfxv2campaignserviceconnections
 func unmarshalMetaAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsMetaAdsConnectionConfig(v *MetaAdsConnectionConfigRequestBody) *lfxv2campaignserviceconnections.MetaAdsConnectionConfig {
 	res := &lfxv2campaignserviceconnections.MetaAdsConnectionConfig{
 		Label:     v.Label,
-		AccountID: *v.AccountID,
+		AccountID: v.AccountID,
 		PageID:    *v.PageID,
 		AppID:     v.AppID,
 	}
