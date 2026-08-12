@@ -595,9 +595,12 @@ func TestCloneEmail_TrimsSourceID(t *testing.T) {
 // split rather than a bare `i%60`: a second field that WRAPS makes id 959 (":59") newer
 // than id 1499 (":59" of a later minute only if the minute advances), and the ordering the
 // test asserts would then be an artefact of the generator rather than of the cap.
-func emailPageServer(t *testing.T, pages, perPage int, name string) (*Client, *int) {
+func emailPageServer(t *testing.T, pages, perPage int, name string) (*Client, *atomic.Int64) {
 	t.Helper()
-	var requested int
+	// Atomic, not a plain int: httptest serves each request on its own goroutine, so a handler
+	// counter is unsynchronized by construction even where -- as here -- the client's walk is
+	// sequential and no two invocations actually overlap.
+	var requested atomic.Int64
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		page := 0
 		if a := r.URL.Query().Get("after"); a != "" {
@@ -605,7 +608,7 @@ func emailPageServer(t *testing.T, pages, perPage int, name string) (*Client, *i
 				t.Errorf("unexpected cursor %q", a)
 			}
 		}
-		requested++
+		requested.Add(1)
 		var b strings.Builder
 		b.WriteString(`{"results":[`)
 		for i := range perPage {
@@ -643,8 +646,8 @@ func TestSearchEmails_UnfilteredIsCapped(t *testing.T) {
 	// The walk must also STOP -- a cap applied only to the returned slice would still
 	// spend the whole deadline reading every page, which is the half of the finding that
 	// actually causes the 503.
-	if maxWalked := maxUnfilteredEmails * unfilteredWalkSlack / perPage; *requested > maxWalked+1 {
-		t.Errorf("walk must stop once enough rows are collected: read %d pages, want <= %d", *requested, maxWalked+1)
+	if maxWalked := int64(maxUnfilteredEmails * unfilteredWalkSlack / perPage); requested.Load() > maxWalked+1 {
+		t.Errorf("walk must stop once enough rows are collected: read %d pages, want <= %d", requested.Load(), maxWalked+1)
 	}
 }
 
@@ -677,7 +680,7 @@ func TestSearchEmails_FilteredWalkIsNotCapped(t *testing.T) {
 	perPage := 100
 	pages := maxUnfilteredEmails * unfilteredWalkSlack / perPage * 2
 	target := pages*perPage - 1
-	var requested int
+	var requested atomic.Int64
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		page := 0
 		if a := r.URL.Query().Get("after"); a != "" {
@@ -685,7 +688,7 @@ func TestSearchEmails_FilteredWalkIsNotCapped(t *testing.T) {
 				t.Errorf("unexpected cursor %q", a)
 			}
 		}
-		requested++
+		requested.Add(1)
 		var b strings.Builder
 		b.WriteString(`{"results":[`)
 		for i := range perPage {
@@ -725,7 +728,7 @@ func TestSearchEmails_FilteredWalkIsNotCapped(t *testing.T) {
 	if !slices.ContainsFunc(got, func(e Email) bool { return e.ID == strconv.Itoa(target) }) {
 		t.Fatalf("the match on the last page must not be truncated away")
 	}
-	if requested != pages {
-		t.Errorf("filtered walk must read every page: read %d, want %d", requested, pages)
+	if requested.Load() != int64(pages) {
+		t.Errorf("filtered walk must read every page: read %d, want %d", requested.Load(), pages)
 	}
 }
