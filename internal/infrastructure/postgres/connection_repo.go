@@ -367,8 +367,12 @@ func isUniqueViolation(err error) bool {
 //
 // Postgres reports the constraint name in the error's CONSTRAINT field, so the
 // caller does not have to reason about which unique indexes the table happens
-// to carry today — a fact that changes with every migration, and that no test
-// on the calling package would notice changing.
+// to carry today — a fact that changes with every migration. Matching on the
+// name rather than on SQLSTATE alone is what keeps a NEW index from being
+// mistaken for this one. `TestAudienceLeaseMappingIgnoresOtherUniqueIndexes`
+// (`dbtest/audience_lease_live_test.go`) creates a second unique index against a
+// real server and pins that an overly broad mapping is caught — a live test, so
+// it skips locally without a database and is fatal on CI without one.
 func isUniqueViolationOn(err error, constraint string) bool {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
