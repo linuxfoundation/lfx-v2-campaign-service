@@ -475,6 +475,37 @@ deciding whether to retry, so naming the wrong one sends them to the wrong subsy
 `accountDiscovery.label()`, the same value `classifyDiscoveryError` uses one layer up, so the two
 messages a single request can produce always agree.
 
+## HubSpot email search (LFXV2-3197)
+
+`ListHubspotEmails` serves `GET /projects/{project_id}/connection-hubspot/emails`, returning the
+marketing emails reachable through the stored HubSpot connection so a caller can pick the one an
+email campaign will CLONE.
+
+It is a TEMPLATE picker, not account discovery, and is deliberately not modelled as one: a HubSpot
+connection is already scoped to the portal its private-app token authenticates against, so there
+is no account to choose. What has no default is `hubspotConfig.SourceEmailID`, which campaign
+create requires — without this endpoint the email channel cannot be driven from the UI at all.
+
+The STATUS MAPPING is shared with discovery. `classifyDiscoveryError` was lifted out of
+`listAccounts` unchanged and both callers pass it a descriptor, so 400/404/500/503 cannot drift
+between the two; only the operation noun differs. One arm is not shared: a dispatcher with no
+`EmailSearcher` yields `ErrEmailSearchUnsupported`, a separate sentinel from
+`ErrAccountsUnsupported` because the capabilities are independent — HubSpot searches emails and
+has no ad accounts, while Google Ads and Meta are the reverse (they are the only `AccountLister`
+implementors; the remaining ad platforms implement neither). Folding them into one sentinel would
+make "this platform cannot do X" ambiguous about which X.
+
+An omitted `q` lists rather than fails, because the first screen of a picker nobody has typed into
+is the useful default. That screen is BOUNDED — see `internal-platform-hubspot.md` for the cap and
+why a filtered search is deliberately not bounded — and the bound is part of the published
+contract, since the endpoint has no pagination fields and a caller otherwise cannot tell a
+complete portal listing from a capped one.
+
+Draft emails are RETURNED with their `state`, for the same reason Meta returns disabled accounts:
+hiding the row the user is looking for answers "your portal has no such email" about an email
+sitting right there. Archived rows are a different case and are simply absent — HubSpot models
+archival as a separate flag rather than a lifecycle state, so no `state` value can describe them.
+
 ## Campaign delete
 
 `BriefService.DeleteCampaign` (backing `DELETE .../campaigns/{id}`, `If-Match` required)

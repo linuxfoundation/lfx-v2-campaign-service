@@ -242,3 +242,26 @@ the layer where it was missing.** Round 4's `state` fix was tested at the client
 service, and the gap was the adapter between them. The mocks that make each layer's test pass are
 the same mocks that hide the seam. When a value crosses three layers, ask which single test would
 fail if the middle one dropped it — if the answer is none, that is the test to write.
+
+## Round 10 — the concepts, finally (review)
+
+Every round so far appended to THIS file and treated the bundle as updated. `CLAUDE.md` asks for
+the relevant CONCEPTS to change alongside the code, and a dated log entry is not one — it records
+what happened, while a concept says what is true now. Two were still describing the world before
+this endpoint:
+
+- `internal-service.md` had no mention of `ListHubspotEmails` at all. It now carries a
+  `## HubSpot email search` section: why it is a template picker rather than account discovery,
+  that `classifyDiscoveryError` is shared so the status mapping cannot drift, why
+  `ErrEmailSearchUnsupported` is a separate sentinel, and that the unfiltered bound is part of the
+  published contract because the endpoint has no pagination fields.
+- `internal-platform-hubspot.md` described `SearchEmails` as it was before the cap and the `state`
+  projection existed. It now states the filtered/unfiltered split and why only one side is
+  bounded, and that `state` is REQUESTED rather than assumed — it decodes to `""` for any field
+  not named in `includedProperties`.
+
+The lesson is the one this file keeps relearning at a different level: **an addition that is
+correct in isolation can still leave the surrounding text false.** A log entry accumulating rounds
+looks like diligence, and reads as though the knowledge bundle moved with the code. It had not.
+The check is not "did I write something down" but "does every document that describes this still
+describe it correctly" — which needs reading the concepts, not appending to the log.

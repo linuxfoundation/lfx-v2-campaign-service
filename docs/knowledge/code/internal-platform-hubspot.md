@@ -51,7 +51,8 @@ googleads/reddit/meta/twitter clients:
   `Error()` omits it. A round-trip failure after the request was plausibly sent, or a 2xx
   whose body can't be read, is a `transportError`; it is ambiguous ONLY for a
   MUTATING call (`IsUnconfirmed` returns `transportError.Mutating`) — an idempotent
-  read/search that failed in transit landed no mutation and is safely retryable. Its
+  read/search that failed in transit landed no mutation and is safely retryable.
+ Its
   `Error()` peels
   every nested `*url.Error` layer (`safeCause`) so the request URL — which can carry
   query secrets — never leaks, while `Unwrap()` keeps the cause for `errors.Is/As`.
@@ -81,6 +82,22 @@ the update applied, so that is NOT unconfirmed). A mutating 429/3xx/5xx apiError
 flagged `Ambiguous` (see `IsUnconfirmed`), so the caller verifies rather than
 blind-retrying. A GET (read) is never UNCONFIRMED — a malformed read is a plain error,
 safely retryable.
+
+`SearchEmails` walks `paging.next.after` across pages, up to `maxListPages` (200). Two behaviours
+differ by whether a query was given, and the split is deliberate (LFXV2-3197). A FILTERED search
+reads every page: truncating it would answer "no such email" about an email on a later page, and
+the callers of a lookup act on that absence. An UNFILTERED one — an empty `q`, the picker's
+default first screen, where every row matches and the walk is therefore at its worst — stops at
+`maxUnfilteredEmails` (500) rows taken in SERVER order and sorted client-side afterwards. Those
+500 are NOT a guarantee of the newest in the portal: under a bound the two cannot both hold, and
+the trade is acceptable only because a degraded order on a picker is a less useful list rather
+than a wrong answer. Nothing that must be correct depends on it.
+
+`includedProperties` restricts the projection to `name`, `subject`, `updatedAt` and `state`. The
+list endpoint returns FULL email content by default, which at `limit=100` can exceed the client's
+response cap. `state` is REQUESTED rather than assumed — `Email.State` decodes to `""` for any
+field not named here, so a consumer promised a lifecycle state would otherwise read an empty
+string from every row.
 
 **`SetSendList` recipients (ILS-only):** a HubSpot email's recipient list goes in
 `contactIlsLists` (ILS list ids). HubSpot's ILS migration removed functional support
