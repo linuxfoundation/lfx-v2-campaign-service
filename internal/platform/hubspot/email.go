@@ -95,23 +95,28 @@ const maxListPages = 200
 // callers of a lookup act on that absence. An unfiltered walk has no such failure mode —
 // nothing is being looked UP, and the contract is already "the most recent ones".
 //
-// The cap is on ACCUMULATED RECORDS, not on pages, and the walk collects
-// unfilteredWalkSlack× the cap before truncating. Stopping at the first page that reaches
-// the cap would make the result depend on the server honouring `sort=-updatedAt`, which
-// this client treats as a hint rather than a guarantee (see sortEmailsByUpdatedDesc);
-// over-collecting and then sorting the aggregate keeps the ordering OURS.
+// WHICH rows the bounded walk returns depends on the server honouring `sort=-updatedAt`,
+// and that dependency is real rather than hedged. An earlier revision over-collected 3×
+// the cap before truncating and claimed this "kept the ordering ours"; it does not. Extra
+// slack only re-sorts what was FETCHED, so if the server ignores the sort the newest rows
+// can sit on a page the walk never reaches — no multiple of the cap fixes that, it only
+// moves the cliff. Under a bounded walk the two guarantees are exclusive: stop early and
+// you depend on server order, scan every page and you have no bound.
+//
+// Depending on it is the right trade HERE, and only here. This is the unfiltered default
+// screen, whose contract is "recent emails to pick from" — a degraded order shows the
+// user a less useful list, not a wrong answer. The client still re-sorts what it fetched
+// (sortEmailsByUpdatedDesc), so the returned page is correctly ordered within itself even
+// if the server's selection was not. Nothing that must be CORRECT depends on the hint: a
+// filtered search, where a miss is a false absence, still reads every page.
 const maxUnfilteredEmails = 500
-
-// unfilteredWalkSlack is how many times maxUnfilteredEmails to collect before truncating.
-// At 3 the walk reads up to 1500 rows (15 pages) to return the newest 500, so the answer
-// stays correct even if the server returns rows in an unhelpful order.
-const unfilteredWalkSlack = 3
 
 // SearchEmails returns marketing emails whose name or subject contains query
 // (case-insensitive), most-recently-updated first. Read-only (idempotent). A FILTERED
 // search follows paging.next.after across ALL pages, so a match beyond the first page is
-// not missed. An UNFILTERED one (empty query) is bounded to the newest
-// maxUnfilteredEmails — see that constant for why the two cases differ.
+// not missed. An UNFILTERED one (empty query) is bounded to maxUnfilteredEmails rows taken
+// in server order — see that constant for why the two cases differ and what the bound does
+// and does not promise.
 func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error) {
 	// Trim before matching — a padded term like " kubecon " must still match
 	// "KubeCon Invite" rather than silently returning no results.
@@ -168,9 +173,12 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 			}
 		}
 		// Two ways the walk ends: the server ran out of pages, or an unfiltered walk has
-		// collected enough to pick the newest maxUnfilteredEmails from.
+		// collected its cap. The truncation below is still reachable on the second path --
+		// a page can carry `out` PAST the cap when the cap is not a page multiple -- so it
+		// trims the overshoot rather than being dead code. It runs after the sort so the
+		// rows dropped are the oldest of what was fetched.
 		lastPage := resp.Paging == nil || resp.Paging.Next == nil || resp.Paging.Next.After == ""
-		if lastPage || (needle == "" && len(out) >= maxUnfilteredEmails*unfilteredWalkSlack) {
+		if lastPage || (needle == "" && len(out) >= maxUnfilteredEmails) {
 			sortEmailsByUpdatedDesc(out)
 			if needle == "" && len(out) > maxUnfilteredEmails {
 				out = out[:maxUnfilteredEmails]

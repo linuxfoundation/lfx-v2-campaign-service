@@ -633,7 +633,7 @@ func TestSearchEmails_UnfilteredIsCapped(t *testing.T) {
 	// A portal far larger than the cap. An empty query matches every row, so without a
 	// bound this walks the whole portal and returns all of it.
 	perPage := 100
-	pages := maxUnfilteredEmails * unfilteredWalkSlack / perPage * 4
+	pages := maxUnfilteredEmails / perPage * 4
 	c, requested := emailPageServer(t, pages, perPage, "Email")
 
 	got, err := c.SearchEmails(context.Background(), "")
@@ -646,18 +646,27 @@ func TestSearchEmails_UnfilteredIsCapped(t *testing.T) {
 	// The walk must also STOP -- a cap applied only to the returned slice would still
 	// spend the whole deadline reading every page, which is the half of the finding that
 	// actually causes the 503.
-	if maxWalked := int64(maxUnfilteredEmails * unfilteredWalkSlack / perPage); requested.Load() > maxWalked+1 {
+	if maxWalked := int64(maxUnfilteredEmails / perPage); requested.Load() > maxWalked+1 {
 		t.Errorf("walk must stop once enough rows are collected: read %d pages, want <= %d", requested.Load(), maxWalked+1)
 	}
 }
 
-func TestSearchEmails_UnfilteredCapKeepsNewest(t *testing.T) {
-	// The server emits oldest-first, so the newest rows are on the LAST page collected.
-	// Truncating before sorting -- or trusting `sort=-updatedAt` and keeping page 1 --
-	// would return the OLDEST rows while still passing a length-only assertion.
+func TestSearchEmails_UnfilteredCapSortsWhatItFetched(t *testing.T) {
+	// What the bound promises, stated exactly: the walk takes the server's FIRST
+	// maxUnfilteredEmails rows and returns them newest-first.
+	//
+	// It does NOT promise the newest rows in the portal. That would require reading every
+	// page, which is the bound being removed. An earlier revision over-collected 3x the cap
+	// and claimed the extra slack made the order the client's own; it did not -- slack only
+	// re-sorts what was fetched, so with the server ignoring `sort=-updatedAt` the newest
+	// rows sit past wherever the walk stops, at any multiple. That version's test hid this
+	// by making the portal exactly the slack size, so the walk happened to see all of it.
+	//
+	// This server emits OLDEST first -- the sort hint ignored -- and the portal is larger
+	// than the cap, so the rows fetched are genuinely not the newest ones. The assertion is
+	// therefore about ORDERING WITHIN the fetched set, which is the part the client owns.
 	perPage := 100
-	collected := maxUnfilteredEmails * unfilteredWalkSlack
-	c, _ := emailPageServer(t, collected/perPage, perPage, "Email")
+	c, _ := emailPageServer(t, maxUnfilteredEmails/perPage*4, perPage, "Email")
 
 	got, err := c.SearchEmails(context.Background(), "")
 	if err != nil {
@@ -666,10 +675,17 @@ func TestSearchEmails_UnfilteredCapKeepsNewest(t *testing.T) {
 	if len(got) != maxUnfilteredEmails {
 		t.Fatalf("want %d, got %d", maxUnfilteredEmails, len(got))
 	}
-	// updatedAt is strictly increasing in id, so the newest row the walk saw is the
-	// highest-numbered one.
-	if got[0].ID != strconv.Itoa(collected-1) {
-		t.Errorf("cap must retain the NEWEST rows: first is id %s, want %d", got[0].ID, collected-1)
+	// updatedAt is strictly increasing in id, so newest-first means descending id over
+	// exactly the prefix the walk read.
+	for i := 1; i < len(got); i++ {
+		prev, _ := strconv.Atoi(got[i-1].ID)
+		cur, _ := strconv.Atoi(got[i].ID)
+		if prev < cur {
+			t.Fatalf("result must be newest-first: id %d precedes id %d", prev, cur)
+		}
+	}
+	if got[0].ID != strconv.Itoa(maxUnfilteredEmails-1) {
+		t.Errorf("the fetched prefix must be sorted as a whole: first is id %s, want %d", got[0].ID, maxUnfilteredEmails-1)
 	}
 }
 
@@ -678,7 +694,7 @@ func TestSearchEmails_FilteredWalkIsNotCapped(t *testing.T) {
 	// looking one UP, and a truncated walk answers "no such email" about an email sitting
 	// on a later page -- a false absence the callers act on destructively.
 	perPage := 100
-	pages := maxUnfilteredEmails * unfilteredWalkSlack / perPage * 2
+	pages := maxUnfilteredEmails / perPage * 2
 	target := pages*perPage - 1
 	var requested atomic.Int64
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
