@@ -327,6 +327,41 @@ func TestAudienceBuildLeaseRefusesUpdateBackToBuilding(t *testing.T) {
 // reason — that CHECK included — so the test also asserts the error really is a 23505
 // naming the probe.
 func TestAudienceLeaseMappingIgnoresOtherUniqueIndexes(t *testing.T) {
+	// All THREE migrated call sites, not just the plain create. Each maps a 23505 to
+	// ErrAudienceBuildInFlight, each was narrowed to the lease index by name, and each is a
+	// separate `isUniqueViolationOn` call that a later edit can widen back on its own — so a
+	// test driving one of them proves nothing about the other two.
+	//
+	// They differ in how they reach the insert (a plain create, a create gated on the brief
+	// being approved, a build claim), which is why this drives the repository methods rather
+	// than the helper: the helper is already unit-tested, and what is under test here is that
+	// each SITE passes the index name.
+	for _, tc := range []struct {
+		name   string
+		insert func(context.Context, *postgres.AudienceRepo, *model.CampaignAudience) error
+	}{
+		{"CreateAudience", func(ctx context.Context, r *postgres.AudienceRepo, a *model.CampaignAudience) error {
+			_, err := r.CreateAudience(ctx, a)
+			return err
+		}},
+		{"CreateAudienceForApprovedBrief", func(ctx context.Context, r *postgres.AudienceRepo, a *model.CampaignAudience) error {
+			_, _, err := r.CreateAudienceForApprovedBrief(ctx, a)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			audienceLeaseNarrowingProbe(t, tc.insert)
+		})
+	}
+}
+
+// audienceLeaseNarrowingProbe is the body shared by every call site above.
+//
+// It creates a SECOND unique index scoped to this brief and outside the lease's predicate, then
+// drives an insert that only that index can refuse. A 23505 from it must NOT map to
+// ErrAudienceBuildInFlight — that sentinel claims a build holds the lease, and none does.
+func audienceLeaseNarrowingProbe(t *testing.T, insert func(context.Context, *postgres.AudienceRepo, *model.CampaignAudience) error) {
+	t.Helper()
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
 	repo := postgres.NewAudienceRepo(&postgres.Pool{Pool: pool})
@@ -341,7 +376,7 @@ func TestAudienceLeaseMappingIgnoresOtherUniqueIndexes(t *testing.T) {
 		}
 	}
 
-	if _, err := repo.CreateAudience(ctx, newRow()); err != nil {
+	if err := insert(ctx, repo, newRow()); err != nil {
 		t.Fatalf("first audience: %v", err)
 	}
 
@@ -372,7 +407,7 @@ func TestAudienceLeaseMappingIgnoresOtherUniqueIndexes(t *testing.T) {
 
 	// 'failed' is outside the lease's predicate, so the lease cannot refuse this row and
 	// no build is in flight for it. Only the probe can refuse it.
-	_, err := repo.CreateAudience(ctx, newRow())
+	err := insert(ctx, repo, newRow())
 	if err == nil {
 		t.Fatal("second audience succeeded, so the probe index did not fire and the test " +
 			"proves nothing — check the probe's predicate against the row being inserted")

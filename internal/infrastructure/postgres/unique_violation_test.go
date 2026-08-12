@@ -106,3 +106,41 @@ func TestIsUniqueViolationOn(t *testing.T) {
 		})
 	}
 }
+
+// TestIsUniqueViolation covers the SIBLING helper, which the narrowing left in place.
+//
+// `isUniqueViolationOn` is the narrow one — it matches a named constraint. `isUniqueViolation`
+// stays load-bearing for the callers that legitimately want ANY 23505, and it detects through a
+// different mechanism: an `interface{ SQLState() string }` rather than a `*pgconn.PgError` type
+// assertion. Two mechanisms means two ways to regress, and only one of them had a test.
+//
+// The interface form is the interesting half. It matches anything exposing SQLState, so a driver
+// wrapper or a test double satisfies it without being a *pgconn.PgError — which is why the
+// non-pg case below uses a bare struct rather than a wrapped nil.
+func TestIsUniqueViolation(t *testing.T) {
+	tests := map[string]struct {
+		err  error
+		want bool
+	}{
+		"a unique violation": {err: &pgconn.PgError{Code: "23505"}, want: true},
+		// Any 23505, regardless of which constraint raised it — that breadth is the whole
+		// difference from isUniqueViolationOn, and it is deliberate for callers that only need
+		// to know a uniqueness rule fired.
+		"a unique violation on some other constraint": {
+			err:  &pgconn.PgError{Code: "23505", ConstraintName: "uq_something_else"},
+			want: true,
+		},
+		"a different SQLSTATE": {err: &pgconn.PgError{Code: "23503"}, want: false},
+		"wrapped": {err: fmt.Errorf("insert: %w", &pgconn.PgError{Code: "23505"}), want: true},
+		"an error that is not a pg error at all": {err: errors.New("connection refused"), want: false},
+		"nil": {err: nil, want: false},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := isUniqueViolation(tc.err); got != tc.want {
+				t.Errorf("isUniqueViolation(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
