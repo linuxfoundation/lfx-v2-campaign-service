@@ -6,6 +6,7 @@ package dbtest_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -337,22 +338,50 @@ func TestAudienceLeaseMappingIgnoresOtherUniqueIndexes(t *testing.T) {
 	// than the helper: the helper is already unit-tested, and what is under test here is that
 	// each SITE passes the index name.
 	for _, tc := range []struct {
-		name   string
-		insert func(context.Context, *postgres.AudienceRepo, *model.CampaignAudience) error
+		name string
+		// seed puts a first row in place; provoke is the operation the probe must refuse.
+		// They are separate because the third site is not an insert: UpdateAudience moves an
+		// EXISTING row, so a single insert-shaped callback cannot express it — which is how
+		// the first version of this table ended up covering two sites while claiming three.
+		seed    func(context.Context, *postgres.AudienceRepo, *model.CampaignAudience) error
+		provoke func(context.Context, *postgres.AudienceRepo, *model.CampaignAudience) error
 	}{
-		{"CreateAudience", func(ctx context.Context, r *postgres.AudienceRepo, a *model.CampaignAudience) error {
-			_, err := r.CreateAudience(ctx, a)
-			return err
-		}},
-		{"CreateAudienceForApprovedBrief", func(ctx context.Context, r *postgres.AudienceRepo, a *model.CampaignAudience) error {
-			_, _, err := r.CreateAudienceForApprovedBrief(ctx, a)
-			return err
-		}},
+		{name: "CreateAudience", seed: createAudience, provoke: createAudience},
+		{name: "CreateAudienceForApprovedBrief", seed: createForApprovedBrief, provoke: createForApprovedBrief},
+		{
+			name: "UpdateAudience",
+			// Seeded as 'failed' like the others, so the probe's predicate covers it.
+			seed: createAudience,
+			// A second row is created OUTSIDE the probe's reach ('building' is not 'failed'),
+			// then updated INTO 'failed' — where the probe refuses it. That is the real shape
+			// of this call site: a PATCH moving a row back across the predicate boundary.
+			provoke: func(ctx context.Context, r *postgres.AudienceRepo, a *model.CampaignAudience) error {
+				building := *a
+				building.Status = model.AudienceBuilding
+				created, err := r.CreateAudience(ctx, &building)
+				if err != nil {
+					return fmt.Errorf("seed the building row this case updates: %w", err)
+				}
+				created.Status = model.AudienceFailed
+				_, err = r.UpdateAudience(ctx, created, created.Version)
+				return err
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			audienceLeaseNarrowingProbe(t, tc.insert)
+			audienceLeaseNarrowingProbe(t, tc.seed, tc.provoke)
 		})
 	}
+}
+
+func createAudience(ctx context.Context, r *postgres.AudienceRepo, a *model.CampaignAudience) error {
+	_, err := r.CreateAudience(ctx, a)
+	return err
+}
+
+func createForApprovedBrief(ctx context.Context, r *postgres.AudienceRepo, a *model.CampaignAudience) error {
+	_, _, err := r.CreateAudienceForApprovedBrief(ctx, a)
+	return err
 }
 
 // audienceLeaseNarrowingProbe is the body shared by every call site above.
@@ -360,7 +389,11 @@ func TestAudienceLeaseMappingIgnoresOtherUniqueIndexes(t *testing.T) {
 // It creates a SECOND unique index scoped to this brief and outside the lease's predicate, then
 // drives an insert that only that index can refuse. A 23505 from it must NOT map to
 // ErrAudienceBuildInFlight — that sentinel claims a build holds the lease, and none does.
-func audienceLeaseNarrowingProbe(t *testing.T, insert func(context.Context, *postgres.AudienceRepo, *model.CampaignAudience) error) {
+func audienceLeaseNarrowingProbe(
+	t *testing.T,
+	seed func(context.Context, *postgres.AudienceRepo, *model.CampaignAudience) error,
+	provoke func(context.Context, *postgres.AudienceRepo, *model.CampaignAudience) error,
+) {
 	t.Helper()
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
@@ -376,7 +409,7 @@ func audienceLeaseNarrowingProbe(t *testing.T, insert func(context.Context, *pos
 		}
 	}
 
-	if err := insert(ctx, repo, newRow()); err != nil {
+	if err := seed(ctx, repo, newRow()); err != nil {
 		t.Fatalf("first audience: %v", err)
 	}
 
@@ -407,7 +440,7 @@ func audienceLeaseNarrowingProbe(t *testing.T, insert func(context.Context, *pos
 
 	// 'failed' is outside the lease's predicate, so the lease cannot refuse this row and
 	// no build is in flight for it. Only the probe can refuse it.
-	err := insert(ctx, repo, newRow())
+	err := provoke(ctx, repo, newRow())
 	if err == nil {
 		t.Fatal("second audience succeeded, so the probe index did not fire and the test " +
 			"proves nothing — check the probe's predicate against the row being inserted")
