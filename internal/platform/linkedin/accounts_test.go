@@ -76,7 +76,7 @@ func adAccountsServer(t *testing.T, pages ...string) (*httptest.Server, *recorde
 
 func TestListAdAccounts_ReturnsEveryAccountWithItsHealth(t *testing.T) {
 	srv, _ := adAccountsServer(t, `{"elements":[
-		{"id":507404993,"name":"LF Core","status":"ACTIVE","type":"BUSINESS","currency":"USD","servingStatuses":["RUNNABLE"],"metadata":{}},
+		{"id":507404993,"name":"LF Core","status":"ACTIVE","type":"BUSINESS","currency":"USD","servingStatuses":["RUNNABLE"]},
 		{"id":507404994,"name":"LF Events","status":"ACTIVE","type":"BUSINESS","currency":"EUR","servingStatuses":["BILLING_HOLD"]},
 		{"id":507404995,"name":"LF Draft","status":"DRAFT","type":"ENTERPRISE","currency":"USD","test":true},
 		{"id":507404996}

@@ -3626,7 +3626,8 @@ func TestFindByName_MissingElementsFieldIsError(t *testing.T) {
 }
 
 // TestFindByName_EmptyElementsSliceIsConfirmedAbsent verifies the FIX 3 boundary:
-// an INTENTIONAL empty result `{"elements":[],"metadata":{}}` (field PRESENT, len 0) IS a valid
+// an INTENTIONAL empty result `{"elements":[],"metadata":{"nextPageToken":""}}` (field PRESENT,
+// len 0) IS a valid
 // confirmed-absence — findByName returns "" (not found) with no error, so the
 // caller may proceed to create.
 func TestFindByName_EmptyElementsSliceIsConfirmedAbsent(t *testing.T) {
@@ -3647,7 +3648,8 @@ func TestFindByName_EmptyElementsSliceIsConfirmedAbsent(t *testing.T) {
 }
 
 // TestFindByName_ElementsPresentWithHitStillWorks verifies FIX 3 does not regress a
-// real search hit: `{"elements":[{...}],"metadata":{}}` still returns the matched id.
+// real search hit: `{"elements":[{...}],"metadata":{"nextPageToken":""}}` still returns the
+// matched id.
 func TestFindByName_ElementsPresentWithHitStillWorks(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

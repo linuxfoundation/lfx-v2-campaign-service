@@ -1,8 +1,13 @@
 # 2026-08-12 — the two older LinkedIn cursor walks, and what a missing envelope costs
 
-**Update** — `internal/platform/linkedin/client.go` (LFXV2-3066). `findByName` and
+**Update** — `internal/platform/linkedin/client.go` (LFXV2-3066). `findMatch` and
 `listCreativeURNs` now reject a response whose `metadata` block is absent, instead of reading it
-as an exhausted cursor. 45 single-page fixtures across five test files gained `"metadata":{}`.
+as an exhausted cursor. 44 single-page fixtures across five test files gained `"metadata":{}`.
+
+`findMatch`, not `findByName`: the walk is shared, and naming the wrapper undersells the fix.
+`findByName` and `findCampaignByNameInGroup` both delegate to it, so ONE guard closes TWO
+find-or-create entry points — and `findCampaignByNameInGroup`'s own comment already says an
+absence there "would allow a duplicate create".
 
 ## This was a known hole, left open on purpose
 
@@ -24,13 +29,14 @@ cascade then reports success and the service persists ACTIVE while the creatives
 discovered stay DRAFT and never serve. Bad, recoverable, and visible to anyone who looks at the
 campaign.
 
-`findByName` truncating is worse in kind, not just degree. It is the find half of find-or-create,
+`findMatch` truncating is worse in kind, not just degree. It is the find half of find-or-create,
 so its absence value is the LICENCE TO CREATE. A dropped cursor envelope on an intermediate page
 means "searched everything, found nothing" about a name that may sit on a page never fetched —
 and the caller answers by creating a **duplicate paid campaign**. Real money, and nothing about
-the outcome looks wrong at the time.
+the outcome looks wrong at the time. Both of its callers are such a path, which is why the guard
+belongs in the shared walk rather than in either wrapper.
 
-That asymmetry is why the `findByName` guard's message borrows the wording the repeated-token arm
+That asymmetry is why the `findMatch` guard's message borrows the wording the repeated-token arm
 right below it already uses: both mean *the search could not be completed*, and neither may be
 reported as an absence. The file had already reasoned its way to the right answer for a looping
 cursor; a missing envelope is the same failure arriving through a different door.
@@ -63,6 +69,22 @@ not, and the reasons differ enough to be worth recording rather than re-derived 
 So there is no fourth site to fix. LinkedIn was the only client where an absent envelope and an
 exhausted cursor decoded to the same value, and all three of its walks now reject it.
 
+## Two things checked and deliberately left alone
+
+**A whitespace-only `nextPageToken` is still treated as a live cursor.** `{"nextPageToken":"   "}`
+decodes to a non-empty string, so the walk echoes it back rather than reading it as exhaustion.
+That fails CLOSED — the `seenTokens` guard catches the repeat on the next page and the page cap
+backstops it, so the outcome is an abort, never a false absence. It is also the choice
+`accounts.go` already made explicitly: its comment says a cursor is "an opaque server token
+echoed back verbatim", and trimming one could request a DIFFERENT page than the one offered.
+Unchanged here for the same reason.
+
+**The three guards word their errors differently, and that is the point.** `accounts.go`,
+`listCreativeURNs` and `findMatch` encode one rule but name three different caller-facing
+consequences — an unenumerated account list, creatives that never serve, a duplicate create. A
+shared helper would flatten exactly the distinction that makes each message useful at its call
+site. Noted in a comment on `findMatch` so the next reader does not "fix" it into one.
+
 ## Verification
 
 Both guards are revert-verified: removing the nil check makes
@@ -71,5 +93,12 @@ Both guards are revert-verified: removing the nil check makes
 INTERMEDIATE page — page one advertises a cursor, page two drops its envelope — because a
 first-page-only test would not distinguish this bug from an empty result set.
 
-The full service suite passes; `internal/dispatch` needed 7 of the 45 fixtures, which is the
+The full service suite passes; `internal/dispatch` needed 7 of the 44 fixtures, which is the
 reminder that this client has callers whose own fixtures encode the same assumption.
+
+The count is 44 rather than 45 because the first sweep also patched an `accounts_test.go`
+fixture whose ENVELOPE already carried `"metadata":{}` — the regex matched an element object and
+injected the key one nesting level too deep, where `responseElement` has no such field and it
+decoded to nothing. A silent no-op that misrepresented the LinkedIn contract to the next reader.
+Reverted. Second lesson from the same sweep, and the more general one: a regex over JSON string
+literals does not know the difference between an envelope and an element.

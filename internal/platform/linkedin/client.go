@@ -1344,6 +1344,11 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 		// Refuse, with the same inconclusive-search wording the repeated-token arm below
 		// uses: both mean the search could not be completed, and neither may be reported as
 		// an absence.
+		// The wording differs from the sibling guards in listCreativeURNs and
+		// accounts.go ListAdAccounts on purpose, and a shared helper would flatten the
+		// distinction: each names the CALLER-facing consequence of an unconfirmed walk.
+		// Here that is a duplicate create, so this borrows the repeated-token arm's
+		// phrasing below; there it is an unenumerated list. Same rule, different cost.
 		if resp.Metadata == nil {
 			return "", fmt.Errorf("search %q by name: response carried no metadata block, so the search could not be confirmed complete — aborting to avoid creating a duplicate", nestedPath)
 		}
