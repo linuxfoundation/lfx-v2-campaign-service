@@ -391,8 +391,15 @@ func createForApprovedBrief(ctx context.Context, r *postgres.AudienceRepo, a *mo
 // audienceLeaseNarrowingProbe is the body shared by every call site above.
 //
 // It creates a SECOND unique index scoped to this brief and outside the lease's predicate, then
-// drives an insert that only that index can refuse. A 23505 from it must NOT map to
-// ErrAudienceBuildInFlight — that sentinel claims a build holds the lease, and none does.
+// drives a write that only that index can refuse. A 23505 from it must NOT map to
+// ErrAudienceBuildInFlight, because the error did not come from the lease — that is the whole
+// point of naming the index in the check.
+//
+// Note the sentinel is wrong here for a reason that differs by case, which is worth stating
+// rather than over-generalising. In the two create cases nothing holds the lease at all: every
+// row is 'failed', outside its predicate. In the UpdateAudience case a 'building' row DOES exist
+// and does hold the lease — but the refusal still came from the probe, so reporting
+// "a build is in flight" would be attributing this failure to the wrong constraint.
 func audienceLeaseNarrowingProbe(
 	t *testing.T,
 	seed func(context.Context, *postgres.AudienceRepo, *model.CampaignAudience) error,
@@ -453,10 +460,11 @@ func audienceLeaseNarrowingProbe(
 	// mapping to it discards the *pgconn.PgError, so the shape check would otherwise fail
 	// first and report the wrong reason.
 	if errors.Is(err, domain.ErrAudienceBuildInFlight) {
-		t.Fatalf("a 23505 from %s was mapped to ErrAudienceBuildInFlight, which claims a "+
-			"build holds the lease for brief %s. None does — every row here is 'failed', "+
-			"outside the lease's predicate. A caller told this retries or reports an "+
-			"occupied slot that does not exist", probeIndex, briefID)
+		t.Fatalf("a 23505 from %s was mapped to ErrAudienceBuildInFlight for brief %s, but "+
+			"that violation came from the PROBE index, not the lease. The sentinel names the "+
+			"wrong constraint: whether or not a build happens to hold the lease, this refusal "+
+			"was not it, and a caller told otherwise retries or reports an occupied slot on "+
+			"the strength of an unrelated uniqueness rule", probeIndex, briefID)
 	}
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "23505" || pgErr.ConstraintName != probeIndex {
