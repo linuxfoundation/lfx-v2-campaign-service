@@ -1870,6 +1870,55 @@ func (d *accountListerRecordingDeadline) ListAccounts(ctx context.Context, _ str
 	return []model.AccessibleAccount{{ID: "1234567890"}}, nil
 }
 
+type emailSearcherRecordingDeadline struct {
+	gotDeadline time.Time
+	hadDeadline bool
+}
+
+func (d *emailSearcherRecordingDeadline) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	return nil, nil
+}
+
+func (d *emailSearcherRecordingDeadline) SearchEmails(ctx context.Context, _ string, _ model.Provider, _ string) ([]model.MarketingEmail, error) {
+	d.gotDeadline, d.hadDeadline = ctx.Deadline()
+	return []model.MarketingEmail{{ID: "112233"}}, nil
+}
+
+// TestOrchestrator_SearchEmailsBoundsThePlatformCall is the email-search half of the pair
+// below, and it matters MORE here rather than less: SearchEmails walks cursor pages, so an
+// unbounded call is not one hung request but up to maxListPages of them, and the shared
+// accountsCallTimeout is the only thing standing between a slow portal and a pinned request
+// goroutine. Without this test, deleting the WithTimeout in Orchestrator.SearchEmails leaves
+// every email test green — the mocks ignore the context entirely.
+func TestOrchestrator_SearchEmailsBoundsThePlatformCall(t *testing.T) {
+	disp := &emailSearcherRecordingDeadline{}
+	orch := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+		model.ProviderHubSpot: disp,
+	})
+
+	// No deadline on the caller's context, deliberately: the bound must be imposed here rather
+	// than inherited from whatever the request happened to carry.
+	beforeCall := time.Now()
+	emails, err := orch.SearchEmails(context.Background(), "proj-1", model.ProviderHubSpot, "kubecon")
+	afterCall := time.Now()
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(emails) != 1 {
+		t.Fatalf("emails = %+v, want the one the searcher returned", emails)
+	}
+
+	if !disp.hadDeadline {
+		t.Fatal("the email searcher received a context with NO deadline; a slow portal would pin the request goroutine across every page of the walk")
+	}
+	expectedMin := beforeCall.Add(accountsCallTimeout)
+	expectedMax := afterCall.Add(accountsCallTimeout)
+	if disp.gotDeadline.Before(expectedMin) || disp.gotDeadline.After(expectedMax) {
+		t.Errorf("deadline %v not within [%v, %v] (call bracket + accountsCallTimeout=%v)",
+			disp.gotDeadline, expectedMin, expectedMax, accountsCallTimeout)
+	}
+}
+
 // TestOrchestrator_ReadAccountsBoundsThePlatformCall pins that ReadAccounts hands the
 // AccountLister a context bounded by accountsCallTimeout.
 //

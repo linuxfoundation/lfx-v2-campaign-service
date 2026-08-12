@@ -216,3 +216,28 @@ in `docs/api-catalog.md` too, since it is the caller-visible half.
 
 The reusable shape: a comment copied along with the code it justifies keeps the ORIGINAL's
 reasoning. Reusing `accountsCallTimeout` was a decision; reusing its rationale was not.
+
+## Round 8: two fixes, neither pinned at the seam that broke
+
+Both findings are the same shape as round 4's, which is what makes them worth recording as a
+pattern rather than as two more items.
+
+**The adapter mapping had no test.** The platform test proves `state` is requested and decodes
+into `hubspot.Email`; the service test injects a `model.MarketingEmail` through a mock searcher.
+Between them sits the per-field copy in `HubSpotDispatcher.SearchEmails`, and deleting `State:
+e.State` left BOTH suites green — recreating the exact empty-state bug this PR already fixed once.
+A test that starts at an HTTP response and ends at the domain model is the only one that binds it,
+and it compares the struct WHOLE so a new field added to the model and forgotten in the mapping
+fails too.
+
+**The 20s deadline had no test either.** `ReadAccounts` has
+`TestOrchestrator_ReadAccountsBoundsThePlatformCall` for precisely this; `SearchEmails` reused the
+constant without the test, and every email mock ignores the context, so removing the
+`WithTimeout` was invisible. It matters more here than for the account read, not less: the walk is
+paginated, so an unbounded call is not one hung request but up to `maxListPages` of them.
+
+The pattern across rounds 4 and 8: **a fix is pinned at the layer where the value is USED, not at
+the layer where it was missing.** Round 4's `state` fix was tested at the client and at the
+service, and the gap was the adapter between them. The mocks that make each layer's test pass are
+the same mocks that hide the seam. When a value crosses three layers, ask which single test would
+fail if the middle one dropped it — if the answer is none, that is the test to write.
