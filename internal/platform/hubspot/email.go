@@ -179,6 +179,16 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 		// rows dropped are the oldest of what was fetched.
 		lastPage := resp.Paging == nil || resp.Paging.Next == nil || resp.Paging.Next.After == ""
 		if lastPage || (needle == "" && len(out) >= maxUnfilteredEmails) {
+			// SORT then trim, deliberately, and not the other way round. The trim is only
+			// reachable when a page carries `out` past the cap — i.e. when the provider ignored
+			// `limit`. If it ignored `limit` it may well have ignored `sort=-updatedAt` too, and
+			// in that case truncating first keeps the provider's FIRST 500, which for an
+			// oldest-first response is the 500 OLDEST emails: the worst possible answer for a
+			// screen whose whole purpose is showing recent ones. Sorting first keeps the newest
+			// 500 of what was actually read.
+			//
+			// The published contract describes this as "the newest of what was read" rather than
+			// a prefix of the provider's order, for the same reason.
 			sortEmailsByUpdatedDesc(out)
 			if needle == "" && len(out) > maxUnfilteredEmails {
 				out = out[:maxUnfilteredEmails]

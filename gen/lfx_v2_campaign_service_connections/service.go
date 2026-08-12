@@ -551,10 +551,11 @@ type ListHubspotEmailsPayload struct {
 	ProjectID string
 	// Substring matched against email name and subject, case-insensitively. A
 	// search walks every page, so a match is never missed. Omit to list recent
-	// emails instead: that listing is capped at 500 rows taken in the provider's
-	// own order and then sorted most-recently-updated first, so it is NOT
-	// guaranteed to be the 500 newest in the portal. There is no paging; reach an
-	// older template by searching for it.
+	// emails instead: that listing is capped at 500 and sorted
+	// most-recently-updated first. WHICH 500 depends on the provider, because the
+	// walk stops once it has enough — so it is NOT guaranteed to be the 500 newest
+	// in the portal, only the newest of what was read. There is no paging; reach
+	// an older template by searching for it.
 	Q *string
 }
 

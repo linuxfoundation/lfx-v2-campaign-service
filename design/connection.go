@@ -849,7 +849,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			// endpoint has no pagination fields: without it a caller cannot tell a complete
 			// portal listing from a silently truncated first screen, and has no way to learn
 			// that older templates are reachable only by searching.
-			Attribute("q", String, "Substring matched against email name and subject, case-insensitively. A search walks every page, so a match is never missed. Omit to list recent emails instead: that listing is capped at 500 rows taken in the provider's own order and then sorted most-recently-updated first, so it is NOT guaranteed to be the 500 newest in the portal. There is no paging; reach an older template by searching for it.", func() {
+			Attribute("q", String, "Substring matched against email name and subject, case-insensitively. A search walks every page, so a match is never missed. Omit to list recent emails instead: that listing is capped at 500 and sorted most-recently-updated first. WHICH 500 depends on the provider, because the walk stops once it has enough — so it is NOT guaranteed to be the 500 newest in the portal, only the newest of what was read. There is no paging; reach an older template by searching for it.", func() {
 				Example("KubeCon")
 			})
 			Required("project_id")
