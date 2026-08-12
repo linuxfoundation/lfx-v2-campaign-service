@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -126,10 +127,13 @@ func TestSearchEmails_SortsMostRecentlyUpdatedFirst(t *testing.T) {
 		gotSort = r.URL.Query().Get("sort")
 		gotProps = r.URL.Query()["includedProperties"]
 		// Intentionally returned oldest-first to prove the client re-orders.
+		// `state` is on each row so the decode is pinned end to end: requesting the property
+		// and mapping it are separate failures, and only asserting the decoded value catches
+		// the second.
 		_, _ = io.WriteString(w, `{"results":[`+
-			`{"id":"1","name":"Old","subject":"x","updatedAt":"2024-01-01T00:00:00Z"},`+
-			`{"id":"2","name":"New","subject":"x","updatedAt":"2026-06-01T00:00:00Z"},`+
-			`{"id":"3","name":"Mid","subject":"x","updatedAt":"2025-03-01T00:00:00Z"}`+
+			`{"id":"1","name":"Old","subject":"x","state":"PUBLISHED","updatedAt":"2024-01-01T00:00:00Z"},`+
+			`{"id":"2","name":"New","subject":"x","state":"DRAFT","updatedAt":"2026-06-01T00:00:00Z"},`+
+			`{"id":"3","name":"Mid","subject":"x","state":"PUBLISHED","updatedAt":"2025-03-01T00:00:00Z"}`+
 			`]}`)
 	})
 	got, err := c.SearchEmails(context.Background(), "")
@@ -142,8 +146,23 @@ func TestSearchEmails_SortsMostRecentlyUpdatedFirst(t *testing.T) {
 	if len(gotProps) == 0 {
 		t.Errorf("SearchEmails should restrict fields via includedProperties, got none")
 	}
+	// `state` is asserted BY NAME, not just "some properties were requested". The list
+	// endpoint returns only the properties named here, so dropping `state` makes Email.State
+	// decode to "" on every row — which is exactly the bug LFXV2-3197 shipped and had to fix.
+	// A length check cannot catch that, and the service-level test cannot either: it injects
+	// State through a mock dispatcher and never sees the wire request.
+	if !slices.Contains(gotProps, "state") {
+		t.Errorf("includedProperties = %v, want it to contain \"state\" — the picker surfaces the "+
+			"lifecycle state, and a property not named here comes back empty", gotProps)
+	}
 	if len(got) != 3 || got[0].ID != "2" || got[1].ID != "3" || got[2].ID != "1" {
 		t.Errorf("results must be most-recently-updated first (2,3,1), got %v", []string{got[0].ID, got[1].ID, got[2].ID})
+	}
+	// The DECODE, not just the request. got[0] is id 2 after re-ordering, whose state is DRAFT
+	// — the value a picker uses to warn before cloning an unfinished template.
+	if got[0].State != "DRAFT" {
+		t.Errorf("State = %q, want DRAFT — a requested property that does not map onto the struct "+
+			"is the same empty string as one that was never requested", got[0].State)
 	}
 }
 

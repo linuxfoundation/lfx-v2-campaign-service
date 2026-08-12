@@ -118,16 +118,23 @@ func (s *ConnectionService) resolveBackend() (domain.ConnectionRepository, domai
 	return repo, enc, nil
 }
 
-// resolveBackendWithOrch returns the repo, encryptor, and orchestrator for account-listing
-// operations, or a typed 503 error when any of them is unavailable. The orchestrator is
-// only required for account discovery, while repo is needed by all connection operations.
-func (s *ConnectionService) resolveBackendWithOrch() (domain.ConnectionRepository, domain.Encryptor, *Orchestrator, error) {
+// resolveBackendWithOrch returns the repo, encryptor, and orchestrator for the operations that
+// reach a platform through a dispatcher, or a typed 503 when any of them is unavailable. The
+// orchestrator is only required by those; repo is needed by every connection operation.
+//
+// `operation` names what the caller was attempting, and exists because this helper now serves
+// two of them. Account discovery was the first, so the message was hard-coded — and an email
+// search hitting the cold-start window was told "account discovery service is unavailable",
+// describing something the caller never asked for. The same reasoning as
+// accountDiscovery.operation one layer up: a 503 is read by someone deciding whether to retry,
+// and naming the wrong operation sends them to check the wrong thing.
+func (s *ConnectionService) resolveBackendWithOrch(operation string) (domain.ConnectionRepository, domain.Encryptor, *Orchestrator, error) {
 	repo, enc, orch := s.backend()
 	if repo == nil {
 		return nil, nil, nil, &conn.ConnServiceUnavailableError{Code: "503", Message: "connection storage is unavailable"}
 	}
 	if orch == nil {
-		return nil, nil, nil, &conn.ConnServiceUnavailableError{Code: "503", Message: "account discovery service is unavailable"}
+		return nil, nil, nil, &conn.ConnServiceUnavailableError{Code: "503", Message: operation + " service is unavailable"}
 	}
 	return repo, enc, orch, nil
 }

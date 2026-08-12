@@ -172,6 +172,28 @@ func TestListHubspotEmails_ClassifiesFailures(t *testing.T) {
 	})
 }
 
+// During cold start the orchestrator is not yet wired, and the 503 must name what the CALLER
+// attempted. Before `resolveBackendWithOrch` took an operation, an email search in that window
+// was told "account discovery service is unavailable" — an operation this endpoint does not
+// perform, sending whoever read it to check the wrong subsystem.
+func TestListHubspotEmails_ColdStartNamesEmailSearch(t *testing.T) {
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	// No SetOrchestrator: this is exactly the pre-wiring state.
+
+	_, err := svc.ListHubspotEmails(context.Background(), &conn.ListHubspotEmailsPayload{ProjectID: "p"})
+
+	unavailable, ok := err.(*conn.ConnServiceUnavailableError)
+	if !ok {
+		t.Fatalf("expected ConnServiceUnavailableError, got %T: %v", err, err)
+	}
+	if !strings.Contains(unavailable.Message, "email search") {
+		t.Errorf("message = %q, want it to name email search", unavailable.Message)
+	}
+	if strings.Contains(unavailable.Message, "account discovery") {
+		t.Errorf("message = %q names an operation this endpoint does not perform", unavailable.Message)
+	}
+}
+
 // A dispatcher with no EmailSearcher is a caller error (400), not a transient outage: asking a
 // platform this service cannot search will never start working on its own.
 func TestListHubspotEmails_UnsupportedPlatformIs400(t *testing.T) {

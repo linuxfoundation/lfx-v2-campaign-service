@@ -59,13 +59,17 @@ The extraction is behaviour-preserving by construction: the switch body was move
 tests exercise the same arms through the new endpoint anyway — a mapping shared by reference is
 still a mapping this endpoint could be wired away from.
 
-## Known-bad rows are returned, not filtered
+## Draft rows are returned, not filtered
 
-Archived and draft emails come back with `state` on each row, mirroring the Meta account picker's
-handling of disabled accounts. Dropping them would answer "your portal has no such email" about an
-email sitting right there, and send someone looking for a permissions problem that does not exist.
-The caller gets the state and decides — including warning before cloning something archived, which
-it cannot do about a row it never receives.
+Draft emails come back with `state` on each row, mirroring the Meta account picker's handling of
+disabled accounts. Dropping them would answer "your portal has no such email" about an email
+sitting right there, and send someone looking for a permissions problem that does not exist. The
+caller gets the state and decides.
+
+ARCHIVED is NOT among them, and the first version of this section said otherwise — see "a
+promised field that never arrives" below for how that was found and why the Meta analogy does not
+transfer. The correction is folded in here rather than left to contradict itself further down;
+the round below records what was learned.
 
 `(nil, nil)` from a searcher is rejected as a contract violation rather than reported as an empty
 portal, and the empty result is built with `make(..., 0, n)` so it marshals as `[]` and not `null`.
@@ -119,3 +123,30 @@ Corrected in five places, because the claim had been restated in each: the desig
 description, the model comment, the dispatcher comment, `docs/api-catalog.md`, and this bundle's
 concept file. Restating a fact in five places is how a wrong one survives a review of any single
 place.
+
+## Round 4: the fix for the promised field was not pinned
+
+Requesting `state` fixed the behaviour and pinned nothing. `TestSearchEmails_SortsMostRecentlyUpdatedFirst`
+asserted only that `includedProperties` was NON-EMPTY, and the service-level test injected `State`
+through a mock dispatcher that never sees a wire request — so deleting `"state"` from the query
+would have recreated the exact bug with both tests green.
+
+Two assertions now, because requesting a property and mapping it are separate failures with the
+same symptom: the request test names `state` explicitly, and the fixture rows carry a `state`
+value that is asserted after decoding. Revert-verified — dropping the property fails with
+`includedProperties = [name subject updatedAt], want it to contain "state"`.
+
+The general shape is worth keeping: a fix whose only test runs above the layer that broke cannot
+bind. The mock that made the service test pass was the same mock that hid the bug for a round.
+
+## Round 4: the cold-start 503 named the wrong operation
+
+`resolveBackendWithOrch` hard-coded "account discovery service is unavailable" because account
+discovery was its only caller. An email search hitting the pre-wiring window was therefore told
+about an operation it never attempted — and a 503 is read by someone deciding whether to retry,
+so naming the wrong operation sends them to check the wrong subsystem. It now takes the operation
+name, exactly as `classifyDiscoveryError` already did one layer up.
+
+That is the second place the same omission surfaced. Sharing a helper across two operations means
+every caller-facing STRING inside it becomes a parameter, not just the branching logic — and the
+strings are the part that gets missed, because they do not fail a compile.

@@ -374,7 +374,7 @@ func (s *ConnectionService) listAccounts(ctx context.Context, projectID string, 
 	if err := rejectSystemScope(projectID); err != nil {
 		return nil, err
 	}
-	_, _, orch, err := s.resolveBackendWithOrch()
+	_, _, orch, err := s.resolveBackendWithOrch(d.label())
 	if err != nil {
 		return nil, err
 	}
@@ -434,7 +434,7 @@ func (s *ConnectionService) ListHubspotEmails(ctx context.Context, p *conn.ListH
 	if err := rejectSystemScope(p.ProjectID); err != nil {
 		return nil, err
 	}
-	_, _, orch, err := s.resolveBackendWithOrch()
+	_, _, orch, err := s.resolveBackendWithOrch(d.label())
 	if err != nil {
 		return nil, err
 	}
