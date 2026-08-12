@@ -71,3 +71,27 @@ it cannot do about a row it never receives.
 portal, and the empty result is built with `make(..., 0, n)` so it marshals as `[]` and not `null`.
 Both are the same property: an empty picker must mean "the portal authoritatively has nothing",
 never "something fell through a branch".
+
+## Round 2: the gateway did not know the path existed
+
+Two findings, both about a claim rather than the mechanism.
+
+**The endpoint was unreachable.** A Goa route is not a routed path: the HTTPRoute regex and the
+Heimdall RuleSet each have to admit it, and neither did. The service would have answered
+correctly and no caller could have arrived. `parity_test.go` pins both sides against each other,
+so the gap was one revert away from being provable — reverting the regex now fails with
+`PARITY VIOLATION ... HTTPRoute match=false but RuleSet match=true`.
+
+HubSpot gets its OWN branch in the alternation rather than joining the discovery one. The
+comment there already explains why google-ads and meta-ads are spelled out separately — folding
+`/accounts` into the shared branch would rule it for providers that do not serve it — and the
+same argument runs in both directions here: `/emails` for google-ads is as wrong as `/accounts`
+for hubspot. Two negative parity rows pin exactly that, because a widened alternation passes
+every positive test.
+
+**The doc comment named the wrong status.** It said the tagged defects "answer 409 rather than
+503", copied from the campaign endpoints, while this function's caller is a CONNECTIONS endpoint
+and `classifyDiscoveryError` maps `ErrConnectionNotUsable` to 400. The tests already asserted
+400, so the code was right and only the prose was wrong — which is the more dangerous ordering,
+since nothing fails. A status is chosen by the caller, not by the sentinel, and a comment that
+names one the function cannot produce sends an integrator to handle a case that never arrives.

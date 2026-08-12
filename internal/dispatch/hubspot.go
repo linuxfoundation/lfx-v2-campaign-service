@@ -582,8 +582,17 @@ func hubSpotCreationPortalID(campaign *model.Campaign) string {
 
 // SearchEmails implements service.EmailSearcher for the HubSpot email channel. It resolves the
 // same connection every other HubSpot path does — so the three stored-connection defects arrive
-// tagged with domain.ErrConnectionNotUsable and answer 409 rather than 503 — and searches the
+// tagged with domain.ErrConnectionNotUsable rather than as bare errors — and searches the
 // portal's marketing emails by name or subject.
+//
+// That tag answers **400** here, not the 409 the campaign endpoints return for the same
+// sentinel. The status is chosen by the CALLER, and this one is a connections endpoint:
+// classifyDiscoveryError maps ErrConnectionNotUsable to BadRequestError, exactly as account
+// discovery does. Both are the right answer for their surface — a campaign toggle's 409 says
+// "this campaign cannot be acted on as things stand", while a connection read's 400 says "the
+// connection you are asking about is misconfigured" — but only one of them is this function's,
+// and naming the wrong one in a comment is how a caller ends up handling a status that never
+// arrives.
 //
 // This is a TEMPLATE picker, not an account picker. A HubSpot connection is already scoped to
 // the portal its private-app token authenticates against, so there is no account to choose; what
