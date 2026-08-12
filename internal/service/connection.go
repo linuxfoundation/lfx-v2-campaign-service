@@ -456,7 +456,9 @@ func (s *ConnectionService) ListHubspotEmails(ctx context.Context, p *conn.ListH
 		// ErrEmailSearchUnsupported is the one arm classifyDiscoveryError cannot carry: it
 		// keys on ErrAccountsUnsupported, and the two are separate sentinels precisely
 		// because the capabilities are independent — HubSpot searches emails and has no ad
-		// accounts, every ad platform is the reverse.
+		// accounts, while Google Ads and Meta are the reverse. Only those two implement
+		// AccountLister; the remaining ad platforms implement neither, so the two directions
+		// are demonstrated by example rather than by a claim over every provider.
 		if errors.Is(serr, ErrEmailSearchUnsupported) {
 			return nil, &conn.BadRequestError{Code: "400", Message: d.label() + " is not supported for this platform"}
 		}

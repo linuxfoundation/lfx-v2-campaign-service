@@ -35,7 +35,8 @@ saving that costs more later than it returns now.
 optional capability, discovered by type assertion. `ErrEmailSearchUnsupported` is a separate
 sentinel from `ErrAccountsUnsupported` for the same reason the interfaces are separate: the
 capabilities are independent in both directions — HubSpot searches emails and has no ad accounts,
-every ad platform is the reverse — so one sentinel would leave "this platform cannot do X"
+Google Ads and Meta are the reverse (they are the only AccountLister implementors; the
+other ad platforms implement neither) — so one sentinel would leave "this platform cannot do X"
 ambiguous about which X.
 
 ## The status mapping is shared by extraction, not by copy

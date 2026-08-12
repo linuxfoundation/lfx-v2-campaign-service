@@ -836,10 +836,14 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
-			// Optional: an absent query lists the most recently updated emails, which is the
-			// useful first screen for a picker. HubSpot matches name OR subject,
-			// case-insensitively.
-			Attribute("q", String, "Substring matched against email name and subject, case-insensitively. Omit to list the most recently updated emails.", func() {
+			// Optional: an absent query lists recent emails, the useful first screen for a
+			// picker. HubSpot matches name OR subject, case-insensitively.
+			//
+			// The cap is part of the CONTRACT, not an implementation detail, because this
+			// endpoint has no pagination fields: without it a caller cannot tell a complete
+			// portal listing from a silently truncated first screen, and has no way to learn
+			// that older templates are reachable only by searching.
+			Attribute("q", String, "Substring matched against email name and subject, case-insensitively. A search walks every page, so a match is never missed. Omit to list recent emails instead: that listing is capped at 500 rows taken in the provider's own order and then sorted most-recently-updated first, so it is NOT guaranteed to be the 500 newest in the portal. There is no paging; reach an older template by searching for it.", func() {
 				Example("KubeCon")
 			})
 			Required("project_id")
