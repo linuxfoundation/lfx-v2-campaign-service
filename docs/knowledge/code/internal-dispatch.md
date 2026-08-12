@@ -545,11 +545,16 @@ picker and the create path cannot disagree about which accounts are known-bad. `
 
 ### Google Ads: manager mode, discovery and the bootstrap lifecycle
 
-Everything below is Google-Ads-specific and reopens its own heading. Without this the manager-id,
-`ListAccessibleCustomers` and bootstrap material renders inside `### Meta` — reproducing exactly
-the misattribution this split exists to remove, one level down. The `### Meta` section above was
-inserted ahead of this block rather than after it, which is easy to do and invisible in a diff
-that shows only the inserted lines.
+This section is Google-Ads-specific, and the two after it alternate again — `### Meta: the same
+bootstrap shape`, then `### Google Ads: the manager hierarchy`. The material was written as one
+narrative when Google Ads was the only implementation, so provider changes fall MID-SECTION and
+each one needs its own heading rather than a single split at the top.
+
+That is what made this hard to get right: the first attempt added `### Meta` above and assumed
+everything after it was Meta's; the second reopened Google Ads here and assumed everything after
+THAT was Google's. Both are wrong in the same way — the boundary is wherever the subject changes,
+not wherever a heading was last placed. Reading the rendered heading sequence catches it; a diff
+of the inserted lines never will, because every inserted line is correct in isolation.
 
 The manager-id check is duplicated on purpose. `Client.validateLoginCustomerID` still validates it
 (the backstop for every other caller), but it does so inside the same call that talks to Google, so
@@ -607,6 +612,8 @@ stored value, which is why the design change above was all that bootstrap additi
   set, body bounding, retry gating, and `apiError`/`transportError` classification. The
   `login-customer-id` header is still attached and still validated (`validateLoginCustomerID`).
 
+### Meta: the same bootstrap shape
+
 **Meta shares the same bootstrap shape as of LFXV2-3061**, now that its own account-picker
 endpoint (`GET .../connection-meta-ads/accounts`, LFXV2-3062) exists to complete it:
 `MetaAdsConnectionConfig` no longer declares `Required("account_id")` either (`page_id` stays
@@ -640,6 +647,8 @@ first half of this same two-PR sequence, so by the time `Required("account_id")`
 here, the completion path already existed in review, and a generic `PUT
 /connection-meta-ads` (every provider gets one via `connectionMethods`) lets an operator set
 `account_id` manually even on a day the discovery PR is still queued behind reviewer bandwidth.
+
+### Google Ads: the manager hierarchy
 
 **A manager credential needs the hierarchy walked, because the flat list does not do it.**
 `customers:listAccessibleCustomers` returns the accounts the authenticated user can act on

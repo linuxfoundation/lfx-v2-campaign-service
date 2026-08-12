@@ -77,6 +77,14 @@ where the ADDITION sat relative to text it did not touch, which a diff cannot sh
 paragraph is under the heading that owns it. The check that would have caught it is reading the
 rendered heading sequence, not the patch.
 
-`### Google Ads: manager mode, discovery and the bootstrap lifecycle` now reopens the provider
-before its own material, and says in the section body why it exists — so the next insertion has a
-visible boundary to land before or after.
+It took two attempts. The first added `### Meta` above the Google Ads block and assumed
+everything after it was Meta's. The second reopened Google Ads and assumed everything after THAT
+was Google's — but a Meta bootstrap block sits in the middle of it, so that was wrong the same
+way. The section runs Google Ads → Meta → Google Ads → Meta → Google Ads → Shared, because the
+material was written as ONE narrative when Google Ads was the only implementation and each later
+provider was appended wherever it fit.
+
+The lesson is about what to read, not about being more careful. A diff of an insertion cannot
+show a scoping error, because every inserted line is correct in isolation; what is wrong is where
+the insertion sits relative to text it does not touch. Only the rendered heading sequence shows
+that, and checking it is one `grep -n '^### '`.
