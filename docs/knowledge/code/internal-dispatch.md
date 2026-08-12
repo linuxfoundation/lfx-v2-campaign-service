@@ -543,6 +543,14 @@ accounts" about an account sitting right there. The label reuses
 picker and the create path cannot disagree about which accounts are known-bad. `account_status`
 0 means the field was absent, which is not a claim of disabled, and gets no label.
 
+### Google Ads: manager mode, discovery and the bootstrap lifecycle
+
+Everything below is Google-Ads-specific and reopens its own heading. Without this the manager-id,
+`ListAccessibleCustomers` and bootstrap material renders inside `### Meta` — reproducing exactly
+the misattribution this split exists to remove, one level down. The `### Meta` section above was
+inserted ahead of this block rather than after it, which is easy to do and invisible in a diff
+that shows only the inserted lines.
+
 The manager-id check is duplicated on purpose. `Client.validateLoginCustomerID` still validates it
 (the backstop for every other caller), but it does so inside the same call that talks to Google, so
 by the time it fires the error is indistinguishable at this boundary from a genuine upstream

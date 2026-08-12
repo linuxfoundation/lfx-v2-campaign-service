@@ -41,19 +41,42 @@ Two placements were actively misleading rather than merely unstructured:
 ## Why this is a documentation change and not a code one
 
 Nothing in `internal/dispatch` moved. The risk this closes is a reader applying a Google Ads
-lifecycle rule to Meta and concluding a credentials-first Meta connection is supported — which,
-**as of `main` at the time of writing**, it is not: Meta's campaign create does not yet fail with
-`account_not_selected`. That conclusion would be drawn from correct sentences read in the wrong
-scope, which no test can catch and no code change can prevent.
+lifecycle rule to Meta — a conclusion drawn from correct sentences read in the wrong scope, which
+no test can catch and no code change can prevent.
 
-That "as of `main`" is load-bearing, not hedging. LFXV2-3061 (PR #116) adds exactly the missing
-tagging and makes credentials-first Meta connections supported, so this sentence has a known
-expiry. Both branches edit the same `Required("account_id")` parenthetical in
-`internal-dispatch.md`, so whichever merges second gets a real conflict rather than a silent
-staleness — the resolution must keep #116's wording, since after that merge the fact this
-paragraph turns on is no longer true.
+**The example that motivated this has since resolved itself, and that is worth recording.** When
+this split was written, a credentials-first Meta connection was NOT supported: Meta's campaign
+create did not fail with `account_not_selected`, so a reader who applied the Google Ads bootstrap
+rule to Meta would have concluded something false. LFXV2-3061 (PR #116) has since merged and
+added exactly that tagging, so credentials-first Meta connections are now supported and both
+providers really do share the lifecycle.
+
+The heading split is not made pointless by that. What it prevents is the *inference* — a reader
+being unable to tell which provider a paragraph governs — and that failure mode is independent of
+whether any particular inference happens to be true this week. The two branches did edit the same
+`Required("account_id")` parenthetical, and the conflict on merge was resolved by keeping #116's
+wording, which is why the concept file now reads "Both lifecycles are reachable as of
+LFXV2-3061".
 
 ## Verification
 
 `go run ./cmd/okfvalidate ./docs/knowledge` clean. Every claim in the moved text was checked
 against the code it describes at its new heading; the split is the whole change.
+
+## The split had the defect it was fixing
+
+Copilot found that the Google-Ads-specific material — the manager-id duplication,
+`ListAccessibleCustomers`, the bootstrap lifecycle — was still rendering INSIDE `### Meta`. The
+`### Meta` section landed ahead of that block rather than after it, so the split reproduced the
+exact misattribution it exists to remove, one level down.
+
+Worth writing down because of how it hid. The diff showed a correctly-formed `### Meta` heading
+with correct Meta content beneath it; nothing in the added lines was wrong. What was wrong was
+where the ADDITION sat relative to text it did not touch, which a diff cannot show and
+`okfvalidate` does not check — it enforces the dated H1 and the frontmatter, not whether a
+paragraph is under the heading that owns it. The check that would have caught it is reading the
+rendered heading sequence, not the patch.
+
+`### Google Ads: manager mode, discovery and the bootstrap lifecycle` now reopens the provider
+before its own material, and says in the section body why it exists — so the next insertion has a
+visible boundary to land before or after.
