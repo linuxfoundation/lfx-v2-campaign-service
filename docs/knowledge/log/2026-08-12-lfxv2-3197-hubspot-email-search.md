@@ -150,3 +150,22 @@ name, exactly as `classifyDiscoveryError` already did one layer up.
 That is the second place the same omission surfaced. Sharing a helper across two operations means
 every caller-facing STRING inside it becomes a parameter, not just the branching logic — and the
 strings are the part that gets missed, because they do not fail a compile.
+
+## Round 5: a duplicated security guard with no test
+
+`rejectSystemScope` is the first statement of `listAccounts`, and
+`TestListAccounts_RejectsTheReservedSystemScope` covers both discovery endpoints through it —
+its comment says so, and gives the reason: the guard is written once, so a third provider cannot
+forget it.
+
+Email search does not go through that helper. It calls `rejectSystemScope` itself, which made the
+test's premise false the moment this endpoint landed: the guard was now DUPLICATED and the copy
+had no test. A duplicated security check is the kind that is added without a test and later
+removed without one failing, and this one gates a GET that would decrypt the LF system credential
+and list the Linux Foundation's own marketing emails — subjects included — for whoever asked.
+
+The case went into the existing table rather than beside the email tests, so the next endpoint
+that copies the guard is added where the other copies already are. Revert-verified: deleting the
+guard fails the hubspot subtest with "got 503, want the system-scope rejection", and the other two
+still pass — which is what proves the case is specific to this endpoint rather than re-testing the
+shared helper.
