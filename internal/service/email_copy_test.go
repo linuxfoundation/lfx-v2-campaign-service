@@ -706,11 +706,12 @@ func TestGenerateEmailCopy_PromptLimitCountsRunesNotBytes(t *testing.T) {
 	}
 
 	// atomic, not a plain bool: the flag is written on the httptest handler's goroutine and
-	// read on the test's. The response body read does establish a happens-before edge in
-	// practice (50 runs under -race are clean), but the guarantee is net/http's internals
-	// rather than anything this test states, and the sibling internal/platform/llm tests
-	// already synchronize their recorders. Cheaper to hold the same discipline than to
-	// re-derive the edge every time someone reads this.
+	// read on the test's, and the atomic is what synchronizes them. Reading the response body
+	// does NOT establish the edge — the client can consume bytes the handler has written while
+	// the handler is still running, so a body read orders nothing with respect to the handler's
+	// return. Clean -race runs do not supply the guarantee either: the detector reports races it
+	// OBSERVES, and a schedule that never interleaves the two is exactly what it will not
+	// report. The atomic makes the synchronization explicit rather than incidental.
 	var llmCalled atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		llmCalled.Store(true)

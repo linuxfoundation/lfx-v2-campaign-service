@@ -23,15 +23,21 @@ is not the one the nit was filed under.
 
 ## 2. `llmCalled` is now an `atomic.Bool` (Cursor, `internal/service/email_copy_test.go`)
 
-The flag is written on the `httptest` handler's goroutine and read on the test's. **The race
-Cursor described is not reachable**: `go test -race -count=50` on the affected tests is clean,
-because reading the response body to completion establishes a happens-before edge with the
-handler's return.
+The flag is written on the `httptest` handler's goroutine and read on the test's, and the atomic
+is what synchronizes them.
 
-It was changed anyway, and the distinction matters: the edge is a property of `net/http`'s
-internals, not something either test states, and the sibling `internal/platform/llm` tests
-already synchronize their recorders. An `atomic.Bool` costs nothing and removes the need to
-re-derive that edge every time somebody reads the test. Both occurrences were converted
+**An earlier version of this entry got the reasoning wrong and is corrected here**, because the
+wrong version is the more instructive one. It said the race "is not reachable" since reading the
+response body to completion establishes a happens-before edge with the handler's return, citing
+`go test -race -count=50` clean. Neither half holds. A body read orders nothing with respect to
+the handler's RETURN — the client can consume bytes the handler has already written while the
+handler is still running. And a clean race detector is not a proof: it reports races it
+OBSERVES, so a schedule that never interleaves the two writes is precisely the case it cannot
+report. Fifty clean runs are fifty schedules, not a guarantee.
+
+So the atomic is not belt-and-braces over an unreachable race; it is the synchronization. That
+also makes the sibling `internal/platform/llm` tests' discipline the right precedent rather than
+merely a consistent one. Both occurrences were converted
 (`TestGenerateEmailCopy_AcceptsSizeablePrompt` as well as the one Cursor flagged) — a single
 converted site would have read as if the two were different.
 
