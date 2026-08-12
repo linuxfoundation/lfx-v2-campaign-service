@@ -1,12 +1,20 @@
 # 2026-08-11 — Account discovery reads by provider, not as one narrative
 
 **Docs** — `docs/knowledge/code/internal-dispatch.md` (LFXV2-3102). Splits the account-discovery
-section under `### Google Ads`, `### Meta`, and `### Shared: credential resolution and decrypt
-classification`. The change is almost entirely movement — every paragraph goes under the heading
-that owns it — with exactly one sentence rewritten: the `ListAccessibleCustomers` paragraph opened
-"Google Ads is the only implementation today", and the heading it now sits under says that better
-than the sentence did. That exception is spelled out below rather than rounded off, because "no
-prose was rewritten" is the kind of summary a later reader would trust instead of the diff.
+section by provider. The rendered heading sequence is now Google Ads → Meta → Google Ads → Meta →
+Google Ads → `### Shared: credential resolution and decrypt classification`, because the material
+was written as one narrative when Google Ads was the only implementation and each later provider
+was appended wherever it fit rather than at a boundary.
+
+**The change is mostly movement, but not only movement, and the count grew across review.** It
+opened claiming "exactly one sentence rewritten"; by the end there were four rewrites plus new
+narrative at the reopened headings. Each is recorded below in the round that produced it. The
+running summary is corrected here rather than left standing, because a first paragraph asserting
+"almost entirely movement" is exactly what a later reader trusts instead of reading the diff —
+which is the same failure mode this entry keeps documenting one level down.
+
+The first rewrite: the `ListAccessibleCustomers` paragraph opened "Google Ads is the only
+implementation today", and the heading it now sits under says that better than the sentence did.
 
 A second sentence was rewritten in review. The `ListAccessibleCustomers` paragraph asserted the
 call goes to `customers:listAccessibleCustomers` flatly, but `Client.ListAccessibleCustomers`
@@ -61,7 +69,13 @@ LFXV2-3061".
 ## Verification
 
 `go run ./cmd/okfvalidate ./docs/knowledge` clean. Every claim in the moved text was checked
-against the code it describes at its new heading; the split is the whole change.
+against the code it describes at its new heading.
+
+`okfvalidate` is NOT the check that matters here, and it is worth saying why: it enforces the
+dated H1 and the frontmatter, not whether a paragraph sits under the heading that owns it. It
+passed on every revision of this entry, including the two that misattributed whole blocks. The
+check that catches a scoping error is reading the rendered heading sequence —
+`grep -n '^### '` — because a diff of an insertion shows only correct lines.
 
 ## The split had the defect it was fixing
 
