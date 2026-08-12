@@ -3631,6 +3631,56 @@ func TestGetCampaignMetrics_OtherUnusableCauseKeepsTheGeneralMessage(t *testing.
 // before, and the difference matters to the caller: 503 says retry, and no amount of retrying
 // creates a connection. Reaching this arm means credsSource.resolve missed the project's own
 // row AND the shared system account, so there is genuinely nothing to resolve.
+// The 404 and 500 arms must sit ABOVE the general ErrConnectionNotUsable arm. Both sentinels
+// CAN be wrapped alongside it, and a broad match placed first would swallow them — answering
+// "repair this project's connection" for a project that has none, or for a key mismatch its
+// admin cannot see.
+//
+// resolve() wraps them alone today, so this pins an ORDERING that is currently un-exercised by
+// the other tests: it drives an error carrying BOTH sentinels, which only the arm order
+// distinguishes.
+func TestToggleCampaignStatus_SpecificArmsWinOverTheGeneralUnusableArm(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		assert func(*testing.T, error)
+	}{
+		{
+			name: "not found beats unusable",
+			err:  fmt.Errorf("no connection: %w: %w", domain.ErrConnectionNotUsable, domain.ErrNotFound),
+			assert: func(t *testing.T, err error) {
+				var nf *briefs.NotFoundError
+				if !errors.As(err, &nf) {
+					t.Fatalf("want 404, got %T: %v — the general arm swallowed it", err, err)
+				}
+			},
+		},
+		{
+			name: "decryption failure beats unusable",
+			err:  fmt.Errorf("decrypt: %w: %w", domain.ErrConnectionNotUsable, domain.ErrCredentialDecryptionFailed),
+			assert: func(t *testing.T, err error) {
+				var ise *briefs.InternalServerError
+				if !errors.As(err, &ise) {
+					t.Fatalf("want 500, got %T: %v — the general arm swallowed it", err, err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			camp := &model.Campaign{
+				ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+				PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+			}
+			s, _ := newToggleService(camp, &stubToggler{err: tc.err})
+			im := "1"
+			_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+				ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+			})
+			tc.assert(t, err)
+		})
+	}
+}
+
 func TestToggleCampaignStatus_NoConnectionIs404(t *testing.T) {
 	camp := &model.Campaign{
 		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
