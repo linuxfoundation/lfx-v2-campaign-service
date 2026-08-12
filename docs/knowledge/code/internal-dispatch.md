@@ -437,6 +437,8 @@ persisted — the same live-read-only discipline as `ReadMetrics`. Errors from t
 propagate verbatim: a read has no ambiguous mutation to protect, and the adapter does not classify
 those, leaving the HTTP status mapping to the service layer.
 
+### Google Ads
+
 **Errors that arise BEFORE any request are classified here, and must be.** The service layer has
 exactly one default arm for an unrecognized error, and it answers 503 — "the provider call failed,
 retry later". Three conditions would land there wrongly: an inactive connection, a credential blob
@@ -541,12 +543,128 @@ accounts" about an account sitting right there. The label reuses
 picker and the create path cannot disagree about which accounts are known-bad. `account_status`
 0 means the field was absent, which is not a claim of disabled, and gets no label.
 
+### Google Ads: manager mode, discovery and the bootstrap lifecycle
+
+This section is Google-Ads-specific, and the two after it alternate again — `### Meta: the same
+bootstrap shape`, then `### Google Ads: the manager hierarchy`. The material was written as one
+narrative when Google Ads was the only implementation, so provider changes fall MID-SECTION and
+each one needs its own heading rather than a single split at the top.
+
+That is what made this hard to get right: the first attempt added `### Meta` above and assumed
+everything after it was Meta's; the second reopened Google Ads here and assumed everything after
+THAT was Google's. Both are wrong in the same way — the boundary is wherever the subject changes,
+not wherever a heading was last placed. Reading the rendered heading sequence catches it; a diff
+of the inserted lines never will, because every inserted line is correct in isolation.
+
 The manager-id check is duplicated on purpose. `Client.validateLoginCustomerID` still validates it
 (the backstop for every other caller), but it does so inside the same call that talks to Google, so
 by the time it fires the error is indistinguishable at this boundary from a genuine upstream
 failure. `storedCustomerIDRE` in `internal/dispatch/googleads.go` therefore checks the STORED value
 where it is READ, not where it is used — the check has to happen while the answer is still
 classifiable. The two regexps must stay in step.
+
+The Google Ads implementation goes via `Client.ListAccessibleCustomers`, which branches on mode
+before it issues any request. In **direct mode** (no `login_customer_id`) it reaches
+`customers:listAccessibleCustomers`. That endpoint is **account-agnostic** — it has no
+`customers/{id}` path segment, unlike every other Google Ads call — and it is sent with a nil body
+(so no `Content-Type`) and `idempotent=true` (a pure read, so retrying a 429 cannot double-apply
+anything). In **manager mode** (`login_customer_id` configured) the flat endpoint is skipped
+entirely: the call returns through `expandManagerHierarchy` first
+(`internal/platform/googleads/client.go:1025-1027`), because a flat read whose rows are never
+consumed could only add a way for discovery to fail.
+
+**Discovery runs without an account id, deliberately, at both layers.** The call is
+account-agnostic: it asks which customer ids the CREDENTIAL reaches, so an account id is not
+a narrower version of the question, it is a different one.
+
+Both lifecycles are now SUPPORTED. `GoogleAdsConnectionConfig` no longer declares
+`Required("account_id")` (Meta joined it in LFXV2-3061, which added the `account_not_selected`
+tagging its campaign create was missing — a credentials-first row needs both the discovery
+endpoint and account-needing paths that name the missing choice), so
+this endpoint serves BOTH re-pointing an existing connection ("which other customer ids does this
+credential reach?") and first-time bootstrap:
+
+```
+POST   /projects/{id}/connection-google-ads          (credentials, no account_id)
+GET    /projects/{id}/connection-google-ads/accounts (discovery)
+PUT    /projects/{id}/connection-google-ads          (set the chosen account_id)
+```
+
+A connection in the intermediate state stays `status=active` and stores `account_id` as `""`.
+That is not a loose end: `validateGoogleAdsCredentials` REFUSES a non-active connection, so any
+"pending"-style status would make step two unreachable and dead-end the bootstrap it exists to
+serve. `active` says the connection is ENABLED for credential-based operations, NOT that the
+credentials were verified — nothing verifies them, so an active row can hold material the
+platform will reject. Readiness to run a campaign is `account_id` being non-empty, and the paths
+that need it say so with `ErrAccountNotSelected`.
+
+The two preconditions below were relaxed for the endpoint's own semantics rather than for the
+stored value, which is why the design change above was all that bootstrap additionally needed:
+
+- The dispatcher's `validateGoogleAdsConnection` demands a non-empty `accountID`. Discovery now
+  routes through `validateGoogleAdsCredentials` (via `resolveGoogleAdsDiscoveryClient`) instead,
+  which keeps every other check — active status, decodable blob, all four OAuth fields — so a
+  discovery call against a stale or half-configured connection still fails as a *connection*
+  problem rather than as an opaque error from Google.
+- `Client.doRequest` validates `c.account.CustomerID` as digits-only. The account-agnostic paths
+  call `doRequestValidated` instead, which is `doRequest` with the id precondition discharged by
+  the caller. It exists ONLY so those paths can share one copy of the URL construction, header
+  set, body bounding, retry gating, and `apiError`/`transportError` classification. The
+  `login-customer-id` header is still attached and still validated (`validateLoginCustomerID`).
+
+### Meta: the same bootstrap shape
+
+**Meta shares the same bootstrap shape as of LFXV2-3061**, now that its own account-picker
+endpoint (`GET .../connection-meta-ads/accounts`, LFXV2-3062) exists to complete it:
+`MetaAdsConnectionConfig` no longer declares `Required("account_id")` either (`page_id` stays
+required — it names a Facebook page the operator already controls, not something discovery
+resolves). The credential-state checks that used to be inlined at each of `Dispatch`,
+`ToggleStatus`, and `ReadMetrics` are now `resolveMetaCredentials`, a single helper in the shape
+`validateGoogleAdsCredentials` established and `resolveRedditClient` adopted — active status,
+decodable blob, non-empty access token, each
+tagged with `domain.ErrConnectionNotUsable` plus its reason sentinel, and a `defer` that runs
+every return path through `systemScoped`. That `defer` closes over a plain local bound once
+(`conn := res`), NOT over the named return: every not-usable path returns a nil connection, and
+`systemScoped` is a no-op on a nil receiver, so reading the named return there would silently
+drop the system-row attribution from exactly the errors that need it. It deliberately does not check
+`account_id`: that is `requireMetaAccountID`, called ONLY by `Dispatch`, right after credential
+resolution, because campaign creation builds Graph paths as `/{accountID}/campaigns` and needs a
+real account id (Meta has no discovery for `page_id`, the other prerequisite `Dispatch` checks).
+`ToggleStatus` and `ReadMetrics` do NOT call it: both target an existing campaign by platform id
+(`POST /{campaignID}`, `GET /{campaignID}/insights`) and never read `AccountConfig.AccountID` at
+all, so requiring a selected account for either would refuse a perfectly servable pause/resume
+or metrics-read on a connection whose account selection was later cleared via `PUT`.
+`requireMetaAccountID` wraps an empty account the same way Google Ads does: `ErrConnectionNotUsable`
+selects the status, `domain.ErrAccountNotSelected` supplies the `account_not_selected` reason
+token, and it is matched before the general unusable-connection arm.
+
+**A CONFIRMED default is the reason to reject this without discovery, not just the goal to
+build toward it.** The Google Ads log entry documenting its own bootstrap states the general
+rule as "an optional `account_id` and a discovery endpoint ship together or not at all" — the
+worry being a connection an operator cannot finish from inside this API. For Meta specifically
+that risk did not materialize: LFXV2-3062 (the discovery endpoint) was built as the deliberate
+first half of this same two-PR sequence, so by the time `Required("account_id")` was dropped
+here, the completion path already existed in review, and a generic `PUT
+/connection-meta-ads` (every provider gets one via `connectionMethods`) lets an operator set
+`account_id` manually even on a day the discovery PR is still queued behind reviewer bandwidth.
+
+### Google Ads: the manager hierarchy
+
+**A manager credential needs the hierarchy walked, because the flat list does not do it.**
+`customers:listAccessibleCustomers` returns the accounts the authenticated user can act on
+DIRECTLY; a `login-customer-id` header does not make it enumerate that manager's children. On an
+MCC connection — the normal shape for agency-managed accounts — the flat list is therefore often
+just the manager itself, and every child ad account the caller actually wants to pick is missing.
+So when a manager id is configured, `listManagerClients` expands it with a `customer_client` GAQL
+query scoped to the manager (`gaqlSearchForCustomer`, which takes an explicit customer id rather
+than the client's empty one). Manager rows are filtered out of the result: a manager account
+cannot hold campaigns, so offering one would let a caller select an account that fails at the
+first create. Only `status = 'ENABLED'` clients are requested. The expansion also supplies
+`descriptive_name`, which the flat endpoint does not return at all — so labels appear only for
+accounts reached this way. Without a manager id there is no hierarchy root to walk and the direct
+list is the whole answer.
+
+### Shared: credential resolution and decrypt classification
 
 `creds.resolve` classifies each of its failure branches, and the splits are deliberate. A connection
 row with an EMPTY credential blob is permanently unusable as it stands, so it carries
@@ -598,99 +716,6 @@ sentinel the branch carried. Authenticated-decryption failure (`ErrCredentialDec
 only. Malformed ciphertext reaches `ErrConnectionNotUsable` → 400, whose handler deliberately
 suppresses the cause and logs `reason=credential_blob_malformed` alone, because the conditions on
 that arm include one detected by decoding the DECRYPTED blob.
-
-Google Ads is the only implementation today, via
-`Client.ListAccessibleCustomers` → `customers:listAccessibleCustomers`. That endpoint is
-**account-agnostic** — it has no `customers/{id}` path segment, unlike every other Google Ads call
-— and it is sent with a nil body (so no `Content-Type`) and `idempotent=true` (a pure read, so
-retrying a 429 cannot double-apply anything).
-
-**Discovery runs without an account id, deliberately, at both layers.** The call is
-account-agnostic: it asks which customer ids the CREDENTIAL reaches, so an account id is not
-a narrower version of the question, it is a different one.
-
-Both lifecycles are now SUPPORTED. `GoogleAdsConnectionConfig` no longer declares
-`Required("account_id")` (Meta joined it in LFXV2-3061, which added the `account_not_selected`
-tagging its campaign create was missing — a credentials-first row needs both the discovery
-endpoint and account-needing paths that name the missing choice), so
-this endpoint serves BOTH re-pointing an existing connection ("which other customer ids does this
-credential reach?") and first-time bootstrap:
-
-```
-POST   /projects/{id}/connection-google-ads          (credentials, no account_id)
-GET    /projects/{id}/connection-google-ads/accounts (discovery)
-PUT    /projects/{id}/connection-google-ads          (set the chosen account_id)
-```
-
-A connection in the intermediate state stays `status=active` and stores `account_id` as `""`.
-That is not a loose end: `validateGoogleAdsCredentials` REFUSES a non-active connection, so any
-"pending"-style status would make step two unreachable and dead-end the bootstrap it exists to
-serve. `active` says the connection is ENABLED for credential-based operations, NOT that the
-credentials were verified — nothing verifies them, so an active row can hold material the
-platform will reject. Readiness to run a campaign is `account_id` being non-empty, and the paths
-that need it say so with `ErrAccountNotSelected`.
-
-The two preconditions below were relaxed for the endpoint's own semantics rather than for the
-stored value, which is why the design change above was all that bootstrap additionally needed:
-
-- The dispatcher's `validateGoogleAdsConnection` demands a non-empty `accountID`. Discovery now
-  routes through `validateGoogleAdsCredentials` (via `resolveGoogleAdsDiscoveryClient`) instead,
-  which keeps every other check — active status, decodable blob, all four OAuth fields — so a
-  discovery call against a stale or half-configured connection still fails as a *connection*
-  problem rather than as an opaque error from Google.
-- `Client.doRequest` validates `c.account.CustomerID` as digits-only. The account-agnostic paths
-  call `doRequestValidated` instead, which is `doRequest` with the id precondition discharged by
-  the caller. It exists ONLY so those paths can share one copy of the URL construction, header
-  set, body bounding, retry gating, and `apiError`/`transportError` classification. The
-  `login-customer-id` header is still attached and still validated (`validateLoginCustomerID`).
-
-**Meta shares the same bootstrap shape as of LFXV2-3061**, now that its own account-picker
-endpoint (`GET .../connection-meta-ads/accounts`, LFXV2-3062) exists to complete it:
-`MetaAdsConnectionConfig` no longer declares `Required("account_id")` either (`page_id` stays
-required — it names a Facebook page the operator already controls, not something discovery
-resolves). The credential-state checks that used to be inlined at each of `Dispatch`,
-`ToggleStatus`, and `ReadMetrics` are now `resolveMetaCredentials`, a single helper in the shape
-`validateGoogleAdsCredentials` established and `resolveRedditClient` adopted — active status,
-decodable blob, non-empty access token, each
-tagged with `domain.ErrConnectionNotUsable` plus its reason sentinel, and a `defer` that runs
-every return path through `systemScoped`. That `defer` closes over a plain local bound once
-(`conn := res`), NOT over the named return: every not-usable path returns a nil connection, and
-`systemScoped` is a no-op on a nil receiver, so reading the named return there would silently
-drop the system-row attribution from exactly the errors that need it. It deliberately does not check
-`account_id`: that is `requireMetaAccountID`, called ONLY by `Dispatch`, right after credential
-resolution, because campaign creation builds Graph paths as `/{accountID}/campaigns` and needs a
-real account id (Meta has no discovery for `page_id`, the other prerequisite `Dispatch` checks).
-`ToggleStatus` and `ReadMetrics` do NOT call it: both target an existing campaign by platform id
-(`POST /{campaignID}`, `GET /{campaignID}/insights`) and never read `AccountConfig.AccountID` at
-all, so requiring a selected account for either would refuse a perfectly servable pause/resume
-or metrics-read on a connection whose account selection was later cleared via `PUT`.
-`requireMetaAccountID` wraps an empty account the same way Google Ads does: `ErrConnectionNotUsable`
-selects the status, `domain.ErrAccountNotSelected` supplies the `account_not_selected` reason
-token, and it is matched before the general unusable-connection arm.
-
-**A CONFIRMED default is the reason to reject this without discovery, not just the goal to
-build toward it.** The Google Ads log entry documenting its own bootstrap states the general
-rule as "an optional `account_id` and a discovery endpoint ship together or not at all" — the
-worry being a connection an operator cannot finish from inside this API. For Meta specifically
-that risk did not materialize: LFXV2-3062 (the discovery endpoint) was built as the deliberate
-first half of this same two-PR sequence, so by the time `Required("account_id")` was dropped
-here, the completion path already existed in review, and a generic `PUT
-/connection-meta-ads` (every provider gets one via `connectionMethods`) lets an operator set
-`account_id` manually even on a day the discovery PR is still queued behind reviewer bandwidth.
-
-**A manager credential needs the hierarchy walked, because the flat list does not do it.**
-`customers:listAccessibleCustomers` returns the accounts the authenticated user can act on
-DIRECTLY; a `login-customer-id` header does not make it enumerate that manager's children. On an
-MCC connection — the normal shape for agency-managed accounts — the flat list is therefore often
-just the manager itself, and every child ad account the caller actually wants to pick is missing.
-So when a manager id is configured, `listManagerClients` expands it with a `customer_client` GAQL
-query scoped to the manager (`gaqlSearchForCustomer`, which takes an explicit customer id rather
-than the client's empty one). Manager rows are filtered out of the result: a manager account
-cannot hold campaigns, so offering one would let a caller select an account that fails at the
-first create. Only `status = 'ENABLED'` clients are requested. The expansion also supplies
-`descriptive_name`, which the flat endpoint does not return at all — so labels appear only for
-accounts reached this way. Without a manager id there is no hierarchy root to walk and the direct
-list is the whole answer.
 
 ### HubSpot: email search, not account discovery
 

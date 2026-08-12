@@ -3,12 +3,12 @@
 * [cmd/campaign-service](cmd-campaign-service.md) - The LFX V2 Campaign Service.
 * [internal/bootstrap](internal-bootstrap.md) - Installs and rotates the LF-owned system ad-account credentials that projects with no connection of their own fall back to.
 * [internal/container](internal-container.md) - Dependency injection: opens the PostgreSQL pool, runs migrations, and wires Readyz to the pool.
-* [internal/audience](internal-audience.md) - Derives the regional-expansion HubSpot inclusion lists that make up a brief's marketing audience.
-* [internal/infrastructure/indexer](internal-infrastructure-indexer.md) - Publishes brief and campaign snapshots to NATS for the platform Query Service.
-* [internal/utm](internal-utm.md) - Tags outbound email links with UTM parameters so email traffic is attributable.
+* [internal/audience](internal-audience.md) - Derives the regional-expansion inclusion lists (HubSpot filter trees) that make up a brief's marketing audience.
+* [internal/infrastructure/indexer](internal-infrastructure-indexer.md) - Publishes brief and campaign snapshots to NATS for the platform Query Service, which indexes them into OpenSearch.
+* [internal/utm](internal-utm.md) - Tags outbound email links with UTM parameters so email traffic is attributable in the warehouse.
 * [internal/dispatch](internal-dispatch.md) - Per-platform PlatformDispatcher adapters bridging the orchestrator to the channel API clients (six paid ad platforms plus the hubspot email channel), plus the HubSpot audience builder.
 * [internal/infrastructure/auth](internal-infrastructure-auth.md) - Verifies the Heimdall-issued bearer token against Heimdall's JWKS (PS256, issuer, audience, expiry, non-empty principal) and turns its claims into the domain actor recorded on writes.
-* [internal/infrastructure/config](internal-infrastructure-config.md) - Application configuration from CLI flags and env vars, including PG* composition into a PostgreSQL DSN.
+* [internal/infrastructure/config](internal-infrastructure-config.md) - Application configuration from CLI flags and env vars, including PG* composition into a PostgreSQL DSN and optional SNOWFLAKE_* warehouse credentials.
 * [internal/infrastructure/postgres](internal-infrastructure-postgres.md) - PostgreSQL pool (otelpgx), migrations, repositories, and Ready() for readiness probes.
 * [internal/middleware](internal-middleware.md) - Package middleware provides HTTP middleware for the service.
 * [internal/platform/reddit](internal-platform-reddit.md) - Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation, best-effort campaign metrics reads (UNVERIFIED contract).
@@ -20,7 +20,7 @@
 * [internal/platform/microsoft](internal-platform-microsoft.md) - Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token + developer-token auth, request layer with 429 retry and status-aware error classification incl. BatchErrors (MS-1), and PAUSED find-or-create Campaign->AdGroup->ResponsiveSearchAd creation over the POST /<Entity> + POST /<Entity>/QueryBy… transport, idempotent by case-insensitive-unique NAME for the campaign and ad group but by DESTINATION URL for the ad (ads have no stable name and v13 permits duplicate RSAs) (MS-2/MS-2.5), plus ad-account discovery against the SEPARATE Customer Management v13 service on a different host, the one call that is not account-scoped (LFXV2-3064).
 * [internal/platform/eventurl](internal-platform-eventurl.md) - Fetches a caller-supplied event page behind SSRF guards (dial-time address check, no redirects, no proxy, bounded body) and parses it into event details via JSON-LD, OpenGraph, then plain HTML.
 * [internal/platform/llm](internal-platform-llm.md) - Client for the LF LiteLLM proxy's OpenAI-compatible /chat/completions surface: the service's only route to a model, with redirect refusal that survives client injection, per-attempt context deadlines, 429 retry with drained bodies, and rebuilt (never forwarded) transport errors.
-* [internal/platform/snowflake](internal-platform-snowflake.md) - Read-only Snowflake client (email channel): resolves past-edition EVENT_NAME strings from PLATINUM_LFX_ONE for HubSpot BEHAVIORAL_EVENT filters.
+* [internal/platform/snowflake](internal-platform-snowflake.md) - Read-only Snowflake client for the email channel: resolves past-edition EVENT_NAME strings from PLATINUM_LFX_ONE for HubSpot BEHAVIORAL_EVENT filters.
 * [internal/service](internal-service.md) - Campaign service business logic, including Readyz (DB-backed readiness) and Livez (process-only liveness).
 * [internal/service/email_copy](internal-service-email-copy.md) - AI-generated email copy (subject, preheader, body, CTA) for campaign briefs using the LiteLLM proxy client. Implements scrape-not-invent, defensive parsing, code-enforced length limits, and graceful degradation when the model is unconfigured.
 * [pkg/constants](pkg-constants.md) - Application-wide constants, including PG*, DATABASE_URL and AI_* environment variable names.

@@ -156,7 +156,7 @@ func parseEmailCopyResponse(raw string) (*briefs.EmailCopy, error) {
 		// instead — turning a bad model response into a 500 that names nothing actionable,
 		// rather than the 503 "the model returned something unusable" it actually is.
 		const maxBodyRunes = 8000
-		if len([]rune(parsed.Body)) > maxBodyRunes {
+		if utf8.RuneCountInString(parsed.Body) > maxBodyRunes {
 			return nil, fmt.Errorf("email body exceeds maximum length of %d characters; model response is unusable", maxBodyRunes)
 		}
 
