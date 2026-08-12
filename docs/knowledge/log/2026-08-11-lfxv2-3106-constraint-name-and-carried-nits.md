@@ -43,11 +43,18 @@ being untestable *is* the evidence the narrowing was unpinned.
 unique index on the table for the duration of the test, violates only that one, and asserts the
 error is not `ErrAudienceBuildInFlight`. Two constraints shaped it:
 
-- **The two indexes are separated by their PREDICATE, not their key.** The obvious separation —
+- **The two indexes are separated by STATUS, not by their key columns.** The obvious separation —
   a different `platform` — is unavailable: migration 000006 CHECKs `platform IN ('hubspot')`, so
   every row the table can hold shares the lease's second key column. The probe covers
   `status = 'failed'` instead, which is outside the lease's `status = 'building'` predicate, so
   two failed rows under one brief violate the probe and never enter the lease's predicate.
+- **They express that separation differently, and the asymmetry is forced.** The lease is a
+  partial index with a `WHERE` predicate. The probe cannot be: `TestEveryUniquePartialIndexIsRequired`
+  enumerates every unique index with `indpred IS NOT NULL` and fails any not in `requiredIndexes`,
+  so a probe left behind by an interrupted run — where `t.Cleanup` never fires — would poison the
+  shared schema and break an unrelated test. The probe carries its condition in a `CASE`
+  expression KEY instead, returning `brief_id` for the rows it covers and NULL for the rest.
+  Postgres does not treat NULLs as equal, so the scoping is identical while `indpred` stays NULL.
 - **"Not the sentinel" is not a sufficient assertion.** It passes when the insert fails for any
   unrelated reason, and the first draft of this test did exactly that: it used a second platform
   and the 23514 from `campaign_audiences_platform_valid` was not the sentinel either. The test
@@ -105,7 +112,7 @@ and with a pair present Postgres refuses — `could not create unique index ... 
 is duplicated`. The first unrelated test to persist that pair would have broken this one for a
 reason having nothing to do with the mapping it pins.
 
-The predicate now also carries `AND brief_id = '<this brief>'::uuid` and the index name carries the
+The `CASE` key now also tests `brief_id = '<this brief>'::uuid` and the index name carries the
 brief id, so neither can collide with another test or an earlier run. The brief id is interpolated
 because `CREATE INDEX` takes no bind parameters; it is a UUID Postgres minted and the test read back
 through `RETURNING`, and it is re-parsed with `uuid.Parse` first so a later change to the helper

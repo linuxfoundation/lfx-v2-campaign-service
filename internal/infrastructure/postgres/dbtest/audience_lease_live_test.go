@@ -299,13 +299,18 @@ func TestAudienceBuildLeaseRefusesUpdateBackToBuilding(t *testing.T) {
 // construction, and it is the whole test: without one, the property has no witness and
 // the next migration to add a unique index inherits ErrAudienceBuildInFlight silently.
 //
-// The two indexes are separated by their PREDICATE, not by their key. The lease covers
-// status = 'building'; the probe covers status = 'failed', so two failed rows under one
-// brief violate the probe and never enter the lease's predicate at all. Separating them
+// The two indexes are separated by STATUS, not by their key columns. The lease is a partial
+// index over status = 'building'; the probe covers status = 'failed', so two failed rows under
+// one brief violate the probe and never enter the lease's predicate at all. Separating them
 // by platform instead would not work: migration 000006 CHECKs platform IN ('hubspot'),
 // so every audience row this table can hold shares the lease's second key column.
 //
-// The probe's predicate is ALSO pinned to this test's own brief, and its name carries that
+// They express that separation differently, and the asymmetry is deliberate. The lease uses a
+// WHERE predicate; the probe cannot, because a leaked partial index fails
+// `TestEveryUniquePartialIndexIsRequired` on the next run (see the CREATE below). The probe
+// therefore carries its condition in a CASE expression KEY instead — same scoping, no predicate.
+//
+// The probe's condition is ALSO pinned to this test's own brief, and its name carries that
 // brief's id, because an index is a schema-wide object while dbtest.go:66-72 requires the
 // opposite of every identifier a test writes: "Tests therefore share a schema and MUST NOT
 // share rows — use UniqueID for every identifier a test writes, so two tests (or two runs
@@ -354,7 +359,7 @@ func TestAudienceLeaseMappingIgnoresOtherUniqueIndexes(t *testing.T) {
 		{name: "CreateAudienceForApprovedBrief", seed: createForApprovedBrief, provoke: createForApprovedBrief},
 		{
 			name: "UpdateAudience",
-			// Seeded as 'failed' like the others, so the probe's predicate covers it.
+			// Seeded as 'failed' like the others, so the probe's CASE key covers it.
 			seed: createAudience,
 			// A second row is created OUTSIDE the probe's reach ('building' is not 'failed'),
 			// then updated INTO 'failed' — where the probe refuses it. That is the real shape
@@ -390,7 +395,8 @@ func createForApprovedBrief(ctx context.Context, r *postgres.AudienceRepo, a *mo
 
 // audienceLeaseNarrowingProbe is the body shared by every call site above.
 //
-// It creates a SECOND unique index scoped to this brief and outside the lease's predicate, then
+// It creates a SECOND unique index scoped to this brief and to a status outside the lease's
+// predicate, then
 // drives a write that only that index can refuse. A 23505 from it must NOT map to
 // ErrAudienceBuildInFlight, because the error did not come from the lease — that is the whole
 // point of naming the index in the check.
@@ -468,7 +474,7 @@ func audienceLeaseNarrowingProbe(
 	err := provoke(ctx, repo, newRow())
 	if err == nil {
 		t.Fatal("second audience succeeded, so the probe index did not fire and the test " +
-			"proves nothing — check the probe's predicate against the row being inserted")
+			"proves nothing — check the probe's CASE key against the row being inserted")
 	}
 	// Checked before the shape assertion below: the sentinel is the defect under test, and
 	// mapping to it discards the *pgconn.PgError, so the shape check would otherwise fail
