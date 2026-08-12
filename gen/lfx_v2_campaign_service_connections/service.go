@@ -139,6 +139,13 @@ type Service interface {
 	// closed are included with the reason in their label rather than filtered out,
 	// so the caller can see why an account they expected cannot be used.
 	ListMetaAdsAccounts(context.Context, *ListMetaAdsAccountsPayload) (res *ListMetaAdsAccountsResult, err error)
+	// Search the marketing emails reachable via the stored HubSpot connection,
+	// most-recently-updated first. This is a TEMPLATE picker, not an account
+	// picker: a HubSpot connection is already scoped to the portal its private-app
+	// token authenticates against, but staging an email campaign clones a
+	// caller-specified source email (sourceEmailId is required and has no
+	// default), so the caller has to be able to find one.
+	ListHubspotEmails(context.Context, *ListHubspotEmailsPayload) (res *ListHubspotEmailsResult, err error)
 }
 
 // Auther defines the authorization functions to be implemented by the service.
@@ -161,7 +168,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [44]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "list-meta-ads-accounts"}
+var MethodNames = [45]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "list-meta-ads-accounts", "list-hubspot-emails"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's own namespace, ready to store as the
@@ -535,6 +542,29 @@ type ListGoogleAdsAccountsResult struct {
 	Accounts []*AccessibleAccount
 }
 
+// ListHubspotEmailsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service list-hubspot-emails method.
+type ListHubspotEmailsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Substring matched against email name and subject, case-insensitively. A
+	// search walks every page, so a match is never missed. Omit to list recent
+	// emails instead: that listing is capped at 500 and sorted
+	// most-recently-updated first. WHICH 500 depends on the provider, because the
+	// walk stops once it has enough — so it is NOT guaranteed to be the 500 newest
+	// in the portal, only the newest of what was read. There is no paging; reach
+	// an older template by searching for it.
+	Q *string
+}
+
+// ListHubspotEmailsResult is the result type of the
+// lfx-v2-campaign-service-connections service list-hubspot-emails method.
+type ListHubspotEmailsResult struct {
+	Emails []*MarketingEmail
+}
+
 // ListMetaAdsAccountsPayload is the payload type of the
 // lfx-v2-campaign-service-connections service list-meta-ads-accounts method.
 type ListMetaAdsAccountsPayload struct {
@@ -548,6 +578,22 @@ type ListMetaAdsAccountsPayload struct {
 // lfx-v2-campaign-service-connections service list-meta-ads-accounts method.
 type ListMetaAdsAccountsResult struct {
 	Accounts []*AccessibleAccount
+}
+
+type MarketingEmail struct {
+	// HubSpot marketing-email id, ready to pass as the campaign config's
+	// sourceEmailId
+	ID string
+	// Internal email name, as it appears in the HubSpot email list
+	Name *string
+	// Subject line
+	Subject *string
+	// HubSpot lifecycle state of the email (e.g. DRAFT, PUBLISHED). Archived
+	// emails are not returned at all — archival is a separate flag in HubSpot, not
+	// a state.
+	State *string
+	// Last-modified timestamp (ISO-8601)
+	UpdatedAt *string
 }
 
 // MetaAdsConnection is the result type of the

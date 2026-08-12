@@ -195,6 +195,25 @@ type accountDiscovery struct {
 	// on the name it sends. Dispatch-layer messages name the Go field, correctly: their
 	// audience is this codebase, not the operator.
 	notUsableRemedy string
+	// operation names what is being attempted, in the response and log messages this helper
+	// emits ("<operation> could not be completed", "<operation> failed upstream"). Empty
+	// means "account discovery", which is what every ad platform passes.
+	//
+	// It exists because the email channel reuses this helper's status mapping without being
+	// account discovery: HubSpot has no ad account to enumerate, and telling a caller that
+	// "account discovery could not be completed" when they searched for an email template
+	// describes an operation they did not perform. The mapping itself is shared verbatim —
+	// per this helper's contract, a provider gets all of the arms reasoned about here or
+	// none of them — and only the noun changes.
+	operation string
+}
+
+// label returns the operation name for messages, defaulting to account discovery.
+func (d accountDiscovery) label() string {
+	if d.operation == "" {
+		return "account discovery"
+	}
+	return d.operation
 }
 
 var googleAdsAccountDiscovery = accountDiscovery{
@@ -209,6 +228,132 @@ var metaAdsAccountDiscovery = accountDiscovery{
 	displayName: "meta ads",
 	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
 		"with access_token set",
+}
+
+// hubspotEmailDiscovery reuses the account-discovery status mapping for the email-template
+// search. Not account discovery — HubSpot has no ad account to choose, since the connection is
+// scoped to the portal its token authenticates against — but every arm of that mapping applies
+// unchanged: the connection can be missing (404), unusable as configured (400), undecryptable
+// (500, logged not echoed), or the platform can be down (503). Only the noun differs, which is
+// what `operation` carries.
+var hubspotEmailDiscovery = accountDiscovery{
+	provider:    model.ProviderHubSpot,
+	displayName: "hubspot",
+	operation:   "email search",
+	// private_app_token — the PUBLISHED wire name (`design/connection.go`'s
+	// HubSpotCredentials), not the Go/JSON shape `privateAppToken` the blob is persisted
+	// under. This string is the only actionable thing the caller is told, and it must name
+	// a field they can actually send; the persisted spelling would send them looking for a
+	// key that appears in no request they can make.
+	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
+		"with private_app_token set",
+}
+
+// classifyDiscoveryError maps an orchestrator discovery error onto the connections API's
+// status codes. Lifted out of listAccounts UNCHANGED so the email search shares the exact
+// arms rather than growing a second copy of them — see listAccounts' contract below: a
+// provider gets the judgements reasoned about here, or none of them.
+//
+// Returns nil when aerr is nil.
+func (s *ConnectionService) classifyDiscoveryError(ctx context.Context, projectID string, d accountDiscovery, aerr error) error {
+	if aerr == nil {
+		return nil
+	}
+	switch {
+	case errors.Is(aerr, ErrAccountsUnsupported):
+		return &conn.BadRequestError{Code: "400", Message: d.label() + " is not supported for this platform"}
+	case errors.Is(aerr, domain.ErrNotFound):
+		// The project has no stored connection for this provider. That is a client-side
+		// state error, not a platform outage — reporting 503 would tell the caller
+		// to retry something that can never succeed until a connection exists.
+		return &conn.NotFoundError{Code: "404", Message: "no " + d.displayName + " connection configured for this project"}
+	case errors.Is(aerr, domain.ErrCredentialDecryptionFailed):
+		// A blob long enough to BE our own output that nonetheless failed authenticated
+		// decryption. Two causes reach here and they have opposite blast radii:
+		//
+		//   - a wrong or rotated APPLICATION KEY, which is deployment-wide, so every
+		//     project's connection is failing at this instant; or
+		//   - THIS ONE ROW's ciphertext being corrupted or tampered with, in which
+		//     case every other connection is fine.
+		//
+		// GCM cannot tell them apart — an authentication failure is an authentication
+		// failure — so this arm must not assert either one. An earlier revision claimed
+		// the deployment-wide reading as a certainty, which misdirects incident response
+		// down a key-rotation path when the real fault is a single damaged row.
+		// (Provably truncated blobs no longer arrive here at all: they are rejected as
+		// malformed by the length guard in internal/infrastructure/crypto, which is a
+		// 400 about one row.)
+		//
+		// Either way it is not the caller's problem and there is nothing for them to
+		// edit: 400 would blame their row for what may be an outage; 503 would promise
+		// that waiting helps. Neither is true.
+		//
+		// Logged at ERROR because this is the arm that should page someone — the first
+		// question for whoever answers is whether OTHER projects are failing too, which
+		// is what separates the two causes. The cause is safe to log: it is produced by
+		// the encryptor from ciphertext and key material only, never from plaintext.
+		//
+		// The row logged is the one that FAILED, which is not the caller's project when
+		// the credentials came from the system fallback — that project has no row at
+		// all, and naming it would send whoever answers to inspect something that does
+		// not exist while repeated failures of one corrupt system row looked like
+		// failures spread across many projects, i.e. the deployment-wide reading this
+		// arm must not assert. Origin is carried by ErrSystemConnectionOrigin, separate
+		// from the usability sentinels, because this error is not a usability defect.
+		credentialProject := projectID
+		if errors.Is(aerr, domain.ErrSystemConnectionOrigin) {
+			credentialProject = model.SystemProjectID
+		}
+		slog.ErrorContext(ctx, "stored credentials failed authenticated decryption; check the application encryption key, and whether this is one row or every connection",
+			"project_id", credentialProject, "requested_by_project_id", projectID,
+			"provider", string(d.provider), "error", aerr)
+		return &conn.InternalServerError{Code: "500", Message: d.label() + " could not be completed"}
+	case errors.Is(aerr, domain.ErrSystemConnectionNotUsable):
+		// The project has no connection of its own and the LF system row it fell back
+		// to is unusable. The 400 below would tell this caller to edit "the stored
+		// connection" — they have none, and the system scope is unaddressable. Nobody
+		// but an operator can act, so page one and say nothing specific to the caller.
+		// The reason is safe to log; the error itself is not (see the arm below).
+		slog.ErrorContext(ctx, "the LF system connection is not usable; "+d.label()+" is failing for every project without its own connection",
+			"provider", string(d.provider), "reason", unusableConnectionReason(aerr))
+		return &conn.InternalServerError{Code: "500", Message: d.label() + " could not be completed"}
+	case errors.Is(aerr, domain.ErrConnectionNotUsable):
+		// The connection EXISTS but cannot be used as it stands — inactive, an
+		// incomplete credential blob, or a malformed stored config value such as a
+		// dashed login_customer_id. The provider is never contacted, and none of these
+		// improve with time, so the 503 below would be a false promise: it tells the
+		// caller to retry a request that cannot succeed until a human edits the
+		// connection. The dispatcher wraps every pre-send failure with this sentinel
+		// precisely so this arm can exist (internal/dispatch/googleads.go,
+		// resolveGoogleAdsDiscoveryClient) — the classification cannot be recovered
+		// here, because a setup failure and an upstream one arrive as the same type.
+		//
+		// NEITHER the cause nor its text leaves this function — not in the response,
+		// and not in the log. One of the conditions behind this arm is detected by
+		// decoding the DECRYPTED credential blob, and an unmarshal error quotes its
+		// input, so echoing aerr would put credential-derived bytes into an HTTP body
+		// and into centralized logs for exactly the connection whose credentials are
+		// malformed. A response body and a log line are different exposures, but the
+		// material is the same and so is the answer.
+		//
+		// What is logged instead is a classification from a FIXED vocabulary
+		// (unusableConnectionReason) plus project metadata. That is not a downgrade:
+		// the dispatch layer wraps a reason sentinel precisely so this line stays
+		// actionable, and a fixed token is what an alert or a grep wants anyway. The
+		// response body names the remedy surface, which is the same for all of them.
+		slog.WarnContext(ctx, "connection is not usable for "+d.label(),
+			"project_id", projectID, "provider", string(d.provider),
+			"reason", unusableConnectionReason(aerr))
+		return &conn.BadRequestError{
+			Code: "400",
+			Message: "the stored " + d.displayName + " connection cannot be used as configured: " +
+				d.notUsableRemedy,
+		}
+	default:
+		slog.WarnContext(ctx, d.label()+" failed upstream",
+			"project_id", projectID, "provider", string(d.provider), "error", aerr)
+		return &conn.ConnServiceUnavailableError{Code: "503", Message: d.label() + " could not be completed"}
+	}
 }
 
 // listAccounts is the whole of account discovery except the strings that name the provider.
@@ -229,107 +374,13 @@ func (s *ConnectionService) listAccounts(ctx context.Context, projectID string, 
 	if err := rejectSystemScope(projectID); err != nil {
 		return nil, err
 	}
-	_, _, orch, err := s.resolveBackendWithOrch()
+	_, _, orch, err := s.resolveBackendWithOrch(d.label())
 	if err != nil {
 		return nil, err
 	}
 	accounts, aerr := orch.ReadAccounts(ctx, projectID, d.provider)
 	if aerr != nil {
-		switch {
-		case errors.Is(aerr, ErrAccountsUnsupported):
-			return nil, &conn.BadRequestError{Code: "400", Message: "account discovery is not supported for this platform"}
-		case errors.Is(aerr, domain.ErrNotFound):
-			// The project has no stored connection for this provider. That is a client-side
-			// state error, not a platform outage — reporting 503 would tell the caller
-			// to retry something that can never succeed until a connection exists.
-			return nil, &conn.NotFoundError{Code: "404", Message: "no " + d.displayName + " connection configured for this project"}
-		case errors.Is(aerr, domain.ErrCredentialDecryptionFailed):
-			// A blob long enough to BE our own output that nonetheless failed authenticated
-			// decryption. Two causes reach here and they have opposite blast radii:
-			//
-			//   - a wrong or rotated APPLICATION KEY, which is deployment-wide, so every
-			//     project's connection is failing at this instant; or
-			//   - THIS ONE ROW's ciphertext being corrupted or tampered with, in which
-			//     case every other connection is fine.
-			//
-			// GCM cannot tell them apart — an authentication failure is an authentication
-			// failure — so this arm must not assert either one. An earlier revision claimed
-			// the deployment-wide reading as a certainty, which misdirects incident response
-			// down a key-rotation path when the real fault is a single damaged row.
-			// (Provably truncated blobs no longer arrive here at all: they are rejected as
-			// malformed by the length guard in internal/infrastructure/crypto, which is a
-			// 400 about one row.)
-			//
-			// Either way it is not the caller's problem and there is nothing for them to
-			// edit: 400 would blame their row for what may be an outage; 503 would promise
-			// that waiting helps. Neither is true.
-			//
-			// Logged at ERROR because this is the arm that should page someone — the first
-			// question for whoever answers is whether OTHER projects are failing too, which
-			// is what separates the two causes. The cause is safe to log: it is produced by
-			// the encryptor from ciphertext and key material only, never from plaintext.
-			//
-			// The row logged is the one that FAILED, which is not the caller's project when
-			// the credentials came from the system fallback — that project has no row at
-			// all, and naming it would send whoever answers to inspect something that does
-			// not exist while repeated failures of one corrupt system row looked like
-			// failures spread across many projects, i.e. the deployment-wide reading this
-			// arm must not assert. Origin is carried by ErrSystemConnectionOrigin, separate
-			// from the usability sentinels, because this error is not a usability defect.
-			credentialProject := projectID
-			if errors.Is(aerr, domain.ErrSystemConnectionOrigin) {
-				credentialProject = model.SystemProjectID
-			}
-			slog.ErrorContext(ctx, "stored credentials failed authenticated decryption; check the application encryption key, and whether this is one row or every connection",
-				"project_id", credentialProject, "requested_by_project_id", projectID,
-				"provider", string(d.provider), "error", aerr)
-			return nil, &conn.InternalServerError{Code: "500", Message: "account discovery could not be completed"}
-		case errors.Is(aerr, domain.ErrSystemConnectionNotUsable):
-			// The project has no connection of its own and the LF system row it fell back
-			// to is unusable. The 400 below would tell this caller to edit "the stored
-			// connection" — they have none, and the system scope is unaddressable. Nobody
-			// but an operator can act, so page one and say nothing specific to the caller.
-			// The reason is safe to log; the error itself is not (see the arm below).
-			slog.ErrorContext(ctx, "the LF system connection is not usable; account discovery is failing for every project without its own connection",
-				"provider", string(d.provider), "reason", unusableConnectionReason(aerr))
-			return nil, &conn.InternalServerError{Code: "500", Message: "account discovery could not be completed"}
-		case errors.Is(aerr, domain.ErrConnectionNotUsable):
-			// The connection EXISTS but cannot be used as it stands — inactive, an
-			// incomplete credential blob, or a malformed stored config value such as a
-			// dashed login_customer_id. The provider is never contacted, and none of these
-			// improve with time, so the 503 below would be a false promise: it tells the
-			// caller to retry a request that cannot succeed until a human edits the
-			// connection. The dispatcher wraps every pre-send failure with this sentinel
-			// precisely so this arm can exist (internal/dispatch/googleads.go,
-			// resolveGoogleAdsDiscoveryClient) — the classification cannot be recovered
-			// here, because a setup failure and an upstream one arrive as the same type.
-			//
-			// NEITHER the cause nor its text leaves this function — not in the response,
-			// and not in the log. One of the conditions behind this arm is detected by
-			// decoding the DECRYPTED credential blob, and an unmarshal error quotes its
-			// input, so echoing aerr would put credential-derived bytes into an HTTP body
-			// and into centralized logs for exactly the connection whose credentials are
-			// malformed. A response body and a log line are different exposures, but the
-			// material is the same and so is the answer.
-			//
-			// What is logged instead is a classification from a FIXED vocabulary
-			// (unusableConnectionReason) plus project metadata. That is not a downgrade:
-			// the dispatch layer wraps a reason sentinel precisely so this line stays
-			// actionable, and a fixed token is what an alert or a grep wants anyway. The
-			// response body names the remedy surface, which is the same for all of them.
-			slog.WarnContext(ctx, "connection is not usable for account discovery",
-				"project_id", projectID, "provider", string(d.provider),
-				"reason", unusableConnectionReason(aerr))
-			return nil, &conn.BadRequestError{
-				Code: "400",
-				Message: "the stored " + d.displayName + " connection cannot be used as configured: " +
-					d.notUsableRemedy,
-			}
-		default:
-			slog.WarnContext(ctx, "account discovery failed upstream",
-				"project_id", projectID, "provider", string(d.provider), "error", aerr)
-			return nil, &conn.ConnServiceUnavailableError{Code: "503", Message: "account discovery could not be completed"}
-		}
+		return nil, s.classifyDiscoveryError(ctx, projectID, d, aerr)
 	}
 	// Convert model.AccessibleAccount to generated conn type. Preallocated with make so an
 	// empty result serializes as `[]`, not `null` — a nil slice here would undo the
@@ -366,6 +417,68 @@ func (s *ConnectionService) ListMetaAdsAccounts(ctx context.Context, p *conn.Lis
 		return nil, err
 	}
 	return &conn.ListMetaAdsAccountsResult{Accounts: accounts}, nil
+}
+
+// ─── HubSpot (email channel) ───
+
+// ListHubspotEmails searches the marketing emails reachable through the project's stored
+// HubSpot connection, so a caller can choose which one an email campaign will CLONE.
+//
+// Not account discovery, and deliberately not modelled as it: a HubSpot connection is already
+// scoped to the portal its private-app token authenticates against, so there is no account to
+// pick. What has no default is hubspotConfig.SourceEmailID, and this is how a caller finds one.
+// The status mapping IS shared with discovery, through classifyDiscoveryError — every arm of it
+// applies unchanged, and only the noun in the messages differs.
+func (s *ConnectionService) ListHubspotEmails(ctx context.Context, p *conn.ListHubspotEmailsPayload) (*conn.ListHubspotEmailsResult, error) {
+	d := hubspotEmailDiscovery
+	if err := rejectSystemScope(p.ProjectID); err != nil {
+		return nil, err
+	}
+	_, _, orch, err := s.resolveBackendWithOrch(d.label())
+	if err != nil {
+		return nil, err
+	}
+
+	// An omitted q asks for a first screen rather than a search; HubSpot treats an empty
+	// query as "no name/subject filter". That screen is BOUNDED
+	// (hubspot.maxUnfilteredEmails) because an empty needle matches every row, so it is the
+	// walk's worst case. The bound takes the first N in SERVER order and sorts those —
+	// "recent emails to pick from", not a guarantee of the newest in the portal, which
+	// under a bound is not available. A filtered search is not bounded, because truncating
+	// one would report an email that exists as absent.
+	query := ""
+	if p.Q != nil {
+		query = *p.Q
+	}
+
+	emails, serr := orch.SearchEmails(ctx, p.ProjectID, d.provider, query)
+	if serr != nil {
+		// ErrEmailSearchUnsupported is the one arm classifyDiscoveryError cannot carry: it
+		// keys on ErrAccountsUnsupported, and the two are separate sentinels precisely
+		// because the capabilities are independent — HubSpot searches emails and has no ad
+		// accounts, while Google Ads and Meta are the reverse. Only those two implement
+		// AccountLister; the remaining ad platforms implement neither, so the two directions
+		// are demonstrated by example rather than by a claim over every provider.
+		if errors.Is(serr, ErrEmailSearchUnsupported) {
+			return nil, &conn.BadRequestError{Code: "400", Message: d.label() + " is not supported for this platform"}
+		}
+		return nil, s.classifyDiscoveryError(ctx, p.ProjectID, d, serr)
+	}
+
+	// make, not nil: an empty result must serialize as `[]` rather than `null`, matching the
+	// account endpoints and preserving the zero-length allocation the dispatcher made below.
+	out := make([]*conn.MarketingEmail, 0, len(emails))
+	for _, e := range emails {
+		name, subject, state, updatedAt := e.Name, e.Subject, e.State, e.UpdatedAt
+		out = append(out, &conn.MarketingEmail{
+			ID:        e.ID,
+			Name:      &name,
+			Subject:   &subject,
+			State:     &state,
+			UpdatedAt: &updatedAt,
+		})
+	}
+	return &conn.ListHubspotEmailsResult{Emails: out}, nil
 }
 
 // ─── LinkedinAds ───

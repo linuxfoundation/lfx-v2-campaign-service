@@ -6,8 +6,11 @@ package hubspot
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -126,10 +129,13 @@ func TestSearchEmails_SortsMostRecentlyUpdatedFirst(t *testing.T) {
 		gotSort = r.URL.Query().Get("sort")
 		gotProps = r.URL.Query()["includedProperties"]
 		// Intentionally returned oldest-first to prove the client re-orders.
+		// `state` is on each row so the decode is pinned end to end: requesting the property
+		// and mapping it are separate failures, and only asserting the decoded value catches
+		// the second.
 		_, _ = io.WriteString(w, `{"results":[`+
-			`{"id":"1","name":"Old","subject":"x","updatedAt":"2024-01-01T00:00:00Z"},`+
-			`{"id":"2","name":"New","subject":"x","updatedAt":"2026-06-01T00:00:00Z"},`+
-			`{"id":"3","name":"Mid","subject":"x","updatedAt":"2025-03-01T00:00:00Z"}`+
+			`{"id":"1","name":"Old","subject":"x","state":"PUBLISHED","updatedAt":"2024-01-01T00:00:00Z"},`+
+			`{"id":"2","name":"New","subject":"x","state":"DRAFT","updatedAt":"2026-06-01T00:00:00Z"},`+
+			`{"id":"3","name":"Mid","subject":"x","state":"PUBLISHED","updatedAt":"2025-03-01T00:00:00Z"}`+
 			`]}`)
 	})
 	got, err := c.SearchEmails(context.Background(), "")
@@ -142,8 +148,23 @@ func TestSearchEmails_SortsMostRecentlyUpdatedFirst(t *testing.T) {
 	if len(gotProps) == 0 {
 		t.Errorf("SearchEmails should restrict fields via includedProperties, got none")
 	}
+	// `state` is asserted BY NAME, not just "some properties were requested". The list
+	// endpoint returns only the properties named here, so dropping `state` makes Email.State
+	// decode to "" on every row — which is exactly the bug LFXV2-3197 shipped and had to fix.
+	// A length check cannot catch that, and the service-level test cannot either: it injects
+	// State through a mock dispatcher and never sees the wire request.
+	if !slices.Contains(gotProps, "state") {
+		t.Errorf("includedProperties = %v, want it to contain \"state\" — the picker surfaces the "+
+			"lifecycle state, and a property not named here comes back empty", gotProps)
+	}
 	if len(got) != 3 || got[0].ID != "2" || got[1].ID != "3" || got[2].ID != "1" {
 		t.Errorf("results must be most-recently-updated first (2,3,1), got %v", []string{got[0].ID, got[1].ID, got[2].ID})
+	}
+	// The DECODE, not just the request. got[0] is id 2 after re-ordering, whose state is DRAFT
+	// — the value a picker uses to warn before cloning an unfinished template.
+	if got[0].State != "DRAFT" {
+		t.Errorf("State = %q, want DRAFT — a requested property that does not map onto the struct "+
+			"is the same empty string as one that was never requested", got[0].State)
 	}
 }
 
@@ -562,5 +583,201 @@ func TestCloneEmail_TrimsSourceID(t *testing.T) {
 	}
 	if body["id"] != "src-42" {
 		t.Errorf("clone body id must be the trimmed source id, got %v", body["id"])
+	}
+}
+
+// emailPageServer serves `pages` pages of `perPage` rows each, cursor-paginated. Row i gets
+// updatedAt strictly increasing with i, so the server emits OLDEST first — the opposite of the
+// requested sort, i.e. a server that IGNORES `sort=-updatedAt`.
+//
+// What that proves has changed, and the earlier comment here still described the abandoned
+// design. It said the client does not trust server order and that any bound assuming page order
+// is newest-first must FAIL against this server. The bound now deliberately depends on that
+// order for SELECTION — under a cap the alternative is reading every page, and the two cannot
+// both hold — so this server is expected to pass. What it still proves is the part the client
+// does own: the rows it fetched come back correctly ordered among themselves, whatever order
+// they arrived in.
+//
+// The timestamp must be strictly monotonic in i for that to hold, hence the minute/second
+// split rather than a bare `i%60`: a second field that WRAPS makes id 959 (":59") newer
+// than id 1499 (":59" of a later minute only if the minute advances), and the ordering the
+// test asserts would then be an artefact of the generator rather than of the cap.
+func emailPageServer(t *testing.T, pages, perPage int, name string) (*Client, *atomic.Int64) {
+	t.Helper()
+	// Atomic, not a plain int: httptest serves each request on its own goroutine, so a handler
+	// counter is unsynchronized by construction even where -- as here -- the client's walk is
+	// sequential and no two invocations actually overlap.
+	var requested atomic.Int64
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		page := 0
+		if a := r.URL.Query().Get("after"); a != "" {
+			if _, err := fmt.Sscanf(a, "P%d", &page); err != nil {
+				t.Errorf("unexpected cursor %q", a)
+			}
+		}
+		requested.Add(1)
+		var b strings.Builder
+		b.WriteString(`{"results":[`)
+		for i := range perPage {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			n := page*perPage + i
+			fmt.Fprintf(&b, `{"id":"%d","name":"%s %d","subject":"s","updatedAt":"2026-01-01T%02d:%02d:%02dZ"}`,
+				n, name, n, n/3600, (n/60)%60, n%60)
+		}
+		b.WriteString(`]`)
+		if page+1 < pages {
+			fmt.Fprintf(&b, `,"paging":{"next":{"after":"P%d"}}`, page+1)
+		}
+		b.WriteString(`}`)
+		_, _ = io.WriteString(w, b.String())
+	})
+	return c, &requested
+}
+
+func TestSearchEmails_UnfilteredIsCapped(t *testing.T) {
+	// A portal far larger than the cap. An empty query matches every row, so without a
+	// bound this walks the whole portal and returns all of it.
+	perPage := 100
+	pages := maxUnfilteredEmails / perPage * 4
+	c, requested := emailPageServer(t, pages, perPage, "Email")
+
+	got, err := c.SearchEmails(context.Background(), "")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != maxUnfilteredEmails {
+		t.Fatalf("unfiltered result must be capped at %d, got %d", maxUnfilteredEmails, len(got))
+	}
+	// The walk must also STOP -- a cap applied only to the returned slice would still
+	// spend the whole deadline reading every page, which is the half of the finding that
+	// actually causes the 503.
+	if maxWalked := int64(maxUnfilteredEmails / perPage); requested.Load() > maxWalked+1 {
+		t.Errorf("walk must stop once enough rows are collected: read %d pages, want <= %d", requested.Load(), maxWalked+1)
+	}
+}
+
+func TestSearchEmails_UnfilteredCapSortsWhatItFetched(t *testing.T) {
+	// What the bound promises, stated exactly: the walk takes the server's FIRST
+	// maxUnfilteredEmails rows and returns them newest-first.
+	//
+	// It does NOT promise the newest rows in the portal. That would require reading every
+	// page, which is the bound being removed. An earlier revision over-collected 3x the cap
+	// and claimed the extra slack made the order the client's own; it did not -- slack only
+	// re-sorts what was fetched, so with the server ignoring `sort=-updatedAt` the newest
+	// rows sit past wherever the walk stops, at any multiple. That version's test hid this
+	// by making the portal exactly the slack size, so the walk happened to see all of it.
+	//
+	// This server emits OLDEST first -- the sort hint ignored -- and the portal is larger
+	// than the cap, so the rows fetched are genuinely not the newest ones. The assertion is
+	// therefore about ORDERING WITHIN the fetched set, which is the part the client owns.
+	perPage := 100
+	c, _ := emailPageServer(t, maxUnfilteredEmails/perPage*4, perPage, "Email")
+
+	got, err := c.SearchEmails(context.Background(), "")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != maxUnfilteredEmails {
+		t.Fatalf("want %d, got %d", maxUnfilteredEmails, len(got))
+	}
+	// updatedAt is strictly increasing in id, so newest-first means descending id over
+	// exactly the prefix the walk read.
+	for i := 1; i < len(got); i++ {
+		prev, _ := strconv.Atoi(got[i-1].ID)
+		cur, _ := strconv.Atoi(got[i].ID)
+		if prev < cur {
+			t.Fatalf("result must be newest-first: id %d precedes id %d", prev, cur)
+		}
+	}
+	if got[0].ID != strconv.Itoa(maxUnfilteredEmails-1) {
+		t.Errorf("the fetched prefix must be sorted as a whole: first is id %s, want %d", got[0].ID, maxUnfilteredEmails-1)
+	}
+}
+
+func TestSearchEmails_UnfilteredCapTrimsAnOvershootingPage(t *testing.T) {
+	// The trim below the exit guard is only reachable when a page carries `out` PAST the cap.
+	// Every other test here uses perPage=100 against a cap of 500, an exact multiple, so `out`
+	// lands on exactly 500, the guard fires on equality, and `len(out) > 500` is never true —
+	// the trim is asserted by a comment no test backs.
+	//
+	// 150 per page overshoots: pages of 150 reach 600 on the fourth, so the trim runs. It
+	// defends against a server that ignores `limit`, and it must trim AFTER sorting — trimming
+	// first would drop the newest of what was fetched, which is the failure this pins.
+	perPage := 150
+	c, _ := emailPageServer(t, 10, perPage, "Email")
+
+	got, err := c.SearchEmails(context.Background(), "")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != maxUnfilteredEmails {
+		t.Fatalf("an overshooting page must be trimmed to the cap: got %d, want %d", len(got), maxUnfilteredEmails)
+	}
+	// The server emits oldest-first, so the newest of the 600 fetched are ids 599..100.
+	// Trimming before the sort would keep 0..499 instead.
+	if got[0].ID != strconv.Itoa(perPage*4-1) {
+		t.Errorf("the trim must keep the NEWEST of what was fetched: first is id %s, want %d", got[0].ID, perPage*4-1)
+	}
+}
+
+func TestSearchEmails_FilteredWalkIsNotCapped(t *testing.T) {
+	// The bound must NOT apply to a filtered search. A caller that searches for a name is
+	// looking one UP, and a truncated walk answers "no such email" about an email sitting
+	// on a later page -- a false absence the callers act on destructively.
+	perPage := 100
+	pages := maxUnfilteredEmails / perPage * 2
+	target := pages*perPage - 1
+	var requested atomic.Int64
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		page := 0
+		if a := r.URL.Query().Get("after"); a != "" {
+			if _, err := fmt.Sscanf(a, "P%d", &page); err != nil {
+				t.Errorf("unexpected cursor %q", a)
+			}
+		}
+		requested.Add(1)
+		var b strings.Builder
+		b.WriteString(`{"results":[`)
+		for i := range perPage {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			n := page*perPage + i
+			// EVERY row matches the needle, so the filtered accumulator grows exactly as
+			// fast as an unfiltered one would. A cap that keys on len(out) without
+			// checking the needle therefore DOES fire here -- which is the point. With
+			// only one matching row, `out` would stay far below the cap all walk and the
+			// test would pass against a cap applied to filtered searches too.
+			//
+			// The row under test is the last one, so a cap that stops the walk early
+			// drops it and the search reports an email that exists as absent.
+			name := fmt.Sprintf("KubeCon Filler %d", n)
+			if n == target {
+				name = "KubeCon Invite"
+			}
+			fmt.Fprintf(&b, `{"id":"%d","name":"%s","subject":"s","updatedAt":"2026-01-01T00:00:00Z"}`, n, name)
+		}
+		b.WriteString(`]`)
+		if page+1 < pages {
+			fmt.Fprintf(&b, `,"paging":{"next":{"after":"P%d"}}`, page+1)
+		}
+		b.WriteString(`}`)
+		_, _ = io.WriteString(w, b.String())
+	})
+
+	got, err := c.SearchEmails(context.Background(), "kubecon")
+	if err != nil {
+		t.Fatalf("SearchEmails: %v", err)
+	}
+	if len(got) != pages*perPage {
+		t.Fatalf("a filtered walk must not be capped: got %d rows, want %d", len(got), pages*perPage)
+	}
+	if !slices.ContainsFunc(got, func(e Email) bool { return e.ID == strconv.Itoa(target) }) {
+		t.Fatalf("the match on the last page must not be truncated away")
+	}
+	if requested.Load() != int64(pages) {
+		t.Errorf("filtered walk must read every page: read %d, want %d", requested.Load(), pages)
 	}
 }

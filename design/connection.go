@@ -495,6 +495,27 @@ var AccessibleAccount = Type("accessible-account", func() {
 	Required("id")
 })
 
+// MarketingEmail is one row of the HubSpot email picker. NOT an account: a HubSpot connection
+// is already scoped to the portal its private-app token authenticates against, so there is
+// nothing to choose there. What the caller must choose is which email to CLONE, because
+// hubspotConfig.SourceEmailID is required and has no default.
+var MarketingEmail = Type("marketing-email", func() {
+	Attribute("id", String, "HubSpot marketing-email id, ready to pass as the campaign config's sourceEmailId", func() { Example("112233445566") })
+	Attribute("name", String, "Internal email name, as it appears in the HubSpot email list")
+	Attribute("subject", String, "Subject line")
+	// Returned so a picker can show that a template is still a DRAFT before someone clones
+	// it. Deliberately not promising ARCHIVED: HubSpot models archival as a separate
+	// `archived` boolean rather than a lifecycle state, and this search does not request
+	// archived rows, so they are absent from the result entirely — an absence a `state`
+	// value could never express.
+	Attribute("state", String, "HubSpot lifecycle state of the email (e.g. DRAFT, PUBLISHED). Archived emails are not returned at all — archival is a separate flag in HubSpot, not a state.")
+	// Ordering is already applied server-side (most-recently-updated first). It is returned
+	// anyway because two templates routinely share a name, and the date is what tells them
+	// apart in a list.
+	Attribute("updated_at", String, "Last-modified timestamp (ISO-8601)")
+	Required("id")
+})
+
 // ─── LinkedIn Ads ───
 
 var LinkedInAdsCredentials = Type("linkedin-ads-credentials", func() {
@@ -796,6 +817,58 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
 			GET("/projects/{project_id}/connection-meta-ads/accounts")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("BadRequest", StatusBadRequest)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("list-hubspot-emails", func() {
+		Description("Search the marketing emails reachable via the stored HubSpot connection, " +
+			"most-recently-updated first. This is a TEMPLATE picker, not an account picker: a " +
+			"HubSpot connection is already scoped to the portal its private-app token " +
+			"authenticates against, but staging an email campaign clones a caller-specified " +
+			"source email (sourceEmailId is required and has no default), so the caller has to " +
+			"be able to find one.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			// Optional: an absent query lists recent emails, the useful first screen for a
+			// picker. The CLIENT matches name OR subject case-insensitively across every page —
+			// HubSpot's list endpoint is not queried by name or subject, and `q` never goes
+			// upstream (`SearchEmails` sends only limit, sort, includedProperties and after).
+			//
+			// That is why the walk and the maxUnfilteredEmails cap exist at all. Reading this as
+			// a server-side search parameter invites optimising the walk away, which
+			// reintroduces the false absence those guards prevent.
+			//
+			// The cap is part of the CONTRACT, not an implementation detail, because this
+			// endpoint has no pagination fields: without it a caller cannot tell a complete
+			// portal listing from a silently truncated first screen, and has no way to learn
+			// that older templates are reachable only by searching.
+			Attribute("q", String, "Substring matched against email name and subject, case-insensitively. A search walks every page, so a match is never missed. Omit to list recent emails instead: that listing is capped at 500 and sorted most-recently-updated first. WHICH 500 depends on the provider, because the walk stops once it has enough — so it is NOT guaranteed to be the 500 newest in the portal, only the newest of what was read. There is no paging; reach an older template by searching for it.", func() {
+				Example("KubeCon")
+			})
+			Required("project_id")
+		})
+		Result(func() {
+			Attribute("emails", ArrayOf(MarketingEmail), func() {
+				Example([]map[string]any{
+					{"id": "112233445566", "name": "KubeCon EU 2026 — announce", "subject": "KubeCon EU 2026 registration is open", "state": "PUBLISHED", "updated_at": "2026-08-01T17:04:00Z"},
+				})
+			})
+			Required("emails")
+		})
+		Error("NotFound", NotFoundError, "Resource not found")
+		Error("BadRequest", BadRequestError, "Bad request")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-hubspot/emails")
+			Param("q")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)

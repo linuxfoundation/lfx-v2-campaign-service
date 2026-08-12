@@ -254,6 +254,12 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// every provider by accident.
 		{"/projects/p1/connection-google-ads/accounts", true},
 		{"/projects/p1/connection-meta-ads/accounts", true},
+		// HubSpot's extra sub-path is /emails, not /accounts (LFXV2-3197): the connection is
+		// already portal-scoped by its token, so there is no account to discover — the choice
+		// is which marketing email a campaign clones. It gets its own branch for that reason,
+		// and the two negative rows below pin that neither path leaked into the other's
+		// providers.
+		{"/projects/p1/connection-hubspot/emails", true},
 		{"/projects/abc-123/connection-linkedin-ads", true},
 		{"/projects/p1/connection-meta-ads/test", true},
 		{"/projects/p1/connection-reddit-ads/set-credential", true},
@@ -304,6 +310,8 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/connection-tiktok-ads", false},
 		{"/projects/p1/connection-google-ads/delete", false},
 		{"/projects/p1/connection-linkedin-ads/accounts", false},
+		{"/projects/p1/connection-hubspot/accounts", false},
+		{"/projects/p1/connection-google-ads/emails", false},
 		// --- rejected: metrics/keywords on the wrong provider ---
 		{"/projects/p1/meta-ads/keywords", false},
 		{"/projects/p1/linkedin-ads/audience", false},

@@ -735,6 +735,13 @@ type ListMetaAdsAccountsResponseBody struct {
 	Accounts []*AccessibleAccountResponseBody `form:"accounts,omitempty" json:"accounts,omitempty" xml:"accounts,omitempty"`
 }
 
+// ListHubspotEmailsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
+// HTTP response body.
+type ListHubspotEmailsResponseBody struct {
+	Emails []*MarketingEmailResponseBody `form:"emails,omitempty" json:"emails,omitempty" xml:"emails,omitempty"`
+}
+
 // CreateGoogleAdsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "create-google-ads" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -2656,6 +2663,46 @@ type ListMetaAdsAccountsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListHubspotEmailsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
+// HTTP response body for the "BadRequest" error.
+type ListHubspotEmailsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListHubspotEmailsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type ListHubspotEmailsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListHubspotEmailsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
+// HTTP response body for the "InternalServerError" error.
+type ListHubspotEmailsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListHubspotEmailsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
+// HTTP response body for the "NotFound" error.
+type ListHubspotEmailsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GoogleAdsConnectionConfigRequestBody is used to define fields on request
 // body types.
 type GoogleAdsConnectionConfigRequestBody struct {
@@ -2825,6 +2872,23 @@ type AccessibleAccountResponseBody struct {
 	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
 	// Human-readable account name or label
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+}
+
+// MarketingEmailResponseBody is used to define fields on response body types.
+type MarketingEmailResponseBody struct {
+	// HubSpot marketing-email id, ready to pass as the campaign config's
+	// sourceEmailId
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Internal email name, as it appears in the HubSpot email list
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Subject line
+	Subject *string `form:"subject,omitempty" json:"subject,omitempty" xml:"subject,omitempty"`
+	// HubSpot lifecycle state of the email (e.g. DRAFT, PUBLISHED). Archived
+	// emails are not returned at all — archival is a separate flag in HubSpot, not
+	// a state.
+	State *string `form:"state,omitempty" json:"state,omitempty" xml:"state,omitempty"`
+	// Last-modified timestamp (ISO-8601)
+	UpdatedAt *string `form:"updated_at,omitempty" json:"updated_at,omitempty" xml:"updated_at,omitempty"`
 }
 
 // NewCreateGoogleAdsRequestBody builds the HTTP request body from the payload
@@ -5817,6 +5881,68 @@ func NewListMetaAdsAccountsNotFound(body *ListMetaAdsAccountsNotFoundResponseBod
 	return v
 }
 
+// NewListHubspotEmailsResultOK builds a "lfx-v2-campaign-service-connections"
+// service "list-hubspot-emails" endpoint result from a HTTP "OK" response.
+func NewListHubspotEmailsResultOK(body *ListHubspotEmailsResponseBody) *lfxv2campaignserviceconnections.ListHubspotEmailsResult {
+	v := &lfxv2campaignserviceconnections.ListHubspotEmailsResult{}
+	v.Emails = make([]*lfxv2campaignserviceconnections.MarketingEmail, len(body.Emails))
+	for i, val := range body.Emails {
+		if val == nil {
+			v.Emails[i] = nil
+			continue
+		}
+		v.Emails[i] = unmarshalMarketingEmailResponseBodyToLfxv2campaignserviceconnectionsMarketingEmail(val)
+	}
+
+	return v
+}
+
+// NewListHubspotEmailsBadRequest builds a lfx-v2-campaign-service-connections
+// service list-hubspot-emails endpoint BadRequest error.
+func NewListHubspotEmailsBadRequest(body *ListHubspotEmailsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListHubspotEmailsServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service list-hubspot-emails endpoint
+// ServiceUnavailable error.
+func NewListHubspotEmailsServiceUnavailable(body *ListHubspotEmailsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListHubspotEmailsInternalServerError builds a
+// lfx-v2-campaign-service-connections service list-hubspot-emails endpoint
+// InternalServerError error.
+func NewListHubspotEmailsInternalServerError(body *ListHubspotEmailsInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListHubspotEmailsNotFound builds a lfx-v2-campaign-service-connections
+// service list-hubspot-emails endpoint NotFound error.
+func NewListHubspotEmailsNotFound(body *ListHubspotEmailsNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // ValidateCreateGoogleAdsResponseBody runs the validations defined on
 // Create-Google-AdsResponseBody
 func ValidateCreateGoogleAdsResponseBody(body *CreateGoogleAdsResponseBody) (err error) {
@@ -6514,6 +6640,22 @@ func ValidateListMetaAdsAccountsResponseBody(body *ListMetaAdsAccountsResponseBo
 	for _, e := range body.Accounts {
 		if e != nil {
 			if err2 := ValidateAccessibleAccountResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateListHubspotEmailsResponseBody runs the validations defined on
+// List-Hubspot-EmailsResponseBody
+func ValidateListHubspotEmailsResponseBody(body *ListHubspotEmailsResponseBody) (err error) {
+	if body.Emails == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("emails", "body"))
+	}
+	for _, e := range body.Emails {
+		if e != nil {
+			if err2 := ValidateMarketingEmailResponseBody(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -8855,6 +8997,54 @@ func ValidateListMetaAdsAccountsNotFoundResponseBody(body *ListMetaAdsAccountsNo
 	return
 }
 
+// ValidateListHubspotEmailsBadRequestResponseBody runs the validations defined
+// on list-hubspot-emails_BadRequest_response_body
+func ValidateListHubspotEmailsBadRequestResponseBody(body *ListHubspotEmailsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListHubspotEmailsServiceUnavailableResponseBody runs the validations
+// defined on list-hubspot-emails_ServiceUnavailable_response_body
+func ValidateListHubspotEmailsServiceUnavailableResponseBody(body *ListHubspotEmailsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListHubspotEmailsInternalServerErrorResponseBody runs the
+// validations defined on list-hubspot-emails_InternalServerError_response_body
+func ValidateListHubspotEmailsInternalServerErrorResponseBody(body *ListHubspotEmailsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListHubspotEmailsNotFoundResponseBody runs the validations defined
+// on list-hubspot-emails_NotFound_response_body
+func ValidateListHubspotEmailsNotFoundResponseBody(body *ListHubspotEmailsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateLinkedinAdsConnectionConfigRequestBody runs the validations defined
 // on linkedin-ads-connection-configRequestBody
 func ValidateLinkedinAdsConnectionConfigRequestBody(body *LinkedinAdsConnectionConfigRequestBody) (err error) {
@@ -8904,6 +9094,15 @@ func ValidateTwitterAdsConnectionConfigRequestBody(body *TwitterAdsConnectionCon
 // ValidateAccessibleAccountResponseBody runs the validations defined on
 // accessible-accountResponseBody
 func ValidateAccessibleAccountResponseBody(body *AccessibleAccountResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	return
+}
+
+// ValidateMarketingEmailResponseBody runs the validations defined on
+// marketing-emailResponseBody
+func ValidateMarketingEmailResponseBody(body *MarketingEmailResponseBody) (err error) {
 	if body.ID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
 	}

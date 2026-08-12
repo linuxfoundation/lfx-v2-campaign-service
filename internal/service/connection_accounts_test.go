@@ -721,9 +721,14 @@ func TestListMetaAdsAccounts_MessagesNameMetaNotGoogleAds(t *testing.T) {
 	})
 }
 
-// TestListAccounts_RejectsTheReservedSystemScope covers BOTH discovery endpoints in one
-// table, because the guard is the first statement of the shared helper and adding a third
-// provider must not require remembering to add a third test.
+// TestListAccounts_RejectsTheReservedSystemScope covers every endpoint that reaches a platform
+// through a dispatcher, in one table.
+//
+// The two discovery endpoints share `listAccounts`, so the guard there is written once. The
+// HubSpot email search is NOT one of them — it does not enumerate accounts, so it calls
+// `rejectSystemScope` itself — and a DUPLICATED security guard is exactly the kind that gets
+// added without a test and later removed without one failing. It is in this table rather than
+// beside the email tests so the next endpoint that copies the guard is added here too.
 //
 // The reserved scope is unaddressable by design: a GET on it would decrypt the LF system
 // credential and enumerate the Linux Foundation's own ad accounts for whoever asked. The
@@ -743,6 +748,14 @@ func TestListAccounts_RejectsTheReservedSystemScope(t *testing.T) {
 		{"meta ads", func(s *ConnectionService) error {
 			_, err := s.ListMetaAdsAccounts(context.Background(),
 				&conn.ListMetaAdsAccountsPayload{ProjectID: model.SystemProjectID})
+			return err
+		}},
+		// Not account discovery, same reserved scope. A GET here would decrypt the LF system
+		// credential and list the Linux Foundation's own marketing emails — subjects and all —
+		// for whoever asked.
+		{"hubspot emails", func(s *ConnectionService) error {
+			_, err := s.ListHubspotEmails(context.Background(),
+				&conn.ListHubspotEmailsPayload{ProjectID: model.SystemProjectID})
 			return err
 		}},
 	}

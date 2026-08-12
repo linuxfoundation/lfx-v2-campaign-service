@@ -100,6 +100,12 @@ spec:
           - path: /projects/:projectId/connection-hubspot
           - path: /projects/:projectId/connection-hubspot/test
           - path: /projects/:projectId/connection-hubspot/set-credential
+          # Email search — HubSpot's counterpart to the ad platforms' /accounts, and
+          # deliberately NOT named /accounts: the connection is already scoped to the
+          # portal its token authenticates against, so there is no account to choose.
+          # What the caller picks is the marketing email a campaign clones, since
+          # hubspotConfig.SourceEmailID is required with no default (LFXV2-3197).
+          - path: /projects/:projectId/connection-hubspot/emails
           # Briefs (+ nested campaigns) and jobs. A single-segment capture (:rest)
           # would only match /briefs/{id}; the routed contract has DEEPER paths —
           # /briefs/{id}/approve and /briefs/{id}/campaigns/{campaignId} (per the

@@ -717,6 +717,48 @@ only. Malformed ciphertext reaches `ErrConnectionNotUsable` → 400, whose handl
 suppresses the cause and logs `reason=credential_blob_malformed` alone, because the conditions on
 that arm include one detected by decoding the DECRYPTED blob.
 
+### HubSpot: email search, not account discovery
+
+`HubSpotDispatcher.SearchEmails` implements `service.EmailSearcher`, a capability that sits
+alongside `AccountLister` rather than inside it. The distinction is the point.
+
+**There is no account to discover.** A HubSpot connection is scoped to the portal its
+private-app token authenticates against — `Client.AuthenticatedPortalID` reads it back from the
+token itself, not from the optional operator-supplied `portal_id`, which a credential swap
+leaves untouched. So the question every ad platform's discovery answers ("which account may this
+credential act as?") has no HubSpot analogue.
+
+**What has no default is the TEMPLATE.** `Dispatch` stages an email by CLONING a caller-specified
+source (`hubspotConfig.SourceEmailID`, required, no default), so without a way to find one the
+channel cannot be driven from a UI at all. That is a per-campaign choice travelling in the
+dispatch config, not a per-connection one stored on the row — which is why `MarketingEmail` is
+its own model type rather than a reuse of `AccessibleAccount`. Sharing the type would only make
+two unrelated lifetimes look interchangeable.
+
+**The status mapping IS shared, deliberately.** `classifyDiscoveryError` was lifted out of
+`listAccounts` unchanged so both endpoints answer 404/400/500/503 from one switch — the helper's
+own contract is that a provider gets the judgements reasoned about there or none of them, and a
+second copy is where one of them quietly diverges. Only the operation noun differs, carried by
+`accountDiscovery.operation`: telling a caller who searched for an email template that "account
+discovery could not be completed" describes an operation they did not perform.
+
+One arm is NOT shared. A dispatcher with no `EmailSearcher` yields `ErrEmailSearchUnsupported`,
+a separate sentinel from `ErrAccountsUnsupported`, because the two capabilities are genuinely
+independent: HubSpot searches emails and has no ad accounts, while Google Ads and Meta are the
+reverse — they are the only `AccountLister` implementors, and the remaining ad platforms
+(LinkedIn, Reddit, X, Microsoft) implement neither capability. Folding the two sentinels into one
+would make "this platform cannot do X" ambiguous about which X.
+
+**Draft emails are returned, with their state — archived ones are absent.** Same reasoning as Meta's disabled
+accounts: filtering the row the user is looking for answers "your portal has no such email"
+about an email sitting right there. The caller gets `state` and decides — a DRAFT is the case
+worth surfacing, since cloning an unfinished template is the mistake a picker can prevent.
+
+Archived rows are a different matter and cannot be warned about at all: they are absent from the
+result, so there is no row to carry a state. Anyone looking for one will not find it here, and
+the endpoint has no way to say why — which is the honest limit of this contract rather than
+something `state` can express.
+
 ## Channel kinds: paid ads vs email
 
 `model.ChannelKind` classifies each provider as **`paid-ads`** or **`email`** (`Provider.Kind()`,

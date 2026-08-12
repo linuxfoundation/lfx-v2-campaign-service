@@ -6932,6 +6932,160 @@ func DecodeListMetaAdsAccountsResponse(decoder func(*http.Response) goahttp.Deco
 	}
 }
 
+// BuildListHubspotEmailsRequest instantiates a HTTP request object with method
+// and path set to call the "lfx-v2-campaign-service-connections" service
+// "list-hubspot-emails" endpoint
+func (c *Client) BuildListHubspotEmailsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.ListHubspotEmailsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-hubspot-emails", "*lfxv2campaignserviceconnections.ListHubspotEmailsPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ListHubspotEmailsLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "list-hubspot-emails", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeListHubspotEmailsRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-connections list-hubspot-emails server.
+func EncodeListHubspotEmailsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.ListHubspotEmailsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-hubspot-emails", "*lfxv2campaignserviceconnections.ListHubspotEmailsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		if p.Q != nil {
+			values.Add("q", *p.Q)
+		}
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeListHubspotEmailsResponse returns a decoder for responses returned by
+// the lfx-v2-campaign-service-connections list-hubspot-emails endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeListHubspotEmailsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - error: internal error
+func DecodeListHubspotEmailsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ListHubspotEmailsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-hubspot-emails", err)
+			}
+			err = ValidateListHubspotEmailsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-hubspot-emails", err)
+			}
+			res := NewListHubspotEmailsResultOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ListHubspotEmailsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-hubspot-emails", err)
+			}
+			err = ValidateListHubspotEmailsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-hubspot-emails", err)
+			}
+			return nil, NewListHubspotEmailsBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ListHubspotEmailsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-hubspot-emails", err)
+			}
+			err = ValidateListHubspotEmailsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-hubspot-emails", err)
+			}
+			return nil, NewListHubspotEmailsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ListHubspotEmailsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-hubspot-emails", err)
+			}
+			err = ValidateListHubspotEmailsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-hubspot-emails", err)
+			}
+			return nil, NewListHubspotEmailsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ListHubspotEmailsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-hubspot-emails", err)
+			}
+			err = ValidateListHubspotEmailsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-hubspot-emails", err)
+			}
+			return nil, NewListHubspotEmailsNotFound(&body)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-hubspot-emails", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // marshalLfxv2campaignserviceconnectionsGoogleAdsConnectionConfigToGoogleAdsConnectionConfigRequestBody
 // builds a value of type *GoogleAdsConnectionConfigRequestBody from a value of
 // type *lfxv2campaignserviceconnections.GoogleAdsConnectionConfig.
@@ -7315,6 +7469,21 @@ func unmarshalAccessibleAccountResponseBodyToLfxv2campaignserviceconnectionsAcce
 	res := &lfxv2campaignserviceconnections.AccessibleAccount{
 		ID:    *v.ID,
 		Label: v.Label,
+	}
+
+	return res
+}
+
+// unmarshalMarketingEmailResponseBodyToLfxv2campaignserviceconnectionsMarketingEmail
+// builds a value of type *lfxv2campaignserviceconnections.MarketingEmail from
+// a value of type *MarketingEmailResponseBody.
+func unmarshalMarketingEmailResponseBodyToLfxv2campaignserviceconnectionsMarketingEmail(v *MarketingEmailResponseBody) *lfxv2campaignserviceconnections.MarketingEmail {
+	res := &lfxv2campaignserviceconnections.MarketingEmail{
+		ID:        *v.ID,
+		Name:      v.Name,
+		Subject:   v.Subject,
+		State:     v.State,
+		UpdatedAt: v.UpdatedAt,
 	}
 
 	return res

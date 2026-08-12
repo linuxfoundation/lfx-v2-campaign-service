@@ -85,9 +85,38 @@ type paging struct {
 // unbounded. 200 pages × 100/page = 20k records, well past any realistic portal.
 const maxListPages = 200
 
+// maxUnfilteredEmails bounds the UNFILTERED walk (an empty query — the picker's default
+// first screen). Without it the default screen is the worst case: every row in the portal
+// matches, so a large portal returns an enormous response or spends the orchestrator's
+// deadline mid-walk and 503s, precisely on the portals that most need a picker.
+//
+// It applies ONLY when there is no needle. A filtered search must still walk every page:
+// truncating it would answer "no such email" about an email sitting on page 50, and the
+// callers of a lookup act on that absence. An unfiltered walk has no such failure mode —
+// nothing is being looked UP, and the contract is already "the most recent ones".
+//
+// WHICH rows the bounded walk returns depends on the server honouring `sort=-updatedAt`,
+// and that dependency is real rather than hedged. An earlier revision over-collected 3×
+// the cap before truncating and claimed this "kept the ordering ours"; it does not. Extra
+// slack only re-sorts what was FETCHED, so if the server ignores the sort the newest rows
+// can sit on a page the walk never reaches — no multiple of the cap fixes that, it only
+// moves the cliff. Under a bounded walk the two guarantees are exclusive: stop early and
+// you depend on server order, scan every page and you have no bound.
+//
+// Depending on it is the right trade HERE, and only here. This is the unfiltered default
+// screen, whose contract is "recent emails to pick from" — a degraded order shows the
+// user a less useful list, not a wrong answer. The client still re-sorts what it fetched
+// (sortEmailsByUpdatedDesc), so the returned page is correctly ordered within itself even
+// if the server's selection was not. Nothing that must be CORRECT depends on the hint: a
+// filtered search, where a miss is a false absence, still reads every page.
+const maxUnfilteredEmails = 500
+
 // SearchEmails returns marketing emails whose name or subject contains query
-// (case-insensitive), most-recently-updated first. Read-only (idempotent). It follows
-// paging.next.after across ALL pages, so a match beyond the first page is not missed.
+// (case-insensitive), most-recently-updated first. Read-only (idempotent). A FILTERED
+// search follows paging.next.after across ALL pages, so a match beyond the first page is
+// not missed. An UNFILTERED one (empty query) is bounded to maxUnfilteredEmails rows taken
+// in server order — see that constant for why the two cases differ and what the bound does
+// and does not promise.
 func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error) {
 	// Trim before matching — a padded term like " kubecon " must still match
 	// "KubeCon Invite" rather than silently returning no results.
@@ -107,8 +136,12 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 		// default, so at limit=100 rich templates can blow past the client's response
 		// cap. The marketing-emails list endpoint uses REPEATED `includedProperties`
 		// entries (not a CRM-style comma-separated `properties` string). We only need
-		// name/subject/updatedAt for search + ordering (id always comes back).
-		q["includedProperties"] = []string{"name", "subject", "updatedAt"}
+		// name/subject/updatedAt for search + ordering (id always comes back), plus `state`
+		// since LFXV2-3197: the email picker surfaces it so a caller can see that a template
+		// is a draft before cloning it. It is REQUESTED rather than assumed — `Email.State`
+		// decodes to "" for any field not named here, so a consumer promised a lifecycle
+		// state would have received an empty string from every row.
+		q["includedProperties"] = []string{"name", "subject", "updatedAt", "state"}
 		if after != "" {
 			q.Set("after", after)
 		}
@@ -139,8 +172,27 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 				out = append(out, e)
 			}
 		}
-		if resp.Paging == nil || resp.Paging.Next == nil || resp.Paging.Next.After == "" {
+		// Two ways the walk ends: the server ran out of pages, or an unfiltered walk has
+		// collected its cap. The truncation below is still reachable on the second path --
+		// a page can carry `out` PAST the cap when the cap is not a page multiple -- so it
+		// trims the overshoot rather than being dead code. It runs after the sort so the
+		// rows dropped are the oldest of what was fetched.
+		lastPage := resp.Paging == nil || resp.Paging.Next == nil || resp.Paging.Next.After == ""
+		if lastPage || (needle == "" && len(out) >= maxUnfilteredEmails) {
+			// SORT then trim, deliberately, and not the other way round. The trim is only
+			// reachable when a page carries `out` past the cap — i.e. when the provider ignored
+			// `limit`. If it ignored `limit` it may well have ignored `sort=-updatedAt` too, and
+			// in that case truncating first keeps the provider's FIRST 500, which for an
+			// oldest-first response is the 500 OLDEST emails: the worst possible answer for a
+			// screen whose whole purpose is showing recent ones. Sorting first keeps the newest
+			// 500 of what was actually read.
+			//
+			// The published contract describes this as "the newest of what was read" rather than
+			// a prefix of the provider's order, for the same reason.
 			sortEmailsByUpdatedDesc(out)
+			if needle == "" && len(out) > maxUnfilteredEmails {
+				out = out[:maxUnfilteredEmails]
+			}
 			return out, nil
 		}
 		// `paging.next.after` is an OPAQUE token from the JSON body — a JSON string field

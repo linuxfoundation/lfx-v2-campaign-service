@@ -53,10 +53,17 @@ spec:
     # to the RuleSet, and leave the remaining providers in the shared branch. Only
     # once EVERY provider in the shared branch has /accounts ruled does collapsing
     # them back into one alternation become correct.
+    #
+    # hubspot is spelled out separately for the same reason, but its extra sub-path is
+    # /emails, NOT /accounts: a HubSpot connection is already scoped to the portal its
+    # token authenticates against, so there is no account to discover — what the caller
+    # picks is which marketing email a campaign clones (LFXV2-3197). It therefore cannot
+    # join the discovery branch; admitting /accounts for hubspot would rule a path the
+    # service does not serve, and /emails for google-ads or meta-ads the same.
     - matches:
       - path:
           type: RegularExpression
-          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads)(/(test|set-credential|accounts))?|connection-(linkedin-ads|reddit-ads|twitter-ads|microsoft-ads|hubspot)(/(test|set-credential))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience))$
+          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads)(/(test|set-credential|accounts))?|connection-hubspot(/(test|set-credential|emails))?|connection-(linkedin-ads|reddit-ads|twitter-ads|microsoft-ads)(/(test|set-credential))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience))$
       {{- if .Values.heimdall.enabled }}
       filters:
         - type: ExtensionRef
