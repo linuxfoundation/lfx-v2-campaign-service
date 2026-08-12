@@ -709,9 +709,7 @@ func TestGenerateEmailCopy_PromptLimitCountsRunesNotBytes(t *testing.T) {
 	// read on the test's, and the atomic is what synchronizes them. Reading the response body
 	// does NOT establish the edge — the client can consume bytes the handler has written while
 	// the handler is still running, so a body read orders nothing with respect to the handler's
-	// return. Clean -race runs do not supply the guarantee either: the detector reports races it
-	// OBSERVES, and a schedule that never interleaves the two is exactly what it will not
-	// report. The atomic makes the synchronization explicit rather than incidental.
+	// return. The atomic supplies the ordering the body read does not.
 	var llmCalled atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		llmCalled.Store(true)

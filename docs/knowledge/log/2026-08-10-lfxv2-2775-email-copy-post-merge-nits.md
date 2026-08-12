@@ -29,11 +29,20 @@ is what synchronizes them.
 **An earlier version of this entry got the reasoning wrong and is corrected here**, because the
 wrong version is the more instructive one. It said the race "is not reachable" since reading the
 response body to completion establishes a happens-before edge with the handler's return, citing
-`go test -race -count=50` clean. Neither half holds. A body read orders nothing with respect to
-the handler's RETURN — the client can consume bytes the handler has already written while the
-handler is still running. And a clean race detector is not a proof: it reports races it
-OBSERVES, so a schedule that never interleaves the two writes is precisely the case it cannot
-report. Fifty clean runs are fifty schedules, not a guarantee.
+`go test -race -count=50` clean.
+
+The first half does not hold: a body read orders nothing with respect to the handler's RETURN,
+since the client can consume bytes the handler has already written while the handler is still
+running.
+
+The second half was ALSO wrong, in a second attempt at this entry, and is worth recording as its
+own mistake. That attempt said the clean runs proved nothing because the detector only reports
+races it "observes", i.e. that interleave in wall-clock time. That is not how it works: TSan
+records executed accesses and orders them by happens-before, not by whether they overlapped. Both
+accesses here execute on every successful request, so wall-clock interleaving was never the
+question. The honest reading is narrower — the clean runs are evidence about the schedules that
+ran, and the atomic is what makes the ordering a property of the code rather than of net/http's
+internals.
 
 So the atomic is not belt-and-braces over an unreachable race; it is the synchronization. That
 also makes the sibling `internal/platform/llm` tests' discipline the right precedent rather than
