@@ -1216,10 +1216,46 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			releaseNow = false
 			campaignRepo.ReleaseCampaignLockAfterCooldown(lockToken, unconfirmedLockCooldown)
 			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the campaign status change is unconfirmed — it may or may not have been applied on the ad platform; verify in the platform before retrying"}
+		case errors.Is(terr, domain.ErrNotFound):
+			// No connection row for (project, provider). PERMANENT: nothing to retry, because
+			// nothing exists to retry against. It reached the default arm's 503 before, which
+			// invites a retry that can never succeed — the fix is a connection, not a wait.
+			//
+			// 404 rather than 409: 409 is this endpoint's "your connection exists but is not
+			// usable" answer (the ErrConnectionNotUsable arm above), and conflating "repair it"
+			// with "create it" sends an operator to edit a row that is not there.
+			//
+			// `credsSource.resolve` reaches this after ALSO missing the shared system account,
+			// so by here neither a project connection nor the LF fallback exists.
+			slog.WarnContext(ctx, "campaign status toggle blocked: no connection configured for this project and provider",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "status", p.Status)
+			return nil, &briefs.NotFoundError{Code: "404", Message: "this project has no connection for the campaign's ad platform; connect the platform before changing campaign status"}
+		case errors.Is(terr, domain.ErrCredentialDecryptionFailed):
+			// GCM authentication failed on the stored blob: a wrong or rotated application key,
+			// or a corrupted row. Also permanent, and NOT the caller's to fix — no amount of
+			// reconnecting repairs a deployment key mismatch, and the project admin cannot see
+			// the key at all.
+			//
+			// 500, not 409, and the distinction is the same one the system-connection arm above
+			// draws: a 409 tells the caller to repair THEIR connection, and this is not a scope
+			// they own. A GCM authentication failure means the application's encryption key no
+			// longer matches the blob — a wrong or rotated `CREDENTIAL_ENCRYPTION_KEY`, or a
+			// corrupted row. Reconnecting the ad platform does not fix either, so sending the
+			// project admin to do that is sending them somewhere they cannot succeed.
+			//
+			// Safe to log the error: `ErrCredentialDecryptionFailed` is constructed from
+			// ciphertext and key material only (see its declaration), never from plaintext.
+			slog.ErrorContext(ctx, "campaign status toggle blocked: stored credentials could not be decrypted (key mismatch or corrupted row)",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "status", p.Status, "error", terr)
+			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign status could not be changed"}
 		default:
-			// A DEFINITE platform-call failure (4xx) or the dispatcher's cred resolution
-			// failing: the ad platform was not updated. Log the underlying error (the client
-			// gets only a sanitized message) so an operator has a diagnostic record, then 503.
+			// A DEFINITE platform-call failure (4xx), or a repository error while loading the
+			// connection: the ad platform was not updated. A bare repo failure (DB down) IS
+			// genuinely transient, which is why it keeps the 503 the two arms above no longer
+			// share. Log the underlying error (the client gets only a sanitized message) so an
+			// operator has a diagnostic record.
 			slog.WarnContext(ctx, "campaign status toggle failed on the ad platform",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,

@@ -200,29 +200,67 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 // not serve. campaign is the persisted row; only campaign.PlatformCampaignID (the numeric
 // campaign id) is used. status is model.CampaignRunActive/Paused. An UNCONFIRMED outcome
 // (including a partial cascade) is wrapped so the caller reports "verify before retry".
+// resolveLinkedInCredentials fetches the project's LinkedIn connection and validates it is
+// usable, tagging each defect with domain.ErrConnectionNotUsable plus a reason sentinel so the
+// endpoint answers 409 rather than the 503 default arm.
+//
+// Mirrors resolveMetaCredentials, deliberately and structurally — including the `conn := res`
+// binding the defer closes over, for the reason meta.go records: every not-usable return sets
+// the named return to nil, and systemScoped is a no-op on a nil receiver, so reading the named
+// return would silently drop system-row attribution from exactly the errors that need it.
+//
+// Before this existed LinkedIn validated inline at four separate call sites with bare errors,
+// so all four fell through to 503 — "transient, retry later" for defects no retry can fix. No
+// amount of retrying repairs a credential blob that is not valid JSON.
+//
+// Scoped to the toggle and metrics paths (LFXV2-3196). Dispatch keeps its own inline checks:
+// they wrap in notCreated() to release the dispatch claim, which is a different contract from
+// returning a classified error to a synchronous handler, and folding the two would mean this
+// helper had to know which caller it had.
+func (d *LinkedInDispatcher) resolveLinkedInCredentials(ctx context.Context, projectID string, platform model.Provider) (res *resolved, creds linkedinCreds, err error) {
+	res, err = d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return nil, linkedinCreds{}, err
+	}
+	conn := res
+	defer func() { err = conn.systemScoped(err) }()
+
+	if res.status != model.StatusActive {
+		return nil, linkedinCreds{}, fmt.Errorf("%w: %w: linkedin connection for project %s is %s, not active",
+			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
+	}
+	if uerr := json.Unmarshal(res.plaintext, &creds); uerr != nil {
+		// The cause is DROPPED rather than wrapped, same as meta: it is the only value here
+		// derived from the DECRYPTED blob, and encoding/json quotes its input in
+		// *json.SyntaxError, so wrapping it could carry credential bytes into a log line.
+		return nil, linkedinCreds{}, fmt.Errorf("%w: %w: linkedin credentials for project %s are not valid JSON",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, projectID)
+	}
+	if strings.TrimSpace(creds.AccessToken) == "" {
+		return nil, linkedinCreds{}, fmt.Errorf("%w: %w: linkedin credentials are incomplete (need accessToken)",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
+	}
+	if strings.TrimSpace(res.accountID) == "" {
+		// Unlike meta's metrics path, LinkedIn DOES need the account id here: its client is
+		// constructed with a RuntimeConfig naming the account, so an empty one cannot reach
+		// the platform at all. Tagged so the reason token names the missing CHOICE rather
+		// than surfacing as an unclassified failure with no path to completion.
+		return nil, linkedinCreds{}, fmt.Errorf("%w: %w: linkedin connection for project %s has no account id",
+			domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected, projectID)
+	}
+	return res, creds, nil
+}
+
 func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
 	liStatus, err := linkedinRunStatus(status)
 	if err != nil {
 		return err
 	}
-	res, err := d.creds.resolve(ctx, projectID, platform)
+	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform)
 	if err != nil {
 		return err
 	}
-	if res.status != model.StatusActive {
-		return fmt.Errorf("linkedin connection for project %s is %s, not active", projectID, res.status)
-	}
-	var creds linkedinCreds
-	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return fmt.Errorf("decode linkedin credentials: %w", err)
-	}
-	if strings.TrimSpace(creds.AccessToken) == "" {
-		return fmt.Errorf("linkedin credentials are incomplete (need accessToken)")
-	}
 	accountID := strings.TrimSpace(res.accountID)
-	if accountID == "" {
-		return fmt.Errorf("linkedin connection for project %s has no account id", projectID)
-	}
 	runtime := linkedin.RuntimeConfig{
 		DefaultAccountID: accountID,
 		Accounts:         []linkedin.Account{{AccountID: accountID, Label: res.label}},
@@ -266,31 +304,17 @@ func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, 
 		return nil, fmt.Errorf("get campaign metrics from linkedin: %w", errors.Join(domain.ErrMetricsWindowUnsupported, werr))
 	}
 
-	res, err := d.creds.resolve(ctx, projectID, platform)
+	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}
-	if res.status != model.StatusActive {
-		return nil, fmt.Errorf("linkedin connection for project %s is %s, not active", projectID, res.status)
-	}
-
-	var creds linkedinCreds
-	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return nil, fmt.Errorf("decode linkedin credentials: %w", err)
-	}
-	// Trimmed once, here, and the trimmed value is what's used for both the
-	// empty-check and the client — passing the raw (possibly whitespace-padded)
-	// token to NewClient would let a token that looks valid still fail
-	// upstream with an invalid Authorization header.
+	// Trimmed once, here, and the trimmed value is what's used for the client — passing the
+	// raw (possibly whitespace-padded) token to NewClient would let a token that looks valid
+	// still fail upstream with an invalid Authorization header. The helper has already
+	// rejected an empty one.
 	accessToken := strings.TrimSpace(creds.AccessToken)
-	if accessToken == "" {
-		return nil, fmt.Errorf("linkedin credentials are incomplete (need accessToken)")
-	}
 
 	accountID := strings.TrimSpace(res.accountID)
-	if accountID == "" {
-		return nil, fmt.Errorf("linkedin connection for project %s has no account id", projectID)
-	}
 
 	runtime := linkedin.RuntimeConfig{
 		DefaultAccountID: accountID,

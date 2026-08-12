@@ -153,8 +153,8 @@ Two properties of this pattern are easy to lose and worth stating outright:
 - **The tagging belongs in the SHARED resolve/validate helper, not at each call site.** Where an
   adapter HAS one — Google Ads, Reddit, X/Twitter and Microsoft Ads each route Dispatch,
   `ToggleStatus` and (where wired) `ReadMetrics` through a single helper — tagging it once covers
-  every path. Meta gained one in LFXV2-3061 (`resolveMetaCredentials`); LinkedIn still has none,
-  see below. Tagging per-path is how Google Ads ended up correct on discovery while its other
+  every path. Meta gained one in LFXV2-3061 (`resolveMetaCredentials`) and
+  LinkedIn in LFXV2-3196 (`resolveLinkedInCredentials`), so every ad adapter now has one. Tagging per-path is how Google Ads ended up correct on discovery while its other
   callers were still bare, before the helper absorbed it.
 
 Which adapters honour it today:
@@ -166,7 +166,7 @@ Which adapters honour it today:
 | X/Twitter | yes | `validateTwitterConnection` — dispatch, toggle, metrics |
 | Microsoft Ads | yes | `validateMicrosoftConnection` — dispatch, toggle (no metrics; async Reporting API) |
 | Meta | yes | `resolveMetaCredentials` — dispatch, toggle, metrics (LFXV2-3061) |
-| LinkedIn | **no** | still bare, still 503 — LFXV2-3069 part 2 |
+| LinkedIn | yes | `resolveLinkedInCredentials` — toggle, metrics (LFXV2-3196); Dispatch keeps its own inline checks, which wrap in `notCreated()` to release the claim |
 | HubSpot (email) | **n/a** | out of scope — see below |
 
 HubSpot is listed for completeness, not as a gap. Its checks in `internal/dispatch/hubspot.go`
@@ -178,10 +178,19 @@ between a 409 and a 503 the way the six above are. Tagging them would change wha
 result says, which is worth doing, but it is a separate question from the status mapping this
 section is about — do not read the empty cell as work queued behind LFXV2-3069 part 2.
 
-LinkedIn still inlines `d.creds.resolve(...)` at more than one call site with no shared helper,
-so tagging it is an extraction rather than an annotation. Meta was in the same state until
-LFXV2-3061 performed exactly that extraction, which is what the entry below describes; until
-LinkedIn's lands, its defects continue to answer 503.
+LinkedIn was the last adapter still inlining `d.creds.resolve(...)` at more than one call site,
+so tagging it was an extraction rather than an annotation — Meta was in the same state until
+LFXV2-3061 performed exactly that extraction. LFXV2-3196 did the same for LinkedIn's toggle and
+metrics paths.
+
+Its `Dispatch` deliberately keeps its own inline checks: they wrap in `notCreated()` to release
+the dispatch claim, which is a different contract from returning a classified error to a
+synchronous handler, and folding the two would mean the helper had to know which caller it had.
+
+One asymmetry worth carrying: LinkedIn emits `account_not_selected` on toggle and metrics where
+Meta does not. LinkedIn's client is constructed with a `RuntimeConfig` naming the account, so an
+empty account id cannot reach the platform at all; Meta targets the campaign node by platform id
+and never reads the account, so an account cleared after creation must not block pausing.
 
 The full rationale for the classification — including why a decrypt failure splits into two
 sentinels, and why an inactive row is refused rather than treated as "pending" — lives in the

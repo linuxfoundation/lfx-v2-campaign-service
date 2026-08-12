@@ -3627,6 +3627,75 @@ func TestGetCampaignMetrics_OtherUnusableCauseKeepsTheGeneralMessage(t *testing.
 	}
 }
 
+// A project with NO connection row is answered 404, not 503. Both were "the toggle failed"
+// before, and the difference matters to the caller: 503 says retry, and no amount of retrying
+// creates a connection. Reaching this arm means credsSource.resolve missed the project's own
+// row AND the shared system account, so there is genuinely nothing to resolve.
+func TestToggleCampaignStatus_NoConnectionIs404(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	tog := &stubToggler{err: fmt.Errorf("no reddit-ads connection configured for project cncf: %w", domain.ErrNotFound)}
+	s, _ := newToggleService(camp, tog)
+	im := "1"
+	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+
+	var notFound *briefs.NotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("want a 404 NotFoundError, got %T: %v", err, err)
+	}
+	if notFound.Code != "404" {
+		t.Errorf("code = %q, want 404", notFound.Code)
+	}
+	// "connect the platform", NOT "repair the connection" — 409 is the repair answer, and
+	// sending someone to edit a row that does not exist is its own dead end.
+	if !strings.Contains(notFound.Message, "no connection") {
+		t.Errorf("message = %q, want it to say no connection exists", notFound.Message)
+	}
+}
+
+// A credential blob that fails GCM authentication is permanent and NOT the caller's to fix: it
+// means a wrong or rotated application key, or a corrupted row. Neither is repaired by
+// reconnecting, so the message names an administrator rather than telling the project admin to
+// try again.
+//
+// Answered 500, matching the system-connection arm's reasoning: a 409 tells the caller to repair
+// THEIR connection, and an encryption-key mismatch is not a scope a project admin owns.
+func TestToggleCampaignStatus_UndecryptableCredentialsIsNot503(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	tog := &stubToggler{err: fmt.Errorf("decrypt reddit-ads credentials: %w", domain.ErrCredentialDecryptionFailed)}
+	s, _ := newToggleService(camp, tog)
+	im := "1"
+	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+
+	// The property that matters is that it is NOT the retry-me answer.
+	var unavailable *briefs.ConnServiceUnavailableError
+	if errors.As(err, &unavailable) {
+		t.Fatalf("an undecryptable credential is permanent; got a 503 telling the caller to retry: %v", err)
+	}
+	var internal *briefs.InternalServerError
+	if !errors.As(err, &internal) {
+		t.Fatalf("want a 500 InternalServerError, got %T: %v", err, err)
+	}
+	if internal.Code != "500" {
+		t.Errorf("code = %q, want 500", internal.Code)
+	}
+	// And it must NOT be a 409 either: that would tell a project admin to repair a connection
+	// whose credentials are fine — the key is what is wrong, and they cannot see it.
+	var conflict *briefs.ConflictError
+	if errors.As(err, &conflict) {
+		t.Errorf("an encryption-key mismatch is not the project's connection to repair; got a 409: %v", err)
+	}
+}
+
 func TestToggleCampaignStatus_UnusableConnectionIs409(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()
