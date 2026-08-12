@@ -1,7 +1,7 @@
 ---
 type: "Code Concept"
 title: "internal/platform/eventurl"
-description: "Fetches a caller-supplied event page behind SSRF guards and parses it into event details, using JSON-LD then OpenGraph then plain HTML."
+description: "Fetches a caller-supplied event page behind SSRF guards (dial-time address check, no redirects, no proxy, bounded body) and parses it into event details via JSON-LD, OpenGraph, then plain HTML."
 resource: "internal/platform/eventurl"
 ---
 
