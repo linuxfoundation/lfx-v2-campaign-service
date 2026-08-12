@@ -710,16 +710,20 @@ func (c *Client) listCreativeURNs(ctx context.Context, accountID, campaignID str
 				urns = append(urns, urn)
 			}
 		}
-		// An absent metadata block is treated as exhaustion here, which is what the
-		// value-typed field did implicitly before it became a pointer. That is the SAME
-		// false-absence exposure ListAdAccounts now rejects, and it is left alone on
-		// purpose: this walk predates the finding, and closing it means asserting a
-		// metadata block in ~50 existing fixtures — churn that belongs in its own change,
-		// not in a review round on an unrelated PR. Tracked as LFXV2-3066.
-		var next string
-		if resp.Metadata != nil {
-			next = resp.Metadata.NextPageToken
+		// An ABSENT metadata block is not an exhausted cursor. The value-typed field made
+		// the two indistinguishable — a response carrying elements with no cursor envelope
+		// decoded to an empty NextPageToken, so a truncated enumeration reported itself as
+		// a complete one. That is the same false absence the id guard above rejects,
+		// arriving through the pagination door.
+		//
+		// The cost here is a partial creative list reported as complete: the cascade then
+		// reports success and the service persists ACTIVE while the undiscovered creatives
+		// stay DRAFT and never serve. Fail instead, exactly as the repeated-cursor arm
+		// below already does for the same reason.
+		if resp.Metadata == nil {
+			return nil, fmt.Errorf("creative discovery for campaign %s returned a response with no metadata; cannot confirm every creative was enumerated", campaignID)
 		}
+		next := resp.Metadata.NextPageToken
 		if next == "" {
 			return urns, nil // fully enumerated
 		}
@@ -1329,13 +1333,21 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 			return id, nil
 		}
 		// Cursor pagination: an empty nextPageToken marks the end of the result set.
-		// Otherwise carry the token into the next request. An absent metadata block reads
-		// as exhaustion, as it did implicitly before the field became a pointer — same
-		// pre-existing exposure and same reason for leaving it here (LFXV2-3066).
-		var nextToken string
-		if resp.Metadata != nil {
-			nextToken = resp.Metadata.NextPageToken
+		// Otherwise carry the token into the next request.
+		//
+		// An ABSENT metadata block is not an exhausted cursor, and this is the walk where
+		// conflating them is most expensive. A missing envelope used to decode to an empty
+		// token, which reads as "searched everything, found nothing" — and for a
+		// find-or-create caller a false no-match is the LICENCE TO CREATE. A dropped cursor
+		// envelope on an intermediate page therefore produces a DUPLICATE PAID CAMPAIGN.
+		//
+		// Refuse, with the same inconclusive-search wording the repeated-token arm below
+		// uses: both mean the search could not be completed, and neither may be reported as
+		// an absence.
+		if resp.Metadata == nil {
+			return "", fmt.Errorf("search %q by name: response carried no metadata block, so the search could not be confirmed complete — aborting to avoid creating a duplicate", nestedPath)
 		}
+		nextToken := resp.Metadata.NextPageToken
 		if nextToken == "" {
 			return "", nil
 		}
