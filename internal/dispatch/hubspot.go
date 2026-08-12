@@ -599,10 +599,15 @@ func hubSpotCreationPortalID(campaign *model.Campaign) string {
 // the caller must choose is the email to clone, because hubspotConfig.SourceEmailID is required
 // and has no default (see the Dispatch contract above).
 //
-// Archived and draft emails are RETURNED rather than filtered, for the same reason the Meta
-// account picker returns disabled accounts with the reason in the label: hiding the row the user
-// is looking for answers "your portal has no such email" about an email sitting right there. The
-// caller gets State and decides.
+// Draft emails are RETURNED rather than filtered, for the same reason the Meta account picker
+// returns disabled accounts with the reason in the label: hiding the row the user is looking for
+// answers "your portal has no such email" about an email sitting right there. The caller gets
+// State and decides.
+//
+// ARCHIVED emails are a different case and are simply absent: HubSpot models archival as a
+// separate `archived` flag rather than a lifecycle state, and the client does not request
+// archived rows. Nothing here can surface them, and `State` could not express their absence
+// even if it tried.
 func (d *HubSpotDispatcher) SearchEmails(ctx context.Context, projectID string, platform model.Provider, query string) ([]model.MarketingEmail, error) {
 	client, err := d.resolveHubSpotClient(ctx, projectID, platform)
 	if err != nil {

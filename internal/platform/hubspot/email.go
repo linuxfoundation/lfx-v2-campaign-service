@@ -107,8 +107,12 @@ func (c *Client) SearchEmails(ctx context.Context, query string) ([]Email, error
 		// default, so at limit=100 rich templates can blow past the client's response
 		// cap. The marketing-emails list endpoint uses REPEATED `includedProperties`
 		// entries (not a CRM-style comma-separated `properties` string). We only need
-		// name/subject/updatedAt for search + ordering (id always comes back).
-		q["includedProperties"] = []string{"name", "subject", "updatedAt"}
+		// name/subject/updatedAt for search + ordering (id always comes back), plus `state`
+		// since LFXV2-3197: the email picker surfaces it so a caller can see that a template
+		// is a draft before cloning it. It is REQUESTED rather than assumed — `Email.State`
+		// decodes to "" for any field not named here, so a consumer promised a lifecycle
+		// state would have received an empty string from every row.
+		q["includedProperties"] = []string{"name", "subject", "updatedAt", "state"}
 		if after != "" {
 			q.Set("after", after)
 		}

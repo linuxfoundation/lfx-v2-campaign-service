@@ -503,9 +503,12 @@ var MarketingEmail = Type("marketing-email", func() {
 	Attribute("id", String, "HubSpot marketing-email id, ready to pass as the campaign config's sourceEmailId", func() { Example("112233445566") })
 	Attribute("name", String, "Internal email name, as it appears in the HubSpot email list")
 	Attribute("subject", String, "Subject line")
-	// Returned so a picker can warn before cloning something archived rather than leaving
-	// the user to discover it after the clone lands in HubSpot.
-	Attribute("state", String, "HubSpot lifecycle state of the email (e.g. DRAFT, PUBLISHED, ARCHIVED)")
+	// Returned so a picker can show that a template is still a DRAFT before someone clones
+	// it. Deliberately not promising ARCHIVED: HubSpot models archival as a separate
+	// `archived` boolean rather than a lifecycle state, and this search does not request
+	// archived rows, so they are absent from the result entirely — an absence a `state`
+	// value could never express.
+	Attribute("state", String, "HubSpot lifecycle state of the email (e.g. DRAFT, PUBLISHED). Archived emails are not returned at all — archival is a separate flag in HubSpot, not a state.")
 	// Ordering is already applied server-side (most-recently-updated first). It is returned
 	// anyway because two templates routinely share a name, and the date is what tells them
 	// apart in a list.

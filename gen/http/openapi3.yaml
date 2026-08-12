@@ -9215,7 +9215,7 @@ components:
                     example: Exercitationem quam sunt aperiam sit sit fuga.
                 state:
                     type: string
-                    description: HubSpot lifecycle state of the email (e.g. DRAFT, PUBLISHED, ARCHIVED)
+                    description: HubSpot lifecycle state of the email (e.g. DRAFT, PUBLISHED). Archived emails are not returned at all — archival is a separate flag in HubSpot, not a state.
                     example: Adipisci maiores fugiat.
                 subject:
                     type: string

@@ -95,3 +95,27 @@ and `classifyDiscoveryError` maps `ErrConnectionNotUsable` to 400. The tests alr
 400, so the code was right and only the prose was wrong — which is the more dangerous ordering,
 since nothing fails. A status is chosen by the caller, not by the sentinel, and a comment that
 names one the function cannot produce sends an integrator to handle a case that never arrives.
+
+## Round 3: a promised field that never arrives
+
+The contract advertised `state` as "e.g. DRAFT, PUBLISHED, ARCHIVED" and the dispatcher comment
+said archived rows are returned so a picker can warn before cloning one. Both were wrong, in two
+different ways, and the wrongness was invisible from inside this change.
+
+**`state` was never requested.** `SearchEmails` restricts the response with
+`includedProperties`, and the list contained `name`, `subject`, `updatedAt` — not `state`.
+`Email.State` therefore decodes to `""` on every row. The field existed on the struct, the model,
+the design and the api-catalog row; only the wire request was missing it, so nothing failed and
+the unit test passed because the MOCK supplied a value the real client never would. Requesting it
+is the fix.
+
+**ARCHIVED was never a value it could hold.** HubSpot models archival as a separate `archived`
+boolean rather than a lifecycle state, and the walk does not ask for archived rows — so they are
+absent from the result entirely. A `state` value cannot express an absence, and the Meta-account
+analogy that motivated the promise ("known-bad rows are returned with the reason in the label")
+does not transfer: Meta returns the disabled account, HubSpot omits the archived email.
+
+Corrected in five places, because the claim had been restated in each: the design attribute
+description, the model comment, the dispatcher comment, `docs/api-catalog.md`, and this bundle's
+concept file. Restating a fact in five places is how a wrong one survives a review of any single
+place.

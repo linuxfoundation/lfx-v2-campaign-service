@@ -723,7 +723,7 @@ independent: HubSpot searches emails and has no ad accounts, and every ad platfo
 reverse. Folding them into one sentinel would make "this platform cannot do X" ambiguous about
 which X.
 
-**Archived and draft emails are returned, with their state.** Same reasoning as Meta's disabled
+**Draft emails are returned, with their state — archived ones are absent.** Same reasoning as Meta's disabled
 accounts: filtering the row the user is looking for answers "your portal has no such email"
 about an email sitting right there. The caller gets `state` and decides — including warning
 before a clone of something archived, which it cannot do about a row it never receives.

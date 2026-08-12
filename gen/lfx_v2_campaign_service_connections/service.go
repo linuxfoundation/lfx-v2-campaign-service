@@ -583,7 +583,9 @@ type MarketingEmail struct {
 	Name *string
 	// Subject line
 	Subject *string
-	// HubSpot lifecycle state of the email (e.g. DRAFT, PUBLISHED, ARCHIVED)
+	// HubSpot lifecycle state of the email (e.g. DRAFT, PUBLISHED). Archived
+	// emails are not returned at all — archival is a separate flag in HubSpot, not
+	// a state.
 	State *string
 	// Last-modified timestamp (ISO-8601)
 	UpdatedAt *string

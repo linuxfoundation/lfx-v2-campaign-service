@@ -2883,7 +2883,9 @@ type MarketingEmailResponseBody struct {
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 	// Subject line
 	Subject *string `form:"subject,omitempty" json:"subject,omitempty" xml:"subject,omitempty"`
-	// HubSpot lifecycle state of the email (e.g. DRAFT, PUBLISHED, ARCHIVED)
+	// HubSpot lifecycle state of the email (e.g. DRAFT, PUBLISHED). Archived
+	// emails are not returned at all — archival is a separate flag in HubSpot, not
+	// a state.
 	State *string `form:"state,omitempty" json:"state,omitempty" xml:"state,omitempty"`
 	// Last-modified timestamp (ISO-8601)
 	UpdatedAt *string `form:"updated_at,omitempty" json:"updated_at,omitempty" xml:"updated_at,omitempty"`

@@ -252,9 +252,12 @@ type MarketingEmail struct {
 	Name string
 	// Subject is the subject line.
 	Subject string
-	// State is HubSpot's lifecycle state (DRAFT, PUBLISHED, ARCHIVED, …). Carried so a
-	// picker can warn before cloning something archived, rather than leaving the user to
-	// discover it after the clone has already landed in their portal.
+	// State is HubSpot's lifecycle state (DRAFT, PUBLISHED, …). Carried so a picker can show
+	// that a template is a draft before someone clones it.
+	//
+	// NOT archived: HubSpot tracks archival as a separate `archived` boolean, and the search
+	// does not request archived rows, so they never appear in a result at all. A `state`
+	// value cannot express an absence.
 	State string
 	// UpdatedAt is the last-modified timestamp (ISO-8601). Results arrive ordered
 	// most-recently-updated first; this is carried anyway because two templates routinely

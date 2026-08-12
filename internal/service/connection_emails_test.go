@@ -74,8 +74,10 @@ func TestListHubspotEmails_ReturnsThePortalsEmails(t *testing.T) {
 	if len(result.Emails) != 2 {
 		t.Fatalf("expected 2 emails, got %d", len(result.Emails))
 	}
-	// State travels: a picker has to be able to warn before cloning an archived template,
-	// which is the whole reason it is on the wire rather than filtered server-side.
+	// State travels: a picker shows that a template is still a DRAFT before someone clones
+	// it. NOT archived — HubSpot tracks archival as a separate flag and the search does not
+	// request archived rows, so they never appear at all. The client must REQUEST `state` in
+	// includedProperties for this to be non-empty; it is not returned by default.
 	if result.Emails[1].State == nil || *result.Emails[1].State != "DRAFT" {
 		t.Errorf("second email state = %v, want DRAFT — the picker cannot warn about a state it never receives", result.Emails[1].State)
 	}
