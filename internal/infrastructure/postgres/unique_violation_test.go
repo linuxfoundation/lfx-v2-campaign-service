@@ -114,9 +114,11 @@ func TestIsUniqueViolationOn(t *testing.T) {
 // different mechanism: an `interface{ SQLState() string }` rather than a `*pgconn.PgError` type
 // assertion. Two mechanisms means two ways to regress, and only one of them had a test.
 //
-// The interface form is the interesting half. It matches anything exposing SQLState, so a driver
-// wrapper or a test double satisfies it without being a *pgconn.PgError — which is why the
-// non-pg case below uses a bare struct rather than a wrapped nil.
+// The interface form is the interesting half, and it needs a case that is NOT a *pgconn.PgError
+// to pin it. Every SQLSTATE-bearing case below used to be a pgconn error while the only non-pg
+// case was errors.New, which exposes no SQLState at all — so swapping the implementation to a
+// concrete *pgconn.PgError assertion would have left this test green, testing the comment rather
+// than the code. `sqlStateOnly` is the case that fails under that swap.
 func TestIsUniqueViolation(t *testing.T) {
 	tests := map[string]struct {
 		err  error
@@ -130,6 +132,11 @@ func TestIsUniqueViolation(t *testing.T) {
 			err:  &pgconn.PgError{Code: "23505", ConstraintName: "uq_something_else"},
 			want: true,
 		},
+		// The whole point of the interface form: a driver wrapper or a test double reports its
+		// SQLSTATE without being a *pgconn.PgError, and must still be recognised.
+		"a non-pgconn error exposing SQLState":   {err: sqlStateOnly("23505"), want: true},
+		"a non-pgconn error with another state":  {err: sqlStateOnly("23503"), want: false},
+		"a wrapped non-pgconn SQLState error":    {err: fmt.Errorf("insert: %w", sqlStateOnly("23505")), want: true},
 		"a different SQLSTATE":                   {err: &pgconn.PgError{Code: "23503"}, want: false},
 		"wrapped":                                {err: fmt.Errorf("insert: %w", &pgconn.PgError{Code: "23505"}), want: true},
 		"an error that is not a pg error at all": {err: errors.New("connection refused"), want: false},
@@ -144,3 +151,11 @@ func TestIsUniqueViolation(t *testing.T) {
 		})
 	}
 }
+
+// sqlStateOnly is an error that reports a SQLSTATE without being a *pgconn.PgError — the shape a
+// driver wrapper or a test double takes. It exists so the interface-based detection is pinned by
+// something a concrete type assertion could not satisfy.
+type sqlStateOnly string
+
+func (e sqlStateOnly) Error() string    { return "sqlstate " + string(e) }
+func (e sqlStateOnly) SQLState() string { return string(e) }

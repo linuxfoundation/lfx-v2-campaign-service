@@ -333,10 +333,14 @@ func TestAudienceLeaseMappingIgnoresOtherUniqueIndexes(t *testing.T) {
 	// separate `isUniqueViolationOn` call that a later edit can widen back on its own — so a
 	// test driving one of them proves nothing about the other two.
 	//
-	// They differ in how they reach the insert (a plain create, a create gated on the brief
-	// being approved, a build claim), which is why this drives the repository methods rather
-	// than the helper: the helper is already unit-tested, and what is under test here is that
-	// each SITE passes the index name.
+	// They differ in how they reach the uniqueness check — a plain create, a create gated on the
+	// brief being approved, and an UPDATE that moves an existing row across the lease predicate —
+	// which is why this drives the repository methods rather than the helper. The helper is
+	// already unit-tested; what is under test here is that each SITE passes the index name.
+	//
+	// The third is deliberately not an insert, which is why `seed` and `provoke` are separate
+	// callbacks below: a single insert-shaped callback could not express it, and an earlier
+	// version of this table silently covered two sites while claiming three.
 	for _, tc := range []struct {
 		name string
 		// seed puts a first row in place; provoke is the operation the probe must refuse.
