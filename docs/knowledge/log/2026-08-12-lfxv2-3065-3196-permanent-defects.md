@@ -65,8 +65,11 @@ the account, so an account cleared after creation must not block pausing.
 
 ## Verification
 
-All seven new tests are revert-verified — four in `brief_test.go`, two in `linkedin_test.go`, and
-one in `connection_defect_tagging_test.go`. The LinkedIn table is 2 entry points × 4 defects, and
+All nine new tests are revert-verified — six in `brief_test.go`, two in `linkedin_test.go`, and
+one in `connection_defect_tagging_test.go`. (The count was written at four-in-`brief_test.go` and
+went stale when the later attribution and redaction rounds added two more; re-derived from the
+diff with `git diff origin/main -- '*_test.go' | grep -c '^+func Test'`, which is the check this
+entry should have used the first time.) The LinkedIn table is 2 entry points × 4 defects, and
 stripping the sentinels from the helper fails 4 subtests — so it binds the tagging, not merely the
 presence of an error.
 

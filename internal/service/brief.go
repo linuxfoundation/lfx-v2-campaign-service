@@ -834,7 +834,7 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 				"project_id", credentialProject, "requested_by_project_id", p.ProjectID,
 				"brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform)
-			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign metrics could not be read"}
+			return nil, &briefs.InternalServerError{Code: "500", Message: "campaign metrics could not be read"}
 
 		case errors.Is(merr, domain.ErrAccountNotSelected):
 			// Split out from the general unusable-connection arm below, and placed ABOVE it,
