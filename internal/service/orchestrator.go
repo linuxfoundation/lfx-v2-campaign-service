@@ -1215,18 +1215,20 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// AUTHENTICATION failure carries domain.ErrCredentialDecryptionFailed. Only the
 	// row-is-provably-bad returns (no stored credentials, ErrCredentialsMalformed) are tagged.
 	//
-	// What the TOGGLE CALLER does with those three today is a single thing: nothing special.
-	// ToggleCampaignStatus's switch (internal/service/brief.go) does have several typed arms,
-	// but NONE of them matches these three: there is no ErrNotFound arm, no arm for a bare
-	// repository error, and no ErrCredentialDecryptionFailed arm. So all three untagged
-	// returns land in default, get logged, and return 503. Their distinct classifications are
-	// honoured by the read-only DISCOVERY handlers, not here. Do not read the sentinel names
-	// off this paragraph and assume this endpoint already answers 404 or 500; it does not.
+	// What the TOGGLE CALLER does with those three is no longer uniform, as of LFXV2-3065.
+	// ToggleCampaignStatus's switch (internal/service/brief.go) now matches two of them:
+	// ErrNotFound answers 404 (no connection row exists and the system fallback did not cover
+	// it — nothing to repair, so the caller is told to connect) and ErrCredentialDecryptionFailed
+	// answers 500 (the application's key no longer matches the stored blob, which is an
+	// operator's repair and not the caller's). GetCampaignMetrics classifies the same two
+	// identically, since both resolve through this same credsSource.
 	//
-	// That is a known rough edge rather than a considered choice: "this project has no
-	// connection configured" is permanent, and 503 invites a retry that cannot succeed. Adding
-	// the arm is a behaviour change with its own ticket (LFXV2-3065), not part of the
-	// classification fix this comment documents.
+	// Only the BARE REPOSITORY ERROR still lands in default and returns 503, and that one is
+	// correct there: a DB blip genuinely is transient, which is the answer the other two no
+	// longer share.
+	//
+	// The rough edge this paragraph used to describe — "permanent defects answered 503, which
+	// invites a retry that cannot succeed" — is the defect LFXV2-3065 closed.
 	//
 	// The manager-id check is the newest of the five and was for a while NOT reachable here:
 	// it sat inline in the discovery resolver, so a malformed stored value reached this path

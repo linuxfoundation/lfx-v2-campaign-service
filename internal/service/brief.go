@@ -795,6 +795,33 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "reason", unusableConnectionReason(merr))
 			return nil, &briefs.InternalServerError{Code: "500", Message: "campaign metrics could not be read"}
+		case errors.Is(merr, domain.ErrNotFound):
+			// The metrics half of LFXV2-3065. The toggle's arm carries the full reasoning;
+			// repeated here only in summary because the two switches are read separately and a
+			// bare "see the toggle" would send someone four hundred lines away.
+			//
+			// No connection row for (project, provider), and no shared system account either.
+			// PERMANENT, so not the 503 default: nothing exists to retry against, and the fix
+			// is to connect the platform rather than to wait.
+			//
+			// ABOVE the general ErrConnectionNotUsable arm for the same reason the
+			// ErrAccountNotSelected arm above is: a broad match placed first would swallow it.
+			slog.WarnContext(ctx, "campaign metrics read blocked: no connection configured for this project and provider",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform)
+			return nil, &briefs.NotFoundError{Code: "404", Message: "this project has no connection for the campaign's channel; connect it before reading metrics"}
+		case errors.Is(merr, domain.ErrCredentialDecryptionFailed):
+			// Also the metrics half of LFXV2-3065, and 500 for the same reason: a GCM
+			// authentication failure means the application's encryption key no longer matches
+			// the stored blob, which is not a scope the caller owns and no reconnect repairs.
+			//
+			// safeErrSummary, for the reason spelled out on the toggle's arm: the sentinel is
+			// safe but the CHAIN carries the encryptor's own error, which is unconstrained.
+			slog.ErrorContext(ctx, "campaign metrics read blocked: stored credentials could not be decrypted (key mismatch or corrupted row)",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "error", safeErrSummary(merr))
+			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign metrics could not be read"}
+
 		case errors.Is(merr, domain.ErrAccountNotSelected):
 			// Split out from the general unusable-connection arm below, and placed ABOVE it,
 			// because ErrAccountNotSelected is always wrapped alongside ErrConnectionNotUsable
@@ -1175,16 +1202,14 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 				"platform", existing.Platform, "status", p.Status, "reason", unusableConnectionReason(terr))
 			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection has no ad account selected — save an ad account id on the connection before changing campaign status"}
 		case errors.Is(terr, domain.ErrNotFound):
-			// ABOVE the general ErrConnectionNotUsable arm, and that placement is the same
-			// point the ErrAccountNotSelected arm above already makes: these sentinels can be
-			// wrapped ALONGSIDE the general one, and a broad match placed first would swallow
-			// them — answering 409 "repair this project's connection" for a project that has
+			// ABOVE the general ErrConnectionNotUsable arm, but for a WEAKER reason than the
+			// ErrAccountNotSelected arm above, and the difference is worth not blurring.
+			// That sentinel is ALWAYS wrapped alongside the general one, so its ordering is
+			// load-bearing today. ErrNotFound and ErrCredentialDecryptionFailed are wrapped
+			// ALONE by `credsSource.resolve`, so ordering them first is DEFENSIVE: it costs
+			// nothing now and means a future caller that wraps both fails loudly rather than
+			// silently answering 409 "repair this project's connection" to a project that has
 			// no connection to repair.
-			//
-			// `credsSource.resolve` happens to wrap ErrNotFound alone today, so the order is
-			// not load-bearing at this instant. It is written this way because that is an
-			// accident of the caller, not a property of the sentinel, and a future arm that
-			// tags both would fail silently rather than loudly.
 			//
 			// No connection row for (project, provider). PERMANENT: nothing to retry, because
 			// nothing exists to retry against. It reached the default arm's 503 before, which
@@ -1201,23 +1226,24 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 				"platform", existing.Platform, "status", p.Status)
 			return nil, &briefs.NotFoundError{Code: "404", Message: "this project has no connection for the campaign's ad platform; connect the platform before changing campaign status"}
 		case errors.Is(terr, domain.ErrCredentialDecryptionFailed):
-			// GCM authentication failed on the stored blob: a wrong or rotated application key,
-			// or a corrupted row. Also permanent, and NOT the caller's to fix — no amount of
-			// reconnecting repairs a deployment key mismatch, and the project admin cannot see
-			// the key at all.
+			// GCM authentication failed on the stored blob: a wrong or rotated
+			// `CREDENTIAL_ENCRYPTION_KEY`, or a corrupted row. Permanent, and reconnecting the
+			// ad platform repairs neither.
 			//
-			// 500, not 409, and the distinction is the same one the system-connection arm above
-			// draws: a 409 tells the caller to repair THEIR connection, and this is not a scope
-			// they own. A GCM authentication failure means the application's encryption key no
-			// longer matches the blob — a wrong or rotated `CREDENTIAL_ENCRYPTION_KEY`, or a
-			// corrupted row. Reconnecting the ad platform does not fix either, so sending the
-			// project admin to do that is sending them somewhere they cannot succeed.
+			// 500, not 409, and the distinction is the one the system-connection arm above
+			// draws: a 409 tells the caller to repair THEIR connection, which is not a scope
+			// they own here — the project admin cannot see the key at all, so sending them to
+			// reconnect is sending them somewhere they cannot succeed.
 			//
-			// Safe to log the error: `ErrCredentialDecryptionFailed` is constructed from
-			// ciphertext and key material only (see its declaration), never from plaintext.
+			// safeErrSummary, like every sibling arm. An earlier revision logged `terr` raw on
+			// the reasoning that `ErrCredentialDecryptionFailed` is built from ciphertext and
+			// key material only — true of the SENTINEL, but what is logged here is the whole
+			// chain, and `resolveConn` wraps the encryptor's own `derr` alongside it. That
+			// sentinel is documented as the DEFAULT for an unrecognised decrypt failure, so
+			// `derr` is arbitrary third-party text this package does not constrain.
 			slog.ErrorContext(ctx, "campaign status toggle blocked: stored credentials could not be decrypted (key mismatch or corrupted row)",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
-				"platform", existing.Platform, "status", p.Status, "error", terr)
+				"platform", existing.Platform, "status", p.Status, "error", safeErrSummary(terr))
 			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign status could not be changed"}
 		case errors.Is(terr, domain.ErrConnectionNotUsable):
 			// Credential resolution refused the connection BEFORE the platform was contacted,

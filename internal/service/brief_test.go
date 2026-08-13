@@ -3639,6 +3639,71 @@ func TestGetCampaignMetrics_OtherUnusableCauseKeepsTheGeneralMessage(t *testing.
 // resolve() wraps them alone today, so this pins an ORDERING that is currently un-exercised by
 // the other tests: it drives an error carrying BOTH sentinels, which only the arm order
 // distinguishes.
+// The METRICS half of the same classification. Both switches resolve credentials through the
+// same credsSource, so the identical causes are reachable on both — and improving one while
+// leaving its sibling on 503 would mean the same broken connection answered 404 on a toggle and
+// "retry later" on a metrics read, which is worse than either answer alone because it makes the
+// status code look arbitrary.
+func TestGetCampaignMetrics_PermanentConnectionDefectsAreNot503(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		assert func(*testing.T, error)
+	}{
+		{
+			name: "no connection row is 404",
+			err:  fmt.Errorf("no google-ads connection configured for project cncf: %w", domain.ErrNotFound),
+			assert: func(t *testing.T, err error) {
+				var nf *briefs.NotFoundError
+				if !errors.As(err, &nf) {
+					t.Fatalf("want 404, got %T: %v", err, err)
+				}
+			},
+		},
+		{
+			name: "undecryptable credentials are 500",
+			err:  fmt.Errorf("decrypt google-ads credentials: %w", domain.ErrCredentialDecryptionFailed),
+			assert: func(t *testing.T, err error) {
+				var ise *briefs.InternalServerError
+				if !errors.As(err, &ise) {
+					t.Fatalf("want 500, got %T: %v", err, err)
+				}
+			},
+		},
+		{
+			// Order, same as the toggle: both sentinels CAN be wrapped together, and the
+			// general arm placed first would swallow the specific one.
+			name: "not found wins over the general unusable arm",
+			err:  fmt.Errorf("no connection: %w: %w", domain.ErrConnectionNotUsable, domain.ErrNotFound),
+			assert: func(t *testing.T, err error) {
+				var nf *briefs.NotFoundError
+				if !errors.As(err, &nf) {
+					t.Fatalf("want 404, got %T: %v — the general arm swallowed it", err, err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			camp := &model.Campaign{
+				ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+				PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+			}
+			s := newMetricsService(camp, &metricsOnlyDispatcher{err: tc.err})
+			window := "last_30_days"
+			_, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+				ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", Window: &window,
+			})
+
+			// The shared property first: none of these may be the retry-me answer.
+			var unavailable *briefs.ConnServiceUnavailableError
+			if errors.As(err, &unavailable) {
+				t.Fatalf("%s is permanent; got a 503 telling the caller to retry: %v", tc.name, err)
+			}
+			tc.assert(t, err)
+		})
+	}
+}
+
 func TestToggleCampaignStatus_SpecificArmsWinOverTheGeneralUnusableArm(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
