@@ -681,7 +681,7 @@ func TestLinkedIn_ReadMetrics_HappyPathBuildsURNsAndForwardsID(t *testing.T) {
 		gotQuery = r.URL.RawQuery
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"elements":[{"impressions":1000,"clicks":40,"costInUsd":"25.50"}],"metadata":{}}`)
+		_, _ = io.WriteString(w, `{"elements":[{"impressions":1000,"clicks":40,"costInUsd":"25.50"}]}`)
 	}))
 	defer srv.Close()
 

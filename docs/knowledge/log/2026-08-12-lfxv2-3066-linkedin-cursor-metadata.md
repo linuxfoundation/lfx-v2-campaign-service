@@ -2,7 +2,7 @@
 
 **Update** — `internal/platform/linkedin/client.go` (LFXV2-3066). `findMatch` and
 `listCreativeURNs` now reject a response whose `metadata` block is absent, instead of reading it
-as an exhausted cursor. 42 single-page fixtures across four test files gained `"metadata":{}`.
+as an exhausted cursor. 40 single-page fixtures across three test files gained `"metadata":{}`.
 
 For `findMatch` that rejection applies to a **no-match page**: the guard sits after the element
 scan, so a page carrying the match returns its id without consulting the envelope. A hit is not
@@ -20,7 +20,7 @@ LFXV2-3063 made `linkedInMetadata` a pointer and made `ListAdAccounts` reject ni
 exposure lived in two older walks, and the log for that round said so plainly: closing them meant
 touching roughly fifty fixtures, which did not belong in a review round on ad-account discovery.
 
-So this is not a newly discovered defect. It is the deferred half, and the estimate was the right order of magnitude: 42
+So this is not a newly discovered defect. It is the deferred half, and the estimate was the right order of magnitude: 40
 against "roughly fifty". Whether that was a counted estimate or a good guess is not recorded, so
 no credit is claimed for it here — what matters is that the deferral named its own cost and the
 cost turned out to be the one named.
@@ -72,7 +72,9 @@ not, and the reasons differ enough to be worth recording rather than re-derived 
   resp.Paging.Next.After == ""` (`email.go`).
 
 So there is no fourth site to fix. LinkedIn was the only client where an absent envelope and an
-exhausted cursor decoded to the same value, and all three of its walks now reject it.
+exhausted cursor decoded to the same value, and none of its three walks will now read a missing
+envelope as exhaustion. (`findMatch` refuses on a no-match page; a page carrying the match still
+resolves, because a hit is not an absence.)
 
 ## Two things checked and deliberately left alone
 
@@ -98,7 +100,7 @@ Both guards are revert-verified: removing the nil check makes
 INTERMEDIATE page — page one advertises a cursor, page two drops its envelope — because a
 first-page-only test would not distinguish this bug from an empty result set.
 
-The full service suite passes; `internal/dispatch` needed 7 of the 42 fixtures, which is the
+The full service suite passes; `internal/dispatch` needed 6 of the 40 fixtures, which is the
 reminder that this client has callers whose own fixtures encode the same assumption.
 
 The count moved twice, and both moves were sweep artifacts rather than scope changes. The first
@@ -110,26 +112,39 @@ Lesson unchanged and now triply earned: a regex over JSON string literals does n
 envelope from an element, and a count derived from one is a claim that needs re-deriving every
 time the diff moves.
 
-It moved twice more, and the second of those was self-inflicted in an instructive way: a revision
-of this entry replaced the hand count with a `grep` and published the command as PROOF — but the
-command counted added LINES containing `"metadata"`, which is not the same set as fixtures. It
-swept up two `strings.Contains(err.Error(), "metadata")` assertions added by this very PR and
-reported 45. A measurement offered as evidence has to be checked against what it actually
-measures, not merely re-run.
+It moved three times more, and the last two were self-inflicted in instructive ways.
+
+First, a revision of this entry replaced the hand count with a `grep` and published the command
+as PROOF — but the command counted added LINES containing `"metadata"`, which is not the same set
+as fixtures. It swept up two `strings.Contains(err.Error(), "metadata")` assertions added by this
+very PR and reported 45. A measurement offered as evidence has to be checked against what it
+actually measures, not merely re-run.
+
+Second, and more substantive: two of the patched fixtures were on the **Ad Analytics** path,
+which does not go through `doRequest` at all and decodes into `AdAnalyticsResponse` — a type
+whose only field is `Elements`. The added key was silently ignored, so those two edits changed
+nothing and counted an unrelated metrics test as part of a cursor migration. Reverting them
+leaves every test green, which is the proof they were inert. `metrics_test.go` drops out of the
+diff entirely.
+
+This is the same trap as the envelope/element mix-up one level up: **a sweep keyed on JSON shape
+does not know which Go type will decode it.** Two fixtures can look identical and be read by
+different structs. Check the decode target, not the literal.
 
 The honest breakdown, with each number saying what it counts:
 
-- **42 pre-existing response fixtures gained `"metadata":{}"`.** This is the migration's real
+- **40 pre-existing response fixtures gained `"metadata":{}`.** This is the migration's real
   size and the number the rest of this entry uses.
-- **43 added lines carry a metadata fixture** — the 42 above plus one genuinely NEW page-1
+- **41 added lines carry a metadata fixture** — the 40 above plus one genuinely NEW page-1
   fixture (`"nextPageToken":"cursor-2"` in `client_test.go`), which is a fixture the PR adds
   rather than one it repairs.
 - Two further added lines match `"metadata"` but are error assertions, and two more are prose
   comments quoting a JSON snippet. Neither is a fixture.
 
 Per file, pre-existing fixtures repaired: `client_findings_test.go` 29, `dispatch/linkedin_test.go`
-7, `client_test.go` 5, `metrics_test.go` 1.
+6, `client_test.go` 5.
 
 If the diff moves again, re-derive by reading the `-`/`+` pairs — a fixture REPAIRED has a `-`
-counterpart, a fixture ADDED does not, and an assertion has neither. No single grep separates
-those three, which is the whole lesson.
+counterpart, a fixture ADDED does not, and an assertion has neither — and then check that each
+one is decoded by a type that HAS a metadata field. No single grep separates those four
+categories, which is the whole lesson.

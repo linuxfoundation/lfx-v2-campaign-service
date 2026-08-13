@@ -1308,7 +1308,7 @@ func TestValidateMetricsWindowMatchesDateRangeForWindow(t *testing.T) {
 func TestClicksWithZeroImpressionsIsRejected(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"elements":[{"clicks":5,"costInUsd":"1.00"}],"metadata":{}}`)
+		_, _ = fmt.Fprint(w, `{"elements":[{"clicks":5,"costInUsd":"1.00"}]}`)
 	}))
 	defer server.Close()
 
