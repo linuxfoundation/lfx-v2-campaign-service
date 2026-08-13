@@ -3717,6 +3717,78 @@ func TestGetCampaignMetrics_PermanentConnectionDefectsAreNot503(t *testing.T) {
 	}
 }
 
+// TestGetCampaignMetrics_DecryptFailureLogsNoErrorText is the metrics twin of
+// TestToggleCampaignStatus_DecryptFailureLogsNoErrorText.
+//
+// The two decrypt arms are separate switches that happen to log the same way, so the
+// non-disclosure property holds on each of them independently — the toggle test cannot fail
+// for a regression introduced here. Pinning only the returned TYPE on this path, as
+// TestGetCampaignMetrics_PermanentConnectionDefectsAreNot503 does, would leave a metrics arm
+// that reverted to logging `merr` green.
+func TestGetCampaignMetrics_DecryptFailureLogsNoErrorText(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	// A hostile encryptor error, standing in for an implementation that quotes what it failed
+	// on. Nothing resembling this may reach the log record.
+	const leaked = "SUPERSECRETCIPHERTEXTBYTES"
+	disp := &metricsOnlyDispatcher{err: fmt.Errorf("%w: aesgcm: open failed on %s",
+		domain.ErrCredentialDecryptionFailed, leaked)}
+	s := newMetricsService(camp, disp)
+	window := "last_30_days"
+	_, _ = s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", Window: &window,
+	})
+
+	if logged := buf.String(); strings.Contains(logged, leaked) {
+		t.Errorf("the decryptor's error text reached the metrics log, so an Encryptor that "+
+			"quotes ciphertext or key material would disclose it; safeErrSummary would NOT "+
+			"prevent this — it normalises and truncates, it does not redact.\nlog: %s", logged)
+	}
+}
+
+// TestGetCampaignMetrics_SystemRowDecryptFailureIsAttributedToTheSystemRow is the metrics twin
+// of TestToggleCampaignStatus_SystemRowDecryptFailureIsAttributedToTheSystemRow, and pins the
+// same attribution on the other switch: one corrupt LF system row is reachable from every
+// project that falls back to it, so blaming the REQUESTER would read as a deployment-wide key
+// problem rather than the single row it is.
+func TestGetCampaignMetrics_SystemRowDecryptFailureIsAttributedToTheSystemRow(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	// The shape credsSource.resolve produces for a fallback failure: the origin sentinel wraps
+	// the decrypt sentinel.
+	disp := &metricsOnlyDispatcher{err: fmt.Errorf("%w: decrypt google-ads credentials: %w",
+		domain.ErrSystemConnectionOrigin, domain.ErrCredentialDecryptionFailed)}
+	s := newMetricsService(camp, disp)
+	window := "last_30_days"
+	_, _ = s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", Window: &window,
+	})
+
+	logged := buf.String()
+	if !strings.Contains(logged, "project_id="+model.SystemProjectID) {
+		t.Errorf("the failing row is the LF system row, but the metrics log blames the caller's "+
+			"project; one corrupt system row would look like unrelated per-project failures."+
+			"\nlog: %s", logged)
+	}
+	if !strings.Contains(logged, "requested_by_project_id=cncf") {
+		t.Errorf("the requester must stay visible alongside the failing row.\nlog: %s", logged)
+	}
+}
+
 func TestToggleCampaignStatus_SpecificArmsWinOverTheGeneralUnusableArm(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
