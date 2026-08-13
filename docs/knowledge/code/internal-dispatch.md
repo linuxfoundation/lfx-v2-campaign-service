@@ -153,8 +153,8 @@ Two properties of this pattern are easy to lose and worth stating outright:
 - **The tagging belongs in the SHARED resolve/validate helper, not at each call site.** Where an
   adapter HAS one — Google Ads, Reddit, X/Twitter and Microsoft Ads each route Dispatch,
   `ToggleStatus` and (where wired) `ReadMetrics` through a single helper — tagging it once covers
-  every path. Meta gained one in LFXV2-3061 (`resolveMetaCredentials`); LinkedIn still has none,
-  see below. Tagging per-path is how Google Ads ended up correct on discovery while its other
+  every path. Meta gained one in LFXV2-3061 (`resolveMetaCredentials`) and
+  LinkedIn in LFXV2-3196 (`resolveLinkedInCredentials`), so every ad adapter now has one. Tagging per-path is how Google Ads ended up correct on discovery while its other
   callers were still bare, before the helper absorbed it.
 
 Which adapters honour it today:
@@ -166,7 +166,7 @@ Which adapters honour it today:
 | X/Twitter | yes | `validateTwitterConnection` — dispatch, toggle, metrics |
 | Microsoft Ads | yes | `validateMicrosoftConnection` — dispatch, toggle (no metrics; async Reporting API) |
 | Meta | yes | `resolveMetaCredentials` — dispatch, toggle, metrics (LFXV2-3061) |
-| LinkedIn | **no** | still bare, still 503 — LFXV2-3069 part 2 |
+| LinkedIn | yes | `resolveLinkedInCredentials` — toggle, metrics (LFXV2-3196); Dispatch keeps its own inline checks, which wrap in `notCreated()` to release the claim |
 | HubSpot (email) | **n/a** | out of scope — see below |
 
 HubSpot is listed for completeness, not as a gap. Its checks in `internal/dispatch/hubspot.go`
@@ -178,10 +178,19 @@ between a 409 and a 503 the way the six above are. Tagging them would change wha
 result says, which is worth doing, but it is a separate question from the status mapping this
 section is about — do not read the empty cell as work queued behind LFXV2-3069 part 2.
 
-LinkedIn still inlines `d.creds.resolve(...)` at more than one call site with no shared helper,
-so tagging it is an extraction rather than an annotation. Meta was in the same state until
-LFXV2-3061 performed exactly that extraction, which is what the entry below describes; until
-LinkedIn's lands, its defects continue to answer 503.
+LinkedIn was the last adapter still inlining `d.creds.resolve(...)` at more than one call site,
+so tagging it was an extraction rather than an annotation — Meta was in the same state until
+LFXV2-3061 performed exactly that extraction. LFXV2-3196 did the same for LinkedIn's toggle and
+metrics paths.
+
+Its `Dispatch` deliberately keeps its own inline checks: they wrap in `notCreated()` to release
+the dispatch claim, which is a different contract from returning a classified error to a
+synchronous handler, and folding the two would mean the helper had to know which caller it had.
+
+One asymmetry worth carrying: LinkedIn emits `account_not_selected` on toggle and metrics where
+Meta does not. LinkedIn's client is constructed with a `RuntimeConfig` naming the account, so an
+empty account id cannot reach the platform at all; Meta targets the campaign node by platform id
+and never reads the account, so an account cleared after creation must not block pausing.
 
 The full rationale for the classification — including why a decrypt failure splits into two
 sentinels, and why an inactive row is refused rather than treated as "pending" — lives in the
@@ -274,8 +283,11 @@ range — `today`, `last_7_days`, `last_30_days`, `this_month`, `last_month`. `y
 translates to `ErrMetricsWindowUnsupported`. That order is load-bearing rather than stylistic:
 an unsupported window is a permanent 400 whatever state the connection is in, but resolving
 credentials first makes a project with an inactive or incomplete connection fail with a
-connection error that `BriefService` maps to 503 — telling the caller to retry a request that
-can never succeed. `dateRangeForWindow` calls the same validator first, so the two cannot drift.
+connection error, reported as something other than the window defect the caller actually has.
+(Before LFXV2-3196 that error was untagged and `BriefService` mapped it to 503 — telling the
+caller to retry a request that can never succeed. `resolveLinkedInCredentials` now tags it, so
+the same states answer 409 for a project-owned row and 500 for an unusable LF system fallback;
+the ordering argument is unchanged, since neither answer is the window's 400.) `dateRangeForWindow` calls the same validator first, so the two cannot drift.
 Spend (`costInUsd`, decimal USD) is converted to
 micro-currency (×1e6, rounded rather than truncated) after a `maxCostDecimalLen` (40-byte) bound
 — the 10 MiB response cap does not bound a single decimal, and `big.Rat` parsing/scaling is
@@ -710,12 +722,20 @@ on the `domain.Encryptor` PORT and never import the implementation; the port's d
 wrapping obligation, and `crypto`'s `ErrCiphertextTooShort` / `ErrDecryptionFailed` each wrap their
 domain sentinel so `errors.Is` carries the classification across the layer without inverting the
 dependency. Note the decrypt branches wrap BOTH a sentinel and the decrypt error (`%w: %w`), and
-the service layer never returns that cause to a caller — but whether it LOGS it depends on which
-sentinel the branch carried. Authenticated-decryption failure (`ErrCredentialDecryptionFailed` →
-500) logs the cause: that error is constructed by the encryptor from ciphertext and key material
-only. Malformed ciphertext reaches `ErrConnectionNotUsable` → 400, whose handler deliberately
-suppresses the cause and logs `reason=credential_blob_malformed` alone, because the conditions on
-that arm include one detected by decoding the DECRYPTED blob.
+the service layer never returns that cause to a caller — but whether it LOGS it is a property of
+the HANDLER, not of the resolver. On the campaign toggle and metrics handlers, as of LFXV2-3065,
+neither arm logs it. Authenticated-decryption failure (`ErrCredentialDecryptionFailed` → 500)
+previously logged the cause, on the reasoning that the error is constructed by the encryptor from
+ciphertext and key material only; that holds for the SENTINEL, but the whole chain is what reaches
+the log and `domain.Encryptor` is a PORT whose implementations may quote the ciphertext or key
+material they failed on. Malformed ciphertext reaches `ErrConnectionNotUsable`, which these two
+handlers answer with 409 (account discovery classifies the same sentinel as 400 for its own
+caller); that arm has always suppressed the cause and logs `reason=credential_blob_malformed`
+alone, because the conditions on it include one detected by decoding the DECRYPTED blob. Those two handlers
+are pinned by `Test{ToggleCampaignStatus,GetCampaignMetrics}_DecryptFailureLogsNoErrorText`.
+Account discovery (`internal/service/connection.go`) still logs the full cause on its 500 arm and
+is not covered by those tests, so this is a per-handler property rather than a service-wide
+guarantee — see `internal-service.md`.
 
 ### HubSpot: email search, not account discovery
 

@@ -795,6 +795,47 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "reason", unusableConnectionReason(merr))
 			return nil, &briefs.InternalServerError{Code: "500", Message: "campaign metrics could not be read"}
+		case errors.Is(merr, domain.ErrNotFound):
+			// The metrics half of LFXV2-3065. The toggle's arm carries the full reasoning;
+			// repeated here only in summary because the two switches are read separately and a
+			// bare "see the toggle" would send someone four hundred lines away.
+			//
+			// No connection row for (project, provider), and no shared system account either.
+			// PERMANENT, so not the 503 default: nothing exists to retry against, and the fix
+			// is to connect the platform rather than to wait.
+			//
+			// ABOVE the general ErrConnectionNotUsable arm for the same reason the
+			// ErrAccountNotSelected arm above is: a broad match placed first would swallow it.
+			slog.WarnContext(ctx, "campaign metrics read blocked: no connection configured for this project and provider",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform)
+			return nil, &briefs.NotFoundError{Code: "404", Message: "this project has no connection for the campaign's channel; connect it before reading metrics"}
+		case errors.Is(merr, domain.ErrCredentialDecryptionFailed):
+			// Also the metrics half of LFXV2-3065, and 500 for the same reason given on the
+			// toggle's arm: re-saving credentials repairs a corrupted row, but a wrong or
+			// rotated key is an operator's repair, and GCM cannot tell the two apart from
+			// here — so this arm must answer for the worse one.
+			// Attributed to the row that failed rather than the requester, for the reason
+			// given on the toggle's arm: a corrupt LF system row is one row, and logging the
+			// caller's project would scatter it across every project that fell back to it.
+			credentialProject := p.ProjectID
+			if errors.Is(merr, domain.ErrSystemConnectionOrigin) {
+				credentialProject = model.SystemProjectID
+			}
+			// NO error text on this arm, unlike its siblings. safeErrSummary normalises
+			// non-graphic runes and truncates; it does NOT redact, and the chain here ends in
+			// the Encryptor's own error. `domain.Encryptor` is an interface, so what that
+			// error contains is not this package's to guarantee — an implementation is free
+			// to quote the ciphertext or key material it failed on. The classification is
+			// already complete without it: this arm fires only for a GCM authentication
+			// failure, and the row and requester are named above, which is the whole
+			// diagnosis a reader can act on.
+			slog.ErrorContext(ctx, "campaign metrics read blocked: stored credentials could not be decrypted (key mismatch or corrupted row)",
+				"project_id", credentialProject, "requested_by_project_id", p.ProjectID,
+				"brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform)
+			return nil, &briefs.InternalServerError{Code: "500", Message: "campaign metrics could not be read"}
+
 		case errors.Is(merr, domain.ErrAccountNotSelected):
 			// Split out from the general unusable-connection arm below, and placed ABOVE it,
 			// because ErrAccountNotSelected is always wrapped alongside ErrConnectionNotUsable
@@ -808,14 +849,17 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			//
 			// The message names no accounts endpoint, even though two now exist
 			// (design/connection.go: list-google-ads-accounts and list-meta-ads-accounts).
-			// Naming one would mean naming the RIGHT one per provider, and the providers that
-			// can actually reach this arm — Google Ads, Microsoft, Reddit, Twitter, the four
-			// whose ToggleStatus/ReadMetrics credential resolution tags the sentinel — are
-			// mostly not the two with discovery routes. Meta, which has a route, cannot reach
-			// this arm at all: its toggle and metrics reads address the campaign node by id
-			// and never require an account. So a per-provider remedy string would be three
-			// parts dead wording for one part correct, and getting it wrong sends an operator
-			// to a route that does not exist, which is a worse remedy than none. Saving the id
+			// Naming one would mean naming the RIGHT one per provider, and the set that can
+			// reach this arm — every provider whose ToggleStatus/ReadMetrics credential
+			// resolution tags ErrAccountNotSelected, which is most of them and grows as
+			// adapters adopt the shared resolver — largely does not overlap the two with
+			// discovery routes. (Meta has a route and cannot reach this arm at all: its
+			// toggle and metrics reads address the campaign node by id and never require an
+			// account.) Grep the sentinel in internal/dispatch for the current set rather
+			// than trusting a list here; an earlier revision enumerated four providers and
+			// went stale the moment LinkedIn adopted the helper. So a per-provider remedy
+			// string would be mostly dead wording, and getting it wrong sends an operator to
+			// a route that does not exist, which is a worse remedy than none. Saving the id
 			// directly works on every provider, so that is what it says.
 			slog.WarnContext(ctx, "campaign metrics read blocked: no ad account selected on the project's connection",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
@@ -1174,6 +1218,74 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "status", p.Status, "reason", unusableConnectionReason(terr))
 			return nil, &briefs.ConflictError{Code: "409", Message: "this project's ad-platform connection has no ad account selected — save an ad account id on the connection before changing campaign status"}
+		case errors.Is(terr, domain.ErrNotFound):
+			// ABOVE the general ErrConnectionNotUsable arm, but for a WEAKER reason than the
+			// ErrAccountNotSelected arm above, and the difference is worth not blurring.
+			// That sentinel is ALWAYS wrapped alongside the general one, so its ordering is
+			// load-bearing today. ErrNotFound and ErrCredentialDecryptionFailed are wrapped
+			// ALONE by `credsSource.resolve`, so ordering them first is DEFENSIVE: it costs
+			// nothing now and means a future caller that wraps both fails loudly rather than
+			// silently answering 409 "repair this project's connection" to a project that has
+			// no connection to repair.
+			//
+			// No connection row for (project, provider). PERMANENT: nothing to retry, because
+			// nothing exists to retry against. It reached the default arm's 503 before, which
+			// invites a retry that can never succeed — the fix is a connection, not a wait.
+			//
+			// 404 rather than 409: 409 is this endpoint's "your connection exists but is not
+			// usable" answer (the ErrConnectionNotUsable arm above), and conflating "repair it"
+			// with "create it" sends an operator to edit a row that is not there.
+			//
+			// `credsSource.resolve` reaches this after ALSO missing the shared system account,
+			// so by here neither a project connection nor the LF fallback exists.
+			slog.WarnContext(ctx, "campaign status toggle blocked: no connection configured for this project and provider",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "status", p.Status)
+			return nil, &briefs.NotFoundError{Code: "404", Message: "this project has no connection for the campaign's ad platform; connect the platform before changing campaign status"}
+		case errors.Is(terr, domain.ErrCredentialDecryptionFailed):
+			// GCM authentication failed on the stored blob: a wrong or rotated
+			// `CREDENTIAL_ENCRYPTION_KEY`, or a corrupted row.
+			//
+			// Re-saving credentials DOES repair the corrupted-row case — setCredential
+			// encrypts fresh plaintext and never reads the old ciphertext — but a wrong or
+			// rotated key is an operator's repair and no reconnect touches it. GCM cannot
+			// tell the two apart from here (both surface as an authentication failure), so
+			// this arm must answer for the worse one.
+			//
+			// 500, not 409, and the distinction is the one the system-connection arm above
+			// draws: a 409 tells the caller to repair THEIR connection, which is not a scope
+			// they own here — the project admin cannot see the key at all, so sending them to
+			// reconnect is sending them somewhere they cannot succeed.
+			//
+			// This arm logs NO error text, and it is the one place in this switch that does
+			// not. Two earlier revisions got this wrong in opposite directions: the first
+			// logged `terr` raw, reasoning that `ErrCredentialDecryptionFailed` is built from
+			// ciphertext and key material only — true of the SENTINEL, but what reaches the
+			// log is the whole chain, and `resolveConn` wraps the encryptor's own `derr`
+			// alongside it. The second reached for `safeErrSummary`, which does not solve it:
+			// that helper replaces non-graphic runes and truncates to 200, so it makes
+			// arbitrary text SAFE TO PRINT, not safe to disclose. `domain.Encryptor` is an
+			// interface and the sentinel is documented as the DEFAULT for an unrecognised
+			// decrypt failure, so `derr` is third-party text this package cannot constrain.
+			// Dropping it costs no diagnosis: the classification is decided, and the failing
+			// row and the requester are both named below.
+			// Attribute the failure to the row that FAILED, not to whoever asked. A project
+			// with no connection of its own falls back to the LF system row, so one corrupt
+			// system row would otherwise surface as unrelated failures scattered across every
+			// project that fell back to it — hiding the single-row cause behind what looks
+			// like a deployment-wide key problem. Same shape as connection.go's decrypt arm.
+			credentialProject := p.ProjectID
+			if errors.Is(terr, domain.ErrSystemConnectionOrigin) {
+				credentialProject = model.SystemProjectID
+			}
+			// No error text, for the reason given on the metrics arm: safeErrSummary is a
+			// normaliser, not a redactor, and this chain ends in the Encryptor interface's
+			// own error.
+			slog.ErrorContext(ctx, "campaign status toggle blocked: stored credentials could not be decrypted (key mismatch or corrupted row)",
+				"project_id", credentialProject, "requested_by_project_id", p.ProjectID,
+				"brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "status", p.Status)
+			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign status could not be changed"}
 		case errors.Is(terr, domain.ErrConnectionNotUsable):
 			// Credential resolution refused the connection BEFORE the platform was contacted,
 			// so — like the branches above — nothing changed upstream and this is decidable
@@ -1217,9 +1329,11 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			campaignRepo.ReleaseCampaignLockAfterCooldown(lockToken, unconfirmedLockCooldown)
 			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the campaign status change is unconfirmed — it may or may not have been applied on the ad platform; verify in the platform before retrying"}
 		default:
-			// A DEFINITE platform-call failure (4xx) or the dispatcher's cred resolution
-			// failing: the ad platform was not updated. Log the underlying error (the client
-			// gets only a sanitized message) so an operator has a diagnostic record, then 503.
+			// A DEFINITE platform-call failure (4xx), or a repository error while loading the
+			// connection: the ad platform was not updated. A bare repo failure (DB down) IS
+			// genuinely transient, which is why it keeps the 503 the two arms above no longer
+			// share. Log the underlying error (the client gets only a sanitized message) so an
+			// operator has a diagnostic record.
 			slog.WarnContext(ctx, "campaign status toggle failed on the ad platform",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "platform_campaign_id", existing.PlatformCampaignID,

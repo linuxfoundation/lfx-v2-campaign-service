@@ -13,6 +13,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
@@ -237,6 +238,45 @@ func TestTwitter_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
 // Microsoft has no ReadMetrics: campaign performance lives in the Reporting API v13, which is
 // asynchronous (submit → poll → download), so the adapter exposes only the two synchronous
 // paths. See docs/api-catalog.md.
+// TestLinkedIn_UnusableConnectionIsTaggedOnEveryPath covers the two entry points LFXV2-3196
+// routed through resolveLinkedInCredentials.
+//
+// The LF-system-fallback half is the load-bearing one. That helper tags system-scoped defects
+// from a DEFERRED closure over `conn := res` — a binding taken before the error returns, which
+// each set `res` to nil. Read the named return directly instead and the defer no-ops on exactly
+// these paths: the service would answer 409 and tell the project to repair a connection row it
+// does not own, while whoever installed the LF credential is never paged. Every other LinkedIn
+// test uses a project-owned row, so without this case that regression passes the whole suite.
+//
+// Dispatch is deliberately absent: it validates inline to preserve its notCreated() claim-release
+// contract (see internal-dispatch.md), so it does not route through the helper under test.
+func TestLinkedIn_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
+	srv := unreachablePlatform(t)
+	camp := &model.Campaign{Platform: model.ProviderLinkedInAds, PlatformCampaignID: "123"}
+	runConnDefectSuite(t,
+		badCreds{
+			// AccessToken is the only required field, so "incomplete" is the empty object.
+			incomplete: `{}`,
+			wrongType:  `{"AccessToken":123}`,
+		},
+		func() *model.Connection { return activeLinkedInConn(goodLinkedInCreds) },
+		func(repo connReader) map[string]func() error {
+			d := NewLinkedInDispatcher(repo, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
+			return map[string]func() error{
+				"ToggleStatus": func() error {
+					return d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, camp, model.CampaignRunPaused)
+				},
+				// A SUPPORTED window: ReadMetrics rejects an unsupported one before it
+				// resolves credentials, which would never reach the helper under test.
+				"ReadMetrics": func() error {
+					_, err := d.ReadMetrics(context.Background(), "proj", model.ProviderLinkedInAds, camp, model.MetricsWindowLast7Days)
+					return err
+				},
+			}
+		},
+	)
+}
+
 func TestMicrosoft_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
 	srv := unreachablePlatform(t)
 	camp := &model.Campaign{Platform: model.ProviderMicrosoftAds, PlatformCampaignID: "999"}

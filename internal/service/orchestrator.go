@@ -1198,9 +1198,11 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// undecodable or incomplete credentials, missing account id) — the ad platform is never
 	// contacted for the last group.
 	//
-	// The classification of that last group is NOT yet uniform across dispatchers. Google Ads,
-	// Reddit, X/Twitter and Microsoft Ads tag the preflight failures REACHABLE HERE with
-	// domain.ErrConnectionNotUsable plus a reason sentinel. Google Ads tags every one of its
+	// The classification of that last group is uniform across dispatchers as of LFXV2-3196;
+	// the paragraph further down names each adapter and its helper. Google Ads, Reddit,
+	// X/Twitter and Microsoft Ads were the first four to tag the preflight failures REACHABLE
+	// HERE with domain.ErrConnectionNotUsable plus a reason sentinel, and Meta then LinkedIn
+	// followed. Google Ads tags every one of its
 	// CONNECTION-STATE checks (internal/dispatch/googleads.go): the three in
 	// validateGoogleAdsCredentials, the missing-account guard in validateGoogleAdsConnection —
 	// both of which resolveGoogleAdsClient runs — and the stored-login_customer_id check in
@@ -1215,32 +1217,38 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// AUTHENTICATION failure carries domain.ErrCredentialDecryptionFailed. Only the
 	// row-is-provably-bad returns (no stored credentials, ErrCredentialsMalformed) are tagged.
 	//
-	// What the TOGGLE CALLER does with those three today is a single thing: nothing special.
-	// ToggleCampaignStatus's switch (internal/service/brief.go) does have several typed arms,
-	// but NONE of them matches these three: there is no ErrNotFound arm, no arm for a bare
-	// repository error, and no ErrCredentialDecryptionFailed arm. So all three untagged
-	// returns land in default, get logged, and return 503. Their distinct classifications are
-	// honoured by the read-only DISCOVERY handlers, not here. Do not read the sentinel names
-	// off this paragraph and assume this endpoint already answers 404 or 500; it does not.
+	// What the TOGGLE CALLER does with those three is no longer uniform, as of LFXV2-3065.
+	// ToggleCampaignStatus's switch (internal/service/brief.go) now matches two of them:
+	// ErrNotFound answers 404 (no connection row exists and the system fallback did not cover
+	// it — nothing to repair, so the caller is told to connect) and ErrCredentialDecryptionFailed
+	// answers 500 (the application's key no longer matches the stored blob, which is an
+	// operator's repair and not the caller's). GetCampaignMetrics classifies the same two
+	// identically, since both resolve through this same credsSource.
 	//
-	// That is a known rough edge rather than a considered choice: "this project has no
-	// connection configured" is permanent, and 503 invites a retry that cannot succeed. Adding
-	// the arm is a behaviour change with its own ticket (LFXV2-3065), not part of the
-	// classification fix this comment documents.
+	// Only the BARE REPOSITORY ERROR still lands in default and returns 503, and that one is
+	// correct there: a DB blip genuinely is transient, which is the answer the other two no
+	// longer share.
+	//
+	// The rough edge this paragraph used to describe — "permanent defects answered 503, which
+	// invites a retry that cannot succeed" — is the defect LFXV2-3065 closed.
 	//
 	// The manager-id check is the newest of the five and was for a while NOT reachable here:
 	// it sat inline in the discovery resolver, so a malformed stored value reached this path
 	// unclassified and fell through to 503. LFXV2-3052 hoisted it into a helper both resolvers
 	// call, which is why the list above is once again the whole list rather than a subset.
 	//
-	// LinkedIn is now the ONLY toggle-capable adapter still returning bare errors that fall
-	// through to the caller's default 503 arm. Every other one tags: Google Ads, Microsoft and
-	// X through their validate<Provider>Connection helpers, Reddit inline in
-	// resolveRedditClient, and Meta in resolveMetaCredentials (internal/dispatch/meta.go).
-	// Tagging LinkedIn's is the remainder of LFXV2-3069 part 2, and it is an extraction rather
-	// than an annotation — LinkedInDispatcher.ToggleStatus validates the connection inline at
-	// four call sites (inactive status, credential decode, incomplete credentials, missing
-	// account id) with no shared resolve/validate helper to put the tagging in.
+	// Every toggle-capable adapter now tags: Google Ads, Microsoft and X through their
+	// validate<Provider>Connection helpers, Reddit inline in resolveRedditClient, Meta in
+	// resolveMetaCredentials (internal/dispatch/meta.go), and LinkedIn in
+	// resolveLinkedInCredentials (internal/dispatch/linkedin.go).
+	//
+	// LinkedIn was the last one, and closing it (LFXV2-3196, the remainder of LFXV2-3069
+	// part 2) was an extraction rather than an annotation: ToggleStatus validated the
+	// connection inline across four checks (inactive status, credential decode, incomplete
+	// credentials, missing account id) with no shared helper to put the tagging in. The new
+	// helper serves ToggleStatus and ReadMetrics, the two paths that reach this classification.
+	// Dispatch keeps its own inline validation, because its failures are wrapped in
+	// notCreated() to release the dispatch claim — a contract this helper does not carry.
 	//
 	// Meta's tagging deliberately stops short of a missing account id HERE, because
 	// ToggleStatus never reads AccountConfig.AccountID (a status update targets the campaign

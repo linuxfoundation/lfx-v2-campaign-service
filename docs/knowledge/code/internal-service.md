@@ -350,12 +350,18 @@ Five outcomes are distinguished deliberately, because collapsing them misdirects
   keeps the 503 below honest: a 503 promises that waiting might help, and none of these conditions
   change until a human edits the connection. The distinction cannot be made here — a setup failure
   and an upstream one arrive as the same type — so the dispatch layer wraps the pre-send failures
-  with the sentinel and this arm reads it. Five adapters do:
-  `internal/dispatch/{googleads,reddit,twitter,microsoft,meta}.go`, each in its own shared
-  resolve/validate helper, so every path through an adapter is covered rather than just the one
+  with the sentinel and this arm reads it. Six adapters do:
+  `internal/dispatch/{googleads,reddit,twitter,microsoft,meta,linkedin}.go`, each in its own shared
+  resolve/validate helper, so every path that reaches THIS arm is covered rather than just the one
   that happened to be fixed. Meta joined them in LFXV2-3061 (`resolveMetaCredentials` for the
-  credential-state three, `requireMetaAccountID` for the missing account). LinkedIn does NOT yet —
-  its equivalent checks are still bare and still fall to the 503 arm below (LFXV2-3069 part 2). In Google Ads the wrap has three owners:
+  credential-state three, `requireMetaAccountID` for the missing account). LinkedIn joined
+  them in LFXV2-3196 (`resolveLinkedInCredentials`, covering the credential-state three plus the
+  missing account, which it needs because its client is constructed with a RuntimeConfig naming
+  the account) — for its two synchronous entry points, `ToggleStatus` and `ReadMetrics`.
+  LinkedIn's `Dispatch` deliberately keeps its own inline validation and does NOT route through
+  that helper: it wraps failures in `notCreated()` to release the dispatch claim, a contract the
+  helper does not carry, and it is asynchronous so it never reaches this arm anyway
+  (`internal-dispatch.md` records the same split). In Google Ads the wrap has three owners:
   `validateGoogleAdsCredentials` tags the credential-state three (inactive, undecodable,
   incomplete), which is why they reach callers beyond discovery — but the SHAPE they reach them in
   depends on whether the caller is synchronous. The **status toggle** and the **metrics read**

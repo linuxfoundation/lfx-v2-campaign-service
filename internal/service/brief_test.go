@@ -3627,6 +3627,349 @@ func TestGetCampaignMetrics_OtherUnusableCauseKeepsTheGeneralMessage(t *testing.
 	}
 }
 
+// A project with NO connection row is answered 404, not 503. Both were "the toggle failed"
+// before, and the difference matters to the caller: 503 says retry, and no amount of retrying
+// creates a connection. Reaching this arm means credsSource.resolve missed the project's own
+// row AND the shared system account, so there is genuinely nothing to resolve.
+// The 404 and 500 arms must sit ABOVE the general ErrConnectionNotUsable arm. Both sentinels
+// CAN be wrapped alongside it, and a broad match placed first would swallow them — answering
+// "repair this project's connection" for a project that has none, or for a key mismatch its
+// admin cannot see.
+//
+// resolve() wraps them alone today, so this pins an ORDERING that is currently un-exercised by
+// the other tests: it drives an error carrying BOTH sentinels, which only the arm order
+// distinguishes.
+// The METRICS half of the same classification. Both switches resolve credentials through the
+// same credsSource, so the identical causes are reachable on both — and improving one while
+// leaving its sibling on 503 would mean the same broken connection answered 404 on a toggle and
+// "retry later" on a metrics read, which is worse than either answer alone because it makes the
+// status code look arbitrary.
+func TestGetCampaignMetrics_PermanentConnectionDefectsAreNot503(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		assert func(*testing.T, error)
+	}{
+		{
+			name: "no connection row is 404",
+			err:  fmt.Errorf("no google-ads connection configured for project cncf: %w", domain.ErrNotFound),
+			assert: func(t *testing.T, err error) {
+				var nf *briefs.NotFoundError
+				if !errors.As(err, &nf) {
+					t.Fatalf("want 404, got %T", err)
+				}
+			},
+		},
+		{
+			name: "undecryptable credentials are 500",
+			err:  fmt.Errorf("decrypt google-ads credentials: %w", domain.ErrCredentialDecryptionFailed),
+			assert: func(t *testing.T, err error) {
+				var ise *briefs.InternalServerError
+				if !errors.As(err, &ise) {
+					t.Fatalf("want 500, got %T", err)
+				}
+			},
+		},
+		{
+			// Order, same as the toggle: both sentinels CAN be wrapped together, and the
+			// general arm placed first would swallow the specific one.
+			name: "not found wins over the general unusable arm",
+			err:  fmt.Errorf("no connection: %w: %w", domain.ErrConnectionNotUsable, domain.ErrNotFound),
+			assert: func(t *testing.T, err error) {
+				var nf *briefs.NotFoundError
+				if !errors.As(err, &nf) {
+					t.Fatalf("the general arm swallowed it; got %T", err)
+				}
+			},
+		},
+		{
+			// The metrics twin of the toggle's second ordering case. Without it the 500 arm's
+			// POSITION is unpinned here — moving it below the general arm would leave the
+			// suite green while the two switches silently diverged.
+			name: "decryption failure wins over the general unusable arm",
+			err:  fmt.Errorf("decrypt: %w: %w", domain.ErrConnectionNotUsable, domain.ErrCredentialDecryptionFailed),
+			assert: func(t *testing.T, err error) {
+				var ise *briefs.InternalServerError
+				if !errors.As(err, &ise) {
+					t.Fatalf("the general arm swallowed it; got %T", err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			camp := &model.Campaign{
+				ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+				PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+			}
+			s := newMetricsService(camp, &metricsOnlyDispatcher{err: tc.err})
+			window := "last_30_days"
+			_, err := s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+				ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", Window: &window,
+			})
+
+			// The shared property first: none of these may be the retry-me answer.
+			var unavailable *briefs.ConnServiceUnavailableError
+			if errors.As(err, &unavailable) {
+				t.Fatalf("%s is permanent; got a 503 telling the caller to retry: %v", tc.name, err)
+			}
+			tc.assert(t, err)
+		})
+	}
+}
+
+// TestGetCampaignMetrics_DecryptFailureLogsNoErrorText is the metrics twin of
+// TestToggleCampaignStatus_DecryptFailureLogsNoErrorText.
+//
+// The two decrypt arms are separate switches that happen to log the same way, so the
+// non-disclosure property holds on each of them independently — the toggle test cannot fail
+// for a regression introduced here. Pinning only the returned TYPE on this path, as
+// TestGetCampaignMetrics_PermanentConnectionDefectsAreNot503 does, would leave a metrics arm
+// that reverted to logging `merr` green.
+func TestGetCampaignMetrics_DecryptFailureLogsNoErrorText(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	// A hostile encryptor error, standing in for an implementation that quotes what it failed
+	// on. Nothing resembling this may reach the log record.
+	const leaked = "SUPERSECRETCIPHERTEXTBYTES"
+	disp := &metricsOnlyDispatcher{err: fmt.Errorf("%w: aesgcm: open failed on %s",
+		domain.ErrCredentialDecryptionFailed, leaked)}
+	s := newMetricsService(camp, disp)
+	window := "last_30_days"
+	_, _ = s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", Window: &window,
+	})
+
+	if logged := buf.String(); strings.Contains(logged, leaked) {
+		t.Errorf("the decryptor's error text reached the metrics log, so an Encryptor that "+
+			"quotes ciphertext or key material would disclose it; safeErrSummary would NOT "+
+			"prevent this — it normalises and truncates, it does not redact.\nlog: %s", logged)
+	}
+}
+
+// TestGetCampaignMetrics_SystemRowDecryptFailureIsAttributedToTheSystemRow is the metrics twin
+// of TestToggleCampaignStatus_SystemRowDecryptFailureIsAttributedToTheSystemRow, and pins the
+// same attribution on the other switch: one corrupt LF system row is reachable from every
+// project that falls back to it, so blaming the REQUESTER would read as a deployment-wide key
+// problem rather than the single row it is.
+func TestGetCampaignMetrics_SystemRowDecryptFailureIsAttributedToTheSystemRow(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	// The shape credsSource.resolve produces for a fallback failure: the origin sentinel wraps
+	// the decrypt sentinel.
+	disp := &metricsOnlyDispatcher{err: fmt.Errorf("%w: decrypt google-ads credentials: %w",
+		domain.ErrSystemConnectionOrigin, domain.ErrCredentialDecryptionFailed)}
+	s := newMetricsService(camp, disp)
+	window := "last_30_days"
+	_, _ = s.GetCampaignMetrics(context.Background(), &briefs.GetCampaignMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", Window: &window,
+	})
+
+	logged := buf.String()
+	if !strings.Contains(logged, "project_id="+model.SystemProjectID) {
+		t.Errorf("the failing row is the LF system row, but the metrics log blames the caller's "+
+			"project; one corrupt system row would look like unrelated per-project failures."+
+			"\nlog: %s", logged)
+	}
+	if !strings.Contains(logged, "requested_by_project_id=cncf") {
+		t.Errorf("the requester must stay visible alongside the failing row.\nlog: %s", logged)
+	}
+}
+
+func TestToggleCampaignStatus_SpecificArmsWinOverTheGeneralUnusableArm(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		assert func(*testing.T, error)
+	}{
+		{
+			name: "not found beats unusable",
+			err:  fmt.Errorf("no connection: %w: %w", domain.ErrConnectionNotUsable, domain.ErrNotFound),
+			assert: func(t *testing.T, err error) {
+				var nf *briefs.NotFoundError
+				if !errors.As(err, &nf) {
+					t.Fatalf("want 404, got %T: %v — the general arm swallowed it", err, err)
+				}
+			},
+		},
+		{
+			name: "decryption failure beats unusable",
+			err:  fmt.Errorf("decrypt: %w: %w", domain.ErrConnectionNotUsable, domain.ErrCredentialDecryptionFailed),
+			assert: func(t *testing.T, err error) {
+				var ise *briefs.InternalServerError
+				if !errors.As(err, &ise) {
+					t.Fatalf("want 500, got %T: %v — the general arm swallowed it", err, err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			camp := &model.Campaign{
+				ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+				PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+			}
+			s, _ := newToggleService(camp, &stubToggler{err: tc.err})
+			im := "1"
+			_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+				ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+			})
+			tc.assert(t, err)
+		})
+	}
+}
+
+func TestToggleCampaignStatus_NoConnectionIs404(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	tog := &stubToggler{err: fmt.Errorf("no reddit-ads connection configured for project cncf: %w", domain.ErrNotFound)}
+	s, _ := newToggleService(camp, tog)
+	im := "1"
+	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+
+	var notFound *briefs.NotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("want a 404 NotFoundError, got %T: %v", err, err)
+	}
+	if notFound.Code != "404" {
+		t.Errorf("code = %q, want 404", notFound.Code)
+	}
+	// "connect the platform", NOT "repair the connection" — 409 is the repair answer, and
+	// sending someone to edit a row that does not exist is its own dead end.
+	if !strings.Contains(notFound.Message, "no connection") {
+		t.Errorf("message = %q, want it to say no connection exists", notFound.Message)
+	}
+}
+
+// A credential blob that fails GCM authentication is permanent and NOT the caller's to fix: it
+// means a wrong or rotated application key, or a corrupted row. Neither is repaired by
+// reconnecting, so the message names an administrator rather than telling the project admin to
+// try again.
+//
+// Answered 500, matching the system-connection arm's reasoning: a 409 tells the caller to repair
+// THEIR connection, and an encryption-key mismatch is not a scope a project admin owns.
+func TestToggleCampaignStatus_UndecryptableCredentialsIsNot503(t *testing.T) {
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	tog := &stubToggler{err: fmt.Errorf("decrypt reddit-ads credentials: %w", domain.ErrCredentialDecryptionFailed)}
+	s, _ := newToggleService(camp, tog)
+	im := "1"
+	_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+
+	// The property that matters is that it is NOT the retry-me answer.
+	var unavailable *briefs.ConnServiceUnavailableError
+	if errors.As(err, &unavailable) {
+		t.Fatalf("an undecryptable credential is permanent; got a 503 telling the caller to retry: %v", err)
+	}
+	var internal *briefs.InternalServerError
+	if !errors.As(err, &internal) {
+		t.Fatalf("want a 500 InternalServerError, got %T: %v", err, err)
+	}
+	if internal.Code != "500" {
+		t.Errorf("code = %q, want 500", internal.Code)
+	}
+	// And it must NOT be a 409 either: that would tell a project admin to repair a connection
+	// whose credentials are fine — the key is what is wrong, and they cannot see it.
+	var conflict *briefs.ConflictError
+	if errors.As(err, &conflict) {
+		t.Errorf("an encryption-key mismatch is not the project's connection to repair; got a 409: %v", err)
+	}
+}
+
+// TestToggleCampaignStatus_SystemRowDecryptFailureIsAttributedToTheSystemRow pins WHO the
+// decrypt-failure log blames.
+//
+// A project with no connection of its own falls back to the LF system row, so a single corrupt
+// system row is reachable from every such project. Logging the REQUESTER's project id would
+// spread one row's failure across all of them and read as a deployment-wide key problem — the
+// opposite of the single-row cause. The error carries ErrSystemConnectionOrigin for exactly this,
+// and `requested_by_project_id` keeps the caller visible without owning the blame.
+func TestToggleCampaignStatus_SystemRowDecryptFailureIsAttributedToTheSystemRow(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	// The shape credsSource.resolve produces for a fallback failure: the origin sentinel wraps
+	// the decrypt sentinel.
+	tog := &stubToggler{err: fmt.Errorf("%w: decrypt reddit-ads credentials: %w",
+		domain.ErrSystemConnectionOrigin, domain.ErrCredentialDecryptionFailed)}
+	s, _ := newToggleService(camp, tog)
+	im := "1"
+	_, _ = s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+
+	logged := buf.String()
+	if !strings.Contains(logged, "project_id="+model.SystemProjectID) {
+		t.Errorf("the failing row is the LF system row, but the log blames the caller's project; "+
+			"one corrupt system row would look like unrelated per-project failures.\nlog: %s", logged)
+	}
+	if !strings.Contains(logged, "requested_by_project_id=cncf") {
+		t.Errorf("the requester must stay visible alongside the failing row.\nlog: %s", logged)
+	}
+}
+
+// TestToggleCampaignStatus_DecryptFailureLogsNoErrorText pins that the decrypt arm logs no
+// error text at all.
+//
+// The chain on this arm ends in the `domain.Encryptor` implementation's own error, and that is
+// an INTERFACE — what the error carries is not this package's to guarantee, and an implementation
+// is free to quote the ciphertext or key material it failed on. `safeErrSummary` is not a
+// defence: it replaces non-graphic runes and truncates to 200 characters, which makes arbitrary
+// text safe to PRINT, not safe to DISCLOSE. Nothing is lost by dropping it — the classification
+// is already decided, and the failing row and requester are logged.
+func TestToggleCampaignStatus_DecryptFailureLogsNoErrorText(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	// A hostile encryptor error, standing in for an implementation that quotes what it failed
+	// on. Nothing resembling this may reach the log record.
+	const leaked = "SUPERSECRETCIPHERTEXTBYTES"
+	tog := &stubToggler{err: fmt.Errorf("%w: aesgcm: open failed on %s", domain.ErrCredentialDecryptionFailed, leaked)}
+	s, _ := newToggleService(camp, tog)
+	im := "1"
+	_, _ = s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+
+	if logged := buf.String(); strings.Contains(logged, leaked) {
+		t.Errorf("the decryptor's error text reached the log, so an Encryptor that quotes "+
+			"ciphertext or key material would disclose it; safeErrSummary would NOT prevent "+
+			"this — it normalises and truncates, it does not redact.\nlog: %s", logged)
+	}
+}
+
 func TestToggleCampaignStatus_UnusableConnectionIs409(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()

@@ -808,3 +808,108 @@ func TestLinkedIn_ReadMetrics_UnsupportedWindowBeatsUnusableConnection(t *testin
 		}
 	}
 }
+
+// LinkedIn's toggle and metrics paths must classify the same four connection defects every
+// other adapter classifies, so the endpoint stops answering the default 503 ("transient, retry
+// later"). No amount of retrying fixes a credential blob that is not valid JSON, and a 503 both
+// offers the user a useless retry affordance and makes user-repairable configuration look like a
+// platform outage on a 5xx dashboard.
+//
+// Which status replaces it depends on the credential SCOPE: a project-owned row answers 409
+// ("repair your connection"), and an LF system fallback row answers 500, because the project
+// cannot repair a row it does not own. Both scopes are exercised by
+// TestLinkedIn_UnusableConnectionIsTaggedOnEveryPath in connection_defect_tagging_test.go.
+//
+// Deliberately covers ONLY ToggleStatus and ReadMetrics (LFXV2-3196). Dispatch keeps its own
+// inline checks because it wraps them in notCreated() to release the dispatch claim — a
+// different contract, covered by TestLinkedIn_PreCreateErrorsReleaseClaim above.
+// A whitespace-padded access token must be trimmed ONCE, in the helper, so both callers get the
+// same value. An earlier revision trimmed only for the empty check and returned the raw token:
+// ToggleStatus then passed the padded token to NewClient while ReadMetrics trimmed it again, so
+// the same stored credential worked on one path and failed upstream on the other — surfacing as
+// a retryable 503 for a token that could never work, which is the defect class this PR fixes.
+func TestLinkedIn_AccessTokenIsTrimmedOnceInTheHelper(t *testing.T) {
+	d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(`{"AccessToken":"  padded-token  "}`)}, identityEncryptor{})
+
+	_, creds, err := d.resolveLinkedInCredentials(context.Background(), "proj", model.ProviderLinkedInAds)
+	if err != nil {
+		t.Fatalf("resolveLinkedInCredentials: %v", err)
+	}
+	if creds.AccessToken != "padded-token" {
+		t.Errorf("AccessToken = %q, want it trimmed — a caller passing this straight to NewClient would send an invalid Authorization header", creds.AccessToken)
+	}
+}
+
+func TestLinkedIn_UnusableReasonsAreClassified(t *testing.T) {
+	cases := []struct {
+		name string
+		conn *model.Connection
+		enc  domain.Encryptor
+		want error
+	}{
+		{
+			name: "inactive",
+			conn: &model.Connection{Provider: model.ProviderLinkedInAds, AccountID: "1", EncryptedCredentials: []byte(goodLinkedInCreds), Status: model.StatusInactive},
+			enc:  identityEncryptor{},
+			want: domain.ErrConnectionInactive,
+		},
+		{
+			name: "undecodable credentials",
+			conn: activeLinkedInConn(`{"AccessToken":`),
+			enc:  identityEncryptor{},
+			want: domain.ErrCredentialsUndecodable,
+		},
+		{
+			name: "incomplete credentials",
+			conn: activeLinkedInConn(`{"AccessToken":""}`),
+			enc:  identityEncryptor{},
+			want: domain.ErrCredentialsIncomplete,
+		},
+		{
+			// LinkedIn's client is constructed with a RuntimeConfig naming the account, so an
+			// empty account id cannot reach the platform at all. Before this it surfaced as an
+			// unclassified error with no path to completion — the caller was told to retry
+			// something only a human choosing an account can resolve.
+			name: "no account selected",
+			conn: &model.Connection{Provider: model.ProviderLinkedInAds, EncryptedCredentials: []byte(goodLinkedInCreds), ProviderConfig: map[string]string{"org_id": "o"}, Status: model.StatusActive},
+			enc:  identityEncryptor{},
+			want: domain.ErrAccountNotSelected,
+		},
+	}
+	entryPoints := []struct {
+		name string
+		call func(d *LinkedInDispatcher) error
+	}{
+		{"ToggleStatus", func(d *LinkedInDispatcher) error {
+			camp := &model.Campaign{Platform: model.ProviderLinkedInAds, PlatformCampaignID: "777"}
+			return d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, camp, model.CampaignRunPaused)
+		}},
+		{"ReadMetrics", func(d *LinkedInDispatcher) error {
+			camp := &model.Campaign{Platform: model.ProviderLinkedInAds, PlatformCampaignID: "777"}
+			_, err := d.ReadMetrics(context.Background(), "proj", model.ProviderLinkedInAds, camp, model.MetricsWindowLast30Days)
+			return err
+		}},
+	}
+
+	for _, ep := range entryPoints {
+		for _, tc := range cases {
+			t.Run(ep.name+"/"+tc.name, func(t *testing.T) {
+				d := NewLinkedInDispatcher(fakeConnReader{conn: tc.conn}, tc.enc)
+				err := ep.call(d)
+
+				if err == nil {
+					t.Fatalf("want an error for %s, got nil", tc.name)
+				}
+				// BOTH sentinels: ErrConnectionNotUsable is what maps the response to 409, and
+				// the reason sentinel is what `unusableConnectionReason` reports in the log so
+				// an operator learns WHICH defect without the error text being rendered.
+				if !errors.Is(err, domain.ErrConnectionNotUsable) {
+					t.Errorf("error %v is not tagged ErrConnectionNotUsable, so it falls through to the 503 default", err)
+				}
+				if !errors.Is(err, tc.want) {
+					t.Errorf("error %v does not carry the %v reason sentinel", err, tc.want)
+				}
+			})
+		}
+	}
+}
