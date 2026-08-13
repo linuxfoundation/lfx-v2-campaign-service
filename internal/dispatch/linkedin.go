@@ -243,9 +243,12 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 // the named return to nil, and systemScoped is a no-op on a nil receiver, so reading the named
 // return would silently drop system-row attribution from exactly the errors that need it.
 //
-// Before this existed LinkedIn validated inline at four separate call sites with bare errors,
-// so all four fell through to 503 — "transient, retry later" for defects no retry can fix. No
-// amount of retrying repairs a credential blob that is not valid JSON.
+// Before this existed LinkedIn repeated four inline connection checks (inactive status,
+// credential decode, incomplete credentials, missing account id) across the two synchronous
+// callers below, each with bare errors that fell through to 503 — "transient, retry later" for
+// defects no retry can fix. No amount of retrying repairs a credential blob that is not valid
+// JSON. Four CHECKS, two CALLERS: Dispatch was a third inline site but never reached that 503
+// mapping, for the reason the next paragraph gives.
 //
 // Scoped to the toggle and metrics paths (LFXV2-3196). Dispatch keeps its own inline checks:
 // they wrap in notCreated() to release the dispatch claim, which is a different contract from

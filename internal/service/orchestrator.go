@@ -1198,9 +1198,11 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// undecodable or incomplete credentials, missing account id) — the ad platform is never
 	// contacted for the last group.
 	//
-	// The classification of that last group is NOT yet uniform across dispatchers. Google Ads,
-	// Reddit, X/Twitter and Microsoft Ads tag the preflight failures REACHABLE HERE with
-	// domain.ErrConnectionNotUsable plus a reason sentinel. Google Ads tags every one of its
+	// The classification of that last group is uniform across dispatchers as of LFXV2-3196;
+	// the paragraph further down names each adapter and its helper. Google Ads, Reddit,
+	// X/Twitter and Microsoft Ads were the first four to tag the preflight failures REACHABLE
+	// HERE with domain.ErrConnectionNotUsable plus a reason sentinel, and Meta then LinkedIn
+	// followed. Google Ads tags every one of its
 	// CONNECTION-STATE checks (internal/dispatch/googleads.go): the three in
 	// validateGoogleAdsCredentials, the missing-account guard in validateGoogleAdsConnection —
 	// both of which resolveGoogleAdsClient runs — and the stored-login_customer_id check in

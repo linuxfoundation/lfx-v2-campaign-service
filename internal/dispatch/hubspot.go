@@ -145,25 +145,25 @@ func (d *HubSpotDispatcher) resolveHubSpotClient(ctx context.Context, projectID 
 // an unsupported window is a permanent 400 whatever the connection looks like, so it must
 // not be maskable by a fault that depends on connection state. Resolving first would let
 // the connection answer instead — 409 for the not-usable defects resolveHubSpotClient tags
-// below, 500 when it fell back to an unusable system row, and 503 when the project has no
+// below, 500 when it fell back to an unusable system row, and 404 when the project has no
 // connection at all — none of which tells the caller the thing they actually have to fix,
 // which is the window they sent.
 //
-// That 503 is worth naming rather than rounding off, because it is the worst of the three to
-// be masked BY. GetCampaignMetrics has no domain.ErrNotFound arm: creds.resolve passes the
-// absence through untagged, so it reaches the handler's default and is reported as a
-// transient platform failure. Both halves of that are wrong for the caller — an absent
-// connection is a permanent configuration fault, and here it would be masking a permanent
-// input fault — so a caller who sent a bad window against a project with no HubSpot
-// connection would be told to retry, twice over, for a request that can never succeed.
-// Validating the window first means the 400 wins; the absent-connection mapping itself is a
-// contract question for every platform's metrics read, not this adapter's to change.
+// The absent-connection case is worth naming rather than rounding off, because it is the one
+// most likely to mask the window fault. As of LFXV2-3065 GetCampaignMetrics DOES have a
+// domain.ErrNotFound arm and answers 404 — "connect HubSpot" — rather than the 503 it used to
+// report. That is a better answer than the old one, but it is still the wrong answer for a
+// caller whose actual mistake was the window: it would send them to configure a connection when
+// the request would be rejected on the window regardless. Validating the window first means the
+// 400 wins.
 //
-// Same ORDER as the linkedin and X adapters, but note the reason differs from linkedin's:
-// linkedin's resolve returns its inactive-connection error UNTAGGED, so there the masking
-// error really is a 503 telling the caller to retry something that can never succeed. This
-// adapter tags with domain.ErrConnectionNotUsable, which internal/service/brief.go
-// classifies as a 409. Do not copy linkedin's 503 wording back over here.
+// Same ORDER as the linkedin and X adapters, and since LFXV2-3196 the reason no longer differs
+// from linkedin's: that adapter now routes ToggleStatus and ReadMetrics through
+// resolveLinkedInCredentials, which tags with domain.ErrConnectionNotUsable exactly as this one
+// does, so both classify as 409 (or 500 for an unusable LF system fallback). The older wording
+// here described linkedin returning UNTAGGED errors that fell to a 503 default; that is no
+// longer true of either adapter, and it is the ordering — not the classification — that this
+// comment exists to justify.
 func (d *HubSpotDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
 	if campaign.PlatformCampaignID == "" {
 		return nil, fmt.Errorf("campaign has no platform campaign ID")
