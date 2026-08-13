@@ -114,13 +114,10 @@ Absence cannot be rejected until it is representable, so the fix is the pointer,
 rejection follows from it.
 
 That pointer is shared with two older walks in `client.go`, which the same reasoning condemns.
-They were deliberately left as they were in this round, with the nil case written out explicitly
-and a comment naming the exposure: closing them meant asserting a `metadata` block in roughly
-fifty existing fixtures, which is a change with its own review surface and did not belong in a
-review round on ad-account discovery.
-
-**Both were closed in LFXV2-3066** (see `2026-08-12-lfxv2-3066-linkedin-cursor-metadata.md`).
-The fixture count was accurate: 45 fixtures across five test files needed the block.
+They are deliberately left as they were, with the nil case now written out explicitly and a
+comment naming the exposure: closing them means asserting a `metadata` block in roughly fifty
+existing fixtures, which is a change with its own review surface and does not belong in a review
+round on ad-account discovery. Tracked as LFXV2-3066.
 
 The generalisable part: **a zero value that is also a meaningful value erases the difference
 between "the server said nothing" and "the server said none".** Any decoded field whose zero

@@ -2,7 +2,7 @@
 
 **Update** — `internal/platform/linkedin/client.go` (LFXV2-3066). `findMatch` and
 `listCreativeURNs` now reject a response whose `metadata` block is absent, instead of reading it
-as an exhausted cursor. 44 single-page fixtures across five test files gained `"metadata":{}`.
+as an exhausted cursor. 42 single-page fixtures across four test files gained `"metadata":{}`.
 
 `findMatch`, not `findByName`: the walk is shared, and naming the wrapper undersells the fix.
 `findByName` and `findCampaignByNameInGroup` both delegate to it, so ONE guard closes TWO
@@ -15,7 +15,7 @@ LFXV2-3063 made `linkedInMetadata` a pointer and made `ListAdAccounts` reject ni
 exposure lived in two older walks, and the log for that round said so plainly: closing them meant
 touching roughly fifty fixtures, which did not belong in a review round on ad-account discovery.
 
-So this is not a newly discovered defect. It is the deferred half, and the estimate held up: 45
+So this is not a newly discovered defect. It is the deferred half, and the estimate was the right order of magnitude: 42
 against "roughly fifty". Whether that was a counted estimate or a good guess is not recorded, so
 no credit is claimed for it here — what matters is that the deferral named its own cost and the
 cost turned out to be the one named.
@@ -93,12 +93,14 @@ Both guards are revert-verified: removing the nil check makes
 INTERMEDIATE page — page one advertises a cursor, page two drops its envelope — because a
 first-page-only test would not distinguish this bug from an empty result set.
 
-The full service suite passes; `internal/dispatch` needed 7 of the 44 fixtures, which is the
+The full service suite passes; `internal/dispatch` needed 7 of the 42 fixtures, which is the
 reminder that this client has callers whose own fixtures encode the same assumption.
 
-The count is 44 rather than 45 because the first sweep also patched an `accounts_test.go`
-fixture whose ENVELOPE already carried `"metadata":{}` — the regex matched an element object and
-injected the key one nesting level too deep, where `responseElement` has no such field and it
-decoded to nothing. A silent no-op that misrepresented the LinkedIn contract to the next reader.
-Reverted. Second lesson from the same sweep, and the more general one: a regex over JSON string
-literals does not know the difference between an envelope and an element.
+The count moved twice, and both moves were sweep artifacts rather than scope changes. The first
+sweep patched an `accounts_test.go` fixture whose ENVELOPE already carried `"metadata":{}` — the
+regex matched an element object and injected the key one nesting level too deep, where
+`responseElement` has no such field and it decoded to nothing. The second was `accounts_test.go`
+and the restored LFXV2-3063 log entry dropping out of the diff entirely once that revert landed.
+Lesson unchanged and now doubly earned: a regex over JSON string literals does not know an
+envelope from an element, and a count derived from one is a claim that needs re-deriving every
+time the diff moves.
