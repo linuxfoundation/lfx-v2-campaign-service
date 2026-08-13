@@ -811,12 +811,10 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 				"platform", existing.Platform)
 			return nil, &briefs.NotFoundError{Code: "404", Message: "this project has no connection for the campaign's channel; connect it before reading metrics"}
 		case errors.Is(merr, domain.ErrCredentialDecryptionFailed):
-			// Also the metrics half of LFXV2-3065, and 500 for the same reason: a GCM
-			// authentication failure means the application's encryption key no longer matches
-			// the stored blob, which is not a scope the caller owns and no reconnect repairs.
-			//
-			// safeErrSummary, for the reason spelled out on the toggle's arm: the sentinel is
-			// safe but the CHAIN carries the encryptor's own error, which is unconstrained.
+			// Also the metrics half of LFXV2-3065, and 500 for the same reason given on the
+			// toggle's arm: re-saving credentials repairs a corrupted row, but a wrong or
+			// rotated key is an operator's repair, and GCM cannot tell the two apart from
+			// here — so this arm must answer for the worse one.
 			// Attributed to the row that failed rather than the requester, for the reason
 			// given on the toggle's arm: a corrupt LF system row is one row, and logging the
 			// caller's project would scatter it across every project that fell back to it.
@@ -824,10 +822,18 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			if errors.Is(merr, domain.ErrSystemConnectionOrigin) {
 				credentialProject = model.SystemProjectID
 			}
+			// NO error text on this arm, unlike its siblings. safeErrSummary normalises
+			// non-graphic runes and truncates; it does NOT redact, and the chain here ends in
+			// the Encryptor's own error. `domain.Encryptor` is an interface, so what that
+			// error contains is not this package's to guarantee — an implementation is free
+			// to quote the ciphertext or key material it failed on. The classification is
+			// already complete without it: this arm fires only for a GCM authentication
+			// failure, and the row and requester are named above, which is the whole
+			// diagnosis a reader can act on.
 			slog.ErrorContext(ctx, "campaign metrics read blocked: stored credentials could not be decrypted (key mismatch or corrupted row)",
 				"project_id", credentialProject, "requested_by_project_id", p.ProjectID,
 				"brief_id", p.BriefID, "campaign_id", p.CampaignID,
-				"platform", existing.Platform, "error", safeErrSummary(merr))
+				"platform", existing.Platform)
 			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign metrics could not be read"}
 
 		case errors.Is(merr, domain.ErrAccountNotSelected):
@@ -1248,12 +1254,18 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			// they own here — the project admin cannot see the key at all, so sending them to
 			// reconnect is sending them somewhere they cannot succeed.
 			//
-			// safeErrSummary, like every sibling arm. An earlier revision logged `terr` raw on
-			// the reasoning that `ErrCredentialDecryptionFailed` is built from ciphertext and
-			// key material only — true of the SENTINEL, but what is logged here is the whole
-			// chain, and `resolveConn` wraps the encryptor's own `derr` alongside it. That
-			// sentinel is documented as the DEFAULT for an unrecognised decrypt failure, so
-			// `derr` is arbitrary third-party text this package does not constrain.
+			// This arm logs NO error text, and it is the one place in this switch that does
+			// not. Two earlier revisions got this wrong in opposite directions: the first
+			// logged `terr` raw, reasoning that `ErrCredentialDecryptionFailed` is built from
+			// ciphertext and key material only — true of the SENTINEL, but what reaches the
+			// log is the whole chain, and `resolveConn` wraps the encryptor's own `derr`
+			// alongside it. The second reached for `safeErrSummary`, which does not solve it:
+			// that helper replaces non-graphic runes and truncates to 200, so it makes
+			// arbitrary text SAFE TO PRINT, not safe to disclose. `domain.Encryptor` is an
+			// interface and the sentinel is documented as the DEFAULT for an unrecognised
+			// decrypt failure, so `derr` is third-party text this package cannot constrain.
+			// Dropping it costs no diagnosis: the classification is decided, and the failing
+			// row and the requester are both named below.
 			// Attribute the failure to the row that FAILED, not to whoever asked. A project
 			// with no connection of its own falls back to the LF system row, so one corrupt
 			// system row would otherwise surface as unrelated failures scattered across every
@@ -1263,10 +1275,13 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			if errors.Is(terr, domain.ErrSystemConnectionOrigin) {
 				credentialProject = model.SystemProjectID
 			}
+			// No error text, for the reason given on the metrics arm: safeErrSummary is a
+			// normaliser, not a redactor, and this chain ends in the Encryptor interface's
+			// own error.
 			slog.ErrorContext(ctx, "campaign status toggle blocked: stored credentials could not be decrypted (key mismatch or corrupted row)",
 				"project_id", credentialProject, "requested_by_project_id", p.ProjectID,
 				"brief_id", p.BriefID, "campaign_id", p.CampaignID,
-				"platform", existing.Platform, "status", p.Status, "error", safeErrSummary(terr))
+				"platform", existing.Platform, "status", p.Status)
 			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign status could not be changed"}
 		case errors.Is(terr, domain.ErrConnectionNotUsable):
 			// Credential resolution refused the connection BEFORE the platform was contacted,

@@ -3862,6 +3862,42 @@ func TestToggleCampaignStatus_SystemRowDecryptFailureIsAttributedToTheSystemRow(
 	}
 }
 
+// TestToggleCampaignStatus_DecryptFailureLogsNoErrorText pins that the decrypt arm logs no
+// error text at all.
+//
+// The chain on this arm ends in the `domain.Encryptor` implementation's own error, and that is
+// an INTERFACE — what the error carries is not this package's to guarantee, and an implementation
+// is free to quote the ciphertext or key material it failed on. `safeErrSummary` is not a
+// defence: it replaces non-graphic runes and truncates to 200 characters, which makes arbitrary
+// text safe to PRINT, not safe to DISCLOSE. Nothing is lost by dropping it — the classification
+// is already decided, and the failing row and requester are logged.
+func TestToggleCampaignStatus_DecryptFailureLogsNoErrorText(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	// A hostile encryptor error, standing in for an implementation that quotes what it failed
+	// on. Nothing resembling this may reach the log record.
+	const leaked = "SUPERSECRETCIPHERTEXTBYTES"
+	tog := &stubToggler{err: fmt.Errorf("%w: aesgcm: open failed on %s", domain.ErrCredentialDecryptionFailed, leaked)}
+	s, _ := newToggleService(camp, tog)
+	im := "1"
+	_, _ = s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+
+	if logged := buf.String(); strings.Contains(logged, leaked) {
+		t.Errorf("the decryptor's error text reached the log, so an Encryptor that quotes "+
+			"ciphertext or key material would disclose it; safeErrSummary would NOT prevent "+
+			"this — it normalises and truncates, it does not redact.\nlog: %s", logged)
+	}
+}
+
 func TestToggleCampaignStatus_UnusableConnectionIs409(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()
