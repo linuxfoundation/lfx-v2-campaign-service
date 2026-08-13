@@ -181,9 +181,13 @@ type linkedInResponse struct {
 	Status string     `json:"status"`
 	// Elements separates "the elements field was absent or null" from "elements was
 	// present but empty", which is the difference between a body that CANNOT prove
-	// absence (a malformed 2xx like `{}`) and one that confirms a not-found
+	// absence (a malformed 2xx like `{}`) and one that can contribute to a not-found
 	// (`{"elements":[]}`). Getting that wrong would let a `{}` read as "no elements →
 	// not found" and permit a DUPLICATE create. See doRequest's search-presence guard.
+	//
+	// An empty elements array is NECESSARY but no longer SUFFICIENT for a not-found:
+	// since LFXV2-3066 the paginated walks also require a present `metadata` block whose
+	// token is empty, because an absent envelope cannot prove the walk reached the end.
 	//
 	// The pointer is not what MAKES the distinction possible — `encoding/json` already
 	// draws it for a plain slice, since a present `[]` decodes to a non-nil EMPTY slice
@@ -1046,7 +1050,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		// treating it as an empty result set would make findMatch report a false "not
 		// found" and let the find-or-create caller create a DUPLICATE paid resource.
 		// An intentional empty result `{"elements":[]}` decodes to a non-nil, len-0
-		// slice and IS a valid confirmed-absence, so it is allowed through. Reject only
+		// slice and CAN form part of a confirmed absence, so it is allowed through — the
+		// paginated walks additionally require a present `metadata` block whose token is
+		// empty before they will answer "not found" (LFXV2-3066). Reject only
 		// the field-absent/null case, as a transportError — with FIX 1's method gate a
 		// GET surfaces this as a plain error (correct: a GET that can't confirm absence
 		// must fail, not create). POST/other mutations are exempt: a create legitimately
@@ -1349,11 +1355,16 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 		// returns the id above without ever reaching this check. That is not a gap: the
 		// guard exists to stop an unconfirmed walk being reported as an ABSENCE, and a hit
 		// is not an absence — the resource was found, so no amount of unread pages could
-		// change the answer, and failing a successful lookup over a missing envelope would
-		// send a find-or-create caller into a duplicate create for a campaign it just
-		// located. The guard covers exactly the path where the envelope decides the
-		// outcome: no match on this page, so the walk must prove it is finished before
-		// answering "not found".
+		// change the answer.
+		//
+		// The cost of hoisting it above the scan is availability, not correctness: both
+		// find-or-create callers propagate this error rather than creating (see
+		// findOrCreateCampaignGroup and findOrCreateCampaign), so an early check would
+		// ABORT a create whose lookup had already succeeded, not duplicate anything. Still
+		// the wrong trade — it fails a fully answered question over an envelope that could
+		// no longer affect the answer. The guard therefore covers exactly the path where
+		// the envelope DOES decide the outcome: no match on this page, so the walk must
+		// prove it is finished before answering "not found".
 		// The wording differs from the sibling guards in listCreativeURNs and
 		// accounts.go ListAdAccounts on purpose, and a shared helper would flatten the
 		// distinction: each names the CALLER-facing consequence of an unconfirmed walk.
