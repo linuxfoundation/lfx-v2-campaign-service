@@ -3824,6 +3824,44 @@ func TestToggleCampaignStatus_UndecryptableCredentialsIsNot503(t *testing.T) {
 	}
 }
 
+// TestToggleCampaignStatus_SystemRowDecryptFailureIsAttributedToTheSystemRow pins WHO the
+// decrypt-failure log blames.
+//
+// A project with no connection of its own falls back to the LF system row, so a single corrupt
+// system row is reachable from every such project. Logging the REQUESTER's project id would
+// spread one row's failure across all of them and read as a deployment-wide key problem — the
+// opposite of the single-row cause. The error carries ErrSystemConnectionOrigin for exactly this,
+// and `requested_by_project_id` keeps the caller visible without owning the blame.
+func TestToggleCampaignStatus_SystemRowDecryptFailureIsAttributedToTheSystemRow(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	camp := &model.Campaign{
+		ID: "c1", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderRedditAds,
+		PlatformCampaignID: "ga-1", Status: model.CampaignStatusCreated, Version: 1,
+	}
+	// The shape credsSource.resolve produces for a fallback failure: the origin sentinel wraps
+	// the decrypt sentinel.
+	tog := &stubToggler{err: fmt.Errorf("%w: decrypt reddit-ads credentials: %w",
+		domain.ErrSystemConnectionOrigin, domain.ErrCredentialDecryptionFailed)}
+	s, _ := newToggleService(camp, tog)
+	im := "1"
+	_, _ = s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+		ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &im, Status: model.CampaignRunPaused,
+	})
+
+	logged := buf.String()
+	if !strings.Contains(logged, "project_id="+model.SystemProjectID) {
+		t.Errorf("the failing row is the LF system row, but the log blames the caller's project; "+
+			"one corrupt system row would look like unrelated per-project failures.\nlog: %s", logged)
+	}
+	if !strings.Contains(logged, "requested_by_project_id=cncf") {
+		t.Errorf("the requester must stay visible alongside the failing row.\nlog: %s", logged)
+	}
+}
+
 func TestToggleCampaignStatus_UnusableConnectionIs409(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()

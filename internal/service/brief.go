@@ -817,8 +817,16 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			//
 			// safeErrSummary, for the reason spelled out on the toggle's arm: the sentinel is
 			// safe but the CHAIN carries the encryptor's own error, which is unconstrained.
+			// Attributed to the row that failed rather than the requester, for the reason
+			// given on the toggle's arm: a corrupt LF system row is one row, and logging the
+			// caller's project would scatter it across every project that fell back to it.
+			credentialProject := p.ProjectID
+			if errors.Is(merr, domain.ErrSystemConnectionOrigin) {
+				credentialProject = model.SystemProjectID
+			}
 			slog.ErrorContext(ctx, "campaign metrics read blocked: stored credentials could not be decrypted (key mismatch or corrupted row)",
-				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"project_id", credentialProject, "requested_by_project_id", p.ProjectID,
+				"brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "error", safeErrSummary(merr))
 			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign metrics could not be read"}
 
@@ -1227,8 +1235,13 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			return nil, &briefs.NotFoundError{Code: "404", Message: "this project has no connection for the campaign's ad platform; connect the platform before changing campaign status"}
 		case errors.Is(terr, domain.ErrCredentialDecryptionFailed):
 			// GCM authentication failed on the stored blob: a wrong or rotated
-			// `CREDENTIAL_ENCRYPTION_KEY`, or a corrupted row. Permanent, and reconnecting the
-			// ad platform repairs neither.
+			// `CREDENTIAL_ENCRYPTION_KEY`, or a corrupted row.
+			//
+			// Re-saving credentials DOES repair the corrupted-row case — setCredential
+			// encrypts fresh plaintext and never reads the old ciphertext — but a wrong or
+			// rotated key is an operator's repair and no reconnect touches it. GCM cannot
+			// tell the two apart from here (both surface as an authentication failure), so
+			// this arm must answer for the worse one.
 			//
 			// 500, not 409, and the distinction is the one the system-connection arm above
 			// draws: a 409 tells the caller to repair THEIR connection, which is not a scope
@@ -1241,8 +1254,18 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			// chain, and `resolveConn` wraps the encryptor's own `derr` alongside it. That
 			// sentinel is documented as the DEFAULT for an unrecognised decrypt failure, so
 			// `derr` is arbitrary third-party text this package does not constrain.
+			// Attribute the failure to the row that FAILED, not to whoever asked. A project
+			// with no connection of its own falls back to the LF system row, so one corrupt
+			// system row would otherwise surface as unrelated failures scattered across every
+			// project that fell back to it — hiding the single-row cause behind what looks
+			// like a deployment-wide key problem. Same shape as connection.go's decrypt arm.
+			credentialProject := p.ProjectID
+			if errors.Is(terr, domain.ErrSystemConnectionOrigin) {
+				credentialProject = model.SystemProjectID
+			}
 			slog.ErrorContext(ctx, "campaign status toggle blocked: stored credentials could not be decrypted (key mismatch or corrupted row)",
-				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"project_id", credentialProject, "requested_by_project_id", p.ProjectID,
+				"brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "status", p.Status, "error", safeErrSummary(terr))
 			return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign status could not be changed"}
 		case errors.Is(terr, domain.ErrConnectionNotUsable):
