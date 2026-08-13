@@ -41,10 +41,13 @@ targeting facet URNs (numeric ids in the correct namespace); ad-account and org
 ids (numeric); geo URNs; and the aliased `cloud-native` profile must exist for
 `custom`. Find-or-create uses cursor pagination and propagates transient search errors
 (rather than treating them as "not found") to reduce duplicates — including a response with no
-`metadata` block, which is refused rather than read as exhaustion. That refusal is the expensive
-half of the same guard: this walk's absence value is the licence to create, so a dropped cursor
-envelope on an intermediate page would answer "no such campaign" for a name sitting on a page
-never fetched, and the caller would create a DUPLICATE PAID CAMPAIGN. It is
+`metadata` block, which on a NO-MATCH page is refused rather than read as exhaustion. That
+refusal is the expensive half of the same guard: this walk's absence value is the licence to
+create, so a dropped cursor envelope on an intermediate page would answer "no such campaign" for
+a name sitting on a page never fetched, and the caller would create a DUPLICATE PAID CAMPAIGN.
+A page that CONTAINS the match returns its id without consulting the envelope — the guard sits
+after the element scan on purpose, because a hit is not an absence and no unread page could
+change it (`TestFindByName_HitOnAPageWithoutMetadataStillResolves`). It is
 best-effort and NOT atomic across calls: `CreateCampaign` re-POSTs every dark
 post and creative on a repeat call, so this package does not itself guarantee
 cross-call idempotency. Single-flight IS provided caller-side by the orchestrator's

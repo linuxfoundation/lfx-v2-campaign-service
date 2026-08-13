@@ -4,6 +4,11 @@
 `listCreativeURNs` now reject a response whose `metadata` block is absent, instead of reading it
 as an exhausted cursor. 42 single-page fixtures across four test files gained `"metadata":{}`.
 
+For `findMatch` that rejection applies to a **no-match page**: the guard sits after the element
+scan, so a page carrying the match returns its id without consulting the envelope. A hit is not
+an absence, and the guard exists to stop an unconfirmed walk being reported as one. See the
+placement discussion below.
+
 `findMatch`, not `findByName`: the walk is shared, and naming the wrapper undersells the fix.
 `findByName` and `findCampaignByNameInGroup` both delegate to it, so ONE guard closes TWO
 find-or-create entry points — and `findCampaignByNameInGroup`'s own comment already says an
