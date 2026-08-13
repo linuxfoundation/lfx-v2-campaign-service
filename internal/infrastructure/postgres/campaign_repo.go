@@ -139,10 +139,13 @@ func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, bri
 				cancel()
 				// Double failure: both the post-insert read AND the rollback delete
 				// failed, so a 'pending' placeholder is orphaned and will block every
-				// future claim for this (brief, platform) — no sweeper reaps pending
-				// campaigns rows. This is a rare double-fault, but its blast radius is
-				// total for the pair, so log at ERROR with enough context to alert and
-				// reconcile manually (delete the stuck row) rather than swallowing it.
+				// future claim for this (brief, platform) until it is reaped. As of
+				// LFXV2-2665 the sweep DOES delete such a row — this one is a bare claim
+				// with no platform_campaign_id and no result, so it matches
+				// unreachedClaimPredicate — but only once it is older than
+				// stuckClaimReportAge, so the pair stays blocked until then. Still ERROR:
+				// the blast radius is total for the pair in the meantime, and a
+				// double-fault here is worth an alert rather than silent self-healing.
 				slog.ErrorContext(ctx, "orphaned pending campaign claim: read-after-claim AND rollback both failed; manual cleanup required",
 					"project_id", projectID, "brief_id", briefID, "platform", string(platform), "job_id", jobID,
 					"read_err", gerr.Error(), "rollback_err", derr.Error())

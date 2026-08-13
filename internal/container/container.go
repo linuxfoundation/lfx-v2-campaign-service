@@ -502,9 +502,16 @@ const maxStuckClaimDetailLogs = 10
 //
 // Without this the rows are INVISIBLE: the claim is ON CONFLICT (brief_id, platform), so a
 // stranded row silently blocks every future dispatch for that pair, and an operator finds out
-// only when someone reports a campaign that will not dispatch. Nothing here reclaims or
-// deletes — see stuckClaimReportAge for why a time-based takeover would be unsafe — the point is to
-// turn a silent block into an alertable log line.
+// only when someone reports a campaign that will not dispatch.
+//
+// It REAPS before it reports, and startup is where that matters most: this comment's own
+// premise is that a crash-stranded claim is most likely to exist right now, and those are
+// exactly the rows the reap can safely delete. Leaving it to the sweeper alone would make a
+// blocked pair wait a full stuckClaimSweepInterval for a row already provably dead.
+//
+// Only the provably-unreached subset is deleted — see unreachedClaimPredicate. Anything that
+// may have created a campaign upstream is still reported and left for a human, for the reason
+// stuckClaimReportAge gives.
 //
 // Runs inline on the wiring path (one bounded query) rather than as a background goroutine.
 // To be precise about what that does and does not buy: it does NOT avoid duplication — every
@@ -517,7 +524,9 @@ const maxStuckClaimDetailLogs = 10
 // low-cardinality and identical across replicas, so an alert built on it dedups naturally. A
 // gauge would be better still, but this service exposes no metrics endpoint today.
 func logStuckDispatchClaims(repo stuckClaimScanner) {
-	scanStuckDispatchClaims(context.Background(), repo, "at startup")
+	ctx := context.Background()
+	reapUnreachedDispatchClaims(ctx, repo)
+	scanStuckDispatchClaims(ctx, repo, "at startup")
 }
 
 // reapUnreachedDispatchClaims deletes the claims that provably never reached the provider and

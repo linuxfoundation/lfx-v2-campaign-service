@@ -874,6 +874,29 @@ func (b *blockingScanner) StuckDispatchClaims(ctx context.Context, _ int) ([]*mo
 // on via <-c.initDone. If it used context.Background() instead, a scan blocked in the database
 // would be uninterruptible and Close would overrun its bounded shutdown budget by up to
 // stuckClaimScanTimeout — the same reasoning that already governs the FailStuckJobs call.
+// Startup must REAP before it reports, not just report.
+//
+// The startup path's own premise is that crash-stranded claims are most likely to exist right
+// then, so skipping the reap there leaves a provably-dead row blocking its (brief, platform)
+// pair for a full sweep interval. Easy to drop in a refactor, because reporting still works and
+// nothing fails — the pair just stays blocked longer.
+func TestLogStuckDispatchClaims_ReapsBeforeReporting(t *testing.T) {
+	sc := &countingScanner{scanned: make(chan struct{}, 1)}
+
+	logStuckDispatchClaims(sc)
+
+	sc.mu.Lock()
+	reaps, calls := sc.reaps, sc.calls
+	sc.mu.Unlock()
+
+	if reaps != 1 {
+		t.Errorf("reaps = %d, want 1 — startup reported without reaping, so a dead claim keeps its pair blocked", reaps)
+	}
+	if calls != 1 {
+		t.Errorf("scans = %d, want 1 — the report must still run after the reap", calls)
+	}
+}
+
 func TestScanStuckDispatchClaims_RespectsParentCancel(t *testing.T) {
 	sc := &blockingScanner{entered: make(chan struct{}, 1)}
 	ctx, cancel := context.WithCancel(context.Background())
