@@ -3656,7 +3656,7 @@ func TestGetCampaignMetrics_PermanentConnectionDefectsAreNot503(t *testing.T) {
 			assert: func(t *testing.T, err error) {
 				var nf *briefs.NotFoundError
 				if !errors.As(err, &nf) {
-					t.Fatalf("want 404, got %T: %v", err, err)
+					t.Fatalf("want 404, got %T", err)
 				}
 			},
 		},
@@ -3666,7 +3666,7 @@ func TestGetCampaignMetrics_PermanentConnectionDefectsAreNot503(t *testing.T) {
 			assert: func(t *testing.T, err error) {
 				var ise *briefs.InternalServerError
 				if !errors.As(err, &ise) {
-					t.Fatalf("want 500, got %T: %v", err, err)
+					t.Fatalf("want 500, got %T", err)
 				}
 			},
 		},
@@ -3678,7 +3678,20 @@ func TestGetCampaignMetrics_PermanentConnectionDefectsAreNot503(t *testing.T) {
 			assert: func(t *testing.T, err error) {
 				var nf *briefs.NotFoundError
 				if !errors.As(err, &nf) {
-					t.Fatalf("want 404, got %T: %v — the general arm swallowed it", err, err)
+					t.Fatalf("the general arm swallowed it; got %T", err)
+				}
+			},
+		},
+		{
+			// The metrics twin of the toggle's second ordering case. Without it the 500 arm's
+			// POSITION is unpinned here — moving it below the general arm would leave the
+			// suite green while the two switches silently diverged.
+			name: "decryption failure wins over the general unusable arm",
+			err:  fmt.Errorf("decrypt: %w: %w", domain.ErrConnectionNotUsable, domain.ErrCredentialDecryptionFailed),
+			assert: func(t *testing.T, err error) {
+				var ise *briefs.InternalServerError
+				if !errors.As(err, &ise) {
+					t.Fatalf("the general arm swallowed it; got %T", err)
 				}
 			},
 		},

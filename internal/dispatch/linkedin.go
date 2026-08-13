@@ -200,6 +200,41 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 // not serve. campaign is the persisted row; only campaign.PlatformCampaignID (the numeric
 // campaign id) is used. status is model.CampaignRunActive/Paused. An UNCONFIRMED outcome
 // (including a partial cascade) is wrapped so the caller reports "verify before retry".
+
+func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
+	liStatus, err := linkedinRunStatus(status)
+	if err != nil {
+		return err
+	}
+	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform)
+	if err != nil {
+		return err
+	}
+	accountID := strings.TrimSpace(res.accountID)
+	runtime := linkedin.RuntimeConfig{
+		DefaultAccountID: accountID,
+		Accounts:         []linkedin.Account{{AccountID: accountID, Label: res.label}},
+	}
+	client := linkedin.NewClient(linkedin.Credentials{AccessToken: creds.AccessToken}, runtime, d.opts...)
+	// Cascade to the campaign's creatives too: CreateCampaign leaves them DRAFT, so
+	// activating only the campaign would not serve (a DRAFT creative never serves, and the
+	// creative's effective status is gated by the campaign). The client discovers the
+	// creatives (LinkedIn persists only a count) and lifts each DRAFT→ACTIVE (or holds PAUSED).
+	if uerr := client.UpdateCampaignAndCreativesStatus(ctx, campaign.PlatformCampaignID, liStatus); uerr != nil {
+		// An activate refused up front because the campaign has no servable creatives is a
+		// local/state error (the platform mutation never ran), so classify it as
+		// ErrCampaignNotProvisioned → 409, not the default 503. Mirrors reddit/meta.
+		if linkedin.IsNotServable(uerr) {
+			return fmt.Errorf("%w: %s", domain.ErrCampaignNotProvisioned, uerr.Error())
+		}
+		if linkedin.IsOutcomeUnconfirmed(uerr) {
+			return &unconfirmedToggleError{err: uerr}
+		}
+		return uerr
+	}
+	return nil
+}
+
 // resolveLinkedInCredentials fetches the project's LinkedIn connection and validates it is
 // usable, tagging each defect with domain.ErrConnectionNotUsable plus a reason sentinel so the
 // endpoint answers 409 rather than the 503 default arm.
@@ -236,7 +271,14 @@ func (d *LinkedInDispatcher) resolveLinkedInCredentials(ctx context.Context, pro
 		return nil, linkedinCreds{}, fmt.Errorf("%w: %w: linkedin credentials for project %s are not valid JSON",
 			domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, projectID)
 	}
-	if strings.TrimSpace(creds.AccessToken) == "" {
+	// Trimmed ONCE, here, and the trimmed value is what both callers receive. An earlier
+	// revision trimmed only for the empty check and returned the raw token, so ToggleStatus
+	// passed a whitespace-padded token to NewClient while ReadMetrics trimmed it again — the
+	// same credential accepted on one path and rejected upstream on the other, surfacing as a
+	// retryable 503 for a token that will never work. Trimming at the single point that
+	// validates it makes the two callers structurally unable to disagree.
+	creds.AccessToken = strings.TrimSpace(creds.AccessToken)
+	if creds.AccessToken == "" {
 		return nil, linkedinCreds{}, fmt.Errorf("%w: %w: linkedin credentials are incomplete (need accessToken)",
 			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
 	}
@@ -249,40 +291,6 @@ func (d *LinkedInDispatcher) resolveLinkedInCredentials(ctx context.Context, pro
 			domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected, projectID)
 	}
 	return res, creds, nil
-}
-
-func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
-	liStatus, err := linkedinRunStatus(status)
-	if err != nil {
-		return err
-	}
-	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform)
-	if err != nil {
-		return err
-	}
-	accountID := strings.TrimSpace(res.accountID)
-	runtime := linkedin.RuntimeConfig{
-		DefaultAccountID: accountID,
-		Accounts:         []linkedin.Account{{AccountID: accountID, Label: res.label}},
-	}
-	client := linkedin.NewClient(linkedin.Credentials{AccessToken: creds.AccessToken}, runtime, d.opts...)
-	// Cascade to the campaign's creatives too: CreateCampaign leaves them DRAFT, so
-	// activating only the campaign would not serve (a DRAFT creative never serves, and the
-	// creative's effective status is gated by the campaign). The client discovers the
-	// creatives (LinkedIn persists only a count) and lifts each DRAFT→ACTIVE (or holds PAUSED).
-	if uerr := client.UpdateCampaignAndCreativesStatus(ctx, campaign.PlatformCampaignID, liStatus); uerr != nil {
-		// An activate refused up front because the campaign has no servable creatives is a
-		// local/state error (the platform mutation never ran), so classify it as
-		// ErrCampaignNotProvisioned → 409, not the default 503. Mirrors reddit/meta.
-		if linkedin.IsNotServable(uerr) {
-			return fmt.Errorf("%w: %s", domain.ErrCampaignNotProvisioned, uerr.Error())
-		}
-		if linkedin.IsOutcomeUnconfirmed(uerr) {
-			return &unconfirmedToggleError{err: uerr}
-		}
-		return uerr
-	}
-	return nil
 }
 
 // ReadMetrics returns live campaign metrics from LinkedIn's Ad Analytics API for the
@@ -308,11 +316,8 @@ func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, 
 	if err != nil {
 		return nil, err
 	}
-	// Trimmed once, here, and the trimmed value is what's used for the client — passing the
-	// raw (possibly whitespace-padded) token to NewClient would let a token that looks valid
-	// still fail upstream with an invalid Authorization header. The helper has already
-	// rejected an empty one.
-	accessToken := strings.TrimSpace(creds.AccessToken)
+	// Already trimmed and non-empty: resolveLinkedInCredentials does both.
+	accessToken := creds.AccessToken
 
 	accountID := strings.TrimSpace(res.accountID)
 

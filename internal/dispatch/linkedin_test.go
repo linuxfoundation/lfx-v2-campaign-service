@@ -818,6 +818,23 @@ func TestLinkedIn_ReadMetrics_UnsupportedWindowBeatsUnusableConnection(t *testin
 // Deliberately covers ONLY ToggleStatus and ReadMetrics (LFXV2-3196). Dispatch keeps its own
 // inline checks because it wraps them in notCreated() to release the dispatch claim — a
 // different contract, covered by TestLinkedIn_PreCreateErrorsReleaseClaim above.
+// A whitespace-padded access token must be trimmed ONCE, in the helper, so both callers get the
+// same value. An earlier revision trimmed only for the empty check and returned the raw token:
+// ToggleStatus then passed the padded token to NewClient while ReadMetrics trimmed it again, so
+// the same stored credential worked on one path and failed upstream on the other — surfacing as
+// a retryable 503 for a token that could never work, which is the defect class this PR fixes.
+func TestLinkedIn_AccessTokenIsTrimmedOnceInTheHelper(t *testing.T) {
+	d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(`{"AccessToken":"  padded-token  "}`)}, identityEncryptor{})
+
+	_, creds, err := d.resolveLinkedInCredentials(context.Background(), "proj", model.ProviderLinkedInAds)
+	if err != nil {
+		t.Fatalf("resolveLinkedInCredentials: %v", err)
+	}
+	if creds.AccessToken != "padded-token" {
+		t.Errorf("AccessToken = %q, want it trimmed — a caller passing this straight to NewClient would send an invalid Authorization header", creds.AccessToken)
+	}
+}
+
 func TestLinkedIn_UnusableReasonsAreClassified(t *testing.T) {
 	cases := []struct {
 		name string
