@@ -301,6 +301,36 @@ func TestFindByName_MatchOnLaterPage(t *testing.T) {
 // "no campaign by that name" for a name that may well exist on a page never fetched. For a
 // find-or-create caller that false absence is the licence to create, and the result is a
 // DUPLICATE PAID CAMPAIGN. LFXV2-3066.
+// TestFindByName_HitOnAPageWithoutMetadataStillResolves is the counterpart to the guard test
+// below, and it pins the guard's PLACEMENT rather than its presence.
+//
+// The metadata check sits after the element scan, so a page carrying the match returns its id
+// without ever consulting the envelope. That ordering is deliberate. The guard exists to stop an
+// unconfirmed walk being reported as an ABSENCE, and a hit is not an absence — no unread page
+// could change the answer once the resource is found. Hoisting the check above the scan (as a
+// reviewer reasonably suggested) would fail a successful lookup over a missing envelope and send
+// a find-or-create caller into a duplicate create for a campaign it had just located: the exact
+// outcome the guard was written to prevent.
+func TestFindByName_HitOnAPageWithoutMetadataStillResolves(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// The match is HERE, and the response carries no metadata block at all.
+		_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | CNCF","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:777"}]}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	id, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaignGroups", "Events | KubeCon | CNCF")
+
+	if err != nil {
+		t.Fatalf("a MATCHED element must resolve even with no metadata envelope; failing it would "+
+			"make the caller create a duplicate of the campaign just found: %v", err)
+	}
+	if id != "777" {
+		t.Errorf("id = %q, want %q", id, "777")
+	}
+}
+
 func TestFindByName_AbsentMetadataOnLaterPageIsNotAbsence(t *testing.T) {
 	var mu sync.Mutex
 	var getCount int

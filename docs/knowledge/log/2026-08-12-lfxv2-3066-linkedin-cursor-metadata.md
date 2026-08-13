@@ -2,7 +2,7 @@
 
 **Update** — `internal/platform/linkedin/client.go` (LFXV2-3066). `findMatch` and
 `listCreativeURNs` now reject a response whose `metadata` block is absent, instead of reading it
-as an exhausted cursor. 45 single-page fixtures across four test files gained `"metadata":{}`.
+as an exhausted cursor. 42 single-page fixtures across four test files gained `"metadata":{}`.
 
 `findMatch`, not `findByName`: the walk is shared, and naming the wrapper undersells the fix.
 `findByName` and `findCampaignByNameInGroup` both delegate to it, so ONE guard closes TWO
@@ -15,7 +15,7 @@ LFXV2-3063 made `linkedInMetadata` a pointer and made `ListAdAccounts` reject ni
 exposure lived in two older walks, and the log for that round said so plainly: closing them meant
 touching roughly fifty fixtures, which did not belong in a review round on ad-account discovery.
 
-So this is not a newly discovered defect. It is the deferred half, and the estimate was the right order of magnitude: 45
+So this is not a newly discovered defect. It is the deferred half, and the estimate was the right order of magnitude: 42
 against "roughly fifty". Whether that was a counted estimate or a good guess is not recorded, so
 no credit is claimed for it here — what matters is that the deferral named its own cost and the
 cost turned out to be the one named.
@@ -93,7 +93,7 @@ Both guards are revert-verified: removing the nil check makes
 INTERMEDIATE page — page one advertises a cursor, page two drops its envelope — because a
 first-page-only test would not distinguish this bug from an empty result set.
 
-The full service suite passes; `internal/dispatch` needed 7 of the 45 fixtures, which is the
+The full service suite passes; `internal/dispatch` needed 7 of the 42 fixtures, which is the
 reminder that this client has callers whose own fixtures encode the same assumption.
 
 The count moved twice, and both moves were sweep artifacts rather than scope changes. The first
@@ -105,14 +105,26 @@ Lesson unchanged and now triply earned: a regex over JSON string literals does n
 envelope from an element, and a count derived from one is a claim that needs re-deriving every
 time the diff moves.
 
-It moved a third time, and the third correction was in the wrong direction — an intermediate
-revision of this entry said 42, which UNDERCOUNTED. The number is only trustworthy when derived
-from the diff, excluding the two prose comments that happen to quote a `"metadata"` JSON snippet:
+It moved twice more, and the second of those was self-inflicted in an instructive way: a revision
+of this entry replaced the hand count with a `grep` and published the command as PROOF — but the
+command counted added LINES containing `"metadata"`, which is not the same set as fixtures. It
+swept up two `strings.Contains(err.Error(), "metadata")` assertions added by this very PR and
+reported 45. A measurement offered as evidence has to be checked against what it actually
+measures, not merely re-run.
 
-```bash
-git diff origin/main -- '*_test.go' | grep '^+.*"metadata"' | grep -vcE '^\+\s*//'
-```
+The honest breakdown, with each number saying what it counts:
 
-That yields **45**, distributed 29 / 8 / 7 / 1 across `client_findings_test.go`,
-`client_test.go`, `linkedin_test.go` and `metrics_test.go`. Every count in this entry is that
-number. If the diff moves again, re-run the command rather than adjusting the prose.
+- **42 pre-existing response fixtures gained `"metadata":{}"`.** This is the migration's real
+  size and the number the rest of this entry uses.
+- **43 added lines carry a metadata fixture** — the 42 above plus one genuinely NEW page-1
+  fixture (`"nextPageToken":"cursor-2"` in `client_test.go`), which is a fixture the PR adds
+  rather than one it repairs.
+- Two further added lines match `"metadata"` but are error assertions, and two more are prose
+  comments quoting a JSON snippet. Neither is a fixture.
+
+Per file, pre-existing fixtures repaired: `client_findings_test.go` 29, `dispatch/linkedin_test.go`
+7, `client_test.go` 5, `metrics_test.go` 1.
+
+If the diff moves again, re-derive by reading the `-`/`+` pairs — a fixture REPAIRED has a `-`
+counterpart, a fixture ADDED does not, and an assertion has neither. No single grep separates
+those three, which is the whole lesson.

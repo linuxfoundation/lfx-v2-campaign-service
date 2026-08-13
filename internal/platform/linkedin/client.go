@@ -1344,6 +1344,16 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 		// Refuse, with the same inconclusive-search wording the repeated-token arm below
 		// uses: both mean the search could not be completed, and neither may be reported as
 		// an absence.
+		//
+		// Deliberately placed AFTER the element scan, so a page that CONTAINS the match
+		// returns the id above without ever reaching this check. That is not a gap: the
+		// guard exists to stop an unconfirmed walk being reported as an ABSENCE, and a hit
+		// is not an absence — the resource was found, so no amount of unread pages could
+		// change the answer, and failing a successful lookup over a missing envelope would
+		// send a find-or-create caller into a duplicate create for a campaign it just
+		// located. The guard covers exactly the path where the envelope decides the
+		// outcome: no match on this page, so the walk must prove it is finished before
+		// answering "not found".
 		// The wording differs from the sibling guards in listCreativeURNs and
 		// accounts.go ListAdAccounts on purpose, and a shared helper would flatten the
 		// distinction: each names the CALLER-facing consequence of an unconfirmed walk.
