@@ -254,6 +254,64 @@ func TestFindOrCreateCampaignGroup_TransientSearchErrorNoCreate(t *testing.T) {
 	}
 }
 
+// TestFindOrCreateCampaignGroup_AbsentMetadataNoCreate is the end-to-end half of this PR's
+// invariant, at the CALLER rather than the finder.
+//
+// The finder test proves the error is raised; TransientSearchErrorNoCreate above proves the
+// caller propagates a search error without POSTing. Composed, those cover this case
+// transitively — but only transitively, and the thing being protected is a duplicate PAID
+// campaign group. A future refactor that mistranslates findMatch's error at the caller (mapping
+// it to a not-found, say) would leave both of those tests green while reopening the exact hole
+// this PR closes. This pins the composition directly.
+//
+// Page 1 advertises a cursor, page 2 drops its metadata envelope: the walk cannot conclude the
+// name is absent, so it must abort rather than license a create.
+func TestFindOrCreateCampaignGroup_AbsentMetadataNoCreate(t *testing.T) {
+	var mu sync.Mutex
+	var postCount, getCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Method == http.MethodPost {
+			postCount++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"999"}`)
+			return
+		}
+		if r.Method == http.MethodGet {
+			getCount++
+			w.Header().Set("Content-Type", "application/json")
+			if getCount == 1 {
+				// No match, and there is more to read.
+				_, _ = io.WriteString(w, `{"elements":[{"name":"Other","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:1"}],"metadata":{"nextPageToken":"cursor-2"}}`)
+				return
+			}
+			// Page 2 carries elements but NO metadata block: the walk cannot prove it reached
+			// the end, so "not found" is not an answer it may give.
+			_, _ = io.WriteString(w, `{"elements":[{"name":"Other2","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:2"}]}`)
+			return
+		}
+		http.Error(w, "unexpected", http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, endMs := testScheduleMs(t, c)
+	_, err := c.findOrCreateCampaignGroup(context.Background(), "123456789", "Events | KubeCon | CNCF", "2099-01-01", endMs)
+
+	if err == nil {
+		t.Fatal("an unconfirmed search must not be reported as success")
+	}
+	if !strings.Contains(err.Error(), "metadata") {
+		t.Errorf("error %q does not name the missing metadata block", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if postCount != 0 {
+		t.Errorf("an inconclusive search licensed a create: got %d POSTs, want 0 — this is the duplicate PAID campaign group the guard exists to prevent", postCount)
+	}
+}
+
 // TestFindByName_MatchOnLaterPage verifies that a same-name resource that only
 // appears beyond the old fixed 5-page cap is still found (name-based
 // idempotency), so no duplicate is created. Each page advertises a

@@ -76,6 +76,33 @@ exhausted cursor decoded to the same value, and none of its three walks will now
 envelope as exhaustion. (`findMatch` refuses on a no-match page; a page carrying the match still
 resolves, because a hit is not an absence.)
 
+## What is ASSUMED here, stated plainly
+
+The guard treats an absent `metadata` block as impossible-in-practice for a healthy 2xx. That is
+an assumption, and it is worth naming because it is **not** backed by captured responses for
+these endpoints.
+
+LFXV2-3063 validated real responses for `adAccounts` only. These two walks hit
+`adCampaignGroups`, `adCampaigns` and the creatives finder, and no captured evidence for those
+three is recorded in this repo. If one of them legitimately omits the block on a genuine
+single-page terminal result, this change converts a previously-working lookup into a hard
+failure.
+
+The direction is deliberate and is why that risk is acceptable: the failure is **closed**. The
+worst case is an availability regression that surfaces loudly as an aborted create — recoverable,
+visible, and diagnosable from the error text, which names the missing block. The alternative
+failure mode is a silent false absence that spends money on a duplicate paid campaign, and there
+is no version of that which surfaces at the time.
+
+An empty `{"metadata":{}}` still passes: the guard is on the key being ABSENT, not on the
+envelope being empty, so a terminal page that carries the block with no cursor reads as
+exhaustion exactly as before.
+
+If any of the three endpoints does turn out to omit the block, the fix is narrow — scope the
+guard to the walks that have actually advertised a cursor (i.e. only require the envelope once
+a `nextPageToken` has been seen), rather than reverting it. That preserves the duplicate-create
+protection, which is the part that costs money.
+
 ## Two things checked and deliberately left alone
 
 **A whitespace-only `nextPageToken` is still treated as a live cursor.** `{"nextPageToken":"   "}`

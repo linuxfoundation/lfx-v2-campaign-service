@@ -47,7 +47,7 @@ create, so a dropped cursor envelope on an intermediate page would answer "no su
 a name sitting on a page never fetched, and the caller would create a DUPLICATE PAID CAMPAIGN.
 A page that CONTAINS the match returns its id without consulting the envelope — the guard sits
 after the element scan on purpose, because a hit is not an absence and no unread page could
-change it (`TestFindByName_HitOnAPageWithoutMetadataStillResolves`). It is
+change it. It is
 best-effort and NOT atomic across calls: `CreateCampaign` re-POSTs every dark
 post and creative on a repeat call, so this package does not itself guarantee
 cross-call idempotency. Single-flight IS provided caller-side by the orchestrator's
