@@ -352,13 +352,17 @@ func (s *credsSource) resolveConn(ctx context.Context, projectID string, conn *m
 	plaintext, derr := s.enc.Decrypt(conn.EncryptedCredentials)
 	if derr != nil {
 		// derr is NOT echoed to callers by the service layer — a decrypt failure can
-		// carry ciphertext detail — and whether it is even LOGGED depends on which of
-		// the two classifications below it lands in. The 500 arm (authenticated-decryption
-		// failure) logs the cause, because that error is built by the encryptor from
-		// ciphertext and key material only. The 400 arm (ErrConnectionNotUsable) does not:
-		// it logs a fixed reason token and nothing else, since the conditions reaching it
-		// include one detected by decoding the DECRYPTED blob. Both arms return a fixed
-		// message. Do not "restore" logging of the cause on the 400 path.
+		// carry ciphertext detail — and as of LFXV2-3065 NEITHER classification logs the
+		// cause either. The 500 arm (authenticated-decryption failure) used to, on the
+		// reasoning that the error is built by the encryptor from ciphertext and key
+		// material only: true of the SENTINEL, but what reaches the log is the whole
+		// chain, and `domain.Encryptor` is an INTERFACE whose implementations are free to
+		// quote the ciphertext or key material they failed on. The 400 arm
+		// (ErrConnectionNotUsable) never did: it logs a fixed reason token and nothing
+		// else, since the conditions reaching it include one detected by decoding the
+		// DECRYPTED blob. Both arms return a fixed message, and both are pinned by tests
+		// (`Test{ToggleCampaignStatus,GetCampaignMetrics}_DecryptFailureLogsNoErrorText`).
+		// Do not "restore" logging of the cause on either path.
 		//
 		// A decrypt failure is NOT one condition, and which sentinel it carries decides
 		// whether a human edits a connection or ops gets paged. Only a blob the encryptor

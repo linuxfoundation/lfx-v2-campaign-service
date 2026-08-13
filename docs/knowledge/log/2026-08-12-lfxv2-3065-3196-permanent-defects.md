@@ -24,7 +24,7 @@ The toggle now separates what its `default` arm had merged:
 | Cause | Was | Now | Why |
 |---|---|---|---|
 | No connection row | 503 | **404** | Nothing exists to repair. 409 is the "repair it" answer and would send someone to edit a row that is not there. |
-| Undecryptable blob | 503 | **500** | Not the caller's scope. A rotated `CREDENTIAL_ENCRYPTION_KEY` or a corrupted row — reconnecting fixes neither, and a project admin cannot see the key. |
+| Undecryptable blob | 503 | **500** | Not the caller's scope. A rotated `CREDENTIAL_ENCRYPTION_KEY` or a corrupted row, and GCM cannot tell them apart: re-saving credentials does repair the corrupted row, but no reconnect touches a rotated key, and a project admin cannot see the key. The arm must answer for the case it cannot rule out. |
 | Repository error | 503 | **503** | Genuinely transient. Keeps the answer the other two no longer share. |
 
 The 500 mirrors the reasoning already written on the `ErrSystemConnectionNotUsable` arm directly
@@ -65,11 +65,13 @@ the account, so an account cleared after creation must not block pausing.
 
 ## Verification
 
-All nine new tests are revert-verified — six in `brief_test.go`, two in `linkedin_test.go`, and
-one in `connection_defect_tagging_test.go`. (The count was written at four-in-`brief_test.go` and
-went stale when the later attribution and redaction rounds added two more; re-derived from the
-diff with `git diff origin/main -- '*_test.go' | grep -c '^+func Test'`, which is the check this
-entry should have used the first time.) The LinkedIn table is 2 entry points × 4 defects, and
+Every new test on this branch is revert-verified: each was confirmed to FAIL against the
+behaviour it pins, reverted, before being kept. The set spans `brief_test.go`,
+`linkedin_test.go` and `connection_defect_tagging_test.go`; derive the current count with
+`git diff origin/main -- '*_test.go' | grep -c '^+func Test'` rather than reading it here. This
+line has now gone stale twice — written at four-in-`brief_test.go`, restated as nine — because a
+literal count is falsified by the next round that adds a test, so it is deliberately no longer
+stated. The LinkedIn table is 2 entry points × 4 defects, and
 stripping the sentinels from the helper fails 4 subtests — so it binds the tagging, not merely the
 presence of an error.
 

@@ -719,12 +719,15 @@ on the `domain.Encryptor` PORT and never import the implementation; the port's d
 wrapping obligation, and `crypto`'s `ErrCiphertextTooShort` / `ErrDecryptionFailed` each wrap their
 domain sentinel so `errors.Is` carries the classification across the layer without inverting the
 dependency. Note the decrypt branches wrap BOTH a sentinel and the decrypt error (`%w: %w`), and
-the service layer never returns that cause to a caller — but whether it LOGS it depends on which
-sentinel the branch carried. Authenticated-decryption failure (`ErrCredentialDecryptionFailed` →
-500) logs the cause: that error is constructed by the encryptor from ciphertext and key material
-only. Malformed ciphertext reaches `ErrConnectionNotUsable` → 400, whose handler deliberately
-suppresses the cause and logs `reason=credential_blob_malformed` alone, because the conditions on
-that arm include one detected by decoding the DECRYPTED blob.
+the service layer never returns that cause to a caller — and as of LFXV2-3065 never LOGS it on
+either arm. Authenticated-decryption failure (`ErrCredentialDecryptionFailed` → 500) previously
+logged the cause, on the reasoning that the error is constructed by the encryptor from ciphertext
+and key material only; that holds for the SENTINEL, but the whole chain is what reaches the log
+and `domain.Encryptor` is a PORT whose implementations may quote the ciphertext or key material
+they failed on. Malformed ciphertext reaches `ErrConnectionNotUsable` → 400, whose handler has
+always suppressed the cause and logs `reason=credential_blob_malformed` alone, because the
+conditions on that arm include one detected by decoding the DECRYPTED blob. The suppression on
+both arms is pinned by `Test{ToggleCampaignStatus,GetCampaignMetrics}_DecryptFailureLogsNoErrorText`.
 
 ### HubSpot: email search, not account discovery
 
