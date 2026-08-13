@@ -352,17 +352,26 @@ func (s *credsSource) resolveConn(ctx context.Context, projectID string, conn *m
 	plaintext, derr := s.enc.Decrypt(conn.EncryptedCredentials)
 	if derr != nil {
 		// derr is NOT echoed to callers by the service layer — a decrypt failure can
-		// carry ciphertext detail — and as of LFXV2-3065 NEITHER classification logs the
-		// cause either. The 500 arm (authenticated-decryption failure) used to, on the
-		// reasoning that the error is built by the encryptor from ciphertext and key
-		// material only: true of the SENTINEL, but what reaches the log is the whole
-		// chain, and `domain.Encryptor` is an INTERFACE whose implementations are free to
-		// quote the ciphertext or key material they failed on. The 400 arm
-		// (ErrConnectionNotUsable) never did: it logs a fixed reason token and nothing
-		// else, since the conditions reaching it include one detected by decoding the
-		// DECRYPTED blob. Both arms return a fixed message, and both are pinned by tests
-		// (`Test{ToggleCampaignStatus,GetCampaignMetrics}_DecryptFailureLogsNoErrorText`).
-		// Do not "restore" logging of the cause on either path.
+		// carry ciphertext detail — and whether it is LOGGED depends on the HANDLER, not
+		// on this function.
+		//
+		// On the campaign toggle and metrics handlers (`internal/service/brief.go`), as of
+		// LFXV2-3065, neither classification logs the cause. The 500 arm
+		// (authenticated-decryption failure) used to, on the reasoning that the error is
+		// built by the encryptor from ciphertext and key material only: true of the
+		// SENTINEL, but what reaches the log is the whole chain, and `domain.Encryptor` is
+		// an INTERFACE whose implementations are free to quote the ciphertext or key
+		// material they failed on. The 400 arm (ErrConnectionNotUsable) never did: it logs
+		// a fixed reason token and nothing else, since the conditions reaching it include
+		// one detected by decoding the DECRYPTED blob. Both are pinned by
+		// `Test{ToggleCampaignStatus,GetCampaignMetrics}_DecryptFailureLogsNoErrorText`.
+		// Do not "restore" logging of the cause on either.
+		//
+		// Account DISCOVERY still logs the full `aerr` (`internal/service/connection.go`,
+		// the ErrCredentialDecryptionFailed arm). That is out of this change's scope and is
+		// NOT covered by the tests above — so this is deliberately not a service-wide
+		// guarantee. Anything relying on one must close that path first.
+		// All arms return a fixed message to the caller regardless.
 		//
 		// A decrypt failure is NOT one condition, and which sentinel it carries decides
 		// whether a human edits a connection or ops gets paged. Only a blob the encryptor

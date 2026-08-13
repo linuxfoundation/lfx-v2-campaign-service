@@ -283,8 +283,11 @@ range — `today`, `last_7_days`, `last_30_days`, `this_month`, `last_month`. `y
 translates to `ErrMetricsWindowUnsupported`. That order is load-bearing rather than stylistic:
 an unsupported window is a permanent 400 whatever state the connection is in, but resolving
 credentials first makes a project with an inactive or incomplete connection fail with a
-connection error that `BriefService` maps to 503 — telling the caller to retry a request that
-can never succeed. `dateRangeForWindow` calls the same validator first, so the two cannot drift.
+connection error, reported as something other than the window defect the caller actually has.
+(Before LFXV2-3196 that error was untagged and `BriefService` mapped it to 503 — telling the
+caller to retry a request that can never succeed. `resolveLinkedInCredentials` now tags it, so
+the same states answer 409 for a project-owned row and 500 for an unusable LF system fallback;
+the ordering argument is unchanged, since neither answer is the window's 400.) `dateRangeForWindow` calls the same validator first, so the two cannot drift.
 Spend (`costInUsd`, decimal USD) is converted to
 micro-currency (×1e6, rounded rather than truncated) after a `maxCostDecimalLen` (40-byte) bound
 — the 10 MiB response cap does not bound a single decimal, and `big.Rat` parsing/scaling is
@@ -719,15 +722,19 @@ on the `domain.Encryptor` PORT and never import the implementation; the port's d
 wrapping obligation, and `crypto`'s `ErrCiphertextTooShort` / `ErrDecryptionFailed` each wrap their
 domain sentinel so `errors.Is` carries the classification across the layer without inverting the
 dependency. Note the decrypt branches wrap BOTH a sentinel and the decrypt error (`%w: %w`), and
-the service layer never returns that cause to a caller — and as of LFXV2-3065 never LOGS it on
-either arm. Authenticated-decryption failure (`ErrCredentialDecryptionFailed` → 500) previously
-logged the cause, on the reasoning that the error is constructed by the encryptor from ciphertext
-and key material only; that holds for the SENTINEL, but the whole chain is what reaches the log
-and `domain.Encryptor` is a PORT whose implementations may quote the ciphertext or key material
-they failed on. Malformed ciphertext reaches `ErrConnectionNotUsable` → 400, whose handler has
-always suppressed the cause and logs `reason=credential_blob_malformed` alone, because the
-conditions on that arm include one detected by decoding the DECRYPTED blob. The suppression on
-both arms is pinned by `Test{ToggleCampaignStatus,GetCampaignMetrics}_DecryptFailureLogsNoErrorText`.
+the service layer never returns that cause to a caller — but whether it LOGS it is a property of
+the HANDLER, not of the resolver. On the campaign toggle and metrics handlers, as of LFXV2-3065,
+neither arm logs it. Authenticated-decryption failure (`ErrCredentialDecryptionFailed` → 500)
+previously logged the cause, on the reasoning that the error is constructed by the encryptor from
+ciphertext and key material only; that holds for the SENTINEL, but the whole chain is what reaches
+the log and `domain.Encryptor` is a PORT whose implementations may quote the ciphertext or key
+material they failed on. Malformed ciphertext reaches `ErrConnectionNotUsable` → 400, whose
+handler has always suppressed the cause and logs `reason=credential_blob_malformed` alone, because
+the conditions on that arm include one detected by decoding the DECRYPTED blob. Those two handlers
+are pinned by `Test{ToggleCampaignStatus,GetCampaignMetrics}_DecryptFailureLogsNoErrorText`.
+Account discovery (`internal/service/connection.go`) still logs the full cause on its 500 arm and
+is not covered by those tests, so this is a per-handler property rather than a service-wide
+guarantee — see `internal-service.md`.
 
 ### HubSpot: email search, not account discovery
 

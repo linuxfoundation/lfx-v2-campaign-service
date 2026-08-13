@@ -849,14 +849,17 @@ func (s *BriefService) GetCampaignMetrics(ctx context.Context, p *briefs.GetCamp
 			//
 			// The message names no accounts endpoint, even though two now exist
 			// (design/connection.go: list-google-ads-accounts and list-meta-ads-accounts).
-			// Naming one would mean naming the RIGHT one per provider, and the providers that
-			// can actually reach this arm — Google Ads, Microsoft, Reddit, Twitter, the four
-			// whose ToggleStatus/ReadMetrics credential resolution tags the sentinel — are
-			// mostly not the two with discovery routes. Meta, which has a route, cannot reach
-			// this arm at all: its toggle and metrics reads address the campaign node by id
-			// and never require an account. So a per-provider remedy string would be three
-			// parts dead wording for one part correct, and getting it wrong sends an operator
-			// to a route that does not exist, which is a worse remedy than none. Saving the id
+			// Naming one would mean naming the RIGHT one per provider, and the set that can
+			// reach this arm — every provider whose ToggleStatus/ReadMetrics credential
+			// resolution tags ErrAccountNotSelected, which is most of them and grows as
+			// adapters adopt the shared resolver — largely does not overlap the two with
+			// discovery routes. (Meta has a route and cannot reach this arm at all: its
+			// toggle and metrics reads address the campaign node by id and never require an
+			// account.) Grep the sentinel in internal/dispatch for the current set rather
+			// than trusting a list here; an earlier revision enumerated four providers and
+			// went stale the moment LinkedIn adopted the helper. So a per-provider remedy
+			// string would be mostly dead wording, and getting it wrong sends an operator to
+			// a route that does not exist, which is a worse remedy than none. Saving the id
 			// directly works on every provider, so that is what it says.
 			slog.WarnContext(ctx, "campaign metrics read blocked: no ad account selected on the project's connection",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
