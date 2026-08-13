@@ -361,9 +361,11 @@ func (s *credsSource) resolveConn(ctx context.Context, projectID string, conn *m
 		// built by the encryptor from ciphertext and key material only: true of the
 		// SENTINEL, but what reaches the log is the whole chain, and `domain.Encryptor` is
 		// an INTERFACE whose implementations are free to quote the ciphertext or key
-		// material they failed on. The 400 arm (ErrConnectionNotUsable) never did: it logs
-		// a fixed reason token and nothing else, since the conditions reaching it include
-		// one detected by decoding the DECRYPTED blob. Both are pinned by
+		// material they failed on. The ErrConnectionNotUsable arm (409 on these two
+		// handlers; 400 on account discovery, which classifies the same sentinel for its
+		// own caller) never did: it logs a fixed reason token and nothing else, since the
+		// conditions reaching it include one detected by decoding the DECRYPTED blob.
+		// Both are pinned by
 		// `Test{ToggleCampaignStatus,GetCampaignMetrics}_DecryptFailureLogsNoErrorText`.
 		// Do not "restore" logging of the cause on either.
 		//

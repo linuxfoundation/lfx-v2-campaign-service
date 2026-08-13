@@ -728,9 +728,10 @@ neither arm logs it. Authenticated-decryption failure (`ErrCredentialDecryptionF
 previously logged the cause, on the reasoning that the error is constructed by the encryptor from
 ciphertext and key material only; that holds for the SENTINEL, but the whole chain is what reaches
 the log and `domain.Encryptor` is a PORT whose implementations may quote the ciphertext or key
-material they failed on. Malformed ciphertext reaches `ErrConnectionNotUsable` → 400, whose
-handler has always suppressed the cause and logs `reason=credential_blob_malformed` alone, because
-the conditions on that arm include one detected by decoding the DECRYPTED blob. Those two handlers
+material they failed on. Malformed ciphertext reaches `ErrConnectionNotUsable`, which these two
+handlers answer with 409 (account discovery classifies the same sentinel as 400 for its own
+caller); that arm has always suppressed the cause and logs `reason=credential_blob_malformed`
+alone, because the conditions on it include one detected by decoding the DECRYPTED blob. Those two handlers
 are pinned by `Test{ToggleCampaignStatus,GetCampaignMetrics}_DecryptFailureLogsNoErrorText`.
 Account discovery (`internal/service/connection.go`) still logs the full cause on its 500 arm and
 is not covered by those tests, so this is a per-handler property rather than a service-wide

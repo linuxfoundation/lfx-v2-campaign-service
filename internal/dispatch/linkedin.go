@@ -273,9 +273,13 @@ func (d *LinkedInDispatcher) resolveLinkedInCredentials(ctx context.Context, pro
 			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
 	}
 	if uerr := json.Unmarshal(res.plaintext, &creds); uerr != nil {
-		// The cause is DROPPED rather than wrapped, same as meta: it is the only value here
-		// derived from the DECRYPTED blob, and encoding/json quotes its input in
-		// *json.SyntaxError, so wrapping it could carry credential bytes into a log line.
+		// The cause is DROPPED rather than wrapped, same as meta, and for the qualified
+		// reason set out in full at resolveMetaCredentials: it is the only value here
+		// derived from the DECRYPTED blob. Today's stdlib happens not to quote the
+		// offending bytes for a struct of string fields, but that is a behaviour rather
+		// than a documented guarantee and it does not hold for every field type. Dropping
+		// the cause removes the class instead of resting on it, and costs nothing — the
+		// sentinel already names the only actionable remedy.
 		return nil, linkedinCreds{}, fmt.Errorf("%w: %w: linkedin credentials for project %s are not valid JSON",
 			domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, projectID)
 	}
