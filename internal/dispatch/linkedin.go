@@ -236,7 +236,13 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 
 // resolveLinkedInCredentials fetches the project's LinkedIn connection and validates it is
 // usable, tagging each defect with domain.ErrConnectionNotUsable plus a reason sentinel so the
-// endpoint answers 409 rather than the 503 default arm.
+// endpoint stops answering from the 503 default arm.
+//
+// The status the caller ends up with depends on WHOSE row was defective, which is what the
+// deferred systemScoped below decides: a project-owned row answers 409 ("repair your
+// connection"), while an LF system fallback row additionally carries
+// domain.ErrSystemConnectionNotUsable and answers 500 — the project cannot repair a row it does
+// not own, so sending them to fix it would be sending them somewhere they cannot succeed.
 //
 // Mirrors resolveMetaCredentials, deliberately and structurally — including the `conn := res`
 // binding the defer closes over, for the reason meta.go records: every not-usable return sets

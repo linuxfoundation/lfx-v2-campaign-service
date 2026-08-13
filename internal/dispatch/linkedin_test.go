@@ -810,10 +810,15 @@ func TestLinkedIn_ReadMetrics_UnsupportedWindowBeatsUnusableConnection(t *testin
 }
 
 // LinkedIn's toggle and metrics paths must classify the same four connection defects every
-// other adapter classifies, so the endpoint answers 409 ("repair your connection") instead of
-// the default 503 ("transient, retry later"). No amount of retrying fixes a credential blob
-// that is not valid JSON, and a 503 both offers the user a useless retry affordance and makes
-// user-repairable configuration look like a platform outage on a 5xx dashboard.
+// other adapter classifies, so the endpoint stops answering the default 503 ("transient, retry
+// later"). No amount of retrying fixes a credential blob that is not valid JSON, and a 503 both
+// offers the user a useless retry affordance and makes user-repairable configuration look like a
+// platform outage on a 5xx dashboard.
+//
+// Which status replaces it depends on the credential SCOPE: a project-owned row answers 409
+// ("repair your connection"), and an LF system fallback row answers 500, because the project
+// cannot repair a row it does not own. Both scopes are exercised by
+// TestLinkedIn_UnusableConnectionIsTaggedOnEveryPath in connection_defect_tagging_test.go.
 //
 // Deliberately covers ONLY ToggleStatus and ReadMetrics (LFXV2-3196). Dispatch keeps its own
 // inline checks because it wraps them in notCreated() to release the dispatch claim — a
