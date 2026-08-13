@@ -65,6 +65,35 @@ container boots in 503 mode and retries the pool in the background (see the
 `internal/container` concept), so `/readyz` stays 503 and the pod is kept alive
 across the window rather than crash-looping.
 
+**Rollout strategy is `Recreate`, and the chart pins `Replace=true` to make that
+deployable.** The Deployment sets `strategy.type: Recreate` (not the RollingUpdate
+default) because this service runs its own schema migrations at boot and a
+backward-incompatible one — `000014` dropping `UNIQUE (brief_id, platform)` — must not go
+live while the previous pod still serves writes; RollingUpdate surges the new pod before
+terminating the old, Recreate orders it the other way. The catch is the cutover: flipping
+an EXISTING Deployment from RollingUpdate to Recreate is rejected by the API server with
+`spec.strategy.rollingUpdate: Forbidden: may not be specified when strategy type is
+'Recreate'`. The old object carries a `strategy.rollingUpdate` block the API server
+DEFAULTED (maxSurge/maxUnavailable 25%) when it was RollingUpdate; that block is owned by
+no field manager, so ArgoCD's server-side-apply sync will not strip it, and it may not
+coexist with `type: Recreate`. The metadata annotation
+`argocd.argoproj.io/sync-options: Replace=true` resolves this by making ArgoCD apply the
+Deployment with `kubectl replace` rather than a merge/SSA patch — a full replace discards
+the orphaned defaulted field, so the flip self-heals with no manual `kubectl patch`. The
+chart MERGES `Replace=true` into any operator-supplied `sync-options` (that annotation is
+one comma-separated value, so a bare literal ahead of `.Values.annotations` would be a
+duplicate map key an override silently wins, dropping `Replace=true` and reopening the
+failure) — an operator's own options are kept and `Replace=true` is always present. The
+two settings are a unit: `Recreate` without `Replace=true` reopens the forbidden-cutover
+failure, so `parity_test.go` pins both: `TestDeploymentUsesRecreateStrategy` asserts
+`type: Recreate` and `Replace=true` on the default render, and
+`TestDeploymentMergesReplaceIntoOperatorSyncOptions` asserts the merge preserves an
+operator sync-option under one key and stays idempotent. A manual
+one-shot recovery, if ever needed, is
+`kubectl patch ... --type=merge -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}'`
+— it must set `type` and null `rollingUpdate` in ONE write, because a bare remove of
+`rollingUpdate` while `type` is still RollingUpdate is immediately re-defaulted.
+
 **Rolling back is not the deploy run backwards.** `pool.go` only ever calls `m.Up()`,
 so reverting the image leaves the schema at whatever version the newer binary migrated it
 to. That is harmless for a migration that only ADDS a column the old code ignores, and it
