@@ -520,6 +520,33 @@ func logStuckDispatchClaims(repo stuckClaimScanner) {
 	scanStuckDispatchClaims(context.Background(), repo, "at startup")
 }
 
+// reapUnreachedDispatchClaims deletes the claims that provably never reached the provider and
+// logs how many, so a silently-unblocked pair still leaves a trace.
+//
+// Failure is logged and swallowed rather than propagated: this runs on a background ticker with
+// no caller to return to, and a reap that could not run leaves exactly the state that existed
+// before it — a reported stuck claim. The scan that follows still surfaces the row.
+//
+// Bounded by the same limit as the scan. A backlog larger than one batch drains over successive
+// ticks rather than in one long transaction.
+func reapUnreachedDispatchClaims(parent context.Context, repo stuckClaimScanner) {
+	ctx, cancel := context.WithTimeout(parent, stuckClaimScanTimeout)
+	defer cancel()
+
+	n, err := repo.ReapUnreachedDispatchClaims(ctx, maxStuckClaimDetailLogs)
+	if err != nil {
+		slog.WarnContext(ctx, "could not reap unreached dispatch claims; they remain blocked and will be reported by the scan below",
+			"error", err)
+		return
+	}
+	if n > 0 {
+		// INFO, not WARN: this is the recovery working. The condition worth alerting on is the
+		// scan's summary, which counts what is still stuck after this ran.
+		slog.InfoContext(ctx, "reaped dispatch claims that never reached the provider; their (brief, platform) pairs are dispatchable again",
+			"reaped", n)
+	}
+}
+
 // scanStuckDispatchClaims performs ONE bounded scan and logs what it finds. phase names the
 // caller ("at startup" / "by periodic sweep") so an operator can tell a claim stranded by the
 // deploy that just happened from one the running process has been watching.
@@ -610,6 +637,9 @@ func stuckClaimRemediation(c *model.Campaign) string {
 // SECOND scan happens at all, which a startup-only implementation would never do.
 type stuckClaimScanner interface {
 	StuckDispatchClaims(ctx context.Context, limit int) ([]*model.Campaign, error)
+	// ReapUnreachedDispatchClaims deletes only claims that provably never reached the
+	// provider. See unreachedClaimPredicate for why that subset is safe and the rest is not.
+	ReapUnreachedDispatchClaims(ctx context.Context, limit int) (int64, error)
 }
 
 // stuckClaimSweepInterval is how often the background sweeper re-scans for stranded
@@ -628,9 +658,18 @@ var stuckClaimSweepInterval = 5 * time.Minute
 // dispatch for its (brief_id, platform). This is the same reasoning that gave
 // Orchestrator.StartRecoverySweeper its sweep, applied to claims instead of jobs.
 //
-// Still REPORT-ONLY: nothing here reclaims or deletes (see stuckClaimReportAge for why a
-// time-based takeover would be unsafe — 'pending' cannot distinguish a claim in flight from
-// an ambiguous outcome where a paid campaign may already exist upstream).
+// No longer report-only, but only for a provably-safe subset (LFXV2-2665). Each sweep now also
+// REAPS claims that never reached the provider — both platform_campaign_id and result still
+// empty, which the claim INSERT leaves and every provider-touching path populates. Those cannot
+// have created anything upstream, so deleting them unblocks the pair with nothing to duplicate.
+//
+// Everything else is still reported and never touched, for the original reason: 'pending'
+// cannot distinguish a claim in flight from an ambiguous outcome where a paid campaign may
+// already exist upstream, and a time-based takeover of THOSE would authorize a duplicate paid
+// create. Reconciling them still needs provider idempotency keys or an authoritative read.
+//
+// Reap BEFORE the scan, so the scan reports what actually remains for a human rather than
+// listing rows this tick is about to remove.
 //
 // Like the startup scan this runs on every replica without leader election, so a stuck row is
 // logged once per replica per interval. That is accepted for the same reason: the summary line
@@ -649,6 +688,7 @@ func (c *Container) startStuckClaimSweeper(repo stuckClaimScanner) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				reapUnreachedDispatchClaims(ctx, repo)
 				scanStuckDispatchClaims(ctx, repo, "by periodic sweep")
 			}
 		}

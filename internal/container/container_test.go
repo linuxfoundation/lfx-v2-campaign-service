@@ -773,7 +773,17 @@ func TestNewContainer_MalformedNATSURLIsFatal(t *testing.T) {
 type countingScanner struct {
 	mu      sync.Mutex
 	calls   int
+	reaps   int
 	scanned chan struct{}
+}
+
+// Counted separately from the scan so a test can assert the sweep does BOTH — a reap that
+// silently stopped running would otherwise look identical to one that found nothing.
+func (s *countingScanner) ReapUnreachedDispatchClaims(context.Context, int) (int64, error) {
+	s.mu.Lock()
+	s.reaps++
+	s.mu.Unlock()
+	return 0, nil
 }
 
 func (s *countingScanner) StuckDispatchClaims(context.Context, int) ([]*model.Campaign, error) {
@@ -845,6 +855,10 @@ func TestStuckClaimSweeper_StopsOnCancel(t *testing.T) {
 // blockingScanner blocks until its context is cancelled, modelling a scan stuck on a slow or
 // unavailable database.
 type blockingScanner struct{ entered chan struct{} }
+
+func (b *blockingScanner) ReapUnreachedDispatchClaims(context.Context, int) (int64, error) {
+	return 0, nil
+}
 
 func (b *blockingScanner) StuckDispatchClaims(ctx context.Context, _ int) ([]*model.Campaign, error) {
 	select {
@@ -1015,7 +1029,15 @@ func TestStuckClaimRemediation_AlwaysRequiresUpstreamCheck(t *testing.T) {
 }
 
 // fixedScanner returns a canned batch of stuck claims.
-type fixedScanner struct{ rows []*model.Campaign }
+type fixedScanner struct {
+	rows    []*model.Campaign
+	reaped  int64
+	reapErr error
+}
+
+func (f *fixedScanner) ReapUnreachedDispatchClaims(context.Context, int) (int64, error) {
+	return f.reaped, f.reapErr
+}
 
 func (f *fixedScanner) StuckDispatchClaims(context.Context, int) ([]*model.Campaign, error) {
 	return f.rows, nil
@@ -1114,6 +1136,10 @@ type wedgedScanner struct {
 	release chan struct{}
 }
 
+func (w *wedgedScanner) ReapUnreachedDispatchClaims(context.Context, int) (int64, error) {
+	return 0, nil
+}
+
 func (w *wedgedScanner) StuckDispatchClaims(context.Context, int) ([]*model.Campaign, error) {
 	select {
 	case w.entered <- struct{}{}:
@@ -1188,6 +1214,10 @@ func TestClose_CancelsSweeperBeforeClosingPool(t *testing.T) {
 // ctxCapturingScanner hands the caller the context its "query" would run under, so a test can
 // assert that context is cancelled by shutdown.
 type ctxCapturingScanner struct{ seen chan context.Context }
+
+func (s *ctxCapturingScanner) ReapUnreachedDispatchClaims(context.Context, int) (int64, error) {
+	return 0, nil
+}
 
 func (s *ctxCapturingScanner) StuckDispatchClaims(ctx context.Context, _ int) ([]*model.Campaign, error) {
 	select {

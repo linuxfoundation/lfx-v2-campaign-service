@@ -155,6 +155,68 @@ func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, bri
 	return claimed, row, nil
 }
 
+// unreachedClaimPredicate is the SQL that identifies a 'pending' claim which provably never
+// reached the provider, and it is the whole safety argument for reaping. Read it before
+// changing anything here.
+//
+// 'pending' is overloaded — see stuckClaimReportAge. It marks a claim merely in flight AND an
+// ambiguous dispatch outcome the orchestrator retains precisely because the provider MAY
+// already have created a paid campaign. Deleting the second kind on age would eventually
+// authorize a DUPLICATE PAID CREATE, which is the exact failure the claim exists to prevent.
+//
+// What makes a subset safe is that the two kinds are distinguishable after all, just not by
+// status. The claim INSERT (claimCampaignDispatchQuery) writes NEITHER platform_campaign_id
+// NOR result — it sets campaign_name ” and status 'pending' and nothing else. Every path that
+// touches the provider populates at least one of them: a created upstream id lands in
+// platform_campaign_id, and the ambiguous-create / group-orphan case persists a reconcile blob
+// in result with the id deliberately empty (orchestrator.go documents both shapes as the
+// "retained partial orphan" it refuses to skip).
+//
+// So a row with both still empty is one where the dispatcher died BEFORE any provider call
+// completed. Nothing exists upstream to duplicate, and nothing will ever revisit the row.
+// Those are safe to delete. Everything else stays for a human, exactly as before.
+//
+// `result IS NULL` rather than a length test: the column is JSONB and the retain path writes a
+// non-empty blob or leaves it NULL, so an empty-object row is not a state this code produces.
+const unreachedClaimPredicate = `status = 'pending'
+		AND (platform_campaign_id IS NULL OR platform_campaign_id = '')
+		AND result IS NULL`
+
+// ReapUnreachedDispatchClaims deletes 'pending' claims older than stuckClaimReportAge that
+// provably never reached the provider, and returns how many it removed.
+//
+// This is the narrow half of LFXV2-2665. The ticket's title says "lifecycle ownership,
+// recovery, upstream reconcile"; this delivers only the part that is safe without provider
+// idempotency keys or an authoritative reconcile. Rows that MIGHT have created something
+// upstream are deliberately left alone and continue to be reported by StuckDispatchClaims —
+// the point is to stop a crash from permanently blocking a (brief, platform) pair, not to
+// automate reconciliation.
+//
+// Bounded by limit so one sweep cannot hold a long transaction or delete an unbounded batch;
+// the caller re-runs on its next tick. Ordered oldest-first so the rows blocking longest go
+// first when the batch is capped.
+func (r *CampaignRepo) ReapUnreachedDispatchClaims(ctx context.Context, limit int) (int64, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+	// The subselect is what bounds the delete: a bare DELETE ... LIMIT is not valid Postgres,
+	// and an unbounded DELETE would be exactly the long-transaction hazard the limit exists to
+	// avoid. ctid is used rather than id because it needs no assumption about the primary key's
+	// name or type and cannot collide.
+	q := `DELETE FROM campaigns WHERE ctid IN (
+			SELECT ctid FROM campaigns
+			WHERE ` + unreachedClaimPredicate + `
+			AND created_at < now() - make_interval(secs => $1)
+			ORDER BY created_at ASC
+			LIMIT $2
+		)`
+	tag, err := r.db.Exec(ctx, q, stuckClaimReportAge.Seconds(), limit)
+	if err != nil {
+		return 0, fmt.Errorf("reap unreached dispatch claims: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 // StuckDispatchClaims returns 'pending' campaign rows older than stuckClaimReportAge, OLDEST
 // first. It is READ-ONLY: nothing here reclaims, deletes, or redispatches.
 //
