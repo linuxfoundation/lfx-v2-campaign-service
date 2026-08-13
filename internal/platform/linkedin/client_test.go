@@ -190,7 +190,7 @@ func TestFindOrCreateCampaignGroup_Idempotent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "adCampaignGroups") {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | CNCF","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:555"}]}`)
+			_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | CNCF","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:555"}],"metadata":{}}`)
 			return
 		}
 		if r.Method == http.MethodPost {
@@ -254,6 +254,64 @@ func TestFindOrCreateCampaignGroup_TransientSearchErrorNoCreate(t *testing.T) {
 	}
 }
 
+// TestFindOrCreateCampaignGroup_AbsentMetadataNoCreate is the end-to-end half of this PR's
+// invariant, at the CALLER rather than the finder.
+//
+// The finder test proves the error is raised; TransientSearchErrorNoCreate above proves the
+// caller propagates a search error without POSTing. Composed, those cover this case
+// transitively — but only transitively, and the thing being protected is a duplicate PAID
+// campaign group. A future refactor that mistranslates findMatch's error at the caller (mapping
+// it to a not-found, say) would leave both of those tests green while reopening the exact hole
+// this PR closes. This pins the composition directly.
+//
+// Page 1 advertises a cursor, page 2 drops its metadata envelope: the walk cannot conclude the
+// name is absent, so it must abort rather than license a create.
+func TestFindOrCreateCampaignGroup_AbsentMetadataNoCreate(t *testing.T) {
+	var mu sync.Mutex
+	var postCount, getCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Method == http.MethodPost {
+			postCount++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"999"}`)
+			return
+		}
+		if r.Method == http.MethodGet {
+			getCount++
+			w.Header().Set("Content-Type", "application/json")
+			if getCount == 1 {
+				// No match, and there is more to read.
+				_, _ = io.WriteString(w, `{"elements":[{"name":"Other","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:1"}],"metadata":{"nextPageToken":"cursor-2"}}`)
+				return
+			}
+			// Page 2 carries elements but NO metadata block: the walk cannot prove it reached
+			// the end, so "not found" is not an answer it may give.
+			_, _ = io.WriteString(w, `{"elements":[{"name":"Other2","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:2"}]}`)
+			return
+		}
+		http.Error(w, "unexpected", http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	_, endMs := testScheduleMs(t, c)
+	_, err := c.findOrCreateCampaignGroup(context.Background(), "123456789", "Events | KubeCon | CNCF", "2099-01-01", endMs)
+
+	if err == nil {
+		t.Fatal("an unconfirmed search must not be reported as success")
+	}
+	if !strings.Contains(err.Error(), "metadata") {
+		t.Errorf("error %q does not name the missing metadata block", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if postCount != 0 {
+		t.Errorf("an inconclusive search licensed a create: got %d POSTs, want 0 — this is the duplicate PAID campaign group the guard exists to prevent", postCount)
+	}
+}
+
 // TestFindByName_MatchOnLaterPage verifies that a same-name resource that only
 // appears beyond the old fixed 5-page cap is still found (name-based
 // idempotency), so no duplicate is created. Each page advertises a
@@ -296,6 +354,107 @@ func TestFindByName_MatchOnLaterPage(t *testing.T) {
 	}
 }
 
+// A dropped cursor envelope on an INTERMEDIATE page is the expensive case: the walk has
+// already been told more pages follow, so treating the missing block as exhaustion reports
+// "no campaign by that name" for a name that may well exist on a page never fetched. For a
+// find-or-create caller that false absence is the licence to create, and the result is a
+// DUPLICATE PAID CAMPAIGN. LFXV2-3066.
+// TestFindByName_HitOnAPageWithoutMetadataStillResolves is the counterpart to the guard test
+// below, and it pins the guard's PLACEMENT rather than its presence.
+//
+// The metadata check sits after the element scan, so a page carrying the match returns its id
+// without ever consulting the envelope. That ordering is deliberate: the guard exists to stop an
+// unconfirmed walk being reported as an ABSENCE, and a hit is not an absence — no unread page
+// could change the answer once the resource is found.
+//
+// Hoisting the check above the scan (as a reviewer reasonably suggested) costs availability
+// rather than correctness — both find-or-create callers propagate the error instead of creating,
+// so an early check aborts a create whose lookup already succeeded. That is still the wrong
+// trade: it fails a fully answered question over an envelope that can no longer change it.
+func TestFindByName_HitOnAPageWithoutMetadataStillResolves(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// The match is HERE, and the response carries no metadata block at all.
+		_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | CNCF","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:777"}]}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	id, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaignGroups", "Events | KubeCon | CNCF")
+
+	if err != nil {
+		t.Fatalf("a MATCHED element must resolve even with no metadata envelope; failing it aborts "+
+			"a create whose lookup had already answered, over an envelope that cannot change "+
+			"the answer: %v", err)
+	}
+	if id != "777" {
+		t.Errorf("id = %q, want %q", id, "777")
+	}
+}
+
+func TestFindByName_AbsentMetadataOnLaterPageIsNotAbsence(t *testing.T) {
+	var mu sync.Mutex
+	var getCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		getCount++
+		n := getCount
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if n == 1 {
+			// Page 1 does not match, and advertises a further page.
+			_, _ = io.WriteString(w, `{"elements":[{"name":"Other","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:1"}],"metadata":{"nextPageToken":"cursor-2"}}`)
+			return
+		}
+		// Page 2 carries elements but NO metadata block at all.
+		_, _ = io.WriteString(w, `{"elements":[{"name":"Other2","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:2"}]}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	id, err := c.findByName(context.Background(), "adAccounts/123456789/adCampaignGroups", "Events | KubeCon | CNCF")
+
+	if err == nil {
+		t.Fatalf("a response with no metadata block was reported as a completed search (id %q) — a caller would create a duplicate", id)
+	}
+	if id != "" {
+		t.Errorf("an inconclusive search must not return an id, got %q", id)
+	}
+	if !strings.Contains(err.Error(), "metadata") {
+		t.Errorf("error %q does not say the metadata block was missing", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if getCount != 2 {
+		t.Errorf("expected the walk to stop on the malformed second page, made %d GETs", getCount)
+	}
+}
+
+// The creative walk has the same exposure with a different cost: a partial creative list
+// reported as complete lets the status cascade report success and persist ACTIVE while the
+// undiscovered creatives stay DRAFT and never serve. LFXV2-3066.
+func TestListCreativeURNs_AbsentMetadataIsNotExhaustion(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Elements, but no cursor envelope.
+		_, _ = io.WriteString(w, `{"elements":[{"id":"urn:li:sponsoredCreative:900"}]}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	urns, err := c.listCreativeURNs(context.Background(), "123456789", "123")
+
+	if err == nil {
+		t.Fatalf("a response with no metadata block was accepted as a fully enumerated creative list (%d urns)", len(urns))
+	}
+	if urns != nil {
+		t.Errorf("an unconfirmed enumeration must not return a partial list, got %v", urns)
+	}
+	if !strings.Contains(err.Error(), "metadata") {
+		t.Errorf("error %q does not say the metadata block was missing", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Campaign-creation happy path (full hierarchy) + dark-post assertion
 // ---------------------------------------------------------------------------
@@ -313,7 +472,7 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 
 		// All search GETs return empty -> forces create path.
 		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 
@@ -437,7 +596,7 @@ func TestCreateCampaign_LifetimeBudgetUsesTotalBudget(t *testing.T) {
 		defer mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		b, _ := io.ReadAll(r.Body)
@@ -707,7 +866,7 @@ func TestResolveOrgID_ConsistentMappingResolves(t *testing.T) {
 func TestContextCancellation(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"elements":[]}`)
+		_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 	}))
 	defer srv.Close()
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
@@ -741,7 +900,7 @@ func TestDoRequestRetriesOn429(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		// A GET is a search: include `elements` so the response is a valid search
 		// envelope (doRequest rejects a GET whose elements field is absent).
-		_, _ = io.WriteString(w, `{"id":"urn:li:x:99","elements":[]}`)
+		_, _ = io.WriteString(w, `{"id":"urn:li:x:99","elements":[],"metadata":{}}`)
 	}))
 	defer srv.Close()
 

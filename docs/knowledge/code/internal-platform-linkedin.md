@@ -40,7 +40,14 @@ sub-cent/NaN/Inf; registration URL (absolute, http/https, real host); schedule
 targeting facet URNs (numeric ids in the correct namespace); ad-account and org
 ids (numeric); geo URNs; and the aliased `cloud-native` profile must exist for
 `custom`. Find-or-create uses cursor pagination and propagates transient search errors
-(rather than treating them as "not found") to reduce duplicates, but it is
+(rather than treating them as "not found") to reduce duplicates — including a response with no
+`metadata` block, which on a NO-MATCH page is refused rather than read as exhaustion. That
+refusal is the expensive half of the same guard: this walk's absence value is the licence to
+create, so a dropped cursor envelope on an intermediate page would answer "no such campaign" for
+a name sitting on a page never fetched, and the caller would create a DUPLICATE PAID CAMPAIGN.
+A page that CONTAINS the match returns its id without consulting the envelope — the guard sits
+after the element scan on purpose, because a hit is not an absence and no unread page could
+change it. It is
 best-effort and NOT atomic across calls: `CreateCampaign` re-POSTs every dark
 post and creative on a repeat call, so this package does not itself guarantee
 cross-call idempotency. Single-flight IS provided caller-side by the orchestrator's
@@ -67,7 +74,10 @@ DISCOVERED via the creatives FINDER (`GET /adAccounts/{acct}/creatives?q=criteri
 (URN or bare-numeric) is normalized to its trailing numeric id and the URN is REBUILT from it,
 so a malformed value (a suffix with `?`/`/`/percent-encoding/traversal) is rejected rather than
 altering the request path; the URN key is then percent-encoded (`urn%3Ali%3A…`). A stuck/looping
-cursor, the page cap, or an element with no usable id FAILS discovery rather than truncating.
+cursor, the page cap, an element with no usable id, or a response carrying elements with NO
+`metadata` block at all FAILS discovery rather than truncating. That last case matters because
+an absent cursor envelope and an exhausted cursor decoded to the same empty token before
+`linkedInMetadata` became a pointer, so a truncated walk reported itself as complete.
 On a PAUSE a definite 400 on an in-review creative is tolerated (LinkedIn forbids pausing an
 in-review creative; the campaign gate already stopped it). Any other failure after a first
 successful mutation is a `partialCascadeError` (Unconfirmed). The narrower `UpdateCampaignStatus`

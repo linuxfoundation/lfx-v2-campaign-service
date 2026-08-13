@@ -32,7 +32,7 @@ func TestFindByName_NumericID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		// id is an unquoted JSON number, as LinkedIn actually returns it.
-		_, _ = io.WriteString(w, `{"elements":[{"name":"Events | Numeric | CNCF","status":"ACTIVE","id":12345}]}`)
+		_, _ = io.WriteString(w, `{"elements":[{"name":"Events | Numeric | CNCF","status":"ACTIVE","id":12345}],"metadata":{}}`)
 	}))
 	defer srv.Close()
 
@@ -184,7 +184,7 @@ func TestCreateCampaign_RejectsBadRegistrationURLBeforeAnyPOST(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"elements":[]}`)
+		_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 	}))
 	defer srv.Close()
 
@@ -225,7 +225,7 @@ func TestCreateCampaign_PartialVariantFailureReported(t *testing.T) {
 		defer mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		switch {
@@ -299,7 +299,7 @@ func TestCreateCampaign_UnknownAccountFailsClosed(t *testing.T) {
 			t.Errorf("unexpected POST — unknown account should fail closed first")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"elements":[]}`)
+		_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 	}))
 	defer srv.Close()
 
@@ -341,7 +341,7 @@ func noPOSTServer(t *testing.T) *httptest.Server {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"elements":[]}`)
+		_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 	}))
 }
 
@@ -414,7 +414,7 @@ func TestCreateCampaign_TrimsRegistrationURLForUTM(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		switch {
@@ -660,7 +660,7 @@ func captureResourceNamesServer(t *testing.T, mu *sync.Mutex, groupName, campaig
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		readName := func() string {
@@ -907,7 +907,7 @@ func TestCreateCampaign_RejectsBadScheduleBeforeAnyLookupEvenWhenResourcesExist(
 			_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | tlf","status":"ACTIVE","id":"urn:li:sponsoredCampaignGroup:100"}],"metadata":{"nextPageToken":""}}`)
 			return
 		}
-		_, _ = io.WriteString(w, `{"elements":[]}`)
+		_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 	}))
 	defer srv.Close()
 
@@ -961,7 +961,7 @@ func TestCreateCampaign_PartialFailureReportsDarkPostWhenCreativeFails(t *testin
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		switch {
@@ -1231,7 +1231,7 @@ func fullFlowServer(t *testing.T) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		switch {
@@ -1495,7 +1495,7 @@ func TestDoRequest_GET429StillRetried(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		// A GET is a search: include `elements` so the response is a valid search
 		// envelope (doRequest rejects a GET whose elements field is absent).
-		_, _ = io.WriteString(w, `{"id":"urn:li:x:99","elements":[]}`)
+		_, _ = io.WriteString(w, `{"id":"urn:li:x:99","elements":[],"metadata":{}}`)
 	}))
 	defer srv.Close()
 
@@ -1526,7 +1526,7 @@ func TestCreateCampaign_SingleScheduleComputation(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		readSched := func() map[string]any {
@@ -1831,7 +1831,7 @@ func TestCreateCampaign_SurfacesGroupWhenCampaignCreateFails(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		switch {
@@ -2011,7 +2011,7 @@ func TestDoRequest_SendsAuthAndVersionHeaders(t *testing.T) {
 		gotVer = r.Header.Get("LinkedIn-Version")
 		gotProto = r.Header.Get("X-RestLi-Protocol-Version")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"elements":[]}`)
+		_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 	}))
 	defer srv.Close()
 	c := NewClient(Credentials{AccessToken: "tok-abc"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
@@ -2223,7 +2223,7 @@ func TestCreateCampaign_StepWordingNeutralForFoundCampaign(t *testing.T) {
 				// An EXISTING ACTIVE campaign under the same group — found idempotently.
 				_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | LinkedIn | Conversions | Prospecting | Static | tlf | MoFU","status":"ACTIVE","id":"urn:li:sponsoredCampaign:200","campaignGroup":"urn:li:sponsoredCampaignGroup:`+groupID+`"}],"metadata":{"nextPageToken":""}}`)
 			default:
-				_, _ = io.WriteString(w, `{"elements":[]}`)
+				_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			}
 			return
 		}
@@ -2431,7 +2431,7 @@ func TestCreateCampaign_IdlessGroupMatchIssuesNoCreate(t *testing.T) {
 			_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | tlf","status":"ACTIVE","urn":""}],"metadata":{"nextPageToken":""}}`)
 			return
 		}
-		_, _ = io.WriteString(w, `{"elements":[]}`)
+		_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 	}))
 	defer srv.Close()
 
@@ -2627,7 +2627,7 @@ func TestCreateCampaign_TrailingEmptyGroupMatchIssuesNoCreate(t *testing.T) {
 			_, _ = io.WriteString(w, `{"elements":[{"name":"Events | KubeCon | tlf","status":"ACTIVE","$URN":"urn:li:sponsoredCampaignGroup:"}],"metadata":{"nextPageToken":""}}`)
 			return
 		}
-		_, _ = io.WriteString(w, `{"elements":[]}`)
+		_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 	}))
 	defer srv.Close()
 
@@ -2739,7 +2739,7 @@ func TestCreateCampaign_GroupCreateIDLessURNErrors(t *testing.T) {
 		defer mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		switch {
@@ -2780,7 +2780,7 @@ func TestCreateCampaign_CampaignCreateIDLessURNErrors(t *testing.T) {
 		defer mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		switch {
@@ -2973,7 +2973,7 @@ func TestCreateCampaign_AmbiguousCampaignCreateIsUnconfirmed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		switch {
@@ -3023,7 +3023,7 @@ func TestCreateCampaign_AmbiguousDarkPostIsUnconfirmed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		switch {
@@ -3085,7 +3085,7 @@ func TestCreateCampaign_CallerCancelDuringCampaignCreateIsUnconfirmedPartial(t *
 			cancel()
 			return nil, fmt.Errorf("Post %q: %w", req.URL.String(), context.Canceled)
 		}
-		body := `{"elements":[]}`
+		body := `{"elements":[],"metadata":{}}`
 		if req.Method == http.MethodPost && strings.Contains(req.URL.Path, "adCampaignGroups") {
 			body = `{"id":"urn:li:sponsoredCampaignGroup:100"}`
 		}
@@ -3154,7 +3154,7 @@ func TestCreateCampaign_CallerCancelDuringDarkPostIsUnconfirmedPartial(t *testin
 			cancel()
 			return nil, fmt.Errorf("Post %q: %w", req.URL.String(), context.Canceled)
 		}
-		body := `{"elements":[]}`
+		body := `{"elements":[],"metadata":{}}`
 		if req.Method == http.MethodPost && strings.Contains(req.URL.Path, "adCampaignGroups") {
 			body = `{"id":"urn:li:sponsoredCampaignGroup:100"}`
 		}
@@ -3216,7 +3216,7 @@ func TestDoRequest_RejectsOversizedResponse(t *testing.T) {
 		// Write a valid-JSON prefix followed by enough padding to exceed the cap, so
 		// a naive LimitReader(cap) would truncate to still-parseable JSON and wrongly
 		// accept it. maxResponseBytes+64 guarantees we cross the +1 boundary.
-		_, _ = io.WriteString(w, `{"elements":[]}`)
+		_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 		pad := strings.Repeat(" ", maxResponseBytes+64)
 		_, _ = io.WriteString(w, pad)
 	}))
@@ -3252,7 +3252,7 @@ func TestDoRequest_PerAttemptTimeoutIndependentOfInjectedClient(t *testing.T) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"elements":[]}`)),
+			Body:       io.NopCloser(strings.NewReader(`{"elements":[],"metadata":{}}`)),
 			Request:    req,
 		}, nil
 	})
@@ -3493,7 +3493,7 @@ func TestCreateCampaign_POST5xxCreateStillAmbiguous(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		switch {
@@ -3626,7 +3626,8 @@ func TestFindByName_MissingElementsFieldIsError(t *testing.T) {
 }
 
 // TestFindByName_EmptyElementsSliceIsConfirmedAbsent verifies the FIX 3 boundary:
-// an INTENTIONAL empty result `{"elements":[]}` (field PRESENT, len 0) IS a valid
+// an INTENTIONAL empty result `{"elements":[],"metadata":{"nextPageToken":""}}` (field PRESENT,
+// len 0) IS a valid
 // confirmed-absence — findByName returns "" (not found) with no error, so the
 // caller may proceed to create.
 func TestFindByName_EmptyElementsSliceIsConfirmedAbsent(t *testing.T) {
@@ -3647,7 +3648,8 @@ func TestFindByName_EmptyElementsSliceIsConfirmedAbsent(t *testing.T) {
 }
 
 // TestFindByName_ElementsPresentWithHitStillWorks verifies FIX 3 does not regress a
-// real search hit: `{"elements":[{...}]}` still returns the matched id.
+// real search hit: `{"elements":[{...}],"metadata":{"nextPageToken":""}}` still returns the
+// matched id.
 func TestFindByName_ElementsPresentWithHitStillWorks(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -3721,7 +3723,7 @@ func TestCreateCampaign_CampaignStartRecomputedBeforePOST(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		b, _ := io.ReadAll(r.Body)
@@ -3797,7 +3799,7 @@ func TestClient_DoesNotFollowRedirects(t *testing.T) {
 		if r.URL.Path == "/redirect-target" {
 			followed = true
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		http.Redirect(w, r, "/redirect-target", http.StatusFound)
@@ -3824,7 +3826,7 @@ func TestClient_OverridesInjectedCheckRedirectWithoutMutatingCaller(t *testing.T
 		if r.URL.Path == "/redirect-target" {
 			followed = true
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		http.Redirect(w, r, "/redirect-target", http.StatusFound)

@@ -181,9 +181,13 @@ type linkedInResponse struct {
 	Status string     `json:"status"`
 	// Elements separates "the elements field was absent or null" from "elements was
 	// present but empty", which is the difference between a body that CANNOT prove
-	// absence (a malformed 2xx like `{}`) and one that confirms a not-found
+	// absence (a malformed 2xx like `{}`) and one that can contribute to a not-found
 	// (`{"elements":[]}`). Getting that wrong would let a `{}` read as "no elements →
 	// not found" and permit a DUPLICATE create. See doRequest's search-presence guard.
+	//
+	// An empty elements array is NECESSARY but no longer SUFFICIENT for a not-found:
+	// since LFXV2-3066 the paginated walks also require a present `metadata` block whose
+	// token is empty, because an absent envelope cannot prove the walk reached the end.
 	//
 	// The pointer is not what MAKES the distinction possible — `encoding/json` already
 	// draws it for a plain slice, since a present `[]` decodes to a non-nil EMPTY slice
@@ -710,16 +714,20 @@ func (c *Client) listCreativeURNs(ctx context.Context, accountID, campaignID str
 				urns = append(urns, urn)
 			}
 		}
-		// An absent metadata block is treated as exhaustion here, which is what the
-		// value-typed field did implicitly before it became a pointer. That is the SAME
-		// false-absence exposure ListAdAccounts now rejects, and it is left alone on
-		// purpose: this walk predates the finding, and closing it means asserting a
-		// metadata block in ~50 existing fixtures — churn that belongs in its own change,
-		// not in a review round on an unrelated PR. Tracked as LFXV2-3066.
-		var next string
-		if resp.Metadata != nil {
-			next = resp.Metadata.NextPageToken
+		// An ABSENT metadata block is not an exhausted cursor. The value-typed field made
+		// the two indistinguishable — a response carrying elements with no cursor envelope
+		// decoded to an empty NextPageToken, so a truncated enumeration reported itself as
+		// a complete one. That is the same false absence the id guard above rejects,
+		// arriving through the pagination door.
+		//
+		// The cost here is a partial creative list reported as complete: the cascade then
+		// reports success and the service persists ACTIVE while the undiscovered creatives
+		// stay DRAFT and never serve. Fail instead, exactly as the repeated-cursor arm
+		// below already does for the same reason.
+		if resp.Metadata == nil {
+			return nil, fmt.Errorf("creative discovery for campaign %s returned a response with no metadata; cannot confirm every creative was enumerated", campaignID)
 		}
+		next := resp.Metadata.NextPageToken
 		if next == "" {
 			return urns, nil // fully enumerated
 		}
@@ -1042,7 +1050,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		// treating it as an empty result set would make findMatch report a false "not
 		// found" and let the find-or-create caller create a DUPLICATE paid resource.
 		// An intentional empty result `{"elements":[]}` decodes to a non-nil, len-0
-		// slice and IS a valid confirmed-absence, so it is allowed through. Reject only
+		// slice and CAN form part of a confirmed absence, so it is allowed through — the
+		// paginated walks additionally require a present `metadata` block whose token is
+		// empty before they will answer "not found" (LFXV2-3066). Reject only
 		// the field-absent/null case, as a transportError — with FIX 1's method gate a
 		// GET surfaces this as a plain error (correct: a GET that can't confirm absence
 		// must fail, not create). POST/other mutations are exempt: a create legitimately
@@ -1329,13 +1339,41 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 			return id, nil
 		}
 		// Cursor pagination: an empty nextPageToken marks the end of the result set.
-		// Otherwise carry the token into the next request. An absent metadata block reads
-		// as exhaustion, as it did implicitly before the field became a pointer — same
-		// pre-existing exposure and same reason for leaving it here (LFXV2-3066).
-		var nextToken string
-		if resp.Metadata != nil {
-			nextToken = resp.Metadata.NextPageToken
+		// Otherwise carry the token into the next request.
+		//
+		// An ABSENT metadata block is not an exhausted cursor, and this is the walk where
+		// conflating them is most expensive. A missing envelope used to decode to an empty
+		// token, which reads as "searched everything, found nothing" — and for a
+		// find-or-create caller a false no-match is the LICENCE TO CREATE. A dropped cursor
+		// envelope on an intermediate page therefore produces a DUPLICATE PAID CAMPAIGN.
+		//
+		// Refuse, with the same inconclusive-search wording the repeated-token arm below
+		// uses: both mean the search could not be completed, and neither may be reported as
+		// an absence.
+		//
+		// Deliberately placed AFTER the element scan, so a page that CONTAINS the match
+		// returns the id above without ever reaching this check. That is not a gap: the
+		// guard exists to stop an unconfirmed walk being reported as an ABSENCE, and a hit
+		// is not an absence — the resource was found, so no amount of unread pages could
+		// change the answer.
+		//
+		// The cost of hoisting it above the scan is availability, not correctness: both
+		// find-or-create callers propagate this error rather than creating (see
+		// findOrCreateCampaignGroup and findOrCreateCampaign), so an early check would
+		// ABORT a create whose lookup had already succeeded, not duplicate anything. Still
+		// the wrong trade — it fails a fully answered question over an envelope that could
+		// no longer affect the answer. The guard therefore covers exactly the path where
+		// the envelope DOES decide the outcome: no match on this page, so the walk must
+		// prove it is finished before answering "not found".
+		// The wording differs from the sibling guards in listCreativeURNs and
+		// accounts.go ListAdAccounts on purpose, and a shared helper would flatten the
+		// distinction: each names the CALLER-facing consequence of an unconfirmed walk.
+		// Here that is a duplicate create, so this borrows the repeated-token arm's
+		// phrasing below; there it is an unenumerated list. Same rule, different cost.
+		if resp.Metadata == nil {
+			return "", fmt.Errorf("search %q by name: response carried no metadata block, so the search could not be confirmed complete — aborting to avoid creating a duplicate", nestedPath)
 		}
+		nextToken := resp.Metadata.NextPageToken
 		if nextToken == "" {
 			return "", nil
 		}

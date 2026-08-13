@@ -196,8 +196,8 @@ func (c *Client) ListAdAccounts(ctx context.Context) ([]AdAccount, error) {
 		// trimming can request a DIFFERENT page than the one offered — and a token that is
 		// only whitespace would trim to "" and read as exhaustion, returning a partial
 		// account list as a complete one. That is the false-absence shape this file's other
-		// guards exist to prevent, arriving through the pagination door. The two existing
-		// cursor walks (client.go findCreatives, findByName) preserve the exact value;
+		// guards exist to prevent, arriving through the pagination door. The other two
+		// cursor walks (client.go listCreativeURNs, findMatch) preserve the exact value;
 		// trimming belongs on human-entered fields, not on server-minted ones.
 		// An ABSENT metadata block is not an exhausted cursor. Without this the zero value
 		// reads as "no more pages" and a malformed intermediate response truncates the

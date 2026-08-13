@@ -122,7 +122,7 @@ func TestLinkedIn_DispatchSuccessMapsResult(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		switch {
@@ -209,7 +209,7 @@ func TestLinkedIn_PaddedMatchingAccountIDAccepted(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		switch {
@@ -256,7 +256,7 @@ func TestLinkedIn_AmbiguousCreateRetainsClaim(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		w.WriteHeader(http.StatusBadGateway) // ambiguous 5xx on a create POST
@@ -304,7 +304,7 @@ func TestLinkedIn_ConfigHSTokenTakesPrecedence(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 			return
 		}
 		switch {
@@ -356,7 +356,7 @@ func TestLinkedIn_GroupCreatedButCampaignFails_RecordsGroupOrphan(t *testing.T) 
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet:
-			_, _ = io.WriteString(w, `{"elements":[]}`)
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
 		case strings.Contains(r.URL.Path, "adCampaignGroups"):
 			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:500"}`) // group created
 		case strings.Contains(r.URL.Path, "adCampaigns"):
@@ -589,7 +589,7 @@ func TestLinkedIn_ToggleStatus_ActivateZeroCreativesNotProvisioned(t *testing.T)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/creatives") {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"elements":[]}`) // discovery finds NO creatives
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`) // discovery finds NO creatives
 			return
 		}
 		t.Errorf("no mutation should be issued when there are zero creatives to serve: %s %s", r.Method, r.URL.Path)
