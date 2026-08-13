@@ -1235,14 +1235,18 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// unclassified and fell through to 503. LFXV2-3052 hoisted it into a helper both resolvers
 	// call, which is why the list above is once again the whole list rather than a subset.
 	//
-	// LinkedIn is now the ONLY toggle-capable adapter still returning bare errors that fall
-	// through to the caller's default 503 arm. Every other one tags: Google Ads, Microsoft and
-	// X through their validate<Provider>Connection helpers, Reddit inline in
-	// resolveRedditClient, and Meta in resolveMetaCredentials (internal/dispatch/meta.go).
-	// Tagging LinkedIn's is the remainder of LFXV2-3069 part 2, and it is an extraction rather
-	// than an annotation — LinkedInDispatcher.ToggleStatus validates the connection inline at
-	// four call sites (inactive status, credential decode, incomplete credentials, missing
-	// account id) with no shared resolve/validate helper to put the tagging in.
+	// Every toggle-capable adapter now tags: Google Ads, Microsoft and X through their
+	// validate<Provider>Connection helpers, Reddit inline in resolveRedditClient, Meta in
+	// resolveMetaCredentials (internal/dispatch/meta.go), and LinkedIn in
+	// resolveLinkedInCredentials (internal/dispatch/linkedin.go).
+	//
+	// LinkedIn was the last one, and closing it (LFXV2-3196, the remainder of LFXV2-3069
+	// part 2) was an extraction rather than an annotation: ToggleStatus validated the
+	// connection inline across four checks (inactive status, credential decode, incomplete
+	// credentials, missing account id) with no shared helper to put the tagging in. The new
+	// helper serves ToggleStatus and ReadMetrics, the two paths that reach this classification.
+	// Dispatch keeps its own inline validation, because its failures are wrapped in
+	// notCreated() to release the dispatch claim — a contract this helper does not carry.
 	//
 	// Meta's tagging deliberately stops short of a missing account id HERE, because
 	// ToggleStatus never reads AccountConfig.AccountID (a status update targets the campaign

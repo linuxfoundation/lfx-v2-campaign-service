@@ -200,7 +200,6 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 // not serve. campaign is the persisted row; only campaign.PlatformCampaignID (the numeric
 // campaign id) is used. status is model.CampaignRunActive/Paused. An UNCONFIRMED outcome
 // (including a partial cascade) is wrapped so the caller reports "verify before retry".
-
 func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
 	liStatus, err := linkedinRunStatus(status)
 	if err != nil {
@@ -303,11 +302,12 @@ func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, 
 		return nil, fmt.Errorf("campaign has no platform campaign ID")
 	}
 
-	// Validated BEFORE credential resolution, and this order is load-bearing. An
-	// unsupported window is a permanent 400 whatever the connection looks like; resolving
-	// credentials first means a project with an inactive or incomplete connection fails
-	// with a connection error that BriefService maps to 503, telling the caller to retry a
-	// request that can never succeed. Same order as the X adapter (twitter.go).
+	// Validated BEFORE credential resolution, and this order is load-bearing. An unsupported
+	// window is a permanent 400 whatever the connection looks like, and it names the one thing
+	// the caller can actually change. Resolving credentials first would answer a connection
+	// error instead — since LFXV2-3196 that is a 409 for a project-owned row, or a 500 for an
+	// unusable LF system fallback — sending the caller to repair a connection when the request
+	// would still be rejected on the window. Same order as the X adapter (twitter.go).
 	if werr := linkedin.ValidateMetricsWindow(window); werr != nil {
 		return nil, fmt.Errorf("get campaign metrics from linkedin: %w", errors.Join(domain.ErrMetricsWindowUnsupported, werr))
 	}

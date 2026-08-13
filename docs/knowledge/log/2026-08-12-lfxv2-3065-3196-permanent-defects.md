@@ -41,8 +41,11 @@ absence is the specific mistake.
 ## LinkedIn was the last adapter with no helper
 
 Six adapters route their pre-flight through one resolve/validate function and tag each defect with
-`domain.ErrConnectionNotUsable` plus a reason sentinel. LinkedIn validated inline at four separate
-call sites with bare errors, so all four fell to the 503 default.
+`domain.ErrConnectionNotUsable` plus a reason sentinel. LinkedIn validated inline at three separate
+call sites with bare errors. Two of them — `ToggleStatus` and `ReadMetrics` — take the synchronous
+service mapping, so those fell to the 503 default and are what this change fixes. `Dispatch` is the
+third, and it is deliberately left inline: it wraps its failures in `notCreated()` to release the
+dispatch claim, a contract the shared helper does not carry (see `internal-dispatch.md`).
 
 `resolveLinkedInCredentials` mirrors `resolveMetaCredentials` structurally — including the
 `conn := res` binding the `defer` closes over, for the reason meta.go records: every not-usable
@@ -62,9 +65,17 @@ the account, so an account cleared after creation must not block pausing.
 
 ## Verification
 
-All five new tests are revert-verified. The LinkedIn table is 2 entry points × 4 defects, and
+All seven new tests are revert-verified — four in `brief_test.go`, two in `linkedin_test.go`, and
+one in `connection_defect_tagging_test.go`. The LinkedIn table is 2 entry points × 4 defects, and
 stripping the sentinels from the helper fails 4 subtests — so it binds the tagging, not merely the
 presence of an error.
+
+`TestLinkedIn_UnusableConnectionIsTaggedOnEveryPath` registers LinkedIn in the shared
+`runConnDefectSuite`, which drives both credential scopes. The LF-system half is the one worth
+having: replacing the `conn := res` binding with a read of the named return fails **only** the
+`lf_system_fallback` subtests and leaves every project-owned case green — the precise signature of
+the attribution bug the binding exists to prevent, and one no other LinkedIn test could see,
+because they all use project-owned rows.
 
 The docs that stated the old behaviour as fact are corrected in the same change: two rows in
 `docs/api-catalog.md` said "LinkedIn emits none of them", and `internal-dispatch.md` said "still
