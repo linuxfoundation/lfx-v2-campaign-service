@@ -35,8 +35,40 @@ clients still have no `ListAdAccounts` — that is what keeps the discovery bran
 from being collapsed back into the shared alternation before those platforms can
 answer.
 
+**Fix** — Review found three defects in the above, all in the first cut.
+
+Microsoft discovery passed the connection's stored `customer_id` into the client.
+That looked like harmless scoping and was not: `discoveryCustomerIDs` treats a
+configured customer as the COMPLETE answer and returns early without enumerating
+any other, so an ordinary configured connection listed only that one customer's
+accounts while the endpoint's own description promises every customer the
+credential reaches. The endpoint contradicted itself for exactly the connections
+most likely to use it. `AccountConfig` is now fully zero.
+
+Both labels discarded the information that says whether an account can be USED.
+The clients carry purpose-built renderings — LinkedIn's `StatusLabel`,
+`ServingHolds`, `Test` and `Currency`; Microsoft's `StatusLabel`, `PauseLabel`
+and `Usable` — and the first cut rendered a bare name. An account that is ACTIVE
+but on `BILLING_HOLD`, a TEST account that never serves, or one the credential
+can only READ all looked exactly as selectable as a writable active account, with
+the refusal arriving later at dispatch and no way back to the list.
+
+The tests reached the REAL LinkedIn and Microsoft endpoints and treated any
+network failure except `ErrAccountNotSelected` as success — so an unrelated
+preflight error passed, and CI depended on DNS. They now run against `httptest`
+servers and assert the OUTBOUND REQUEST, which is the only thing that can catch a
+discovery client scoped to one account: a scoped client still returns a plausible
+non-empty list.
+
 Verified by mutation: making either discovery path demand an account id again
 fails `TestListAccountsWorksWithoutASelectedAccount`, and removing either chart
 side fails the parity test. A first attempt at the Microsoft mutation broke the
 BUILD (an unused import) rather than failing a test, which proves nothing about
 coverage — it was redone as a change that compiles.
+
+The customer-scoping test needed the same correction twice over. Its first
+assertion checked for a `CustomerAccountId` request header and PASSED with the
+bug reintroduced: the scoped path does not send a differently-headed request, it
+skips the `User/Query` call entirely. Asserting on that call's ABSENCE is what
+binds. A test that cannot fail is worse than no test, because it reads as
+coverage.

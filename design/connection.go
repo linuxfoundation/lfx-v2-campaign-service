@@ -845,8 +845,8 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			// publishes a false id format rather than none. LinkedIn ids are bare digits.
 			Attribute("accounts", ArrayOf(AccessibleAccount), func() {
 				Example([]map[string]any{
-					{"id": "507404993", "label": "Linux Foundation (ACTIVE)"},
-					{"id": "512233445", "label": "CNCF"},
+					{"id": "507404993", "label": "Linux Foundation [USD]"},
+					{"id": "512233445", "label": "CNCF [USD] — on billing hold"},
 				})
 			})
 			Required("accounts")
@@ -880,7 +880,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Attribute("accounts", ArrayOf(AccessibleAccount), func() {
 				Example([]map[string]any{
 					{"id": "1234567", "label": "Linux Foundation (X1234567)"},
-					{"id": "7654321", "label": "CNCF (X7654321)"},
+					{"id": "7654321", "label": "CNCF (X7654321) — suspended"},
 				})
 			})
 			Required("accounts")

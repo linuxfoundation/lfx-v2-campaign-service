@@ -378,17 +378,51 @@ func (d *LinkedInDispatcher) ListAccounts(ctx context.Context, projectID string,
 //
 // It never returns "" for an account carrying any identifying information: an account with
 // no name falls back to its id, because a blank row in a picker is unpickable and the id is
-// what actually gets stored. A non-ACTIVE status is appended so the user sees WHY an account
-// they were about to choose may not work, rather than discovering it at dispatch with no way
-// back to this list. An ABSENT status appends nothing — LinkedIn omitting the field is not a
-// claim either way, and labelling it would invent one.
+// what actually gets stored.
+//
+// Everything that decides whether the account can actually be USED is rendered, because a
+// lifecycle status alone does not answer it. LinkedIn reports three independent things and
+// the client carries a purpose-built rendering for each:
+//
+//   - StatusLabel() — a KNOWN-BAD lifecycle status, "" for ACTIVE/absent/unrecognized. An
+//     empty label is not a claim the account is fine, only that this package has nothing to
+//     say, so it is never rendered as reassurance.
+//   - ServingHolds() — why an otherwise-ACTIVE account cannot serve. An account can be
+//     ACTIVE and on BILLING_HOLD simultaneously; showing only the status would present it
+//     as normal.
+//   - Test — LinkedIn's immutable test-account flag. Test accounts never serve, never bill,
+//     and auto-reject creatives, so a real campaign bound to one silently does nothing.
+//     Surfaced rather than filtered: someone wiring up an integration is looking for
+//     exactly this account.
+//
+// Currency rides along because budgets and bids are denominated in it and this client does
+// no FX conversion — a picker offering a USD and a JPY account with the same number beside
+// them is offering two very different things.
 func linkedInAccountLabel(a linkedin.AdAccount) string {
 	name := strings.TrimSpace(a.Name)
 	if name == "" {
 		name = a.ID
 	}
-	if s := strings.TrimSpace(a.Status); s != "" && s != "ACTIVE" {
-		return name + " (" + s + ")"
+	if c := strings.TrimSpace(a.Currency); c != "" {
+		name += " [" + c + "]"
+	}
+
+	var notes []string
+	if s := a.StatusLabel(); s != "" {
+		notes = append(notes, s)
+	}
+	if a.Test {
+		notes = append(notes, "TEST account — never serves")
+	}
+	notes = append(notes, a.ServingHolds()...)
+	// Servable() is an ALLOW-list: an absent or unrecognized servingStatuses is not evidence
+	// the account can spend. Say so only when nothing above already explains it, so an
+	// unrecognized hold is still visible rather than silently reading as fine.
+	if len(notes) == 0 && !a.Servable() {
+		notes = append(notes, "cannot currently serve")
+	}
+	if len(notes) > 0 {
+		return name + " — " + strings.Join(notes, ", ")
 	}
 	return name
 }

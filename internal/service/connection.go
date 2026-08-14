@@ -234,14 +234,14 @@ var linkedInAdsAccountDiscovery = accountDiscovery{
 	provider:    model.ProviderLinkedInAds,
 	displayName: "linkedin ads",
 	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
-		"with accessToken set",
+		"with access_token set",
 }
 
 var microsoftAdsAccountDiscovery = accountDiscovery{
 	provider:    model.ProviderMicrosoftAds,
 	displayName: "microsoft ads",
 	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
-		"with clientId, clientSecret, developerToken and refreshToken set",
+		"with client_id, client_secret, developer_token and refresh_token set",
 }
 
 // hubspotEmailDiscovery reuses the account-discovery status mapping for the email-template
@@ -498,9 +498,11 @@ func (s *ConnectionService) ListHubspotEmails(ctx context.Context, p *conn.ListH
 		// ErrEmailSearchUnsupported is the one arm classifyDiscoveryError cannot carry: it
 		// keys on ErrAccountsUnsupported, and the two are separate sentinels precisely
 		// because the capabilities are independent — HubSpot searches emails and has no ad
-		// accounts, while Google Ads and Meta are the reverse. Only those two implement
-		// AccountLister; the remaining ad platforms implement neither, so the two directions
-		// are demonstrated by example rather than by a claim over every provider.
+		// accounts, while the ad platforms are the reverse — they enumerate accounts and
+		// search no emails. Stated as the SHAPE rather than by naming which providers
+		// implement AccountLister: that membership grows (LinkedIn and Microsoft joined
+		// Google Ads and Meta), and an enumerating comment is falsified by the next one
+		// added without anything failing.
 		if errors.Is(serr, ErrEmailSearchUnsupported) {
 			return nil, &conn.BadRequestError{Code: "400", Message: d.label() + " is not supported for this platform"}
 		}

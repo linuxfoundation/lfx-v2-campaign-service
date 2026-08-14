@@ -255,11 +255,18 @@ func (d *MicrosoftDispatcher) ListAccounts(ctx context.Context, projectID string
 	if verr != nil && !errors.Is(verr, domain.ErrAccountNotSelected) {
 		return nil, res.systemScoped(verr)
 	}
-	// AccountConfig carries only the CustomerID, and only when the connection already has
-	// one: the account listing enumerates what the CREDENTIAL reaches, so naming an account
-	// would narrow the response to a subset of the question. CustomerID is different — it
-	// scopes WHICH customers are searched, and the client falls back to discovering them
-	// when it is empty.
+	// AccountConfig is left ZERO — no AccountID and, deliberately, no CustomerID.
+	//
+	// Naming an ACCOUNT would narrow the response to a subset of the question, which is the
+	// same reason meta's discovery client carries a zero AccountConfig. CustomerID is the
+	// less obvious half: passing the connection's stored one looks like harmless scoping,
+	// but discoveryCustomerIDs treats a configured customer as the COMPLETE answer and
+	// returns early without enumerating any other. An ordinary configured connection would
+	// therefore have listed only that one customer's accounts while this endpoint's own
+	// description promises every customer the credential reaches — the endpoint would have
+	// contradicted itself for exactly the connections most likely to use it.
+	//
+	// Empty means "discover them", which is the question being asked.
 	client := microsoft.NewClient(
 		microsoft.Credentials{
 			ClientID:       creds.ClientID,
@@ -267,10 +274,7 @@ func (d *MicrosoftDispatcher) ListAccounts(ctx context.Context, projectID string
 			DeveloperToken: creds.DeveloperToken,
 			RefreshToken:   creds.RefreshToken,
 		},
-		microsoft.AccountConfig{
-			CustomerID: strings.TrimSpace(res.providerConfig["customer_id"]),
-			Label:      res.label,
-		},
+		microsoft.AccountConfig{},
 		d.opts...,
 	)
 	adAccounts, lerr := client.ListAdAccounts(ctx)
@@ -294,19 +298,48 @@ func (d *MicrosoftDispatcher) ListAccounts(ctx context.Context, projectID string
 // row in a picker is unpickable, and the id is what actually gets stored. The Number is
 // appended when both are present because it is what the Microsoft Advertising UI shows, so
 // a user recognises the account by it rather than by the id.
+//
+// Unusable accounts are LABELLED, not filtered — the same discipline meta's discovery uses.
+// Dropping them would answer "your credential reaches no accounts" about an account sitting
+// right there; returning them unmarked is worse still, because a suspended, paused or
+// viewer-only account then looks exactly as selectable as a writable one and the refusal
+// arrives later at dispatch, with no way back to this list.
+//
+// The client carries purpose-built renderings for exactly this: StatusLabel() maps a
+// KNOWN-BAD lifecycle status ("" for a good or unrecognised one, so an unexpected value is
+// never labelled as a defect), and PauseLabel() names who paused it, rendering an
+// undocumented flag verbatim rather than guessing. Role is reported separately because it is
+// a different question — an ACTIVE, unpaused account the credential can only READ is still
+// unusable for a create, and Usable() already encodes that deny-list.
 func microsoftAccountLabel(a microsoft.AdAccount) string {
 	name := strings.TrimSpace(a.Name)
 	number := strings.TrimSpace(a.Number)
 	switch {
 	case name != "" && number != "":
-		return name + " (" + number + ")"
-	case name != "":
-		return name
-	case number != "":
-		return number
-	default:
-		return a.ID
+		name += " (" + number + ")"
+	case name == "" && number != "":
+		name = number
+	case name == "":
+		name = a.ID
 	}
+
+	var notes []string
+	if s := a.StatusLabel(); s != "" {
+		notes = append(notes, s)
+	}
+	if p := a.PauseLabel(); p != "" {
+		notes = append(notes, p)
+	}
+	// Only when nothing above already explains it: an account can be unusable purely because
+	// of the caller's ROLE, and that has no status or pause reason to render. Saying
+	// "read-only" twice for an account that is also suspended would be noise.
+	if len(notes) == 0 && !a.Usable() {
+		notes = append(notes, "not writable with this credential")
+	}
+	if len(notes) > 0 {
+		return name + " — " + strings.Join(notes, ", ")
+	}
+	return name
 }
 
 // resolveMicrosoftClient resolves + validates the project's connection and builds a client

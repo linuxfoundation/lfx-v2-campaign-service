@@ -6486,15 +6486,15 @@ definitions:
                     $ref: '#/definitions/AccessibleAccount'
                 example:
                     - id: "507404993"
-                      label: Linux Foundation (ACTIVE)
+                      label: Linux Foundation [USD]
                     - id: "512233445"
-                      label: CNCF
+                      label: CNCF [USD] — on billing hold
         example:
             accounts:
                 - id: "507404993"
-                  label: Linux Foundation (ACTIVE)
+                  label: Linux Foundation [USD]
                 - id: "512233445"
-                  label: CNCF
+                  label: CNCF [USD] — on billing hold
         required:
             - accounts
     LfxV2CampaignServiceConnectionsListMetaAdsAccountsResponseBody:
@@ -6530,13 +6530,13 @@ definitions:
                     - id: "1234567"
                       label: Linux Foundation (X1234567)
                     - id: "7654321"
-                      label: CNCF (X7654321)
+                      label: CNCF (X7654321) — suspended
         example:
             accounts:
                 - id: "1234567"
                   label: Linux Foundation (X1234567)
                 - id: "7654321"
-                  label: CNCF (X7654321)
+                  label: CNCF (X7654321) — suspended
         required:
             - accounts
     LfxV2CampaignServiceConnectionsSetCredentialGoogleAdsRequestBody:

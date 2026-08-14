@@ -3779,9 +3779,9 @@ paths:
                             example:
                                 accounts:
                                     - id: "507404993"
-                                      label: Linux Foundation (ACTIVE)
+                                      label: Linux Foundation [USD]
                                     - id: "512233445"
-                                      label: CNCF
+                                      label: CNCF [USD] — on billing hold
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -4883,7 +4883,7 @@ paths:
                                     - id: "1234567"
                                       label: Linux Foundation (X1234567)
                                     - id: "7654321"
-                                      label: CNCF (X7654321)
+                                      label: CNCF (X7654321) — suspended
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
