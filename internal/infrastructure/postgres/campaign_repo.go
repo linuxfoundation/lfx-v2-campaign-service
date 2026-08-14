@@ -430,9 +430,15 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 //
 // A soft-deleted row sits outside the partial index, so a pair whose campaign was deleted
 // can be adopted afresh, exactly as it can be re-dispatched.
+// The variant is BOUND ($4), not the literal 'default' it used to be. Adoption establishes
+// the slot from what the platform reports the campaign actually is, and hardcoding 'default'
+// here silently discarded that: an adopted Demand Gen campaign landed in the Search slot,
+// leaving 'demand-gen' free for a later dispatch to fill with a SECOND paid campaign — the
+// exact duplicate the caller-side fix was written to prevent. The conflict target reads the
+// same column, so a hardcoded literal also made the DO NOTHING arm arbitrate the wrong slot.
 const adoptCampaignQuery = `INSERT INTO campaigns
 	(project_id, brief_id, platform, variant, platform_campaign_id, campaign_name, status, result, created_by, updated_by)
-	VALUES ($1,$2,$3,'default',$4,$5,$6,$7,$8,$8)
+	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
 	ON CONFLICT (brief_id, platform, variant) WHERE status <> 'deleted' DO NOTHING
 	RETURNING ` + campaignCols
 
@@ -487,8 +493,11 @@ func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, exp
 	if aerr != nil {
 		return nil, fmt.Errorf("adopt campaign: %w", aerr)
 	}
+	// NormalizeVariant, matching every other write path: the column is NOT NULL, and a bare
+	// "" would become a THIRD slot alongside 'default' rather than an error.
 	row := tx.QueryRow(ctx, adoptCampaignQuery,
-		c.ProjectID, c.BriefID, string(c.Platform), nullStr(c.PlatformCampaignID),
+		c.ProjectID, c.BriefID, string(c.Platform), model.NormalizeVariant(c.Variant),
+		nullStr(c.PlatformCampaignID),
 		c.CampaignName, c.Status, nullJSON(c.Result), adoptedBy,
 	)
 	adopted, err := scanCampaign(row)
