@@ -67,6 +67,26 @@ func TestDecodeBriefFieldsPrefersExplicitEventName(t *testing.T) {
 	}
 }
 
+// A WHITESPACE-ONLY `eventName` must not block the `name` fallback. Emptiness here has to be
+// semantic, matching the TrimSpace validation at the end of decodeBriefFields: with a plain
+// `== ""` test, `{"eventName":" ", "name":"…"}` skipped the fallback and was then rejected —
+// a perfectly usable name discarded because the other key held a space.
+func TestDecodeBriefFieldsTreatsWhitespaceEventNameAsAbsent(t *testing.T) {
+	brief := &model.CampaignBrief{
+		ID:           "b-3",
+		URL:          "https://example.com/",
+		EventDetails: json.RawMessage(`{"eventName":"   ","name":"Valid UI Name"}`),
+	}
+
+	bf, err := decodeBriefFields(brief)
+	if err != nil {
+		t.Fatalf("decodeBriefFields: %v", err)
+	}
+	if bf.EventName != "Valid UI Name" {
+		t.Errorf("EventName = %q, want %q — a whitespace-only eventName must fall back to name", bf.EventName, "Valid UI Name")
+	}
+}
+
 // A brief carrying NEITHER spelling must still error. Without this the fix could be
 // "verified" by a decoder that returns a name for everything, which would push the failure
 // to the ad platform instead of catching it here.

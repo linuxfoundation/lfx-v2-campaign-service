@@ -556,8 +556,9 @@ failed targeting step the caller has to puzzle out separately.
 
 **Keywords** (`Keyword{Text, MatchType}`) are positive Search criteria only;
 `MatchType` is one of `EXACT`/`PHRASE`/`BROAD`. `Text` is capped at v23's
-80-rune `KeywordInfo.text` limit. Up to 20 keywords per call (a sanity cap on
-this broker's input, not a Google Ads platform limit); duplicates (same
+80-rune `KeywordInfo.text` limit. Up to 60 keywords per call (a sanity cap on
+this broker's input, not a Google Ads platform limit; raised from 20 in
+LFXV2-3259, which the brief generator's ~38-keyword output exceeded); duplicates (same
 matchType+text) are deduped rather than rejected.
 
 **Audience segments** are EXISTING Google Ads audience resource names — this

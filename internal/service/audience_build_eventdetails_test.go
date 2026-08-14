@@ -10,16 +10,19 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// The UI writes `name` and `countryCode`; this decoder read only `eventName` and `country`.
-// Both are REQUIRED (decodeEventDetails errors on either), so a brief the UI actually produced
-// failed the audience build twice over — and BuildAudience is the gate the HubSpot dispatcher
-// waits on, so the email channel could not stage at all.
+// The UI writes `name`; this decoder read only `eventName`. BuildAudience is the gate the
+// HubSpot dispatcher waits on, so the email channel could not stage at all.
+//
+// `countryCode` is deliberately NOT accepted — see briefEventDetails. It would pass an ISO-2
+// code into HubSpot filters that only alias `us`/`uk`, turning a loud failure into a silent
+// empty audience. So this fixture carries `country` as well; a brief with only `countryCode`
+// still fails, which is the correct outcome until an ISO-2 mapping exists.
 //
 // The fixture is the REAL stored `event_details` from brief 77f52f20-… (trimmed), not an
 // invented shape, so this binds to what the UI persists rather than to what we wish it did.
 // The paid path had the same defect (LFXV2-3259); this decoder is a separate struct that the
 // dispatch-side fix does not cover.
-func TestDecodeEventDetailsReadsUISpellings(t *testing.T) {
+func TestDecodeEventDetailsReadsUIEventName(t *testing.T) {
 	const uiEventDetails = `{
 		"city": "",
 		"name": "Agntcon Mcpcon Japan",
@@ -29,6 +32,7 @@ func TestDecodeEventDetailsReadsUISpellings(t *testing.T) {
 		"audience": "",
 		"speakers": [],
 		"countryCode": "US",
+		"country": "United States",
 		"formatNotes": "",
 		"registrationUrl": "https://events.linuxfoundation.org/agntcon-mcpcon-japan/"
 	}`
@@ -43,16 +47,16 @@ func TestDecodeEventDetailsReadsUISpellings(t *testing.T) {
 	if got.EventName != "Agntcon Mcpcon Japan" {
 		t.Errorf("EventName = %q, want %q — the UI spells it `name`", got.EventName, "Agntcon Mcpcon Japan")
 	}
-	if got.Country != "US" {
-		t.Errorf("Country = %q, want %q — the UI spells it `countryCode`", got.Country, "US")
+	if got.Country != "United States" {
+		t.Errorf("Country = %q, want %q", got.Country, "United States")
 	}
 }
 
-// The explicit spellings must WIN: `name`/`countryCode` are fallbacks, not equals.
-func TestDecodeEventDetailsPrefersExplicitSpellings(t *testing.T) {
+// `eventName` must WIN where both are present: `name` is a fallback, not an equal.
+func TestDecodeEventDetailsPrefersExplicitEventName(t *testing.T) {
 	got, err := decodeEventDetails(&model.CampaignBrief{
 		ID:           "b-1",
-		EventDetails: json.RawMessage(`{"eventName":"Explicit","name":"Generic","country":"JP","countryCode":"US"}`),
+		EventDetails: json.RawMessage(`{"eventName":"Explicit","name":"Generic","country":"JP"}`),
 	})
 	if err != nil {
 		t.Fatalf("decodeEventDetails: %v", err)
@@ -61,7 +65,7 @@ func TestDecodeEventDetailsPrefersExplicitSpellings(t *testing.T) {
 		t.Errorf("EventName = %q, want %q — `eventName` must take precedence", got.EventName, "Explicit")
 	}
 	if got.Country != "JP" {
-		t.Errorf("Country = %q, want %q — `country` must take precedence", got.Country, "JP")
+		t.Errorf("Country = %q, want %q", got.Country, "JP")
 	}
 }
 

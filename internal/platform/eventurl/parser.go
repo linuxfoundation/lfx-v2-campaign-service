@@ -26,11 +26,12 @@ const (
 //
 // The JSON keys are the ones a brief's stored `event_details` blob already uses, NOT a
 // spelling chosen for this struct. The endpoint that returns this tells callers to store
-// the result with create-brief, and the existing consumers of that blob read `eventName`
-// specifically — internal/dispatch/reddit.go's briefFields and internal/service's
-// briefEventDetails both reject a brief without it. Serializing the name as `name` would
-// have produced a result that round-trips through create-brief and then fails campaign
-// dispatch, with nothing between the two steps saying why. camelCase throughout matches
+// the result with create-brief. `eventName` is the PREFERRED spelling: both consumers of
+// that blob — internal/dispatch/reddit.go's briefFields and internal/service's
+// briefEventDetails — read it first. Since LFXV2-3259 they also accept `name`, because
+// that is what the UI writes and briefs stored that way were undispatchable; emitting
+// `eventName` here keeps this producer on the unambiguous key rather than relying on the
+// compatibility fallback. camelCase throughout matches
 // that blob's existing keys (`registrationUrl`, `conversionPixelId`).
 type EventDetails struct {
 	Name        string `json:"eventName,omitempty"`

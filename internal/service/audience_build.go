@@ -144,21 +144,28 @@ func (s *AudienceService) BuilderIsSet() bool {
 // opportunistically and validates what it found rather than assuming a shape.
 type briefEventDetails struct {
 	EventName string `json:"eventName"`
-	// Name and CountryCode are the SAME two values under the spellings the UI actually
-	// writes. Its `CampaignEventDetails` interface has `name` and `countryCode`, and the
-	// persist path spreads that object verbatim into the opaque `event_details` blob —
-	// which the design types as `Any`, so nothing arbitrates the keys.
+	// Name is the SAME value under the spelling the UI actually writes: its
+	// `CampaignEventDetails` interface has `name`, and the persist path spreads that object
+	// verbatim into the opaque `event_details` blob, which the design types as `Any` — so
+	// nothing arbitrates the key. Same defect the paid path had (LFXV2-3259); this decoder is
+	// a separate struct that the dispatch-side fix does not reach.
+	Name string `json:"name"`
+	// `countryCode` is deliberately NOT accepted as a fallback for Country, even though the UI
+	// writes it and its absence is what makes this decoder reject a UI brief.
 	//
-	// Without these, a brief the UI produced fails here on BOTH required fields, and the
-	// email channel cannot dispatch at all: BuildAudience is the gate the HubSpot
-	// dispatcher waits on. Same defect the paid path had (LFXV2-3259) — this decoder is a
-	// separate struct that the dispatch-side fix does not cover, despite the doc comment
-	// below claiming to mirror it.
-	Name        string `json:"name"`
-	Country     string `json:"country"`
-	CountryCode string `json:"countryCode"`
-	Location    string `json:"location"`
-	Year        string `json:"year"`
+	// Country flows through `audience.DisplayName` into HubSpot `CONTAINS`/`IS_ANY_OF`
+	// filters, and that function aliases only `us` and `uk` among ISO-2 values
+	// (`internal/audience/region.go:63-64`). A `JP` or `DE` would pass through literally,
+	// match no HubSpot country property, and the build would SUCCEED while storing an empty
+	// inclusion list — trading a loud, accurate failure for a silent wrong answer on a list
+	// that decides who receives an email.
+	//
+	// Reading the code therefore needs an ISO-2 → country-name mapping first. Until that
+	// exists, failing with "no country in its details" is the correct outcome: it names a
+	// real gap instead of hiding it. Tracked separately from LFXV2-3259.
+	Country  string `json:"country"`
+	Location string `json:"location"`
+	Year     string `json:"year"`
 }
 
 // BuildAudience derives a brief's HubSpot audience and records it.
@@ -763,9 +770,6 @@ func decodeEventDetails(b *model.CampaignBrief) (briefEventDetails, error) {
 		}
 		if out.Country == "" {
 			out.Country = strings.TrimSpace(partial.Country)
-		}
-		if out.Country == "" {
-			out.Country = strings.TrimSpace(partial.CountryCode)
 		}
 		if out.Location == "" {
 			out.Location = strings.TrimSpace(partial.Location)
