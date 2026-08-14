@@ -2749,6 +2749,13 @@ func TestFindMatch_NameDelimitersSurviveTheWire(t *testing.T) {
 		"C# Conf",                                                               // # — would start a fragment
 		"Events | KubeCon, Inc. (26)" /* Rest.li structural chars */, "50% Off", // % — must not double-encode
 		"日本語 イベント", // non-ASCII must not reach the wire raw
+		// A LITERAL plus. Correctness here depends on ORDER: url.QueryEscape runs first
+		// and turns a real "+" into %2B, and only then does ReplaceAll rewrite the
+		// space-derived "+" to %20. Reversing those two steps (or switching to
+		// url.PathEscape, which leaves "+" alone) would send a bare "+" that LinkedIn
+		// decodes back to a space — the campaign would be looked up under the wrong name
+		// and the lookup would miss. Nothing else in this table has a literal "+".
+		"AI + ML Summit",
 	} {
 		t.Run(name, func(t *testing.T) {
 			var mu sync.Mutex
