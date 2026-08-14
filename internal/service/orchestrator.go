@@ -884,6 +884,23 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// existing campaign simply couldn't be loaded risks a duplicate upstream create.
 	// Only ErrNotFound is a clean "nothing yet, proceed".
 	variant := variantForDispatch(p, config)
+	// An invalid variant is refused HERE, before the lookup and the claim, rather than
+	// being routed through a shared VariantInvalid slot.
+	//
+	// Routing it through the slot was wrong even though no CREATE writes that slot: the
+	// CLAIM does. ClaimCampaignDispatch inserts a pending row keyed on the variant, so two
+	// concurrent malformed requests both derive VariantInvalid, one wins the claim and the
+	// other is marked Skipped — and aggregateStatus excludes skipped platforms from the
+	// failure tally, so a wholly-skipped job terminalizes as SUCCEEDED. The caller sends
+	// invalid config and is told it worked. A stranded _invalid claim (see the KNOWN
+	// RESIDUAL GAP note on the skip path) makes that permanent rather than a one-off race.
+	//
+	// Refusing before any row is written removes the shared slot entirely, so there is
+	// nothing to collide over and the caller gets the decode error it should have had.
+	if variant == model.VariantInvalid {
+		res.Error = fmt.Sprintf("invalid platform config for %s: unsupported channel", p)
+		return res
+	}
 	existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p, variant)
 	switch {
 	case lerr == nil && isReusableCampaign(existing):

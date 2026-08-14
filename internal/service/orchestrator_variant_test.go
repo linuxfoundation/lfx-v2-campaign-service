@@ -150,3 +150,38 @@ func TestReleasingOneSlotDoesNotFreeAnother(t *testing.T) {
 		t.Error("releasing demand-gen also freed the SEARCH slot's in-flight claim")
 	}
 }
+
+// An invalid variant must be refused BEFORE the claim, so no `_invalid` row is ever
+// written and two malformed requests cannot collide on a shared slot.
+//
+// Routing invalid input through VariantInvalid was wrong even though no CREATE writes that
+// slot — the CLAIM does. ClaimCampaignDispatch inserts a pending row keyed on the variant,
+// so two concurrent malformed requests both derived VariantInvalid, one won the claim and
+// the other was marked Skipped. aggregateStatus excludes skipped platforms from the failure
+// tally and a wholly-skipped job terminalizes as SUCCEEDED — so the caller sent invalid
+// config and was told it worked. Reported by Copilot on PR #130.
+func TestOrchestrator_InvalidVariantIsRefusedAndClaimsNoSlot(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: okDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b-invalid", ProjectID: "cncf"}
+	// Valid JSON, unsupported Google channel -> VariantInvalid.
+	cfg := json.RawMessage(`{"googleAdsConfig":{"channel":"performance-max"}}`)
+
+	id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, cfg)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	j := waitForTerminal(t, jobs, id)
+
+	// The job must NOT report success for a config it refused.
+	if j.Status == model.JobSucceeded {
+		t.Errorf("a job whose only platform had an unsupported channel reported SUCCEEDED")
+	}
+	// And nothing may have been created upstream.
+	if len(camps.upserted) != 0 {
+		t.Errorf("upserted %d campaigns for an invalid config, want 0", len(camps.upserted))
+	}
+}
