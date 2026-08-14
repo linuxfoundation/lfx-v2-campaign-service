@@ -28,15 +28,20 @@ Pipes do need encoding, but for a different reason and only once the space bug i
 out of the way — bare `|` is illegal in a query component and LinkedIn returns
 `java.net.URISyntaxException`.
 
-**The fix has two halves, and one alone is not enough.** `restliReplacer` now
-emits `%20` for space, `%7C` for `|` and `%2B` for `+` (which would otherwise
-decode back to a space). `buildRawQuery` writes `preEncodedParams` — currently
-just `search` — to `RawQuery` verbatim, because passing an already-encoded value
-back through `url.Values.Encode()` turns each `%` into `%25`, so `%20` becomes
-`%2520`. That double-encoded filter matches a literally-different name and
-returns a **200 with an empty result set**: a false "not found" that looks clean
-and drives exactly the duplicate create the lookup exists to prevent. Keys are
-sorted so the query string stays deterministic under Go's randomized map order.
+**The fix has two halves, and one alone is not enough.** `restliEncode` produces
+the final wire bytes for a name (see the next paragraph for why it encodes the
+whole query component rather than a character list), and `buildRawQuery` writes
+every parameter in `preEncodedParams` to `RawQuery` verbatim. The second half
+matters because passing an already-encoded value back through
+`url.Values.Encode()` turns each `%` into `%25`, so `%20` becomes `%2520`. That
+double-encoded filter matches a literally-different name and returns a **200
+with an empty result set**: a false "not found" that looks clean and drives
+exactly the duplicate create the lookup exists to prevent. Keys are sorted so
+the query string stays deterministic under Go's randomized map order.
+
+`preEncodedParams` is keyed on one property — the value came from
+`restliEncode` — rather than on a remembered list of names, because the two are
+easy to drift apart (see the second call site below).
 
 **The first fix was an allow-list, and an allow-list was the wrong shape.**
 Adding `%20`/`%7C`/`%2B` to an enumerated replacer fixed the names we happened to
