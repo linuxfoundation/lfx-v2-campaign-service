@@ -129,11 +129,15 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		CampaignBudget:                 budgetResource,
 		ContainsEuPoliticalAdvertising: euPoliticalAdvertisingNo,
 		// targetSpend, matching the legacy Express implementation's `target_spend: {}` —
-		// which is what serves this channel on app.lfx.dev today, so it is evidence of what
-		// the API accepts rather than a reading of the docs. A review flagged it as
-		// unsupported for Demand Gen on v23; keeping the shape the working implementation
-		// uses, and noting the disagreement here so a real create settles it. This is the
-		// one field a live create would most usefully verify.
+		// which is what serves this channel on app.lfx.dev today.
+		//
+		// VERIFIED against the live API (2026-08-14): a validateOnly campaigns:mutate at
+		// v23 on a real account returned HTTP 200 for DEMAND_GEN + targetSpend. A review
+		// had flagged it as unsupported on this channel and proposed maximizeConversions
+		// instead; that payload returned HTTP 400
+		// BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET against the same budget.
+		// Do not "fix" this to a maximize-* strategy without re-running that check — the
+		// rejection lands AFTER the budget is created, which orphans it.
 		TargetSpend: map[string]any{},
 	}}}}
 	campaignResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), campaignReq, false)
@@ -173,16 +177,41 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		Campaign: campaignResource,
 		Status:   "ENABLED",
 	}}}}
+	// namePartial carries the deterministic ad-group NAME on every failure arm below. A
+	// partial without it tells a reconciler an ad group may exist but not what to look
+	// for, which is the difference between "verify this name in Google Ads" and a manual
+	// hunt. Mirrors the Search path (adgroup_ad.go), whose messages all name the ad group.
+	adGroupPartial := func() *CampaignResult {
+		r := campaignPartial()
+		r.AdGroupName = adGroupName
+		return r
+	}
 	adGroupResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("adGroups:mutate"), adGroupReq, false)
 	if err != nil {
-		return campaignPartial(), fmt.Errorf("google-ads demand gen ad group creation failed (campaign %s created): %w", campaignID, err)
+		// Classify exactly as the Search path and the budget/campaign steps above do: a
+		// duplicate name and an ambiguous transport failure both mean the ad group MAY
+		// exist, so neither may be reported as a clean failure — the caller decides
+		// whether to retry, and a flat "failed" invites a duplicate.
+		switch {
+		case isDuplicateAdGroupNameErr(err):
+			return adGroupPartial(), fmt.Errorf("google-ads demand gen ad group %q already exists (DUPLICATE_ADGROUP_NAME) — a prior attempt likely created it; verify in Google Ads before retrying (campaign %s created): %w", adGroupName, campaignID, err)
+		case createOutcomeAmbiguous(err):
+			return adGroupPartial(), fmt.Errorf("google-ads demand gen ad group creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying; campaign %s created): %w", adGroupName, campaignID, err)
+		default:
+			return adGroupPartial(), fmt.Errorf("google-ads demand gen ad group creation failed (campaign %s created): %w", campaignID, err)
+		}
 	}
-	_, adGroupID, err := firstResourceName(adGroupResp)
+	adGroupResource, adGroupID, err := firstResourceName(adGroupResp)
 	if err != nil {
-		return campaignPartial(), fmt.Errorf("google-ads demand gen ad group creation UNCONFIRMED (campaign %s created): %w", campaignID, err)
+		return adGroupPartial(), fmt.Errorf("google-ads demand gen ad group creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying; campaign %s created): %w", adGroupName, campaignID, err)
 	}
-	res := campaignPartial()
-	res.AdGroupName = adGroupName
+	// firstResourceName only extracts a trailing id; it does not check resource kind or
+	// account. Without this, a malformed or wrong-account 2xx (another customer's adGroups
+	// resource) would be accepted as confirmed and its id persisted as AdGroupID.
+	if verr := c.validateResourceKind("adGroups", adGroupResource, true); verr != nil {
+		return adGroupPartial(), fmt.Errorf("google-ads demand gen ad group creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying; campaign %s created): %w", adGroupName, campaignID, verr)
+	}
+	res := adGroupPartial()
 	res.AdGroupID = adGroupID
 	steps = append(steps, fmt.Sprintf("Ad group created: %s", adGroupID))
 	res.Steps = steps

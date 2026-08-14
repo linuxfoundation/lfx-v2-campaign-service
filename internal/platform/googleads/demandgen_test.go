@@ -264,3 +264,88 @@ func TestCreateDemandGenCampaignUsesItsOwnName(t *testing.T) {
 		t.Errorf("CampaignName = %q, want it to identify the channel", res.CampaignName)
 	}
 }
+
+// The ad-group step must carry the SAME ambiguity safeguards as the Search path
+// (adgroup_ad.go) and as the budget/campaign steps above it. Before this, a failing
+// adGroups:mutate returned a flat "failed" and a partial with NO AdGroupName — so a
+// transport error or 5xx, which can mean the ad group DOES exist, was reported as a clean
+// failure, and the caller had no name to reconcile by. Caught in review of #130.
+func TestCreateDemandGenAdGroupFailureIsReconcilable(t *testing.T) {
+	var mu sync.Mutex
+	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
+			_, _ = w.Write([]byte(`{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`))
+		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
+			_, _ = w.Write([]byte(`{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`))
+		default:
+			// A 5xx on the ad group: AMBIGUOUS — the ad group may or may not exist.
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	c := NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
+	res, err := c.CreateDemandGenCampaign(context.Background(), demandGenInput())
+
+	if err == nil {
+		t.Fatal("expected an error when the ad-group mutate fails")
+	}
+	if res == nil {
+		t.Fatal("expected a NON-NIL partial: the budget and campaign committed")
+	}
+	// The name is what makes the failure reconcilable — without it an operator is told
+	// something may exist but not what to search for.
+	if res.AdGroupName == "" {
+		t.Error("partial must carry AdGroupName so the possibly-created ad group can be found")
+	}
+	if res.AdGroupID != "" {
+		t.Errorf("AdGroupID = %q, want empty — no id was returned", res.AdGroupID)
+	}
+	// A 5xx is ambiguous, so the message must say so rather than reporting a clean
+	// failure the caller might retry into a duplicate.
+	if !strings.Contains(err.Error(), "UNCONFIRMED") {
+		t.Errorf("a 5xx on the ad group is AMBIGUOUS and must be reported UNCONFIRMED, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), res.AdGroupName) {
+		t.Errorf("the error must name the ad group to reconcile (%q), got: %v", res.AdGroupName, err)
+	}
+}
+
+// A 2xx whose resource names the WRONG kind or a DIFFERENT customer must not be accepted
+// as a confirmed create: firstResourceName only reads a trailing id, so without
+// validateResourceKind another account's id would be persisted as this AdGroupID.
+func TestCreateDemandGenAdGroupRejectsAForeignResource(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(tokenHandler))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
+			_, _ = w.Write([]byte(`{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`))
+		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
+			_, _ = w.Write([]byte(`{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`))
+		default:
+			// A DIFFERENT customer's ad group — a 2xx that must not be trusted.
+			_, _ = w.Write([]byte(`{"results":[{"resourceName":"customers/9999999999/adGroups/333"}]}`))
+		}
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	c := NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()), withRetryBaseDelay(time.Millisecond))
+	res, err := c.CreateDemandGenCampaign(context.Background(), demandGenInput())
+
+	if err == nil {
+		t.Fatal("a foreign-account adGroups resource must not be accepted as a confirmed create")
+	}
+	if res != nil && res.AdGroupID == "333" {
+		t.Error("persisted another customer's ad group id as our AdGroupID")
+	}
+}
