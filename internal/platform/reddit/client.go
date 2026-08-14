@@ -1462,6 +1462,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Tracked separately from communities so the Steps trail can say WHICH dimension was
 	// lost. An operator re-adding targeting by hand needs to know that.
 	droppedInterests := false
+	// WHY each dimension was dropped, not just THAT it was. Reddit names one or both
+	// dimensions in its 400; the retry then drops both regardless, because baseTargeting
+	// carries neither. The retry step already reports that distinction — these carry it to
+	// the PERSISTED summary below, which otherwise re-merges the two and reports a
+	// collateral drop as a Reddit refusal. Communities and interests are re-added on
+	// different Ads Manager screens, so a wrong attribution sends an operator to the wrong
+	// place.
+	rejectedCommunitiesByReddit := false
+	rejectedInterestsByReddit := false
 	adGroupResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(optionalTargeting))
 	// adGroupErr words an ad-group failure as UNCONFIRMED when the outcome is
 	// ambiguous (transportError / 5xx / mutating 3xx — the ad group MAY exist, and partialResult
@@ -1522,6 +1531,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			usedCommunities = false
 			droppedCommunities = suppliedCommunities
 			droppedInterests = len(in.Interests) > 0
+			// Carry the rejected-vs-collateral distinction to the persisted summary.
+			rejectedCommunitiesByReddit = rejectedCommunities
+			rejectedInterestsByReddit = rejectedInterests
 			adGroupResp, err = c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(baseTargeting))
 			if err != nil {
 				return partialResult(), adGroupErr(err)
@@ -1557,15 +1569,30 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	surviving = append(surviving, fmt.Sprintf("%d keywords", len(in.Keywords)), fmt.Sprintf("%d geos", len(geos)))
 	steps = append(steps, "Targeting: "+strings.Join(surviving, ", "))
 
-	var dropped []string
+	// Report each dropped dimension by its ACTUAL reason. Merging them into one
+	// "rejected by Reddit" line attributes a collateral drop to Reddit, and the two are
+	// re-added on different Ads Manager screens — so the wrong attribution sends an
+	// operator to the wrong place looking for a refusal that never happened.
+	var rejectedDrops, collateralDrops []string
 	if droppedCommunities {
-		dropped = append(dropped, "communities")
+		if rejectedCommunitiesByReddit {
+			rejectedDrops = append(rejectedDrops, "communities")
+		} else {
+			collateralDrops = append(collateralDrops, "communities")
+		}
 	}
 	if droppedInterests {
-		dropped = append(dropped, "interests")
+		if rejectedInterestsByReddit {
+			rejectedDrops = append(rejectedDrops, "interests")
+		} else {
+			collateralDrops = append(collateralDrops, "interests")
+		}
 	}
-	if len(dropped) > 0 {
-		steps = append(steps, fmt.Sprintf("%s rejected by Reddit and skipped -- add manually in Reddit Ads Manager", strings.Join(dropped, " and ")))
+	if len(rejectedDrops) > 0 {
+		steps = append(steps, fmt.Sprintf("%s rejected by Reddit and skipped -- add manually in Reddit Ads Manager", strings.Join(rejectedDrops, " and ")))
+	}
+	if len(collateralDrops) > 0 {
+		steps = append(steps, fmt.Sprintf("%s dropped so the retry carried no rejectable targeting (NOT refused by Reddit) -- add manually in Reddit Ads Manager", strings.Join(collateralDrops, " and ")))
 	}
 
 	// Step 4: Create ad from post URL if provided, otherwise emit instructions.

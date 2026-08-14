@@ -395,10 +395,21 @@ func InstallSystemCredentials(
 		// every column, so a rotation omitting -account-id would otherwise CLEAR the
 		// selection.
 		cfg := mergeConfig(existing.ProviderConfig, providerConfig)
-		if cfg != nil {
-			if cerr := requireConfig(provider, cfg); cerr != nil {
-				return cerr
-			}
+		// Validate the EFFECTIVE config, not only a supplied one. mergeConfig returns nil
+		// when -config is omitted, so gating this on `cfg != nil` skipped validation on
+		// exactly the rotation that needs it: a row written BEFORE a key joined
+		// requiredConfigKeys (a pre-000025 Reddit row with no conversion_pixel_id) could
+		// take fresh credentials, report success, and remain unusable — and because the LF
+		// system row is the fallback for every project with no Reddit connection of its
+		// own, unusable for all of them, surfacing per-project at dispatch instead of once
+		// here. requireAccountID below already validates the effective value
+		// unconditionally; this now matches it.
+		effective := cfg
+		if effective == nil {
+			effective = existing.ProviderConfig
+		}
+		if cerr := requireConfig(provider, effective); cerr != nil {
+			return cerr
 		}
 		upd := *existing
 		switch {

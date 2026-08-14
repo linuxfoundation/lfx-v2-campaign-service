@@ -324,4 +324,23 @@ func TestCreateCampaign_DistinguishesRejectedFromCollateralDrops(t *testing.T) {
 	if strings.Contains(joined, "rejected interests") {
 		t.Errorf("interests were never rejected by Reddit; reporting them as rejected misattributes the failure: %v", res.Steps)
 	}
+	// The PERSISTED summary line, not just the retry step. The two are written by
+	// different code paths, and only the retry step was covered before — so the summary
+	// re-merged both dimensions into "communities and interests rejected by Reddit" while
+	// this test stayed green. A substring check for "rejected interests" cannot see that
+	// wording; the phrase to guard against is the other word order.
+	if strings.Contains(joined, "interests rejected by Reddit") {
+		t.Errorf("the persisted summary reports collateral interests as a Reddit refusal: %v", res.Steps)
+	}
+	if strings.Contains(joined, "communities and interests rejected by Reddit") {
+		t.Errorf("the persisted summary merges a rejection and a collateral drop into one attribution: %v", res.Steps)
+	}
+	// And the positive half: the summary must still say communities WERE rejected, and
+	// that interests were dropped without blaming Reddit.
+	if !strings.Contains(joined, "communities rejected by Reddit") {
+		t.Errorf("the summary must name the dimension Reddit actually rejected: %v", res.Steps)
+	}
+	if !strings.Contains(joined, "NOT refused by Reddit") {
+		t.Errorf("the summary must say the collateral drop was not a Reddit refusal: %v", res.Steps)
+	}
 }
