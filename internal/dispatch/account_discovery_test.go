@@ -415,9 +415,10 @@ func TestListAccountsReturnsEmptyNotNilWhenUpstreamHasNone(t *testing.T) {
 	})
 
 	t.Run("microsoft", func(t *testing.T) {
-		rec := &requestRecorder{}
+		// No requestRecorder here: this subtest asserts on the RESULT (empty, non-nil),
+		// not on the outbound request. Recording requests nobody reads is scaffolding a
+		// later reader would mistake for an intended assertion.
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			rec.record(r)
 			w.Header().Set("Content-Type", "application/json")
 			switch {
 			case strings.Contains(r.URL.Path, "/token"):
