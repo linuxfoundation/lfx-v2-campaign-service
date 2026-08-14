@@ -41,8 +41,11 @@ look:
 constraint still governed soft-deleted rows the delete path had to free, so deferring the
 drop shipped a delete endpoint that silently did nothing. The rule therefore says "stopped
 depending" means for EVERY row the N-1 binary can still touch, soft-deleted rows included —
-and names the rollout-strategy escape hatch as the exception that the PreSync-Job work
-(#1543) removes the need for.
+and qualifies the rollout-strategy escape hatch as BOOT-TIME-ONLY: `Recreate` works because
+the migration runs when the new pod boots, so the old pod is gone first. It does not hold
+under a PreSync Job (#1543), which migrates while the N-1 ReplicaSet is still serving —
+there an unstageable migration needs explicit old-pod shutdown or a maintenance window, not
+`Recreate`. That is the coupling #1543 removes the need for.
 
 ## Not a behavior change
 

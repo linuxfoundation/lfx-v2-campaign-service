@@ -172,9 +172,14 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   the case that could not be split for exactly that reason — the old full constraint still
   governed soft-deleted rows the delete path had to free, so deferring the drop shipped a
   delete endpoint that silently did nothing. When a change genuinely cannot be staged apart,
-  a rollout strategy carries the ordering instead (here `Recreate`); that is the exception
-  that shows why the default is expand/contract, and it is the coupling the PreSync-Job
-  migration work (linuxfoundation/lfx-self-serve#1543) removes the need for.
+  a rollout strategy carries the ordering instead (here `Recreate`) — but only while
+  migrations run AT BOOT, because `Recreate` removes the old pod before the new one boots and
+  migrates. Once migrations move to a PreSync Job (linuxfoundation/lfx-self-serve#1543),
+  which runs BEFORE the Deployment sync while the N-1 ReplicaSet is still serving, `Recreate`
+  no longer covers an unstageable migration — that would need explicit old-pod shutdown
+  (scale the old Deployment to zero) or a maintenance window. That is the exception that
+  shows why the default is expand/contract, and the coupling the PreSync-Job work removes
+  the need for.
 
 - `000015` — `created_by` / `updated_by` JSONB on `campaign_briefs` (see *Actor
   attribution* below).

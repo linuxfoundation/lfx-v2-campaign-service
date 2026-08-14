@@ -223,6 +223,11 @@ narrowing/removing DDL (a `DROP`, an `ALTER … DROP`, or a tightened `UNIQUE` /
 `NOT NULL`) AND the code change that stops depending on the old shape, in the
 same release, is a finding — unless it also pins a rollout ordering (e.g.
 `strategy.type: Recreate`) that keeps the old binary from meeting the new schema.
+That escape hatch is BOOT-TIME-ONLY: it works because the migration runs when
+the new pod boots, so `Recreate` removes the old pod first. It does NOT hold once
+migrations move to a PreSync Job (#1543), which migrates while the N-1 ReplicaSet
+is still serving — there an unstageable migration needs explicit old-pod shutdown
+(scale the old Deployment to zero) or a maintenance window, not `Recreate`.
 "Stopped depending" means for every row the N-1 binary can still touch, soft-
 deleted rows included (`000013`/`000014` is the case that could not be split for
 exactly that reason). Concept:

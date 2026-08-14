@@ -37,10 +37,14 @@ delete endpoint would have shipped doing nothing.
 
 When a change genuinely cannot be staged apart, a **rollout strategy** carries the
 ordering instead — the chart pinned `strategy.type: Recreate` so the old pod is gone
-before the new one migrates. That is the exception, not the pattern, and the reason
-migrations are being moved out of boot into a PreSync Job
-(linuxfoundation/lfx-self-serve#1543): once no pod migrates the shared schema at
-boot, expand/contract alone is sufficient and the strategy override goes away
+before the new one migrates. That works **only while migrations run at boot**: `Recreate`
+removes the old pod before the new one boots and migrates. Once migrations move into a
+PreSync Job (linuxfoundation/lfx-self-serve#1543) — which runs **before** the Deployment
+sync, while the N-1 ReplicaSet is still serving — `Recreate` no longer covers an
+unstageable migration; that would need explicit old-pod shutdown (scale the old Deployment
+to zero) or a maintenance window. That is the exception, not the pattern, and the reason
+migrations are being moved out of boot: once no pod migrates the shared schema at boot,
+expand/contract alone is sufficient and the strategy override goes away
 (linuxfoundation/lfx-self-serve#1544).
 
 ## Authoring checklist
@@ -57,8 +61,10 @@ boot, expand/contract alone is sufficient and the strategy override goes away
 - [ ] A `.down.sql` exists and is correct; remember its safety is per-migration (see
       the "Rolling back is not the deploy run backwards" note in the deployment
       concept).
-- [ ] A schema shape the app relies on for correctness is registered in
-      `requiredIndexes` so `/readyz` fails closed when it is missing.
+- [ ] If this migration adds a **unique index that stands in for a constraint** (one
+      whose absence would be *silent* — every write it serializes still succeeds), register
+      it in `requiredIndexes` so boot / `/readyz` fails closed when it is missing. That
+      guard is unique-index-only; it does not model columns, `NOT NULL`, or foreign keys.
 
 ## References
 
