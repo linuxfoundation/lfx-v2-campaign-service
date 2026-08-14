@@ -756,7 +756,7 @@ func TestCreateCampaign_CommunityFallback(t *testing.T) {
 	foundFallback := false
 	foundSkipped := false
 	for _, s := range res.Steps {
-		if strings.Contains(s, "retrying without communities") {
+		if strings.Contains(s, "rejected communities") && strings.Contains(s, "retrying") {
 			foundFallback = true
 		}
 		if strings.Contains(s, "communities") && strings.Contains(s, "skipped -- add manually") {

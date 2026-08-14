@@ -635,9 +635,17 @@ var RedditAdsConnectionConfig = Type("reddit-ads-connection-config", func() {
 	// account, 2026-08-13). It identifies the advertiser's pixel, which is one per ad account,
 	// so it belongs on the connection rather than being re-entered per campaign.
 	//
-	// NOT Required: connections created before this attribute existed have none, and making it
-	// required would make every one of them unreadable rather than merely unable to dispatch.
-	// The dispatcher refuses a create when it is absent, naming this connection as the fix.
+	// NOT Required, and the reason is narrower than "legacy rows": this type is REQUEST-only
+	// (GET returns RedditAdsConnection), so requiring it could not make an existing row
+	// unreadable. What it would break is the caller — every existing integration that PUTs a
+	// Reddit connection without this newly-added field would start getting a 400.
+	//
+	// The cost of leaving it optional is real and must be stated rather than discovered: PUT
+	// is a FULL REPLACE on every provider in this API, so omitting this field CLEARS a
+	// configured pixel, and the next Reddit dispatch is then refused. That is the same
+	// semantic account_id and label have always had here — consistency across seven providers
+	// is worth more than special-casing one field — but it is sharper for a field a caller may
+	// not know exists yet. Send it on every update, or read the current value first.
 	// The example is deliberately DIFFERENT from account_id's above. On the LF account the
 	// two happen to share a value, and copying it here published a schema in which the
 	// advertiser id is offered as the pixel id — a UI developer wiring the connection form

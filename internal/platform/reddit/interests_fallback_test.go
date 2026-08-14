@@ -291,3 +291,37 @@ func TestCreateCampaign_ReportsSurvivingInterests(t *testing.T) {
 		t.Errorf("nothing was rejected, so nothing should be reported as skipped: %v", res.Steps)
 	}
 }
+
+// REJECTED and DROPPED are different facts and the Steps trail must not conflate them.
+//
+// Reddit names one or both dimensions in its 400; the retry then drops BOTH regardless,
+// because baseTargeting carries neither. An earlier version reported "retrying without
+// communities" while also dropping interests, which told the operator Reddit had refused
+// something it never saw — and interests and communities are re-added in different places
+// in Reddit Ads Manager, so a wrong attribution sends them to the wrong screen.
+func TestCreateCampaign_DistinguishesRejectedFromCollateralDrops(t *testing.T) {
+	// Only communities are rejected; interests are supplied and therefore collateral.
+	c, _, cleanup := interestRejectingServers(t, "communities")
+	defer cleanup()
+
+	in := interestInput()
+	in.Subreddits = []string{"kubernetes"}
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	joined := strings.Join(res.Steps, " | ")
+
+	if !strings.Contains(joined, "rejected communities") {
+		t.Errorf("the step must name what Reddit actually rejected: %v", res.Steps)
+	}
+	// The load-bearing half: interests were NOT rejected, so they must be reported as
+	// dropped alongside rather than as something Reddit refused.
+	if !strings.Contains(joined, "also dropping interests") {
+		t.Errorf("interests were dropped as collateral and must be reported as such, not as a Reddit rejection: %v", res.Steps)
+	}
+	if strings.Contains(joined, "rejected interests") {
+		t.Errorf("interests were never rejected by Reddit; reporting them as rejected misattributes the failure: %v", res.Steps)
+	}
+}

@@ -43,3 +43,26 @@ what the deployed pod serves, so the published spec omitted
 reading the served contract could not have discovered the field. Regenerated
 through `make apigen`; all four copies are byte-identical to `gen/http/` again.
 Use the make target, not the bare tool.
+
+**Docs** — A second review round found the DURABLE documentation had not been
+updated, only the dated log. `CLAUDE.md:17` requires the concept file, and a log
+fragment does not substitute for it: `docs/knowledge/code/internal-platform-reddit.md`
+described only the communities fallback, and `docs/channel-connections-schema.md`
+still said the Reddit table has no provider-specific columns. Both now describe
+the two-dimension fallback and the `conversion_pixel_id` column.
+
+**Fix** — The Steps trail conflated REJECTED with DROPPED. Reddit names one or
+both dimensions in its 400; the retry then drops BOTH regardless, because
+`baseTargeting` carries neither. Reporting "retrying without communities" while
+also dropping interests told the operator Reddit had refused something it never
+saw — and the two are re-added in different places in Reddit Ads Manager, so a
+wrong attribution sends them to the wrong screen. The step now names what was
+rejected and, separately, what was dropped alongside it.
+
+**Note** — The `conversion_pixel_id` attribute stays OPTIONAL, and the trade is
+now stated at the attribute rather than left to be discovered. PUT is a full
+replace on every provider in this API, so omitting the field CLEARS a configured
+pixel and the next dispatch is refused. That is the same semantic `account_id`
+and `label` have always had — consistency across seven providers beats
+special-casing one field — but it is sharper for a field a caller may not know
+exists yet.

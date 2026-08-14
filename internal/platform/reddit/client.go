@@ -1494,15 +1494,28 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		rejectedCommunities := is400 && strings.Contains(body, "invalid communities")
 		rejectedInterests := is400 && strings.Contains(body, "invalid interests")
 		if (suppliedCommunities && rejectedCommunities) || (len(in.Interests) > 0 && rejectedInterests) {
-			switch {
-			case rejectedCommunities && rejectedInterests:
-				steps = append(steps, fmt.Sprintf("Community and interest targeting both rejected (subreddits: %s; interests: %s), retrying without either",
-					strings.Join(communityNames, ", "), strings.Join(in.Interests, ", ")))
-			case rejectedCommunities:
-				steps = append(steps, fmt.Sprintf("Community targeting failed (invalid subreddits: %s), retrying without communities", strings.Join(communityNames, ", ")))
-			default:
-				steps = append(steps, fmt.Sprintf("Interest targeting failed (invalid interests: %s), retrying without interests", strings.Join(in.Interests, ", ")))
+			// REJECTED and DROPPED are reported separately, because they are different
+			// facts and an operator acts on them differently. Reddit names one or both
+			// dimensions in the 400; the retry then drops BOTH regardless, since
+			// baseTargeting carries neither. Saying "retrying without communities" while
+			// also dropping interests would misreport the second as something Reddit
+			// refused — it was not, it was collateral to the single-retry design.
+			var rejected, collateral []string
+			if rejectedCommunities {
+				rejected = append(rejected, fmt.Sprintf("communities (%s)", strings.Join(communityNames, ", ")))
+			} else if suppliedCommunities {
+				collateral = append(collateral, "communities")
 			}
+			if rejectedInterests {
+				rejected = append(rejected, fmt.Sprintf("interests (%s)", strings.Join(in.Interests, ", ")))
+			} else if len(in.Interests) > 0 {
+				collateral = append(collateral, "interests")
+			}
+			step := "Reddit rejected " + strings.Join(rejected, " and ")
+			if len(collateral) > 0 {
+				step += fmt.Sprintf("; also dropping %s so the retry carries no rejectable targeting", strings.Join(collateral, " and "))
+			}
+			steps = append(steps, step+" — retrying")
 			// Both are dropped whichever was named: baseTargeting is the payload without
 			// either, and a retry that re-sent the un-named dimension would fail again for
 			// the same reason it just failed.
