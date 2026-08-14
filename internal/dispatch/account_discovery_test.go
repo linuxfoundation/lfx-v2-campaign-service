@@ -5,7 +5,6 @@ package dispatch
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -98,9 +97,14 @@ func TestLinkedInListAccountsWorksWithoutASelectedAccount(t *testing.T) {
 	}
 }
 
-// The request must ask about the TOKEN, not about the stored account. A client scoped to one
-// account returns a plausible one-account list, so the regression is invisible in the result
-// and only the outbound request can catch it.
+// The request must ask about the TOKEN, not about the stored account.
+//
+// LinkedIn's ListAdAccounts builds its request from q/pageSize/pageToken only and never
+// reads RuntimeConfig.AccountID, so it cannot be account-scoped the way Microsoft's
+// per-customer path can. What this test pins is that the stored id never LEAKS into the
+// request — a future edit that threaded it through (as the Microsoft path legitimately
+// does for its customer id) would narrow the question silently, and the result would still
+// be a plausible one-account list. Only the outbound request shows the difference.
 func TestLinkedInListAccountsAsksAboutTheTokenNotTheAccount(t *testing.T) {
 	rec := &requestRecorder{}
 	srv := linkedInAccountsServer(t, rec, `{"id":507404993,"name":"LF Events","status":"ACTIVE"}`)
@@ -381,4 +385,65 @@ func TestMicrosoftAccountLabelSurfacesWhyAnAccountCannotServe(t *testing.T) {
 	}
 }
 
-var _ = json.Marshal // keep encoding/json referenced if a future fixture drops its use
+// A zero-account upstream answer must return an EMPTY, NON-NIL slice.
+//
+// Both dispatchers rely on `make([]model.AccessibleAccount, 0, len(...))` to guarantee
+// that, and nothing pinned it: every other fixture in this file returns exactly one
+// element, so a regression to `var accounts []model.AccessibleAccount` would still pass
+// them all while returning nil on the zero case. The distinction is load-bearing — an
+// empty list means "these credentials reach no accounts", which is a real answer a picker
+// can render, while nil is indistinguishable from "this platform cannot list accounts".
+// Raised by dealako in review of #132.
+func TestListAccountsReturnsEmptyNotNilWhenUpstreamHasNone(t *testing.T) {
+	t.Run("linkedin", func(t *testing.T) {
+		rec := &requestRecorder{}
+		srv := linkedInAccountsServer(t, rec, "") // zero elements
+
+		conn := activeLinkedInConn(goodLinkedInCreds)
+		d := NewLinkedInDispatcher(fakeConnReader{conn: conn}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
+
+		accounts, err := d.ListAccounts(context.Background(), "cncf", model.ProviderLinkedInAds)
+		if err != nil {
+			t.Fatalf("ListAccounts: %v", err)
+		}
+		if accounts == nil {
+			t.Error("returned NIL for a zero-account answer; the orchestrator cannot tell that from an unsupported platform")
+		}
+		if len(accounts) != 0 {
+			t.Errorf("want an empty list, got %+v", accounts)
+		}
+	})
+
+	t.Run("microsoft", func(t *testing.T) {
+		rec := &requestRecorder{}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			rec.record(r)
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case strings.Contains(r.URL.Path, "/token"):
+				_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+			case strings.Contains(r.URL.Path, "User"):
+				_, _ = io.WriteString(w, `{"CustomerRoles":[{"CustomerId":9999999,"RoleId":41}]}`)
+			default:
+				// The customer is reachable but holds no ad accounts.
+				_, _ = io.WriteString(w, `{"AccountsInfo":[]}`)
+			}
+		}))
+		t.Cleanup(srv.Close)
+
+		conn := activeMicrosoftConn(goodMicrosoftCreds)
+		d := NewMicrosoftDispatcher(fakeConnReader{conn: conn}, identityEncryptor{},
+			microsoft.WithBaseURL(srv.URL), microsoft.WithCustomerBaseURL(srv.URL), microsoft.WithTokenURL(srv.URL+"/token"))
+
+		accounts, err := d.ListAccounts(context.Background(), "cncf", model.ProviderMicrosoftAds)
+		if err != nil {
+			t.Fatalf("ListAccounts: %v", err)
+		}
+		if accounts == nil {
+			t.Error("returned NIL for a zero-account answer; the orchestrator cannot tell that from an unsupported platform")
+		}
+		if len(accounts) != 0 {
+			t.Errorf("want an empty list, got %+v", accounts)
+		}
+	})
+}
