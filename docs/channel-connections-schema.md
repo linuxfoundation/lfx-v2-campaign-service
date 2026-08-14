@@ -92,7 +92,13 @@ Common columns + provider-specific:
 
 ### reddit_ads_connections
 
-Common columns only (no provider-specific columns). `account_id` = advertiser ID (e.g. `t2_gv9wtbfa`). Encrypted credential shape: `{ client_id, client_secret, refresh_token }`.
+Common columns + provider-specific:
+
+| Column | Type | Purpose |
+|---|---|---|
+| `conversion_pixel_id` | `TEXT` | Reddit conversion pixel (nullable). Required by Reddit on EVERY campaign create — including Traffic and Awareness, not only Conversions as its docs describe (observed against the live LF account, 2026-08-13). Stored on the connection rather than per campaign because it identifies the advertiser's pixel: one per ad account, the same for every campaign created through it. Nullable with no backfill — a connection created before migration 000025 genuinely has none, and any invented value would attribute conversions to a pixel that is not that advertiser's. A create with none configured is refused before any upstream call. |
+
+`account_id` = advertiser ID (e.g. `t2_gv9wtbfa`). Encrypted credential shape: `{ client_id, client_secret, refresh_token }`.
 
 ### twitter_ads_connections
 

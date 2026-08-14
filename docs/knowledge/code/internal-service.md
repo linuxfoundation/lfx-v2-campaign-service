@@ -515,7 +515,7 @@ archival as a separate flag rather than a lifecycle state, so no `state` value c
 ## Campaign delete
 
 `BriefService.DeleteCampaign` (backing `DELETE .../campaigns/{id}`, `If-Match` required)
-SOFT-deletes a campaign locally. Its purpose is slot recovery: the `(brief_id, platform)`
+SOFT-deletes a campaign locally. Its purpose is slot recovery: the `(brief_id, platform, variant)`
 uniqueness that makes dispatch idempotent also meant a campaign row occupied its brief's
 slot for that platform permanently, so a wrong-budget campaign or an ambiguously-failed
 upstream create blocked the pair forever. The partial unique index from `000010` excludes

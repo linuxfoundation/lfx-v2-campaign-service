@@ -659,6 +659,9 @@ func (s *ConnectionService) buildRedditAdsResult(c *model.Connection) *conn.Redd
 		Version:        c.Version,
 		Etag:           etag(c.Version),
 	}
+	// Surfaced so a caller can see whether this connection can create campaigns at all: an
+	// absent pixel means every Reddit create is refused.
+	r.ConversionPixelID = optStr(c.ProviderConfig["conversion_pixel_id"])
 	return r
 }
 
@@ -668,12 +671,14 @@ func (s *ConnectionService) CreateRedditAds(ctx context.Context, p *conn.CreateR
 	}
 	cfg := p.Config
 	m := &model.Connection{
-		ProjectID:      p.ProjectID,
-		Provider:       model.ProviderRedditAds,
-		Label:          strVal(cfg.Label),
-		AccountID:      cfg.AccountID,
-		ProviderConfig: map[string]string{},
-		CreatedBy:      actorFromCtx(ctx),
+		ProjectID: p.ProjectID,
+		Provider:  model.ProviderRedditAds,
+		Label:     strVal(cfg.Label),
+		AccountID: cfg.AccountID,
+		ProviderConfig: map[string]string{
+			"conversion_pixel_id": strVal(cfg.ConversionPixelID),
+		},
+		CreatedBy: actorFromCtx(ctx),
 	}
 	created, err := s.createConn(ctx, m, p.Credentials)
 	if err != nil {
@@ -693,12 +698,14 @@ func (s *ConnectionService) GetRedditAds(ctx context.Context, p *conn.GetRedditA
 func (s *ConnectionService) UpdateRedditAds(ctx context.Context, p *conn.UpdateRedditAdsPayload) (*conn.RedditAdsConnection, error) {
 	cfg := p.Config
 	m := &model.Connection{
-		ProjectID:      p.ProjectID,
-		Provider:       model.ProviderRedditAds,
-		Label:          strVal(cfg.Label),
-		AccountID:      cfg.AccountID,
-		ProviderConfig: map[string]string{},
-		UpdatedBy:      actorFromCtx(ctx),
+		ProjectID: p.ProjectID,
+		Provider:  model.ProviderRedditAds,
+		Label:     strVal(cfg.Label),
+		AccountID: cfg.AccountID,
+		ProviderConfig: map[string]string{
+			"conversion_pixel_id": strVal(cfg.ConversionPixelID),
+		},
+		UpdatedBy: actorFromCtx(ctx),
 	}
 	updated, err := s.updateConn(ctx, m, p.IfMatch)
 	if err != nil {

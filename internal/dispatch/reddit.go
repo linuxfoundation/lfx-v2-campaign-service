@@ -55,7 +55,19 @@ type redditConfig struct {
 // stores event data as opaque JSON (EventDetails/Copy). Project is deliberately NOT
 // here — it must come from the authenticated brief.ProjectID, not caller JSON.
 type briefFields struct {
-	EventName       string `json:"eventName"`
+	EventName string `json:"eventName"`
+	// Name is the SAME value under the spelling the UI actually writes. `event_details` is
+	// typed `Any` in the design (design/brief.go:37), so nothing arbitrates the key, and the
+	// UI's own `CampaignEventDetails` interface has spelled it `name` all along — the persist
+	// path spreads that object verbatim. Every paid create therefore decoded EventName as ""
+	// and was refused before reaching the ad platform. Accepting both spellings fixes the
+	// briefs ALREADY STORED, which a writer-side change could not.
+	//
+	// `lenientEventName` (hubspot.go) is lenient about PRESENCE — it returns "" rather than
+	// erroring, because an email must still stage without a name — but it was not lenient
+	// about SPELLING, so it too missed the UI's `name` and labelled every cloned email from
+	// the fallback. Both now read both keys.
+	Name            string `json:"name"`
 	RegistrationURL string `json:"registrationUrl"`
 	HSToken         string `json:"hsToken"`
 }
@@ -225,7 +237,15 @@ func (d *RedditDispatcher) resolveRedditClient(ctx context.Context, projectID st
 	}
 	return reddit.NewClient(
 		reddit.Credentials{ClientID: creds.ClientID, ClientSecret: creds.ClientSecret, RefreshToken: creds.RefreshToken},
-		reddit.AccountConfig{AccountID: res.accountID, Label: res.label},
+		// The pixel travels with the ACCOUNT, matching where it is stored. An absent key
+		// yields "", which CreateCampaign refuses with a message naming the connection --
+		// the empty case is a connection saved before the column existed, and guessing a
+		// value would attribute conversions to a pixel that is not this advertiser's.
+		reddit.AccountConfig{
+			AccountID:         res.accountID,
+			Label:             res.label,
+			ConversionPixelID: res.providerConfig["conversion_pixel_id"],
+		},
 		d.opts...,
 	), nil
 }
@@ -403,8 +423,34 @@ func decodeBriefFields(brief *model.CampaignBrief) (briefFields, error) {
 		if err := json.Unmarshal(blob, &partial); err != nil {
 			continue // a blob that isn't this shape is fine; skip it
 		}
+		// TRIMMED on assignment, matching decodeEventDetails (audience_build.go). Storing the
+		// raw value and trimming only at the emptiness gate below left the two decoders
+		// disagreeing on the same blob: `{"eventName":"  Foo  "}` yielded "  Foo  " here and
+		// "Foo" there, and this value becomes the upstream campaign NAME.
 		if bf.EventName == "" {
-			bf.EventName = partial.EventName
+			bf.EventName = strings.TrimSpace(partial.EventName)
+		}
+		// `eventName` wins where both are present; `name` is the fallback rather than an
+		// equal, so a blob that carries the explicit spelling is never overridden by the
+		// generic one.
+		//
+		// Emptiness is SEMANTIC (TrimSpace), matching the final validation below and the
+		// sibling decoders. A plain `== ""` let `{"eventName":" ","name":"Valid UI name"}`
+		// skip the fallback and then fail that validation — a usable name discarded because
+		// the other key held a space.
+		if bf.EventName == "" {
+			bf.EventName = strings.TrimSpace(partial.Name)
+		}
+		// `eventName` wins where both are present; `name` is the fallback rather than an
+		// equal, so a blob that carries the explicit spelling is never overridden by the
+		// generic one.
+		//
+		// Emptiness is SEMANTIC (TrimSpace), matching the final validation below and the
+		// sibling decoders. A plain `== ""` let `{"eventName":" ","name":"Valid UI name"}`
+		// skip the fallback and then fail that validation — a usable name discarded because
+		// the other key held a space.
+		if strings.TrimSpace(bf.EventName) == "" {
+			bf.EventName = partial.Name
 		}
 		if bf.RegistrationURL == "" {
 			bf.RegistrationURL = partial.RegistrationURL

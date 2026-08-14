@@ -630,11 +630,39 @@ var RedditAdsCredentials = Type("reddit-ads-credentials", func() {
 var RedditAdsConnectionConfig = Type("reddit-ads-connection-config", func() {
 	Attribute("label", String, "Optional friendly name")
 	Attribute("account_id", String, "Reddit advertiser ID", func() { Example("t2_gv9wtbfa") })
+	// Reddit requires a conversion pixel on EVERY campaign create -- including Traffic and
+	// Awareness, not only Conversions as the API docs describe (observed against the live LF
+	// account, 2026-08-13). It identifies the advertiser's pixel, which is one per ad account,
+	// so it belongs on the connection rather than being re-entered per campaign.
+	//
+	// NOT Required, and the reason is narrower than "legacy rows": this type is REQUEST-only
+	// (GET returns RedditAdsConnection), so requiring it could not make an existing row
+	// unreadable. What it would break is the caller — every existing integration that PUTs a
+	// Reddit connection without this newly-added field would start getting a 400.
+	//
+	// The cost of leaving it optional is real and must be stated rather than discovered: PUT
+	// is a FULL REPLACE on every provider in this API, so omitting this field CLEARS a
+	// configured pixel, and the next Reddit dispatch is then refused. That is the same
+	// semantic account_id and label have always had here — consistency across seven providers
+	// is worth more than special-casing one field — but it is sharper for a field a caller may
+	// not know exists yet. Send it on every update, or read the current value first.
+	// The example is deliberately DIFFERENT from account_id's above. On the LF account the
+	// two happen to share a value, and copying it here published a schema in which the
+	// advertiser id is offered as the pixel id — a UI developer wiring the connection form
+	// reads the generated OpenAPI, not this account's coincidence.
+	Attribute("conversion_pixel_id", String, "Reddit conversion pixel ID (Reddit Ads → Events Manager)", func() {
+		Example("a2_1b3c5d7e9f")
+	})
 	Required("account_id")
 })
 
 var RedditAdsConnection = Type("reddit-ads-connection", func() {
 	commonConnectionAttrs()
+	// Surfaced on the read model the way google-ads surfaces login_customer_id: it is
+	// non-secret configuration, and without it a caller cannot tell a connection that has a
+	// pixel from one that does not -- which is the difference between a connection that can
+	// create campaigns and one that cannot.
+	Attribute("conversion_pixel_id", String, "Reddit conversion pixel ID")
 	commonConnectionRequired()
 })
 

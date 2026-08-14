@@ -423,6 +423,8 @@ type CreateRedditAdsResponseBody struct {
 	Status string `form:"status" json:"status" xml:"status"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
+	// Reddit conversion pixel ID
+	ConversionPixelID *string `form:"conversion_pixel_id,omitempty" json:"conversion_pixel_id,omitempty" xml:"conversion_pixel_id,omitempty"`
 }
 
 // GetRedditAdsResponseBody is the type of the
@@ -443,6 +445,8 @@ type GetRedditAdsResponseBody struct {
 	Status string `form:"status" json:"status" xml:"status"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
+	// Reddit conversion pixel ID
+	ConversionPixelID *string `form:"conversion_pixel_id,omitempty" json:"conversion_pixel_id,omitempty" xml:"conversion_pixel_id,omitempty"`
 }
 
 // UpdateRedditAdsResponseBody is the type of the
@@ -463,6 +467,8 @@ type UpdateRedditAdsResponseBody struct {
 	Status string `form:"status" json:"status" xml:"status"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
+	// Reddit conversion pixel ID
+	ConversionPixelID *string `form:"conversion_pixel_id,omitempty" json:"conversion_pixel_id,omitempty" xml:"conversion_pixel_id,omitempty"`
 }
 
 // TestRedditAdsResponseBody is the type of the
@@ -2807,6 +2813,8 @@ type RedditAdsConnectionConfigRequestBody struct {
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
 	// Reddit advertiser ID
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// Reddit conversion pixel ID (Reddit Ads → Events Manager)
+	ConversionPixelID *string `form:"conversion_pixel_id,omitempty" json:"conversion_pixel_id,omitempty" xml:"conversion_pixel_id,omitempty"`
 }
 
 // RedditAdsCredentialsRequestBody is used to define fields on request body
@@ -3085,13 +3093,14 @@ func NewTestMetaAdsResponseBody(res *lfxv2campaignserviceconnections.ConnectionT
 // "lfx-v2-campaign-service-connections" service.
 func NewCreateRedditAdsResponseBody(res *lfxv2campaignserviceconnections.RedditAdsConnection) *CreateRedditAdsResponseBody {
 	body := &CreateRedditAdsResponseBody{
-		ID:             res.ID,
-		ProjectID:      res.ProjectID,
-		Label:          res.Label,
-		AccountID:      res.AccountID,
-		HasCredentials: res.HasCredentials,
-		Status:         res.Status,
-		Version:        res.Version,
+		ID:                res.ID,
+		ProjectID:         res.ProjectID,
+		Label:             res.Label,
+		AccountID:         res.AccountID,
+		HasCredentials:    res.HasCredentials,
+		Status:            res.Status,
+		Version:           res.Version,
+		ConversionPixelID: res.ConversionPixelID,
 	}
 	return body
 }
@@ -3101,13 +3110,14 @@ func NewCreateRedditAdsResponseBody(res *lfxv2campaignserviceconnections.RedditA
 // service.
 func NewGetRedditAdsResponseBody(res *lfxv2campaignserviceconnections.RedditAdsConnection) *GetRedditAdsResponseBody {
 	body := &GetRedditAdsResponseBody{
-		ID:             res.ID,
-		ProjectID:      res.ProjectID,
-		Label:          res.Label,
-		AccountID:      res.AccountID,
-		HasCredentials: res.HasCredentials,
-		Status:         res.Status,
-		Version:        res.Version,
+		ID:                res.ID,
+		ProjectID:         res.ProjectID,
+		Label:             res.Label,
+		AccountID:         res.AccountID,
+		HasCredentials:    res.HasCredentials,
+		Status:            res.Status,
+		Version:           res.Version,
+		ConversionPixelID: res.ConversionPixelID,
 	}
 	return body
 }
@@ -3117,13 +3127,14 @@ func NewGetRedditAdsResponseBody(res *lfxv2campaignserviceconnections.RedditAdsC
 // "lfx-v2-campaign-service-connections" service.
 func NewUpdateRedditAdsResponseBody(res *lfxv2campaignserviceconnections.RedditAdsConnection) *UpdateRedditAdsResponseBody {
 	body := &UpdateRedditAdsResponseBody{
-		ID:             res.ID,
-		ProjectID:      res.ProjectID,
-		Label:          res.Label,
-		AccountID:      res.AccountID,
-		HasCredentials: res.HasCredentials,
-		Status:         res.Status,
-		Version:        res.Version,
+		ID:                res.ID,
+		ProjectID:         res.ProjectID,
+		Label:             res.Label,
+		AccountID:         res.AccountID,
+		HasCredentials:    res.HasCredentials,
+		Status:            res.Status,
+		Version:           res.Version,
+		ConversionPixelID: res.ConversionPixelID,
 	}
 	return body
 }

@@ -21,12 +21,79 @@ const (
 // many campaigns (one per platform), discriminated by Platform and sharing
 // BriefID. The row is updated in place (not recreated) when a brief changes
 // after campaigns exist.
+// VariantDefault is the variant for every provider that does not sub-divide into
+// campaign types, and the value every pre-000021 row was backfilled to. Six of the
+// seven providers use it permanently: Meta's and Reddit's `objective` configures a
+// single campaign rather than multiplying it, and LinkedIn/X/Microsoft/HubSpot have
+// no such concept at all.
+const VariantDefault = "default"
+
+// VariantInvalid is the slot for a request whose variant could NOT be determined —
+// today, a config envelope that fails to decode. It exists so such a request cannot be
+// filed under a slot a real campaign occupies.
+//
+// The idempotency lookup runs BEFORE the dispatcher, so a request routed to an occupied
+// slot is answered by reusing that row and never reaches the dispatcher that would have
+// reported what was actually wrong with it. Mapping "we don't know" onto 'default' meant
+// a malformed create against a brief with an existing Search campaign returned success.
+//
+// No create path ever writes this value, so the lookup is guaranteed to miss and the
+// dispatch proceeds to its real error. The leading underscore keeps it outside the
+// namespace any provider's channel/objective string could produce, so a future platform
+// channel literally named "invalid" still cannot collide with it.
+const VariantInvalid = "_invalid"
+
+// AdoptableVariants lists the slots a platform's adopt endpoint can bind a campaign into.
+//
+// Only Google sub-divides today: its briefs can hold a Search campaign (VariantDefault) and
+// a Demand Gen one simultaneously. Every other provider has exactly one slot, because its
+// `objective`/`channel` configures a single campaign rather than multiplying it.
+//
+// It exists so the adopt pre-check can answer "is there any slot left?" WITHOUT guessing
+// which one this campaign will occupy — that is only known once the platform reports what
+// the campaign is. A pre-check that guessed VariantDefault refused a Demand Gen adoption
+// onto a brief that merely had a Search campaign.
+//
+// A provider absent from this map has no adopt support, and callers must treat an empty
+// result as "cannot pre-decide" rather than as "no slots".
+func AdoptableVariants(p Provider) []string {
+	if p == ProviderGoogleAds {
+		return []string{VariantDefault, "demand-gen"}
+	}
+	return []string{VariantDefault}
+}
+
+// NormalizeVariant maps an empty variant to VariantDefault.
+//
+// Empty means "this caller does not sub-divide", which is true of every provider
+// but Google and of every call site written before 000021. Normalizing at the
+// boundary keeps that out of the query layer: the column is NOT NULL, and a bare ""
+// would silently become a THIRD slot alongside 'default' — so a brief could hold
+// two google-ads campaigns that both mean "the only one", which is exactly the
+// duplicate the slot key exists to prevent.
+func NormalizeVariant(v string) string {
+	if v == "" {
+		return VariantDefault
+	}
+	return v
+}
+
 type Campaign struct {
-	ID                 string
-	ProjectID          string
-	BriefID            string
-	JobID              *string // creation job that produced this row (soft ref; no FK)
-	Platform           Provider
+	ID        string
+	ProjectID string
+	BriefID   string
+	JobID     *string // creation job that produced this row (soft ref; no FK)
+	Platform  Provider
+	// Variant is the sub-division of Platform this campaign is: which of that
+	// platform's campaign types it represents. Google has several (search,
+	// demand-gen, performance-max next) and its UI offers them as simultaneous
+	// checkboxes, so one brief can hold more than one google-ads campaign; every
+	// other provider uses VariantDefault.
+	//
+	// Part of the campaign's identity, not its config: (BriefID, Platform, Variant)
+	// is the slot key the dispatch claim arbitrates on (migration 000022), which is
+	// what stops a retry creating a second paid campaign.
+	Variant            string
 	PlatformCampaignID string // ID returned by the ad platform
 	CampaignName       string
 	Status             string
@@ -339,4 +406,15 @@ type PlatformCampaignRef struct {
 	// empty, the guard reads "unknown", and a later repointing of the project's connection
 	// would let the same numeric id address a DIFFERENT customer's campaign.
 	Result json.RawMessage
+	// Variant is the slot this upstream campaign belongs in, as established from what the
+	// PLATFORM reports the campaign actually is — not assumed from the adopt request, which
+	// names no campaign type at all.
+	//
+	// Adoption previously filed every Google campaign under VariantDefault regardless of
+	// type. Adopting a Demand Gen campaign therefore left the 'demand-gen' slot empty, and
+	// the next Demand Gen dispatch for that brief saw a free slot and created a SECOND paid
+	// campaign. An adapter that cannot establish the variant must fail rather than return
+	// a guess: an empty value here is a bug in the adapter, and the service layer rejects
+	// it rather than defaulting.
+	Variant string
 }

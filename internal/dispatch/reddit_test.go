@@ -69,6 +69,11 @@ func activeRedditConn(creds string) *model.Connection {
 		AccountID:            "t2_acct",
 		EncryptedCredentials: []byte(creds),
 		Status:               model.StatusActive,
+		// Reddit requires a conversion pixel on every campaign create, so a connection
+		// without one cannot dispatch at all. A usable fixture carries it, the same way a
+		// real connection does. TestReddit_MissingConversionPixelIsRefused covers the
+		// absent case, which is a connection saved before the column existed.
+		ProviderConfig: map[string]string{"conversion_pixel_id": "t2_pixel"},
 	}
 }
 

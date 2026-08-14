@@ -144,9 +144,28 @@ func (s *AudienceService) BuilderIsSet() bool {
 // opportunistically and validates what it found rather than assuming a shape.
 type briefEventDetails struct {
 	EventName string `json:"eventName"`
-	Country   string `json:"country"`
-	Location  string `json:"location"`
-	Year      string `json:"year"`
+	// Name is the SAME value under the spelling the UI actually writes: its
+	// `CampaignEventDetails` interface has `name`, and the persist path spreads that object
+	// verbatim into the opaque `event_details` blob, which the design types as `Any` — so
+	// nothing arbitrates the key. Same defect the paid path had (LFXV2-3259); this decoder is
+	// a separate struct that the dispatch-side fix does not reach.
+	Name string `json:"name"`
+	// `countryCode` is deliberately NOT accepted as a fallback for Country, even though the UI
+	// writes it and its absence is what makes this decoder reject a UI brief.
+	//
+	// Country flows through `audience.DisplayName` into HubSpot `CONTAINS`/`IS_ANY_OF`
+	// filters, and that function aliases only `us` and `uk` among ISO-2 values
+	// (`internal/audience/region.go:63-64`). A `JP` or `DE` would pass through literally,
+	// match no HubSpot country property, and the build would SUCCEED while storing an empty
+	// inclusion list — trading a loud, accurate failure for a silent wrong answer on a list
+	// that decides who receives an email.
+	//
+	// Reading the code therefore needs an ISO-2 → country-name mapping first. Until that
+	// exists, failing with "no country in its details" is the correct outcome: it names a
+	// real gap instead of hiding it. Tracked separately from LFXV2-3259.
+	Country  string `json:"country"`
+	Location string `json:"location"`
+	Year     string `json:"year"`
 }
 
 // BuildAudience derives a brief's HubSpot audience and records it.
@@ -728,8 +747,11 @@ func isSupportedYear(s string) bool {
 }
 
 // decodeEventDetails pulls the fields the build needs out of the brief's opaque blobs. It
-// mirrors internal/dispatch's decodeBriefFields: EventDetails is the primary source, Copy is a
-// fallback, and a blob that isn't this shape is skipped rather than failing the request.
+// follows internal/dispatch's decodeBriefFields in STRUCTURE — EventDetails is the primary
+// source, Copy is a fallback, and a blob that isn't this shape is skipped rather than failing
+// the request — but it is a SEPARATE struct reading different fields, so a change there does
+// not reach here. That is how both decoders came to miss the UI's spellings independently
+// (LFXV2-3259): treat them as siblings to keep in step, not as one implementation.
 func decodeEventDetails(b *model.CampaignBrief) (briefEventDetails, error) {
 	var out briefEventDetails
 	for _, blob := range []json.RawMessage{b.EventDetails, b.Copy} {
@@ -742,6 +764,9 @@ func decodeEventDetails(b *model.CampaignBrief) (briefEventDetails, error) {
 		}
 		if out.EventName == "" {
 			out.EventName = strings.TrimSpace(partial.EventName)
+		}
+		if out.EventName == "" {
+			out.EventName = strings.TrimSpace(partial.Name)
 		}
 		if out.Country == "" {
 			out.Country = strings.TrimSpace(partial.Country)

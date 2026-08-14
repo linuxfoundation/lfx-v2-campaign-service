@@ -43,7 +43,9 @@ revoked or deleted.
    back to the reserved `model.SystemProjectID` scope (see below).
 2. **Map inputs** (per-platform) — the adapter reads the brief's event destination
    from its top-level `URL` field (with a nested `registrationUrl` in the opaque JSON
-   only as a fallback) and `eventName` from the opaque JSON blobs, plus the
+   only as a fallback) and the event name from the opaque JSON blobs — read as
+   `eventName`, falling back to `name`, which is the spelling the UI writes
+   (LFXV2-3259) — plus the
    per-platform config (its OWN nested key — `redditConfig`/`linkedInConfig`/… — out
    of the single `CreateCampaigns` `Input.Config` envelope, via
    `unmarshalPlatformConfig`) onto the client's `CampaignInput`. The **Project** name
@@ -926,4 +928,22 @@ customer id, so the adopted row records the account it was verified under and th
 rejected locally with no network call, so it is permanent input, not an unreachable platform.
 **Campaign ID validation happens before resolving the connection, so a malformed ID always returns
 400 regardless of connection state — the permanent input fault masks any contingent connection fault.**
+
+It also establishes the SLOT the adopted campaign occupies. The adopt request names no campaign
+type, so the only evidence is what the platform reports: the lookup selects
+`campaign.advertising_channel_type` and `googleAdsVariantForChannelType` maps it onto
+`PlatformCampaignRef.Variant`, which the adopt path persists. Before this, every adopted Google
+campaign was stored as `default` whatever it was — so adopting a Demand Gen campaign left the
+`demand-gen` slot free and the next Demand Gen dispatch created a SECOND paid campaign for the
+same brief. The mapping fails CLOSED: only the types this service can create are mappable, and
+`PERFORMANCE_MAX`, `VIDEO`, an unrecognised future value or an absent field are refused rather
+than defaulted, since defaulting is what produces the duplicate. An adapter that returns an empty
+variant is refused by the service layer too, so a contract violation cannot fall back to `default`.
+
+The Google dispatcher resolves the CHANNEL before it composes the campaign name, before adoption
+looks anything up, and before any create. Each of those depends on which campaign type is being
+dispatched, and doing it last meant all three ran assuming Search: `adoptExisting` on a Demand Gen
+dispatch searched for the Search campaign's name, and an unsupported channel was refused only
+after adoption could already have bound a campaign. `googleads.CampaignKindSearch` and
+`CampaignKindDemandGen` are exported so the dispatcher composes the same name the client writes.
 
