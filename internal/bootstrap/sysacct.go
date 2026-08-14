@@ -204,6 +204,15 @@ var requiredConfigKeys = map[model.Provider][]string{
 	model.ProviderLinkedInAds: {"org_id"},
 	model.ProviderMetaAds:     {"page_id"},
 	model.ProviderTwitterAds:  {"funding_instrument_id"},
+	// Reddit joined this list when the conversion pixel moved onto the connection
+	// (migration 000025). It meets the stated bar exactly: the Reddit client refuses EVERY
+	// campaign create without a pixel -- not only the "conversions" objective its API docs
+	// describe -- so a system row installed without one is installable and dead. Worse than
+	// dead, in fact: the LF system row is the FALLBACK for every project that has connected
+	// no Reddit account of its own, so one pixel-less install silently refuses paid creates
+	// for all of them, with the failure surfacing per-project at dispatch rather than once
+	// at install.
+	model.ProviderRedditAds: {"conversion_pixel_id"},
 }
 
 // requireConfig checks the map about to be WRITTEN, not the flags as typed: on a rotation
@@ -386,10 +395,21 @@ func InstallSystemCredentials(
 		// every column, so a rotation omitting -account-id would otherwise CLEAR the
 		// selection.
 		cfg := mergeConfig(existing.ProviderConfig, providerConfig)
-		if cfg != nil {
-			if cerr := requireConfig(provider, cfg); cerr != nil {
-				return cerr
-			}
+		// Validate the EFFECTIVE config, not only a supplied one. mergeConfig returns nil
+		// when -config is omitted, so gating this on `cfg != nil` skipped validation on
+		// exactly the rotation that needs it: a row written BEFORE a key joined
+		// requiredConfigKeys (a pre-000025 Reddit row with no conversion_pixel_id) could
+		// take fresh credentials, report success, and remain unusable — and because the LF
+		// system row is the fallback for every project with no Reddit connection of its
+		// own, unusable for all of them, surfacing per-project at dispatch instead of once
+		// here. requireAccountID below already validates the effective value
+		// unconditionally; this now matches it.
+		effective := cfg
+		if effective == nil {
+			effective = existing.ProviderConfig
+		}
+		if cerr := requireConfig(provider, effective); cerr != nil {
+			return cerr
 		}
 		upd := *existing
 		switch {

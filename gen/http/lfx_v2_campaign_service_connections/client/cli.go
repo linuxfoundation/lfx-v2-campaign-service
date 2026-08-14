@@ -628,7 +628,7 @@ func BuildCreateRedditAdsPayload(lfxV2CampaignServiceConnectionsCreateRedditAdsB
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceConnectionsCreateRedditAdsBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"config\": {\n         \"account_id\": \"t2_gv9wtbfa\",\n         \"label\": \"Facere ut voluptatem.\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Unde perspiciatis.\",\n         \"client_secret\": \"Rerum maiores in alias est laboriosam saepe.\",\n         \"refresh_token\": \"Perferendis placeat earum occaecati et.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"config\": {\n         \"account_id\": \"t2_gv9wtbfa\",\n         \"conversion_pixel_id\": \"a2_1b3c5d7e9f\",\n         \"label\": \"Facere ut voluptatem.\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Unde perspiciatis.\",\n         \"client_secret\": \"Rerum maiores in alias est laboriosam saepe.\",\n         \"refresh_token\": \"Perferendis placeat earum occaecati et.\"\n      }\n   }'")
 		}
 		if body.Config == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
@@ -699,7 +699,7 @@ func BuildUpdateRedditAdsPayload(lfxV2CampaignServiceConnectionsUpdateRedditAdsB
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceConnectionsUpdateRedditAdsBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"config\": {\n         \"account_id\": \"t2_gv9wtbfa\",\n         \"label\": \"Facere ut voluptatem.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"config\": {\n         \"account_id\": \"t2_gv9wtbfa\",\n         \"conversion_pixel_id\": \"a2_1b3c5d7e9f\",\n         \"label\": \"Facere ut voluptatem.\"\n      }\n   }'")
 		}
 		if body.Config == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
@@ -823,7 +823,7 @@ func BuildCreateTwitterAdsPayload(lfxV2CampaignServiceConnectionsCreateTwitterAd
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceConnectionsCreateTwitterAdsBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"config\": {\n         \"account_id\": \"8r7gb\",\n         \"funding_instrument_id\": \"lygyi\",\n         \"label\": \"Commodi facere vel.\"\n      },\n      \"credentials\": {\n         \"access_token\": \"Et fugiat reprehenderit officiis modi quae consequatur.\",\n         \"access_token_secret\": \"Et culpa culpa veritatis.\",\n         \"consumer_key\": \"Totam et voluptates atque consequatur consequuntur voluptates.\",\n         \"consumer_secret\": \"Quos provident.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"config\": {\n         \"account_id\": \"8r7gb\",\n         \"funding_instrument_id\": \"lygyi\",\n         \"label\": \"Et fugiat reprehenderit officiis modi quae consequatur.\"\n      },\n      \"credentials\": {\n         \"access_token\": \"Ea perspiciatis rerum occaecati incidunt deleniti sunt.\",\n         \"access_token_secret\": \"Ea et quidem quibusdam officiis dolor.\",\n         \"consumer_key\": \"Et culpa culpa veritatis.\",\n         \"consumer_secret\": \"Adipisci minus et vero.\"\n      }\n   }'")
 		}
 		if body.Config == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
@@ -899,7 +899,7 @@ func BuildUpdateTwitterAdsPayload(lfxV2CampaignServiceConnectionsUpdateTwitterAd
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceConnectionsUpdateTwitterAdsBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"config\": {\n         \"account_id\": \"8r7gb\",\n         \"funding_instrument_id\": \"lygyi\",\n         \"label\": \"Commodi facere vel.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"config\": {\n         \"account_id\": \"8r7gb\",\n         \"funding_instrument_id\": \"lygyi\",\n         \"label\": \"Et fugiat reprehenderit officiis modi quae consequatur.\"\n      }\n   }'")
 		}
 		if body.Config == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
@@ -990,7 +990,7 @@ func BuildSetCredentialTwitterAdsPayload(lfxV2CampaignServiceConnectionsSetCrede
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceConnectionsSetCredentialTwitterAdsBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"credentials\": {\n         \"access_token\": \"Et fugiat reprehenderit officiis modi quae consequatur.\",\n         \"access_token_secret\": \"Et culpa culpa veritatis.\",\n         \"consumer_key\": \"Totam et voluptates atque consequatur consequuntur voluptates.\",\n         \"consumer_secret\": \"Quos provident.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"credentials\": {\n         \"access_token\": \"Ea perspiciatis rerum occaecati incidunt deleniti sunt.\",\n         \"access_token_secret\": \"Ea et quidem quibusdam officiis dolor.\",\n         \"consumer_key\": \"Et culpa culpa veritatis.\",\n         \"consumer_secret\": \"Adipisci minus et vero.\"\n      }\n   }'")
 		}
 		if body.Credentials == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("credentials", "body"))
@@ -1028,7 +1028,7 @@ func BuildCreateMicrosoftAdsPayload(lfxV2CampaignServiceConnectionsCreateMicroso
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceConnectionsCreateMicrosoftAdsBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"config\": {\n         \"account_id\": \"Consequuntur sed ea sunt debitis.\",\n         \"customer_id\": \"Voluptas qui voluptas veniam sint voluptas.\",\n         \"label\": \"Eveniet aliquid quia aut impedit a veritatis.\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Non illo ab in voluptatem minus est.\",\n         \"client_secret\": \"Molestiae soluta vel ad et in voluptatem.\",\n         \"developer_token\": \"Dolores qui.\",\n         \"refresh_token\": \"Perspiciatis ea dolor.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"config\": {\n         \"account_id\": \"Ad et in voluptatem et perspiciatis.\",\n         \"customer_id\": \"Dolor cumque dolores.\",\n         \"label\": \"Est magnam molestiae soluta.\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Aut ratione dicta.\",\n         \"client_secret\": \"Aspernatur culpa sed non qui ad.\",\n         \"developer_token\": \"Rerum voluptatem saepe eligendi eum non.\",\n         \"refresh_token\": \"Voluptas qui.\"\n      }\n   }'")
 		}
 		if body.Config == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
@@ -1100,7 +1100,7 @@ func BuildUpdateMicrosoftAdsPayload(lfxV2CampaignServiceConnectionsUpdateMicroso
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceConnectionsUpdateMicrosoftAdsBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"config\": {\n         \"account_id\": \"Consequuntur sed ea sunt debitis.\",\n         \"customer_id\": \"Voluptas qui voluptas veniam sint voluptas.\",\n         \"label\": \"Eveniet aliquid quia aut impedit a veritatis.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"config\": {\n         \"account_id\": \"Ad et in voluptatem et perspiciatis.\",\n         \"customer_id\": \"Dolor cumque dolores.\",\n         \"label\": \"Est magnam molestiae soluta.\"\n      }\n   }'")
 		}
 		if body.Config == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
@@ -1187,7 +1187,7 @@ func BuildSetCredentialMicrosoftAdsPayload(lfxV2CampaignServiceConnectionsSetCre
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceConnectionsSetCredentialMicrosoftAdsBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"credentials\": {\n         \"client_id\": \"Non illo ab in voluptatem minus est.\",\n         \"client_secret\": \"Molestiae soluta vel ad et in voluptatem.\",\n         \"developer_token\": \"Dolores qui.\",\n         \"refresh_token\": \"Perspiciatis ea dolor.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"credentials\": {\n         \"client_id\": \"Aut ratione dicta.\",\n         \"client_secret\": \"Aspernatur culpa sed non qui ad.\",\n         \"developer_token\": \"Rerum voluptatem saepe eligendi eum non.\",\n         \"refresh_token\": \"Voluptas qui.\"\n      }\n   }'")
 		}
 		if body.Credentials == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("credentials", "body"))
@@ -1224,7 +1224,7 @@ func BuildCreateHubspotPayload(lfxV2CampaignServiceConnectionsCreateHubspotBody 
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceConnectionsCreateHubspotBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"config\": {\n         \"account_id\": \"Quae qui optio magni itaque iure.\",\n         \"brand_kit\": \"Beatae quis dignissimos voluptatem et labore sit.\",\n         \"label\": \"Placeat dolores culpa sed.\",\n         \"portal_id\": \"Autem aperiam quis.\",\n         \"sender_email\": \"Enim odit numquam.\",\n         \"sender_name\": \"Placeat aut dolores at.\"\n      },\n      \"credentials\": {\n         \"private_app_token\": \"Qui dignissimos.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"config\": {\n         \"account_id\": \"Voluptatem beatae quis dignissimos voluptatem et labore.\",\n         \"brand_kit\": \"Ad optio magnam sequi esse.\",\n         \"label\": \"Aut dolores.\",\n         \"portal_id\": \"Atque qui dignissimos aut eaque eveniet.\",\n         \"sender_email\": \"Ut unde dolore id.\",\n         \"sender_name\": \"Necessitatibus fuga ducimus dolorem ut aspernatur.\"\n      },\n      \"credentials\": {\n         \"private_app_token\": \"Modi vel aut rerum.\"\n      }\n   }'")
 		}
 		if body.Config == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
@@ -1294,7 +1294,7 @@ func BuildUpdateHubspotPayload(lfxV2CampaignServiceConnectionsUpdateHubspotBody 
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceConnectionsUpdateHubspotBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"config\": {\n         \"account_id\": \"Quae qui optio magni itaque iure.\",\n         \"brand_kit\": \"Beatae quis dignissimos voluptatem et labore sit.\",\n         \"label\": \"Placeat dolores culpa sed.\",\n         \"portal_id\": \"Autem aperiam quis.\",\n         \"sender_email\": \"Enim odit numquam.\",\n         \"sender_name\": \"Placeat aut dolores at.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"config\": {\n         \"account_id\": \"Voluptatem beatae quis dignissimos voluptatem et labore.\",\n         \"brand_kit\": \"Ad optio magnam sequi esse.\",\n         \"label\": \"Aut dolores.\",\n         \"portal_id\": \"Atque qui dignissimos aut eaque eveniet.\",\n         \"sender_email\": \"Ut unde dolore id.\",\n         \"sender_name\": \"Necessitatibus fuga ducimus dolorem ut aspernatur.\"\n      }\n   }'")
 		}
 		if body.Config == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("config", "body"))
@@ -1379,7 +1379,7 @@ func BuildSetCredentialHubspotPayload(lfxV2CampaignServiceConnectionsSetCredenti
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceConnectionsSetCredentialHubspotBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"credentials\": {\n         \"private_app_token\": \"Qui dignissimos.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"credentials\": {\n         \"private_app_token\": \"Modi vel aut rerum.\"\n      }\n   }'")
 		}
 		if body.Credentials == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("credentials", "body"))

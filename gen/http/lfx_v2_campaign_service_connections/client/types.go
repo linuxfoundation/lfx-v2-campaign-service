@@ -423,6 +423,8 @@ type CreateRedditAdsResponseBody struct {
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
+	// Reddit conversion pixel ID
+	ConversionPixelID *string `form:"conversion_pixel_id,omitempty" json:"conversion_pixel_id,omitempty" xml:"conversion_pixel_id,omitempty"`
 }
 
 // GetRedditAdsResponseBody is the type of the
@@ -443,6 +445,8 @@ type GetRedditAdsResponseBody struct {
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
+	// Reddit conversion pixel ID
+	ConversionPixelID *string `form:"conversion_pixel_id,omitempty" json:"conversion_pixel_id,omitempty" xml:"conversion_pixel_id,omitempty"`
 }
 
 // UpdateRedditAdsResponseBody is the type of the
@@ -463,6 +467,8 @@ type UpdateRedditAdsResponseBody struct {
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
+	// Reddit conversion pixel ID
+	ConversionPixelID *string `form:"conversion_pixel_id,omitempty" json:"conversion_pixel_id,omitempty" xml:"conversion_pixel_id,omitempty"`
 }
 
 // TestRedditAdsResponseBody is the type of the
@@ -2779,6 +2785,8 @@ type RedditAdsConnectionConfigRequestBody struct {
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
 	// Reddit advertiser ID
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Reddit conversion pixel ID (Reddit Ads → Events Manager)
+	ConversionPixelID *string `form:"conversion_pixel_id,omitempty" json:"conversion_pixel_id,omitempty" xml:"conversion_pixel_id,omitempty"`
 }
 
 // RedditAdsCredentialsRequestBody is used to define fields on request body
@@ -4265,13 +4273,14 @@ func NewSetCredentialMetaAdsNotFound(body *SetCredentialMetaAdsNotFoundResponseB
 // result from a HTTP "Created" response.
 func NewCreateRedditAdsRedditAdsConnectionCreated(body *CreateRedditAdsResponseBody, etag string) *lfxv2campaignserviceconnections.RedditAdsConnection {
 	v := &lfxv2campaignserviceconnections.RedditAdsConnection{
-		ID:             *body.ID,
-		ProjectID:      *body.ProjectID,
-		Label:          body.Label,
-		AccountID:      *body.AccountID,
-		HasCredentials: *body.HasCredentials,
-		Status:         *body.Status,
-		Version:        *body.Version,
+		ID:                *body.ID,
+		ProjectID:         *body.ProjectID,
+		Label:             body.Label,
+		AccountID:         *body.AccountID,
+		HasCredentials:    *body.HasCredentials,
+		Status:            *body.Status,
+		Version:           *body.Version,
+		ConversionPixelID: body.ConversionPixelID,
 	}
 	v.Etag = etag
 
@@ -4330,13 +4339,14 @@ func NewCreateRedditAdsInternalServerError(body *CreateRedditAdsInternalServerEr
 // result from a HTTP "OK" response.
 func NewGetRedditAdsRedditAdsConnectionOK(body *GetRedditAdsResponseBody, etag string) *lfxv2campaignserviceconnections.RedditAdsConnection {
 	v := &lfxv2campaignserviceconnections.RedditAdsConnection{
-		ID:             *body.ID,
-		ProjectID:      *body.ProjectID,
-		Label:          body.Label,
-		AccountID:      *body.AccountID,
-		HasCredentials: *body.HasCredentials,
-		Status:         *body.Status,
-		Version:        *body.Version,
+		ID:                *body.ID,
+		ProjectID:         *body.ProjectID,
+		Label:             body.Label,
+		AccountID:         *body.AccountID,
+		HasCredentials:    *body.HasCredentials,
+		Status:            *body.Status,
+		Version:           *body.Version,
+		ConversionPixelID: body.ConversionPixelID,
 	}
 	v.Etag = etag
 
@@ -4394,13 +4404,14 @@ func NewGetRedditAdsNotFound(body *GetRedditAdsNotFoundResponseBody) *lfxv2campa
 // result from a HTTP "OK" response.
 func NewUpdateRedditAdsRedditAdsConnectionOK(body *UpdateRedditAdsResponseBody, etag string) *lfxv2campaignserviceconnections.RedditAdsConnection {
 	v := &lfxv2campaignserviceconnections.RedditAdsConnection{
-		ID:             *body.ID,
-		ProjectID:      *body.ProjectID,
-		Label:          body.Label,
-		AccountID:      *body.AccountID,
-		HasCredentials: *body.HasCredentials,
-		Status:         *body.Status,
-		Version:        *body.Version,
+		ID:                *body.ID,
+		ProjectID:         *body.ProjectID,
+		Label:             body.Label,
+		AccountID:         *body.AccountID,
+		HasCredentials:    *body.HasCredentials,
+		Status:            *body.Status,
+		Version:           *body.Version,
+		ConversionPixelID: body.ConversionPixelID,
 	}
 	v.Etag = etag
 

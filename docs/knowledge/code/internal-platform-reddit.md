@@ -38,10 +38,36 @@ Supplied subreddit names (`r/golang` or `golang`) are sent to the ad-group
 case-insensitive duplicates removed) -- Reddit's Ads API targets communities by
 name, not `t5_` ID, and rejects `t5_` values as "invalid communities". This
 matches the reference TS implementation, which sends the stripped names
-directly. If the ad-group create returns a 400 "invalid communities" the client
-retries once WITHOUT communities (keyword/geo-only) and emits a
-communities-skipped warning step, so an invalid subreddit never orphans the
-PAUSED campaign.
+directly.
+
+TWO targeting dimensions can be rejected wholesale, and both are handled by one
+retry. Communities are rejected when a subreddit name does not resolve;
+`interests` are rejected because Reddit wants opaque ids (`technology_v3`) while
+the brief generator produces human labels ("Machine Learning"), so in practice
+every AI-generated brief sends values Reddit refuses. Either rejection returns a
+400 that would otherwise ORPHAN the PAUSED campaign created moments earlier.
+
+`baseTargeting` deliberately carries NEITHER dimension and is the retry payload;
+`optionalTargeting` adds both for the first attempt. A 400 naming either one
+therefore drops BOTH on a single retry rather than chaining two — retrying per
+dimension sends a second doomed request, and every extra ad-group POST is another
+chance to create one nothing points at. The Steps trail distinguishes what Reddit
+REJECTED from what was proactively dropped alongside it, because an operator
+re-adding targeting by hand needs to know which is which, and the two are re-added
+in different places in Reddit Ads Manager.
+
+This makes the failure SURVIVABLE, not the targeting correct: a campaign whose
+interests and communities were dropped runs on keywords and geo alone. Resolving
+labels to Reddit's ids is tracked separately (LFXV2-3261).
+
+A conversion pixel is required by Reddit on EVERY campaign create, not only for
+the `conversions` objective its documentation describes. It is read from the
+CONNECTION (`conversion_pixel_id`, migration 000025) rather than per campaign,
+because it identifies the advertiser: one pixel per ad account, the same for every
+campaign created through it. A per-campaign value still overrides when present. A
+create with none configured is refused BEFORE any upstream call, with a message
+naming the connection — an operator reading it is looking at the campaign they
+were editing, which is not where the fix lives.
 
 Because create calls are mutating and paid, a FAILED create is classified by
 whether the request may have reached Reddit. `isPreSendDialError` reports a Do
