@@ -63,6 +63,17 @@ metadata:
   labels:
     app.kubernetes.io/name: {{ .Chart.Name }}
   annotations:
+    # TRANSITIONAL WORKAROUND (tracked in linuxfoundation/lfx-self-serve#1541; removed by
+    # linuxfoundation/lfx-self-serve#1544). This annotation exists only to flip a PRE-EXISTING
+    # RollingUpdate Deployment to Recreate; a freshly created object never needs it. It is
+    # dropped once schema migrations move out of pod boot into a PreSync Job and the Deployment
+    # returns to RollingUpdate. Note the cost while it is here: Replace=true makes ArgoCD PUT
+    # (replace) this Deployment every sync instead of applying it, so a live field the manifest
+    # omits is removed and SSA field-ownership is bypassed. Concretely spec.replicas: the chart
+    # pins it and the Application sets ignoreDifferences:/spec/replicas (RespectIgnoreDifferences),
+    # so an ordinary sync leaves an out-of-band scale or HPA value alone but a full replace
+    # overwrites it back to replicaCount -- low risk today (no HPA, replicaCount 1).
+    #
     # Replace=true makes ArgoCD apply this Deployment with `kubectl replace` instead of a
     # strategic-merge / server-side-apply patch. Required because `strategy.type` below is
     # Recreate: when an existing object is flipped from the RollingUpdate default, the API
