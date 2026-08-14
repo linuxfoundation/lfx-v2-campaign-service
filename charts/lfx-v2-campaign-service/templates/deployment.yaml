@@ -62,10 +62,29 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ .Chart.Name }}
-  {{- with .Values.annotations }}
   annotations:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
+    # Replace=true makes ArgoCD apply this Deployment with `kubectl replace` instead of a
+    # strategic-merge / server-side-apply patch. Required because `strategy.type` below is
+    # Recreate: when an existing object is flipped from the RollingUpdate default, the API
+    # server's defaulted `strategy.rollingUpdate` block (maxSurge/maxUnavailable) is owned by
+    # no field manager, so SSA will not strip it, and `rollingUpdate` may not coexist with
+    # `type: Recreate` -- the apply is rejected with "may not be specified when strategy `type`
+    # is 'Recreate'". A full replace discards the orphaned field, so the cutover self-heals
+    # without a manual `kubectl patch`.
+    #
+    # Replace=true is MERGED into any operator-supplied sync-options rather than emitted as a
+    # bare literal: since `argocd.argoproj.io/sync-options` is one comma-separated value, an
+    # override that sets it for another reason would otherwise be a duplicate map key and win
+    # last, silently dropping Replace=true and reopening the forbidden-cutover failure. Merging
+    # keeps the operator's options AND guarantees Replace=true is present. Every other
+    # operator annotation renders unchanged beneath.
+    {{- $annotations := deepCopy (default (dict) .Values.annotations) }}
+    {{- $syncOptions := compact (splitList "," (index $annotations "argocd.argoproj.io/sync-options" | default "")) }}
+    {{- if not (has "Replace=true" $syncOptions) }}
+    {{- $syncOptions = append $syncOptions "Replace=true" }}
+    {{- end }}
+    {{- $_ := set $annotations "argocd.argoproj.io/sync-options" (join "," $syncOptions) }}
+    {{- toYaml $annotations | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   # Recreate, not the RollingUpdate default, because this service runs its OWN schema

@@ -128,3 +128,6 @@ yarn-error.log*
 
 # OAS local agent instances and worktrees
 local-agents/
+
+# Pi subagent run artifacts (local review workflow)
+.pi/subagents/

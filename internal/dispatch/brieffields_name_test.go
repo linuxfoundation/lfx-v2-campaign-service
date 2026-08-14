@@ -101,3 +101,58 @@ func TestDecodeBriefFieldsStillErrorsWithNoName(t *testing.T) {
 		t.Fatal("expected an error for a brief with no event name in any spelling, got nil")
 	}
 }
+
+// The value becomes the upstream campaign NAME, so it must be trimmed on assignment rather
+// than only checked for emptiness. Raised by @dealako: decodeEventDetails trims on assignment
+// and this one did not, so the two decoders disagreed on the same blob — "  Foo  " here vs
+// "Foo" there — and the PR documents them as siblings to keep in step.
+func TestDecodeBriefFieldsTrimsTheStoredEventName(t *testing.T) {
+	for name, blob := range map[string]string{
+		"explicit spelling": `{"eventName":"  KubeCon EU 2026  "}`,
+		"ui spelling":       `{"name":"  KubeCon EU 2026  "}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			bf, err := decodeBriefFields(&model.CampaignBrief{
+				ID:           "b-trim",
+				URL:          "https://example.com/",
+				EventDetails: json.RawMessage(blob),
+			})
+			if err != nil {
+				t.Fatalf("decodeBriefFields: %v", err)
+			}
+			if bf.EventName != "KubeCon EU 2026" {
+				t.Errorf("EventName = %q, want it trimmed — this value becomes the upstream campaign name", bf.EventName)
+			}
+		})
+	}
+}
+
+// lenientEventName labels the cloned email. It was lenient about PRESENCE (returns "" rather
+// than erroring, so an email still stages without a name) but not about SPELLING, so it missed
+// the UI's `name` and every cloned email fell back to the slug/brief-id label even when the
+// brief carried a perfectly good name. Raised by @dealako, whose point was that the PR's
+// comment implied this path was already covered — it was not.
+func TestLenientEventNameReadsTheUISpelling(t *testing.T) {
+	got := lenientEventName(&model.CampaignBrief{
+		ID:           "b-1",
+		EventDetails: json.RawMessage(`{"name":"  Agntcon Mcpcon Japan  ","countryCode":"US"}`),
+	})
+	if got != "Agntcon Mcpcon Japan" {
+		t.Errorf("lenientEventName = %q, want the trimmed UI `name` — otherwise the cloned email is labelled from the fallback", got)
+	}
+}
+
+// The explicit spelling still wins, and absence still yields "" rather than an error — the
+// leniency this function has always had, which email staging depends on.
+func TestLenientEventNamePrecedenceAndAbsence(t *testing.T) {
+	if got := lenientEventName(&model.CampaignBrief{
+		EventDetails: json.RawMessage(`{"eventName":"Explicit","name":"Generic"}`),
+	}); got != "Explicit" {
+		t.Errorf("got %q, want the explicit `eventName` to win", got)
+	}
+	if got := lenientEventName(&model.CampaignBrief{
+		EventDetails: json.RawMessage(`{"city":"Tokyo"}`),
+	}); got != "" {
+		t.Errorf("got %q, want \"\" — a nameless brief must still stage its email", got)
+	}
+}

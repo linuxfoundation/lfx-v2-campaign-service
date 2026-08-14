@@ -480,6 +480,30 @@ func (c *Client) preflightCampaign(in CampaignInput) (*campaignPreflight, error)
 	return c.preflightCampaignKind(campaignKindSearch, in)
 }
 
+// budgetKindFor returns the name segment distinguishing one channel's BUDGET from another's
+// on the same brief. The mapping is deliberately ASYMMETRIC — Search keeps the bare "Budget"
+// it has always used, and only Demand Gen gets a channel-specific one.
+//
+// The asymmetry is the point, not an oversight. A non-shared budget's name is this client's
+// idempotency key: ComposeName is deterministic in the brief, so a retry recomposes the same
+// name and Google refuses it with DUPLICATE_NAME, which the caller reports as
+// already-exists rather than creating a second budget. Renaming SEARCH's budget would break
+// that for every Search campaign already in flight — its budget is named the old way
+// upstream, so a retry would compose a name that does NOT collide and would create a second
+// budget for the same campaign. Demand Gen has no such history: nothing has been created
+// under a Demand Gen budget name yet, so it is free to take a distinct one.
+//
+// Without this, both channels composed "LFX | Budget | <project> | <event> | <brief id>" —
+// identical, because every other segment is the same for one brief. Demand Gen on a brief
+// that already had a Search campaign therefore failed at the BUDGET step with DUPLICATE_NAME
+// and never reached the campaign create at all.
+func budgetKindFor(campaignKind string) string {
+	if campaignKind == campaignKindDemandGen {
+		return "DemandGen Budget"
+	}
+	return "Budget"
+}
+
 func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaignPreflight, error) {
 	if err := c.validateAccountIDs(); err != nil {
 		return nil, err
@@ -517,7 +541,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		return nil, fmt.Errorf("google-ads campaign budget must be > 0 (rounds to %d micros), got %.6f", amountMicros, in.Budget)
 	}
 
-	budgetName := ComposeName("Budget", in)
+	budgetName := ComposeName(budgetKindFor(kind), in)
 	campaignName := ComposeName(kind, in)
 	// Budget name is limited in UTF-8 BYTES (len is the byte count); campaign name in
 	// CHARACTERS (utf8.RuneCountInString). See maxBudgetNameBytes/maxCampaignNameRunes.
