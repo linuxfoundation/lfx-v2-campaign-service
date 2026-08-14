@@ -43,6 +43,26 @@ const VariantDefault = "default"
 // channel literally named "invalid" still cannot collide with it.
 const VariantInvalid = "_invalid"
 
+// AdoptableVariants lists the slots a platform's adopt endpoint can bind a campaign into.
+//
+// Only Google sub-divides today: its briefs can hold a Search campaign (VariantDefault) and
+// a Demand Gen one simultaneously. Every other provider has exactly one slot, because its
+// `objective`/`channel` configures a single campaign rather than multiplying it.
+//
+// It exists so the adopt pre-check can answer "is there any slot left?" WITHOUT guessing
+// which one this campaign will occupy — that is only known once the platform reports what
+// the campaign is. A pre-check that guessed VariantDefault refused a Demand Gen adoption
+// onto a brief that merely had a Search campaign.
+//
+// A provider absent from this map has no adopt support, and callers must treat an empty
+// result as "cannot pre-decide" rather than as "no slots".
+func AdoptableVariants(p Provider) []string {
+	if p == ProviderGoogleAds {
+		return []string{VariantDefault, "demand-gen"}
+	}
+	return []string{VariantDefault}
+}
+
 // NormalizeVariant maps an empty variant to VariantDefault.
 //
 // Empty means "this caller does not sub-divide", which is true of every provider

@@ -572,17 +572,23 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 	// return the deterministic 409 conflict immediately without contacting the platform.
 	// Only if no campaign exists (ErrNotFound) do we proceed to verify the upstream campaign.
 	// This ensures that an occupied brief returns 409 even if the platform is unreachable or slow.
-	// ADOPTION targets the DEFAULT variant: the adopt endpoint binds one already-existing
-	// upstream campaign to a brief and its input names no campaign type, so it can only
-	// mean that platform's single slot. Google's multi-variant briefs are produced by the
-	// create path, which reads the variant from the config envelope.
-	if _, cerr := campaignRepo.GetCampaignByPlatform(ctx, p.ProjectID, p.BriefID, platform, model.VariantDefault); cerr != nil {
-		if !errors.Is(cerr, domain.ErrNotFound) {
-			return nil, mapBriefErr(cerr)
-		}
-		// No existing campaign for this (brief, platform) pair; proceed to platform lookup
-	} else {
-		// A campaign already exists for this (brief, platform) pair
+	// Fail fast on a brief whose EVERY adoptable slot is already taken, and only then.
+	//
+	// Two properties are in tension here and both are worth keeping. An occupied brief must
+	// answer a deterministic 409 rather than a 503 that a platform outage could produce —
+	// which argues for checking before the network call. But the slot this campaign will
+	// occupy is established from what the PLATFORM reports, so a pre-check has to GUESS it.
+	// An earlier version guessed VariantDefault and refused a Demand Gen adoption onto any
+	// brief that merely had a Search campaign; those are different slots and the insert
+	// would have accepted it.
+	//
+	// The resolution is to pre-check only what needs no guess: if every variant this
+	// platform can adopt into is occupied, the answer is 409 whatever the lookup returns.
+	// Anything less is left to the variant-aware check after the lookup, which knows the
+	// real slot.
+	if occupied, cerr := allAdoptableSlotsOccupied(ctx, campaignRepo, p.ProjectID, p.BriefID, platform); cerr != nil {
+		return nil, mapBriefErr(cerr)
+	} else if occupied {
 		return nil, &briefs.ConflictError{Code: "409", Message: "this brief already has a live campaign on that platform"}
 	}
 
@@ -662,19 +668,18 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 		return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the campaign could not be verified with the ad platform"}
 	}
 
-	// The occupancy pre-check above used VariantDefault because the variant was not yet known
-	// — the platform had not been contacted. Now that it is known, re-check the ACTUAL slot:
-	// without this, adopting a Demand Gen campaign into a brief that already holds one gets
-	// past the pre-check (which looked at 'default') and is refused only by the insert's
-	// unique index, as a generic conflict. Checking here returns the same deterministic 409
-	// the default-slot path gives. The insert remains the authority — this is a better error,
-	// not the guarantee.
-	if ref.Variant != model.VariantDefault {
-		if _, cerr := campaignRepo.GetCampaignByPlatform(ctx, p.ProjectID, p.BriefID, platform, ref.Variant); cerr == nil {
-			return nil, &briefs.ConflictError{Code: "409", Message: "this brief already has a live campaign on that platform"}
-		} else if !errors.Is(cerr, domain.ErrNotFound) {
-			return nil, mapBriefErr(cerr)
-		}
+	// THE occupancy check, for every variant. It lives here rather than before the platform
+	// call because the slot is only known once the platform has said what this campaign IS:
+	// checking a guessed slot earlier refused a Demand Gen adoption onto a brief that merely
+	// had a Search campaign, which the insert would have accepted.
+	//
+	// The insert remains the authority — its partial unique index is what actually arbitrates
+	// — so this is a deterministic 409 in place of a generic unique-violation, not the
+	// guarantee itself.
+	if _, cerr := campaignRepo.GetCampaignByPlatform(ctx, p.ProjectID, p.BriefID, platform, ref.Variant); cerr == nil {
+		return nil, &briefs.ConflictError{Code: "409", Message: "this brief already has a live campaign on that platform"}
+	} else if !errors.Is(cerr, domain.ErrNotFound) {
+		return nil, mapBriefErr(cerr)
 	}
 
 	// ref.ID, not platformCampaignID: bind the id the PLATFORM reported. The two are equal on
@@ -723,6 +728,31 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 		"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", adopted.ID,
 		"platform", platform, "platform_campaign_id", adopted.PlatformCampaignID)
 	return campaignResult(adopted), nil
+}
+
+// allAdoptableSlotsOccupied reports whether EVERY slot this platform can adopt into is
+// already taken on this brief. Only then can a 409 be returned before the platform is
+// contacted, because only then is the answer independent of which slot the campaign turns
+// out to occupy.
+//
+// A repository error other than not-found is returned rather than swallowed: an unanswered
+// "is this slot free?" is not a no, and treating it as one would let a second campaign be
+// adopted into an occupied slot.
+func allAdoptableSlotsOccupied(ctx context.Context, repo domain.CampaignRepository, projectID, briefID string, platform model.Provider) (bool, error) {
+	variants := model.AdoptableVariants(platform)
+	if len(variants) == 0 {
+		return false, nil
+	}
+	for _, v := range variants {
+		_, err := repo.GetCampaignByPlatform(ctx, projectID, briefID, platform, v)
+		switch {
+		case errors.Is(err, domain.ErrNotFound):
+			return false, nil // a free slot exists; the lookup decides which one is used
+		case err != nil:
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // GetCampaignMetrics reads live performance metrics for a campaign directly from its ad

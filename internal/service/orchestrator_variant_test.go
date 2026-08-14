@@ -50,6 +50,17 @@ func TestVariantForDispatch(t *testing.T) {
 		// error it was meant to surface never surfaced. VariantInvalid is a slot no create
 		// writes, so the lookup always misses and the dispatch reaches the real error.
 		{"malformed config claims an unoccupiable slot, not the default one", model.ProviderGoogleAds, `{not json`, model.VariantInvalid},
+		// An UNSUPPORTED channel must not land on a real slot either, and "default" is the
+		// dangerous spelling: NormalizeVariant passes any non-empty value through, so it
+		// resolved to the SEARCH slot. The idempotency fast path then found that brief's
+		// existing Search campaign and returned its id as a SUCCESS -- the dispatcher never
+		// ran, so its "unsupported channel" error never reached the caller, who was told a
+		// campaign it never validly asked for had been created.
+		{"reserved slot name does not claim the search slot", model.ProviderGoogleAds, `{"googleAdsConfig":{"channel":"default"}}`, model.VariantInvalid},
+		{"an unknown channel does not claim a real slot", model.ProviderGoogleAds, `{"googleAdsConfig":{"channel":"performance-max"}}`, model.VariantInvalid},
+		// The reserved sentinel itself, sent as a channel, must not round-trip onto its own
+		// slot either -- it is not a channel any create writes.
+		{"the invalid sentinel is not a usable channel", model.ProviderGoogleAds, `{"googleAdsConfig":{"channel":"_invalid"}}`, model.VariantInvalid},
 		// Case and whitespace are normalized so "Demand-Gen " cannot claim a third slot
 		// alongside "demand-gen" — two rows that both mean the same campaign.
 		{"case and space are normalized", model.ProviderGoogleAds, `{"googleAdsConfig":{"channel":"  Demand-Gen "}}`, "demand-gen"},

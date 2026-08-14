@@ -805,6 +805,11 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 // this package, so the dependency cannot run the other way.
 const googleAdsChannelSearchName = "search"
 
+// googleAdsChannelDemandGenName mirrors internal/dispatch's googleAdsChannelDemandGen for
+// the same reason googleAdsChannelSearchName mirrors its sibling: dispatch imports this
+// package, so the dependency cannot run the other way.
+const googleAdsChannelDemandGenName = "demand-gen"
+
 func variantForDispatch(p model.Provider, config json.RawMessage) string {
 	if p != model.ProviderGoogleAds || len(config) == 0 {
 		return model.VariantDefault
@@ -839,7 +844,34 @@ func variantForDispatch(p model.Provider, config json.RawMessage) string {
 	if ch == googleAdsChannelSearchName {
 		return model.VariantDefault
 	}
+	// An UNSUPPORTED channel must not land on a real slot. `NormalizeVariant` is a
+	// pass-through for any non-empty value, so a caller sending `channel:"default"` — valid
+	// JSON, not an accepted Google channel — resolved to the Search slot: the idempotency
+	// fast path then found that brief's existing Search campaign and returned its id as a
+	// SUCCESS, so the dispatcher never ran and never rejected the unsupported channel. The
+	// caller was told a campaign it never validly asked for had been created.
+	//
+	// This is the same shape as the undecodable-config case above and takes the same answer:
+	// a slot no create path writes, so the lookup always misses and the dispatch proceeds to
+	// the dispatcher's own "unsupported channel" error. Validating HERE instead would
+	// duplicate the dispatcher's channel list in a second place and let the two drift.
+	if !googleAdsChannelIsSupported(ch) {
+		return model.VariantInvalid
+	}
 	return model.NormalizeVariant(ch)
+}
+
+// googleAdsChannelIsSupported reports whether a channel string names a Google Ads campaign
+// type this service creates. It deliberately mirrors — rather than re-derives — the
+// dispatcher's switch: the dispatcher owns the decision and produces the caller-facing
+// error, and this exists only so an unsupported value cannot be filed under a slot a real
+// campaign occupies before that error is reached.
+func googleAdsChannelIsSupported(ch string) bool {
+	// An ABSENT channel is supported and means Search — that is what every brief created
+	// before the channel field existed sends, and the dispatcher's own switch has the same
+	// empty-string arm. Treating it as unsupported would file every one of those on
+	// VariantInvalid and refuse the platform's most common create.
+	return ch == "" || ch == googleAdsChannelSearchName || ch == googleAdsChannelDemandGenName
 }
 
 func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, config json.RawMessage, by *model.Actor) platformResult {
