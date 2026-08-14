@@ -28,8 +28,17 @@ const (
 	maxKeywordTextRunes = 80
 	// maxKeywords/maxAudienceSegments bound caller input to keep one
 	// adGroupCriteria:mutate call (and its log/error output) a sane size. Not a
-	// Google Ads platform limit — a generous sanity cap on this broker's input.
-	maxKeywords         = 20
+	// Google Ads platform limit — a sanity cap on this broker's input; Google's own
+	// per-ad-group ceiling is orders of magnitude higher.
+	//
+	// 20 was the original value and it was NOT generous enough: the product's own AI
+	// brief generator routinely emits ~38 keywords, so every default paid create was
+	// refused here (observed end-to-end 2026-08-13 — "at most 20 keywords are
+	// supported, got 38", zero campaigns created). A cap that the system's own
+	// upstream stage exceeds by default is not protecting a caller from a mistake, it
+	// is blocking a create the ad platform would have accepted. Raised to 60 to clear
+	// the generator's real output with headroom while keeping one mutate call bounded.
+	maxKeywords         = 60
 	maxAudienceSegments = 20
 
 	// MatchTypeExact/Phrase/Broad are the only Search keyword match types.

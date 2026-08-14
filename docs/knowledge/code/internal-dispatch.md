@@ -43,7 +43,9 @@ revoked or deleted.
    back to the reserved `model.SystemProjectID` scope (see below).
 2. **Map inputs** (per-platform) — the adapter reads the brief's event destination
    from its top-level `URL` field (with a nested `registrationUrl` in the opaque JSON
-   only as a fallback) and `eventName` from the opaque JSON blobs, plus the
+   only as a fallback) and the event name from the opaque JSON blobs — read as
+   `eventName`, falling back to `name`, which is the spelling the UI writes
+   (LFXV2-3259) — plus the
    per-platform config (its OWN nested key — `redditConfig`/`linkedInConfig`/… — out
    of the single `CreateCampaigns` `Input.Config` envelope, via
    `unmarshalPlatformConfig`) onto the client's `CampaignInput`. The **Project** name

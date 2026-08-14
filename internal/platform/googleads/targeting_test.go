@@ -6,6 +6,7 @@ package googleads
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -60,6 +61,29 @@ func TestValidateKeywords(t *testing.T) {
 		}
 		if _, err := validateKeywords(kws); err == nil {
 			t.Error("expected an error for exceeding the keyword count cap")
+		}
+	})
+
+	// The cap must clear what the product's own AI brief generator actually emits. The
+	// sibling test above is written as `maxKeywords+1`, so it stays green for ANY value
+	// — including the 20 that refused every default paid create on 2026-08-13 ("at most
+	// 20 keywords are supported, got 38"). This one binds the number itself: 38 is the
+	// observed real-world count, and a regression back to 20 fails here rather than in
+	// production.
+	t.Run("accepts the keyword count the brief generator really produces", func(t *testing.T) {
+		const observedGeneratorKeywords = 38
+		kws := make([]Keyword, observedGeneratorKeywords)
+		for i := range kws {
+			// Distinct text so dedupe cannot mask the count.
+			kws[i] = Keyword{Text: fmt.Sprintf("cloud native keyword %d", i), MatchType: MatchTypeBroad}
+		}
+		got, err := validateKeywords(kws)
+		if err != nil {
+			t.Fatalf("validateKeywords rejected %d keywords, the count the generator emits by default: %v",
+				observedGeneratorKeywords, err)
+		}
+		if len(got) != observedGeneratorKeywords {
+			t.Errorf("got %d keywords, want %d — none should be dropped", len(got), observedGeneratorKeywords)
 		}
 	})
 
