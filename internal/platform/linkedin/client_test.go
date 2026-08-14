@@ -1617,9 +1617,16 @@ func TestUpdateCampaignAndCreativesStatus_FinderSendsRequiredParams(t *testing.T
 	if !strings.Contains(got.query, "q=criteria") {
 		t.Errorf("finder query %q missing q=criteria", got.query)
 	}
-	// The campaign filter must scope to THIS campaign's URN (percent-encoded in the query).
-	if !strings.Contains(got.query, "campaigns=") || !strings.Contains(got.query, "555") {
-		t.Errorf("finder query %q missing campaigns=List(...campaign 555...) filter", got.query)
+	// The campaign filter must scope to THIS campaign's URN, encoded EXACTLY once.
+	// Asserting the precise bytes rather than a "555" substring: a numeric id carries
+	// no reserved characters, so a substring check cannot tell the correct single
+	// encoding (%3A) from a double one (%253A). Double-encoded, the "%3A" reaches
+	// LinkedIn as literal text, the finder matches no campaign, and the empty result
+	// reads as "this campaign has no creatives" — so a status cascade would silently
+	// skip every creative instead of failing.
+	const wantCampaigns = "campaigns=List(urn%3Ali%3AsponsoredCampaign%3A555)"
+	if !strings.Contains(got.query, wantCampaigns) {
+		t.Errorf("finder query %q must contain %q", got.query, wantCampaigns)
 	}
 }
 

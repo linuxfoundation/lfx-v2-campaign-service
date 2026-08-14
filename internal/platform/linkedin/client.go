@@ -830,7 +830,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		return nil, fmt.Errorf("parse url: %w", err)
 	}
 	if len(params) > 0 {
-		u.RawQuery = buildRawQuery(u.Query(), params)
+		u.RawQuery = buildRawQuery(params)
 	}
 
 	var encoded []byte
@@ -1251,9 +1251,12 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 			// Server-side name filter: the adCampaigns/adCampaignGroups `search`
 			// finder supports search.name.values, so only elements whose name equals
 			// the lookup name are returned. This keeps the lookup O(matches), not
-			// O(account). The value is Rest.li-encoded so names containing reserved
-			// characters (parens, commas, colons) can't break out of the List(...)
-			// literal; url.Values.Encode() then applies the outer percent-encoding.
+			// O(account). restliEncode produces the FINAL bytes: names containing
+			// reserved characters (parens, commas, colons) can't break out of the
+			// List(...) literal, and spaces/pipes are percent-encoded here rather
+			// than by url.Values.Encode(), which renders a space as "+" and 400s.
+			// buildRawQuery writes this value through untouched — see
+			// preEncodedParams.
 			"search": "(name:(values:List(" + restliEncode(name) + ")))",
 			// Cursor pagination at LinkedIn-Version 202602 uses `pageSize` (paired
 			// with `pageToken`), NOT the legacy offset param `count`. Sending
@@ -1429,39 +1432,39 @@ var restliReplacer = strings.NewReplacer(
 // one through url.Values.Encode() would re-encode its "%" escapes ("%20" ->
 // "%2520"), producing a filter that matches a literally-different name and
 // returns a clean-looking empty result set.
+// Membership is derived from ONE property: the value was produced by
+// restliEncode. EVERY restliEncode call site must appear here, or its "%"
+// escapes are re-encoded ("%3A" -> "%253A") and the literal reaches LinkedIn
+// as text. Adding a call site without adding its key here is exactly the
+// failure this map exists to prevent, so grep restliEncode when changing
+// either one.
 var preEncodedParams = map[string]struct{}{
-	"search": {},
+	"search":    {}, // findMatch — the name filter
+	"campaigns": {}, // listCreativeURNs — the creatives finder's campaign List()
 }
 
-// buildRawQuery renders the query string, percent-encoding every value EXCEPT
-// those in preEncodedParams, which are emitted verbatim. Keys are sorted so the
-// resulting URL is deterministic (Go map iteration order is randomized).
-func buildRawQuery(base url.Values, params map[string]string) string {
-	keys := make([]string, 0, len(base)+len(params))
-	seen := make(map[string]struct{}, len(base)+len(params))
-	add := func(k string) {
-		if _, dup := seen[k]; dup {
-			return
-		}
-		seen[k] = struct{}{}
-		keys = append(keys, k)
-	}
-	for k := range base {
-		add(k)
-	}
+// buildRawQuery renders params as a query string, percent-encoding every value
+// EXCEPT those in preEncodedParams, which are emitted verbatim. Keys are sorted
+// so the resulting URL is deterministic (Go map iteration order is randomized).
+//
+// It takes only params, not the parsed base URL's values: baseURL is a constant
+// with no query string and WithBaseURL trims its input to host+path, so there is
+// never anything on the base to merge. An earlier version accepted a url.Values
+// base and read it with Get(), which returns only the FIRST value — a repeated
+// key would have been silently truncated with no way to notice.
+func buildRawQuery(params map[string]string) string {
+	// No capacity hint: params holds a handful of query parameters, so pre-sizing
+	// buys nothing measurable, and a len()+len() sum is an addition CodeQL flags
+	// as a potential allocation-size overflow (go/allocation-size-overflow).
+	var keys []string
 	for k := range params {
-		add(k)
+		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
 	var b strings.Builder
 	for _, k := range keys {
-		// params wins over any value already on the base URL, matching the
-		// previous q.Set(k, v) behaviour.
-		v, ok := params[k]
-		if !ok {
-			v = base.Get(k)
-		}
+		v := params[k]
 		if b.Len() > 0 {
 			b.WriteByte('&')
 		}
