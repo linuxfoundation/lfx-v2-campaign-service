@@ -572,7 +572,11 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 	// return the deterministic 409 conflict immediately without contacting the platform.
 	// Only if no campaign exists (ErrNotFound) do we proceed to verify the upstream campaign.
 	// This ensures that an occupied brief returns 409 even if the platform is unreachable or slow.
-	if _, cerr := campaignRepo.GetCampaignByPlatform(ctx, p.ProjectID, p.BriefID, platform); cerr != nil {
+	// ADOPTION targets the DEFAULT variant: the adopt endpoint binds one already-existing
+	// upstream campaign to a brief and its input names no campaign type, so it can only
+	// mean that platform's single slot. Google's multi-variant briefs are produced by the
+	// create path, which reads the variant from the config envelope.
+	if _, cerr := campaignRepo.GetCampaignByPlatform(ctx, p.ProjectID, p.BriefID, platform, model.VariantDefault); cerr != nil {
 		if !errors.Is(cerr, domain.ErrNotFound) {
 			return nil, mapBriefErr(cerr)
 		}

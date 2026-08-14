@@ -21,12 +21,44 @@ const (
 // many campaigns (one per platform), discriminated by Platform and sharing
 // BriefID. The row is updated in place (not recreated) when a brief changes
 // after campaigns exist.
+// VariantDefault is the variant for every provider that does not sub-divide into
+// campaign types, and the value every pre-000021 row was backfilled to. Six of the
+// seven providers use it permanently: Meta's and Reddit's `objective` configures a
+// single campaign rather than multiplying it, and LinkedIn/X/Microsoft/HubSpot have
+// no such concept at all.
+const VariantDefault = "default"
+
+// NormalizeVariant maps an empty variant to VariantDefault.
+//
+// Empty means "this caller does not sub-divide", which is true of every provider
+// but Google and of every call site written before 000021. Normalizing at the
+// boundary keeps that out of the query layer: the column is NOT NULL, and a bare ""
+// would silently become a THIRD slot alongside 'default' — so a brief could hold
+// two google-ads campaigns that both mean "the only one", which is exactly the
+// duplicate the slot key exists to prevent.
+func NormalizeVariant(v string) string {
+	if v == "" {
+		return VariantDefault
+	}
+	return v
+}
+
 type Campaign struct {
-	ID                 string
-	ProjectID          string
-	BriefID            string
-	JobID              *string // creation job that produced this row (soft ref; no FK)
-	Platform           Provider
+	ID        string
+	ProjectID string
+	BriefID   string
+	JobID     *string // creation job that produced this row (soft ref; no FK)
+	Platform  Provider
+	// Variant is the sub-division of Platform this campaign is: which of that
+	// platform's campaign types it represents. Google has several (search,
+	// demand-gen, performance-max next) and its UI offers them as simultaneous
+	// checkboxes, so one brief can hold more than one google-ads campaign; every
+	// other provider uses VariantDefault.
+	//
+	// Part of the campaign's identity, not its config: (BriefID, Platform, Variant)
+	// is the slot key the dispatch claim arbitrates on (migration 000022), which is
+	// what stops a retry creating a second paid campaign.
+	Variant            string
 	PlatformCampaignID string // ID returned by the ad platform
 	CampaignName       string
 	Status             string

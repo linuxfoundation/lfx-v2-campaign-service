@@ -138,7 +138,7 @@ func (r *fakeCampaignRepo) GetCampaign(_ context.Context, _, _, campaignID strin
 	return nil, errors.New("unused")
 }
 
-func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, _ string, briefID string, platform model.Provider) (*model.Campaign, error) {
+func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, _ string, briefID string, platform model.Provider, variant string) (*model.Campaign, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.byPlatformErr != nil {
@@ -153,7 +153,7 @@ func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, _ string, br
 // ClaimCampaignDispatch simulates INSERT ... ON CONFLICT DO NOTHING: if an entry
 // for (brief, platform) already exists it's a conflict (not claimed) returning
 // the existing row; otherwise it inserts a pending placeholder and claims.
-func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, briefID string, platform model.Provider, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
+func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, briefID string, platform model.Provider, variant, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	// Recorded BEFORE the error and conflict returns: the question the binding test asks
@@ -178,7 +178,7 @@ func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, b
 	return true, pending, nil
 }
 
-func (r *fakeCampaignRepo) DeleteDispatchClaim(_ context.Context, briefID string, platform model.Provider) error {
+func (r *fakeCampaignRepo) DeleteDispatchClaim(_ context.Context, briefID string, platform model.Provider, variant string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	key := briefID + "|" + string(platform)
@@ -841,7 +841,7 @@ func TestClaimCampaignDispatch_ConcurrentSingleWinner(t *testing.T) {
 			defer wg.Done()
 			<-start // release all goroutines at once to maximize contention
 			claimed, row, err := repo.ClaimCampaignDispatch(
-				context.Background(), "cncf", "b1", model.ProviderGoogleAds, "job1", nil)
+				context.Background(), "cncf", "b1", model.ProviderGoogleAds, model.VariantDefault, "job1", nil)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -1037,11 +1037,11 @@ type claimCountingCampaignRepo struct {
 	claims int
 }
 
-func (r *claimCountingCampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, p model.Provider, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
+func (r *claimCountingCampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, p model.Provider, variant, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
 	r.cmu.Lock()
 	r.claims++
 	r.cmu.Unlock()
-	return r.fakeCampaignRepo.ClaimCampaignDispatch(ctx, projectID, briefID, p, jobID, by)
+	return r.fakeCampaignRepo.ClaimCampaignDispatch(ctx, projectID, briefID, p, model.VariantDefault, jobID, by)
 }
 
 // TestOrchestrator_DispatchGoesThroughClaim verifies each per-platform dispatch

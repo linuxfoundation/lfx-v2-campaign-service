@@ -780,6 +780,44 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 // arbitrates); the other reuses the existing row or, if it's still pending, is
 // reported in-progress. campaign_id is always the upstream platform id, so the
 // field means the same on the reuse and create paths.
+
+// variantForDispatch reads WHICH of a platform's campaign types this dispatch is for,
+// out of the same config envelope the dispatcher will read.
+//
+// It exists because (brief, platform) is not a unique slot for Google: its UI offers
+// Search and Demand Gen as simultaneous checkboxes (Performance Max next), so one
+// brief legitimately holds several google-ads campaigns. Without this, the
+// idempotency fast path below matched the FIRST google-ads campaign for the brief and
+// reported a Demand Gen dispatch as already done — returning the Search campaign's id
+// without ever calling Google. Observed 2026-08-13.
+//
+// Every other provider returns VariantDefault: Meta's and Reddit's `objective`
+// configures a single campaign rather than multiplying it, and the rest have no such
+// concept. Their slot key is unchanged in behaviour, just spelled with a third column.
+//
+// A MALFORMED or unknown value is NOT rejected here. The dispatcher validates it and
+// refuses before any upstream call — that is the guard that matters, since defaulting
+// a typo would spend one channel's budget on another. This only needs a stable slot
+// key, and passing the raw value through means a typo claims its own slot and is then
+// refused, rather than colliding with a real campaign's.
+func variantForDispatch(p model.Provider, config json.RawMessage) string {
+	if p != model.ProviderGoogleAds || len(config) == 0 {
+		return model.VariantDefault
+	}
+	var envelope struct {
+		GoogleAds struct {
+			Channel string `json:"channel"`
+		} `json:"googleAdsConfig"`
+	}
+	if err := json.Unmarshal(config, &envelope); err != nil {
+		// Undecodable config is the dispatcher's error to report, not this function's.
+		// Claim the default slot so the dispatch proceeds far enough to produce that
+		// error rather than failing here with a less specific one.
+		return model.VariantDefault
+	}
+	return model.NormalizeVariant(strings.ToLower(strings.TrimSpace(envelope.GoogleAds.Channel)))
+}
+
 func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, config json.RawMessage, by *model.Actor) platformResult {
 	res := platformResult{Platform: string(p)}
 
@@ -789,7 +827,8 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// NOT be swallowed as "no existing campaign": proceeding to claim/dispatch when an
 	// existing campaign simply couldn't be loaded risks a duplicate upstream create.
 	// Only ErrNotFound is a clean "nothing yet, proceed".
-	existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p)
+	variant := variantForDispatch(p, config)
+	existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p, variant)
 	switch {
 	case lerr == nil && isReusableCampaign(existing):
 		// A COMPLETED campaign (created / created_degraded — both terminal, since a
@@ -827,7 +866,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// Single-flight claim: atomically insert a 'pending' placeholder for (brief,
 	// platform). Exactly one worker across all replicas wins (the unique index
 	// arbitrates) — no held connection, no blocking lock.
-	claimed, existing, err := o.campaigns.ClaimCampaignDispatch(ctx, brief.ProjectID, brief.ID, p, jobID, by)
+	claimed, existing, err := o.campaigns.ClaimCampaignDispatch(ctx, brief.ProjectID, brief.ID, p, variant, jobID, by)
 	if err != nil {
 		slog.ErrorContext(ctx, "claim dispatch failed", "platform", p, "job_id", jobID, "error", err)
 		res.Error = "could not claim campaign dispatch"
@@ -895,7 +934,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// DELETE fail and leak the pending claim exactly when we most need to free it.
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimReleaseTimeout)
 		defer cancel()
-		if derr := o.campaigns.DeleteDispatchClaim(rctx, brief.ID, p); derr != nil {
+		if derr := o.campaigns.DeleteDispatchClaim(rctx, brief.ID, p, variant); derr != nil {
 			slog.ErrorContext(rctx, "failed to release pending dispatch claim", "platform", p, "job_id", jobID, "error", derr)
 		}
 	}
