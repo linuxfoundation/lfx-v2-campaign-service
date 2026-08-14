@@ -514,6 +514,66 @@ func TestDeploymentUsesRecreateStrategy(t *testing.T) {
 		t.Errorf("deployment must NOT use RollingUpdate while a backward-incompatible migration "+
 			"(000014, DROP CONSTRAINT) ships in this release.\nrendered:\n%s", rendered)
 	}
+
+	// The Recreate flip is only deployable via ArgoCD if the Deployment carries
+	// Replace=true: an existing object flipped from the RollingUpdate default keeps an
+	// API-server-defaulted strategy.rollingUpdate block that server-side apply will not
+	// strip, and rollingUpdate may not coexist with type: Recreate, so a merge/SSA sync is
+	// rejected. A full replace discards the orphaned field. Pinning it here keeps the two
+	// settings from drifting apart -- Recreate without Replace=true reintroduces the
+	// "may not be specified when strategy type is 'Recreate'" cutover failure.
+	if !strings.Contains(rendered, "argocd.argoproj.io/sync-options: Replace=true") {
+		t.Errorf("deployment must set annotation `argocd.argoproj.io/sync-options: Replace=true` "+
+			"so ArgoCD replaces rather than merge-patches the object; otherwise flipping an "+
+			"existing RollingUpdate Deployment to Recreate is rejected because the defaulted "+
+			"rollingUpdate block cannot coexist with type: Recreate.\nrendered:\n%s", rendered)
+	}
+}
+
+// TestDeploymentMergesReplaceIntoOperatorSyncOptions pins the hardening half of the
+// Replace=true annotation: it is MERGED into an operator-supplied
+// argocd.argoproj.io/sync-options rather than emitted as a bare literal. The default render
+// in TestDeploymentUsesRecreateStrategy only proves Replace=true is present when
+// .Values.annotations is empty; it never exercises the collision path, which is the whole
+// point of the merge. Without this a refactor back to a bare literal would keep that test
+// green while silently reintroducing the duplicate-map-key drop (last-wins) that reopens the
+// forbidden-cutover failure.
+func TestDeploymentMergesReplaceIntoOperatorSyncOptions(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skipf("helm not on PATH; skipping chart guard test: %v", err)
+	}
+
+	// An operator setting sync-options for another reason must keep BOTH their option and
+	// Replace=true under ONE key -- a duplicate map key is last-wins and would drop one.
+	out, err := exec.Command("helm", "template", chartDir,
+		"--show-only", "templates/deployment.yaml",
+		"--set", `annotations.argocd\.argoproj\.io/sync-options=Prune=false`,
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template failed with an operator sync-options override: %v\n%s", err, out)
+	}
+	rendered := string(out)
+	if !strings.Contains(rendered, "argocd.argoproj.io/sync-options: Prune=false,Replace=true") {
+		t.Errorf("operator sync-options must be preserved AND carry Replace=true; want "+
+			"`Prune=false,Replace=true`.\nrendered:\n%s", rendered)
+	}
+	if n := strings.Count(rendered, "argocd.argoproj.io/sync-options:"); n != 1 {
+		t.Errorf("sync-options must render as ONE merged map key, got %d occurrences "+
+			"(a duplicate key is last-wins and drops Replace=true).\nrendered:\n%s", n, rendered)
+	}
+
+	// Idempotent: an operator who already set Replace=true gets no duplicated token.
+	out, err = exec.Command("helm", "template", chartDir,
+		"--show-only", "templates/deployment.yaml",
+		"--set", `annotations.argocd\.argoproj\.io/sync-options=Replace=true`,
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template failed with a Replace=true override: %v\n%s", err, out)
+	}
+	if got := string(out); !strings.Contains(got, "argocd.argoproj.io/sync-options: Replace=true") ||
+		strings.Contains(got, "Replace=true,Replace=true") {
+		t.Errorf("Replace=true merge must be idempotent; want a single Replace=true token.\nrendered:\n%s", got)
+	}
 }
 
 // TestEveryConfiguredEnvVarIsWiredInTheChart is a second parity invariant: an environment
