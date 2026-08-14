@@ -2750,10 +2750,11 @@ func TestFindMatch_NameDelimitersSurviveTheWire(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			var mu sync.Mutex
-			var seen string
+			var seen, rawSeen string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				mu.Lock()
 				seen = r.URL.Query().Get("search")
+				rawSeen = rawParam(r.URL.RawQuery, "search")
 				mu.Unlock()
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = io.WriteString(w, `{"elements":[],"metadata":{"nextPageToken":""}}`)
@@ -2772,6 +2773,17 @@ func TestFindMatch_NameDelimitersSurviveTheWire(t *testing.T) {
 			want := "(name:(values:List(" + name + ")))"
 			if seen != want {
 				t.Errorf("name did not survive the wire:\n  sent name: %q\n  server saw: %q\n  want:       %q", name, seen, want)
+			}
+			// The decoded view above CANNOT see a space encoded as "+": Query()
+			// decodes "+" back to a space, so a correct %20 and a wrong + are
+			// identical through it — the exact blindness this branch exists to fix.
+			// Assert the raw bytes too, or dropping the "+"->%20 rewrite in
+			// restliEncode would leave this test green while the lookup 400s.
+			if strings.Contains(rawSeen, "+") {
+				t.Errorf("a space reached the wire as \"+\", which Rest.li reads as a literal plus (400 PARAM_INVALID): %q", rawSeen)
+			}
+			if strings.Contains(name, " ") && !strings.Contains(rawSeen, "%20") {
+				t.Errorf("space must be encoded as %%20 on the wire, got %q", rawSeen)
 			}
 		})
 	}
