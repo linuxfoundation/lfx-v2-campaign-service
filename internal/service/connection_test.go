@@ -677,3 +677,56 @@ func TestUpdateMetaAds_OmittedAccountIDClearsTheSelection(t *testing.T) {
 		t.Errorf("expected version passed to Update = %d, want 7 from If-Match", repo.gotUpdateVersion)
 	}
 }
+
+// The conversion pixel must survive create → read-back, and a PUT that omits it must CLEAR
+// it. Both halves matter and neither was pinned.
+//
+// Reddit requires the pixel on every campaign create, so an update that silently drops it
+// turns the next dispatch into a refusal — an operator editing only the label would break
+// campaign creation without touching anything that looks related. That is the documented
+// full-replace semantic of PUT (see the Update handlers), not a bug, but it is exactly the
+// kind of behaviour that needs a test recording it where someone will find it.
+func TestRedditAdsConversionPixelRoundTripAndClear(t *testing.T) {
+	repo := newFakeRepo()
+	s := newTestService(t, repo)
+	ctx := context.Background()
+
+	created, err := s.CreateRedditAds(ctx, &conn.CreateRedditAdsPayload{
+		ProjectID: "cncf",
+		Config: &conn.RedditAdsConnectionConfig{
+			AccountID: "t2_gv9wtbfa",
+			// Deliberately DIFFERENT from AccountID: on the LF account the two share a
+			// value, and a fixture that repeats it cannot tell the two fields apart.
+			ConversionPixelID: strPtr("a2_pixel_round_trip"),
+		},
+		Credentials: &conn.RedditAdsCredentials{ClientID: "c", ClientSecret: "s", RefreshToken: "r"},
+	})
+	if err != nil {
+		t.Fatalf("CreateRedditAds: %v", err)
+	}
+	if created.ConversionPixelID == nil || *created.ConversionPixelID != "a2_pixel_round_trip" {
+		t.Fatalf("create did not return the stored pixel: %v", created.ConversionPixelID)
+	}
+
+	got, err := s.GetRedditAds(ctx, &conn.GetRedditAdsPayload{ProjectID: "cncf"})
+	if err != nil {
+		t.Fatalf("GetRedditAds: %v", err)
+	}
+	if got.ConversionPixelID == nil || *got.ConversionPixelID != "a2_pixel_round_trip" {
+		t.Errorf("read-back pixel = %v, want a2_pixel_round_trip — a value that does not survive the round trip is unusable at dispatch", got.ConversionPixelID)
+	}
+
+	// PUT is a full replace: omitting the pixel clears it. Recorded rather than asserted as
+	// desirable — the next dispatch refuses, which is the safe outcome but a surprising one.
+	updated, err := s.UpdateRedditAds(ctx, &conn.UpdateRedditAdsPayload{
+		ProjectID: "cncf",
+		IfMatch:   strPtr(etag(got.Version)),
+		Config:    &conn.RedditAdsConnectionConfig{AccountID: "t2_gv9wtbfa"},
+	})
+	if err != nil {
+		t.Fatalf("UpdateRedditAds: %v", err)
+	}
+	if updated.ConversionPixelID != nil && *updated.ConversionPixelID != "" {
+		t.Errorf("an update omitting conversion_pixel_id must CLEAR it (PUT is a full replace), got %v", *updated.ConversionPixelID)
+	}
+}

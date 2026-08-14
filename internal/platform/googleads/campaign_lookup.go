@@ -74,6 +74,13 @@ type campaignLookupRow struct {
 		ID           string `json:"id"`
 		Name         string `json:"name"`
 		Status       string `json:"status"`
+		// AdvertisingChannelType is what campaign TYPE this is (SEARCH, DEMAND_GEN, ...).
+		// Read because adoption binds an upstream campaign to a brief SLOT, and the slot key
+		// includes the variant: without the type, every adopted Google campaign was stored as
+		// 'default' whatever it actually was, so adopting a Demand Gen campaign left the
+		// 'demand-gen' slot free and a later Demand Gen dispatch created a SECOND paid
+		// campaign for the same brief.
+		AdvertisingChannelType string `json:"advertisingChannelType"`
 	} `json:"campaign"`
 }
 
@@ -380,6 +387,12 @@ type CampaignRef struct {
 	ID     string
 	Name   string
 	Status string // StatusEnabled or StatusPaused — a live campaign is never anything else here
+	// AdvertisingChannelType is Google's own name for the campaign type (SEARCH,
+	// DEMAND_GEN, ...), carried verbatim rather than mapped to this service's variant
+	// vocabulary: the mapping is the SERVICE's decision, and a caller that cannot map a
+	// value must be able to tell "Google said something we don't handle" from "Google said
+	// nothing". Empty means the field was absent from the response — never assume a type.
+	AdvertisingChannelType string
 }
 
 // ErrNotACampaignID reports that the caller's id could not name a campaign at all, so no
@@ -422,7 +435,8 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 	// campaign.id is an int64 in GAQL, so it is compared UNQUOTED — quoting it would make
 	// this a string comparison against a numeric field. No escaping question arises: the
 	// value has already been proven to be nothing but digits.
-	query := "SELECT campaign.id, campaign.name, campaign.status, campaign.resource_name " +
+	query := "SELECT campaign.id, campaign.name, campaign.status, campaign.resource_name, " +
+		"campaign.advertising_channel_type " +
 		"FROM campaign WHERE campaign.id = " + campaignID +
 		" AND campaign.status != '" + StatusRemoved + "'"
 
@@ -506,7 +520,7 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 			// several rows — and the name is compared unvalidated here on purpose: a
 			// tombstone's name is never surfaced, so an empty one is not a defect, but
 			// TWO names for one id still is.
-			ref := &CampaignRef{ID: id, Name: row.Campaign.Name, Status: row.Campaign.Status}
+			ref := &CampaignRef{ID: id, Name: row.Campaign.Name, Status: row.Campaign.Status, AdvertisingChannelType: row.Campaign.AdvertisingChannelType}
 			if removedRef != nil && *removedRef != *ref {
 				// Quoted field by field rather than %+v'd as a struct, matching how
 				// metrics.go renders upstream values. Both refs carry the id already
@@ -535,7 +549,7 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 		// on several rows when a query joins a repeated resource) as long as they agree —
 		// and they must agree on the NAME too, not only the id, since the name is what an
 		// operator will read before confirming the binding.
-		ref := &CampaignRef{ID: id, Name: row.Campaign.Name, Status: row.Campaign.Status}
+		ref := &CampaignRef{ID: id, Name: row.Campaign.Name, Status: row.Campaign.Status, AdvertisingChannelType: row.Campaign.AdvertisingChannelType}
 		if found != nil && *found != *ref {
 			// Quoted for the same reason as the tombstone case above. These names DID pass
 			// returnedCampaignName, which rejects what Campaign.name forbids — NUL, LF and

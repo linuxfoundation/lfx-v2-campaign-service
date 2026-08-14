@@ -237,7 +237,15 @@ func (d *RedditDispatcher) resolveRedditClient(ctx context.Context, projectID st
 	}
 	return reddit.NewClient(
 		reddit.Credentials{ClientID: creds.ClientID, ClientSecret: creds.ClientSecret, RefreshToken: creds.RefreshToken},
-		reddit.AccountConfig{AccountID: res.accountID, Label: res.label},
+		// The pixel travels with the ACCOUNT, matching where it is stored. An absent key
+		// yields "", which CreateCampaign refuses with a message naming the connection --
+		// the empty case is a connection saved before the column existed, and guessing a
+		// value would attribute conversions to a pixel that is not this advertiser's.
+		reddit.AccountConfig{
+			AccountID:         res.accountID,
+			Label:             res.label,
+			ConversionPixelID: res.providerConfig["conversion_pixel_id"],
+		},
 		d.opts...,
 	), nil
 }
@@ -432,6 +440,17 @@ func decodeBriefFields(brief *model.CampaignBrief) (briefFields, error) {
 		// the other key held a space.
 		if bf.EventName == "" {
 			bf.EventName = strings.TrimSpace(partial.Name)
+		}
+		// `eventName` wins where both are present; `name` is the fallback rather than an
+		// equal, so a blob that carries the explicit spelling is never overridden by the
+		// generic one.
+		//
+		// Emptiness is SEMANTIC (TrimSpace), matching the final validation below and the
+		// sibling decoders. A plain `== ""` let `{"eventName":" ","name":"Valid UI name"}`
+		// skip the fallback and then fail that validation — a usable name discarded because
+		// the other key held a space.
+		if strings.TrimSpace(bf.EventName) == "" {
+			bf.EventName = partial.Name
 		}
 		if bf.RegistrationURL == "" {
 			bf.RegistrationURL = partial.RegistrationURL

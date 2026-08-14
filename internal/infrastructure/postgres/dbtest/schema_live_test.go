@@ -55,11 +55,16 @@ func insertBrief(ctx context.Context, t *testing.T, pool *pgxpool.Pool) string {
 // happily and the test would still pass — while quietly asserting about a row shape the
 // service never writes. The index under test is keyed on (brief_id, platform), so the
 // value being a real one is the whole point.
+//
+// The variant is written explicitly rather than left to the column DEFAULT: the index
+// under test is keyed on (brief_id, platform, VARIANT) since 000022, and a test that
+// relied on the default would still pass if the conflict target silently dropped that
+// column.
 func insertCampaignSQL(predicate string) string {
 	return fmt.Sprintf(`
-		INSERT INTO campaigns (project_id, brief_id, platform, campaign_name, status)
-		VALUES ($1, $2, '%s', $3, $4)
-		ON CONFLICT (brief_id, platform) %s DO NOTHING`, model.ProviderGoogleAds, predicate)
+		INSERT INTO campaigns (project_id, brief_id, platform, variant, campaign_name, status)
+		VALUES ($1, $2, '%s', '%s', $3, $4)
+		ON CONFLICT (brief_id, platform, variant) %s DO NOTHING`, model.ProviderGoogleAds, model.VariantDefault, predicate)
 }
 
 // TestLiveOnConflictNeedsThePartialIndexPredicate is the reason this package exists.

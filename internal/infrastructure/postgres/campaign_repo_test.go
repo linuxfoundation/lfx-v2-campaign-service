@@ -29,7 +29,7 @@ const livePredicate = `status <> 'deleted'`
 // onConflictBriefPlatform finds an ON CONFLICT clause whose target is the
 // (brief_id, platform) pair, capturing whatever follows it up to the action
 // keyword (DO). The capture is what the assertions inspect for the predicate.
-var onConflictBriefPlatform = regexp.MustCompile(`(?is)ON\s+CONFLICT\s*\(\s*brief_id\s*,\s*platform\s*\)(.*?)\bDO\b`)
+var onConflictBriefPlatform = regexp.MustCompile(`(?is)ON\s+CONFLICT\s*\(\s*brief_id\s*,\s*platform\s*,\s*variant\s*\)(.*?)\bDO\b`)
 
 // TestCampaignRepo_OnConflictCarriesLivePredicate pins the single most dangerous
 // coupling introduced by the soft-delete migration.
@@ -55,9 +55,9 @@ func TestCampaignRepo_OnConflictCarriesLivePredicate(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			m := onConflictBriefPlatform.FindStringSubmatch(q)
-			require.NotNil(t, m, "query has no ON CONFLICT (brief_id, platform) clause; if the conflict target moved, update this test deliberately:\n%s", q)
+			require.NotNil(t, m, "query has no ON CONFLICT (brief_id, platform, variant) clause; if the conflict target moved, update this test deliberately:\n%s", q)
 			require.Contains(t, normalizeWS(m[1]), livePredicate,
-				"ON CONFLICT (brief_id, platform) is missing the partial index predicate %q. "+
+				"ON CONFLICT (brief_id, platform, variant) is missing the partial index predicate %q. "+
 					"Migration 000014 drops the full UNIQUE constraint, so a bare conflict target infers no arbiter "+
 					"index and this statement fails at runtime with \"no unique or exclusion constraint matching the "+
 					"ON CONFLICT specification\".", livePredicate)
@@ -351,7 +351,7 @@ func TestClaimCampaignDispatchStampsBothActorColumns(t *testing.T) {
 	q := normalizeWS(claimCampaignDispatchQuery)
 	require.Contains(t, q, "created_by, updated_by)",
 		"the claim INSERT must name both actor columns:\n%s", claimCampaignDispatchQuery)
-	assert.Contains(t, q, "$5, $5)",
+	assert.Contains(t, q, "$6, $6)",
 		"both actor columns must be written from the SAME placeholder; two placeholders would "+
 			"let a caller set them independently at creation time, when there is only one actor")
 }
@@ -374,7 +374,7 @@ func TestDeleteCampaignStampsTheDeletingActor(t *testing.T) {
 // changing one of campaignCols / scanCampaign's destination list without the other is a
 // silent data-corruption bug, and this constant makes the third edit deliberate.
 var campaignColumnOrder = []string{
-	"id", "project_id", "brief_id", "job_id", "platform", "platform_campaign_id",
+	"id", "project_id", "brief_id", "job_id", "platform", "variant", "platform_campaign_id",
 	"campaign_name", "status", "budget_amount", "budget_type", "start_date", "end_date",
 	"config_snapshot", "result", "version", "created_by", "updated_by", "created_at", "updated_at",
 }
@@ -438,7 +438,7 @@ func TestScanCampaign_MapsEachColumnToItsField(t *testing.T) {
 	amount := 250.5
 
 	c, err := scanCampaign(fakeCampaignRow{vals: []any{
-		"c1", "cncf", "b1", &jobID, "google-ads", &pcID, "Spring launch", "created",
+		"c1", "cncf", "b1", &jobID, "google-ads", "demand-gen", &pcID, "Spring launch", "created",
 		&amount, &budgetType, &start, &end,
 		json.RawMessage(`{"cfg":1}`), json.RawMessage(`{"res":2}`), int64(9),
 		[]byte(`{"email":"ada@lf.dev"}`), []byte(`{"email":"grace@lf.dev"}`), created, updated,
@@ -451,6 +451,10 @@ func TestScanCampaign_MapsEachColumnToItsField(t *testing.T) {
 	require.NotNil(t, c.JobID)
 	assert.Equal(t, "j1", *c.JobID)
 	assert.Equal(t, model.ProviderGoogleAds, c.Platform)
+	// The variant round-trips as its own field rather than being folded into Platform —
+	// (brief, platform, variant) is the slot key, so losing it here would let a Demand Gen
+	// campaign read back as the Search one.
+	assert.Equal(t, "demand-gen", c.Variant)
 	assert.Equal(t, "gads-123", c.PlatformCampaignID)
 	assert.Equal(t, "Spring launch", c.CampaignName)
 	assert.Equal(t, "created", c.Status)
@@ -481,7 +485,7 @@ func TestScanCampaign_MapsEachColumnToItsField(t *testing.T) {
 // has both NULL, so a scan that failed here would make every pre-migration campaign unreadable.
 func TestScanCampaign_NullActorsDecodeToNil(t *testing.T) {
 	c, err := scanCampaign(fakeCampaignRow{vals: []any{
-		"c1", "cncf", "b1", nil, "google-ads", nil, "n", "created",
+		"c1", "cncf", "b1", nil, "google-ads", "default", nil, "n", "created",
 		nil, nil, nil, nil, nil, nil, int64(1),
 		nil, nil, time.Time{}, time.Time{},
 	}})
@@ -505,7 +509,7 @@ func TestScanCampaign_NullActorsDecodeToNil(t *testing.T) {
 func TestScanCampaign_MalformedActorJSONIsAnError(t *testing.T) {
 	base := func(createdBy, updatedBy []byte) []any {
 		return []any{
-			"c1", "cncf", "b1", nil, "google-ads", nil, "n", "created",
+			"c1", "cncf", "b1", nil, "google-ads", "default", nil, "n", "created",
 			nil, nil, nil, nil, nil, nil, int64(1),
 			createdBy, updatedBy, time.Time{}, time.Time{},
 		}

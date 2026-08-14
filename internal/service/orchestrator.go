@@ -780,6 +780,100 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 // arbitrates); the other reuses the existing row or, if it's still pending, is
 // reported in-progress. campaign_id is always the upstream platform id, so the
 // field means the same on the reuse and create paths.
+
+// googleAdsChannelSearchName is the `channel` value that means the default Search
+// campaign. Duplicated from internal/dispatch rather than imported: dispatch imports
+// this package, so the dependency cannot run the other way.
+const googleAdsChannelSearchName = "search"
+
+// googleAdsChannelDemandGenName mirrors internal/dispatch's googleAdsChannelDemandGen for
+// the same reason googleAdsChannelSearchName mirrors its sibling: dispatch imports this
+// package, so the dependency cannot run the other way.
+const googleAdsChannelDemandGenName = "demand-gen"
+
+// variantForDispatch reads WHICH of a platform's campaign types this dispatch is for,
+// out of the same config envelope the dispatcher will read.
+//
+// It exists because (brief, platform) is not a unique slot for Google: its UI offers
+// Search and Demand Gen as simultaneous checkboxes (Performance Max next), so one
+// brief legitimately holds several google-ads campaigns. Without this, the
+// idempotency fast path below matched the FIRST google-ads campaign for the brief and
+// reported a Demand Gen dispatch as already done — returning the Search campaign's id
+// without ever calling Google. Observed 2026-08-13.
+//
+// Every other provider returns VariantDefault: Meta's and Reddit's `objective`
+// configures a single campaign rather than multiplying it, and the rest have no such
+// concept. Their slot key is unchanged in behaviour, just spelled with a third column.
+//
+// A MALFORMED or unknown value resolves to VariantInvalid, which dispatchPlatform
+// refuses BEFORE the idempotency lookup and the claim — so it writes no row and cannot
+// collide with a real campaign's slot. Defaulting a typo would spend one channel's
+// budget on another, and routing it through a shared slot let two concurrent malformed
+// requests collide into a false success (see the refusal in dispatchPlatform).
+func variantForDispatch(p model.Provider, config json.RawMessage) string {
+	if p != model.ProviderGoogleAds || len(config) == 0 {
+		return model.VariantDefault
+	}
+	var envelope struct {
+		GoogleAds struct {
+			Channel string `json:"channel"`
+		} `json:"googleAdsConfig"`
+	}
+	if err := json.Unmarshal(config, &envelope); err != nil {
+		// Undecodable config must NOT claim the default slot. The intent was to let the
+		// dispatcher report the specific decode error, but the idempotency lookup runs FIRST:
+		// when a Search/default campaign already exists for this brief, the malformed request
+		// matched that row, was reported as a reused success, and the dispatcher never ran —
+		// so the error it was supposed to surface never surfaced, and the caller was told a
+		// campaign it never validly asked for had been created.
+		//
+		// VariantInvalid is a slot no create ever writes, so the lookup always misses and the
+		// dispatch proceeds to the decode error. It cannot collide with a real campaign.
+		return model.VariantInvalid
+	}
+	ch := strings.ToLower(strings.TrimSpace(envelope.GoogleAds.Channel))
+	// Explicit "search" and an ABSENT channel dispatch the identical Search campaign, so
+	// they must share a slot. They did not: absence normalized to 'default' (what every
+	// pre-000021 row was backfilled to) while "search" claimed a slot of its own — so the
+	// updated UI, which now names the channel explicitly, would miss the existing row for
+	// a brief created before it and create a SECOND paid Search campaign.
+	//
+	// Collapsing to 'default' rather than migrating the old rows to 'search' keeps the
+	// backfill honest: 'default' means "this platform's only campaign", which is exactly
+	// what those rows are.
+	if ch == googleAdsChannelSearchName {
+		return model.VariantDefault
+	}
+	// An UNSUPPORTED channel must not land on a real slot. `NormalizeVariant` is a
+	// pass-through for any non-empty value, so a caller sending `channel:"default"` — valid
+	// JSON, not an accepted Google channel — resolved to the Search slot: the idempotency
+	// fast path then found that brief's existing Search campaign and returned its id as a
+	// SUCCESS, so the dispatcher never ran and never rejected the unsupported channel. The
+	// caller was told a campaign it never validly asked for had been created.
+	//
+	// This is the same shape as the undecodable-config case above and takes the same answer:
+	// a slot no create path writes, so the lookup always misses and the dispatch proceeds to
+	// the dispatcher's own "unsupported channel" error. Validating HERE instead would
+	// duplicate the dispatcher's channel list in a second place and let the two drift.
+	if !googleAdsChannelIsSupported(ch) {
+		return model.VariantInvalid
+	}
+	return model.NormalizeVariant(ch)
+}
+
+// googleAdsChannelIsSupported reports whether a channel string names a Google Ads campaign
+// type this service creates. It deliberately mirrors — rather than re-derives — the
+// dispatcher's switch: the dispatcher owns the decision and produces the caller-facing
+// error, and this exists only so an unsupported value cannot be filed under a slot a real
+// campaign occupies before that error is reached.
+func googleAdsChannelIsSupported(ch string) bool {
+	// An ABSENT channel is supported and means Search — that is what every brief created
+	// before the channel field existed sends, and the dispatcher's own switch has the same
+	// empty-string arm. Treating it as unsupported would file every one of those on
+	// VariantInvalid and refuse the platform's most common create.
+	return ch == "" || ch == googleAdsChannelSearchName || ch == googleAdsChannelDemandGenName
+}
+
 func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, config json.RawMessage, by *model.Actor) platformResult {
 	res := platformResult{Platform: string(p)}
 
@@ -789,7 +883,36 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// NOT be swallowed as "no existing campaign": proceeding to claim/dispatch when an
 	// existing campaign simply couldn't be loaded risks a duplicate upstream create.
 	// Only ErrNotFound is a clean "nothing yet, proceed".
-	existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p)
+	variant := variantForDispatch(p, config)
+	// An invalid variant is refused HERE, before the lookup and the claim, rather than
+	// being routed through a shared VariantInvalid slot.
+	//
+	// Routing it through the slot was wrong even though no CREATE writes that slot: the
+	// CLAIM does. ClaimCampaignDispatch inserts a pending row keyed on the variant, so two
+	// concurrent malformed requests both derive VariantInvalid, one wins the claim and the
+	// other is marked Skipped — and aggregateStatus excludes skipped platforms from the
+	// failure tally, so a wholly-skipped job terminalizes as SUCCEEDED. The caller sends
+	// invalid config and is told it worked. A stranded _invalid claim (see the KNOWN
+	// RESIDUAL GAP note on the skip path) makes that permanent rather than a one-off race.
+	//
+	// Refusing before any row is written removes the shared slot entirely, so there is
+	// nothing to collide over and the caller gets the decode error it should have had.
+	if variant == model.VariantInvalid {
+		// VariantInvalid has TWO causes and they are not the same problem for the caller:
+		// a config that did not decode at all, and one that decoded but named a channel
+		// this service does not support. Reporting both as "unsupported channel" sends
+		// someone hunting a channel value in a payload that never parsed. `config` is
+		// still in hand here, so the cause is re-derived rather than threaded through a
+		// second sentinel.
+		var probe map[string]json.RawMessage
+		if jerr := json.Unmarshal(config, &probe); jerr != nil {
+			res.Error = fmt.Sprintf("invalid platform config for %s: config could not be decoded", p)
+		} else {
+			res.Error = fmt.Sprintf("invalid platform config for %s: unsupported channel", p)
+		}
+		return res
+	}
+	existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p, variant)
 	switch {
 	case lerr == nil && isReusableCampaign(existing):
 		// A COMPLETED campaign (created / created_degraded — both terminal, since a
@@ -827,7 +950,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// Single-flight claim: atomically insert a 'pending' placeholder for (brief,
 	// platform). Exactly one worker across all replicas wins (the unique index
 	// arbitrates) — no held connection, no blocking lock.
-	claimed, existing, err := o.campaigns.ClaimCampaignDispatch(ctx, brief.ProjectID, brief.ID, p, jobID, by)
+	claimed, existing, err := o.campaigns.ClaimCampaignDispatch(ctx, brief.ProjectID, brief.ID, p, variant, jobID, by)
 	if err != nil {
 		slog.ErrorContext(ctx, "claim dispatch failed", "platform", p, "job_id", jobID, "error", err)
 		res.Error = "could not claim campaign dispatch"
@@ -895,7 +1018,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// DELETE fail and leak the pending claim exactly when we most need to free it.
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimReleaseTimeout)
 		defer cancel()
-		if derr := o.campaigns.DeleteDispatchClaim(rctx, brief.ID, p); derr != nil {
+		if derr := o.campaigns.DeleteDispatchClaim(rctx, brief.ID, p, variant); derr != nil {
 			slog.ErrorContext(rctx, "failed to release pending dispatch claim", "platform", p, "job_id", jobID, "error", derr)
 		}
 	}
@@ -1007,6 +1130,11 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			// drop the record of a paid campaign that actually exists.
 			if campaign != nil && (campaign.PlatformCampaignID != "" || len(campaign.Result) > 0) {
 				campaign.JobID = &jobID
+				// Stamp the SAME variant the claim used. A dispatcher does not know which
+				// slot it was claimed for, so without this the upsert writes 'default' via
+				// NormalizeVariant while the claim holds 'demand-gen' — the conflict target
+				// then misses the claimed row and INSERTs a second one.
+				campaign.Variant = variant
 				campaign.BriefID = brief.ID
 				campaign.ProjectID = brief.ProjectID
 				campaign.Platform = p
@@ -1085,8 +1213,10 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		return res
 	}
 	// Stamp ownership, then update the claimed row in place (Upsert on the same
-	// (brief, platform) fills in the real upstream id and status).
+	// (brief, platform, variant) fills in the real upstream id and status).
 	campaign.JobID = &jobID
+	// The SAME variant the claim used — see the retained-partial path above.
+	campaign.Variant = variant
 	campaign.BriefID = brief.ID
 	campaign.ProjectID = brief.ProjectID
 	campaign.Platform = p
