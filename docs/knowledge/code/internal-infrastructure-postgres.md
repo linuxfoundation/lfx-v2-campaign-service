@@ -160,6 +160,22 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   rows — load-bearing for `GetCampaignByPlatform`, which the orchestrator uses to
   decide whether a pair was already dispatched.
 
+  **Authoring rule — expand/contract, one release apart.** The general form of the
+  constraint `000013`/`000014` had to break: *a migration that removes or narrows something
+  the N-1 release's SQL depends on ships one release AFTER the code change that stopped
+  depending on it.* Add the new shape (index, column, constraint) and move every read and
+  write onto it in release N; drop or narrow the old shape in release N+1, once no running
+  binary reads it. golang-migrate is linearly versioned and applied ascending, so this is
+  enforced at AUTHORING time — there is one migration stream and the version number IS the
+  ordering. "Stopped depending" means completely: the N-1 binary must not rely on the old
+  shape for ANY row it can still touch, INCLUDING soft-deleted rows. `000013`/`000014` is
+  the case that could not be split for exactly that reason — the old full constraint still
+  governed soft-deleted rows the delete path had to free, so deferring the drop shipped a
+  delete endpoint that silently did nothing. When a change genuinely cannot be staged apart,
+  a rollout strategy carries the ordering instead (here `Recreate`); that is the exception
+  that shows why the default is expand/contract, and it is the coupling the PreSync-Job
+  migration work (linuxfoundation/lfx-self-serve#1543) removes the need for.
+
 - `000015` — `created_by` / `updated_by` JSONB on `campaign_briefs` (see *Actor
   attribution* below).
 

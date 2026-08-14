@@ -213,7 +213,21 @@ are unauthenticated and excluded from the published OpenAPI.
 **Postgres.** Schema changes ship a paired golang-migrate up/down migration, and
 an **applied migration is immutable** — a change is always a new numbered
 version, never an edit to a merged file, because applied versions are never
-re-run. Updates carry optimistic concurrency (`AND version = $n`, incrementing
+re-run. **Expand/contract, one release apart:** a migration that removes or
+narrows something the N-1 release's SQL depends on ships one release AFTER the
+code change that stopped depending on it — add the new shape and move all
+reads/writes onto it in release N, drop or narrow the old shape in release N+1
+once no running binary reads it. golang-migrate is one ascending stream, so this
+is an authoring-time check on the diff: a PR that both introduces a
+narrowing/removing DDL (a `DROP`, an `ALTER … DROP`, or a tightened `UNIQUE` /
+`NOT NULL`) AND the code change that stops depending on the old shape, in the
+same release, is a finding — unless it also pins a rollout ordering (e.g.
+`strategy.type: Recreate`) that keeps the old binary from meeting the new schema.
+"Stopped depending" means for every row the N-1 binary can still touch, soft-
+deleted rows included (`000013`/`000014` is the case that could not be split for
+exactly that reason). Concept:
+`docs/knowledge/code/internal-infrastructure-postgres.md`. Updates carry
+optimistic concurrency (`AND version = $n`, incrementing
 `version`, `ErrPreconditionFailed` on mismatch). `project_id` takes no
 cross-service foreign key. SQL is hand-written with `$N` placeholders — flag
 interpolation. `pgx.ErrNoRows` is translated to `domain.ErrNotFound` at the repo
