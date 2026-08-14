@@ -1,10 +1,16 @@
 # 2026-08-14 — LFXV2-3259 LinkedIn search encoding
 
 **Fix** — Every LinkedIn campaign and campaign-group lookup returned
-`400 PARAM_INVALID` on fieldPath `search`, so find-or-create could never find an
-existing resource and would fall through to create on every call — duplicating
-paid campaigns. Found by running a real create against the live Marketing API,
-not by review; the third paid-create blocker on this ticket found that way.
+`400 PARAM_INVALID` on fieldPath `search`. `findMatch` propagates ANY search
+error rather than treating it as a clean absence, so the failure did not
+silently duplicate — it **blocked LinkedIn campaign creation outright**: the
+live run aborted at the first call, before the campaign group existed. Found by
+running a real create against the live Marketing API, not by review; the third
+paid-create blocker on this ticket found that way.
+
+(The duplicate-create hazard belongs to the `%2520` double-encoding case below,
+which returns a clean 200 with an empty result set — a false absence the caller
+resolves by creating. The 400 is the louder failure and the safer one.)
 
 **The cause was the space, not the name.** `findMatch` built the Rest.li filter
 `(name:(values:List(<name>)))` and handed it to `url.Values.Encode()`, which
@@ -31,6 +37,29 @@ back through `url.Values.Encode()` turns each `%` into `%25`, so `%20` becomes
 returns a **200 with an empty result set**: a false "not found" that looks clean
 and drives exactly the duplicate create the lookup exists to prevent. Keys are
 sorted so the query string stays deterministic under Go's randomized map order.
+
+**The first fix was an allow-list, and an allow-list was the wrong shape.**
+Adding `%20`/`%7C`/`%2B` to an enumerated replacer fixed the names we happened to
+generate and missed two characters that truncate the query at the URL layer
+rather than inside the Rest.li literal: `&` starts another query parameter (a
+lookup for `R&D Summit` searched for `R`) and `#` starts a fragment (`C# Conf`
+searched for `C`, with the tail landing in `url.URL.Fragment`). Both silently
+produce a false absence — the exact outcome this path exists to prevent. Caught
+by Cursor and Copilot independently, which is strong signal. `restliEncode` now
+encodes the COMPLETE query component via `url.QueryEscape`, with `+` rewritten
+to `%20`; the caller still supplies the `(name:(values:List(` … `)))` syntax
+raw. A list needs extending for the next delimiter, and it also left non-ASCII
+raw; encoding everything cannot go stale.
+
+**A second `restliEncode` call site had the same double-encoding bug.**
+`preEncodedParams` listed only `search`, but `listCreativeURNs` builds
+`campaigns=List(<encoded URN>)` the same way, so its `%3A` became `%253A` and the
+URN reached LinkedIn as literal text. The finder matched no campaign, and that
+empty result reads as "this campaign has no creatives" — so a status cascade
+silently skipped every creative. Pre-existing (main emitted the same bytes), but
+the same class one function away. Its test asserted only
+`strings.Contains(query, "555")`, and a numeric id has no reserved characters,
+so the double encoding was invisible to it.
 
 **A test was pinning the bug.** `TestFindMatch_SendsServerSideNameFilter`
 asserted that bare `Events | KubeCon` reached LinkedIn, reading the value through

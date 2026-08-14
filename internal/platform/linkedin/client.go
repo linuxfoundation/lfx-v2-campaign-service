@@ -1392,43 +1392,8 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 	return "", fmt.Errorf("search %q by name: exceeded %d pages without exhausting results — aborting to avoid creating a duplicate", nestedPath, maxListPages)
 }
 
-// restliReplacer percent-encodes the characters that are structurally
-// significant inside a Rest.li query value — the delimiters of the
-// List(...)/(key:value) grammar. Leaving them raw would let a resource name
-// containing, say, a comma or paren break out of the List(...) literal and
-// corrupt the filter (or, at worst, inject additional criteria). This is the
-// Rest.li "reduced encoding" applied to values embedded in a query string.
-//
-// This encoding is FINAL: the result is written to url.URL.RawQuery verbatim by
-// buildRawQuery, NOT passed through url.Values.Encode(). Two reasons, both
-// verified against the live Marketing API at LinkedIn-Version 202602:
-//
-//  1. url.Values.Encode() encodes a space as "+", which the Rest.li parser reads
-//     as a literal plus inside List(...) rather than a space. EVERY lookup whose
-//     name contains a space — i.e. every name this client generates — came back
-//     400 PARAM_INVALID on fieldPath "search".
-//  2. Running it over an already-encoded value would turn each "%" into "%25",
-//     so "%20" becomes "%2520" and the filter silently matches a literal
-//     "%20"-containing name — a 200 with an empty result set that looks like a
-//     clean "not found" and drives a duplicate create.
-//
-// Space is therefore encoded as %20 here, and "|"/"+" are encoded because they
-// are otherwise illegal in a query (java.net.URISyntaxException) or would decode
-// back to a space.
-var restliReplacer = strings.NewReplacer(
-	"%", "%25", // must be first so the escapes below aren't double-encoded
-	"(", "%28",
-	")", "%29",
-	",", "%2C",
-	":", "%3A",
-	"'", "%27",
-	" ", "%20", // NOT "+": Rest.li reads "+" as a literal plus, not a space
-	"|", "%7C", // illegal raw in a query component
-	"+", "%2B", // would otherwise decode back to a space
-)
-
 // preEncodedParams are query parameters whose values arrive ALREADY percent-
-// encoded by restliReplacer and must be written to RawQuery verbatim. Passing
+// encoded by restliEncode and must be written to RawQuery verbatim. Passing
 // one through url.Values.Encode() would re-encode its "%" escapes ("%20" ->
 // "%2520"), producing a filter that matches a literally-different name and
 // returns a clean-looking empty result set.
@@ -1479,9 +1444,41 @@ func buildRawQuery(params map[string]string) string {
 	return b.String()
 }
 
-// restliEncode returns name safe for embedding inside a Rest.li List(...) value.
+// restliEncode percent-encodes name for embedding inside a Rest.li
+// List(...)/(key:value) literal. The caller supplies the structural syntax raw
+// — `(name:(values:List(` … `)))` — and everything that came from a resource
+// NAME goes through here, so a name containing a comma or paren stays data
+// rather than breaking out of the literal and corrupting the filter.
+//
+// This encoding is FINAL: the result is written to url.URL.RawQuery verbatim by
+// buildRawQuery, NOT passed through url.Values.Encode(). Two reasons, both
+// verified against the live Marketing API at LinkedIn-Version 202602:
+//
+//  1. url.Values.Encode() encodes a space as "+", which the Rest.li parser reads
+//     as a literal plus inside List(...) rather than a space. EVERY lookup whose
+//     name contains a space — i.e. every name this client generates — came back
+//     400 PARAM_INVALID on fieldPath "search".
+//  2. Running it over an already-encoded value would turn each "%" into "%25",
+//     so "%20" becomes "%2520" and the filter silently matches a literal
+//     "%20"-containing name — a 200 with an empty result set that looks like a
+//     clean "not found" and drives a duplicate create.
+//
+// It encodes the COMPLETE query component rather than an enumerated list of
+// characters. An allow-list is what shipped first, and it was wrong twice over:
+// it missed "&" (which splits the value into another query parameter, so a
+// lookup for "R&D Summit" searched for "R") and "#" (which starts a fragment, so
+// "C# Conf" truncated the filter and leaked the tail into url.URL.Fragment).
+// Both silently corrupt the lookup into a FALSE ABSENCE — the outcome this
+// whole encoding path exists to prevent. Any list would need extending again for
+// the next delimiter; encoding everything cannot go stale.
+//
+// url.QueryEscape is that complete encoder, with one correction: it renders a
+// space as "+" for form encoding, which is hazard 1 above, so those are
+// rewritten to %20. Rest.li's structural characters are not exempt — a name
+// containing "(" or "," must stay data, or it breaks out of the literal.
+
 func restliEncode(name string) string {
-	return restliReplacer.Replace(name)
+	return strings.ReplaceAll(url.QueryEscape(name), "+", "%20")
 }
 
 // trailingID returns the segment after the last colon of a URN, or the input

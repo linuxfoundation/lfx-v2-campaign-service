@@ -2723,6 +2723,60 @@ func TestFindMatch_SendsServerSideNameFilter(t *testing.T) {
 	}
 }
 
+// TestFindMatch_NameDelimitersSurviveTheWire pins the encoding against the
+// characters that do not merely need escaping inside the Rest.li literal but
+// would TRUNCATE the query at the URL layer:
+//
+//   - "&" starts another query parameter, so a lookup for "R&D Summit" would
+//     search for "R" and the rest would arrive as a bogus parameter;
+//   - "#" starts a fragment, so "C# Conf" would search for "C" and the tail
+//     would land in url.URL.Fragment, never reaching LinkedIn at all.
+//
+// Either one silently answers "no such campaign" about a campaign that exists —
+// a false absence, which the find-or-create caller resolves by creating a
+// DUPLICATE PAID campaign. An enumerated escape list shipped first and missed
+// both; this test is what makes the complete-encoder contract binding.
+//
+// The assertion round-trips through http.NewRequestWithContext because that is
+// where the truncation happens: the server's r.URL.Query() is the first place
+// the damage is observable, and a test that only inspected the string we built
+// would not see it.
+func TestFindMatch_NameDelimitersSurviveTheWire(t *testing.T) {
+	for _, name := range []string{
+		"R&D Summit",                                                            // & — would split the query
+		"C# Conf",                                                               // # — would start a fragment
+		"Events | KubeCon, Inc. (26)" /* Rest.li structural chars */, "50% Off", // % — must not double-encode
+		"日本語 イベント", // non-ASCII must not reach the wire raw
+	} {
+		t.Run(name, func(t *testing.T) {
+			var mu sync.Mutex
+			var seen string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				seen = r.URL.Query().Get("search")
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"elements":[],"metadata":{"nextPageToken":""}}`)
+			}))
+			defer srv.Close()
+
+			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+			if _, err := c.findByName(context.Background(), "adAccounts/123/adCampaigns", name); err != nil {
+				t.Fatalf("findByName(%q): %v", name, err)
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			// The server decodes one layer, so it must observe the filter with the
+			// name intact — structural syntax bare, the name itself verbatim.
+			want := "(name:(values:List(" + name + ")))"
+			if seen != want {
+				t.Errorf("name did not survive the wire:\n  sent name: %q\n  server saw: %q\n  want:       %q", name, seen, want)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Ninth-round Copilot findings: id-less CREATE responses
 // ---------------------------------------------------------------------------
