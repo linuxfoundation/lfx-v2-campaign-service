@@ -6932,6 +6932,305 @@ func DecodeListMetaAdsAccountsResponse(decoder func(*http.Response) goahttp.Deco
 	}
 }
 
+// BuildListLinkedinAdsAccountsRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "list-linkedin-ads-accounts" endpoint
+func (c *Client) BuildListLinkedinAdsAccountsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.ListLinkedinAdsAccountsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", "*lfxv2campaignserviceconnections.ListLinkedinAdsAccountsPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ListLinkedinAdsAccountsLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeListLinkedinAdsAccountsRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-connections list-linkedin-ads-accounts server.
+func EncodeListLinkedinAdsAccountsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.ListLinkedinAdsAccountsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", "*lfxv2campaignserviceconnections.ListLinkedinAdsAccountsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		return nil
+	}
+}
+
+// DecodeListLinkedinAdsAccountsResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// list-linkedin-ads-accounts endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+// DecodeListLinkedinAdsAccountsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - error: internal error
+func DecodeListLinkedinAdsAccountsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ListLinkedinAdsAccountsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", err)
+			}
+			err = ValidateListLinkedinAdsAccountsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", err)
+			}
+			res := NewListLinkedinAdsAccountsResultOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ListLinkedinAdsAccountsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", err)
+			}
+			err = ValidateListLinkedinAdsAccountsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", err)
+			}
+			return nil, NewListLinkedinAdsAccountsBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ListLinkedinAdsAccountsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", err)
+			}
+			err = ValidateListLinkedinAdsAccountsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", err)
+			}
+			return nil, NewListLinkedinAdsAccountsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ListLinkedinAdsAccountsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", err)
+			}
+			err = ValidateListLinkedinAdsAccountsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", err)
+			}
+			return nil, NewListLinkedinAdsAccountsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ListLinkedinAdsAccountsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", err)
+			}
+			err = ValidateListLinkedinAdsAccountsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", err)
+			}
+			return nil, NewListLinkedinAdsAccountsNotFound(&body)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildListMicrosoftAdsAccountsRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "list-microsoft-ads-accounts" endpoint
+func (c *Client) BuildListMicrosoftAdsAccountsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.ListMicrosoftAdsAccountsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", "*lfxv2campaignserviceconnections.ListMicrosoftAdsAccountsPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ListMicrosoftAdsAccountsLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeListMicrosoftAdsAccountsRequest returns an encoder for requests sent
+// to the lfx-v2-campaign-service-connections list-microsoft-ads-accounts
+// server.
+func EncodeListMicrosoftAdsAccountsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.ListMicrosoftAdsAccountsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", "*lfxv2campaignserviceconnections.ListMicrosoftAdsAccountsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		return nil
+	}
+}
+
+// DecodeListMicrosoftAdsAccountsResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// list-microsoft-ads-accounts endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+// DecodeListMicrosoftAdsAccountsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - error: internal error
+func DecodeListMicrosoftAdsAccountsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ListMicrosoftAdsAccountsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", err)
+			}
+			err = ValidateListMicrosoftAdsAccountsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", err)
+			}
+			res := NewListMicrosoftAdsAccountsResultOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ListMicrosoftAdsAccountsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", err)
+			}
+			err = ValidateListMicrosoftAdsAccountsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", err)
+			}
+			return nil, NewListMicrosoftAdsAccountsBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ListMicrosoftAdsAccountsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", err)
+			}
+			err = ValidateListMicrosoftAdsAccountsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", err)
+			}
+			return nil, NewListMicrosoftAdsAccountsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ListMicrosoftAdsAccountsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", err)
+			}
+			err = ValidateListMicrosoftAdsAccountsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", err)
+			}
+			return nil, NewListMicrosoftAdsAccountsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ListMicrosoftAdsAccountsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", err)
+			}
+			err = ValidateListMicrosoftAdsAccountsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", err)
+			}
+			return nil, NewListMicrosoftAdsAccountsNotFound(&body)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildListHubspotEmailsRequest instantiates a HTTP request object with method
 // and path set to call the "lfx-v2-campaign-service-connections" service
 // "list-hubspot-emails" endpoint

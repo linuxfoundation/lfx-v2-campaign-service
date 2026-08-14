@@ -735,6 +735,20 @@ type ListMetaAdsAccountsResponseBody struct {
 	Accounts []*AccessibleAccountResponseBody `form:"accounts,omitempty" json:"accounts,omitempty" xml:"accounts,omitempty"`
 }
 
+// ListLinkedinAdsAccountsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-accounts"
+// endpoint HTTP response body.
+type ListLinkedinAdsAccountsResponseBody struct {
+	Accounts []*AccessibleAccountResponseBody `form:"accounts,omitempty" json:"accounts,omitempty" xml:"accounts,omitempty"`
+}
+
+// ListMicrosoftAdsAccountsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-microsoft-ads-accounts"
+// endpoint HTTP response body.
+type ListMicrosoftAdsAccountsResponseBody struct {
+	Accounts []*AccessibleAccountResponseBody `form:"accounts,omitempty" json:"accounts,omitempty" xml:"accounts,omitempty"`
+}
+
 // ListHubspotEmailsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
 // HTTP response body.
@@ -2657,6 +2671,86 @@ type ListMetaAdsAccountsInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint HTTP response body for the "NotFound" error.
 type ListMetaAdsAccountsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListLinkedinAdsAccountsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-accounts"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListLinkedinAdsAccountsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListLinkedinAdsAccountsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-accounts"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListLinkedinAdsAccountsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListLinkedinAdsAccountsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-accounts"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListLinkedinAdsAccountsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListLinkedinAdsAccountsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-accounts"
+// endpoint HTTP response body for the "NotFound" error.
+type ListLinkedinAdsAccountsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMicrosoftAdsAccountsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-microsoft-ads-accounts"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListMicrosoftAdsAccountsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMicrosoftAdsAccountsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-microsoft-ads-accounts"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListMicrosoftAdsAccountsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMicrosoftAdsAccountsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-microsoft-ads-accounts"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListMicrosoftAdsAccountsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMicrosoftAdsAccountsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-microsoft-ads-accounts"
+// endpoint HTTP response body for the "NotFound" error.
+type ListMicrosoftAdsAccountsNotFoundResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -5881,6 +5975,136 @@ func NewListMetaAdsAccountsNotFound(body *ListMetaAdsAccountsNotFoundResponseBod
 	return v
 }
 
+// NewListLinkedinAdsAccountsResultOK builds a
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-accounts"
+// endpoint result from a HTTP "OK" response.
+func NewListLinkedinAdsAccountsResultOK(body *ListLinkedinAdsAccountsResponseBody) *lfxv2campaignserviceconnections.ListLinkedinAdsAccountsResult {
+	v := &lfxv2campaignserviceconnections.ListLinkedinAdsAccountsResult{}
+	v.Accounts = make([]*lfxv2campaignserviceconnections.AccessibleAccount, len(body.Accounts))
+	for i, val := range body.Accounts {
+		if val == nil {
+			v.Accounts[i] = nil
+			continue
+		}
+		v.Accounts[i] = unmarshalAccessibleAccountResponseBodyToLfxv2campaignserviceconnectionsAccessibleAccount(val)
+	}
+
+	return v
+}
+
+// NewListLinkedinAdsAccountsBadRequest builds a
+// lfx-v2-campaign-service-connections service list-linkedin-ads-accounts
+// endpoint BadRequest error.
+func NewListLinkedinAdsAccountsBadRequest(body *ListLinkedinAdsAccountsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListLinkedinAdsAccountsServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service list-linkedin-ads-accounts
+// endpoint ServiceUnavailable error.
+func NewListLinkedinAdsAccountsServiceUnavailable(body *ListLinkedinAdsAccountsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListLinkedinAdsAccountsInternalServerError builds a
+// lfx-v2-campaign-service-connections service list-linkedin-ads-accounts
+// endpoint InternalServerError error.
+func NewListLinkedinAdsAccountsInternalServerError(body *ListLinkedinAdsAccountsInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListLinkedinAdsAccountsNotFound builds a
+// lfx-v2-campaign-service-connections service list-linkedin-ads-accounts
+// endpoint NotFound error.
+func NewListLinkedinAdsAccountsNotFound(body *ListLinkedinAdsAccountsNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMicrosoftAdsAccountsResultOK builds a
+// "lfx-v2-campaign-service-connections" service "list-microsoft-ads-accounts"
+// endpoint result from a HTTP "OK" response.
+func NewListMicrosoftAdsAccountsResultOK(body *ListMicrosoftAdsAccountsResponseBody) *lfxv2campaignserviceconnections.ListMicrosoftAdsAccountsResult {
+	v := &lfxv2campaignserviceconnections.ListMicrosoftAdsAccountsResult{}
+	v.Accounts = make([]*lfxv2campaignserviceconnections.AccessibleAccount, len(body.Accounts))
+	for i, val := range body.Accounts {
+		if val == nil {
+			v.Accounts[i] = nil
+			continue
+		}
+		v.Accounts[i] = unmarshalAccessibleAccountResponseBodyToLfxv2campaignserviceconnectionsAccessibleAccount(val)
+	}
+
+	return v
+}
+
+// NewListMicrosoftAdsAccountsBadRequest builds a
+// lfx-v2-campaign-service-connections service list-microsoft-ads-accounts
+// endpoint BadRequest error.
+func NewListMicrosoftAdsAccountsBadRequest(body *ListMicrosoftAdsAccountsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMicrosoftAdsAccountsServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service list-microsoft-ads-accounts
+// endpoint ServiceUnavailable error.
+func NewListMicrosoftAdsAccountsServiceUnavailable(body *ListMicrosoftAdsAccountsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMicrosoftAdsAccountsInternalServerError builds a
+// lfx-v2-campaign-service-connections service list-microsoft-ads-accounts
+// endpoint InternalServerError error.
+func NewListMicrosoftAdsAccountsInternalServerError(body *ListMicrosoftAdsAccountsInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMicrosoftAdsAccountsNotFound builds a
+// lfx-v2-campaign-service-connections service list-microsoft-ads-accounts
+// endpoint NotFound error.
+func NewListMicrosoftAdsAccountsNotFound(body *ListMicrosoftAdsAccountsNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewListHubspotEmailsResultOK builds a "lfx-v2-campaign-service-connections"
 // service "list-hubspot-emails" endpoint result from a HTTP "OK" response.
 func NewListHubspotEmailsResultOK(body *ListHubspotEmailsResponseBody) *lfxv2campaignserviceconnections.ListHubspotEmailsResult {
@@ -6634,6 +6858,38 @@ func ValidateListGoogleAdsAccountsResponseBody(body *ListGoogleAdsAccountsRespon
 // ValidateListMetaAdsAccountsResponseBody runs the validations defined on
 // List-Meta-Ads-AccountsResponseBody
 func ValidateListMetaAdsAccountsResponseBody(body *ListMetaAdsAccountsResponseBody) (err error) {
+	if body.Accounts == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("accounts", "body"))
+	}
+	for _, e := range body.Accounts {
+		if e != nil {
+			if err2 := ValidateAccessibleAccountResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateListLinkedinAdsAccountsResponseBody runs the validations defined on
+// List-Linkedin-Ads-AccountsResponseBody
+func ValidateListLinkedinAdsAccountsResponseBody(body *ListLinkedinAdsAccountsResponseBody) (err error) {
+	if body.Accounts == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("accounts", "body"))
+	}
+	for _, e := range body.Accounts {
+		if e != nil {
+			if err2 := ValidateAccessibleAccountResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateListMicrosoftAdsAccountsResponseBody runs the validations defined on
+// List-Microsoft-Ads-AccountsResponseBody
+func ValidateListMicrosoftAdsAccountsResponseBody(body *ListMicrosoftAdsAccountsResponseBody) (err error) {
 	if body.Accounts == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("accounts", "body"))
 	}
@@ -8988,6 +9244,106 @@ func ValidateListMetaAdsAccountsInternalServerErrorResponseBody(body *ListMetaAd
 // ValidateListMetaAdsAccountsNotFoundResponseBody runs the validations defined
 // on list-meta-ads-accounts_NotFound_response_body
 func ValidateListMetaAdsAccountsNotFoundResponseBody(body *ListMetaAdsAccountsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListLinkedinAdsAccountsBadRequestResponseBody runs the validations
+// defined on list-linkedin-ads-accounts_BadRequest_response_body
+func ValidateListLinkedinAdsAccountsBadRequestResponseBody(body *ListLinkedinAdsAccountsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListLinkedinAdsAccountsServiceUnavailableResponseBody runs the
+// validations defined on
+// list-linkedin-ads-accounts_ServiceUnavailable_response_body
+func ValidateListLinkedinAdsAccountsServiceUnavailableResponseBody(body *ListLinkedinAdsAccountsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListLinkedinAdsAccountsInternalServerErrorResponseBody runs the
+// validations defined on
+// list-linkedin-ads-accounts_InternalServerError_response_body
+func ValidateListLinkedinAdsAccountsInternalServerErrorResponseBody(body *ListLinkedinAdsAccountsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListLinkedinAdsAccountsNotFoundResponseBody runs the validations
+// defined on list-linkedin-ads-accounts_NotFound_response_body
+func ValidateListLinkedinAdsAccountsNotFoundResponseBody(body *ListLinkedinAdsAccountsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMicrosoftAdsAccountsBadRequestResponseBody runs the validations
+// defined on list-microsoft-ads-accounts_BadRequest_response_body
+func ValidateListMicrosoftAdsAccountsBadRequestResponseBody(body *ListMicrosoftAdsAccountsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMicrosoftAdsAccountsServiceUnavailableResponseBody runs the
+// validations defined on
+// list-microsoft-ads-accounts_ServiceUnavailable_response_body
+func ValidateListMicrosoftAdsAccountsServiceUnavailableResponseBody(body *ListMicrosoftAdsAccountsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMicrosoftAdsAccountsInternalServerErrorResponseBody runs the
+// validations defined on
+// list-microsoft-ads-accounts_InternalServerError_response_body
+func ValidateListMicrosoftAdsAccountsInternalServerErrorResponseBody(body *ListMicrosoftAdsAccountsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMicrosoftAdsAccountsNotFoundResponseBody runs the validations
+// defined on list-microsoft-ads-accounts_NotFound_response_body
+func ValidateListMicrosoftAdsAccountsNotFoundResponseBody(body *ListMicrosoftAdsAccountsNotFoundResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

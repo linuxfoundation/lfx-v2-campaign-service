@@ -6,6 +6,7 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -219,10 +220,93 @@ func validateMicrosoftConnection(projectID string, res *resolved) (creds microso
 	if accountID == "" {
 		// BOTH sentinels: ErrConnectionNotUsable decides the HTTP status, ErrAccountNotSelected
 		// names the reason for the log line's fixed vocabulary (unusableConnectionReason).
+		// creds is returned ALONGSIDE the error rather than zeroed: by this point the
+		// credential has passed every other check, and the discovery path needs exactly
+		// that — a valid credential on a connection that has chosen no account. Every
+		// dispatch caller checks err first and so cannot observe the value.
 		return creds, "", fmt.Errorf("%w: %w: microsoft connection for project %s has no account id (customer account id)",
 			domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected, projectID)
 	}
 	return creds, accountID, nil
+}
+
+// ListAccounts discovers the Microsoft Advertising accounts reachable via the project's
+// stored, encrypted connection credential, across every customer that credential can reach.
+//
+// It satisfies the service-side AccountLister interface, which Orchestrator.ReadAccounts
+// type-asserts on the dispatcher for the requested platform.
+//
+// It deliberately does NOT require an account id. Discovery exists to answer "which ad
+// account should this connection use?", so demanding one would make the endpoint reachable
+// only by connections that no longer need it — the account-less connection it is meant to
+// rescue is exactly the one it would refuse. Meta's discovery path draws the same
+// distinction; see resolveMetaDiscoveryClient.
+func (d *MicrosoftDispatcher) ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error) {
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	// Shares validateMicrosoftConnection with the dispatch path rather than repeating its
+	// status/decode/completeness rules: duplicating them would let the two drift, so a
+	// credential rejected at dispatch could be accepted here — which makes a discovery
+	// endpoint actively misleading rather than merely permissive. Only the account-id
+	// outcome is tolerated, and only because it is the state this endpoint serves.
+	creds, _, verr := validateMicrosoftConnection(projectID, res)
+	if verr != nil && !errors.Is(verr, domain.ErrAccountNotSelected) {
+		return nil, res.systemScoped(verr)
+	}
+	// AccountConfig carries only the CustomerID, and only when the connection already has
+	// one: the account listing enumerates what the CREDENTIAL reaches, so naming an account
+	// would narrow the response to a subset of the question. CustomerID is different — it
+	// scopes WHICH customers are searched, and the client falls back to discovering them
+	// when it is empty.
+	client := microsoft.NewClient(
+		microsoft.Credentials{
+			ClientID:       creds.ClientID,
+			ClientSecret:   creds.ClientSecret,
+			DeveloperToken: creds.DeveloperToken,
+			RefreshToken:   creds.RefreshToken,
+		},
+		microsoft.AccountConfig{
+			CustomerID: strings.TrimSpace(res.providerConfig["customer_id"]),
+			Label:      res.label,
+		},
+		d.opts...,
+	)
+	adAccounts, lerr := client.ListAdAccounts(ctx)
+	if lerr != nil {
+		return nil, lerr
+	}
+	// make(..., 0, n), never nil: a credential that legitimately reaches zero accounts is
+	// an empty ANSWER, not an error, and Orchestrator.ReadAccounts rejects a nil result as
+	// a contract violation precisely so empty keeps its meaning.
+	accounts := make([]model.AccessibleAccount, 0, len(adAccounts))
+	for _, a := range adAccounts {
+		accounts = append(accounts, model.AccessibleAccount{ID: a.ID, Label: microsoftAccountLabel(a)})
+	}
+	return accounts, nil
+}
+
+// microsoftAccountLabel builds the string a picker shows for one account.
+//
+// It never returns "" for an account carrying any identifying information: Name is nillable
+// in Microsoft's schema, so it falls back to the account Number and then to the id — a blank
+// row in a picker is unpickable, and the id is what actually gets stored. The Number is
+// appended when both are present because it is what the Microsoft Advertising UI shows, so
+// a user recognises the account by it rather than by the id.
+func microsoftAccountLabel(a microsoft.AdAccount) string {
+	name := strings.TrimSpace(a.Name)
+	number := strings.TrimSpace(a.Number)
+	switch {
+	case name != "" && number != "":
+		return name + " (" + number + ")"
+	case name != "":
+		return name
+	case number != "":
+		return number
+	default:
+		return a.ID
+	}
 }
 
 // resolveMicrosoftClient resolves + validates the project's connection and builds a client

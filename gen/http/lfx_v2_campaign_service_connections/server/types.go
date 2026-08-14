@@ -735,6 +735,20 @@ type ListMetaAdsAccountsResponseBody struct {
 	Accounts []*AccessibleAccountResponseBody `form:"accounts" json:"accounts" xml:"accounts"`
 }
 
+// ListLinkedinAdsAccountsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-accounts"
+// endpoint HTTP response body.
+type ListLinkedinAdsAccountsResponseBody struct {
+	Accounts []*AccessibleAccountResponseBody `form:"accounts" json:"accounts" xml:"accounts"`
+}
+
+// ListMicrosoftAdsAccountsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-microsoft-ads-accounts"
+// endpoint HTTP response body.
+type ListMicrosoftAdsAccountsResponseBody struct {
+	Accounts []*AccessibleAccountResponseBody `form:"accounts" json:"accounts" xml:"accounts"`
+}
+
 // ListHubspotEmailsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
 // HTTP response body.
@@ -2663,6 +2677,86 @@ type ListMetaAdsAccountsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListLinkedinAdsAccountsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-accounts"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListLinkedinAdsAccountsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsAccountsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-accounts"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListLinkedinAdsAccountsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsAccountsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-accounts"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListLinkedinAdsAccountsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListLinkedinAdsAccountsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-linkedin-ads-accounts"
+// endpoint HTTP response body for the "NotFound" error.
+type ListLinkedinAdsAccountsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMicrosoftAdsAccountsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-microsoft-ads-accounts"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListMicrosoftAdsAccountsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMicrosoftAdsAccountsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-microsoft-ads-accounts"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListMicrosoftAdsAccountsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMicrosoftAdsAccountsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-microsoft-ads-accounts"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListMicrosoftAdsAccountsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMicrosoftAdsAccountsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-microsoft-ads-accounts"
+// endpoint HTTP response body for the "NotFound" error.
+type ListMicrosoftAdsAccountsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ListHubspotEmailsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -3359,6 +3453,46 @@ func NewListGoogleAdsAccountsResponseBody(res *lfxv2campaignserviceconnections.L
 // "lfx-v2-campaign-service-connections" service.
 func NewListMetaAdsAccountsResponseBody(res *lfxv2campaignserviceconnections.ListMetaAdsAccountsResult) *ListMetaAdsAccountsResponseBody {
 	body := &ListMetaAdsAccountsResponseBody{}
+	if res.Accounts != nil {
+		body.Accounts = make([]*AccessibleAccountResponseBody, len(res.Accounts))
+		for i, val := range res.Accounts {
+			if val == nil {
+				body.Accounts[i] = nil
+				continue
+			}
+			body.Accounts[i] = marshalLfxv2campaignserviceconnectionsAccessibleAccountToAccessibleAccountResponseBody(val)
+		}
+	} else {
+		body.Accounts = []*AccessibleAccountResponseBody{}
+	}
+	return body
+}
+
+// NewListLinkedinAdsAccountsResponseBody builds the HTTP response body from
+// the result of the "list-linkedin-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsAccountsResponseBody(res *lfxv2campaignserviceconnections.ListLinkedinAdsAccountsResult) *ListLinkedinAdsAccountsResponseBody {
+	body := &ListLinkedinAdsAccountsResponseBody{}
+	if res.Accounts != nil {
+		body.Accounts = make([]*AccessibleAccountResponseBody, len(res.Accounts))
+		for i, val := range res.Accounts {
+			if val == nil {
+				body.Accounts[i] = nil
+				continue
+			}
+			body.Accounts[i] = marshalLfxv2campaignserviceconnectionsAccessibleAccountToAccessibleAccountResponseBody(val)
+		}
+	} else {
+		body.Accounts = []*AccessibleAccountResponseBody{}
+	}
+	return body
+}
+
+// NewListMicrosoftAdsAccountsResponseBody builds the HTTP response body from
+// the result of the "list-microsoft-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsAccountsResponseBody(res *lfxv2campaignserviceconnections.ListMicrosoftAdsAccountsResult) *ListMicrosoftAdsAccountsResponseBody {
+	body := &ListMicrosoftAdsAccountsResponseBody{}
 	if res.Accounts != nil {
 		body.Accounts = make([]*AccessibleAccountResponseBody, len(res.Accounts))
 		for i, val := range res.Accounts {
@@ -5491,6 +5625,94 @@ func NewListMetaAdsAccountsNotFoundResponseBody(res *lfxv2campaignserviceconnect
 	return body
 }
 
+// NewListLinkedinAdsAccountsBadRequestResponseBody builds the HTTP response
+// body from the result of the "list-linkedin-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsAccountsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListLinkedinAdsAccountsBadRequestResponseBody {
+	body := &ListLinkedinAdsAccountsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsAccountsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "list-linkedin-ads-accounts" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsAccountsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListLinkedinAdsAccountsServiceUnavailableResponseBody {
+	body := &ListLinkedinAdsAccountsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsAccountsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "list-linkedin-ads-accounts" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsAccountsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListLinkedinAdsAccountsInternalServerErrorResponseBody {
+	body := &ListLinkedinAdsAccountsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListLinkedinAdsAccountsNotFoundResponseBody builds the HTTP response body
+// from the result of the "list-linkedin-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListLinkedinAdsAccountsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListLinkedinAdsAccountsNotFoundResponseBody {
+	body := &ListLinkedinAdsAccountsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMicrosoftAdsAccountsBadRequestResponseBody builds the HTTP response
+// body from the result of the "list-microsoft-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsAccountsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListMicrosoftAdsAccountsBadRequestResponseBody {
+	body := &ListMicrosoftAdsAccountsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMicrosoftAdsAccountsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "list-microsoft-ads-accounts" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsAccountsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListMicrosoftAdsAccountsServiceUnavailableResponseBody {
+	body := &ListMicrosoftAdsAccountsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMicrosoftAdsAccountsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "list-microsoft-ads-accounts" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsAccountsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListMicrosoftAdsAccountsInternalServerErrorResponseBody {
+	body := &ListMicrosoftAdsAccountsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMicrosoftAdsAccountsNotFoundResponseBody builds the HTTP response
+// body from the result of the "list-microsoft-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListMicrosoftAdsAccountsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListMicrosoftAdsAccountsNotFoundResponseBody {
+	body := &ListMicrosoftAdsAccountsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewListHubspotEmailsBadRequestResponseBody builds the HTTP response body
 // from the result of the "list-hubspot-emails" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -6009,6 +6231,28 @@ func NewListGoogleAdsAccountsPayload(projectID string, bearerToken *string) *lfx
 // service list-meta-ads-accounts endpoint payload.
 func NewListMetaAdsAccountsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListMetaAdsAccountsPayload {
 	v := &lfxv2campaignserviceconnections.ListMetaAdsAccountsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListLinkedinAdsAccountsPayload builds a
+// lfx-v2-campaign-service-connections service list-linkedin-ads-accounts
+// endpoint payload.
+func NewListLinkedinAdsAccountsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListLinkedinAdsAccountsPayload {
+	v := &lfxv2campaignserviceconnections.ListLinkedinAdsAccountsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListMicrosoftAdsAccountsPayload builds a
+// lfx-v2-campaign-service-connections service list-microsoft-ads-accounts
+// endpoint payload.
+func NewListMicrosoftAdsAccountsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListMicrosoftAdsAccountsPayload {
+	v := &lfxv2campaignserviceconnections.ListMicrosoftAdsAccountsPayload{}
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken
 

@@ -750,7 +750,12 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	// Account discovery is declared per provider rather than inside connectionMethods:
 	// only providers whose dispatcher implements the AccountLister interface have one, and
 	// a generated method for a provider that cannot answer it would be a 400 by
-	// construction. LinkedIn, X, Reddit and Microsoft follow in their own tickets.
+	// construction.
+	//
+	// Google Ads, Meta, LinkedIn and Microsoft have one. X and Reddit do not: neither
+	// platform client has a ListAdAccounts, so their account id stays hand-entered on the
+	// connection until one is built. Do not add a method here for either without the
+	// dispatcher side — the endpoint would exist and always fail.
 	Method("list-google-ads-accounts", func() {
 		Description("Enumerate the Google Ads ad accounts accessible via the stored connection credential.")
 		Payload(func() {
@@ -817,6 +822,75 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
 			GET("/projects/{project_id}/connection-meta-ads/accounts")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("BadRequest", StatusBadRequest)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("list-linkedin-ads-accounts", func() {
+		Description("Enumerate the LinkedIn ad accounts accessible via the stored connection credential. " +
+			"Returns bare numeric account ids, ready to store as the connection's account_id.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Required("project_id")
+		})
+		Result(func() {
+			// Per-provider example, for the reason spelled out on list-google-ads-accounts:
+			// Goa fabricates lorem-ipsum for an attribute with no example, so omitting one
+			// publishes a false id format rather than none. LinkedIn ids are bare digits.
+			Attribute("accounts", ArrayOf(AccessibleAccount), func() {
+				Example([]map[string]any{
+					{"id": "507404993", "label": "Linux Foundation (ACTIVE)"},
+					{"id": "512233445", "label": "CNCF"},
+				})
+			})
+			Required("accounts")
+		})
+		Error("NotFound", NotFoundError, "Resource not found")
+		Error("BadRequest", BadRequestError, "Bad request")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-linkedin-ads/accounts")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("BadRequest", StatusBadRequest)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("list-microsoft-ads-accounts", func() {
+		Description("Enumerate the Microsoft Advertising accounts accessible via the stored connection " +
+			"credential, across every customer the credential can reach. Returns account ids as " +
+			"digits, ready to store as the connection's account_id; the label carries Microsoft's " +
+			"human-facing account number, which is what its own UI shows.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Required("project_id")
+		})
+		Result(func() {
+			Attribute("accounts", ArrayOf(AccessibleAccount), func() {
+				Example([]map[string]any{
+					{"id": "1234567", "label": "Linux Foundation (X1234567)"},
+					{"id": "7654321", "label": "CNCF (X7654321)"},
+				})
+			})
+			Required("accounts")
+		})
+		Error("NotFound", NotFoundError, "Resource not found")
+		Error("BadRequest", BadRequestError, "Bad request")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-microsoft-ads/accounts")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)

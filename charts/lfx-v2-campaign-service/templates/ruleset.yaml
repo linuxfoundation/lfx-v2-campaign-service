@@ -77,13 +77,18 @@ spec:
           - path: /projects/:projectId/connection-google-ads/test
           - path: /projects/:projectId/connection-google-ads/set-credential
           # Account discovery — a live, credential-scoped read of the ad accounts
-          # reachable upstream. Google Ads and Meta Ads only for now; other providers
-          # get theirs in follow-ups, and each must be ruled here AND admitted by the
-          # HTTPRoute regex or the path is unreachable through the gateway.
+          # reachable upstream. Ruled for the four providers whose dispatchers
+          # implement AccountLister: google-ads, meta-ads, linkedin-ads and
+          # microsoft-ads. reddit-ads and twitter-ads have no ListAdAccounts in their
+          # platform clients, so the endpoint does not exist for them and ruling the
+          # path would admit one the service does not serve. Each entry must be ruled
+          # here AND admitted by the HTTPRoute regex or the path is unreachable
+          # through the gateway.
           - path: /projects/:projectId/connection-google-ads/accounts
           - path: /projects/:projectId/connection-linkedin-ads
           - path: /projects/:projectId/connection-linkedin-ads/test
           - path: /projects/:projectId/connection-linkedin-ads/set-credential
+          - path: /projects/:projectId/connection-linkedin-ads/accounts
           - path: /projects/:projectId/connection-meta-ads
           - path: /projects/:projectId/connection-meta-ads/test
           - path: /projects/:projectId/connection-meta-ads/set-credential
@@ -97,6 +102,7 @@ spec:
           - path: /projects/:projectId/connection-microsoft-ads
           - path: /projects/:projectId/connection-microsoft-ads/test
           - path: /projects/:projectId/connection-microsoft-ads/set-credential
+          - path: /projects/:projectId/connection-microsoft-ads/accounts
           - path: /projects/:projectId/connection-hubspot
           - path: /projects/:projectId/connection-hubspot/test
           - path: /projects/:projectId/connection-hubspot/set-credential
