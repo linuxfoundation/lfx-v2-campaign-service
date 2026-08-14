@@ -239,3 +239,28 @@ func TestCreateDemandGenCampaignReturnsThePartialAfterBudgetCommits(t *testing.T
 		t.Errorf("CampaignID = %q, want empty — the campaign was not created", res.CampaignID)
 	}
 }
+
+// The campaign NAME must not be the Search one. preflightCampaign hardcoded
+// ComposeName("Search Campaign", …), so the first version of this port composed both
+// channels identically — Google rejects a duplicate campaign name in an account, and two
+// channels sharing a name are indistinguishable to anyone reconciling by name after an
+// ambiguous create. The legacy Express path draws the same distinction
+// (buildCampaignName(body, 'Search' | 'DemandGen')). Caught in review of #130.
+func TestCreateDemandGenCampaignUsesItsOwnName(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	var bodies []map[string]any
+	srv := captureServer(t, &bodies, &paths, &mu)
+	t.Cleanup(srv.Close)
+
+	res, err := newDemandGenClient(t, srv.URL).CreateDemandGenCampaign(context.Background(), demandGenInput())
+	if err != nil {
+		t.Fatalf("CreateDemandGenCampaign: %v", err)
+	}
+	if strings.Contains(res.CampaignName, "Search Campaign") {
+		t.Errorf("CampaignName = %q — a Demand Gen campaign must not be named as the Search one; they would collide on the same brief", res.CampaignName)
+	}
+	if !strings.Contains(res.CampaignName, "DemandGen") {
+		t.Errorf("CampaignName = %q, want it to identify the channel", res.CampaignName)
+	}
+}

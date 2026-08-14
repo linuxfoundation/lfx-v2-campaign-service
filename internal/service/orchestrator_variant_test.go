@@ -26,7 +26,12 @@ func TestVariantForDispatch(t *testing.T) {
 		config   string
 		want     string
 	}{
-		{"google search is its own slot", model.ProviderGoogleAds, `{"googleAdsConfig":{"channel":"search"}}`, "search"},
+		// Explicit "search" shares the DEFAULT slot rather than claiming its own: it
+		// dispatches the identical Search campaign as an absent channel, and every row
+		// created before this column was backfilled to 'default'. Giving it a separate slot
+		// meant the updated UI would miss an older brief's existing campaign and create a
+		// SECOND paid Search campaign. Caught in review of #130.
+		{"explicit search shares the default slot", model.ProviderGoogleAds, `{"googleAdsConfig":{"channel":"search"}}`, model.VariantDefault},
 		{"google demand-gen is a DIFFERENT slot", model.ProviderGoogleAds, `{"googleAdsConfig":{"channel":"demand-gen"}}`, "demand-gen"},
 		// Absent channel means Search upstream, but the SLOT is 'default': every caller
 		// written before this column omits it, and their existing rows were backfilled to
@@ -62,7 +67,11 @@ func TestVariantForDispatch(t *testing.T) {
 // collide, the second dispatch reads the first's campaign and reports a false success.
 func TestVariantForDispatchSeparatesGoogleChannels(t *testing.T) {
 	search := variantForDispatch(model.ProviderGoogleAds, json.RawMessage(`{"googleAdsConfig":{"channel":"search"}}`))
+	absent := variantForDispatch(model.ProviderGoogleAds, json.RawMessage(`{"googleAdsConfig":{"budget":500}}`))
 	demandGen := variantForDispatch(model.ProviderGoogleAds, json.RawMessage(`{"googleAdsConfig":{"channel":"demand-gen"}}`))
+	if search != absent {
+		t.Errorf("explicit search (%q) and absent (%q) must SHARE a slot — they dispatch the same campaign, and a split would double-create on an older brief", search, absent)
+	}
 	if search == demandGen {
 		t.Fatalf("search and demand-gen resolved to the same slot %q — one brief could not hold both, which is the bug this column fixes", search)
 	}

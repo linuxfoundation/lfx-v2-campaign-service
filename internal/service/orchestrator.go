@@ -800,6 +800,11 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 // a typo would spend one channel's budget on another. This only needs a stable slot
 // key, and passing the raw value through means a typo claims its own slot and is then
 // refused, rather than colliding with a real campaign's.
+// googleAdsChannelSearchName is the `channel` value that means the default Search
+// campaign. Duplicated from internal/dispatch rather than imported: dispatch imports
+// this package, so the dependency cannot run the other way.
+const googleAdsChannelSearchName = "search"
+
 func variantForDispatch(p model.Provider, config json.RawMessage) string {
 	if p != model.ProviderGoogleAds || len(config) == 0 {
 		return model.VariantDefault
@@ -815,7 +820,20 @@ func variantForDispatch(p model.Provider, config json.RawMessage) string {
 		// error rather than failing here with a less specific one.
 		return model.VariantDefault
 	}
-	return model.NormalizeVariant(strings.ToLower(strings.TrimSpace(envelope.GoogleAds.Channel)))
+	ch := strings.ToLower(strings.TrimSpace(envelope.GoogleAds.Channel))
+	// Explicit "search" and an ABSENT channel dispatch the identical Search campaign, so
+	// they must share a slot. They did not: absence normalized to 'default' (what every
+	// pre-000021 row was backfilled to) while "search" claimed a slot of its own — so the
+	// updated UI, which now names the channel explicitly, would miss the existing row for
+	// a brief created before it and create a SECOND paid Search campaign.
+	//
+	// Collapsing to 'default' rather than migrating the old rows to 'search' keeps the
+	// backfill honest: 'default' means "this platform's only campaign", which is exactly
+	// what those rows are.
+	if ch == googleAdsChannelSearchName {
+		return model.VariantDefault
+	}
+	return model.NormalizeVariant(ch)
 }
 
 func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, config json.RawMessage, by *model.Actor) platformResult {
@@ -1046,6 +1064,11 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			// drop the record of a paid campaign that actually exists.
 			if campaign != nil && (campaign.PlatformCampaignID != "" || len(campaign.Result) > 0) {
 				campaign.JobID = &jobID
+				// Stamp the SAME variant the claim used. A dispatcher does not know which
+				// slot it was claimed for, so without this the upsert writes 'default' via
+				// NormalizeVariant while the claim holds 'demand-gen' — the conflict target
+				// then misses the claimed row and INSERTs a second one.
+				campaign.Variant = variant
 				campaign.BriefID = brief.ID
 				campaign.ProjectID = brief.ProjectID
 				campaign.Platform = p
@@ -1124,8 +1147,10 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		return res
 	}
 	// Stamp ownership, then update the claimed row in place (Upsert on the same
-	// (brief, platform) fills in the real upstream id and status).
+	// (brief, platform, variant) fills in the real upstream id and status).
 	campaign.JobID = &jobID
+	// The SAME variant the claim used — see the retained-partial path above.
+	campaign.Variant = variant
 	campaign.BriefID = brief.ID
 	campaign.ProjectID = brief.ProjectID
 	campaign.Platform = p

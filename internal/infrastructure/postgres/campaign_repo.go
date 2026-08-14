@@ -234,7 +234,7 @@ func (r *CampaignRepo) StuckDispatchClaims(ctx context.Context, limit int) ([]*m
 // it can only ever delete a placeholder claim, never a created campaign.
 func (r *CampaignRepo) DeleteDispatchClaim(ctx context.Context, briefID string, platform model.Provider, variant string) error {
 	q := `DELETE FROM campaigns WHERE brief_id=$1 AND platform=$2 AND variant=$3 AND status='pending'`
-	if _, err := r.db.Exec(ctx, q, briefID, string(platform)); err != nil {
+	if _, err := r.db.Exec(ctx, q, briefID, string(platform), model.NormalizeVariant(variant)); err != nil {
 		return fmt.Errorf("delete dispatch claim: %w", err)
 	}
 	return nil

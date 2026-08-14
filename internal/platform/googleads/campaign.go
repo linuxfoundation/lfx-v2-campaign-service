@@ -452,7 +452,25 @@ func (c *Client) ValidateCampaignInput(in CampaignInput) error {
 
 // preflightCampaign validates the input and computes the derived values. Non-mutating: it
 // performs no I/O, so a caller may run it to decide whether a request is well-formed.
+// campaignKind is the name segment that distinguishes one channel's campaign from
+// another's on the SAME brief. Google rejects a duplicate campaign name within an
+// account, and (more importantly) two channels sharing a name are indistinguishable
+// to anyone reconciling them by name after an ambiguous create.
+const (
+	campaignKindSearch    = "Search Campaign"
+	campaignKindDemandGen = "DemandGen Campaign"
+)
+
+// preflightCampaign validates the input and composes the names, for the given campaign
+// KIND. The kind is a parameter rather than a constant because Demand Gen and Search are
+// separate campaigns under one brief: composing both as "Search Campaign" made them
+// collide upstream and become indistinguishable in a reconcile. The legacy Express path
+// draws the same distinction (buildCampaignName(body, 'Search' | 'DemandGen')).
 func (c *Client) preflightCampaign(in CampaignInput) (*campaignPreflight, error) {
+	return c.preflightCampaignKind(campaignKindSearch, in)
+}
+
+func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaignPreflight, error) {
 	if err := c.validateAccountIDs(); err != nil {
 		return nil, err
 	}
@@ -490,7 +508,7 @@ func (c *Client) preflightCampaign(in CampaignInput) (*campaignPreflight, error)
 	}
 
 	budgetName := ComposeName("Budget", in)
-	campaignName := ComposeName("Search Campaign", in)
+	campaignName := ComposeName(kind, in)
 	// Budget name is limited in UTF-8 BYTES (len is the byte count); campaign name in
 	// CHARACTERS (utf8.RuneCountInString). See maxBudgetNameBytes/maxCampaignNameRunes.
 	if err := validateEntityName("budget", budgetName, len(budgetName), maxBudgetNameBytes, "UTF-8 bytes"); err != nil {

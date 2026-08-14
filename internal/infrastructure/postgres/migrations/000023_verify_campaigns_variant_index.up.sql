@@ -57,7 +57,12 @@ BEGIN
       AND i.indisvalid
       AND i.indnkeyatts = 3
       AND pg_get_indexdef(i.indexrelid) LIKE '%(brief_id, platform, variant)%'
-      AND pg_get_expr(i.indpred, i.indrelid) IS NOT NULL;
+      -- The EXACT predicate, not merely that one exists. An impostor such as
+      -- `WHERE status = 'created'` is unique, valid and correctly keyed, and would pass a
+      -- non-null check while enforcing a different invariant entirely — after which 000024
+      -- drops the real arbiter. Character-identical to the deparsed form, matching how
+      -- 000014 compares its own.
+      AND pg_get_expr(i.indpred, i.indrelid) = '(status <> ''deleted''::text)';
 
     IF idx_oid IS NULL THEN
         RAISE EXCEPTION

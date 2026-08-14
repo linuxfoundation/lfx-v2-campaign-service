@@ -57,7 +57,7 @@ type demandGenAdGroupCreate struct {
 // "nothing was created" from "something may exist and needs reconciling". Returning
 // (nil, err) here would release the claim on a campaign that exists and spends.
 func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
-	pf, err := c.preflightCampaign(in)
+	pf, err := c.preflightCampaignKind(campaignKindDemandGen, in)
 	if err != nil {
 		return nil, err // pre-create: nothing was sent
 	}
@@ -128,7 +128,13 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		AdvertisingChannelType:         advertisingChannelDemandGen,
 		CampaignBudget:                 budgetResource,
 		ContainsEuPoliticalAdvertising: euPoliticalAdvertisingNo,
-		TargetSpend:                    map[string]any{},
+		// targetSpend, matching the legacy Express implementation's `target_spend: {}` —
+		// which is what serves this channel on app.lfx.dev today, so it is evidence of what
+		// the API accepts rather than a reading of the docs. A review flagged it as
+		// unsupported for Demand Gen on v23; keeping the shape the working implementation
+		// uses, and noting the disagreement here so a real create settles it. This is the
+		// one field a live create would most usefully verify.
+		TargetSpend: map[string]any{},
 	}}}}
 	campaignResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaigns:mutate"), campaignReq, false)
 	if err != nil {
