@@ -226,9 +226,12 @@ discovery is not a Campaign Management call. It is
 Microsoft splits its API by service across DIFFERENT hosts, so `msCustomerBaseURL` and
 `WithCustomerBaseURL` sit alongside the campaign base rather than replacing it, and the
 tests point the two at different servers — a call routed to the wrong service would
-otherwise look correct. (This is still the synchronous REST/JSON surface; the SOAP,
-submit-and-poll Reporting API that tabled Microsoft metrics reads is a third service
-again.) The version segment is NOT a second knob: `WithAPIVersion` sets `c.apiVersion`
+otherwise look correct. Reporting is a THIRD service again
+(`reporting.api.bingads.microsoft.com`, reached via `msReportingBaseURL` /
+`WithReportingBaseURL` / `doReportingRequest`) — see the metrics section below. It is
+REST/JSON like the other two, NOT SOAP; what makes it different is that it is
+ASYNCHRONOUS (submit, poll, then download a zipped CSV). The version segment is NOT a
+second knob: `WithAPIVersion` sets `c.apiVersion`
 for both hosts, because Microsoft versions the two services in lockstep — a caller
 pinning a version is pinning the client, not one of its halves.
 
@@ -406,3 +409,36 @@ Two further details belong to this layer specifically:
   PRESENCE separately and reports absence as unconfirmed — otherwise a proxy error page that happens
   to parse would let the service persist a status Microsoft never confirmed. The valid empty forms
   (`null`, `[]`) are still accepted.
+
+## Metrics read (asynchronous, default-OFF)
+
+`GetCampaignMetrics(ctx, campaignID, window)` answers the same question as the other five
+platform clients, but Microsoft is the only one whose reporting is ASYNCHRONOUS. The
+pipeline is `POST Reporting/v13/GenerateReport/Submit` (returns a `ReportRequestId`) ->
+`POST .../Poll` (`Pending` | `Success` | `Error`, plus a pre-signed download URL) -> `GET`
+that URL for a **ZIP containing one CSV**. It is REST/JSON, not SOAP.
+
+The `service.MetricsReader` contract is synchronous and the platform ingress times out at
+60s, so the submit+poll phase is bounded by `reportPollBudget` (20s) and gives up with
+`ErrReportNotReady`. The DOWNLOAD is deliberately outside that budget: once `Success` is
+reported the file exists, and cutting off the transfer would discard a report already paid
+for. `ErrReportNotReady` is NOT mapped to either metrics sentinel — both mean 400, and a
+report still building is retryable, not unsupported.
+
+Three properties are load-bearing and each is pinned by a test. The CSV is **ragged** —
+a two-column metadata preamble, then the four-column header and data, then a one-column `©`
+trailer — so `FieldsPerRecord = -1` is required; the default field-count lock rejects the
+whole file at the header row, which would fail every real report. Columns are resolved by
+header NAME, never by position, because Microsoft's writer chooses its own order and a
+positional read would swap Clicks and Spend into plausible wrong numbers; a missing metric
+column is refused rather than defaulted to zero. And the download request carries NO bearer
+token: the URL is pre-signed storage, so attaching our OAuth credential would disclose it to
+a host that neither needs nor expects it.
+
+The one path where zeroes are truthful is a `Success` status with no download URL —
+Microsoft's "report built, no rows". Every other empty outcome in this file is an error.
+
+Reads are gated behind `MICROSOFT_METRICS_ENABLED` (chart default `"false"`), mirroring
+`REDDIT_METRICS_ENABLED`: the v13 Reporting contract was implemented from published
+documentation and has not been exercised against a live Microsoft Advertising account, and a
+guessed read returning 200 looks authoritative to every consumer.

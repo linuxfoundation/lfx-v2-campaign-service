@@ -134,6 +134,22 @@ openssl rand -base64 32
   (`charts/lfx-v2-campaign-service/values.yaml`); flip it only after
   the contract is verified against a live Reddit ad account.
 
+- `MICROSOFT_METRICS_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to Microsoft Advertising (Bing Ads) metrics reads.
+  Only the exact value `true` enables them; unset or any other value
+  (including `TRUE` or a typo) fails closed, and
+  `GET .../campaigns/{campaign_id}/metrics` answers 400 "not
+  supported for this campaign's platform" for a Microsoft campaign.
+  Off by default because the v13 Reporting contract was implemented
+  from Microsoft's published documentation and has NOT been exercised
+  against a live Microsoft Advertising account. Microsoft's pipeline
+  is also unlike every other platform's — an asynchronous
+  submit/poll/download returning a zipped CSV rather than one JSON
+  GET — so there is more surface to be wrong about. The chart sets it
+  to `"false"` (`charts/lfx-v2-campaign-service/values.yaml`); flip it
+  only after the contract is verified against a live Microsoft ad
+  account.
+
 ### Snowflake (optional, audience building)
 
 Read-only warehouse access, used ONLY to resolve an event's past editions when

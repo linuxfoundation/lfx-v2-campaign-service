@@ -172,8 +172,10 @@ type Client struct {
 	// Microsoft splits its API across hosts by service; apiVersion is shared, since both
 	// services are versioned in lockstep at v13.
 	customerBaseURL string
-	apiVersion      string
-	tokenURL        string
+	// reportingBaseURL is the Reporting origin — the third host in the same split.
+	reportingBaseURL string
+	apiVersion       string
+	tokenURL         string
 
 	httpClient *http.Client
 	now        func() time.Time
@@ -254,6 +256,16 @@ func WithCustomerBaseURL(u string) Option {
 	}
 }
 
+// WithReportingBaseURL overrides the Reporting service origin. Primarily for tests
+// (httptest.Server).
+func WithReportingBaseURL(u string) Option {
+	return func(c *Client) {
+		if u != "" {
+			c.reportingBaseURL = strings.TrimRight(u, "/")
+		}
+	}
+}
+
 // WithTokenURL overrides the OAuth2 token endpoint. Primarily for tests.
 func WithTokenURL(u string) Option {
 	return func(c *Client) {
@@ -303,15 +315,16 @@ func withRetryBaseDelay(d time.Duration) Option {
 // caller's client is not mutated). Mirrors the google-ads/reddit clients.
 func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client {
 	c := &Client{
-		creds:           creds,
-		account:         account,
-		baseURL:         msAdsBaseURL,
-		customerBaseURL: msCustomerBaseURL,
-		apiVersion:      msAdsAPIVersion,
-		tokenURL:        msOAuthTokenURL,
-		httpClient:      &http.Client{Timeout: msAdsRequestTimeout, CheckRedirect: noFollow},
-		now:             time.Now,
-		retryBaseDelay:  retryBaseDelay,
+		creds:            creds,
+		account:          account,
+		baseURL:          msAdsBaseURL,
+		customerBaseURL:  msCustomerBaseURL,
+		reportingBaseURL: msReportingBaseURL,
+		apiVersion:       msAdsAPIVersion,
+		tokenURL:         msOAuthTokenURL,
+		httpClient:       &http.Client{Timeout: msAdsRequestTimeout, CheckRedirect: noFollow},
+		now:              time.Now,
+		retryBaseDelay:   retryBaseDelay,
 	}
 	for _, o := range opts {
 		o(c)
@@ -674,6 +687,33 @@ func (c *Client) doCustomerRequest(ctx context.Context, method, path string, bod
 		return nil, fmt.Errorf("invalid Microsoft Advertising customer id %q: must be digits only", clipID(c.account.CustomerID))
 	}
 	return c.do(ctx, method, c.customerBaseURL+"/CustomerManagement/"+c.apiVersion+"/"+path, path, body, idempotent, false)
+}
+
+// doReportingRequest performs one call against the REPORTING service —
+// {reportingBaseURL}/Reporting/{version}/{path} — reusing do's token refresh, 429 policy
+// and outcome classification.
+//
+// It is account-scoped (unlike doCustomerRequest): a report is always about ONE account's
+// data, so CustomerAccountId must be attached and validateAccountIDs must run — the account
+// id also reaches the request body via Scope.AccountIds.
+func (c *Client) doReportingRequest(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, error) {
+	if err := c.validateAccountIDs(); err != nil {
+		return nil, err
+	}
+	return c.do(ctx, method, c.reportingBaseURL+"/Reporting/"+c.apiVersion+"/"+path, path, body, idempotent, true)
+}
+
+// sleepCtx waits for d, or returns early if ctx is done. A bare time.Sleep in a poll loop
+// would keep waiting after the caller has already given up.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // do is the shared request loop behind doRequest and doCustomerRequest. fullURL is

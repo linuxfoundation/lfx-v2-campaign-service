@@ -6,13 +6,16 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // microsoftCreds is the credential shape stored (encrypted) for a Microsoft Advertising
@@ -319,4 +322,61 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 		return uerr
 	}
 	return nil
+}
+
+// ReadMetrics implements the OPTIONAL service.MetricsReader capability for Microsoft
+// Advertising, reading campaign performance through the v13 Reporting service.
+//
+// Microsoft's reporting pipeline is asynchronous — submit a report request, poll until it
+// builds, then download a zipped CSV — unlike every other platform here, which answers with
+// one synchronous JSON call. The client bounds the submit+poll phase well under the platform
+// ingress timeout and returns microsoft.ErrReportNotReady rather than hanging the caller;
+// that is mapped to domain.ErrMetricsUnavailable below, because a report still building is a
+// "ask again shortly", NOT a campaign with no data. Reporting it as zeroes would turn a
+// timing condition into a measurement.
+//
+// Because of that, this capability is OFF unless MICROSOFT_METRICS_ENABLED is set to "true".
+// Merely declaring this method is the capability switch — Orchestrator.ReadCampaignMetrics
+// discovers MetricsReader by type assertion, and the published endpoint then calls it — so
+// without the flag an UNVERIFIED request/response shape would ship as production metrics that
+// return 200 and look authoritative. The v13 Reporting contract this client implements was
+// written from Microsoft's published documentation and has not been exercised against a live
+// Microsoft Advertising account; nothing in the response carries that caveat. The gate is
+// checked here rather than at construction so a deployment can flip it without a rebuild.
+//
+// Disabled reads answer domain.ErrMetricsUnsupported, which the service maps to the same 400
+// a platform with no metrics support at all returns — the accurate answer while the contract
+// is unverified. Delete the gate once the shape is confirmed against a live ad account.
+func (d *MicrosoftDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+	if os.Getenv(constants.EnvMicrosoftMetricsEnabled) != "true" {
+		return nil, fmt.Errorf("microsoft metrics reads are disabled (%s is not \"true\") while the reporting contract is unverified: %w",
+			constants.EnvMicrosoftMetricsEnabled, domain.ErrMetricsUnsupported)
+	}
+	if campaign == nil || campaign.PlatformCampaignID == "" {
+		return nil, fmt.Errorf("campaign has no platform campaign ID")
+	}
+	client, err := d.resolveMicrosoftClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	metrics, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, window)
+	if err != nil {
+		// Classify the two conditions the caller must NOT read as "no data":
+		// an unsupported window, and a report that had not finished building.
+		if errors.Is(err, microsoft.ErrUnsupportedWindow) {
+			return nil, fmt.Errorf("get campaign metrics from microsoft: %w: %w", domain.ErrMetricsWindowUnsupported, err)
+		}
+		// A report still building is deliberately NOT mapped to either metrics sentinel:
+		// both mean 400 ("this cannot work"), and a retryable timing condition is neither
+		// unsupported nor permanent. It propagates as an ordinary error — a 500 the caller
+		// can retry — until a distinct retryable sentinel exists (there is none today; see
+		// internal/domain/errors.go, which defines only ErrMetricsUnsupported and
+		// ErrMetricsWindowUnsupported). Returning zeroes here instead would be the worse
+		// failure: a timing condition rendered as a measurement.
+		if errors.Is(err, microsoft.ErrReportNotReady) {
+			return nil, fmt.Errorf("get campaign metrics from microsoft (report still building; retry shortly): %w", err)
+		}
+		return nil, fmt.Errorf("get campaign metrics from microsoft: %w", err)
+	}
+	return metrics, nil
 }
