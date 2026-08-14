@@ -64,7 +64,19 @@ BEGIN
       AND i.indisvalid
       AND i.indisready
       AND i.indnkeyatts = 3
-      AND pg_get_indexdef(i.indexrelid) LIKE '%(brief_id, platform, variant)%'
+      -- The KEY COLUMNS themselves, by position, not the text of the definition.
+      -- `pg_get_indexdef(...) LIKE '%(brief_id, platform, variant)%'` only proves that
+      -- string appears SOMEWHERE in the deparsed definition: an expression index with
+      -- three key expressions and this same predicate would satisfy it while enforcing a
+      -- different invariant — and 000024 then drops the real arbiter on this guard's word,
+      -- leaving the application's three-column ON CONFLICT with no matching index.
+      -- Mirrors how 000014 verifies its own index (indkey/pg_attribute, positions 0 and 1).
+      AND (SELECT a.attname FROM pg_attribute a
+            WHERE a.attrelid = i.indrelid AND a.attnum = i.indkey[0]) = 'brief_id'
+      AND (SELECT a.attname FROM pg_attribute a
+            WHERE a.attrelid = i.indrelid AND a.attnum = i.indkey[1]) = 'platform'
+      AND (SELECT a.attname FROM pg_attribute a
+            WHERE a.attrelid = i.indrelid AND a.attnum = i.indkey[2]) = 'variant'
       -- The EXACT predicate, not merely that one exists. An impostor such as
       -- `WHERE status = 'created'` is unique, valid and correctly keyed, and would pass a
       -- non-null check while enforcing a different invariant entirely — after which 000024

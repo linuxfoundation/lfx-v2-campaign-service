@@ -88,13 +88,6 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   WHERE EXISTS` an active brief scoped by project+brief); the FK makes the datastore the
   source of truth for all writers.
 - `000013` / `000014` — campaign SOFT DELETE. `000002`'s full
-  `variant` (added by `000021`) names WHICH of a platform's campaign types a
-  row is: Google's UI offers Search and Demand Gen together and Performance
-  Max is coming, so one brief legitimately holds several `google-ads`
-  campaigns. Every other provider writes `'default'`, and every pre-`000021`
-  row was backfilled to it, so the invariant is unchanged for them — one live
-  campaign per pair, now spelled with a third column.
-
   `UNIQUE (brief_id, platform)` made a campaign row occupy its brief's slot for that
   platform PERMANENTLY, so a campaign created with the wrong budget (or one whose
   upstream create failed ambiguously) blocked that pair forever with no recovery.
@@ -168,6 +161,12 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   (`GetCampaign`, `GetCampaignByPlatform`, `ReplaceCampaign`) also filters deleted
   rows — load-bearing for `GetCampaignByPlatform`, which the orchestrator uses to
   decide whether a pair was already dispatched.
+
+  `variant` (added by `000021`) names WHICH of a platform's campaign types a row is:
+  Google's UI offers Search and Demand Gen together and Performance Max is coming, so
+  one brief legitimately holds several `google-ads` campaigns. Every other provider
+  writes `'default'`, and every pre-`000021` row was backfilled to it, so the invariant
+  is unchanged for them — one live campaign per pair, now spelled with a third column.
 
 - `000015` — `created_by` / `updated_by` JSONB on `campaign_briefs` (see *Actor
   attribution* below).

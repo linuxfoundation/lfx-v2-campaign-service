@@ -257,7 +257,7 @@ const getCampaignQuery = `SELECT ` + campaignCols + ` FROM campaigns
 // campaign exists to enable. At most one LIVE row can match (the partial unique
 // index), so this still returns at most one row.
 const getCampaignByPlatformQuery = `SELECT ` + campaignCols + ` FROM campaigns
-	WHERE brief_id=$1 AND platform=$2 AND variant=$4 AND project_id=$3 AND status <> 'deleted'`
+	WHERE brief_id=$1 AND platform=$2 AND project_id=$3 AND variant=$4 AND status <> 'deleted'`
 
 // GetCampaign returns a single campaign under a brief. Soft-deleted campaigns are
 // invisible to reads: a deleted campaign returns ErrNotFound (404), matching

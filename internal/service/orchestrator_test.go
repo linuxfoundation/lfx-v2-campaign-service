@@ -1122,7 +1122,11 @@ func (r *claimCountingCampaignRepo) ClaimCampaignDispatch(ctx context.Context, p
 	r.cmu.Lock()
 	r.claims++
 	r.cmu.Unlock()
-	return r.fakeCampaignRepo.ClaimCampaignDispatch(ctx, projectID, briefID, p, model.VariantDefault, jobID, by)
+	// Forward the RECEIVED variant, not a hardcoded default. A wrapper that substitutes
+	// the slot key would claim the default slot for every dispatch routed through it and
+	// hide exactly the variant-routing regression this PR exists to prevent — the same
+	// "a fake that does not model the key hides the bug" class the PR argues elsewhere.
+	return r.fakeCampaignRepo.ClaimCampaignDispatch(ctx, projectID, briefID, p, variant, jobID, by)
 }
 
 // TestOrchestrator_DispatchGoesThroughClaim verifies each per-platform dispatch

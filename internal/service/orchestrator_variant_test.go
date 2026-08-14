@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -183,5 +184,43 @@ func TestOrchestrator_InvalidVariantIsRefusedAndClaimsNoSlot(t *testing.T) {
 	// And nothing may have been created upstream.
 	if len(camps.upserted) != 0 {
 		t.Errorf("upserted %d campaigns for an invalid config, want 0", len(camps.upserted))
+	}
+}
+
+// VariantInvalid has TWO causes and the refusal must name the right one. Reporting an
+// undecodable config as "unsupported channel" sends someone hunting a channel value in a
+// payload that never parsed. Raised by Cursor and by dealako on PR #130.
+func TestOrchestrator_InvalidVariantNamesTheActualCause(t *testing.T) {
+	cases := []struct {
+		name   string
+		config string
+		want   string
+	}{
+		{"undecodable config", `{not json`, "could not be decoded"},
+		{"decoded but unsupported channel", `{"googleAdsConfig":{"channel":"performance-max"}}`, "unsupported channel"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			jobs := newFakeJobRepo()
+			camps := &fakeCampaignRepo{}
+			orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+				model.ProviderGoogleAds: okDispatcher{},
+			})
+			brief := &model.CampaignBrief{ID: "b-cause", ProjectID: "cncf"}
+
+			id, err := orch.Start(context.Background(), brief, brief.Version,
+				[]model.Provider{model.ProviderGoogleAds}, json.RawMessage(tc.config))
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			j := waitForTerminal(t, jobs, id)
+			if j.Status == model.JobSucceeded {
+				t.Fatal("an invalid config must not report succeeded")
+			}
+			blob, _ := json.Marshal(j)
+			if !strings.Contains(string(blob), tc.want) {
+				t.Errorf("job does not name the actual cause %q:\n%s", tc.want, string(blob))
+			}
+		})
 	}
 }

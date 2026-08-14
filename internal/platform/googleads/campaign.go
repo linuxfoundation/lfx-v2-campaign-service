@@ -450,8 +450,6 @@ func (c *Client) ValidateCampaignInput(in CampaignInput) error {
 	return err
 }
 
-// preflightCampaign validates the input and computes the derived values. Non-mutating: it
-// performs no I/O, so a caller may run it to decide whether a request is well-formed.
 // campaignKind is the name segment that distinguishes one channel's campaign from
 // another's on the SAME brief. Google rejects a duplicate campaign name within an
 // account, and (more importantly) two channels sharing a name are indistinguishable

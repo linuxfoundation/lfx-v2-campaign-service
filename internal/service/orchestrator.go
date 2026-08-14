@@ -781,6 +781,16 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 // reported in-progress. campaign_id is always the upstream platform id, so the
 // field means the same on the reuse and create paths.
 
+// googleAdsChannelSearchName is the `channel` value that means the default Search
+// campaign. Duplicated from internal/dispatch rather than imported: dispatch imports
+// this package, so the dependency cannot run the other way.
+const googleAdsChannelSearchName = "search"
+
+// googleAdsChannelDemandGenName mirrors internal/dispatch's googleAdsChannelDemandGen for
+// the same reason googleAdsChannelSearchName mirrors its sibling: dispatch imports this
+// package, so the dependency cannot run the other way.
+const googleAdsChannelDemandGenName = "demand-gen"
+
 // variantForDispatch reads WHICH of a platform's campaign types this dispatch is for,
 // out of the same config envelope the dispatcher will read.
 //
@@ -795,21 +805,11 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 // configures a single campaign rather than multiplying it, and the rest have no such
 // concept. Their slot key is unchanged in behaviour, just spelled with a third column.
 //
-// A MALFORMED or unknown value is NOT rejected here. The dispatcher validates it and
-// refuses before any upstream call — that is the guard that matters, since defaulting
-// a typo would spend one channel's budget on another. This only needs a stable slot
-// key, and passing the raw value through means a typo claims its own slot and is then
-// refused, rather than colliding with a real campaign's.
-// googleAdsChannelSearchName is the `channel` value that means the default Search
-// campaign. Duplicated from internal/dispatch rather than imported: dispatch imports
-// this package, so the dependency cannot run the other way.
-const googleAdsChannelSearchName = "search"
-
-// googleAdsChannelDemandGenName mirrors internal/dispatch's googleAdsChannelDemandGen for
-// the same reason googleAdsChannelSearchName mirrors its sibling: dispatch imports this
-// package, so the dependency cannot run the other way.
-const googleAdsChannelDemandGenName = "demand-gen"
-
+// A MALFORMED or unknown value resolves to VariantInvalid, which dispatchPlatform
+// refuses BEFORE the idempotency lookup and the claim — so it writes no row and cannot
+// collide with a real campaign's slot. Defaulting a typo would spend one channel's
+// budget on another, and routing it through a shared slot let two concurrent malformed
+// requests collide into a false success (see the refusal in dispatchPlatform).
 func variantForDispatch(p model.Provider, config json.RawMessage) string {
 	if p != model.ProviderGoogleAds || len(config) == 0 {
 		return model.VariantDefault
@@ -898,7 +898,18 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// Refusing before any row is written removes the shared slot entirely, so there is
 	// nothing to collide over and the caller gets the decode error it should have had.
 	if variant == model.VariantInvalid {
-		res.Error = fmt.Sprintf("invalid platform config for %s: unsupported channel", p)
+		// VariantInvalid has TWO causes and they are not the same problem for the caller:
+		// a config that did not decode at all, and one that decoded but named a channel
+		// this service does not support. Reporting both as "unsupported channel" sends
+		// someone hunting a channel value in a payload that never parsed. `config` is
+		// still in hand here, so the cause is re-derived rather than threaded through a
+		// second sentinel.
+		var probe map[string]json.RawMessage
+		if jerr := json.Unmarshal(config, &probe); jerr != nil {
+			res.Error = fmt.Sprintf("invalid platform config for %s: config could not be decoded", p)
+		} else {
+			res.Error = fmt.Sprintf("invalid platform config for %s: unsupported channel", p)
+		}
 		return res
 	}
 	existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p, variant)
