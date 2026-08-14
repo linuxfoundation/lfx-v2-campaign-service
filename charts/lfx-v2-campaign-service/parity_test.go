@@ -820,3 +820,48 @@ func TestWhitespaceOnlyBypassValueStillRenders(t *testing.T) {
 		t.Errorf("rendered deployment is missing the bypass key entirely:\n%s", out)
 	}
 }
+
+// TestMigrateJobIsPreSyncHookRunningTheMigrateSubcommand pins the migration Job's contract.
+// Schema migrations moved out of pod boot (the server now only VERIFIES the schema) into an
+// ArgoCD PreSync hook Job that runs the migrate subcommand of the SAME image. Three
+// properties are load-bearing and each would silently break the "migrate before rollout"
+// guarantee if it regressed:
+//
+//   - it is a PreSync hook (not a plain Job that would apply during/after the rollout);
+//   - it runs `migrate` (the args the serving image dispatches on), not the server;
+//   - it carries the SAME database secret refs the Deployment does, or it cannot connect.
+func TestMigrateJobIsPreSyncHookRunningTheMigrateSubcommand(t *testing.T) {
+	job := helmTemplate(t, "templates/migrate-job.yaml")
+
+	var yamlOnly strings.Builder
+	for _, line := range strings.Split(job, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			yamlOnly.WriteString(line)
+			yamlOnly.WriteString("\n")
+		}
+	}
+	rendered := yamlOnly.String()
+
+	for _, want := range []string{
+		"kind: Job",
+		"argocd.argoproj.io/hook: PreSync",
+		"argocd.argoproj.io/hook-delete-policy: BeforeHookCreation",
+		`args: ["migrate"]`,
+		"restartPolicy: Never",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("migrate Job must contain %q; rendered chart does not.\nrendered:\n%s", want, rendered)
+		}
+	}
+
+	// The Job must resolve the DSN from the same secret the Deployment uses. Assert the
+	// required PG* keys are present as secret refs; a Job missing them cannot migrate.
+	for _, want := range []string{"name: PGHOST", "name: PGUSER", "name: PGPASSWORD", "name: PGDATABASE"} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("migrate Job is missing the database env %q it needs to connect.\nrendered:\n%s", want, rendered)
+		}
+	}
+	if !strings.Contains(rendered, "name: lfx-v2-campaign-service-secrets") {
+		t.Errorf("migrate Job must source the database from the campaign-service secret.\nrendered:\n%s", rendered)
+	}
+}

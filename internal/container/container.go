@@ -336,11 +336,12 @@ func NewContainer(cfg *config.Config) (container *Container, err error) {
 		}
 		return c, nil
 	case postgres.IsPermanentMigrationErr(initErr):
-		// A dirty schema (or other permanent migration state) can NEVER be cleared by
-		// retrying — it needs an operator to inspect and force the version. Fail fast
-		// so the failure is loud (pod crash) rather than a silent 503 loop that burns
-		// the startup-probe budget and then restarts to the same broken state.
-		return nil, fmt.Errorf("database migration is in a permanent-failure state (needs manual recovery): %w", initErr)
+		// A schema the pod cannot serve against — a missing or invalid constraint-bearing
+		// index (migrations run in the PreSync Job now, so boot only VERIFIES) — can NEVER
+		// be cleared by retrying; it needs an operator to run the rebuild DDL the error
+		// carries. Fail fast so the failure is loud (pod crash) rather than a silent 503
+		// loop that burns the startup-probe budget and then restarts to the same state.
+		return nil, fmt.Errorf("database schema is in a permanent-failure state (needs manual recovery): %w", initErr)
 	default:
 		slog.Warn("database not ready at startup; booting in 503 mode and retrying in the background",
 			"error", initErr.Error())
@@ -826,12 +827,13 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			}
 			return
 		}
-		// A permanent migration state (dirty schema) will never clear by retrying, so
-		// stop the loop and surface it loudly. /readyz stays at 503 with no live pool,
-		// but the ERROR log makes the reason unambiguous instead of an endless silent
-		// "will retry" stream — an operator must force the migration version.
+		// A permanent schema-verification failure (a missing or invalid required index)
+		// will never clear by retrying, so stop the loop and surface it loudly. /readyz
+		// stays at 503 with no live pool, but the ERROR log makes the reason unambiguous
+		// instead of an endless silent "will retry" stream — an operator must run the
+		// rebuild DDL the error carries.
 		if postgres.IsPermanentMigrationErr(err) {
-			slog.Error("background database initialization hit a permanent migration failure (needs manual recovery); stopping retries",
+			slog.Error("background database initialization hit a permanent schema-verification failure (needs manual recovery); stopping retries",
 				"attempt", attempt, "error", err.Error())
 			return
 		}
@@ -854,65 +856,49 @@ func (c *Container) setPool(pool *postgres.Pool) {
 	c.mu.Unlock()
 }
 
-// initDatabase runs migrations and opens the pool within a single bounded
-// attempt. golang-migrate's Up() takes no context, so it is bounded by running
-// it under the same deadline. Returns the live pool or an error.
+// initDatabase verifies the schema and opens the pool within a single bounded attempt.
+// Schema MUTATION no longer happens here: migrations run in the `migrate` subcommand as an
+// ArgoCD PreSync Job, before the rollout. Boot only VERIFIES the schema (required/invalid
+// indexes) and fails closed if a constraint-bearing index is missing or invalid — the guard
+// /readyz relies on — so the previous release is never migrated out from under while it may
+// still be serving. Returns the live pool or an error.
 func initDatabase(parent context.Context, dsn string) (*postgres.Pool, error) {
 	ctx, cancel := context.WithTimeout(parent, startupDBTimeout)
 	defer cancel()
 
 	// Open the pool FIRST: NewPool does a context-bounded Ping (pool.go), so when the
-	// database is unreachable this fails fast within the deadline. golang-migrate's
-	// Up() takes no context and blocks until the DB responds, so running it against a
-	// down database would hang past the deadline — and because the caller retries,
-	// each hung attempt would leak another migration goroutine and race concurrent
-	// migrations. Gating Migrate behind a successful (reachable) Ping ensures Migrate
-	// only runs when the DB is actually up, where it connects immediately, so no
-	// migration goroutine is ever left blocked and retries never overlap.
+	// database is unreachable this fails fast within the deadline rather than blocking.
 	pool, err := postgres.NewPool(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database pool: %w", err)
 	}
 
-	// Migrate only after a reachable ping (above), so it connects immediately rather
-	// than blocking against a down DB. It can still run long on a reachable DB if a
-	// migration is slow or lock-blocked, and golang-migrate's Up() takes no context,
-	// so bound it with the startup deadline: run it under migrateMu (only ONE
-	// migration ever runs at a time, so a retry can't start a second while a prior is
-	// still finishing) and return on the deadline. On timeout the in-flight migration
-	// keeps running under the lock; the next retry blocks on migrateMu until it
-	// finishes rather than launching an overlapping one.
-	migrateDone := make(chan error, 1)
-	go func() {
-		migrateMu.Lock()
-		defer migrateMu.Unlock()
-		migrateDone <- postgres.Migrate(dsn)
-	}()
+	// VerifySchema is a bounded catalog read (no Up(), no context argument), so run it under
+	// the startup deadline via a goroutine and return on ctx: a hung read must not wedge boot.
+	// Unlike the old migration path it needs no serialization — it is read-only and idempotent,
+	// so overlapping boot retries are harmless.
+	verifyDone := make(chan error, 1)
+	go func() { verifyDone <- postgres.VerifySchema(dsn) }()
 	select {
-	case mErr := <-migrateDone:
-		if mErr != nil {
+	case vErr := <-verifyDone:
+		if vErr != nil {
 			pool.Close()
-			return nil, fmt.Errorf("run migrations: %w", mErr)
+			return nil, fmt.Errorf("verify schema: %w", vErr)
 		}
 	case <-ctx.Done():
 		pool.Close()
-		return nil, fmt.Errorf("run migrations: %w", ctx.Err())
+		return nil, fmt.Errorf("verify schema: %w", ctx.Err())
 	}
-	// A successful migrateDone can win the select even if ctx was ALSO cancelled
-	// (Go picks a ready case pseudo-randomly when both fire together). Returning a
-	// live pool here would let retryDatabaseInit late-bind backends, start the
-	// sweeper, and flip readiness AFTER Close cancelled init — the exact pool swap
-	// Close means to prevent. Re-check the context and fail closed if it's done.
+	// A successful verifyDone can win the select even if ctx was ALSO cancelled (Go picks a
+	// ready case pseudo-randomly when both fire together). Returning a live pool here would let
+	// retryDatabaseInit late-bind backends, start the sweeper, and flip readiness AFTER Close
+	// cancelled init — the exact pool swap Close means to prevent. Re-check and fail closed.
 	if err := ctx.Err(); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("run migrations: %w", err)
+		return nil, fmt.Errorf("verify schema: %w", err)
 	}
 	return pool, nil
 }
-
-// migrateMu serializes golang-migrate runs so a retry never starts a second
-// migration while a prior (possibly deadline-abandoned) one is still finishing.
-var migrateMu sync.Mutex
 
 // Close releases any resources held by the container. It first stops the background
 // DB-init goroutine (if a cold start is still retrying), then stops the periodic

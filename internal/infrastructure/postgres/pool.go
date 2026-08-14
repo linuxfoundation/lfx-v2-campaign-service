@@ -161,9 +161,21 @@ func Migrate(dsn string) error {
 	return checkNoInvalidIndexes(dsn)
 }
 
-// invalidIndexCheckTimeout bounds the post-migration catalog read. It is a single
-// indexed lookup against a database the migrator has just finished using, so the budget
-// only needs to cover a connect plus one round trip.
+// VerifySchema runs the same required/invalid-index verification Migrate performs after
+// Up(), but applies NO migration. The service calls it at boot now that schema mutation has
+// moved into the `migrate` subcommand (an ArgoCD PreSync Job): a pod must still fail closed
+// when a constraint-bearing index is missing or invalid — that is the guard /readyz relies
+// on — but must NOT change the schema itself, because the previous release may still be
+// serving during a rollout. The errors are the same permanent sentinels (ErrInvalidIndex,
+// ErrMissingRequiredIndex, ErrRequiredIndexMismatch), so IsPermanentMigrationErr classifies
+// a verification failure exactly as it classified the post-migration check.
+func VerifySchema(dsn string) error {
+	return checkNoInvalidIndexes(dsn)
+}
+
+// invalidIndexCheckTimeout bounds the catalog read that follows a migration (in `Migrate`)
+// and runs at boot (in `VerifySchema`). It is a single indexed lookup against a database,
+// so the budget only needs to cover a connect plus one round trip.
 const invalidIndexCheckTimeout = 10 * time.Second
 
 // ErrInvalidIndex reports that the schema carries an index Postgres has marked INVALID.
@@ -204,8 +216,10 @@ const invalidIndexQuery = `SELECT c.relname
 	WHERE NOT i.indisvalid AND n.nspname = current_schema()
 	ORDER BY c.relname`
 
-// checkNoInvalidIndexes runs after a successful migration and refuses to report success
-// while the schema carries an invalid index.
+// checkNoInvalidIndexes refuses to report a healthy schema while it carries an invalid
+// index. It runs after a successful migration (`Migrate`) AND on every boot as the body of
+// `VerifySchema` — the server no longer migrates at boot, so this read-only check is the
+// whole schema gate there.
 //
 // This exists because `CREATE INDEX CONCURRENTLY IF NOT EXISTS` cannot recover from its
 // own failure. A failed CONCURRENTLY build leaves the index present under the intended
@@ -220,13 +234,14 @@ const invalidIndexQuery = `SELECT c.relname
 // an invalid index is never an intended state, and every future CONCURRENTLY migration
 // gets this for free rather than needing its own bespoke assertion.
 //
-// Running it on every boot, including the ErrNoChange path, is the point: a pod that
+// Running it on every boot is the point (in `Migrate` this includes the ErrNoChange path;
+// at boot `VerifySchema` runs it with no migration at all): a pod that
 // starts against a schema whose lease index is invalid must refuse rather than quietly
 // accept the duplicate builds the index was added to prevent.
 func checkNoInvalidIndexes(dsn string) error {
-	// Migrate takes no context (golang-migrate's Up() does not either). This is a
-	// single catalog read against a database the migration just finished using, so a
-	// short independent deadline is enough and keeps a hung read from wedging boot.
+	// This is a single catalog read (no migration is applied on the boot path). It runs
+	// against a reachable database, so a short independent deadline covers a connect plus
+	// one round trip and keeps a hung read from wedging boot.
 	ctx, cancel := context.WithTimeout(context.Background(), invalidIndexCheckTimeout)
 	defer cancel()
 

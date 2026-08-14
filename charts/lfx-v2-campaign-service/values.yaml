@@ -55,6 +55,23 @@ resources:
     cpu: 100m
     memory: 128Mi
 
+# migrateJob configures the ArgoCD PreSync hook Job that applies schema migrations before a
+# rollout (templates/migrate-job.yaml). Migrations no longer run at pod boot; this Job is the
+# single writer of schema, and the server only verifies the schema at startup.
+migrateJob:
+  # activeDeadlineSeconds bounds a migration that hangs on a lock, so the Job fails the sync
+  # rather than running indefinitely.
+  activeDeadlineSeconds: 600
+  # resources for the one-shot migration container. Modest by default; a migration is I/O
+  # bound on the database, not CPU bound in the pod.
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
 # traefik is the configuration for Traefik Gateway API routing
 traefik:
   # gateway specifies the platform Gateway to attach to

@@ -98,8 +98,9 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   rejected.
 
   The split into two versions is required, not stylistic: `000013` uses
-  `CREATE INDEX CONCURRENTLY` (migrations run during a ROLLING startup, so a blocking
-  build could stall an in-flight dispatch claim), which cannot share a file with other
+  `CREATE INDEX CONCURRENTLY` (the migration runs against the shared database while the
+  previous release is still serving — the PreSync Job applies it before the rollout — so a
+  blocking build could stall an in-flight dispatch claim), which cannot share a file with other
   statements — a multi-statement migration is batched, reintroducing the implicit
   transaction CONCURRENTLY forbids. Splitting also gives the required ORDERING for
   free: golang-migrate applies versions ascending, so the replacement index always
@@ -144,12 +145,16 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   bare `ON CONFLICT (brief_id, platform, variant)` matches no index once the constraint is gone and
   errors on every dispatch claim (verified: works while the constraint exists, fails with
   "there is no unique or exclusion constraint matching the ON CONFLICT specification" after
-  the drop). Since migrations run at pod boot against a shared database, Kubernetes' default
-  `RollingUpdate` — which surges the new pod BEFORE terminating the old one — would put the
-  migrated schema under the old code. The chart therefore pins `strategy.type: Recreate`, so
-  the old pod is gone before the new one migrates. Pinned by
-  `TestDeploymentUsesRecreateStrategy`; `replicaCount` is 1, so nothing is lost by dropping
-  the surge.
+  the drop). Historically migrations ran at pod boot against a shared database, so
+  Kubernetes' default `RollingUpdate` — which surges the new pod BEFORE terminating the old
+  one — would have put the migrated schema under the old code, and the chart pinned
+  `strategy.type: Recreate` so the old pod was gone before the new one migrated. Migrations
+  have since moved into an ArgoCD PreSync Job (see the *Migrate Job* concept), which applies
+  them BEFORE the rollout while the old pods still serve — so Recreate is no longer
+  load-bearing here (it is transitional, removed in linuxfoundation/lfx-self-serve#1544), and
+  the ordering guarantee now rests entirely on expand/contract keeping every migration
+  N-1-safe. Still pinned by `TestDeploymentUsesRecreateStrategy` while it stands;
+  `replicaCount` is 1, so nothing is lost by dropping the surge.
 
   **Consequence for every `ON CONFLICT (brief_id, platform)`**: PostgreSQL infers the
   arbiter index by matching the conflict target AND its predicate, so once the full
@@ -180,14 +185,12 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   the case that could not be split for exactly that reason — the old full constraint still
   governed soft-deleted rows the delete path had to free, so deferring the drop shipped a
   delete endpoint that silently did nothing. When a change genuinely cannot be staged apart,
-  a rollout strategy carries the ordering instead (here `Recreate`) — but only while
-  migrations run AT BOOT, because `Recreate` removes the old pod before the new one boots and
-  migrates. Once migrations move to a PreSync Job (linuxfoundation/lfx-self-serve#1543),
-  which runs BEFORE the Deployment sync while the N-1 ReplicaSet is still serving, `Recreate`
-  no longer covers an unstageable migration — that would need explicit old-pod shutdown
+  the rollout timing does not save it. Migrations now run in a PreSync Job
+  (linuxfoundation/lfx-self-serve#1543) that applies them BEFORE the Deployment sync, while
+  the N-1 ReplicaSet is still serving — so `Recreate` (which only orders the Deployment's own
+  pod swap) does NOT cover an unstageable migration; that needs explicit old-pod shutdown
   (scale the old Deployment to zero) or a maintenance window. That is the exception that
-  shows why the default is expand/contract, and the coupling the PreSync-Job work removes
-  the need for.
+  shows why the default is expand/contract, which is now the whole safety mechanism.
 
 - `000015` — `created_by` / `updated_by` JSONB on `campaign_briefs` (see *Actor
   attribution* below).

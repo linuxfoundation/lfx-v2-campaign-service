@@ -98,27 +98,22 @@ metadata:
     {{- toYaml $annotations | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
-  # Recreate, not the RollingUpdate default, because this service runs its OWN schema
-  # migrations at boot and migration 000014 makes a BACKWARD-INCOMPATIBLE change: it drops
-  # UNIQUE (brief_id, platform), after which the previous release's bare
-  # `ON CONFLICT (brief_id, platform)` matches no index and fails with "there is no unique
-  # or exclusion constraint matching the ON CONFLICT specification" on every dispatch claim.
+  # TRANSITIONAL (removed by linuxfoundation/lfx-self-serve#1544): Recreate, and the
+  # Replace=true annotation above, are retained for one release but are NO LONGER load-bearing.
+  # Schema migrations moved out of pod boot into a PreSync hook Job
+  # (templates/migrate-job.yaml, linuxfoundation/lfx-self-serve#1543); the server now only
+  # VERIFIES the schema at startup and never mutates it.
   #
-  # RollingUpdate surges the new pod BEFORE terminating the old one (default maxSurge 25%
-  # rounds up to 1), so the new pod would migrate the shared database while the old pod is
-  # still serving writes against it. Recreate terminates the old pod first, so the
-  # incompatible schema is never live under the old code.
+  # The old rationale: boot-time migrations under RollingUpdate let the surged NEW pod migrate
+  # the shared DB (e.g. 000014's backward-incompatible drop of UNIQUE (brief_id, platform))
+  # while the OLD pod still served the incompatible schema; Recreate terminated the old pod
+  # first. With migrations in a PreSync Job that hazard is closed by a different mechanism --
+  # expand/contract keeps every pending migration N-1-safe (see the migrations README) -- and
+  # Recreate would not have protected the PreSync case anyway, since PreSync applies the
+  # migration BEFORE the rollout while the old pods are still serving.
   #
-  # This is the correct shape for THIS migration specifically: 000013 and 000014 cannot be
-  # staged apart. Verified on PostgreSQL 16.10 -- with the drop deferred, the old full
-  # constraint still covers soft-deleted rows, so a re-dispatch after delete hits
-  # ON CONFLICT DO NOTHING and is SILENTLY swallowed (RowsAffected 0, read back as "already
-  # claimed"). Deferring the drop therefore ships a delete endpoint whose whole purpose --
-  # freeing the slot -- does not work, and fails silently rather than loudly.
-  #
-  # The cost is a brief gap in availability instead of an overlap. That is the right trade
-  # here: replicaCount is 1, so RollingUpdate provides no real availability benefit anyway,
-  # and /readyz already gates traffic until migrations finish.
+  # Kept here only so #1543 and #1544 stay independently verifiable; #1544 returns this to
+  # RollingUpdate and drops the Replace=true annotation.
   strategy:
     type: Recreate
   selector:

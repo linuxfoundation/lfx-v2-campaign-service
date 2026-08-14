@@ -1,0 +1,82 @@
+# Copyright The Linux Foundation and each contributor to LFX.
+# SPDX-License-Identifier: MIT
+{{/*
+PreSync migration Job. Runs `campaign-service migrate` (a subcommand of the SAME image the
+Deployment runs — ko publishes only cmd/campaign-service) as an ArgoCD PreSync hook, so all
+pending schema migrations are applied BEFORE the Deployment rolls. The server no longer
+migrates at boot (it only verifies the schema via postgres.VerifySchema), which makes this
+Job the single writer of schema.
+
+Why PreSync rather than boot:
+  - A failed migration becomes a failed Job with logs, not a crash-looping pod.
+  - The rollout does not proceed until this Job succeeds, so a broken migration leaves the
+    previous ReplicaSet serving instead of replacing it with a pod that cannot start.
+
+Safety boundary (see the expand/contract rule in the migrations README): PreSync runs the
+migration while the previous release's pods are STILL serving, so every pending migration
+must be N-1-safe. A genuinely unstageable, backward-incompatible migration is NOT covered by
+this Job alone — it needs an explicit old-pod shutdown (scale to zero) or a maintenance
+window. Do not treat PreSync as a substitute for expand/contract.
+
+The Job renders the same .Values.app.environment (PG* / DATABASE_URL secret refs) the
+Deployment does, so DSN resolution is identical; it needs none of the serving-only env
+(OTel, AI, probes).
+*/ -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Chart.Name }}-migrate
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    # PreSync: run (and finish) before the Deployment sync wave.
+    argocd.argoproj.io/hook: PreSync
+    # Delete the prior hook Job only when the next sync creates a new one, so a failed
+    # migration's Job and logs remain inspectable until the next deploy.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  # A migration is not made correct by retrying a bad SQL statement (golang-migrate marks the
+  # schema dirty and the next attempt refuses it), but a couple of retries ride out a
+  # transient "database not reachable yet" at deploy time. Keep it small so a real failure
+  # surfaces quickly and blocks the sync.
+  backoffLimit: 2
+  # Bound a migration that hangs on a lock so the Job fails the sync rather than running
+  # indefinitely.
+  activeDeadlineSeconds: {{ .Values.migrateJob.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Chart.Name }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ .Values.serviceAccount.name | default .Chart.Name }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+          # Run the migrate subcommand of the serving image (same binary as the Deployment).
+          args: ["migrate"]
+          env:
+          {{- range $name, $config := .Values.app.environment }}
+          - name: {{ $name }}
+            {{- if hasKey $config "value" }}
+            value: {{ $config.value | quote }}
+            {{- else if $config.valueFrom }}
+            valueFrom:
+              {{- toYaml $config.valueFrom | nindent 14 }}
+            {{- end }}
+          {{- end }}
+          {{- with .Values.app.extraEnv }}
+          {{- toYaml . | nindent 10 }}
+          {{- end }}
+          {{- with .Values.migrateJob.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

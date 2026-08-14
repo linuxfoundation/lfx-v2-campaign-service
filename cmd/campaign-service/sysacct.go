@@ -58,17 +58,25 @@ func runCommand(args []string, stderr io.Writer) (handled bool, code int) {
 	if !isCmd {
 		return false, 0
 	}
-	if name != bootstrapSystemAccountCmd {
+	switch name {
+	case bootstrapSystemAccountCmd:
+		if err := runSysacctBootstrap(args[1:]); err != nil {
+			_, _ = fmt.Fprintln(stderr, err)
+			return true, 1
+		}
+		return true, 0
+	case migrateCmd:
+		if err := runMigrate(args[1:]); err != nil {
+			_, _ = fmt.Fprintln(stderr, err)
+			return true, 1
+		}
+		return true, 0
+	default:
 		// Writing the diagnostic is best effort: the exit code is what a Job fails on.
-		_, _ = fmt.Fprintf(stderr, "unknown command %q; the only subcommand is %s (server flags begin with -)\n",
-			name, bootstrapSystemAccountCmd)
+		_, _ = fmt.Fprintf(stderr, "unknown command %q; subcommands are %s and %s (server flags begin with -)\n",
+			name, bootstrapSystemAccountCmd, migrateCmd)
 		return true, 2
 	}
-	if err := runSysacctBootstrap(args[1:]); err != nil {
-		_, _ = fmt.Fprintln(stderr, err)
-		return true, 1
-	}
-	return true, 0
 }
 
 // parseProviderConfig turns `k=v,k2=v2` into the connection's non-secret config columns — the

@@ -66,11 +66,16 @@ container boots in 503 mode and retries the pool in the background (see the
 across the window rather than crash-looping.
 
 **Rollout strategy is `Recreate`, and the chart pins `Replace=true` to make that
-deployable.** The Deployment sets `strategy.type: Recreate` (not the RollingUpdate
-default) because this service runs its own schema migrations at boot and a
-backward-incompatible one — `000014` dropping `UNIQUE (brief_id, platform)` — must not go
-live while the previous pod still serves writes; RollingUpdate surges the new pod before
-terminating the old, Recreate orders it the other way. The catch is the cutover: flipping
+deployable — both transitional, removed in linuxfoundation/lfx-self-serve#1544.** The
+Deployment sets `strategy.type: Recreate` (not the RollingUpdate default). This was
+originally load-bearing because the service migrated its own schema AT BOOT: a
+backward-incompatible migration — `000014` dropping `UNIQUE (brief_id, platform)` — must not
+go live while the previous pod still serves writes, and Recreate terminates the old pod
+before the new one boots and migrates, where RollingUpdate would surge the new pod first.
+Migrations have since moved out of boot into a PreSync Job (see the *Migrate Job* concept);
+the server now only VERIFIES the schema at boot. Recreate is therefore no longer
+load-bearing — it is kept for one release so #1543 and #1544 stay independently verifiable —
+but the deploy mechanics below still apply while it is here. The catch is the cutover: flipping
 an EXISTING Deployment from RollingUpdate to Recreate is rejected by the API server with
 `spec.strategy.rollingUpdate: Forbidden: may not be specified when strategy type is
 'Recreate'`. The old object carries a `strategy.rollingUpdate` block the API server
@@ -107,11 +112,11 @@ the concrete case here — the chart pins it AND the ArgoCD Application sets
 `ignoreDifferences: /spec/replicas` with `RespectIgnoreDifferences=true`, so an ordinary sync
 leaves an out-of-band `kubectl scale` or an external HPA's value alone, but a full replace
 overwrites it back to `replicaCount`. That is low risk today
-(no HPA in the chart, `replicaCount: 1`), but nothing reminds anyone to remove it. It is
-retired once schema migrations move out of pod boot into a PreSync Job, after which the
-Deployment returns to RollingUpdate and both the strategy override and the annotation are
-dropped — the cutover hazard the pairing exists to prevent no longer exists once no pod
-migrates the shared schema at boot.
+(no HPA in the chart, `replicaCount: 1`), but nothing reminds anyone to remove it.
+Migrations have now moved out of pod boot into a PreSync Job, so the cutover hazard the
+pairing existed to prevent no longer exists (no pod migrates the shared schema at boot).
+What remains is to return the Deployment to RollingUpdate and drop both the strategy
+override and the annotation — linuxfoundation/lfx-self-serve#1544.
 
 **Rolling back is not the deploy run backwards.** `pool.go` only ever calls `m.Up()`,
 so reverting the image leaves the schema at whatever version the newer binary migrated it
