@@ -630,11 +630,27 @@ var RedditAdsCredentials = Type("reddit-ads-credentials", func() {
 var RedditAdsConnectionConfig = Type("reddit-ads-connection-config", func() {
 	Attribute("label", String, "Optional friendly name")
 	Attribute("account_id", String, "Reddit advertiser ID", func() { Example("t2_gv9wtbfa") })
+	// Reddit requires a conversion pixel on EVERY campaign create -- including Traffic and
+	// Awareness, not only Conversions as the API docs describe (observed against the live LF
+	// account, 2026-08-13). It identifies the advertiser's pixel, which is one per ad account,
+	// so it belongs on the connection rather than being re-entered per campaign.
+	//
+	// NOT Required: connections created before this attribute existed have none, and making it
+	// required would make every one of them unreadable rather than merely unable to dispatch.
+	// The dispatcher refuses a create when it is absent, naming this connection as the fix.
+	Attribute("conversion_pixel_id", String, "Reddit conversion pixel ID (Reddit Ads → Events Manager)", func() {
+		Example("t2_gv9wtbfa")
+	})
 	Required("account_id")
 })
 
 var RedditAdsConnection = Type("reddit-ads-connection", func() {
 	commonConnectionAttrs()
+	// Surfaced on the read model the way google-ads surfaces login_customer_id: it is
+	// non-secret configuration, and without it a caller cannot tell a connection that has a
+	// pixel from one that does not -- which is the difference between a connection that can
+	// create campaigns and one that cannot.
+	Attribute("conversion_pixel_id", String, "Reddit conversion pixel ID")
 	commonConnectionRequired()
 })
 

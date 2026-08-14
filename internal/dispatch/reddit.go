@@ -234,7 +234,15 @@ func (d *RedditDispatcher) resolveRedditClient(ctx context.Context, projectID st
 	}
 	return reddit.NewClient(
 		reddit.Credentials{ClientID: creds.ClientID, ClientSecret: creds.ClientSecret, RefreshToken: creds.RefreshToken},
-		reddit.AccountConfig{AccountID: res.accountID, Label: res.label},
+		// The pixel travels with the ACCOUNT, matching where it is stored. An absent key
+		// yields "", which CreateCampaign refuses with a message naming the connection --
+		// the empty case is a connection saved before the column existed, and guessing a
+		// value would attribute conversions to a pixel that is not this advertiser's.
+		reddit.AccountConfig{
+			AccountID:         res.accountID,
+			Label:             res.label,
+			ConversionPixelID: res.providerConfig["conversion_pixel_id"],
+		},
 		d.opts...,
 	), nil
 }

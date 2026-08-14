@@ -26,8 +26,13 @@ import (
 
 // testCreds / testAccount are dummy injected values (no real secrets, no env).
 var (
-	testCreds   = Credentials{ClientID: "cid", ClientSecret: "secret", RefreshToken: "refresh"}
-	testAccount = AccountConfig{AccountID: "t2_test", Label: "Test Account"}
+	testCreds = Credentials{ClientID: "cid", ClientSecret: "secret", RefreshToken: "refresh"}
+	// ConversionPixelID is set because Reddit requires it on EVERY campaign create, so a
+	// client without one cannot create anything -- see CreateCampaign. The tests below are
+	// about other behaviour, so the fixture carries a valid pixel rather than making every
+	// one of them assert the same refusal. TestCreateCampaign_RequiresAConversionPixel
+	// covers the empty case explicitly.
+	testAccount = AccountConfig{AccountID: "t2_test", Label: "Test Account", ConversionPixelID: "t2_test"}
 )
 
 // TestCreateCampaign_RejectsOverlongNameBeforeAnyPOST verifies an over-long
@@ -754,7 +759,7 @@ func TestCreateCampaign_CommunityFallback(t *testing.T) {
 		if strings.Contains(s, "retrying without communities") {
 			foundFallback = true
 		}
-		if strings.Contains(s, "communities skipped -- add manually") {
+		if strings.Contains(s, "communities") && strings.Contains(s, "skipped -- add manually") {
 			foundSkipped = true
 		}
 	}
@@ -1380,12 +1385,6 @@ func TestCreateCampaign_Validation(t *testing.T) {
 			"unsupported Reddit objective",
 		},
 		{
-			// conversions with no pixel must fail at the pixel check, not earlier.
-			"conversions missing pixel",
-			CampaignInput{EventName: "Ev", Project: "tlf", BudgetUSD: 10, StartDate: "2026-01-01", EndDate: "2026-01-02", RegistrationURL: "https://example.com/reg", Objective: "conversions"},
-			"conversion pixel ID is required",
-		},
-		{
 			// video_views with no goal must fail at the video-goal check.
 			"video_views missing goal",
 			CampaignInput{EventName: "Ev", Project: "tlf", BudgetUSD: 10, StartDate: "2026-01-01", EndDate: "2026-01-02", RegistrationURL: "https://example.com/reg", Objective: "video_views"},
@@ -1411,6 +1410,33 @@ func TestCreateCampaign_Validation(t *testing.T) {
 	}
 }
 
+// A create with no pixel on the input AND none on the connection is refused, whatever the
+// objective. This left the shared-client table above when the pixel moved to the account
+// config: every client there carries one, so no table row can express "no pixel anywhere".
+func TestCreateCampaign_NoPixelAnywhereIsRefused(t *testing.T) {
+	noPixel := AccountConfig{AccountID: testAccount.AccountID, Label: testAccount.Label}
+	c := NewClient(testCreds, noPixel, WithNowFunc(fixedRedditClock()))
+
+	// Traffic, not conversions: the refusal must not depend on the objective, which is the
+	// assumption that made every UI create fail.
+	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName: "No Pixel", Project: "tlf", BudgetUSD: 10,
+		StartDate: "2026-01-01", EndDate: "2026-01-02",
+		RegistrationURL: "https://example.com/reg", Objective: "traffic",
+	})
+	if err == nil {
+		t.Fatal("expected a refusal when no pixel is configured anywhere")
+	}
+	if !strings.Contains(err.Error(), "conversion pixel id") {
+		t.Errorf("error %q does not name the missing pixel", err.Error())
+	}
+	// The remedy is on the CONNECTION, and the message has to say so: an operator reading it
+	// is looking at the campaign they were editing, which is not where the fix lives.
+	if !strings.Contains(err.Error(), "connection") {
+		t.Errorf("error %q does not point the operator at the connection", err.Error())
+	}
+}
+
 // TestCreateCampaign_ConversionPixelRejectedBeforeNetwork verifies the
 // conversion-objective flow rejects a missing pixel BEFORE any network call, so a
 // conversion campaign is never created and then orphaned at ad-group creation for
@@ -1423,7 +1449,10 @@ func TestCreateCampaign_ConversionPixelRejectedBeforeNetwork(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(testCreds, testAccount,
+	// No pixel on the ACCOUNT either -- testAccount carries one, and the connection is now
+	// the source, so using it here would supply the very thing this test removes.
+	noPixelAccount := AccountConfig{AccountID: testAccount.AccountID, Label: testAccount.Label}
+	c := NewClient(testCreds, noPixelAccount,
 		WithBaseURL(srv.URL+"/api/v3"), WithTokenURL(srv.URL), WithNowFunc(fixedRedditClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
 		EventName:       "Conv No Pixel",
@@ -1439,7 +1468,7 @@ func TestCreateCampaign_ConversionPixelRejectedBeforeNetwork(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected rejection for conversions objective with no pixel")
 	}
-	if !strings.Contains(err.Error(), "conversion pixel ID is required") {
+	if !strings.Contains(err.Error(), "conversion pixel id") {
 		t.Errorf("error %q does not name the missing conversion pixel", err.Error())
 	}
 	if called.Load() {
@@ -1478,35 +1507,77 @@ func TestCreateCampaign_ConversionPixelSentWhenPresent(t *testing.T) {
 	}
 }
 
-// TestCreateCampaign_PixelIgnoredForNonConversion verifies that a stray
-// ConversionPixelID carried by a reused input is NOT sent for a non-conversion
-// objective (the field is documented as ignored outside conversions), so an
-// objective-inapplicable field is never sent upstream.
-func TestCreateCampaign_PixelIgnoredForNonConversion(t *testing.T) {
+// TestCreateCampaign_PixelSentForEveryObjective pins the contract the LIVE API enforces,
+// which is the opposite of what this test asserted before.
+//
+// It previously verified that a pixel was NOT sent for a non-conversion objective, on the
+// documented rule that the field is ignored outside conversions. Reddit rejects that: on
+// 2026-08-13 a CLICKS/Traffic create against the LF ad account came back 400 with
+// {"field":"conversion_pixel_id","message":"conversion_pixel_id is required"}, and the same
+// payload was accepted once the pixel was added. Every Reddit create from the UI failed on
+// exactly this, because the docs-shaped gate meant no pixel was ever sent for the objectives
+// that turn out to need one.
+//
+// The old assertion was not merely redundant -- it actively pinned the broken behaviour, so
+// restoring the gate would make this file green again. Written against the observed response
+// rather than the documentation.
+func TestCreateCampaign_PixelSentForEveryObjective(t *testing.T) {
+	for _, objective := range []string{"traffic", "awareness", "conversions"} {
+		t.Run(objective, func(t *testing.T) {
+			c, bodies, cleanup := newBodyCaptureServers(t)
+			defer cleanup()
+
+			_, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName:         "Pixel For " + objective,
+				Project:           "tlf",
+				RegistrationURL:   "https://example.com/reg",
+				BudgetUSD:         100,
+				StartDate:         "2026-09-01",
+				EndDate:           "2026-09-10",
+				GeoTargets:        []string{"us"},
+				Keywords:          []string{"k8s"},
+				Objective:         objective,
+				ConversionPixelID: "pixel_xyz",
+			})
+			if err != nil {
+				t.Fatalf("CreateCampaign(%s): %v", objective, err)
+			}
+			campaignBody, _ := bodies()
+			if campaignBody["conversion_pixel_id"] != "pixel_xyz" {
+				t.Errorf("campaign conversion_pixel_id = %v, want pixel_xyz -- Reddit requires it for %s too, not only conversions",
+					campaignBody["conversion_pixel_id"], objective)
+			}
+		})
+	}
+}
+
+// The pixel comes from the CONNECTION when the campaign input carries none. This is the
+// path every UI create takes: the pixel is an account-level constant the operator saves once
+// on the connection, not something re-entered per campaign.
+func TestCreateCampaign_PixelFallsBackToTheAccountConfig(t *testing.T) {
 	c, bodies, cleanup := newBodyCaptureServers(t)
 	defer cleanup()
 
+	// newBodyCaptureServers builds its client from testAccount, whose pixel is "t2_test".
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
-		EventName:         "Traffic With Stray Pixel",
-		Project:           "tlf",
-		RegistrationURL:   "https://example.com/reg",
-		BudgetUSD:         100,
-		StartDate:         "2026-09-01",
-		EndDate:           "2026-09-10",
-		GeoTargets:        []string{"us"},
-		Keywords:          []string{"k8s"},
-		Objective:         "traffic",
-		ConversionPixelID: "pixel_should_be_ignored",
+		EventName:       "Account Pixel",
+		Project:         "tlf",
+		RegistrationURL: "https://example.com/reg",
+		BudgetUSD:       100,
+		StartDate:       "2026-09-01",
+		EndDate:         "2026-09-10",
+		GeoTargets:      []string{"us"},
+		Keywords:        []string{"k8s"},
+		Objective:       "traffic",
+		// No ConversionPixelID: the connection supplies it.
 	})
 	if err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
-	campaignBody, adGroupBody := bodies()
-	if _, present := campaignBody["conversion_pixel_id"]; present {
-		t.Errorf("campaign body must not carry conversion_pixel_id for a non-conversion objective, got %v", campaignBody["conversion_pixel_id"])
-	}
-	if _, present := adGroupBody["conversion_pixel_id"]; present {
-		t.Errorf("ad group body must not carry conversion_pixel_id for a non-conversion objective, got %v", adGroupBody["conversion_pixel_id"])
+	campaignBody, _ := bodies()
+	if campaignBody["conversion_pixel_id"] != testAccount.ConversionPixelID {
+		t.Errorf("campaign conversion_pixel_id = %v, want %q from the connection",
+			campaignBody["conversion_pixel_id"], testAccount.ConversionPixelID)
 	}
 }
 

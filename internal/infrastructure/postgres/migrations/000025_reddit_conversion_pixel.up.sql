@@ -1,0 +1,17 @@
+-- Reddit requires a conversion pixel on EVERY campaign create, not only for the
+-- CONVERSIONS objective the API docs describe. Observed against the live LF ad account on
+-- 2026-08-13: a CLICKS/Traffic create was rejected with
+-- {"field":"conversion_pixel_id","message":"conversion_pixel_id is required"} and accepted
+-- unchanged once the pixel was supplied.
+--
+-- It belongs on the CONNECTION rather than on each campaign's config because it identifies
+-- the advertiser's pixel: one per ad account, the same for every campaign created through it.
+-- Asking for it per campaign would make an account-level constant a thing the operator can
+-- get wrong once per campaign.
+--
+-- NULLable with no default and no backfill. An existing connection genuinely does not have
+-- one, and inventing a value would be worse than absent: the id is account-specific, so any
+-- guess would attribute conversions to a pixel that is not the advertiser's. The dispatcher
+-- refuses a create when it is missing, which is a clear error rather than a silent
+-- mis-attribution.
+ALTER TABLE reddit_ads_connections ADD COLUMN conversion_pixel_id TEXT;

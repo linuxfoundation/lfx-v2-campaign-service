@@ -162,6 +162,18 @@ type Credentials struct {
 type AccountConfig struct {
 	AccountID string
 	Label     string
+	// ConversionPixelID identifies the advertiser's conversion pixel. It sits on the ACCOUNT
+	// config rather than on CampaignInput because it is a property of the ad account: one
+	// pixel, the same for every campaign created through the connection.
+	//
+	// Reddit requires it on EVERY campaign create observed on the LF account (2026-08-13),
+	// including CLICKS/Traffic — not only CONVERSIONS as the API docs describe. A create
+	// without it is rejected with
+	// {"field":"conversion_pixel_id","message":"conversion_pixel_id is required"}.
+	//
+	// May be empty for a connection saved before the field existed; CreateCampaign refuses
+	// rather than sending a create Reddit will reject.
+	ConversionPixelID string
 }
 
 // Option customizes a Client at construction time.
@@ -1138,12 +1150,28 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// non-empty. Gating resolution on the objective (not merely on the input being
 	// non-empty) keeps a reused input carrying a stray pixel from sending an
 	// objective-inapplicable field that Reddit would reject.
-	var conversionPixelID string
-	if objective == "conversions" {
-		conversionPixelID = strings.TrimSpace(in.ConversionPixelID)
-		if conversionPixelID == "" {
-			return nil, fmt.Errorf("conversion pixel ID is required for objective conversions")
-		}
+	// The pixel is required for EVERY objective, not only conversions.
+	//
+	// This previously gated on `objective == "conversions"`, matching the API documentation.
+	// The live API disagrees: on 2026-08-13 a CLICKS/Traffic create against the LF account was
+	// rejected with {"field":"conversion_pixel_id","message":"conversion_pixel_id is required"}
+	// and accepted unchanged once the pixel was supplied. Every Reddit create from the UI
+	// failed on this, because the docs-shaped gate meant no pixel was ever sent for the
+	// objectives that turn out to need one.
+	//
+	// It is read from the ACCOUNT config, not from CampaignInput: the pixel identifies the
+	// advertiser and is one per ad account, so per-campaign entry would make an account-level
+	// constant something an operator can get wrong once per campaign. A per-campaign value is
+	// still honoured when present so a caller can override, but the connection is the source.
+	conversionPixelID := strings.TrimSpace(in.ConversionPixelID)
+	if conversionPixelID == "" {
+		conversionPixelID = strings.TrimSpace(c.account.ConversionPixelID)
+	}
+	if conversionPixelID == "" {
+		// Refused BEFORE any upstream call: Reddit rejects this create, so sending it would
+		// spend a round trip to learn what is already known. The message names the connection
+		// because that is where the fix is -- not in the campaign the operator was editing.
+		return nil, fmt.Errorf("reddit requires a conversion pixel id and none is configured: add it to this project's Reddit connection (Reddit Ads → Events Manager lists the account's pixel)")
 	}
 
 	var validatedPostID string
@@ -1382,14 +1410,31 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if len(in.Keywords) > 0 {
 		baseTargeting["keywords"] = in.Keywords
 	}
-	if len(in.Interests) > 0 {
-		baseTargeting["interests"] = in.Interests
-	}
+	// in.Interests is deliberately NOT set here: baseTargeting is the RETRY payload, and the
+	// retry exists to drop the dimensions Reddit rejected. Interests are added to
+	// optionalTargeting below, alongside communities.
 
-	targetingWithCommunities := baseTargeting
-	if len(communityNames) > 0 {
-		targetingWithCommunities = cloneTargeting(baseTargeting)
-		targetingWithCommunities["communities"] = communityNames
+	// Interests are held OUT of baseTargeting, which is the retry payload, so the fallback
+	// below drops them by construction rather than by remembering to.
+	//
+	// They are the second targeting dimension the upstream can reject wholesale. Reddit's
+	// interests are OPAQUE IDS ("technology_v3", "programming_v3"), while the brief's
+	// generator produces human labels ("Artificial Intelligence", "Machine Learning") -- so
+	// every AI-generated brief sends values Reddit refuses with "You cannot set invalid
+	// interests", the ad-group create 400s, and the PAUSED campaign created moments earlier
+	// is orphaned. Observed end-to-end on the LF account, 2026-08-13.
+	//
+	// Dropping them is the right trade: a campaign that reaches a slightly wider audience is
+	// recoverable in Reddit Ads Manager, an orphaned paid campaign is not.
+	optionalTargeting := baseTargeting
+	if len(communityNames) > 0 || len(in.Interests) > 0 {
+		optionalTargeting = cloneTargeting(baseTargeting)
+		if len(communityNames) > 0 {
+			optionalTargeting["communities"] = communityNames
+		}
+		if len(in.Interests) > 0 {
+			optionalTargeting["interests"] = in.Interests
+		}
 	}
 
 	buildAdGroupBody := func(targeting map[string]any) map[string]any {
@@ -1418,7 +1463,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	suppliedCommunities := len(communityNames) > 0
 	usedCommunities := suppliedCommunities
 	droppedCommunities := false
-	adGroupResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(targetingWithCommunities))
+	// Tracked separately from communities so the Steps trail can say WHICH dimension was
+	// lost. An operator re-adding targeting by hand needs to know that.
+	droppedInterests := false
+	adGroupResp, err := c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(optionalTargeting))
 	// adGroupErr words an ad-group failure as UNCONFIRMED when the outcome is
 	// ambiguous (transportError / 5xx / mutating 3xx — the ad group MAY exist, and partialResult
 	// carries its deterministic name for reconciliation) vs a flat "failed" for a
@@ -1437,12 +1485,34 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// failure where the ad group may already have been created, so a blind retry
 		// could duplicate it.
 		var apiErr *apiError
-		is400InvalidCommunities := errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusBadRequest &&
-			strings.Contains(strings.ToLower(apiErr.Body), "invalid communities")
-		if suppliedCommunities && is400InvalidCommunities {
-			steps = append(steps, fmt.Sprintf("Community targeting failed (invalid subreddits: %s), retrying without communities", strings.Join(communityNames, ", ")))
+		is400 := errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusBadRequest
+		body := ""
+		if apiErr != nil {
+			body = strings.ToLower(apiErr.Body)
+		}
+		// Two rejectable dimensions, ONE retry. Both can be named in the same 400, and
+		// retrying per-dimension would send a second doomed request whose own failure is
+		// ambiguous — every extra POST is another chance to create an ad group we then lose
+		// track of. The single retry drops both, which is also why baseTargeting carries
+		// neither.
+		rejectedCommunities := is400 && strings.Contains(body, "invalid communities")
+		rejectedInterests := is400 && strings.Contains(body, "invalid interests")
+		if (suppliedCommunities && rejectedCommunities) || (len(in.Interests) > 0 && rejectedInterests) {
+			switch {
+			case rejectedCommunities && rejectedInterests:
+				steps = append(steps, fmt.Sprintf("Community and interest targeting both rejected (subreddits: %s; interests: %s), retrying without either",
+					strings.Join(communityNames, ", "), strings.Join(in.Interests, ", ")))
+			case rejectedCommunities:
+				steps = append(steps, fmt.Sprintf("Community targeting failed (invalid subreddits: %s), retrying without communities", strings.Join(communityNames, ", ")))
+			default:
+				steps = append(steps, fmt.Sprintf("Interest targeting failed (invalid interests: %s), retrying without interests", strings.Join(in.Interests, ", ")))
+			}
+			// Both are dropped whichever was named: baseTargeting is the payload without
+			// either, and a retry that re-sent the un-named dimension would fail again for
+			// the same reason it just failed.
 			usedCommunities = false
-			droppedCommunities = true
+			droppedCommunities = suppliedCommunities
+			droppedInterests = len(in.Interests) > 0
 			adGroupResp, err = c.request(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/ad_groups", buildAdGroupBody(baseTargeting))
 			if err != nil {
 				return partialResult(), adGroupErr(err)
@@ -1459,16 +1529,26 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return partialResult(), fmt.Errorf("reddit ad group creation UNCONFIRMED: 2xx returned no ad group ID (campaign %s created, PAUSED; ad group %q may exist)", campaignID, adGroupName)
 	}
 	steps = append(steps, fmt.Sprintf("Ad group created: %s (PAUSED, geo: %s)", adGroupID, strings.Join(geos, ", ")))
-	switch {
-	case usedCommunities:
+	// What SURVIVED, then what was dropped and must be re-added by hand. The dropped half is
+	// the part an operator acts on, so it names each lost dimension rather than saying
+	// "some targeting was skipped" -- interests and communities are re-added in different
+	// places in Reddit Ads Manager.
+	if usedCommunities {
 		steps = append(steps, fmt.Sprintf("Targeting: %d communities, %d keywords, %d geos", len(communityNames), len(in.Keywords), len(geos)))
-	case droppedCommunities:
-		// Communities were supplied but the upstream rejected them ("invalid
-		// communities"), so they were dropped and must be re-added manually.
-		steps = append(steps, fmt.Sprintf("Targeting: %d keywords, %d geos (communities skipped -- add manually in Reddit Ads Manager)", len(in.Keywords), len(geos)))
-	default:
-		// No subreddits were supplied; this is a normal keyword/geo-only campaign.
+	} else {
 		steps = append(steps, fmt.Sprintf("Targeting: %d keywords, %d geos", len(in.Keywords), len(geos)))
+	}
+	var dropped []string
+	if droppedCommunities {
+		dropped = append(dropped, "communities")
+	}
+	if droppedInterests {
+		dropped = append(dropped, "interests")
+	}
+	if len(dropped) > 0 {
+		steps = append(steps, fmt.Sprintf("%s rejected by Reddit and skipped -- add manually in Reddit Ads Manager", strings.Join(dropped, " and ")))
+	} else if len(in.Interests) > 0 {
+		steps = append(steps, fmt.Sprintf("Targeting: %d interests", len(in.Interests)))
 	}
 
 	// Step 4: Create ad from post URL if provided, otherwise emit instructions.
