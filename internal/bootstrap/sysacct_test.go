@@ -338,8 +338,11 @@ func TestInstallRejectsMisshapenValues(t *testing.T) {
 		"google ads values in shape":              {model.ProviderGoogleAds, "8666746580", map[string]string{"login_customer_id": "9746983954"}, gaCreds, false},
 		"microsoft customer id not numeric":       {model.ProviderMicrosoftAds, "1234", map[string]string{"customer_id": "cus-9"}, msCreds, true},
 		"microsoft values in shape":               {model.ProviderMicrosoftAds, "1234", map[string]string{"customer_id": "9"}, msCreds, false},
-		"reddit account id with a path separator": {model.ProviderRedditAds, "t2_gv9../x", nil, rdCreds, true},
-		"reddit account id in shape":              {model.ProviderRedditAds, "t2_gv9wtbfa", nil, rdCreds, false},
+		// Reddit now REQUIRES conversion_pixel_id (see requiredConfigKeys), so the in-shape
+		// case must supply one -- these rows assert the ACCOUNT ID's shape, and omitting the
+		// pixel would make them fail for an unrelated reason and stop testing what they name.
+		"reddit account id with a path separator": {model.ProviderRedditAds, "t2_gv9../x", map[string]string{"conversion_pixel_id": "a2_pixel"}, rdCreds, true},
+		"reddit account id in shape":              {model.ProviderRedditAds, "t2_gv9wtbfa", map[string]string{"conversion_pixel_id": "a2_pixel"}, rdCreds, false},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -748,5 +751,52 @@ func TestClearedValueIsNotHeldToAValueShape(t *testing.T) {
 	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
 		model.ProviderGoogleAds, "", false, map[string]string{"login_customer_id": ""}, []byte(goodCreds)); err != nil {
 		t.Fatalf("clear rejected as a malformed value: %v", err)
+	}
+}
+
+// A Reddit system row without a conversion pixel is installable and DEAD, which is exactly
+// what requiredConfigKeys exists to prevent.
+//
+// The blast radius is what makes it worth its own test rather than a table row. The LF
+// system row is the FALLBACK for every project that has connected no Reddit account of its
+// own, and the Reddit client refuses EVERY campaign create without a pixel — not only the
+// "conversions" objective its API docs describe. So one pixel-less install silently refuses
+// paid creates for every fallback project, and the failure surfaces per-project at dispatch
+// rather than once, loudly, at install time.
+func TestInstallRefusesRedditWithoutAConversionPixel(t *testing.T) {
+	rdCreds := []byte(`{"client_id":"ci","client_secret":"cs","refresh_token":"rt"}`)
+	repo := &stubRepo{getErr: domain.ErrNotFound}
+	err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderRedditAds, "t2_gv9wtbfa", false, nil, rdCreds)
+	if err == nil {
+		t.Fatal("installed a Reddit system row with no conversion pixel; every project falling back to it would be refused at dispatch")
+	}
+	if !strings.Contains(err.Error(), "conversion_pixel_id") {
+		t.Errorf("error %q does not name the missing key, so the operator cannot act on it", err)
+	}
+	// Nothing may be written: a row that exists and cannot dispatch is worse than no row,
+	// because the fallback probe finds it and stops looking.
+	if repo.created != nil {
+		t.Errorf("wrote a dead row despite refusing: %+v", repo.created)
+	}
+}
+
+// The pixel satisfies the requirement wherever it comes from — including a rotation that
+// omits the flag but keeps the value already on the row. requireConfig checks the map about
+// to be WRITTEN, not the flags as typed, and this pins that distinction for Reddit.
+func TestInstallAcceptsRedditWithAConversionPixel(t *testing.T) {
+	rdCreds := []byte(`{"client_id":"ci","client_secret":"cs","refresh_token":"rt"}`)
+	repo := &stubRepo{getErr: domain.ErrNotFound}
+	err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderRedditAds, "t2_gv9wtbfa", false,
+		map[string]string{"conversion_pixel_id": "a2_pixel"}, rdCreds)
+	if err != nil {
+		t.Fatalf("InstallSystemCredentials: %v", err)
+	}
+	if repo.created == nil {
+		t.Fatal("no row was written")
+	}
+	if got := repo.created.ProviderConfig["conversion_pixel_id"]; got != "a2_pixel" {
+		t.Errorf("stored pixel = %q, want a2_pixel", got)
 	}
 }

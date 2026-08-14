@@ -66,3 +66,17 @@ pixel and the next dispatch is refused. That is the same semantic `account_id`
 and `label` have always had — consistency across seven providers beats
 special-casing one field — but it is sharper for a field a caller may not know
 exists yet.
+
+**Fix** — The system-account installer was left inconsistent with the new
+requirement. `requiredConfigKeys` lists the ProviderConfig columns a dispatch
+adapter REFUSES to create a campaign without — "the row is otherwise installable
+and dead" — and Reddit's pixel became exactly that without being added.
+
+The blast radius is why it matters more than a missing map entry. The LF system
+row is the FALLBACK for every project that has connected no Reddit account of its
+own, and the client refuses EVERY create without a pixel, not only the
+`conversions` objective its docs describe. So one pixel-less install would have
+silently refused paid creates for every fallback project, surfacing per-project
+at dispatch rather than once, loudly, at install.
+
+Reverting the map entry fails `TestInstallRefusesRedditWithoutAConversionPixel`.

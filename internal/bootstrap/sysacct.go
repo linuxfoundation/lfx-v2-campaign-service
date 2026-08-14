@@ -204,6 +204,15 @@ var requiredConfigKeys = map[model.Provider][]string{
 	model.ProviderLinkedInAds: {"org_id"},
 	model.ProviderMetaAds:     {"page_id"},
 	model.ProviderTwitterAds:  {"funding_instrument_id"},
+	// Reddit joined this list when the conversion pixel moved onto the connection
+	// (migration 000025). It meets the stated bar exactly: the Reddit client refuses EVERY
+	// campaign create without a pixel -- not only the "conversions" objective its API docs
+	// describe -- so a system row installed without one is installable and dead. Worse than
+	// dead, in fact: the LF system row is the FALLBACK for every project that has connected
+	// no Reddit account of its own, so one pixel-less install silently refuses paid creates
+	// for all of them, with the failure surfacing per-project at dispatch rather than once
+	// at install.
+	model.ProviderRedditAds: {"conversion_pixel_id"},
 }
 
 // requireConfig checks the map about to be WRITTEN, not the flags as typed: on a rotation
