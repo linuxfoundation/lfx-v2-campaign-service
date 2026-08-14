@@ -98,6 +98,18 @@ NUMERIC id persisted by `campaignFromLinkedIn` (`trailingID` of the creation res
 campaign URN, not a URN) — this method builds the `urn:li:sponsoredCampaign:{id}` and
 `urn:li:sponsoredAccount:{acctID}` URNs the Ad Analytics finder itself requires.
 
+The same Rest.li-vs-transport encoding split applies to the find-or-create name filter, and
+`doRequest` handles it inline rather than by bypass. `restliEncode` produces the FINAL bytes
+for the `search` value — `%20` for space, `%7C` for `|`, `%2B` for `+`, alongside the
+structural `(`/`)`/`,`/`:`/`'` escapes — and `buildRawQuery` writes any parameter listed in
+`preEncodedParams` (currently just `search`) to `RawQuery` verbatim. Both halves are load-
+bearing: `url.Values.Encode()` renders a space as `+`, which the Rest.li parser reads as a
+literal plus and rejects with `400 PARAM_INVALID`, while re-encoding an already-encoded value
+turns `%20` into `%2520`, which matches a literally-different name and returns a
+**clean-looking empty result set** — a false "not found" that drives a duplicate paid create.
+Assertions about this encoding must read `r.URL.RawQuery`, never `r.URL.Query()`: the latter
+percent-decodes, so a correct value and a bare one are indistinguishable through it.
+
 The Ad Analytics finder (`GET /adAnalytics`) uses Rest.li 2.0 array/nested-object query
 literals — `dateRange=(start:(day:D,month:M,year:Y),end:(...))`, `campaigns=List(urn:...)`,
 `accounts=List(urn:...)` — that are not expressible through `url.Values.Encode()` (which would
