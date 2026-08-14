@@ -4,6 +4,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -89,5 +90,63 @@ func TestVariantForDispatchSeparatesGoogleChannels(t *testing.T) {
 	}
 	if search == demandGen {
 		t.Fatalf("search and demand-gen resolved to the same slot %q — one brief could not hold both, which is the bug this column fixes", search)
+	}
+}
+
+// A Demand Gen claim must not be answered with the brief's SEARCH row.
+//
+// This is the shape the slot key exists to prevent, and the fake used to hide it: the read
+// path was made variant-aware while ClaimCampaignDispatch still keyed on (brief, platform)
+// alone, so a Demand Gen dispatch missed on the read, then had its claim answered with the
+// existing Search campaign — reported as a reused success. The dispatcher never ran, and the
+// caller was told a Demand Gen campaign existed when only a Search one did.
+func TestClaimDoesNotReturnAnotherVariantsCampaign(t *testing.T) {
+	repo := &fakeCampaignRepo{existing: map[string]*model.Campaign{}}
+	// The brief already holds a completed SEARCH campaign in the default slot.
+	// Seeded through storeRow, not by writing the map directly: storeRow is what the
+	// repository uses, and it also indexes a DEFAULT-slot row under the bare
+	// (brief, platform) key. Seeding only the qualified key would leave the bare key empty,
+	// so a variant-blind claim would find nothing and "correctly" claim -- the test would
+	// pass against the very bug it is named for.
+	repo.storeRow(&model.Campaign{
+		BriefID: "b1", Platform: model.ProviderGoogleAds, Variant: model.VariantDefault,
+		PlatformCampaignID: "search-111", Status: model.CampaignStatusCreated,
+	})
+
+	claimed, existing, err := repo.ClaimCampaignDispatch(
+		context.Background(), "cncf", "b1", model.ProviderGoogleAds, "demand-gen", "job-1", nil)
+	if err != nil {
+		t.Fatalf("ClaimCampaignDispatch: %v", err)
+	}
+	if !claimed {
+		t.Fatalf("the demand-gen slot is free and must be claimable; got existing=%+v", existing)
+	}
+	// And the claim must record the slot it took, as the real INSERT does — otherwise the
+	// row it writes is indistinguishable from a default-slot claim.
+	if existing == nil || existing.Variant != "demand-gen" {
+		t.Errorf("claimed row variant = %v, want demand-gen", existing)
+	}
+}
+
+// Releasing one slot's claim must not release another's. The real DELETE is keyed on all
+// three columns; a fake keyed on two would free a sibling variant's pending row and let a
+// concurrent dispatch re-claim a slot that is still in flight.
+func TestReleasingOneSlotDoesNotFreeAnother(t *testing.T) {
+	repo := &fakeCampaignRepo{existing: map[string]*model.Campaign{}}
+	repo.storeRow(&model.Campaign{
+		BriefID: "b1", Platform: model.ProviderGoogleAds, Variant: model.VariantDefault, Status: "pending",
+	})
+	repo.storeRow(&model.Campaign{
+		BriefID: "b1", Platform: model.ProviderGoogleAds, Variant: "demand-gen", Status: "pending",
+	})
+
+	if err := repo.DeleteDispatchClaim(context.Background(), "b1", model.ProviderGoogleAds, "demand-gen"); err != nil {
+		t.Fatalf("DeleteDispatchClaim: %v", err)
+	}
+	if _, ok := repo.existing[slotKey("b1", model.ProviderGoogleAds, "demand-gen")]; ok {
+		t.Error("the demand-gen claim was not released")
+	}
+	if _, ok := repo.existing[slotKey("b1", model.ProviderGoogleAds, model.VariantDefault)]; !ok {
+		t.Error("releasing demand-gen also freed the SEARCH slot's in-flight claim")
 	}
 }

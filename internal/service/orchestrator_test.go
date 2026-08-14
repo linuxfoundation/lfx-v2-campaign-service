@@ -153,10 +153,10 @@ func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, _ string, br
 	// Keys may be written either way. The variant-qualified form is preferred; the bare
 	// (brief, platform) form is accepted as meaning the DEFAULT slot, so the many existing
 	// single-variant fixtures keep working without being rewritten.
-	if c, ok := r.existing[briefID+"|"+string(platform)+"|"+model.NormalizeVariant(variant)]; ok {
+	if c, ok := r.existing[slotKey(briefID, platform, variant)]; ok {
 		return c, nil
 	}
-	if c, ok := r.existing[briefID+"|"+string(platform)]; ok && model.NormalizeVariant(variant) == model.VariantDefault {
+	if c, ok := r.existing[legacySlotKey(briefID, platform)]; ok && model.NormalizeVariant(variant) == model.VariantDefault {
 		return c, nil
 	}
 	return nil, domain.ErrNotFound
@@ -165,6 +165,44 @@ func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, _ string, br
 // ClaimCampaignDispatch simulates INSERT ... ON CONFLICT DO NOTHING: if an entry
 // for (brief, platform) already exists it's a conflict (not claimed) returning
 // the existing row; otherwise it inserts a pending placeholder and claims.
+// storeRow writes a campaign under its variant-qualified slot key, and ALSO under the bare
+// (brief, platform) key when it occupies the DEFAULT slot.
+//
+// The dual write is for the TESTS, not the schema: many assertions read a row back as
+// existing["b1|linkedin-ads"], and those fixtures are single-variant, so the two keys name
+// the same row. Writing only the qualified form would break them for a reason unrelated to
+// what they assert. Writes are still keyed correctly — a demand-gen row never lands on the
+// bare key, so it cannot be mistaken for a Search row.
+func (r *fakeCampaignRepo) storeRow(c *model.Campaign) {
+	if r.existing == nil {
+		r.existing = map[string]*model.Campaign{}
+	}
+	r.existing[slotKey(c.BriefID, c.Platform, c.Variant)] = c
+	if model.NormalizeVariant(c.Variant) == model.VariantDefault {
+		r.existing[legacySlotKey(c.BriefID, c.Platform)] = c
+	}
+}
+
+// slotKey is THE key for this fake, mirroring the real partial unique index from migration
+// 000022: (brief_id, platform, variant). Every method that reads, writes or deletes a row
+// goes through it.
+//
+// It exists because they drifted. GetCampaignByPlatform and AdoptCampaign were made
+// variant-aware while ClaimCampaignDispatch, DeleteDispatchClaim and UpsertCampaign kept
+// keying on (brief, platform) alone — so a Demand Gen dispatch missed on the read, then had
+// its claim answered with the brief's SEARCH row, which is the duplicate-paid-campaign shape
+// the slot key exists to prevent. A fake whose methods disagree about the key models no
+// schema at all.
+func slotKey(briefID string, platform model.Provider, variant string) string {
+	return briefID + "|" + string(platform) + "|" + model.NormalizeVariant(variant)
+}
+
+// legacySlotKey is the bare (brief, platform) form many fixtures still use. It means the
+// DEFAULT slot, so reads accept it for that variant only — new writes always use slotKey.
+func legacySlotKey(briefID string, platform model.Provider) string {
+	return briefID + "|" + string(platform)
+}
+
 func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, briefID string, platform model.Provider, variant, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -174,15 +212,21 @@ func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, b
 	if r.claimErr != nil {
 		return false, nil, r.claimErr
 	}
-	key := briefID + "|" + string(platform)
+	key := slotKey(briefID, platform, variant)
 	if c, ok := r.existing[key]; ok {
 		return false, c, nil
+	}
+	// A fixture written in the bare form occupies the DEFAULT slot only.
+	if model.NormalizeVariant(variant) == model.VariantDefault {
+		if c, ok := r.existing[legacySlotKey(briefID, platform)]; ok {
+			return false, c, nil
+		}
 	}
 	// Both actor columns, because claimCampaignDispatchQuery inserts `created_by, updated_by`
 	// from the SAME $5. A fake that stamped only CreatedBy would hand every orchestrator test
 	// a claimed row production cannot create, and the creation-time updated_by invariant would
 	// have no fake capable of catching a regression in it.
-	pending := &model.Campaign{ProjectID: projectID, BriefID: briefID, Platform: platform, JobID: &jobID, Status: "pending", CreatedBy: by, UpdatedBy: by}
+	pending := &model.Campaign{ProjectID: projectID, BriefID: briefID, Platform: platform, Variant: model.NormalizeVariant(variant), JobID: &jobID, Status: "pending", CreatedBy: by, UpdatedBy: by}
 	if r.existing == nil {
 		r.existing = map[string]*model.Campaign{}
 	}
@@ -193,9 +237,15 @@ func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, b
 func (r *fakeCampaignRepo) DeleteDispatchClaim(_ context.Context, briefID string, platform model.Provider, variant string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	key := briefID + "|" + string(platform)
-	if c, ok := r.existing[key]; ok && c.Status == "pending" {
-		delete(r.existing, key)
+	// Only this slot's claim: releasing on the bare key would free a DIFFERENT variant's
+	// pending row, which the real DELETE (keyed on all three columns) cannot do.
+	for _, key := range []string{slotKey(briefID, platform, variant), legacySlotKey(briefID, platform)} {
+		if key == legacySlotKey(briefID, platform) && model.NormalizeVariant(variant) != model.VariantDefault {
+			continue
+		}
+		if c, ok := r.existing[key]; ok && c.Status == "pending" {
+			delete(r.existing, key)
+		}
 	}
 	return nil
 }
@@ -218,10 +268,7 @@ func (r *fakeCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, 
 	// Mirror the real ON CONFLICT (brief_id, platform) DO UPDATE: the (brief,
 	// platform) row is updated in place, so a subsequent lookup sees the new
 	// platform_campaign_id/status.
-	if r.existing == nil {
-		r.existing = map[string]*model.Campaign{}
-	}
-	r.existing[c.BriefID+"|"+string(c.Platform)] = c
+	r.storeRow(c)
 	return c, nil
 }
 
@@ -285,7 +332,7 @@ func (r *fakeCampaignRepo) AdoptCampaign(_ context.Context, c *model.Campaign, e
 	}
 	// Stored variant-qualified so a later lookup for a DIFFERENT slot on the same brief does
 	// not find this row -- the whole point of the slot key.
-	r.existing[c.BriefID+"|"+string(c.Platform)+"|"+variant] = c
+	r.storeRow(c)
 	r.adopted = append(r.adopted, c)
 	return c, nil
 }
