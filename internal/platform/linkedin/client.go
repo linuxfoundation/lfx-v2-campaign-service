@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -829,11 +830,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 		return nil, fmt.Errorf("parse url: %w", err)
 	}
 	if len(params) > 0 {
-		q := u.Query()
-		for k, v := range params {
-			q.Set(k, v)
-		}
-		u.RawQuery = q.Encode()
+		u.RawQuery = buildRawQuery(params)
 	}
 
 	var encoded []byte
@@ -1254,9 +1251,12 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 			// Server-side name filter: the adCampaigns/adCampaignGroups `search`
 			// finder supports search.name.values, so only elements whose name equals
 			// the lookup name are returned. This keeps the lookup O(matches), not
-			// O(account). The value is Rest.li-encoded so names containing reserved
-			// characters (parens, commas, colons) can't break out of the List(...)
-			// literal; url.Values.Encode() then applies the outer percent-encoding.
+			// O(account). restliEncode produces the FINAL bytes: names containing
+			// reserved characters (parens, commas, colons) can't break out of the
+			// List(...) literal, and spaces/pipes are percent-encoded here rather
+			// than by url.Values.Encode(), which renders a space as "+" and 400s.
+			// buildRawQuery writes this value through untouched — see
+			// preEncodedParams.
 			"search": "(name:(values:List(" + restliEncode(name) + ")))",
 			// Cursor pagination at LinkedIn-Version 202602 uses `pageSize` (paired
 			// with `pageToken`), NOT the legacy offset param `count`. Sending
@@ -1392,26 +1392,93 @@ func (c *Client) findMatch(ctx context.Context, nestedPath, name string, match f
 	return "", fmt.Errorf("search %q by name: exceeded %d pages without exhausting results — aborting to avoid creating a duplicate", nestedPath, maxListPages)
 }
 
-// restliReplacer percent-encodes the characters that are structurally
-// significant inside a Rest.li query value — the delimiters of the
-// List(...)/(key:value) grammar. Leaving them raw would let a resource name
-// containing, say, a comma or paren break out of the List(...) literal and
-// corrupt the filter (or, at worst, inject additional criteria). This is the
-// Rest.li "reduced encoding" applied to values embedded in a query string; the
-// surrounding url.Values.Encode() then percent-encodes everything else (spaces,
-// pipes, etc.) for transport.
-var restliReplacer = strings.NewReplacer(
-	"%", "%25", // must be first so the escapes below aren't double-encoded
-	"(", "%28",
-	")", "%29",
-	",", "%2C",
-	":", "%3A",
-	"'", "%27",
-)
+// preEncodedParams are query parameters whose values arrive ALREADY percent-
+// encoded by restliEncode and must be written to RawQuery verbatim. Passing
+// one through url.Values.Encode() would re-encode its "%" escapes ("%20" ->
+// "%2520"), producing a filter that matches a literally-different name and
+// returns a clean-looking empty result set.
+// Membership is derived from ONE property: the value was produced by
+// restliEncode. EVERY restliEncode call site must appear here, or its "%"
+// escapes are re-encoded ("%3A" -> "%253A") and the literal reaches LinkedIn
+// as text. Adding a call site without adding its key here is exactly the
+// failure this map exists to prevent, so grep restliEncode when changing
+// either one.
+var preEncodedParams = map[string]struct{}{
+	"search":    {}, // findMatch — the name filter
+	"campaigns": {}, // listCreativeURNs — the creatives finder's campaign List()
+}
 
-// restliEncode returns name safe for embedding inside a Rest.li List(...) value.
+// buildRawQuery renders params as a query string, percent-encoding every value
+// EXCEPT those in preEncodedParams, which are emitted verbatim. Keys are sorted
+// so the resulting URL is deterministic (Go map iteration order is randomized).
+//
+// It takes only params, not the parsed base URL's values: baseURL is a constant
+// with no query string and WithBaseURL trims its input to host+path, so there is
+// never anything on the base to merge. An earlier version accepted a url.Values
+// base and read it with Get(), which returns only the FIRST value — a repeated
+// key would have been silently truncated with no way to notice.
+func buildRawQuery(params map[string]string) string {
+	// No capacity hint: params holds a handful of query parameters, so pre-sizing
+	// buys nothing measurable, and a len()+len() sum is an addition CodeQL flags
+	// as a potential allocation-size overflow (go/allocation-size-overflow).
+	var keys []string
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var b strings.Builder
+	for _, k := range keys {
+		v := params[k]
+		if b.Len() > 0 {
+			b.WriteByte('&')
+		}
+		b.WriteString(url.QueryEscape(k))
+		b.WriteByte('=')
+		if _, pre := preEncodedParams[k]; pre {
+			b.WriteString(v)
+		} else {
+			b.WriteString(url.QueryEscape(v))
+		}
+	}
+	return b.String()
+}
+
+// restliEncode percent-encodes name for embedding inside a Rest.li
+// List(...)/(key:value) literal. The caller supplies the structural syntax raw
+// — `(name:(values:List(` … `)))` — and everything that came from a resource
+// NAME goes through here, so a name containing a comma or paren stays data
+// rather than breaking out of the literal and corrupting the filter.
+//
+// This encoding is FINAL: the result is written to url.URL.RawQuery verbatim by
+// buildRawQuery, NOT passed through url.Values.Encode(). Two reasons, both
+// verified against the live Marketing API at LinkedIn-Version 202602:
+//
+//  1. url.Values.Encode() encodes a space as "+", which the Rest.li parser reads
+//     as a literal plus inside List(...) rather than a space. EVERY lookup whose
+//     name contains a space — i.e. every name this client generates — came back
+//     400 PARAM_INVALID on fieldPath "search".
+//  2. Running it over an already-encoded value would turn each "%" into "%25",
+//     so "%20" becomes "%2520" and the filter silently matches a literal
+//     "%20"-containing name — a 200 with an empty result set that looks like a
+//     clean "not found" and drives a duplicate create.
+//
+// It encodes the COMPLETE query component rather than an enumerated list of
+// characters. An allow-list is what shipped first, and it was wrong twice over:
+// it missed "&" (which splits the value into another query parameter, so a
+// lookup for "R&D Summit" searched for "R") and "#" (which starts a fragment, so
+// "C# Conf" truncated the filter and leaked the tail into url.URL.Fragment).
+// Both silently corrupt the lookup into a FALSE ABSENCE — the outcome this
+// whole encoding path exists to prevent. Any list would need extending again for
+// the next delimiter; encoding everything cannot go stale.
+//
+// url.QueryEscape is that complete encoder, with one correction: it renders a
+// space as "+" for form encoding, which is hazard 1 above, so those are
+// rewritten to %20. Rest.li's structural characters are not exempt — a name
+// containing "(" or "," must stay data, or it breaks out of the literal.
+
 func restliEncode(name string) string {
-	return restliReplacer.Replace(name)
+	return strings.ReplaceAll(url.QueryEscape(name), "+", "%20")
 }
 
 // trailingID returns the segment after the last colon of a URN, or the input
@@ -1654,15 +1721,22 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 	}
 
 	body := map[string]any{
-		"account":                accountURN(accountID),
-		"campaignGroup":          "urn:li:sponsoredCampaignGroup:" + groupID,
-		"name":                   name,
-		"status":                 "PAUSED",
-		"type":                   "SPONSORED_UPDATES",
-		"objectiveType":          "WEBSITE_CONVERSION",
-		"costType":               "CPM",
-		"locale":                 map[string]any{"country": "US", "language": "en"},
-		"offsiteDeliveryEnabled": true,
+		"account":       accountURN(accountID),
+		"campaignGroup": "urn:li:sponsoredCampaignGroup:" + groupID,
+		"name":          name,
+		"status":        "PAUSED",
+		"type":          "SPONSORED_UPDATES",
+		"objectiveType": "WEBSITE_CONVERSION",
+		// CPC, not CPM: these campaigns carry a WEBSITE_CONVERSION objective, so the
+		// budget should buy clicks rather than impressions. Verified against a draft
+		// created by hand on the LF Events account (campaign 868353296).
+		"costType": "CPC",
+		"locale":   map[string]any{"country": "US", "language": "en"},
+		// false keeps delivery on LinkedIn itself. true opts the campaign into the
+		// LinkedIn Audience Network — placements beyond the feed, on third-party
+		// sites — which is a media-buying decision nobody makes in our UI, so it
+		// must not be switched on by default.
+		"offsiteDeliveryEnabled": false,
 		"politicalIntent":        "NOT_POLITICAL",
 		budgetField:              map[string]any{"amount": amount, "currencyCode": "USD"},
 		"runSchedule":            map[string]any{"start": startMs, "end": endMs},

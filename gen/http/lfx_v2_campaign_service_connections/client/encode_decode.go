@@ -7548,8 +7548,9 @@ func marshalMetaAdsCredentialsRequestBodyToLfxv2campaignserviceconnectionsMetaAd
 // type *lfxv2campaignserviceconnections.RedditAdsConnectionConfig.
 func marshalLfxv2campaignserviceconnectionsRedditAdsConnectionConfigToRedditAdsConnectionConfigRequestBody(v *lfxv2campaignserviceconnections.RedditAdsConnectionConfig) *RedditAdsConnectionConfigRequestBody {
 	res := &RedditAdsConnectionConfigRequestBody{
-		Label:     v.Label,
-		AccountID: v.AccountID,
+		Label:             v.Label,
+		AccountID:         v.AccountID,
+		ConversionPixelID: v.ConversionPixelID,
 	}
 
 	return res
@@ -7574,8 +7575,9 @@ func marshalLfxv2campaignserviceconnectionsRedditAdsCredentialsToRedditAdsCreden
 // type *RedditAdsConnectionConfigRequestBody.
 func marshalRedditAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsRedditAdsConnectionConfig(v *RedditAdsConnectionConfigRequestBody) *lfxv2campaignserviceconnections.RedditAdsConnectionConfig {
 	res := &lfxv2campaignserviceconnections.RedditAdsConnectionConfig{
-		Label:     v.Label,
-		AccountID: v.AccountID,
+		Label:             v.Label,
+		AccountID:         v.AccountID,
+		ConversionPixelID: v.ConversionPixelID,
 	}
 
 	return res

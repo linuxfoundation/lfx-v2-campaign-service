@@ -50,10 +50,15 @@ const SystemProjectID = "system:linuxfoundation"
 // The values are compile-time constants, never input, which is what makes interpolating them
 // into SQL safe.
 var providerConfigKeys = map[Provider][]string{
-	ProviderGoogleAds:    {"login_customer_id"},
-	ProviderLinkedInAds:  {"org_id"},
-	ProviderMetaAds:      {"page_id", "app_id"},
-	ProviderRedditAds:    {},
+	ProviderGoogleAds:   {"login_customer_id"},
+	ProviderLinkedInAds: {"org_id"},
+	ProviderMetaAds:     {"page_id", "app_id"},
+	// conversion_pixel_id is stored on the CONNECTION, not per campaign: it identifies the
+	// advertiser's pixel, which is a property of the ad account and the same for every
+	// campaign created through it. Reddit requires it on EVERY campaign create observed on
+	// the LF account (2026-08-13) — including CLICKS/Traffic, not only CONVERSIONS as the
+	// docs describe — so a campaign that cannot supply one cannot be created at all.
+	ProviderRedditAds:    {"conversion_pixel_id"},
 	ProviderTwitterAds:   {"funding_instrument_id"},
 	ProviderMicrosoftAds: {"customer_id"},
 	ProviderHubSpot:      {"portal_id", "sender_email", "sender_name", "brand_kit"},

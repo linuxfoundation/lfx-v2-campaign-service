@@ -138,13 +138,25 @@ func (r *fakeCampaignRepo) GetCampaign(_ context.Context, _, _, campaignID strin
 	return nil, errors.New("unused")
 }
 
-func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, _ string, briefID string, platform model.Provider) (*model.Campaign, error) {
+func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, _ string, briefID string, platform model.Provider, variant string) (*model.Campaign, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.byPlatformErr != nil {
 		return nil, r.byPlatformErr
 	}
-	if c, ok := r.existing[briefID+"|"+string(platform)]; ok {
+	// The real slot key is (brief, platform, VARIANT) — migration 000022. This fake ignored
+	// the variant and keyed on (brief, platform) alone, which made EVERY variant look
+	// occupied once any one of them was: a Demand Gen adoption onto a brief holding a Search
+	// campaign was reported as a conflict the real repository would have accepted. A fake
+	// that does not model the constraint hides the bug the constraint exists to catch.
+	//
+	// Keys may be written either way. The variant-qualified form is preferred; the bare
+	// (brief, platform) form is accepted as meaning the DEFAULT slot, so the many existing
+	// single-variant fixtures keep working without being rewritten.
+	if c, ok := r.existing[slotKey(briefID, platform, variant)]; ok {
+		return c, nil
+	}
+	if c, ok := r.existing[legacySlotKey(briefID, platform)]; ok && model.NormalizeVariant(variant) == model.VariantDefault {
 		return c, nil
 	}
 	return nil, domain.ErrNotFound
@@ -153,7 +165,45 @@ func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, _ string, br
 // ClaimCampaignDispatch simulates INSERT ... ON CONFLICT DO NOTHING: if an entry
 // for (brief, platform) already exists it's a conflict (not claimed) returning
 // the existing row; otherwise it inserts a pending placeholder and claims.
-func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, briefID string, platform model.Provider, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
+// storeRow writes a campaign under its variant-qualified slot key, and ALSO under the bare
+// (brief, platform) key when it occupies the DEFAULT slot.
+//
+// The dual write is for the TESTS, not the schema: many assertions read a row back as
+// existing["b1|linkedin-ads"], and those fixtures are single-variant, so the two keys name
+// the same row. Writing only the qualified form would break them for a reason unrelated to
+// what they assert. Writes are still keyed correctly — a demand-gen row never lands on the
+// bare key, so it cannot be mistaken for a Search row.
+func (r *fakeCampaignRepo) storeRow(c *model.Campaign) {
+	if r.existing == nil {
+		r.existing = map[string]*model.Campaign{}
+	}
+	r.existing[slotKey(c.BriefID, c.Platform, c.Variant)] = c
+	if model.NormalizeVariant(c.Variant) == model.VariantDefault {
+		r.existing[legacySlotKey(c.BriefID, c.Platform)] = c
+	}
+}
+
+// slotKey is THE key for this fake, mirroring the real partial unique index from migration
+// 000022: (brief_id, platform, variant). Every method that reads, writes or deletes a row
+// goes through it.
+//
+// It exists because they drifted. GetCampaignByPlatform and AdoptCampaign were made
+// variant-aware while ClaimCampaignDispatch, DeleteDispatchClaim and UpsertCampaign kept
+// keying on (brief, platform) alone — so a Demand Gen dispatch missed on the read, then had
+// its claim answered with the brief's SEARCH row, which is the duplicate-paid-campaign shape
+// the slot key exists to prevent. A fake whose methods disagree about the key models no
+// schema at all.
+func slotKey(briefID string, platform model.Provider, variant string) string {
+	return briefID + "|" + string(platform) + "|" + model.NormalizeVariant(variant)
+}
+
+// legacySlotKey is the bare (brief, platform) form many fixtures still use. It means the
+// DEFAULT slot, so reads accept it for that variant only — new writes always use slotKey.
+func legacySlotKey(briefID string, platform model.Provider) string {
+	return briefID + "|" + string(platform)
+}
+
+func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, briefID string, platform model.Provider, variant, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	// Recorded BEFORE the error and conflict returns: the question the binding test asks
@@ -162,15 +212,21 @@ func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, b
 	if r.claimErr != nil {
 		return false, nil, r.claimErr
 	}
-	key := briefID + "|" + string(platform)
+	key := slotKey(briefID, platform, variant)
 	if c, ok := r.existing[key]; ok {
 		return false, c, nil
+	}
+	// A fixture written in the bare form occupies the DEFAULT slot only.
+	if model.NormalizeVariant(variant) == model.VariantDefault {
+		if c, ok := r.existing[legacySlotKey(briefID, platform)]; ok {
+			return false, c, nil
+		}
 	}
 	// Both actor columns, because claimCampaignDispatchQuery inserts `created_by, updated_by`
 	// from the SAME $5. A fake that stamped only CreatedBy would hand every orchestrator test
 	// a claimed row production cannot create, and the creation-time updated_by invariant would
 	// have no fake capable of catching a regression in it.
-	pending := &model.Campaign{ProjectID: projectID, BriefID: briefID, Platform: platform, JobID: &jobID, Status: "pending", CreatedBy: by, UpdatedBy: by}
+	pending := &model.Campaign{ProjectID: projectID, BriefID: briefID, Platform: platform, Variant: model.NormalizeVariant(variant), JobID: &jobID, Status: "pending", CreatedBy: by, UpdatedBy: by}
 	if r.existing == nil {
 		r.existing = map[string]*model.Campaign{}
 	}
@@ -178,12 +234,18 @@ func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, b
 	return true, pending, nil
 }
 
-func (r *fakeCampaignRepo) DeleteDispatchClaim(_ context.Context, briefID string, platform model.Provider) error {
+func (r *fakeCampaignRepo) DeleteDispatchClaim(_ context.Context, briefID string, platform model.Provider, variant string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	key := briefID + "|" + string(platform)
-	if c, ok := r.existing[key]; ok && c.Status == "pending" {
-		delete(r.existing, key)
+	// Only this slot's claim: releasing on the bare key would free a DIFFERENT variant's
+	// pending row, which the real DELETE (keyed on all three columns) cannot do.
+	for _, key := range []string{slotKey(briefID, platform, variant), legacySlotKey(briefID, platform)} {
+		if key == legacySlotKey(briefID, platform) && model.NormalizeVariant(variant) != model.VariantDefault {
+			continue
+		}
+		if c, ok := r.existing[key]; ok && c.Status == "pending" {
+			delete(r.existing, key)
+		}
 	}
 	return nil
 }
@@ -206,10 +268,7 @@ func (r *fakeCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, 
 	// Mirror the real ON CONFLICT (brief_id, platform) DO UPDATE: the (brief,
 	// platform) row is updated in place, so a subsequent lookup sees the new
 	// platform_campaign_id/status.
-	if r.existing == nil {
-		r.existing = map[string]*model.Campaign{}
-	}
-	r.existing[c.BriefID+"|"+string(c.Platform)] = c
+	r.storeRow(c)
 	return c, nil
 }
 
@@ -226,9 +285,29 @@ func (r *fakeCampaignRepo) AdoptCampaign(_ context.Context, c *model.Campaign, e
 	if r.adoptBriefVersion != 0 && r.adoptBriefVersion != expectedVersion {
 		return nil, domain.ErrStaleApproval
 	}
-	key := c.BriefID + "|" + string(c.Platform)
-	if existing, ok := r.existing[key]; ok && existing.Status != "deleted" {
-		return nil, fmt.Errorf("%w: brief %s already has a live %s campaign", domain.ErrConflict, c.BriefID, c.Platform)
+	// Keyed by (brief, platform, VARIANT), matching the real partial unique index from
+	// migration 000022. Keying on (brief, platform) alone made this fake reject a Demand Gen
+	// adoption onto a brief holding a Search campaign -- a pair the real index accepts -- so
+	// the fake enforced a constraint stricter than production and hid the bug that the
+	// service-side pre-check was refusing the same pair.
+	variant := model.NormalizeVariant(c.Variant)
+	for _, key := range []string{
+		c.BriefID + "|" + string(c.Platform) + "|" + variant,
+		// The bare form means the DEFAULT slot, so existing single-variant fixtures still
+		// collide correctly without being rewritten.
+		func() string {
+			if variant == model.VariantDefault {
+				return c.BriefID + "|" + string(c.Platform)
+			}
+			return ""
+		}(),
+	} {
+		if key == "" {
+			continue
+		}
+		if existing, ok := r.existing[key]; ok && existing.Status != "deleted" {
+			return nil, fmt.Errorf("%w: brief %s already has a live %s campaign", domain.ErrConflict, c.BriefID, c.Platform)
+		}
 	}
 	for _, other := range r.existing {
 		// No project comparison: 000020's index is keyed (platform, platform_campaign_id)
@@ -251,7 +330,9 @@ func (r *fakeCampaignRepo) AdoptCampaign(_ context.Context, c *model.Campaign, e
 	if r.existing == nil {
 		r.existing = map[string]*model.Campaign{}
 	}
-	r.existing[key] = c
+	// Stored variant-qualified so a later lookup for a DIFFERENT slot on the same brief does
+	// not find this row -- the whole point of the slot key.
+	r.storeRow(c)
 	r.adopted = append(r.adopted, c)
 	return c, nil
 }
@@ -841,7 +922,7 @@ func TestClaimCampaignDispatch_ConcurrentSingleWinner(t *testing.T) {
 			defer wg.Done()
 			<-start // release all goroutines at once to maximize contention
 			claimed, row, err := repo.ClaimCampaignDispatch(
-				context.Background(), "cncf", "b1", model.ProviderGoogleAds, "job1", nil)
+				context.Background(), "cncf", "b1", model.ProviderGoogleAds, model.VariantDefault, "job1", nil)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -1037,11 +1118,15 @@ type claimCountingCampaignRepo struct {
 	claims int
 }
 
-func (r *claimCountingCampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, p model.Provider, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
+func (r *claimCountingCampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, p model.Provider, variant, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
 	r.cmu.Lock()
 	r.claims++
 	r.cmu.Unlock()
-	return r.fakeCampaignRepo.ClaimCampaignDispatch(ctx, projectID, briefID, p, jobID, by)
+	// Forward the RECEIVED variant, not a hardcoded default. A wrapper that substitutes
+	// the slot key would claim the default slot for every dispatch routed through it and
+	// hide exactly the variant-routing regression this PR exists to prevent — the same
+	// "a fake that does not model the key hides the bug" class the PR argues elsewhere.
+	return r.fakeCampaignRepo.ClaimCampaignDispatch(ctx, projectID, briefID, p, variant, jobID, by)
 }
 
 // TestOrchestrator_DispatchGoesThroughClaim verifies each per-platform dispatch

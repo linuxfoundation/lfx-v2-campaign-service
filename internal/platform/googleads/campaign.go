@@ -450,9 +450,59 @@ func (c *Client) ValidateCampaignInput(in CampaignInput) error {
 	return err
 }
 
-// preflightCampaign validates the input and computes the derived values. Non-mutating: it
-// performs no I/O, so a caller may run it to decide whether a request is well-formed.
+// campaignKind is the name segment that distinguishes one channel's campaign from
+// another's on the SAME brief. Google rejects a duplicate campaign name within an
+// account, and (more importantly) two channels sharing a name are indistinguishable
+// to anyone reconciling them by name after an ambiguous create.
+// Exported because the DISPATCH layer must compose the same name this client will, before
+// it calls a create: adoption looks a campaign up BY NAME, so a dispatch that composed the
+// name itself from a local literal would look up a name the client never writes the moment
+// the two drift. One definition, both callers.
+const (
+	CampaignKindSearch    = "Search Campaign"
+	CampaignKindDemandGen = "DemandGen Campaign"
+)
+
+// Unexported aliases retained so this package's own call sites read unchanged.
+const (
+	campaignKindSearch    = CampaignKindSearch
+	campaignKindDemandGen = CampaignKindDemandGen
+)
+
+// preflightCampaign validates the input and composes the names, for the given campaign
+// KIND. The kind is a parameter rather than a constant because Demand Gen and Search are
+// separate campaigns under one brief: composing both as "Search Campaign" made them
+// collide upstream and become indistinguishable in a reconcile. The legacy Express path
+// draws the same distinction (buildCampaignName(body, 'Search' | 'DemandGen')).
 func (c *Client) preflightCampaign(in CampaignInput) (*campaignPreflight, error) {
+	return c.preflightCampaignKind(campaignKindSearch, in)
+}
+
+// budgetKindFor returns the name segment distinguishing one channel's BUDGET from another's
+// on the same brief. The mapping is deliberately ASYMMETRIC — Search keeps the bare "Budget"
+// it has always used, and only Demand Gen gets a channel-specific one.
+//
+// The asymmetry is the point, not an oversight. A non-shared budget's name is this client's
+// idempotency key: ComposeName is deterministic in the brief, so a retry recomposes the same
+// name and Google refuses it with DUPLICATE_NAME, which the caller reports as
+// already-exists rather than creating a second budget. Renaming SEARCH's budget would break
+// that for every Search campaign already in flight — its budget is named the old way
+// upstream, so a retry would compose a name that does NOT collide and would create a second
+// budget for the same campaign. Demand Gen has no such history: nothing has been created
+// under a Demand Gen budget name yet, so it is free to take a distinct one.
+//
+// Without this, both channels composed "LFX | Budget | <project> | <event> | <brief id>" —
+// identical, because every other segment is the same for one brief. Demand Gen on a brief
+// that already had a Search campaign therefore failed at the BUDGET step with DUPLICATE_NAME
+// and never reached the campaign create at all.
+func budgetKindFor(campaignKind string) string {
+	if campaignKind == campaignKindDemandGen {
+		return "DemandGen Budget"
+	}
+	return "Budget"
+}
+
+func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaignPreflight, error) {
 	if err := c.validateAccountIDs(); err != nil {
 		return nil, err
 	}
@@ -489,8 +539,8 @@ func (c *Client) preflightCampaign(in CampaignInput) (*campaignPreflight, error)
 		return nil, fmt.Errorf("google-ads campaign budget must be > 0 (rounds to %d micros), got %.6f", amountMicros, in.Budget)
 	}
 
-	budgetName := ComposeName("Budget", in)
-	campaignName := ComposeName("Search Campaign", in)
+	budgetName := ComposeName(budgetKindFor(kind), in)
+	campaignName := ComposeName(kind, in)
 	// Budget name is limited in UTF-8 BYTES (len is the byte count); campaign name in
 	// CHARACTERS (utf8.RuneCountInString). See maxBudgetNameBytes/maxCampaignNameRunes.
 	if err := validateEntityName("budget", budgetName, len(budgetName), maxBudgetNameBytes, "UTF-8 bytes"); err != nil {

@@ -48,7 +48,7 @@ leaving headroom over reusing a number a sibling branch might renumber into.
 
 - `000001` — connection tables.
 - `000002` — brief, campaign, and async-job tables. Indexes: `campaign_jobs`
-  on `brief_id`; `campaigns` on `project_id`. `(brief_id, platform)` /
+  on `brief_id`; `campaigns` on `project_id`. `(brief_id, platform, variant)` /
   `(project_id, event_slug)` uniqueness covers those leftmost columns.
 - `000003` — brief `project_id` UUID→TEXT and partial-unique
   `(project_id, event_slug)` excluding archived rows.
@@ -118,7 +118,9 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   and a name-only guard then accepts it and drops the sole real uniqueness constraint,
   leaving the pair with none: every claim wins and concurrent retries double-create paid
   campaigns, silently. So the guard proves `indrelid = public.campaigns`, `indisunique`,
-  `indnkeyatts = 2` with key columns exactly `(brief_id, platform)` in order, and a
+  `indnkeyatts = 3` with key columns exactly `(brief_id, platform, variant)`
+  in order (widened by `000022`; `000023` verifies it and `000024` drops the
+  two-column form), and a
   partial predicate deparsing to `(status <> 'deleted'::text)`. Verified on PostgreSQL
   16.10: a non-unique index of the right name PASSED the old name-only guard and FAILS
   this one, as do a superset key list, a reversed column order, a non-partial index, a
@@ -139,7 +141,7 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   fails silently rather than loudly.
 
   The genuine hazard staging was meant to address is real, though: the PREVIOUS release's
-  bare `ON CONFLICT (brief_id, platform)` matches no index once the constraint is gone and
+  bare `ON CONFLICT (brief_id, platform, variant)` matches no index once the constraint is gone and
   errors on every dispatch claim (verified: works while the constraint exists, fails with
   "there is no unique or exclusion constraint matching the ON CONFLICT specification" after
   the drop). Since migrations run at pod boot against a shared database, Kubernetes' default
@@ -159,6 +161,12 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   (`GetCampaign`, `GetCampaignByPlatform`, `ReplaceCampaign`) also filters deleted
   rows — load-bearing for `GetCampaignByPlatform`, which the orchestrator uses to
   decide whether a pair was already dispatched.
+
+  `variant` (added by `000021`) names WHICH of a platform's campaign types a row is:
+  Google's UI offers Search and Demand Gen together and Performance Max is coming, so
+  one brief legitimately holds several `google-ads` campaigns. Every other provider
+  writes `'default'`, and every pre-`000021` row was backfilled to it, so the invariant
+  is unchanged for them — one live campaign per pair, now spelled with a third column.
 
 - `000015` — `created_by` / `updated_by` JSONB on `campaign_briefs` (see *Actor
   attribution* below).

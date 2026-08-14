@@ -5912,8 +5912,9 @@ func unmarshalMetaAdsCredentialsRequestBodyToLfxv2campaignserviceconnectionsMeta
 // type *RedditAdsConnectionConfigRequestBody.
 func unmarshalRedditAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsRedditAdsConnectionConfig(v *RedditAdsConnectionConfigRequestBody) *lfxv2campaignserviceconnections.RedditAdsConnectionConfig {
 	res := &lfxv2campaignserviceconnections.RedditAdsConnectionConfig{
-		Label:     v.Label,
-		AccountID: *v.AccountID,
+		Label:             v.Label,
+		AccountID:         *v.AccountID,
+		ConversionPixelID: v.ConversionPixelID,
 	}
 
 	return res

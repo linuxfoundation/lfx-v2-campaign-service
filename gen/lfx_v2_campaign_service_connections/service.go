@@ -750,6 +750,8 @@ type RedditAdsConnection struct {
 	Version int64
 	// ETag header value (mirrors version)
 	Etag string
+	// Reddit conversion pixel ID
+	ConversionPixelID *string
 }
 
 type RedditAdsConnectionConfig struct {
@@ -757,6 +759,8 @@ type RedditAdsConnectionConfig struct {
 	Label *string
 	// Reddit advertiser ID
 	AccountID string
+	// Reddit conversion pixel ID (Reddit Ads → Events Manager)
+	ConversionPixelID *string
 }
 
 // Reddit Ads OAuth credential. Write-only; never returned.
