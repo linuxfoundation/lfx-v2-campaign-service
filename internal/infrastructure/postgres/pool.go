@@ -337,11 +337,17 @@ var requiredIndexes = []requiredIndex{{
 	// a clean boot and duplicate PAID campaigns as the first symptom. Two guards on one
 	// definition is the point: a migration-time check cannot speak for the schema a year
 	// of operations later.
-	name:   "uq_campaigns_brief_platform_live",
+	name:   "uq_campaigns_brief_platform_variant_live",
 	table:  "campaigns",
 	unique: true,
-	keys:   []string{"brief_id", "platform"},
-	// Deparsed, and character-identical to the form 000014's guard compares against.
+	// (brief, platform, VARIANT) since 000022. Google's UI offers Search and Demand Gen
+	// as simultaneous checkboxes, so a brief legitimately holds several google-ads
+	// campaigns; keying on (brief, platform) alone made the second dispatch read the
+	// first's row and report a false success. Every other provider writes 'default', so
+	// the invariant is unchanged for them — one live campaign per pair, now spelled with
+	// a third column.
+	keys: []string{"brief_id", "platform", "variant"},
+	// Deparsed, and character-identical to the form 000023's guard compares against.
 	predicate: "(status <> 'deleted'::text)",
 }, {
 	// at most one live campaign per (platform, platform_campaign_id) — the guard that keeps
@@ -634,7 +640,7 @@ func describeInvalid(names []string) string {
 //
 // It is per-name and not per-message because more than one index can be reported at once
 // and they need not share an owner: `uq_campaign_audiences_brief_platform_building` comes
-// from 000018 and `uq_campaigns_brief_platform_live` from 000013. A single
+// from 000018 and `uq_campaigns_brief_platform_variant_live` from 000022. A single
 // `force <version-1>` sentence covering both is wrong for at least one of them — an
 // operator who forces 17 replays 000018 and the campaigns index is still absent, with the
 // error now silent because the message they followed said this was the remedy. Advice
