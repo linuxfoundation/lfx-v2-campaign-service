@@ -144,7 +144,19 @@ func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, _ string, br
 	if r.byPlatformErr != nil {
 		return nil, r.byPlatformErr
 	}
-	if c, ok := r.existing[briefID+"|"+string(platform)]; ok {
+	// The real slot key is (brief, platform, VARIANT) — migration 000022. This fake ignored
+	// the variant and keyed on (brief, platform) alone, which made EVERY variant look
+	// occupied once any one of them was: a Demand Gen adoption onto a brief holding a Search
+	// campaign was reported as a conflict the real repository would have accepted. A fake
+	// that does not model the constraint hides the bug the constraint exists to catch.
+	//
+	// Keys may be written either way. The variant-qualified form is preferred; the bare
+	// (brief, platform) form is accepted as meaning the DEFAULT slot, so the many existing
+	// single-variant fixtures keep working without being rewritten.
+	if c, ok := r.existing[briefID+"|"+string(platform)+"|"+model.NormalizeVariant(variant)]; ok {
+		return c, nil
+	}
+	if c, ok := r.existing[briefID+"|"+string(platform)]; ok && model.NormalizeVariant(variant) == model.VariantDefault {
 		return c, nil
 	}
 	return nil, domain.ErrNotFound
@@ -226,9 +238,29 @@ func (r *fakeCampaignRepo) AdoptCampaign(_ context.Context, c *model.Campaign, e
 	if r.adoptBriefVersion != 0 && r.adoptBriefVersion != expectedVersion {
 		return nil, domain.ErrStaleApproval
 	}
-	key := c.BriefID + "|" + string(c.Platform)
-	if existing, ok := r.existing[key]; ok && existing.Status != "deleted" {
-		return nil, fmt.Errorf("%w: brief %s already has a live %s campaign", domain.ErrConflict, c.BriefID, c.Platform)
+	// Keyed by (brief, platform, VARIANT), matching the real partial unique index from
+	// migration 000022. Keying on (brief, platform) alone made this fake reject a Demand Gen
+	// adoption onto a brief holding a Search campaign -- a pair the real index accepts -- so
+	// the fake enforced a constraint stricter than production and hid the bug that the
+	// service-side pre-check was refusing the same pair.
+	variant := model.NormalizeVariant(c.Variant)
+	for _, key := range []string{
+		c.BriefID + "|" + string(c.Platform) + "|" + variant,
+		// The bare form means the DEFAULT slot, so existing single-variant fixtures still
+		// collide correctly without being rewritten.
+		func() string {
+			if variant == model.VariantDefault {
+				return c.BriefID + "|" + string(c.Platform)
+			}
+			return ""
+		}(),
+	} {
+		if key == "" {
+			continue
+		}
+		if existing, ok := r.existing[key]; ok && existing.Status != "deleted" {
+			return nil, fmt.Errorf("%w: brief %s already has a live %s campaign", domain.ErrConflict, c.BriefID, c.Platform)
+		}
 	}
 	for _, other := range r.existing {
 		// No project comparison: 000020's index is keyed (platform, platform_campaign_id)
@@ -251,7 +283,9 @@ func (r *fakeCampaignRepo) AdoptCampaign(_ context.Context, c *model.Campaign, e
 	if r.existing == nil {
 		r.existing = map[string]*model.Campaign{}
 	}
-	r.existing[key] = c
+	// Stored variant-qualified so a later lookup for a DIFFERENT slot on the same brief does
+	// not find this row -- the whole point of the slot key.
+	r.existing[c.BriefID+"|"+string(c.Platform)+"|"+variant] = c
 	r.adopted = append(r.adopted, c)
 	return c, nil
 }

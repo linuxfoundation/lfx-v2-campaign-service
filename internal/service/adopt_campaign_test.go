@@ -553,6 +553,15 @@ func TestAdoptCampaign_OccupiedBriefReturns409WithoutPlatformCall(t *testing.T) 
 
 	// Pre-populate the campaign repo with an existing campaign for this (brief, platform) pair
 	// The key format is briefID|platformString
+	// BOTH Google slots, because the fast-path 409 fires only when every adoptable slot is
+	// taken — with demand-gen free, the correct answer is to contact the platform and find
+	// out which slot this campaign wants. Filling both is what makes "occupied" unambiguous
+	// and keeps this test about the no-platform-call guarantee it is named for.
+	camps.existing["b1|google-ads|demand-gen"] = &model.Campaign{
+		ID: "existing-demandgen", ProjectID: "cncf", BriefID: "b1",
+		Platform: model.ProviderGoogleAds, Variant: "demand-gen",
+		PlatformCampaignID: "6666666666", Status: model.CampaignStatusCreated,
+	}
 	camps.existing["b1|google-ads"] = &model.Campaign{
 		ID:                 "existing-campaign",
 		ProjectID:          "cncf",
@@ -582,5 +591,38 @@ func TestAdoptCampaign_OccupiedBriefReturns409WithoutPlatformCall(t *testing.T) 
 	// Nothing should have been persisted
 	if len(camps.adopted) != 0 {
 		t.Errorf("persisted %d campaigns for an occupied brief, want 0", len(camps.adopted))
+	}
+}
+
+// Adopting a Demand Gen campaign onto a brief that already has a SEARCH campaign must
+// succeed: those are different slots and the insert accepts the pair.
+//
+// The pre-check used to guess VariantDefault and return 409 before the platform was
+// contacted, so this was refused outright — while the variant-aware check written for
+// exactly this case sat unreachable below it. The pre-check now fires only when EVERY
+// adoptable slot is taken, which needs no guess.
+func TestAdoptCampaign_DemandGenIsNotBlockedByAnExistingSearchCampaign(t *testing.T) {
+	disp := &adopterDispatcher{ref: &model.PlatformCampaignRef{
+		ID: "1234567890", Name: "KubeCon EU 2026 — DemandGen", Variant: "demand-gen",
+	}}
+	s, camps := newAdoptService(t, model.ProviderGoogleAds, disp)
+	if camps.existing == nil {
+		camps.existing = make(map[string]*model.Campaign)
+	}
+	// The brief already holds the DEFAULT-slot (Search) campaign.
+	camps.existing["b1|google-ads"] = &model.Campaign{
+		ID: "existing-search", ProjectID: "cncf", BriefID: "b1",
+		Platform: model.ProviderGoogleAds, Variant: model.VariantDefault,
+		PlatformCampaignID: "5555555555", Status: model.CampaignStatusCreated,
+	}
+
+	if _, err := s.AdoptCampaign(context.Background(), adoptPayload()); err != nil {
+		t.Fatalf("adopting a demand-gen campaign onto a brief with a Search campaign must succeed — different slots: %v", err)
+	}
+	if len(camps.adopted) != 1 {
+		t.Fatalf("adopted %d campaigns, want 1", len(camps.adopted))
+	}
+	if got := camps.adopted[0].Variant; got != "demand-gen" {
+		t.Errorf("adopted into slot %q, want demand-gen", got)
 	}
 }
