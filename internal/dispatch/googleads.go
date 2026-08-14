@@ -221,7 +221,28 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err := client.ValidateCampaignInput(in); err != nil {
 		return nil, notCreated(err)
 	}
-	campaignName := googleads.ComposeName("Search Campaign", in)
+	// Resolve the channel BEFORE the name is composed, before adoption looks anything up, and
+	// before any create. Every step below depends on which campaign type this is, and doing it
+	// last meant all of them ran assuming Search:
+	//   - the name was hardcoded "Search Campaign", so a Demand Gen dispatch with
+	//     adoptExisting:true searched for the SEARCH campaign's name — adopting a Search
+	//     campaign into the demand-gen slot, or missing the real "DemandGen Campaign".
+	//   - an unsupported channel was refused only at the switch, AFTER adoption could already
+	//     have bound a campaign.
+	// Refusing here also keeps the no-upstream-call guarantee: an unknown channel returns
+	// before the client is contacted at all.
+	channel := strings.ToLower(strings.TrimSpace(cfg.Channel))
+	var campaignKind string
+	switch channel {
+	case "", googleAdsChannelSearch:
+		channel = googleAdsChannelSearch
+		campaignKind = googleads.CampaignKindSearch
+	case googleAdsChannelDemandGen:
+		campaignKind = googleads.CampaignKindDemandGen
+	default:
+		return nil, notCreated(fmt.Errorf("google ads: unsupported channel %q (want %q or %q)", cfg.Channel, googleAdsChannelSearch, googleAdsChannelDemandGen))
+	}
+	campaignName := googleads.ComposeName(campaignKind, in)
 	// Adoption is OPT-IN (see googleAdsConfig.AdoptExisting for why the default must be
 	// off). When asked for: ComposeName is deterministic in the brief, so the caller is
 	// pointing at a campaign that already carries this exact name on this account. Adopt
@@ -257,21 +278,26 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	//   - (result, err)   → may exist; return the (possibly id-less) campaign + error so
 	//                       the orchestrator retains the claim and records the orphan.
 	//   - (result, nil)   → success.
-	// Channel selection. Both creates share the (result, err) contract above, so the
-	// handling below is identical — only which campaign type gets created differs.
-	// An unrecognised value is refused BEFORE any upstream call: a typo must not
-	// silently fall back to Search and spend a Demand Gen budget on search ads.
+	// Channel selection. Both creates share the (result, err) contract above, so the handling
+	// below is identical — only which campaign type gets created differs. `channel` was
+	// resolved and validated above (an unsupported value returned before the client was
+	// contacted), so this switch needs no default arm beyond the unreachable guard: adding one
+	// that creates a Search campaign would reintroduce exactly the silent fallback the early
+	// validation exists to prevent.
 	var (
 		result *googleads.CampaignResult
 		cerr   error
 	)
-	switch strings.ToLower(strings.TrimSpace(cfg.Channel)) {
-	case "", googleAdsChannelSearch:
+	switch channel {
+	case googleAdsChannelSearch:
 		result, cerr = client.CreateCampaign(ctx, in)
 	case googleAdsChannelDemandGen:
 		result, cerr = client.CreateDemandGenCampaign(ctx, in)
 	default:
-		return nil, notCreated(fmt.Errorf("google ads: unsupported channel %q (want %q or %q)", cfg.Channel, googleAdsChannelSearch, googleAdsChannelDemandGen))
+		// Unreachable: the resolution above admits only these two. Refuse rather than fall
+		// through to a create, so a future channel added there but not here cannot spend one
+		// channel's budget on another.
+		return nil, notCreated(fmt.Errorf("google ads: channel %q resolved but has no create path", channel))
 	}
 	if cerr != nil {
 		if result == nil {
@@ -959,7 +985,43 @@ func (d *GoogleAdsDispatcher) LookupCampaign(ctx context.Context, projectID stri
 	if merr != nil {
 		return nil, fmt.Errorf("look up google ads campaign: record account scope: %w", merr)
 	}
-	return &model.PlatformCampaignRef{ID: ref.ID, Name: ref.Name, Result: scope}, nil
+	// Establish the SLOT from what Google says the campaign is. Adoption's input names no
+	// campaign type, so this is the only evidence available — and filing every adopted
+	// campaign under 'default' meant adopting a Demand Gen campaign left the 'demand-gen'
+	// slot free for a later dispatch to fill with a second paid campaign.
+	//
+	// Fails closed: an unrecognised or absent channel type is refused rather than defaulted.
+	// A campaign type this service has no slot for cannot be bound safely — 'default' would
+	// be a guess, and the guess is what creates the duplicate.
+	variant, verr := googleAdsVariantForChannelType(ref.AdvertisingChannelType)
+	if verr != nil {
+		return nil, verr
+	}
+	return &model.PlatformCampaignRef{ID: ref.ID, Name: ref.Name, Result: scope, Variant: variant}, nil
+}
+
+// googleAdsVariantForChannelType maps Google's advertising_channel_type onto this service's
+// variant slot. The two vocabularies are deliberately separate: Google's is an upstream enum
+// that grows without our involvement, and the mapping is the point at which this service
+// decides whether it can represent a campaign at all.
+//
+// Only the types this service can CREATE are mappable. Anything else — PERFORMANCE_MAX,
+// VIDEO, SHOPPING, a value Google adds next quarter, or an empty string from a response that
+// omitted the field — is refused. Adopting one would file it under some existing slot and
+// leave that campaign type's real slot open for a duplicate.
+func googleAdsVariantForChannelType(channelType string) (string, error) {
+	switch strings.ToUpper(strings.TrimSpace(channelType)) {
+	case "SEARCH":
+		// Search is this platform's default slot: an absent channel and an explicit
+		// "search" both dispatch the same campaign, and both normalise to VariantDefault.
+		return model.VariantDefault, nil
+	case "DEMAND_GEN":
+		return model.NormalizeVariant(googleAdsChannelDemandGen), nil
+	case "":
+		return "", fmt.Errorf("google ads: the campaign lookup returned no advertising channel type, so which campaign type this is cannot be established; refusing to adopt rather than assume")
+	default:
+		return "", fmt.Errorf("google ads: campaign type %q is not one this service creates, so it has no slot to adopt into", channelType)
+	}
 }
 
 // googleAdsCreationCustomerID recovers the ad account the campaign was CREATED under from

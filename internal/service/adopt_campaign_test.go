@@ -69,6 +69,7 @@ func adoptPayload() *briefs.AdoptCampaignPayload {
 func TestAdoptCampaign_BindsThePlatformsOwnAnswer(t *testing.T) {
 	disp := &adopterDispatcher{ref: &model.PlatformCampaignRef{
 		ID: "1234567890", Name: "KubeCon EU 2026 — Search",
+		Variant: model.VariantDefault,
 	}}
 	s, camps := newAdoptService(t, model.ProviderGoogleAds, disp)
 
@@ -211,7 +212,7 @@ func TestAdoptCampaign_RefWithNoIDIsNotSuccess(t *testing.T) {
 
 // Re-adopting a bound pair must not repoint it and orphan a still-spending campaign.
 func TestAdoptCampaign_AlreadyBoundPairIsAConflict(t *testing.T) {
-	disp := &adopterDispatcher{ref: &model.PlatformCampaignRef{ID: "1234567890", Name: "n"}}
+	disp := &adopterDispatcher{ref: &model.PlatformCampaignRef{ID: "1234567890", Name: "n", Variant: model.VariantDefault}}
 	s, camps := newAdoptService(t, model.ProviderGoogleAds, disp)
 	camps.existing = map[string]*model.Campaign{
 		"b1|" + string(model.ProviderGoogleAds): {
@@ -421,7 +422,8 @@ func (d deadlineRecordingAdopter) LookupCampaign(ctx context.Context, _ string, 
 func TestAdoptCampaign_RecordsItsProvenance(t *testing.T) {
 	disp := &adopterDispatcher{ref: &model.PlatformCampaignRef{
 		ID: "1234567890", Name: "KubeCon EU 2026 — Search",
-		Result: json.RawMessage(`{"customerId":"1112223333"}`),
+		Result:  json.RawMessage(`{"customerId":"1112223333"}`),
+		Variant: model.VariantDefault,
 	}}
 	s, camps := newAdoptService(t, model.ProviderGoogleAds, disp)
 	ctx := ctxWithActor(&model.Actor{Username: "mrautela"})
@@ -448,7 +450,7 @@ func TestAdoptCampaign_RecordsItsProvenance(t *testing.T) {
 // longer approved — the approval gate routed around by latency alone. The version the service
 // verified must therefore reach the repository, which re-checks it under the row lock.
 func TestAdoptCampaign_ApprovalLostDuringTheLookupIsAConflict(t *testing.T) {
-	disp := &adopterDispatcher{ref: &model.PlatformCampaignRef{ID: "1234567890", Name: "n"}}
+	disp := &adopterDispatcher{ref: &model.PlatformCampaignRef{ID: "1234567890", Name: "n", Variant: model.VariantDefault}}
 	s, camps := newAdoptService(t, model.ProviderGoogleAds, disp)
 	// What the locked re-read finds: the brief moved on while the platform was being queried.
 	camps.adoptBriefVersion = 7
@@ -467,7 +469,7 @@ func TestAdoptCampaign_ApprovalLostDuringTheLookupIsAConflict(t *testing.T) {
 // think they own it: one brief's toggle pauses what the other just enabled, and no reader of
 // either row can see why. Neither row is malformed, so nothing detects it after the fact.
 func TestAdoptCampaign_SecondBriefCannotBindTheSameCampaign(t *testing.T) {
-	disp := &adopterDispatcher{ref: &model.PlatformCampaignRef{ID: "1234567890", Name: "n"}}
+	disp := &adopterDispatcher{ref: &model.PlatformCampaignRef{ID: "1234567890", Name: "n", Variant: model.VariantDefault}}
 	s, camps := newAdoptService(t, model.ProviderGoogleAds, disp)
 	camps.existing = map[string]*model.Campaign{
 		"b0|" + string(model.ProviderGoogleAds): {

@@ -650,6 +650,33 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 		}
 	}
 
+	// An adapter that could not establish the variant must not reach the insert: an empty
+	// value would be normalised to 'default' by the repository and reintroduce exactly the
+	// mis-slotting this carries the variant to prevent. This is a CONTRACT violation by the
+	// adapter, not a caller fault, so it is a 500 — the caller can do nothing about it, and a
+	// 4xx would send them to fix their own request.
+	if strings.TrimSpace(ref.Variant) == "" {
+		slog.ErrorContext(ctx, "adapter returned no variant for an adopted campaign; refusing to guess a slot",
+			"project_id", p.ProjectID, "brief_id", p.BriefID, "platform", platform,
+			"platform_campaign_id", platformCampaignID)
+		return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the campaign could not be verified with the ad platform"}
+	}
+
+	// The occupancy pre-check above used VariantDefault because the variant was not yet known
+	// — the platform had not been contacted. Now that it is known, re-check the ACTUAL slot:
+	// without this, adopting a Demand Gen campaign into a brief that already holds one gets
+	// past the pre-check (which looked at 'default') and is refused only by the insert's
+	// unique index, as a generic conflict. Checking here returns the same deterministic 409
+	// the default-slot path gives. The insert remains the authority — this is a better error,
+	// not the guarantee.
+	if ref.Variant != model.VariantDefault {
+		if _, cerr := campaignRepo.GetCampaignByPlatform(ctx, p.ProjectID, p.BriefID, platform, ref.Variant); cerr == nil {
+			return nil, &briefs.ConflictError{Code: "409", Message: "this brief already has a live campaign on that platform"}
+		} else if !errors.Is(cerr, domain.ErrNotFound) {
+			return nil, mapBriefErr(cerr)
+		}
+	}
+
 	// ref.ID, not platformCampaignID: bind the id the PLATFORM reported. The two are equal on
 	// every correct response — googleads.GetCampaign errors when its own filter comes back
 	// unhonoured — so a platform that ever answers with a different campaign cannot have the
@@ -664,6 +691,12 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 		// verified under, which the account-mismatch guards read back on every later toggle
 		// and metrics read. An empty Result reads as "unknown" there and is waved through.
 		Result: ref.Result,
+		// The slot this campaign actually occupies, established by the adapter from what the
+		// PLATFORM reports the campaign is. Set explicitly rather than left to the column
+		// default: the default is 'default', and defaulting is precisely the bug — an adopted
+		// Demand Gen campaign filed under 'default' leaves the 'demand-gen' slot free, and the
+		// next Demand Gen dispatch for this brief creates a SECOND paid campaign.
+		Variant: ref.Variant,
 		// Adoption is a write like any other, so it records who made it. Same nil handling
 		// as CreateBrief: no decodable actor stores NULL rather than refusing the write.
 		CreatedBy: attributedActor(ctx, "adopt campaign"),

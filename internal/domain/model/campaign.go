@@ -28,6 +28,21 @@ const (
 // no such concept at all.
 const VariantDefault = "default"
 
+// VariantInvalid is the slot for a request whose variant could NOT be determined —
+// today, a config envelope that fails to decode. It exists so such a request cannot be
+// filed under a slot a real campaign occupies.
+//
+// The idempotency lookup runs BEFORE the dispatcher, so a request routed to an occupied
+// slot is answered by reusing that row and never reaches the dispatcher that would have
+// reported what was actually wrong with it. Mapping "we don't know" onto 'default' meant
+// a malformed create against a brief with an existing Search campaign returned success.
+//
+// No create path ever writes this value, so the lookup is guaranteed to miss and the
+// dispatch proceeds to its real error. The leading underscore keeps it outside the
+// namespace any provider's channel/objective string could produce, so a future platform
+// channel literally named "invalid" still cannot collide with it.
+const VariantInvalid = "_invalid"
+
 // NormalizeVariant maps an empty variant to VariantDefault.
 //
 // Empty means "this caller does not sub-divide", which is true of every provider
@@ -371,4 +386,15 @@ type PlatformCampaignRef struct {
 	// empty, the guard reads "unknown", and a later repointing of the project's connection
 	// would let the same numeric id address a DIFFERENT customer's campaign.
 	Result json.RawMessage
+	// Variant is the slot this upstream campaign belongs in, as established from what the
+	// PLATFORM reports the campaign actually is — not assumed from the adopt request, which
+	// names no campaign type at all.
+	//
+	// Adoption previously filed every Google campaign under VariantDefault regardless of
+	// type. Adopting a Demand Gen campaign therefore left the 'demand-gen' slot empty, and
+	// the next Demand Gen dispatch for that brief saw a free slot and created a SECOND paid
+	// campaign. An adapter that cannot establish the variant must fail rather than return
+	// a guess: an empty value here is a bug in the adapter, and the service layer rejects
+	// it rather than defaulting.
+	Variant string
 }

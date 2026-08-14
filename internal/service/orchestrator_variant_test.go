@@ -43,9 +43,13 @@ func TestVariantForDispatch(t *testing.T) {
 		{"meta ignores channel entirely", model.ProviderMetaAds, `{"metaConfig":{"objective":"traffic"}}`, model.VariantDefault},
 		{"reddit ignores channel entirely", model.ProviderRedditAds, `{"redditConfig":{"objective":"awareness"}}`, model.VariantDefault},
 		{"hubspot", model.ProviderHubSpot, `{"hubspotConfig":{"sourceEmailId":"e-1"}}`, model.VariantDefault},
-		// Undecodable config is the dispatcher's error to report. Claiming the default slot
-		// lets the dispatch reach that specific error instead of failing here vaguely.
-		{"malformed config falls back rather than failing", model.ProviderGoogleAds, `{not json`, model.VariantDefault},
+		// Undecodable config is still the dispatcher's error to report, but it must NOT claim
+		// the DEFAULT slot to get there. The idempotency lookup runs before the dispatcher: on
+		// a brief that already holds a Search/default campaign, the malformed request matched
+		// that row and was answered as a reused success, so the dispatcher never ran and the
+		// error it was meant to surface never surfaced. VariantInvalid is a slot no create
+		// writes, so the lookup always misses and the dispatch reaches the real error.
+		{"malformed config claims an unoccupiable slot, not the default one", model.ProviderGoogleAds, `{not json`, model.VariantInvalid},
 		// Case and whitespace are normalized so "Demand-Gen " cannot claim a third slot
 		// alongside "demand-gen" — two rows that both mean the same campaign.
 		{"case and space are normalized", model.ProviderGoogleAds, `{"googleAdsConfig":{"channel":"  Demand-Gen "}}`, "demand-gen"},

@@ -456,9 +456,19 @@ func (c *Client) ValidateCampaignInput(in CampaignInput) error {
 // another's on the SAME brief. Google rejects a duplicate campaign name within an
 // account, and (more importantly) two channels sharing a name are indistinguishable
 // to anyone reconciling them by name after an ambiguous create.
+// Exported because the DISPATCH layer must compose the same name this client will, before
+// it calls a create: adoption looks a campaign up BY NAME, so a dispatch that composed the
+// name itself from a local literal would look up a name the client never writes the moment
+// the two drift. One definition, both callers.
 const (
-	campaignKindSearch    = "Search Campaign"
-	campaignKindDemandGen = "DemandGen Campaign"
+	CampaignKindSearch    = "Search Campaign"
+	CampaignKindDemandGen = "DemandGen Campaign"
+)
+
+// Unexported aliases retained so this package's own call sites read unchanged.
+const (
+	campaignKindSearch    = CampaignKindSearch
+	campaignKindDemandGen = CampaignKindDemandGen
 )
 
 // preflightCampaign validates the input and composes the names, for the given campaign

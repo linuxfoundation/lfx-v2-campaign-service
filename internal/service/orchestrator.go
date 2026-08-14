@@ -815,10 +815,16 @@ func variantForDispatch(p model.Provider, config json.RawMessage) string {
 		} `json:"googleAdsConfig"`
 	}
 	if err := json.Unmarshal(config, &envelope); err != nil {
-		// Undecodable config is the dispatcher's error to report, not this function's.
-		// Claim the default slot so the dispatch proceeds far enough to produce that
-		// error rather than failing here with a less specific one.
-		return model.VariantDefault
+		// Undecodable config must NOT claim the default slot. The intent was to let the
+		// dispatcher report the specific decode error, but the idempotency lookup runs FIRST:
+		// when a Search/default campaign already exists for this brief, the malformed request
+		// matched that row, was reported as a reused success, and the dispatcher never ran —
+		// so the error it was supposed to surface never surfaced, and the caller was told a
+		// campaign it never validly asked for had been created.
+		//
+		// VariantInvalid is a slot no create ever writes, so the lookup always misses and the
+		// dispatch proceeds to the decode error. It cannot collide with a real campaign.
+		return model.VariantInvalid
 	}
 	ch := strings.ToLower(strings.TrimSpace(envelope.GoogleAds.Channel))
 	// Explicit "search" and an ABSENT channel dispatch the identical Search campaign, so
