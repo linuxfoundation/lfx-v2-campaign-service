@@ -55,7 +55,16 @@ type redditConfig struct {
 // stores event data as opaque JSON (EventDetails/Copy). Project is deliberately NOT
 // here — it must come from the authenticated brief.ProjectID, not caller JSON.
 type briefFields struct {
-	EventName       string `json:"eventName"`
+	EventName string `json:"eventName"`
+	// Name is the SAME value under the spelling the UI actually writes. `event_details` is
+	// typed `Any` in the design (design/brief.go:37), so nothing arbitrates the key, and the
+	// UI's own `CampaignEventDetails` interface has spelled it `name` all along — the persist
+	// path spreads that object verbatim. Every paid create therefore decoded EventName as ""
+	// and was refused before reaching the ad platform, while the email path had already been
+	// hardened against exactly this (hubspot.go:480 reads the name leniently rather than
+	// erroring). Accepting both spellings fixes the briefs already stored, which a
+	// writer-side change could not.
+	Name            string `json:"name"`
 	RegistrationURL string `json:"registrationUrl"`
 	HSToken         string `json:"hsToken"`
 }
@@ -405,6 +414,12 @@ func decodeBriefFields(brief *model.CampaignBrief) (briefFields, error) {
 		}
 		if bf.EventName == "" {
 			bf.EventName = partial.EventName
+		}
+		// `eventName` wins where both are present; `name` is the fallback rather than an
+		// equal, so a blob that carries the explicit spelling is never overridden by the
+		// generic one.
+		if bf.EventName == "" {
+			bf.EventName = partial.Name
 		}
 		if bf.RegistrationURL == "" {
 			bf.RegistrationURL = partial.RegistrationURL

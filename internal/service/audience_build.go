@@ -144,9 +144,21 @@ func (s *AudienceService) BuilderIsSet() bool {
 // opportunistically and validates what it found rather than assuming a shape.
 type briefEventDetails struct {
 	EventName string `json:"eventName"`
-	Country   string `json:"country"`
-	Location  string `json:"location"`
-	Year      string `json:"year"`
+	// Name and CountryCode are the SAME two values under the spellings the UI actually
+	// writes. Its `CampaignEventDetails` interface has `name` and `countryCode`, and the
+	// persist path spreads that object verbatim into the opaque `event_details` blob —
+	// which the design types as `Any`, so nothing arbitrates the keys.
+	//
+	// Without these, a brief the UI produced fails here on BOTH required fields, and the
+	// email channel cannot dispatch at all: BuildAudience is the gate the HubSpot
+	// dispatcher waits on. Same defect the paid path had (LFXV2-3259) — this decoder is a
+	// separate struct that the dispatch-side fix does not cover, despite the doc comment
+	// below claiming to mirror it.
+	Name        string `json:"name"`
+	Country     string `json:"country"`
+	CountryCode string `json:"countryCode"`
+	Location    string `json:"location"`
+	Year        string `json:"year"`
 }
 
 // BuildAudience derives a brief's HubSpot audience and records it.
@@ -728,8 +740,11 @@ func isSupportedYear(s string) bool {
 }
 
 // decodeEventDetails pulls the fields the build needs out of the brief's opaque blobs. It
-// mirrors internal/dispatch's decodeBriefFields: EventDetails is the primary source, Copy is a
-// fallback, and a blob that isn't this shape is skipped rather than failing the request.
+// follows internal/dispatch's decodeBriefFields in STRUCTURE — EventDetails is the primary
+// source, Copy is a fallback, and a blob that isn't this shape is skipped rather than failing
+// the request — but it is a SEPARATE struct reading different fields, so a change there does
+// not reach here. That is how both decoders came to miss the UI's spellings independently
+// (LFXV2-3259): treat them as siblings to keep in step, not as one implementation.
 func decodeEventDetails(b *model.CampaignBrief) (briefEventDetails, error) {
 	var out briefEventDetails
 	for _, blob := range []json.RawMessage{b.EventDetails, b.Copy} {
@@ -743,8 +758,14 @@ func decodeEventDetails(b *model.CampaignBrief) (briefEventDetails, error) {
 		if out.EventName == "" {
 			out.EventName = strings.TrimSpace(partial.EventName)
 		}
+		if out.EventName == "" {
+			out.EventName = strings.TrimSpace(partial.Name)
+		}
 		if out.Country == "" {
 			out.Country = strings.TrimSpace(partial.Country)
+		}
+		if out.Country == "" {
+			out.Country = strings.TrimSpace(partial.CountryCode)
 		}
 		if out.Location == "" {
 			out.Location = strings.TrimSpace(partial.Location)
