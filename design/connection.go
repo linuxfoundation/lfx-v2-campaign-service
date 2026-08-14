@@ -638,8 +638,12 @@ var RedditAdsConnectionConfig = Type("reddit-ads-connection-config", func() {
 	// NOT Required: connections created before this attribute existed have none, and making it
 	// required would make every one of them unreadable rather than merely unable to dispatch.
 	// The dispatcher refuses a create when it is absent, naming this connection as the fix.
+	// The example is deliberately DIFFERENT from account_id's above. On the LF account the
+	// two happen to share a value, and copying it here published a schema in which the
+	// advertiser id is offered as the pixel id — a UI developer wiring the connection form
+	// reads the generated OpenAPI, not this account's coincidence.
 	Attribute("conversion_pixel_id", String, "Reddit conversion pixel ID (Reddit Ads → Events Manager)", func() {
-		Example("t2_gv9wtbfa")
+		Example("a2_1b3c5d7e9f")
 	})
 	Required("account_id")
 })

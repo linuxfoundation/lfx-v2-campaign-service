@@ -227,3 +227,67 @@ func TestCreateCampaign_DoesNotRetryAnUnrelated400(t *testing.T) {
 		t.Errorf("the partial result must carry the created campaign id so the orphan is recorded, got %+v", res)
 	}
 }
+
+// The SURVIVING-interests case, which no test reached before: communities are rejected while
+// interests are accepted, so the retry keeps interests and the Steps trail must say so.
+//
+// It matters more than a reporting detail. Every fallback fixture rejects interests by
+// construction, so the branch reporting interests as kept was unreachable — and it is the
+// only line telling an operator their interest targeting survived. A claim no test and (per
+// LFXV2-3261) no production run has ever validated is exactly the kind that drifts.
+func TestCreateCampaign_KeepsInterestsWhenOnlyCommunitiesAreRejected(t *testing.T) {
+	c, bodies, cleanup := interestRejectingServers(t, "communities")
+	defer cleanup()
+
+	in := interestInput()
+	in.Subreddits = []string{"kubernetes"}
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+
+	sent := bodies()
+	if len(sent) != 2 {
+		t.Fatalf("expected 2 ad-group POSTs (rejected + retry), got %d", len(sent))
+	}
+	// The retry drops BOTH by design — baseTargeting carries neither — so interests are
+	// genuinely gone from the wire even though only communities were named. The Steps trail
+	// must therefore report interests as DROPPED, not as surviving. Asserting this pins the
+	// deliberate trade: one retry, both dimensions, honestly reported.
+	retry, _ := sent[1]["targeting"].(map[string]any)
+	if _, ok := retry["interests"]; ok {
+		t.Error("the retry still carries interests")
+	}
+
+	joined := strings.Join(res.Steps, " | ")
+	if strings.Count(joined, "Targeting:") != 1 {
+		t.Errorf("expected exactly one \"Targeting:\" step, got %d in %v", strings.Count(joined, "Targeting:"), res.Steps)
+	}
+	if !strings.Contains(joined, "interests") {
+		t.Errorf("the steps must account for interests either way: %v", res.Steps)
+	}
+}
+
+// The genuinely-surviving case: interests supplied, NOTHING rejected. This is the branch the
+// single "Targeting:" line exists to serve, and the one no fixture could reach while every
+// server rejected interests unconditionally.
+func TestCreateCampaign_ReportsSurvivingInterests(t *testing.T) {
+	c, _, cleanup := interestRejectingServers(t, "nothing-rejected")
+	defer cleanup()
+
+	res, err := c.CreateCampaign(context.Background(), interestInput())
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	joined := strings.Join(res.Steps, " | ")
+	if strings.Count(joined, "Targeting:") != 1 {
+		t.Errorf("expected exactly one \"Targeting:\" step, got %d in %v", strings.Count(joined, "Targeting:"), res.Steps)
+	}
+	if !strings.Contains(joined, "2 interests") {
+		t.Errorf("surviving interests must be reported in the targeting line: %v", res.Steps)
+	}
+	if strings.Contains(joined, "skipped") {
+		t.Errorf("nothing was rejected, so nothing should be reported as skipped: %v", res.Steps)
+	}
+}

@@ -6277,7 +6277,7 @@ definitions:
         example:
             config:
                 account_id: t2_gv9wtbfa
-                conversion_pixel_id: t2_gv9wtbfa
+                conversion_pixel_id: a2_1b3c5d7e9f
                 label: Facere ut voluptatem.
             credentials:
                 client_id: Unde perspiciatis.
@@ -6539,7 +6539,7 @@ definitions:
         example:
             config:
                 account_id: t2_gv9wtbfa
-                conversion_pixel_id: t2_gv9wtbfa
+                conversion_pixel_id: a2_1b3c5d7e9f
                 label: Facere ut voluptatem.
         required:
             - config
@@ -7064,14 +7064,14 @@ definitions:
             conversion_pixel_id:
                 type: string
                 description: Reddit conversion pixel ID (Reddit Ads → Events Manager)
-                example: t2_gv9wtbfa
+                example: a2_1b3c5d7e9f
             label:
                 type: string
                 description: Optional friendly name
                 example: Eaque eos veniam quidem maiores adipisci.
         example:
             account_id: t2_gv9wtbfa
-            conversion_pixel_id: t2_gv9wtbfa
+            conversion_pixel_id: a2_1b3c5d7e9f
             label: Impedit a.
         required:
             - account_id

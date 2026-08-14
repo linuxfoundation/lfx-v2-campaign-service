@@ -367,9 +367,13 @@ type CampaignInput struct {
 	Project         string
 	Objective       string // one of: awareness, traffic, conversions, video_views
 	PostURL         string
-	// ConversionPixelID is the Reddit conversion pixel this campaign optimizes
-	// toward. It is REQUIRED when the resolved objective is "conversions" (Reddit
-	// rejects a conversion ad group without a pixel), and ignored otherwise.
+	// ConversionPixelID is an optional PER-CAMPAIGN override of the connection's pixel.
+	// Empty is the normal case: the pixel is an account-level constant carried on
+	// AccountConfig, and this field exists only so a caller can override it.
+	//
+	// Reddit requires a pixel for EVERY objective, not merely "conversions" as its docs
+	// describe, so one of the two must be non-empty or CreateCampaign refuses before any
+	// upstream call. It is never ignored.
 	ConversionPixelID string
 	// VideoGoal is the concrete video optimization goal, REQUIRED when the resolved
 	// objective is "video_views". Accepted values: VIDEO_VIEW_6S, VIDEO_VIEW_15S.
@@ -1138,18 +1142,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		optimizationGoal = videoGoal
 	}
 
-	// Validate/resolve the conversion pixel before any mutating call. Reddit
-	// requires a conversion pixel for a conversion ad group, so a missing pixel
-	// would create the campaign in Step 2 and then fail at ad-group creation,
-	// orphaning a PAUSED campaign. Reject up front for the "conversions" objective
-	// so nothing is created.
+	// Validate/resolve the conversion pixel before any mutating call. A missing pixel would
+	// otherwise create the campaign in Step 2 and then fail at ad-group creation, orphaning a
+	// PAUSED campaign — so it is rejected up front and nothing is created.
 	//
-	// conversionPixelID is left EMPTY for every non-conversion objective even if the
-	// caller supplied a value: the field is documented as ignored outside
-	// conversions, and the payloads below add conversion_pixel_id only when this is
-	// non-empty. Gating resolution on the objective (not merely on the input being
-	// non-empty) keeps a reused input carrying a stray pixel from sending an
-	// objective-inapplicable field that Reddit would reject.
 	// The pixel is required for EVERY objective, not only conversions.
 	//
 	// This previously gated on `objective == "conversions"`, matching the API documentation.
@@ -1479,9 +1475,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return fmt.Errorf("reddit ad group creation failed (campaign %s created, PAUSED): %w", campaignID, e)
 	}
 	if err != nil {
-		// Only fall back to a communities-less retry on a 400 (validation) response
-		// whose body names invalid communities. Restricting to 400 (and matching the
-		// phrase case-insensitively) avoids retrying after a 401/500 — an ambiguous
+		// Only fall back on a 400 (validation) response whose body names an invalid
+		// TARGETING dimension — communities or interests. Restricting to 400 (and matching
+		// the phrases case-insensitively) avoids retrying after a 401/500 — an ambiguous
 		// failure where the ad group may already have been created, so a blind retry
 		// could duplicate it.
 		var apiErr *apiError
@@ -1533,11 +1529,21 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// the part an operator acts on, so it names each lost dimension rather than saying
 	// "some targeting was skipped" -- interests and communities are re-added in different
 	// places in Reddit Ads Manager.
+	// ONE "Targeting:" line listing every dimension that survived, built from what is
+	// actually being SENT rather than from what was asked for. Appending a separate line for
+	// interests made a successful run emit two "Targeting:" steps that had to be read
+	// together, and its branch was unreachable in every test — the fallback fixtures reject
+	// interests by construction, so nothing ever exercised the surviving case.
+	surviving := []string{}
 	if usedCommunities {
-		steps = append(steps, fmt.Sprintf("Targeting: %d communities, %d keywords, %d geos", len(communityNames), len(in.Keywords), len(geos)))
-	} else {
-		steps = append(steps, fmt.Sprintf("Targeting: %d keywords, %d geos", len(in.Keywords), len(geos)))
+		surviving = append(surviving, fmt.Sprintf("%d communities", len(communityNames)))
 	}
+	if len(in.Interests) > 0 && !droppedInterests {
+		surviving = append(surviving, fmt.Sprintf("%d interests", len(in.Interests)))
+	}
+	surviving = append(surviving, fmt.Sprintf("%d keywords", len(in.Keywords)), fmt.Sprintf("%d geos", len(geos)))
+	steps = append(steps, "Targeting: "+strings.Join(surviving, ", "))
+
 	var dropped []string
 	if droppedCommunities {
 		dropped = append(dropped, "communities")
@@ -1547,8 +1553,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	if len(dropped) > 0 {
 		steps = append(steps, fmt.Sprintf("%s rejected by Reddit and skipped -- add manually in Reddit Ads Manager", strings.Join(dropped, " and ")))
-	} else if len(in.Interests) > 0 {
-		steps = append(steps, fmt.Sprintf("Targeting: %d interests", len(in.Interests)))
 	}
 
 	// Step 4: Create ad from post URL if provided, otherwise emit instructions.

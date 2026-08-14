@@ -1,3 +1,6 @@
+-- Copyright The Linux Foundation and each contributor to LFX.
+-- SPDX-License-Identifier: MIT
+
 -- Dropping the column DISCARDS every stored pixel id, and they cannot be recovered from
 -- anywhere else in this service -- each one was entered by an operator who read it out of
 -- Reddit Ads. A re-migration leaves every Reddit connection unable to create a campaign

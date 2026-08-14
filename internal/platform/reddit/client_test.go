@@ -32,7 +32,7 @@ var (
 	// about other behaviour, so the fixture carries a valid pixel rather than making every
 	// one of them assert the same refusal. TestCreateCampaign_RequiresAConversionPixel
 	// covers the empty case explicitly.
-	testAccount = AccountConfig{AccountID: "t2_test", Label: "Test Account", ConversionPixelID: "t2_test"}
+	testAccount = AccountConfig{AccountID: "t2_test", Label: "Test Account", ConversionPixelID: "t2_pixel_from_conn"}
 )
 
 // TestCreateCampaign_RejectsOverlongNameBeforeAnyPOST verifies an over-long
@@ -1575,9 +1575,14 @@ func TestCreateCampaign_PixelFallsBackToTheAccountConfig(t *testing.T) {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
 	campaignBody, _ := bodies()
-	if campaignBody["conversion_pixel_id"] != testAccount.ConversionPixelID {
-		t.Errorf("campaign conversion_pixel_id = %v, want %q from the connection",
-			campaignBody["conversion_pixel_id"], testAccount.ConversionPixelID)
+	// The LITERAL, not testAccount.ConversionPixelID: comparing a field against itself
+	// passes whatever the code reads. The fixture's pixel is also deliberately DIFFERENT
+	// from its AccountID -- when both were "t2_test", mutating the fallback to read
+	// c.account.AccountID left this test green, so the one test covering the connection
+	// fallback proved nothing.
+	if campaignBody["conversion_pixel_id"] != "t2_pixel_from_conn" {
+		t.Errorf("campaign conversion_pixel_id = %v, want the CONNECTION's pixel %q (not the account id %q)",
+			campaignBody["conversion_pixel_id"], "t2_pixel_from_conn", testAccount.AccountID)
 	}
 }
 

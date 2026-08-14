@@ -1,3 +1,6 @@
+-- Copyright The Linux Foundation and each contributor to LFX.
+-- SPDX-License-Identifier: MIT
+
 -- Reddit requires a conversion pixel on EVERY campaign create, not only for the
 -- CONVERSIONS objective the API docs describe. Observed against the live LF ad account on
 -- 2026-08-13: a CLICKS/Traffic create was rejected with
