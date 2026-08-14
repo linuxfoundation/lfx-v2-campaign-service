@@ -136,7 +136,12 @@ func microsoftAccountsServer(t *testing.T, rec *requestRecorder) *httptest.Serve
 		case strings.Contains(r.URL.Path, "/token"):
 			_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
 		case strings.Contains(r.URL.Path, "User/Query"), strings.Contains(r.URL.Path, "User"):
-			_, _ = io.WriteString(w, `{"User":{"Id":1,"CustomerRoles":[{"CustomerId":9999999,"RoleId":41}]}}`)
+			// CustomerRoles is TOP-LEVEL, matching userQueryResponse
+			// (internal/platform/microsoft/accounts.go) and the platform package's own
+			// withCustomerRoles helper. An earlier version of this fixture nested it under
+			// "User", which never decoded — so customer discovery always failed and this
+			// test only ever proved that a request was attempted.
+			_, _ = io.WriteString(w, `{"CustomerRoles":[{"CustomerId":9999999,"RoleId":41}]}`)
 		default:
 			_, _ = io.WriteString(w, `{"AccountsInfo":[{"Id":1234567,"Name":"LF Events","Number":"X1234567","AccountLifeCycleStatus":"Active","PauseReason":0}]}`)
 		}
@@ -154,12 +159,29 @@ func TestMicrosoftListAccountsWorksWithoutASelectedAccount(t *testing.T) {
 	d := NewMicrosoftDispatcher(fakeConnReader{conn: conn}, identityEncryptor{},
 		microsoft.WithBaseURL(srv.URL), microsoft.WithCustomerBaseURL(srv.URL), microsoft.WithTokenURL(srv.URL+"/token"))
 
-	_, err := d.ListAccounts(context.Background(), "cncf", model.ProviderMicrosoftAds)
+	accounts, err := d.ListAccounts(context.Background(), "cncf", model.ProviderMicrosoftAds)
 	if errors.Is(err, domain.ErrAccountNotSelected) {
 		t.Fatal("discovery refused a connection with no account id — that is the connection it exists to serve")
 	}
-	// A transport-shaped failure against the fake is acceptable here; what must NOT happen is
-	// a refusal before the platform is contacted at all.
+	// Require the ACCOUNT, not merely an attempt. An earlier version of this test accepted
+	// any "transport-shaped failure against the fake", which — combined with a fixture the
+	// parser could not decode — meant it passed while customer discovery failed on every
+	// run. A test that tolerates the failure it is meant to detect proves nothing: this is
+	// the whole point of the capability, so it must reach AccountsInfo and return the row.
+	if err != nil {
+		t.Fatalf("ListAccounts: %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("want exactly the one discovered account, got %d: %+v", len(accounts), accounts)
+	}
+	if accounts[0].ID != "1234567" {
+		t.Errorf("account id = %q, want 1234567", accounts[0].ID)
+	}
+	// The client composes the label from the account NAME plus its account NUMBER, so a
+	// marketer picking from the list can tell two similarly-named accounts apart.
+	if accounts[0].Label != "LF Events (X1234567)" {
+		t.Errorf("account label = %q, want %q", accounts[0].Label, "LF Events (X1234567)")
+	}
 	paths, _, _ := rec.all()
 	if len(paths) == 0 {
 		t.Fatal("no upstream request was made — the resolver refused before contacting the platform")
