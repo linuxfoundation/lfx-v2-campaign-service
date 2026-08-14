@@ -76,7 +76,11 @@ an EXISTING Deployment from RollingUpdate to Recreate is rejected by the API ser
 'Recreate'`. The old object carries a `strategy.rollingUpdate` block the API server
 DEFAULTED (maxSurge/maxUnavailable 25%) when it was RollingUpdate; that block is owned by
 no field manager, so ArgoCD's server-side-apply sync will not strip it, and it may not
-coexist with `type: Recreate`. The metadata annotation
+coexist with `type: Recreate`. This failure is scoped to a **pre-existing** Deployment:
+it only arises when an object first created as RollingUpdate is flipped to Recreate. A
+freshly created Deployment emits `type: Recreate` directly and never gets a defaulted
+`rollingUpdate` block, so `Replace=true` is a one-time need per pre-existing environment,
+not a standing requirement. The metadata annotation
 `argocd.argoproj.io/sync-options: Replace=true` resolves this by making ArgoCD apply the
 Deployment with `kubectl replace` rather than a merge/SSA patch — a full replace discards
 the orphaned defaulted field, so the flip self-heals with no manual `kubectl patch`. The
@@ -93,6 +97,16 @@ one-shot recovery, if ever needed, is
 `kubectl patch ... --type=merge -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}'`
 — it must set `type` and null `rollingUpdate` in ONE write, because a bare remove of
 `rollingUpdate` while `type` is still RollingUpdate is immediately re-defaulted.
+
+**`Replace=true` is a transitional workaround, not an invariant.** A full replace makes
+ArgoCD PUT this Deployment on every sync rather than apply it, so any field written by
+another actor and absent from the chart is wiped — an out-of-band `kubectl scale`, an
+external HPA's `spec.replicas`, webhook-injected object fields. That is low risk today
+(no HPA in the chart, `replicaCount: 1`), but nothing reminds anyone to remove it. It is
+retired once schema migrations move out of pod boot into a PreSync Job, after which the
+Deployment returns to RollingUpdate and both the strategy override and the annotation are
+dropped — the cutover hazard the pairing exists to prevent no longer exists once no pod
+migrates the shared schema at boot.
 
 **Rolling back is not the deploy run backwards.** `pool.go` only ever calls `m.Up()`,
 so reverting the image leaves the schema at whatever version the newer binary migrated it
