@@ -52,14 +52,39 @@ type googleAdsKeywordConfig struct {
 	MatchType string `json:"matchType"`
 }
 
+const (
+	// The accepted `channel` values. Lower-case and hyphenated to match the campaignTypes
+	// vocabulary the UI already uses ("search" / "demand-gen"), so callers do not have to
+	// translate between two spellings of the same idea.
+	googleAdsChannelSearch    = "search"
+	googleAdsChannelDemandGen = "demand-gen"
+)
+
 // googleAdsConfig is the per-platform campaign config the caller passes for Google Ads
-// in CreateCampaigns' Input.Config (delivered here as the Dispatch `config`). The GA
-// client creates a PAUSED search campaign with an ad group + a Responsive Search Ad
-// (GA-3b) and can attach keyword/audience targeting to that ad group (GA-4). Budget is
-// in whole units of the ad ACCOUNT's currency (NOT USD — the client does no FX),
-// mirroring the meta client.
+// in CreateCampaigns' Input.Config (delivered here as the Dispatch `config`).
+//
+// Which campaign the client creates depends on Channel: the default (absent/"search")
+// is a PAUSED Search campaign with an ad group + a Responsive Search Ad (GA-3b), which
+// can carry keyword/audience targeting (GA-4); "demand-gen" is a PAUSED Demand Gen
+// campaign with an ad group and NO ad or keywords (LFXV2-3257). Several fields below
+// apply to the Search path only, and say so.
+//
+// Budget is in whole units of the ad ACCOUNT's currency (NOT USD — the client does no
+// FX), mirroring the meta client.
 type googleAdsConfig struct {
 	Budget float64 `json:"budget"`
+	// Channel selects which Google Ads campaign type to create: "" or "search" (the
+	// default) creates the Search campaign with an ad group and a Responsive Search Ad;
+	// "demand-gen" creates a Demand Gen campaign, which has no ads and no keywords
+	// because its creatives are image/video assets a human uploads in the Google Ads UI.
+	//
+	// ABSENT means SEARCH, deliberately. Every caller that predates this field omits it,
+	// and they all mean Search — the value that has been hardcoded since GA-2. Making
+	// absence mean anything else would silently repoint existing callers at a different
+	// channel. An unrecognised value is REFUSED rather than defaulted, because defaulting
+	// a typo'd "demandgen" to Search would spend the Demand Gen budget on Search ads and
+	// report success.
+	Channel string `json:"channel"`
 	// Headlines/Descriptions are optional Responsive Search Ad copy overrides (GA-3b).
 	// Left nil/empty, the client composes deterministic placeholder copy from the
 	// brief's EventName/Project (see googleads.composeAdCopy).
@@ -232,7 +257,22 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	//   - (result, err)   → may exist; return the (possibly id-less) campaign + error so
 	//                       the orchestrator retains the claim and records the orphan.
 	//   - (result, nil)   → success.
-	result, cerr := client.CreateCampaign(ctx, in)
+	// Channel selection. Both creates share the (result, err) contract above, so the
+	// handling below is identical — only which campaign type gets created differs.
+	// An unrecognised value is refused BEFORE any upstream call: a typo must not
+	// silently fall back to Search and spend a Demand Gen budget on search ads.
+	var (
+		result *googleads.CampaignResult
+		cerr   error
+	)
+	switch strings.ToLower(strings.TrimSpace(cfg.Channel)) {
+	case "", googleAdsChannelSearch:
+		result, cerr = client.CreateCampaign(ctx, in)
+	case googleAdsChannelDemandGen:
+		result, cerr = client.CreateDemandGenCampaign(ctx, in)
+	default:
+		return nil, notCreated(fmt.Errorf("google ads: unsupported channel %q (want %q or %q)", cfg.Channel, googleAdsChannelSearch, googleAdsChannelDemandGen))
+	}
 	if cerr != nil {
 		if result == nil {
 			return nil, notCreated(fmt.Errorf("google ads campaign creation failed before any upstream create: %w", cerr))

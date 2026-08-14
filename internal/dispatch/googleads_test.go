@@ -2773,3 +2773,123 @@ func TestGoogleAds_Dispatch_MalformedManagerIDIsClassified(t *testing.T) {
 			"re-dispatch that fixing the stored row exists to enable", err)
 	}
 }
+
+// ---- channel selection (LFXV2-3257) ---------------------------------------
+
+// `channel: "demand-gen"` must reach CreateDemandGenCampaign, not CreateCampaign. The
+// two are told apart by what lands on the wire: DEMAND_GEN as the channel type, and NO
+// adGroupAds:mutate, because Demand Gen creatives are assets a human uploads.
+func TestGoogleAds_DispatchDemandGenChannel(t *testing.T) {
+	var channelType string
+	var mu sync.Mutex
+
+	opts, _ := googleAdsServers(t,
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
+		},
+		func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				Operations []struct {
+					Create struct {
+						AdvertisingChannelType string `json:"advertisingChannelType"`
+					} `json:"create"`
+				} `json:"operations"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err == nil && len(body.Operations) > 0 {
+				mu.Lock()
+				channelType = body.Operations[0].Create.AdvertisingChannelType
+				mu.Unlock()
+			}
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+		},
+	)
+
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":500,"channel":"demand-gen"}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if camp == nil || camp.PlatformCampaignID != "222" {
+		t.Fatalf("adapter must map the upstream campaign id, got %+v", camp)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if channelType != "DEMAND_GEN" {
+		t.Errorf("advertisingChannelType = %q, want DEMAND_GEN — the demand-gen channel must not create a Search campaign", channelType)
+	}
+}
+
+// The default is SEARCH, and absence means default. Every caller predating the field
+// omits it and means Search, so this pins that adding the field did not repoint them.
+func TestGoogleAds_DispatchDefaultsToSearchChannel(t *testing.T) {
+	var channelType string
+	var mu sync.Mutex
+
+	opts, _ := googleAdsServers(t,
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
+		},
+		func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				Operations []struct {
+					Create struct {
+						AdvertisingChannelType string `json:"advertisingChannelType"`
+					} `json:"create"`
+				} `json:"operations"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err == nil && len(body.Operations) > 0 {
+				mu.Lock()
+				channelType = body.Operations[0].Create.AdvertisingChannelType
+				mu.Unlock()
+			}
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+		},
+	)
+
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	// No `channel` key at all — the shape every existing caller sends.
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":500}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if channelType != "SEARCH" {
+		t.Errorf("advertisingChannelType = %q, want SEARCH — an absent channel must keep the pre-existing behaviour", channelType)
+	}
+}
+
+// An unrecognised channel is REFUSED before any upstream call, and refused as
+// NoUpstreamCreate so the orchestrator releases the claim. Defaulting a typo'd
+// "demandgen" to Search would spend the Demand Gen budget on search ads and report
+// success — asserting on the handlers not firing is what pins that.
+func TestGoogleAds_DispatchRefusesUnknownChannel(t *testing.T) {
+	opts, _ := googleAdsServers(t,
+		func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("an unknown channel must be refused before any budget mutate")
+			w.WriteHeader(http.StatusInternalServerError)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("an unknown channel must be refused before any campaign mutate")
+			w.WriteHeader(http.StatusInternalServerError)
+		},
+	)
+
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":500,"channel":"demandgen"}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+
+	if camp != nil {
+		t.Errorf("an unknown channel must return a nil campaign, got %+v", camp)
+	}
+	var nuc interface{ NoUpstreamCreate() bool }
+	if err == nil || !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+		t.Errorf("an unknown channel must be NoUpstreamCreate (release the claim), got %T: %v", err, err)
+	}
+	if err != nil && !strings.Contains(err.Error(), "unsupported channel") {
+		t.Errorf("error should name the problem, got %v", err)
+	}
+}
