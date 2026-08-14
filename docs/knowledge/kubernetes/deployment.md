@@ -99,9 +99,14 @@ one-shot recovery, if ever needed, is
 `rollingUpdate` while `type` is still RollingUpdate is immediately re-defaulted.
 
 **`Replace=true` is a transitional workaround, not an invariant.** A full replace makes
-ArgoCD PUT this Deployment on every sync rather than apply it, so any field written by
-another actor and absent from the chart is wiped — an out-of-band `kubectl scale`, an
-external HPA's `spec.replicas`, webhook-injected object fields. That is low risk today
+ArgoCD PUT this Deployment on every sync rather than apply it, which costs two things an
+ordinary apply does not: a field present on the LIVE object but omitted from the rendered
+manifest is removed, and server-side-apply field-ownership conflict detection is bypassed,
+so a value another controller owns is overwritten rather than flagged. `spec.replicas` is
+the concrete case here — the chart pins it AND the ArgoCD Application sets
+`ignoreDifferences: /spec/replicas` with `RespectIgnoreDifferences=true`, so an ordinary sync
+leaves an out-of-band `kubectl scale` or an external HPA's value alone, but a full replace
+overwrites it back to `replicaCount`. That is low risk today
 (no HPA in the chart, `replicaCount: 1`), but nothing reminds anyone to remove it. It is
 retired once schema migrations move out of pod boot into a PreSync Job, after which the
 Deployment returns to RollingUpdate and both the strategy override and the annotation are

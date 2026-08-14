@@ -68,9 +68,11 @@ metadata:
     # RollingUpdate Deployment to Recreate; a freshly created object never needs it. It is
     # dropped once schema migrations move out of pod boot into a PreSync Job and the Deployment
     # returns to RollingUpdate. Note the cost while it is here: Replace=true makes ArgoCD PUT
-    # (replace) this Deployment every sync instead of applying it, so any field written by
-    # another actor and absent from the chart is wiped (out-of-band kubectl scale, an external
-    # HPA's spec.replicas, webhook-injected fields) -- low risk today (no HPA, replicaCount 1).
+    # (replace) this Deployment every sync instead of applying it, so a live field the manifest
+    # omits is removed and SSA field-ownership is bypassed. Concretely spec.replicas: the chart
+    # pins it and the Application sets ignoreDifferences:/spec/replicas (RespectIgnoreDifferences),
+    # so an ordinary sync leaves an out-of-band scale or HPA value alone but a full replace
+    # overwrites it back to replicaCount -- low risk today (no HPA, replicaCount 1).
     #
     # Replace=true makes ArgoCD apply this Deployment with `kubectl replace` instead of a
     # strategic-merge / server-side-apply patch. Required because `strategy.type` below is

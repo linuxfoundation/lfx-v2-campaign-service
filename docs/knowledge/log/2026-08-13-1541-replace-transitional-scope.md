@@ -24,9 +24,14 @@ historical record.
 ## The cost outlives the reason
 
 `Replace=true` makes ArgoCD PUT (replace) this Deployment on every sync instead of applying
-it, so any field written by another actor and absent from the chart is wiped — out-of-band
-`kubectl scale`, an external HPA's `spec.replicas`, webhook-injected fields. Low risk today
-(no HPA in the chart, `replicaCount: 1`), but nothing reminds anyone to remove it. Both the
+it, which costs two things an ordinary apply does not: a live field the rendered manifest
+omits is removed, and server-side-apply field-ownership conflict detection is bypassed, so a
+value another controller owns is overwritten rather than flagged. `spec.replicas` is the
+concrete case here — the chart pins it AND the ArgoCD Application sets
+`ignoreDifferences: /spec/replicas` with `RespectIgnoreDifferences=true`, so an ordinary sync
+leaves an out-of-band `kubectl scale` or an external HPA's value alone, but a full replace
+overwrites it back to `replicaCount`. Low risk today (no HPA in the chart, `replicaCount: 1`),
+but nothing reminds anyone to remove it. Both the
 annotation comment and the concept now name it a transitional workaround and point at the
 work that retires it: migrations move out of pod boot into a PreSync Job
 (linuxfoundation/lfx-self-serve#1543), after which the Deployment returns to RollingUpdate
@@ -35,5 +40,6 @@ the shared schema at boot, the cutover hazard the pairing exists to prevent is g
 
 ## Not a behavior change
 
-Docs and one chart comment only — the rendered manifest is unchanged, so there is nothing
-to deploy for this entry.
+Docs and one chart comment only — the applied Kubernetes object is unchanged (the raw
+`helm template` text gains the new comment lines, but its non-comment content is identical),
+so there is nothing to deploy for this entry.
