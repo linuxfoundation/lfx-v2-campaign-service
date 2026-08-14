@@ -2698,8 +2698,10 @@ func TestFindMatch_SendsServerSideNameFilter(t *testing.T) {
 	}
 	// The name's own comma/parens must be Rest.li-encoded so they stay data, not
 	// structure. If they were bare, the List(...) literal would be corrupted.
-	// One url-decode has already run, so the doubly-escaped "%252C" arrives here
-	// as "%2C" — still encoded from the Rest.li parser's point of view.
+	// rawParam reads RawQuery WITHOUT decoding, so "%2C"/"%28"/"%29" here are the
+	// single escapes actually on the wire — not the result of one decode. (An
+	// earlier version of this comment described a "%252C" that decodes to "%2C",
+	// which is the double encoding this change exists to prevent.)
 	if !strings.Contains(sawSearch, "KubeCon%2C") || !strings.Contains(sawSearch, "%282026%29") {
 		t.Errorf("name's reserved chars must be Rest.li-encoded inside List(...), got %q", sawSearch)
 	}
@@ -2784,6 +2786,18 @@ func TestFindMatch_NameDelimitersSurviveTheWire(t *testing.T) {
 			}
 			if strings.Contains(name, " ") && !strings.Contains(rawSeen, "%20") {
 				t.Errorf("space must be encoded as %%20 on the wire, got %q", rawSeen)
+			}
+			// Non-ASCII must ALSO be percent-encoded, and this needs its own raw check for
+			// the same reason the space did: Query() decodes, so encoded and raw UTF-8 are
+			// indistinguishable through it. Without this, an ASCII-only escape list would
+			// leave CJK bytes raw on the wire and every assertion above would still pass.
+			for _, r := range name {
+				if r > 127 {
+					if strings.ContainsRune(rawSeen, r) {
+						t.Errorf("non-ASCII %q reached the wire raw; it must be percent-encoded: %q", r, rawSeen)
+					}
+					break
+				}
 			}
 		})
 	}
