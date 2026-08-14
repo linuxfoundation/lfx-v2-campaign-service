@@ -2657,7 +2657,8 @@ func TestCreateCampaign_TrailingEmptyGroupMatchIssuesNoCreate(t *testing.T) {
 // carries a server-side name filter (search=(name:(values:List(<name>)))) so the
 // lookup is O(matches), not O(account), and requests the API-max pageSize. It
 // also checks that a name containing Rest.li-reserved characters is encoded so it
-// can't break out of the List(...) literal.
+// can't break out of the List(...) literal, AND that spaces/pipes are percent-
+// encoded rather than left bare or form-encoded as "+" — LinkedIn 400s both.
 func TestFindMatch_SendsServerSideNameFilter(t *testing.T) {
 	// A name with a comma and parens — Rest.li-reserved inside List(...).
 	const lookupName = "Events | KubeCon, Inc. (2026) | TLF"
@@ -2666,7 +2667,10 @@ func TestFindMatch_SendsServerSideNameFilter(t *testing.T) {
 	var sawSearch, sawPageSize string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
-		sawSearch = r.URL.Query().Get("search")
+		// RawQuery, NOT .Query(): .Query() percent-DECODES, so a correctly
+		// encoded value and a bare one look identical through it — the exact
+		// blindness that let the "+"-for-space bug ship. Assert the wire bytes.
+		sawSearch = rawParam(r.URL.RawQuery, "search")
 		sawPageSize = r.URL.Query().Get("pageSize")
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
@@ -2694,13 +2698,25 @@ func TestFindMatch_SendsServerSideNameFilter(t *testing.T) {
 	}
 	// The name's own comma/parens must be Rest.li-encoded so they stay data, not
 	// structure. If they were bare, the List(...) literal would be corrupted.
-	if !strings.Contains(sawSearch, "KubeCon%2C Inc. %282026%29") {
+	// One url-decode has already run, so the doubly-escaped "%252C" arrives here
+	// as "%2C" — still encoded from the Rest.li parser's point of view.
+	if !strings.Contains(sawSearch, "KubeCon%2C") || !strings.Contains(sawSearch, "%282026%29") {
 		t.Errorf("name's reserved chars must be Rest.li-encoded inside List(...), got %q", sawSearch)
 	}
-	// The bare event-name pipe/spaces survive one url-decode as plain text — they
-	// are not Rest.li-structural, so they must NOT be double-encoded.
-	if !strings.Contains(sawSearch, "Events | KubeCon") {
-		t.Errorf("non-reserved name text must survive as-is, got %q", sawSearch)
+	// Spaces and pipes must ALSO arrive encoded, and this is not cosmetic:
+	//   - a space rendered as "+" (what url.Values.Encode produces) is read by the
+	//     Rest.li parser as a literal plus, and the whole filter 400s
+	//     PARAM_INVALID on fieldPath "search";
+	//   - a bare "|" is illegal in a query component and LinkedIn rejects the
+	//     request with java.net.URISyntaxException.
+	// Both were verified against the live Marketing API at LinkedIn-Version
+	// 202602. Since every campaign name this client generates contains spaces and
+	// pipes, bare ones mean EVERY lookup fails and find-or-create can never find.
+	if strings.Contains(sawSearch, "Events | KubeCon") {
+		t.Errorf("space/pipe must not reach LinkedIn bare — they 400 the search: %q", sawSearch)
+	}
+	if !strings.Contains(sawSearch, "Events%20%7C%20KubeCon") {
+		t.Errorf("space must encode as %%20 and pipe as %%7C, got %q", sawSearch)
 	}
 	if sawPageSize != "1000" {
 		t.Errorf("expected pageSize=1000 (API max), got %q", sawPageSize)
@@ -3848,4 +3864,18 @@ func TestClient_OverridesInjectedCheckRedirectWithoutMutatingCaller(t *testing.T
 	if caller.CheckRedirect != nil {
 		t.Error("caller's *http.Client CheckRedirect was mutated — the override must use a shallow copy")
 	}
+}
+
+// rawParam returns a query parameter's value from a RawQuery string WITHOUT
+// percent-decoding it, so a test can assert on the exact bytes sent on the wire.
+// net/url's Query() decodes, which makes a correctly-encoded value and a bare
+// one indistinguishable.
+func rawParam(rawQuery, key string) string {
+	for _, kv := range strings.Split(rawQuery, "&") {
+		k, v, found := strings.Cut(kv, "=")
+		if found && k == key {
+			return v
+		}
+	}
+	return ""
 }

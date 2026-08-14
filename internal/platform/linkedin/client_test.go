@@ -586,6 +586,26 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 	if _, hasTotal := campaignBody["totalBudget"]; hasTotal {
 		t.Errorf("daily-budget campaign must not send totalBudget")
 	}
+
+	// costType CPC, not CPM: the objective is WEBSITE_CONVERSION, so the budget
+	// buys clicks. Flipping this to CPM silently changes what the money buys and
+	// nothing else in the payload would contradict it.
+	if campaignBody["costType"] != "CPC" {
+		t.Errorf("campaign costType: want CPC, got %v", campaignBody["costType"])
+	}
+
+	// offsiteDeliveryEnabled must stay false. true opts the campaign into the
+	// LinkedIn Audience Network — placements on third-party sites — which is a
+	// media-buying decision our UI never asks anyone to make.
+	if campaignBody["offsiteDeliveryEnabled"] != false {
+		t.Errorf("offsiteDeliveryEnabled: want false, got %v", campaignBody["offsiteDeliveryEnabled"])
+	}
+
+	// politicalIntent is a required enum STRING at LinkedIn-Version 202602 —
+	// not a bool, and not "NONE"/"NON_POLITICAL". A wrong shape 4xxs the create.
+	if campaignBody["politicalIntent"] != "NOT_POLITICAL" {
+		t.Errorf("politicalIntent: want NOT_POLITICAL, got %v", campaignBody["politicalIntent"])
+	}
 }
 
 func TestCreateCampaign_LifetimeBudgetUsesTotalBudget(t *testing.T) {
