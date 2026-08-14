@@ -21,7 +21,14 @@
 -- So the replacement must be proven to enforce what the old one enforced:
 --   * on public.campaigns, not another table's index of the same name
 --   * UNIQUE -- a non-unique index arbitrates no claim
---   * VALID -- indisvalid, so a failed CONCURRENTLY build cannot pass
+--   * VALID and READY -- indisvalid AND indisready. The two fail APART: a
+--     CONCURRENTLY build that dies between its phases can leave an index marked
+--     valid but not ready, and a not-ready index enforces nothing on new writes.
+--     Checking only indisvalid would therefore let this guard pass on an index
+--     that arbitrates no claim -- after which 000024 drops the real arbiter and
+--     nothing stops a retry creating a second paid campaign. This is the same
+--     pair the boot-time check requires (pool.go's requiredIndexQuery); the two
+--     must agree, or a schema that satisfies the migration fails at startup.
 --   * keyed on exactly (brief_id, platform, variant), in that order
 --   * PARTIAL on status <> 'deleted', or a deleted campaign would never free its
 --     slot
@@ -55,6 +62,7 @@ BEGIN
       AND i.indrelid = 'public.campaigns'::regclass
       AND i.indisunique
       AND i.indisvalid
+      AND i.indisready
       AND i.indnkeyatts = 3
       AND pg_get_indexdef(i.indexrelid) LIKE '%(brief_id, platform, variant)%'
       -- The EXACT predicate, not merely that one exists. An impostor such as
