@@ -485,11 +485,18 @@ func lenientEventName(brief *model.CampaignBrief) string {
 		}
 		var partial struct {
 			EventName string `json:"eventName"`
+			// The spelling the UI actually writes — see decodeBriefFields. Without it a
+			// cloned email is labelled from the fallback (event slug / brief id) even though
+			// the brief carries a perfectly good name, on EVERY brief the UI produced.
+			Name string `json:"name"`
 		}
 		if err := json.Unmarshal(blob, &partial); err != nil {
 			continue
 		}
 		if s := strings.TrimSpace(partial.EventName); s != "" {
+			return s
+		}
+		if s := strings.TrimSpace(partial.Name); s != "" {
 			return s
 		}
 	}

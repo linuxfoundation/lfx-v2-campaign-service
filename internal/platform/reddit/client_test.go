@@ -2808,14 +2808,31 @@ func TestRefreshToken_LeaderCancelSurvives(t *testing.T) {
 		followerTok <- tok
 	}()
 
-	// Let the (detached) fetch complete now that the leader's ctx is cancelled.
-	close(release)
-
-	// The cancelled leader returns its ctx error promptly (by design) — drain it.
-	<-leaderTok
-	if err := <-leaderErr; err == nil {
-		t.Error("cancelled leader should return its context error promptly")
+	// Assert the leader's OUTCOME BEFORE releasing the fetch, not after.
+	//
+	// "Promptly" is the property under test: the leader returns as soon as its own ctx is
+	// cancelled, without waiting for the detached fetch. Releasing first made that a race —
+	// if the handler won, the leader observed a completed refresh and returned (token, nil),
+	// and this assertion failed with nothing wrong in the code. Seen in CI on 2026-08-14
+	// while passing 40/40 locally, which is the signature of a scheduling race rather than a
+	// defect.
+	//
+	// Reading here proves the stronger statement anyway: the fetch is still BLOCKED in the
+	// handler at this point, so a leader that has already returned an error can only have
+	// done so because its context was cancelled.
+	select {
+	case err := <-leaderErr:
+		if err == nil {
+			t.Error("cancelled leader should return its context error promptly, without waiting for the detached fetch")
+		}
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("cancelled leader did not return while the fetch was still in flight")
 	}
+	<-leaderTok
+
+	// Only now let the (detached) fetch complete, so the follower can observe it.
+	close(release)
 	// The KEY assertion: the follower (live ctx) still gets the token, proving the
 	// leader's cancellation did NOT tear down the detached fetch.
 	select {
