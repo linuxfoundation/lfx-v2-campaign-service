@@ -1,6 +1,6 @@
 # 2026-08-14 — LFXV2-3259 encoding review follow-ups
 
-**Fix** — Three corrections from the review of the LinkedIn search-encoding
+**Docs** — Three corrections from the review of the LinkedIn search-encoding
 change (#133), which merged before they could land on it; they ship as a
 follow-up rather than being lost.
 
