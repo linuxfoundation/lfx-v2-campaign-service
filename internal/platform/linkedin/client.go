@@ -1412,11 +1412,14 @@ var preEncodedParams = map[string]struct{}{
 // EXCEPT those in preEncodedParams, which are emitted verbatim. Keys are sorted
 // so the resulting URL is deterministic (Go map iteration order is randomized).
 //
-// It takes only params, not the parsed base URL's values: baseURL is a constant
-// with no query string and WithBaseURL trims its input to host+path, so there is
-// never anything on the base to merge. An earlier version accepted a url.Values
-// base and read it with Get(), which returns only the FIRST value — a repeated
-// key would have been silently truncated with no way to notice.
+// It takes only params, not the parsed base URL's values: baseURL is a constant with
+// no query string, and every caller passes query data through the params map rather
+// than embedded in the path — so there is never anything on the base to merge.
+// (WithBaseURL itself only trims a trailing slash; it does not strip a query string,
+// so it is the constant and the calling convention that make this safe, not the
+// option.) An earlier version accepted a url.Values base and read it with Get(),
+// which returns only the FIRST value — a repeated key would have been silently
+// truncated with no way to notice.
 func buildRawQuery(params map[string]string) string {
 	// No capacity hint: params holds a handful of query parameters, so pre-sizing
 	// buys nothing measurable, and a len()+len() sum is an addition CodeQL flags

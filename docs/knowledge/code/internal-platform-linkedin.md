@@ -104,8 +104,9 @@ for a name embedded in a Rest.li literal — the COMPLETE query component via `u
 with `+` rewritten to `%20`, the caller supplying the `(name:(values:List(` … `)))` syntax raw
 — and `buildRawQuery` writes any parameter whose value came from `restliEncode` (the set is
 `preEncodedParams`) to `RawQuery` verbatim. An enumerated escape list shipped first and missed
-`&` and `#`, which truncate the query at the URL layer rather than inside the literal. Both halves are load-
-bearing: `url.Values.Encode()` renders a space as `+`, which the Rest.li parser reads as a
+`&` and `#`, which truncate the query at the URL layer rather than inside the literal.
+Both halves are load-bearing: `url.Values.Encode()` renders a space as `+`, which the
+Rest.li parser reads as a
 literal plus and rejects with `400 PARAM_INVALID`, while re-encoding an already-encoded value
 turns `%20` into `%2520`, which matches a literally-different name and returns a
 **clean-looking empty result set** — a false "not found" that drives a duplicate paid create.
