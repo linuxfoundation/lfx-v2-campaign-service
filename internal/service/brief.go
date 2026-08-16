@@ -54,6 +54,10 @@ type BriefService struct {
 	// llmClient backs GenerateEmailCopy. Nil in every construction that does not call
 	// SetLLMClient, which is why that handler checks it rather than ready().
 	llmClient *llm.Client
+	// creativeAssets backs UploadCreativeAsset. Bound alongside the other repositories on the
+	// live/cold-start paths (SetCreativeAssetRepo), so it is nil in the no-database and
+	// cold-start-pending modes — which is why that handler checks it rather than ready().
+	creativeAssets domain.CreativeAssetRepository
 }
 
 var (
