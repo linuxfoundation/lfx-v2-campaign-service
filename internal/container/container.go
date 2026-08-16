@@ -63,6 +63,11 @@ type backendSetter interface {
 // signature) so the retry path can wire both.
 type briefBackendSetter interface {
 	SetBackend(domain.BriefRepository, domain.CampaignRepository, domain.JobRepository, *service.Orchestrator)
+	// SetCreativeAssetRepo is on this interface, not folded into SetBackend, so the cold-start
+	// path binds it in the SAME step it binds the brief repos. Omitting it there would leave
+	// UploadCreativeAsset serving 503 forever on a cold-started pod while every other route
+	// worked — the same silent gap that pulled SetBriefRepo/SetBuilder onto audienceBackendSetter.
+	SetCreativeAssetRepo(domain.CreativeAssetRepository)
 }
 
 // audienceBackendSetter late-binds the audience repo after a cold-start retry.
@@ -716,7 +721,12 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// declared contract and a signature change breaks both at compile time rather than
 	// leaving this one silently behind.
 	c.Connections.(backendSetter).SetOrchestrator(orch)
-	c.Briefs = c.newBriefService(briefRepo, campaignRepo, jobRepo, orch)
+	briefSvc := c.newBriefService(briefRepo, campaignRepo, jobRepo, orch)
+	// The creative-asset repo is a live-backend concern like the brief/campaign repos (it needs
+	// the pool), not an always-on collaborator like the indexer, so it is bound here rather than
+	// inside newBriefService — which the two 503-mode paths also call with nil repos and no pool.
+	briefSvc.SetCreativeAssetRepo(postgres.NewCreativeAssetRepo(pool))
+	c.Briefs = briefSvc
 	c.Audiences = c.newAudienceService(audienceRepo, briefRepo)
 
 	// Recover jobs orphaned by a previous pod's restart: a queued/running job's
@@ -790,6 +800,10 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// that read.
 			c.orch = orch
 			bb.SetBackend(briefRepo, campaignRepo, jobRepo, orch)
+			// Bind the creative-asset repo in the SAME step as the brief repos: leaving it out
+			// would serve every UploadCreativeAsset a 503 forever on a cold-started pod while
+			// the rest of the brief routes went live. See briefBackendSetter.
+			bb.SetCreativeAssetRepo(postgres.NewCreativeAssetRepo(pool))
 			ab.SetBackend(audienceRepo)
 			// Inject the orchestrator into the connection service for account-listing operations.
 			b.SetOrchestrator(orch)
