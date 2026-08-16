@@ -82,6 +82,41 @@ and its `Shutdown` drains them (bounded) before the DB pool closes, and on
 startup jobs left non-terminal beyond a staleness cutoff are failed-forward (they
 cannot be safely resumed without provider idempotency keys).
 
+## Creative asset upload (LFXV2-2665)
+
+`BriefService.UploadCreativeAsset` (backing `POST .../briefs/{briefId}/creative-assets`)
+validates and stores an uploaded image so a Meta ad creative can later reference it by id. It
+touches NO ad platform — the bytes are held until dispatch, where Meta's per-ad-account
+`image_hash` is resolved (see [internal/platform/meta](internal-platform-meta.md)).
+
+The generated decoder already enforces what the CONTRACT can express — `content_type` is one of
+the allowed MIME strings and the byte length is within `[1, 30 MiB]` — so what this handler ADDS
+is that the BYTES are actually a decodable image of the DECLARED type. `image.DecodeConfig` reads
+only the header (enough to prove the bytes parse as a known format and to name it, without
+decoding the full up-to-30-MiB pixel data on every upload), which rejects truncated/garbage bytes
+a declared `content_type` alone would wave through. The set of registered decoders (`image/png`,
+`image/jpeg`, blank-imported) is only the UPPER bound; `mimeForImageFormat` is the authoritative
+allow-list, so another package importing `image/gif` cannot widen what this endpoint accepts. The
+stored `mime_type` is the SNIFFED one, and a declared/sniffed mismatch is REFUSED (400), not
+silently corrected. Three distinct 400s are kept apart: bytes that do not decode at all, bytes
+that decode to a format outside the allow-list, and a declared type that disagrees with the
+sniff. Meta's creative POLICY (minimum dimensions, aspect ratio) is deliberately NOT checked
+here — it is Meta-specific and belongs at dispatch; this endpoint is storage integrity.
+
+Unlike `CreateCampaigns`/`AdoptCampaign` there is no `validateProjectSlug`: an asset's
+`project_id` is only a tenant-scoping predicate, never an attribution or connection-lookup key,
+so it stays UUID-or-slug like the other nested brief routes. The `checksum` is the
+lowercase-hex SHA-256 of the bytes (`sha256Hex`), which is the `(brief_id, checksum)` dedupe key
+— a repeat upload of the same image returns the existing asset. `created_by` is the attributed
+actor (NULL when none decodes, same as `CreateBrief`); on an idempotent re-upload the repo
+preserves the FIRST uploader, so this attributes creation, not re-sending. The `bytes` are
+deliberately NOT echoed in the result (`creativeAssetResult` returns metadata only — the caller
+already has the bytes it sent, and a multi-megabyte base64 body on every upload would be pure
+overhead). Like the other late-bound methods, an unwired repo returns a typed `503`
+(availability-neutral wording, since in the cold-start window the database is configured but the
+repo has not bound yet); `SetCreativeAssetRepo` is on `briefBackendSetter` so the cold-start path
+binds it in the same step as the brief repos.
+
 ## Campaign status toggle
 
 `BriefService.ToggleCampaignStatus` (backing `PATCH .../campaigns/{id}/status`

@@ -534,12 +534,27 @@ variants: AdVariant[]           — One ad per variant; at least one is required
 primaryText: string             — Required; non-empty; at most 125 runes
 headline: string                — Required; non-empty; at most 40 runes
 description?: string             — At most 30 runes
+imageAssetId?: string            — UUID of an image uploaded for THIS brief via
+                                   POST .../creative-assets. Omit for a link-only
+                                   creative (the pre-image behaviour).
 ```
 
 Copy limits are enforced by the client before any upstream call, so a variant that
 exceeds them fails the platform job pre-create (async — not a synchronous 4xx). The
 composed ad-creative NAME (`<eventName> - Variant N`) is also capped at 255 runes and
 rejected pre-create, so keep `eventName` well short of that so the suffix fits.
+
+`imageAssetId` references an asset uploaded to the SAME brief. At dispatch the service
+resolves it to the stored bytes (scoped to this brief — an id belonging to another brief
+or project is a bad reference and fails the job pre-create, before any paid campaign
+exists), uploads them once to the ad account (Meta content-addresses images, so a
+re-dispatch re-derives the same `image_hash` rather than duplicating), and attaches the
+resulting `image_hash` to the variant's creative. A per-variant image or creative/ad
+failure is NON-FATAL: the campaign is still created, its status is `created_degraded`, and
+the shortfall is described in the result Steps rather than failing the whole job. The
+attached `image_hash` is recorded per ad in the persisted result so a later reconcile can
+tell which uploaded asset backs a live ad. Video and carousel formats are not yet
+supported (single image only).
 
 Connection prerequisites (from the Meta connection, not this config): `page_id` is REQUIRED,
 format-validated (numeric), and length-bounded (`MaxLength 64`) at connection creation (a
