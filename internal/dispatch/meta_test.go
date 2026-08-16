@@ -1274,3 +1274,131 @@ func TestMeta_ListAccounts_StillRejectsUnusableConnections(t *testing.T) {
 		})
 	}
 }
+
+// ---- creative-asset resolution (resolveVariantAssets) ----------------------
+
+// fakeCreativeReader is a creativeAssetReader stub: it records the (project, brief, asset) tuple
+// it was asked for and returns a preset asset or error, so a test can assert both the scoping
+// arguments and how the dispatcher maps the result onto the variant.
+type fakeCreativeReader struct {
+	asset     *model.CreativeAsset
+	err       error
+	gotProj   string
+	gotBrief  string
+	gotAsset  string
+	callCount int
+}
+
+func (f *fakeCreativeReader) GetAsset(_ context.Context, projectID, briefID, assetID string) (*model.CreativeAsset, error) {
+	f.callCount++
+	f.gotProj, f.gotBrief, f.gotAsset = projectID, briefID, assetID
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.asset, nil
+}
+
+const testAssetID = "11111111-1111-4111-8111-111111111111"
+
+// TestMeta_ResolveVariantAssets_HappyPath: a variant referencing a valid, existing asset is
+// loaded scoped to the brief's (project, brief), and its bytes + mime land on the returned
+// variant while the input slice is left untouched.
+func TestMeta_ResolveVariantAssets_HappyPath(t *testing.T) {
+	reader := &fakeCreativeReader{asset: &model.CreativeAsset{
+		Bytes:    []byte("PNGDATA"),
+		MimeType: model.MimeTypePNG,
+	}}
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
+	d.SetCreativeAssetRepo(reader)
+
+	in := []meta.AdVariant{{Headline: "h", PrimaryText: "p", ImageAssetID: testAssetID}}
+	out, err := d.resolveVariantAssets(context.Background(), testBrief(), in)
+	if err != nil {
+		t.Fatalf("resolveVariantAssets: %v", err)
+	}
+	if reader.gotProj != "cncf" || reader.gotBrief != "brief-1" || reader.gotAsset != testAssetID {
+		t.Errorf("GetAsset scoped to (%q,%q,%q), want (cncf,brief-1,%s)", reader.gotProj, reader.gotBrief, reader.gotAsset, testAssetID)
+	}
+	if string(out[0].ImageBytes) != "PNGDATA" || out[0].ImageMIME != model.MimeTypePNG {
+		t.Errorf("resolved variant bytes/mime = %q/%q, want PNGDATA/%s", out[0].ImageBytes, out[0].ImageMIME, model.MimeTypePNG)
+	}
+	// The caller's input slice must not be mutated (the dispatcher copies before filling).
+	if in[0].ImageBytes != nil {
+		t.Errorf("input variant was mutated: ImageBytes = %q, want nil", in[0].ImageBytes)
+	}
+}
+
+// TestMeta_ResolveVariantAssets_NoReference: a variant with no ImageAssetID is a link-only
+// creative — it must pass through untouched and never call the store (which may be nil).
+func TestMeta_ResolveVariantAssets_NoReference(t *testing.T) {
+	reader := &fakeCreativeReader{}
+	d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
+	d.SetCreativeAssetRepo(reader)
+
+	out, err := d.resolveVariantAssets(context.Background(), testBrief(), []meta.AdVariant{{Headline: "h", PrimaryText: "p"}})
+	if err != nil {
+		t.Fatalf("resolveVariantAssets: %v", err)
+	}
+	if reader.callCount != 0 {
+		t.Errorf("GetAsset called %d times for a variant with no asset reference, want 0", reader.callCount)
+	}
+	if out[0].ImageBytes != nil {
+		t.Errorf("link-only variant should carry no image bytes, got %q", out[0].ImageBytes)
+	}
+}
+
+// TestMeta_ResolveVariantAssets_Rejections: the boundary cases each fail with a clear,
+// variant-indexed error and (except for the store-not-configured case) never invent an image.
+func TestMeta_ResolveVariantAssets_Rejections(t *testing.T) {
+	cases := []struct {
+		name        string
+		reader      creativeAssetReader // nil → store not configured
+		assetID     string
+		wantErrPart string
+	}{
+		{
+			name:        "malformed asset id",
+			reader:      &fakeCreativeReader{},
+			assetID:     "not-a-uuid",
+			wantErrPart: "not a valid asset id",
+		},
+		{
+			name:        "store not configured",
+			reader:      nil,
+			assetID:     testAssetID,
+			wantErrPart: "creative-asset store is not configured",
+		},
+		{
+			name:        "asset does not exist",
+			reader:      &fakeCreativeReader{err: domain.ErrNotFound},
+			assetID:     testAssetID,
+			wantErrPart: "does not exist for this brief",
+		},
+		{
+			name:        "store error propagates",
+			reader:      &fakeCreativeReader{err: errors.New("db down")},
+			assetID:     testAssetID,
+			wantErrPart: "db down",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{})
+			if tc.reader != nil {
+				d.SetCreativeAssetRepo(tc.reader)
+			}
+			_, err := d.resolveVariantAssets(context.Background(), testBrief(),
+				[]meta.AdVariant{{Headline: "h", PrimaryText: "p", ImageAssetID: tc.assetID}})
+			if err == nil {
+				t.Fatalf("expected an error")
+			}
+			if !strings.Contains(err.Error(), tc.wantErrPart) {
+				t.Errorf("error %q does not contain %q", err.Error(), tc.wantErrPart)
+			}
+			// The error must name the offending variant so an operator can find it.
+			if !strings.Contains(err.Error(), "variant 1") {
+				t.Errorf("error %q does not identify the variant index", err.Error())
+			}
+		})
+	}
+}

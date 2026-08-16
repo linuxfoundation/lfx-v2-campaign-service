@@ -18,8 +18,10 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"mime/multipart"
 	"net"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"regexp"
 	"sort"
@@ -2190,6 +2192,22 @@ type AdVariant struct {
 	PrimaryText string
 	Headline    string
 	Description string
+	// ImageAssetID references an image uploaded to this brief (UploadCreativeAsset). It is a
+	// CONFIG field: the caller sets it (JSON key imageAssetId, matched case-insensitively like
+	// the sibling fields, which carry no json tag), and the Meta DISPATCHER — not this client —
+	// resolves it, filling ImageBytes/ImageMIME below. The client never sees the id; it works
+	// only from the resolved bytes. Empty → a link-only creative (the pre-image behaviour).
+	ImageAssetID string
+	// ImageBytes and ImageMIME are the RESOLVED image, populated by the dispatcher from
+	// ImageAssetID and never from caller JSON (json:"-" so a config body cannot inject raw
+	// bytes, and so a marshalled variant never carries a multi-megabyte blob). When ImageBytes
+	// is non-empty CreateCampaign uploads it to the ad account and attaches the returned
+	// image_hash to the creative; when empty the creative is link-only. The client depending on
+	// bytes+type rather than on the asset store is what will let a future video/carousel variant
+	// carry its own resolved bytes through the same field without the client learning a new
+	// storage type.
+	ImageBytes []byte `json:"-"`
+	ImageMIME  string `json:"-"`
 }
 
 // CampaignInput mirrors MetaCampaignCreateRequest.
@@ -3035,9 +3053,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	return partialResult(), nil
 }
 
-// createVariantAd creates the adcreative and ad for one variant, returning the
-// ad id and creative id.
-func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant AdVariant, adSetID, utmURL string, i int) (adID, creativeID string, err error) {
+// objectStorySpec builds a creative's object_story_spec for a single-image (or, with an empty
+// imageHash, link-only) website-click ad. It is the seam for further creative formats: a video
+// or carousel creative differs from this one ONLY in this spec (video_data / child_attachments
+// in place of link_data), so a new format lands as a sibling builder selected here by the
+// resolved asset's kind, leaving the surrounding creative/ad POST flow in createVariantAd
+// untouched. imageHash empty → the pre-image link-only creative; non-empty → the same creative
+// with the account-uploaded image attached.
+func objectStorySpec(pageID, utmURL string, variant AdVariant, imageHash string) map[string]any {
 	linkData := map[string]any{
 		"link":    utmURL,
 		"message": variant.PrimaryText,
@@ -3050,14 +3073,156 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 	if variant.Description != "" {
 		linkData["description"] = variant.Description
 	}
+	if imageHash != "" {
+		linkData["image_hash"] = imageHash
+	}
+	return map[string]any{
+		"page_id":   pageID,
+		"link_data": linkData,
+	}
+}
+
+// adImageUploadResponse mirrors the /act_{id}/adimages response: the uploaded image(s) keyed by
+// the request's form-field name, each carrying the account-scoped hash a creative references.
+// One image is uploaded per call, so there is exactly one entry; uploadImage reads it by value,
+// not by key, so it does not depend on how Meta names the key.
+type adImageUploadResponse struct {
+	Images map[string]struct {
+		Hash string `json:"hash"`
+		URL  string `json:"url"`
+	} `json:"images"`
+}
+
+// uploadImage uploads one image to the ad account and returns its account-scoped image_hash for
+// createVariantAd to attach to a creative. Meta CONTENT-ADDRESSES ad images — identical bytes
+// always yield the same hash and a repeat upload is a no-op returning that hash — so this is
+// idempotent and needs none of do()'s create-ambiguity/retry machinery: a duplicate upload
+// creates nothing, and createVariantAd already treats a failed upload as a non-fatal per-variant
+// failure (recorded in Steps, downgrading the campaign to created_degraded). It therefore makes a
+// single attempt and classifies the outcome with the SAME error types do() uses, so callers and
+// tests see one vocabulary:
+//   - pre-send dial failure → plain error (nothing was uploaded);
+//   - non-2xx → *APIError carrying the Graph envelope (or a redacted body snippet);
+//   - a 2xx we cannot read/parse, or that names no hash → *transportError (ambiguous).
+//
+// The bytes go as a multipart FILE part rather than base64 in JSON, to avoid a ~33% size
+// inflation on an image that may be up to 30 MiB; contentType, when known, labels the part.
+func (c *Client) uploadImage(ctx context.Context, image []byte, contentType string) (string, error) {
+	if c.creds.AccessToken == "" {
+		return "", fmt.Errorf("meta access token is not configured")
+	}
+	if len(image) == 0 {
+		return "", fmt.Errorf("meta image upload called with no bytes")
+	}
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	// The field name becomes the image's key in the response; uploadImage reads the single entry
+	// by value, so any stable name works. A filename is what makes Graph treat the part as a file
+	// upload rather than a scalar field.
+	partHeader := textproto.MIMEHeader{}
+	partHeader.Set("Content-Disposition", `form-data; name="source"; filename="creative"`)
+	if strings.TrimSpace(contentType) != "" {
+		partHeader.Set("Content-Type", contentType)
+	}
+	part, perr := mw.CreatePart(partHeader)
+	if perr != nil {
+		return "", fmt.Errorf("build image upload body: %w", perr)
+	}
+	if _, werr := part.Write(image); werr != nil {
+		return "", fmt.Errorf("build image upload body: %w", werr)
+	}
+	if cerr := mw.Close(); cerr != nil {
+		return "", fmt.Errorf("build image upload body: %w", cerr)
+	}
+
+	path := "/" + c.account.AccountID + "/adimages"
+	req, rerr := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, &body)
+	if rerr != nil {
+		return "", fmt.Errorf("build request: %w", rerr)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.creds.AccessToken)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+
+	resp, derr := c.httpClient.Do(req)
+	if derr != nil {
+		// Same split as do(): a failure BEFORE the request left the client means nothing was
+		// uploaded (plain error); a mid-flight failure is ambiguous (transportError). The upload
+		// being idempotent makes ambiguity harmless, but the caller fails the variant either way.
+		if isPreSendDialError(derr) {
+			return "", fmt.Errorf("meta API %s %s: %w", http.MethodPost, path, derr)
+		}
+		return "", &transportError{Method: http.MethodPost, Path: path, Err: derr}
+	}
+	// One byte past the cap so truncation is detectable, exactly as do() reads.
+	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
+	status := resp.StatusCode
+	_ = resp.Body.Close()
+
+	if status < 200 || status >= 300 {
+		apiErr := &APIError{StatusCode: status, Method: http.MethodPost, Path: path}
+		var env graphErrorEnvelope
+		switch {
+		case readErr == nil && json.Unmarshal(raw, &env) == nil && env.Error != nil:
+			apiErr.Type = env.Error.Type
+			apiErr.Code = env.Error.Code
+			apiErr.FBTraceID = env.Error.FBTraceID
+			apiErr.Message = env.Error.Message
+		case readErr == nil:
+			// Non-Graph or malformed error body: surface a redacted, truncated snippet so the
+			// reason is not lost. REDACT FIRST — a reflected request could echo the Bearer token
+			// (see do()'s matching branch).
+			if snippet := strings.TrimSpace(string(raw)); snippet != "" {
+				apiErr.Message = truncate(c.redactSecrets(snippet), 300)
+			}
+		default:
+			// Body unread: a missing Code means "we never read it", not "Meta sent none" —
+			// mark it so callers do not read a bare status as a clean rejection.
+			apiErr.EnvelopeUnreadable = true
+			apiErr.Message = fmt.Sprintf("read response body: %v", readErr)
+		}
+		return "", apiErr
+	}
+	if readErr != nil {
+		return "", &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("read response body: %w", readErr)}
+	}
+	if int64(len(raw)) > maxResponseBody {
+		return "", &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("response exceeds %d bytes", maxResponseBody)}
+	}
+
+	var out adImageUploadResponse
+	if uerr := json.Unmarshal(raw, &out); uerr != nil {
+		return "", &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("decode response: %w", uerr)}
+	}
+	for _, img := range out.Images {
+		if h := strings.TrimSpace(img.Hash); h != "" {
+			return h, nil
+		}
+	}
+	// A 2xx naming no hash is ambiguous the same way a create returning no id is: the upload may
+	// have landed but we cannot name it. transportError, so the variant fails rather than
+	// attaching an empty image_hash to a creative.
+	return "", &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("image upload returned no hash")}
+}
+
+// createVariantAd creates the adcreative and ad for one variant, returning the
+// ad id and creative id.
+func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant AdVariant, adSetID, utmURL string, i int) (adID, creativeID string, err error) {
+	// Upload the variant's image (if any) FIRST, so a rejected image fails the variant before a
+	// creative/ad is created. The upload is idempotent (content-addressed), so a re-dispatch that
+	// reaches here again re-derives the same hash rather than duplicating the image. An empty
+	// image → imageHash stays "" → objectStorySpec builds a link-only creative.
+	var imageHash string
+	if len(variant.ImageBytes) > 0 {
+		if imageHash, err = c.uploadImage(ctx, variant.ImageBytes, variant.ImageMIME); err != nil {
+			return "", "", fmt.Errorf("upload image for variant %d: %w", i+1, err)
+		}
+	}
 
 	var creativeResp createResponse
 	if err = c.doCreate(ctx, "/"+c.account.AccountID+"/adcreatives", map[string]any{
-		"name": fmt.Sprintf("%s - Variant %d", in.EventName, i+1),
-		"object_story_spec": map[string]any{
-			"page_id":   c.account.PageID,
-			"link_data": linkData,
-		},
+		"name":              fmt.Sprintf("%s - Variant %d", in.EventName, i+1),
+		"object_story_spec": objectStorySpec(c.account.PageID, utmURL, variant, imageHash),
 	}, &creativeResp); err != nil {
 		return "", "", err
 	}

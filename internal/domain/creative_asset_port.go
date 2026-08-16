@@ -34,4 +34,19 @@ type CreativeAssetRepository interface {
 	// is already there — the same id every time, which is what lets the caller (and the Meta
 	// image-upload step at dispatch) treat upload as safe to retry.
 	CreateAsset(ctx context.Context, a *model.CreativeAsset) (*model.CreativeAsset, error)
+
+	// GetAsset loads a single stored asset — INCLUDING its Bytes — by id, scoped to
+	// (projectID, briefID). The scope is part of the lookup, not a check after the read: an
+	// id that exists but belongs to another project or another brief resolves to ErrNotFound,
+	// so a caller can never dereference a creative it does not own. The three cases (absent,
+	// cross-project, cross-brief) collapse to one outcome for the same reason CreateAsset's
+	// parent-brief gate does — telling them apart would leak whether an asset the caller cannot
+	// see exists.
+	//
+	// Unlike the metadata-only rows CreateAsset returns (bytes are multi-megabyte and no write
+	// caller needs them back), GetAsset DOES load Bytes: its one caller is the Meta dispatch
+	// step, which resolves a variant's imageAssetId to the image it uploads to the ad account.
+	// The id is expected to be a well-formed asset id — the caller validates untrusted input
+	// before calling, as the sibling repositories' id lookups assume (see GetBrief/GetAudience).
+	GetAsset(ctx context.Context, projectID, briefID, assetID string) (*model.CreativeAsset, error)
 }

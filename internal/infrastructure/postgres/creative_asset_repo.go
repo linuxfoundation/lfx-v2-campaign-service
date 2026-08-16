@@ -85,6 +85,53 @@ func (r *CreativeAssetRepo) CreateAsset(ctx context.Context, a *model.CreativeAs
 	return stored, nil
 }
 
+// creativeAssetColsWithBytes is creativeAssetCols plus the bytes column, for the ONE read that
+// needs the image itself — GetAsset, called at Meta dispatch to upload the creative. bytes is
+// last so scanCreativeAssetWithBytes can reuse scanCreativeAsset's field order and append one
+// scan target. Every OTHER read stays on the bytes-free creativeAssetCols so it never ships a
+// multi-megabyte column it does not use.
+const creativeAssetColsWithBytes = creativeAssetCols + `, bytes`
+
+// getCreativeAssetQuery loads one asset by id, scoped to (project, brief). The scope lives in the
+// WHERE clause, not a post-read check: a row under another project or brief simply does not
+// match, so it comes back as pgx.ErrNoRows → ErrNotFound, and a Meta variant can never reference
+// a creative owned by a different tenant or a different brief. The id is compared as the UUID
+// primary key ($1 bound as the caller's validated asset id, exactly as GetBrief compares its id),
+// so the PK index serves the lookup.
+const getCreativeAssetQuery = `SELECT ` + creativeAssetColsWithBytes + `
+	FROM creative_assets
+	WHERE id = $1 AND project_id = $2 AND brief_id = $3`
+
+// GetAsset loads a stored asset with its bytes, scoped to (projectID, briefID), or ErrNotFound
+// when no such asset exists for that brief (absent, or owned by another project/brief).
+func (r *CreativeAssetRepo) GetAsset(ctx context.Context, projectID, briefID, assetID string) (*model.CreativeAsset, error) {
+	asset, err := scanCreativeAssetWithBytes(r.db.QueryRow(ctx, getCreativeAssetQuery, assetID, projectID, briefID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("get creative asset: %w", err)
+	}
+	return asset, nil
+}
+
+// scanCreativeAssetWithBytes reads one creative_assets row in creativeAssetColsWithBytes order —
+// scanCreativeAsset's fields plus the trailing bytes column into model.Bytes.
+func scanCreativeAssetWithBytes(row pgx.Row) (*model.CreativeAsset, error) {
+	var (
+		a         model.CreativeAsset
+		createdBy []byte
+	)
+	if err := row.Scan(
+		&a.ID, &a.ProjectID, &a.BriefID, &a.MimeType, &a.ByteSize, &a.Checksum,
+		&createdBy, &a.CreatedAt, &a.Bytes,
+	); err != nil {
+		return nil, err
+	}
+	a.CreatedBy = createdBy
+	return &a, nil
+}
+
 // scanCreativeAsset reads one creative_assets row in creativeAssetCols order. It does not scan
 // bytes (creativeAssetCols omits them); the returned model's Bytes stays nil.
 func scanCreativeAsset(row pgx.Row) (*model.CreativeAsset, error) {
