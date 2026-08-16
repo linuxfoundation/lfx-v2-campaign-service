@@ -93,8 +93,10 @@ in Go, a base64 string in the JSON body): the transport choice is Goa-native wit
 machinery, and `MinLength(1)`/`MaxLength(31457280)` put the accepted size in the OpenAPI
 document and let Goa enforce it at DECODE, before the handler runs — `MinLength(1)` rejects an
 empty upload and the 30-MiB `MaxLength` is a hard ceiling at Meta's documented single-image
-maximum (the operational limit is a lower, configurable server-side bound applied in the
-handler, never above this ceiling). `content_type` is an `Enum("image/png", "image/jpeg")`, but
+maximum. That ceiling is the ONLY size bound applied today; the handler adds no separate size
+check of its own (it only decodes the bytes to verify the format). A lower, configurable
+operational bound applied server-side is a planned enhancement (`design/brief.go` marks it
+"plan C3"), and must never sit above this ceiling. `content_type` is an `Enum("image/png", "image/jpeg")`, but
 the enum only constrains the DECLARED value — the handler re-sniffs the bytes and stores the
 verified type (see [internal/service](internal-service.md)). It responds `201` with NO ETag:
 creative assets are insert-only and carry no version, so there is no optimistic-concurrency
