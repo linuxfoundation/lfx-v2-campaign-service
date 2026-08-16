@@ -203,21 +203,39 @@ func TestCreativeAssetRepo_CreateAsset_IsIdempotentOnChecksum(t *testing.T) {
 // TestCreativeAssetRepo_CreateAsset_RejectsInactiveOrForeignBrief covers the three ways the
 // parent-brief gate must refuse an insert, all mapped to ErrNotFound so none reveals whether a
 // brief the caller cannot see exists: no such brief, an archived brief, and a brief owned by a
-// different project. Each asserts nothing was stored.
+// different project. Each asserts nothing was stored (via assertNothingStored), because returning
+// ErrNotFound is not the same claim as storing no row — a gate could do the wrong one of the two.
 func TestCreativeAssetRepo_CreateAsset_RejectsInactiveOrForeignBrief(t *testing.T) {
 	pool := creativeAssetTestPool(t)
 	ctx := context.Background()
 	repo := NewCreativeAssetRepo(pool)
 
+	// assertNothingStored proves the gate refused the write, not merely that it returned an
+	// error: a bug that both stored a row AND returned ErrNotFound would pass the error check
+	// alone. Every subtest below asserts it, so the comment's "nothing was stored" promise holds
+	// for all three refusal paths, not just the archived one.
+	assertNothingStored := func(t *testing.T, briefID string) {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM creative_assets WHERE brief_id=$1`, briefID).Scan(&n); err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		if n != 0 {
+			t.Errorf("row count = %d, want 0 — the gate returned ErrNotFound but stored a row anyway", n)
+		}
+	}
+
 	t.Run("absent brief", func(t *testing.T) {
 		// A well-formed brief id that names nothing. The INSERT ... SELECT finds no active parent,
 		// so nothing is inserted and RETURNING is empty → ErrNotFound (no FK violation, because
 		// nothing was inserted).
-		asset := newTestAsset(t, creativeAssetUniqueID(t, "proj"), "00000000-0000-4000-8000-000000000000")
+		briefID := "00000000-0000-4000-8000-000000000000"
+		asset := newTestAsset(t, creativeAssetUniqueID(t, "proj"), briefID)
 		_, err := repo.CreateAsset(ctx, asset)
 		if !errors.Is(err, domain.ErrNotFound) {
 			t.Fatalf("err = %v, want domain.ErrNotFound", err)
 		}
+		assertNothingStored(t, briefID)
 	})
 
 	t.Run("archived brief", func(t *testing.T) {
@@ -227,24 +245,21 @@ func TestCreativeAssetRepo_CreateAsset_RejectsInactiveOrForeignBrief(t *testing.
 		if !errors.Is(err, domain.ErrNotFound) {
 			t.Fatalf("err = %v, want domain.ErrNotFound — an archived brief must not accrue assets", err)
 		}
-		var n int
-		if err := pool.QueryRow(ctx, `SELECT count(*) FROM creative_assets WHERE brief_id=$1`, briefID).Scan(&n); err != nil {
-			t.Fatalf("count: %v", err)
-		}
-		if n != 0 {
-			t.Errorf("row count = %d, want 0 — an asset was stored under an archived brief", n)
-		}
+		assertNothingStored(t, briefID)
 	})
 
 	t.Run("brief owned by another project", func(t *testing.T) {
 		briefID, _ := insertCreativeAssetTestBrief(ctx, t, pool, "approved")
 		// Same (existing, active) brief, but a caller scoped to a DIFFERENT project. The FK would
-		// accept it — the brief exists — but the WHERE project_id gate must not.
+		// accept it — the brief exists — but the WHERE project_id gate must not. This is a tenant
+		// boundary, so it is the most important of the three to prove stored NOTHING, not just to
+		// prove it returned an error.
 		asset := newTestAsset(t, creativeAssetUniqueID(t, "other-proj"), briefID)
 		_, err := repo.CreateAsset(ctx, asset)
 		if !errors.Is(err, domain.ErrNotFound) {
 			t.Fatalf("err = %v, want domain.ErrNotFound — a caller must not attach an asset to another project's brief", err)
 		}
+		assertNothingStored(t, briefID)
 	})
 }
 
