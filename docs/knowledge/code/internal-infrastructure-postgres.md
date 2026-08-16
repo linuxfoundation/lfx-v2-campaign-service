@@ -248,6 +248,15 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   fewest references to the number, not the branch you happen to be in** — a migration
   version leaks into prose and recovery code, and the leak, not the file name, is the cost.
   See *Migration numbering* below.
+- `000026` — `creative_assets` table (Meta single-image creatives, LFXV2-2665): an uploaded
+  image subordinate to a brief (`brief_id` REFERENCES `campaign_briefs(id)`), with `project_id`
+  for tenant scoping, a `mime_type` CHECK constrained to `image/png`/`image/jpeg`, `byte_size`,
+  a `checksum` (lowercase-hex SHA-256 of the bytes), the `bytes` themselves as `BYTEA`, and
+  `created_by` JSONB. `UNIQUE (brief_id, checksum)` is the content-addressed dedupe key. The
+  table is INSERT-ONLY: no `updated_at`, no `version` — an asset is created once and read back,
+  never edited, so there is no optimistic-concurrency handle (which is also why the upload
+  endpoint answers `201` with no ETag). The bytes are stored plaintext, NOT encrypted: an ad
+  image is not a secret, unlike the credential blobs.
 
 ### `Migrate` refuses to succeed over an INVALID index
 
@@ -1078,3 +1087,46 @@ Two guards live in the same transaction as the insert, and neither can be enforc
 
 The insert and its outbox index row are co-committed in one transaction, as every campaign
 write is — see `enqueueCampaignIndex`.
+
+## `CreativeAssetRepo` (Meta single-image creatives, LFXV2-2665)
+
+`CreativeAssetRepo` backs `000026`'s `creative_assets` table with two methods, and both are
+built around the parent-brief gate and the content-addressed dedupe key.
+
+`CreateAsset` runs a single statement:
+`INSERT ... SELECT ... WHERE EXISTS (an active same-project brief) ON CONFLICT (brief_id,
+checksum) DO UPDATE SET byte_size = creative_assets.byte_size RETURNING <cols>`. Three things
+are doing work here and each has a failure mode if changed:
+
+- **The `WHERE EXISTS` gate is the parent-brief check, in SQL, not in Go.** The row is inserted
+  only if a brief with this `id` and `project_id` exists and is not archived. A brief that is
+  absent, archived, or owned by ANOTHER project produces no inserted row, so `RETURNING` comes
+  back empty → `pgx.ErrNoRows` → `domain.ErrNotFound`. Doing this as a separate `SELECT` then
+  `INSERT` would race an archival committing in between; folding it into the insert's `SELECT`
+  closes that window.
+- **`DO UPDATE SET byte_size = creative_assets.byte_size` is a deliberate NO-OP, not a real
+  update.** The point is idempotency: a re-upload of identical bytes collides on
+  `(brief_id, checksum)` and must RETURN the existing row. `DO NOTHING` would suppress
+  `RETURNING` on the conflict → `ErrNoRows` → a spurious `ErrNotFound` on what is actually a
+  successful repeat upload; the no-op `DO UPDATE` keeps the row eligible for `RETURNING` while
+  changing nothing (`byte_size` set to its own value). The pre-existing row is returned intact,
+  so the FIRST uploader's `created_by` is preserved — the re-upload attributes nothing.
+- **The returned column set OMITS `bytes`.** `creativeAssetCols` (used by the write and the
+  metadata result) does not select the potentially-30-MiB blob; only `GetAsset`'s
+  `creativeAssetColsWithBytes` appends it. A create returns metadata, so a `stored.Bytes` read
+  back from `CreateAsset` is `nil` by design.
+
+`GetAsset` reads one asset `WHERE id = $1 AND project_id = $2 AND brief_id = $3`, so the lookup
+is scoped to the tenant AND the brief — a correct id under the wrong project or brief reads as
+absent (`ErrNotFound`), which is what lets the Meta dispatcher's `resolveVariantAssets` treat a
+cross-brief/cross-project reference as a bad reference rather than a leak. It selects
+`creativeAssetColsWithBytes`, because the bytes ARE the point of this read: they are handed to
+the Meta client for upload at dispatch.
+
+The repository has no source-text SQL assertion (unlike the campaign/connection repos); its
+behaviour — the parent-brief gate's three rejection shapes, the `ON CONFLICT` idempotency, and
+`GetAsset`'s scoping — is pinned by `creative_asset_repo_live_test.go`. That test is IN-PACKAGE
+(`package postgres`, alongside `audience_reconcile_live_test.go`) rather than under `dbtest/`,
+because `NewCreativeAssetRepo` needs the instrumented `*Pool` wrapper that `dbtest.Pool` does
+not expose; it follows the same `TEST_DATABASE_URL`-gated skip/fail-on-CI convention and the
+same `UniqueID` discipline as the rest of the live suite.

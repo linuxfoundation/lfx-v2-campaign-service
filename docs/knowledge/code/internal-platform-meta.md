@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/meta"
-description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, campaign status toggle cascade over ad set and ads, live campaign metrics reads, and ad-account discovery — a paginated `/me/adaccounts` walk that asks about the TOKEN rather than any one account, returns known-bad accounts with their reason instead of filtering them, and fails rather than truncating when the walk cannot be completed."
+description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, single-image ad creatives built from a per-account content-addressed image upload behind a format-agnostic object_story_spec seam, campaign status toggle cascade over ad set and ads, live campaign metrics reads, and ad-account discovery — a paginated `/me/adaccounts` walk that asks about the TOKEN rather than any one account, returns known-bad accounts with their reason instead of filtering them, and fails rather than truncating when the walk cannot be completed."
 resource: "internal/platform/meta"
 tags:
   - platform-client
@@ -196,6 +196,60 @@ without calling the dispatcher) AND that caller setting `ReconcileByName`. Until
 both land the lookup is exercised only by tests, which is the intended state — the
 capability is in place and deliberately unreached rather than on by default.
 
+## Image creatives (LFXV2-2665)
+
+Each ad variant can carry a single image. The variant field the CALLER sets is
+`AdVariant.ImageAssetID` (JSON `imageAssetId`) — an id into this brief's uploaded assets, NOT
+raw bytes. The client never sees that id: the Meta DISPATCHER resolves it to
+`ImageBytes`/`ImageMIME` (both `json:"-"`, so a config body can neither inject raw bytes nor
+carry a multi-megabyte blob through a marshalled variant), and `CreateCampaign` works only from
+the resolved bytes. An empty `ImageAssetID` → empty bytes → a link-only creative, which is the
+exact pre-image behaviour, so a variant with no image is unaffected.
+
+`createVariantAd` uploads the image FIRST, before creating the creative or ad, so a rejected
+image fails that variant while NOTHING has been created for it — no orphaned creative to clean
+up. The upload is idempotent (see `uploadImage` below), so a re-dispatch that reaches this
+variant again re-derives the same hash rather than duplicating the image. A per-variant image or
+creative/ad failure stays NON-FATAL, exactly as a copy-only variant failure does: it is recorded
+in `Steps` and the campaign is reported `created_degraded` rather than failing the whole
+operation (see the dispatcher's degraded-count check in [internal/dispatch](internal-dispatch.md)).
+
+`uploadImage` POSTs one image to `/{accountID}/adimages` and returns the account-scoped
+`image_hash`. The bytes go as a multipart FILE part (field name `source`, filename `creative` —
+a filename is what makes Graph treat the part as a file upload rather than a scalar field), NOT
+base64 in JSON, to avoid the ~33% size inflation base64 would add to an image that may be up to
+30 MiB. Meta CONTENT-ADDRESSES ad images — identical bytes always yield the same hash and a
+repeat upload is a no-op returning that hash — so the upload needs NONE of `do`/`doCreate`'s
+create-ambiguity or throttle-retry machinery: a duplicate upload creates nothing to reconcile.
+It therefore makes a single attempt and classifies the outcome with the SAME error vocabulary
+the rest of the client uses, so callers and tests read one language:
+
+- a pre-send dial failure → a PLAIN error (nothing was uploaded);
+- a non-2xx → `*APIError` carrying the Graph envelope (or, for a non-Graph/malformed body, a
+  redact-first-then-truncate snippet, matching `do`'s branch; `EnvelopeUnreadable` marks a body
+  that could not be read so a bare status is not misread as a clean rejection);
+- a 2xx that cannot be read/parsed, or that names no hash → `*transportError` (ambiguous the
+  same way a create returning no id is — the image may have landed but we cannot name it, so the
+  variant fails rather than attaching an empty `image_hash` to a creative).
+
+The response is read by VALUE, not by the form-field key, so the client does not depend on how
+Meta names the returned image.
+
+`objectStorySpec` builds the creative's `object_story_spec` and is the SEAM for further formats.
+A single-image or link-only website-click ad differs from a video or carousel one ONLY in this
+spec (`video_data` / `child_attachments` in place of `link_data`), so a new format lands as a
+sibling builder selected here by the resolved asset's kind, leaving the creative/ad POST flow in
+`createVariantAd` untouched. An empty `imageHash` builds the link-only `link_data`; a non-empty
+one adds `image_hash` to the same structure.
+
+`createVariantAd` returns `(adID, creativeID, imageHash, err)`. The `imageHash` is SURFACED (not
+just used internally) so each successfully-created ad records it in `AdResult.ImageHash` within
+`CampaignResult.Ads` (one entry per created ad, `len(Ads) == AdCount`, in variant order). Like
+`CampaignResult`'s other fields these carry no json tags, so the hash round-trips through the
+persisted `Result` blob (written by `campaignFromMeta`, read back by `metaAdSetID`) under its Go
+field name. That is what lets a future reconcile pass (LFXV2-2665) tell which uploaded asset
+backs a live ad without re-deriving it.
+
 ## Campaign status toggle
 
 `UpdateCampaignAndChildrenStatus(ctx, campaignID, adSetID, status)` pauses/resumes a campaign
@@ -332,5 +386,22 @@ It implements `StatusToggler` and CASCADES: its create PAUSES the campaign, ad s
 ads, so `UpdateCampaignAndChildrenStatus` POSTs the status to the campaign, the persisted
 ad set id, and each ad DISCOVERED via `GET /{adSetID}/ads` (Meta persists the ad set id
 but not the individual ad ids). It needs only the access token, not the page id.
+
+The dispatcher owns the ImageAssetID → bytes resolution the client depends on (above).
+`resolveVariantAssets` runs BEFORE any upstream create, returning a COPY of the variants
+(so `cfg.Variants`, reused by `campaignFromMeta` for the degraded-count check, is not
+mutated): a variant with no `imageAssetId` passes through unchanged, and one that references
+an asset has its bytes loaded via `GetAsset(projectID, briefID, assetID)` — scoped to THIS
+brief, so another brief's or project's asset reads as absent. Every failure here is a
+caller/wiring error that must abort the dispatch before a paid campaign exists, so the sole
+call site wraps the error in `notCreated`, RELEASING the `(brief, platform)` claim (see the
+claim contract in [internal/dispatch](internal-dispatch.md)) rather than stranding it: a
+malformed `imageAssetId` is rejected up front (never handed to the UUID primary-key lookup,
+which would raise an opaque driver error); a nil asset store with an image-referencing
+variant is surfaced as a wiring defect rather than a nil-panic (`registerDispatchers` always
+binds it via `SetCreativeAssetRepo`, whose nil-argument guard leaves the dispatcher
+image-less instead of storing a panic); and an asset absent for this brief is reported as a
+bad reference. The bytes+MIME the client works from — not the asset store — is the seam that
+lets a future video/carousel variant carry its own resolved bytes through the same field.
 
 See [internal/platform/meta](../../../internal/platform/meta).

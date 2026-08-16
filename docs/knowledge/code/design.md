@@ -85,4 +85,22 @@ than `""`, which is the distinction a form being pre-filled actually needs.
 parameter it lands verbatim in access logs, proxy logs and browser history at every hop;
 as a body parameter it does not. That outweighs the idempotency `GET` would advertise.
 
+`upload-creative-asset` (`POST .../briefs/{brief_id}/creative-assets`, LFXV2-2665) is the
+briefs service's image-upload method, backing the Meta single-image creative. It is
+SYNCHRONOUS — unlike `create-campaigns`, which returns a job — because it only validates and
+stores bytes and touches no ad platform. The `bytes` attribute is Goa's `Bytes` type (`[]byte`
+in Go, a base64 string in the JSON body): the transport choice is Goa-native with no multipart
+machinery, and `MinLength(1)`/`MaxLength(31457280)` put the accepted size in the OpenAPI
+document and let Goa enforce it at DECODE, before the handler runs — `MinLength(1)` rejects an
+empty upload and the 30-MiB `MaxLength` is a hard ceiling at Meta's documented single-image
+maximum (the operational limit is a lower, configurable server-side bound applied in the
+handler, never above this ceiling). `content_type` is an `Enum("image/png", "image/jpeg")`, but
+the enum only constrains the DECLARED value — the handler re-sniffs the bytes and stores the
+verified type (see [internal/service](internal-service.md)). It responds `201` with NO ETag:
+creative assets are insert-only and carry no version, so there is no optimistic-concurrency
+handle to return (contrast the campaign/audience updates that require `If-Match`). `project_id`
+uses the permissive UUID-or-slug attribute, not the slug-only one `create-campaigns` needs,
+because the asset is bound to a campaign later by its own id and the id is never stamped into a
+campaign name.
+
 See [design](../../../design).
