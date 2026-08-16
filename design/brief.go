@@ -515,8 +515,16 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			})
 			// Goa Bytes -> []byte in Go, base64-encoded string in the JSON body. This is
 			// the transport choice (see specs/004 research): Goa-native, no multipart
-			// machinery. Request-body size is bounded server-side before decode.
-			Attribute("bytes", Bytes, "Raw image bytes, base64-encoded in the JSON request body.")
+			// machinery. MinLength/MaxLength put the accepted size in the contract (and the
+			// OpenAPI document) and Goa enforces them at decode, before the handler runs:
+			// MinLength(1) rejects an empty upload; MaxLength is a hard ceiling at Meta's
+			// documented single-image maximum. The operational limit is a lower,
+			// configurable server-side bound applied by the upload handler (plan C3) and is
+			// never above this ceiling.
+			Attribute("bytes", Bytes, "Raw image bytes, base64-encoded in the JSON request body.", func() {
+				MinLength(1)
+				MaxLength(31457280) // 30 MiB hard ceiling; at/above Meta's ~30 MB single-image max file size
+			})
 			Required("project_id", "brief_id", "content_type", "bytes")
 		})
 		Result(CreativeAsset)

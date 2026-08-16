@@ -297,13 +297,19 @@ func BuildUploadCreativeAssetPayload(lfxV2CampaignServiceBriefsUploadCreativeAss
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsUploadCreativeAssetBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"bytes\": \"RXhwZWRpdGEgbm9uIHZvbHVwdGFzIHNpdCB2b2x1cHRhdGVtIGFkIGFiLg==\",\n      \"content_type\": \"image/jpeg\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"bytes\": \"ZGVx\",\n      \"content_type\": \"image/jpeg\"\n   }'")
 		}
 		if body.Bytes == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("bytes", "body"))
 		}
 		if !(body.ContentType == "image/png" || body.ContentType == "image/jpeg") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.content_type", body.ContentType, []any{"image/png", "image/jpeg"}))
+		}
+		if len(body.Bytes) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.bytes", body.Bytes, len(body.Bytes), 1, true))
+		}
+		if len(body.Bytes) > 31457280 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.bytes", body.Bytes, len(body.Bytes), 31457280, false))
 		}
 		if err != nil {
 			return nil, err
@@ -581,7 +587,7 @@ func BuildUpdateCampaignPayload(lfxV2CampaignServiceBriefsUpdateCampaignBody str
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceBriefsUpdateCampaignBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"campaign\": {\n         \"campaign_name\": \"Quia vero alias temporibus.\",\n         \"config\": \"Fuga et veniam itaque optio consequatur nulla.\",\n         \"status\": \"Impedit ullam eaque suscipit harum sint neque.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"campaign\": {\n         \"campaign_name\": \"Sunt quis odio enim nam id voluptatem.\",\n         \"config\": \"Ullam eaque suscipit harum.\",\n         \"status\": \"Vero alias temporibus illum.\"\n      }\n   }'")
 		}
 		if body.Campaign == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("campaign", "body"))

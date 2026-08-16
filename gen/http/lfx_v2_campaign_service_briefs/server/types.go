@@ -3121,6 +3121,14 @@ func ValidateUploadCreativeAssetRequestBody(body *UploadCreativeAssetRequestBody
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.content_type", *body.ContentType, []any{"image/png", "image/jpeg"}))
 		}
 	}
+	if body.Bytes != nil {
+		if len(body.Bytes) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.bytes", body.Bytes, len(body.Bytes), 1, true))
+		}
+		if len(body.Bytes) > 31457280 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.bytes", body.Bytes, len(body.Bytes), 31457280, false))
+		}
+	}
 	return
 }
 
