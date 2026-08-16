@@ -338,7 +338,14 @@ func microsoftAccountLabel(a microsoft.AdAccount) string {
 	// not read-only. Saying "read-only" twice for an account that is also suspended would be
 	// noise, which is why this arm runs only when nothing above spoke.
 	if len(notes) == 0 && !a.Usable() {
-		if strings.TrimSpace(a.Status) != "Active" {
+		// The SAME comparison Usable() makes, deliberately — not a trimmed one. This arm's only
+		// job is to explain a decision Usable() already took, so any predicate that can disagree
+		// with it explains the wrong thing: for Status " Active " the exact gate denies (padding
+		// is not "Active") while a trimmed test reads it as Active and blames the role instead —
+		// reintroducing precisely the role-blaming mislabel this arm exists to remove. Padding is
+		// unlikely (Status is unmarshalled from AccountLifeCycleStatus with no normalization) but
+		// the coupling is the point: if Usable() ever starts trimming, this must trim with it.
+		if a.Status != "Active" {
 			notes = append(notes, "account status could not be confirmed")
 		} else {
 			notes = append(notes, "not writable with this credential")

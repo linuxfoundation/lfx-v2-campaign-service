@@ -393,6 +393,16 @@ func TestMicrosoftAccountLabelSurfacesWhyAnAccountCannotServe(t *testing.T) {
 			"LF Events (X1234567) — account status could not be confirmed",
 		},
 		{
+			// Raised by dealako on #132. Usable() compares Status EXACTLY, so " Active " is not
+			// Active and the account is unusable — but a TrimSpace test in the label arm read it
+			// as Active and blamed the ROLE, which is the mislabel this arm exists to remove.
+			// The label predicate must be the same one the gate used, or it explains a decision
+			// that was never taken.
+			"padded status is not blamed on the role",
+			microsoft.AdAccount{ID: "1234567", Name: "LF Events", Number: "X1234567", Status: " Active ", RoleID: msWritableRole},
+			"LF Events (X1234567) — account status could not be confirmed",
+		},
+		{
 			"no name falls back to the number",
 			microsoft.AdAccount{ID: "1234567", Number: "X1234567", Status: "Active", RoleID: msWritableRole},
 			"X1234567",
