@@ -390,12 +390,18 @@ func NewContainer(cfg *config.Config) (container *Container, err error) {
 // dispatcher registered" for that platform (logged as a startup warning).
 // audiences is the audience repository the HubSpot (email) dispatcher reads to resolve a brief's
 // built send-list. The ad dispatchers don't need it, so it is a distinct arg rather than folded
-// into the connection repo.
-func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, audiences *postgres.AudienceRepo) map[model.Provider]service.PlatformDispatcher {
+// into the connection repo. creatives is the creative-asset repository the Meta dispatcher reads
+// to resolve a variant's uploaded image to bytes; likewise distinct, and likewise only one
+// dispatcher needs it.
+func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, audiences *postgres.AudienceRepo, creatives *postgres.CreativeAssetRepo) map[model.Provider]service.PlatformDispatcher {
+	// Construct the Meta dispatcher, then bind its creative-asset read path before boxing it into
+	// the interface map — the setter lives on the concrete type (see SetCreativeAssetRepo).
+	metaDisp := dispatch.NewMetaDispatcher(repo, enc)
+	metaDisp.SetCreativeAssetRepo(creatives)
 	return map[model.Provider]service.PlatformDispatcher{
 		model.ProviderRedditAds:    dispatch.NewRedditDispatcher(repo, enc),
 		model.ProviderLinkedInAds:  dispatch.NewLinkedInDispatcher(repo, enc),
-		model.ProviderMetaAds:      dispatch.NewMetaDispatcher(repo, enc),
+		model.ProviderMetaAds:      metaDisp,
 		model.ProviderTwitterAds:   dispatch.NewTwitterDispatcher(repo, enc),
 		model.ProviderGoogleAds:    dispatch.NewGoogleAdsDispatcher(repo, enc),
 		model.ProviderHubSpot:      dispatch.NewHubSpotDispatcher(repo, enc, audiences),
@@ -703,9 +709,13 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// ad-platform + email adapters land incrementally, LFXV2-2636..2642 / 2777);
 	// warn so that gap is visible in production logs.
 	audienceRepo := postgres.NewAudienceRepo(pool)
+	// One creative-asset repo instance, shared by the Meta dispatcher (resolves a variant's
+	// uploaded image at dispatch) and the brief service's upload handler below — both are live-
+	// backend concerns needing the pool.
+	creativeRepo := postgres.NewCreativeAssetRepo(pool)
 	// Must precede newAudienceService below, which reads c.audienceBuilder.
 	c.audienceBuilder, c.snowflakeClient = newAudienceBuilder(repo, enc, cfg)
-	dispatchers := registerDispatchers(repo, enc, audienceRepo)
+	dispatchers := registerDispatchers(repo, enc, audienceRepo, creativeRepo)
 	logMissingDispatchers(dispatchers)
 	// Surface claims stranded by a previous process (crash/eviction mid-dispatch) — they
 	// silently block future dispatches for their (brief, platform) until a human acts.
@@ -725,7 +735,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// The creative-asset repo is a live-backend concern like the brief/campaign repos (it needs
 	// the pool), not an always-on collaborator like the indexer, so it is bound here rather than
 	// inside newBriefService — which the two 503-mode paths also call with nil repos and no pool.
-	briefSvc.SetCreativeAssetRepo(postgres.NewCreativeAssetRepo(pool))
+	briefSvc.SetCreativeAssetRepo(creativeRepo)
 	c.Briefs = briefSvc
 	c.Audiences = c.newAudienceService(audienceRepo, briefRepo)
 
@@ -779,8 +789,11 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			jobRepo := postgres.NewJobRepo(pool)
 			// Same dispatcher set as the fast path (see registerDispatchers).
 			audienceRepo := postgres.NewAudienceRepo(pool)
+			// One shared instance for the Meta dispatcher and the brief upload handler, as on the
+			// fast path.
+			creativeRepo := postgres.NewCreativeAssetRepo(pool)
 			c.audienceBuilder, c.snowflakeClient = newAudienceBuilder(connRepo, enc, cfg)
-			dispatchers := registerDispatchers(connRepo, enc, audienceRepo)
+			dispatchers := registerDispatchers(connRepo, enc, audienceRepo, creativeRepo)
 			logMissingDispatchers(dispatchers)
 			// Same stuck-claim scan as the fast path: the DB only just became reachable, so
 			// this is the first opportunity to see claims stranded by a previous process.
@@ -803,7 +816,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// Bind the creative-asset repo in the SAME step as the brief repos: leaving it out
 			// would serve every UploadCreativeAsset a 503 forever on a cold-started pod while
 			// the rest of the brief routes went live. See briefBackendSetter.
-			bb.SetCreativeAssetRepo(postgres.NewCreativeAssetRepo(pool))
+			bb.SetCreativeAssetRepo(creativeRepo)
 			ab.SetBackend(audienceRepo)
 			// Inject the orchestrator into the connection service for account-listing operations.
 			b.SetOrchestrator(orch)

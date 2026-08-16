@@ -6,9 +6,12 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+
+	"github.com/google/uuid"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -51,15 +54,84 @@ type metaConfig struct {
 	CurrencyOffset int64 `json:"currencyOffset"`
 }
 
+// creativeAssetReader is the narrow read slice of the creative-asset repository the Meta
+// dispatcher needs to resolve a variant's imageAssetId to bytes. It is defined here rather than
+// depending on domain.CreativeAssetRepository so the dispatcher can only READ an asset, never
+// create one — least privilege, exactly as the HubSpot dispatcher's audienceReader narrows the
+// audience repository.
+type creativeAssetReader interface {
+	GetAsset(ctx context.Context, projectID, briefID, assetID string) (*model.CreativeAsset, error)
+}
+
 // MetaDispatcher creates Meta (Facebook/Instagram) campaigns for the orchestrator.
 type MetaDispatcher struct {
 	creds *credsSource
-	opts  []meta.Option
+	// creatives resolves a variant's imageAssetId to image bytes at dispatch. Bound by
+	// registerDispatchers on the live and cold-start paths; nil in the direct-construction tests
+	// that create no image variants, where it is never read (resolveVariantAssets touches it only
+	// for a variant that references an asset).
+	creatives creativeAssetReader
+	opts      []meta.Option
 }
 
-// NewMetaDispatcher builds the adapter from the connection repo + encryptor.
+// NewMetaDispatcher builds the adapter from the connection repo + encryptor. The creative-asset
+// read path is bound separately via SetCreativeAssetRepo (see BriefService.SetCreativeAssetRepo
+// for the same opt-in shape), so the ~30 direct-construction tests that create no image variants
+// stay unchanged.
 func NewMetaDispatcher(repo connReader, enc domain.Encryptor, opts ...meta.Option) *MetaDispatcher {
 	return &MetaDispatcher{creds: newCredsSource(repo, enc), opts: opts}
+}
+
+// SetCreativeAssetRepo binds the creative-asset read path so image-referencing variants resolve
+// to bytes at dispatch. registerDispatchers calls it once at construction, before the dispatcher
+// is shared with the orchestrator, so no lock guards it (unlike BriefService, which late-binds
+// across a cold start). A nil argument is ignored — mirroring BriefService.SetCreativeAssetRepo —
+// leaving the dispatcher image-less rather than storing a value that would nil-panic when a
+// variant referenced an asset.
+func (d *MetaDispatcher) SetCreativeAssetRepo(r creativeAssetReader) {
+	if r == nil {
+		return
+	}
+	d.creatives = r
+}
+
+// resolveVariantAssets loads each variant's referenced image (imageAssetId) into the bytes the
+// Meta client uploads, returning a COPY so the caller's cfg.Variants — reused by campaignFromMeta
+// for the degraded-count check — is not mutated. A variant with no imageAssetId passes through
+// unchanged (a link-only creative). Every failure here is a caller/wiring error that must fail
+// the dispatch BEFORE any upstream create — the sole call site wraps the returned error in
+// notCreated so the (brief, platform) claim is released rather than stranded:
+//   - a malformed imageAssetId cannot reference a real asset, so it is rejected up front rather
+//     than handed to the UUID primary-key lookup (which would raise an opaque driver error);
+//   - a nil repo with an image-referencing variant is a wiring defect (registerDispatchers always
+//     binds it) — surfaced as a clear error, not a nil-panic;
+//   - an asset absent for THIS brief (missing, or another brief's/project's) is ErrNotFound from
+//     GetAsset's scoped lookup, reported as a bad reference.
+func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.CampaignBrief, variants []meta.AdVariant) ([]meta.AdVariant, error) {
+	out := make([]meta.AdVariant, len(variants))
+	copy(out, variants)
+	for i := range out {
+		assetID := strings.TrimSpace(out[i].ImageAssetID)
+		if assetID == "" {
+			continue
+		}
+		if _, perr := uuid.Parse(assetID); perr != nil {
+			return nil, fmt.Errorf("meta variant %d references creative asset %q, which is not a valid asset id", i+1, assetID)
+		}
+		if d.creatives == nil {
+			return nil, fmt.Errorf("meta variant %d references creative asset %s but the creative-asset store is not configured", i+1, assetID)
+		}
+		asset, gerr := d.creatives.GetAsset(ctx, brief.ProjectID, brief.ID, assetID)
+		if gerr != nil {
+			if errors.Is(gerr, domain.ErrNotFound) {
+				return nil, fmt.Errorf("meta variant %d references creative asset %s, which does not exist for this brief", i+1, assetID)
+			}
+			return nil, fmt.Errorf("meta variant %d: load creative asset %s: %w", i+1, assetID, gerr)
+		}
+		out[i].ImageBytes = asset.Bytes
+		out[i].ImageMIME = asset.MimeType
+	}
+	return out, nil
 }
 
 // resolveMetaCredentials fetches the project's Meta connection and validates it is usable
@@ -184,6 +256,14 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		return nil, notCreated(err)
 	}
 
+	// Resolve each variant's imageAssetId to bytes before any upstream create. A bad reference
+	// (malformed id, unknown/foreign asset) fails the dispatch here — notCreated releases the
+	// claim — rather than after a paid campaign/ad set already exist.
+	variants, verr := d.resolveVariantAssets(ctx, brief, cfg.Variants)
+	if verr != nil {
+		return nil, notCreated(verr)
+	}
+
 	account := meta.AccountConfig{
 		AccountID:      accountID,
 		PageID:         pageID,
@@ -218,7 +298,7 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		EndDate:         cfg.EndDate,
 		Placements:      cfg.Placements,
 		PixelID:         cfg.PixelID,
-		Variants:        cfg.Variants,
+		Variants:        variants,
 	}
 
 	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, account, d.opts...)

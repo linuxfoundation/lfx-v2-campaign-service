@@ -4,6 +4,7 @@
 package meta
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1067,6 +1068,183 @@ func TestCreateCampaignPartialVariantErrorsWithIndex(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "variant 2") {
 		t.Fatalf("err = %v, want an error naming 'variant 2'", err)
+	}
+}
+
+// TestCreateCampaignImageVariantUploadsAndAttachesHash pins the single-image creative path:
+// a variant carrying resolved image bytes is uploaded to /act_{id}/adimages FIRST, as a
+// multipart FILE part (field "source", the bytes and Content-Type preserved), and the hash the
+// upload returns is threaded into the creative's object_story_spec.link_data.image_hash. A
+// regression that drops the upload, mangles the part, or fails to attach the hash must fail here.
+func TestCreateCampaignImageVariantUploadsAndAttachesHash(t *testing.T) {
+	type uploaded struct {
+		data        []byte
+		contentType string
+		filename    string
+	}
+	imgCap := make(chan uploaded, 4)
+	creativeCap := newBodyCapture()
+	var uploadCount int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adimages"):
+			atomic.AddInt32(&uploadCount, 1)
+			f, hdr, ferr := r.FormFile("source")
+			if ferr != nil {
+				t.Errorf("adimages: FormFile(source): %v", ferr)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			data, _ := io.ReadAll(f)
+			_ = f.Close()
+			imgCap <- uploaded{data: data, contentType: hdr.Header.Get("Content-Type"), filename: hdr.Filename}
+			_, _ = io.WriteString(w, `{"images":{"source":{"hash":"IMGHASH123","url":"https://scontent.example/creative.png"}}}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			creativeCap.set(decodeBody(t, r))
+			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{AccessToken: "tok-abc"},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", Label: "LF Core", CurrencyOffset: 100},
+		WithBaseURL(srv.URL),
+		WithClock(fixedMetaClock()),
+	)
+
+	imgBytes := []byte("\x89PNG\r\n\x1a\n fake png bytes for the upload")
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "KubeCon",
+		Project:         "tlf",
+		RegistrationURL: "https://events.example.org/kubecon",
+		Objective:       "traffic",
+		GeoTargets:      []string{"US"},
+		Budget:          500,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants: []AdVariant{
+			{PrimaryText: "Join us", Headline: "KubeCon 2026", ImageBytes: imgBytes, ImageMIME: "image/png"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign error: %v", err)
+	}
+	if res.AdCount != 1 {
+		t.Errorf("ad count = %d, want 1", res.AdCount)
+	}
+	if got := atomic.LoadInt32(&uploadCount); got != 1 {
+		t.Fatalf("adimages uploads = %d, want exactly 1", got)
+	}
+
+	var up uploaded
+	select {
+	case up = <-imgCap:
+	default:
+		t.Fatalf("no image upload captured")
+	}
+	if !bytes.Equal(up.data, imgBytes) {
+		t.Errorf("uploaded image bytes = %q, want %q", up.data, imgBytes)
+	}
+	if up.contentType != "image/png" {
+		t.Errorf("uploaded part Content-Type = %q, want image/png", up.contentType)
+	}
+	if up.filename == "" {
+		t.Errorf("uploaded part must carry a filename (Graph treats a nameless part as a scalar field)")
+	}
+
+	creativeBody := creativeCap.get()
+	if creativeBody == nil {
+		t.Fatalf("no creative body captured")
+	}
+	oss, ok := creativeBody["object_story_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("creative object_story_spec missing or wrong type: %v", creativeBody["object_story_spec"])
+	}
+	linkData, ok := oss["link_data"].(map[string]any)
+	if !ok {
+		t.Fatalf("creative link_data missing or wrong type: %v", oss["link_data"])
+	}
+	if linkData["image_hash"] != "IMGHASH123" {
+		t.Errorf("creative link_data.image_hash = %v, want IMGHASH123", linkData["image_hash"])
+	}
+}
+
+// TestCreateCampaignImageUploadFailureDegradesVariant verifies that a 4xx image rejection fails
+// ONLY that variant, non-fatally, and does so BEFORE any creative/ad is POSTed for it. A
+// single-variant campaign whose only image is rejected therefore lands created (no fatal error)
+// with AdCount 0, and no adcreatives request is ever made.
+func TestCreateCampaignImageUploadFailureDegradesVariant(t *testing.T) {
+	var creativeCount int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adimages"):
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"bad image","type":"OAuthException","code":100}}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			atomic.AddInt32(&creativeCount, 1)
+			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient(
+		Credentials{AccessToken: "tok-abc"},
+		AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+		WithBaseURL(srv.URL),
+		WithClock(fixedMetaClock()),
+	)
+
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "KubeCon",
+		Project:         "tlf",
+		RegistrationURL: "https://events.example.org/kubecon",
+		Objective:       "traffic",
+		GeoTargets:      []string{"US"},
+		Budget:          500,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants: []AdVariant{
+			{PrimaryText: "Join us", Headline: "KubeCon 2026", ImageBytes: []byte("bad image bytes"), ImageMIME: "image/png"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCampaign must not fail fatally on a per-variant image rejection: %v", err)
+	}
+	if res.AdCount != 0 {
+		t.Errorf("ad count = %d, want 0 (the only variant's image was rejected)", res.AdCount)
+	}
+	if got := atomic.LoadInt32(&creativeCount); got != 0 {
+		t.Errorf("adcreatives created = %d, want 0 (upload fails before the creative POST)", got)
 	}
 }
 
