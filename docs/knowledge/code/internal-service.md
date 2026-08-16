@@ -497,8 +497,9 @@ The STATUS MAPPING is shared with discovery. `classifyDiscoveryError` was lifted
 between the two; only the operation noun differs. One arm is not shared: a dispatcher with no
 `EmailSearcher` yields `ErrEmailSearchUnsupported`, a separate sentinel from
 `ErrAccountsUnsupported` because the capabilities are independent — HubSpot searches emails and
-has no ad accounts, while Google Ads and Meta are the reverse (they are the only `AccountLister`
-implementors; the remaining ad platforms implement neither). Folding them into one sentinel would
+has no ad accounts, while the ad platforms that implement `AccountLister` are the reverse
+(Google Ads, Meta, LinkedIn and Microsoft as of LFXV2-3064; Reddit and X implement neither,
+having no `ListAdAccounts` in their clients). Folding them into one sentinel would
 make "this platform cannot do X" ambiguous about which X.
 
 An omitted `q` lists rather than fails, because the first screen of a picker nobody has typed into

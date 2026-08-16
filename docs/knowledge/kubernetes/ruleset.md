@@ -20,11 +20,13 @@ chart↔route parity invariant — see [httproute.md](httproute.md)):
    (`oidc` + `anonymous_authenticator` → `allow_all` → `create_jwt`).
 2. **`project-api`** — every project-nested endpoint (`connection-*` — including two
    provider-specific sub-paths that are ruled by their own entries rather than by the
-   shared `connection-*` family: `connection-google-ads/accounts` and
-   `connection-meta-ads/accounts` (ad-account discovery), and
+   shared `connection-*` family: `/accounts` on each provider whose dispatcher implements
+   `AccountLister` — google-ads, meta-ads, linkedin-ads and microsoft-ads (ad-account
+   discovery; the last two added under LFXV2-3064) — and
    `connection-hubspot/emails` (marketing-email search, LFXV2-3197). The HTTPRoute
-   regex spells out THREE branches for the same reason — google-ads|meta-ads with
-   `accounts`, hubspot with `emails`, and the remaining four providers with neither —
+   regex spells out THREE branches for the same reason — the `AccountLister` providers
+   with `accounts`, hubspot with `emails`, and the providers with neither (reddit-ads
+   and twitter-ads, whose clients have no `ListAdAccounts`) —
    because folding them into one alternation would rule `/accounts` for hubspot and
    `/emails` for google-ads, neither of which is served. `parity_test` fails if the
    RuleSet and the regex ever disagree, in either direction —

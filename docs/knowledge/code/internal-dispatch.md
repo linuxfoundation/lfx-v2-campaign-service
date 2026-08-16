@@ -766,9 +766,10 @@ discovery could not be completed" describes an operation they did not perform.
 
 One arm is NOT shared. A dispatcher with no `EmailSearcher` yields `ErrEmailSearchUnsupported`,
 a separate sentinel from `ErrAccountsUnsupported`, because the two capabilities are genuinely
-independent: HubSpot searches emails and has no ad accounts, while Google Ads and Meta are the
-reverse — they are the only `AccountLister` implementors, and the remaining ad platforms
-(LinkedIn, Reddit, X, Microsoft) implement neither capability. Folding the two sentinels into one
+independent: HubSpot searches emails and has no ad accounts, while the ad platforms that
+implement `AccountLister` are the reverse — Google Ads, Meta, LinkedIn and Microsoft as of
+LFXV2-3064. Reddit and X implement neither capability, their clients having no
+`ListAdAccounts`. Folding the two sentinels into one
 would make "this platform cannot do X" ambiguous about which X.
 
 **Draft emails are returned, with their state — archived ones are absent.** Same reasoning as Meta's disabled

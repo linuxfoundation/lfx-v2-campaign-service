@@ -330,11 +330,19 @@ func microsoftAccountLabel(a microsoft.AdAccount) string {
 	if p := a.PauseLabel(); p != "" {
 		notes = append(notes, p)
 	}
-	// Only when nothing above already explains it: an account can be unusable purely because
-	// of the caller's ROLE, and that has no status or pause reason to render. Saying
-	// "read-only" twice for an account that is also suspended would be noise.
+	// Only when nothing above already explains it. Usable() is false for TWO independent
+	// reasons and they are not the same message to an operator: a status that is not "Active"
+	// (including an ABSENT or unrecognised one, which StatusLabel renders as nothing), and a
+	// role with no evidence of write. Blaming the role for a missing status sends someone to
+	// check permissions that are fine — {Status:"", RoleID:41} is writable and unconfirmed,
+	// not read-only. Saying "read-only" twice for an account that is also suspended would be
+	// noise, which is why this arm runs only when nothing above spoke.
 	if len(notes) == 0 && !a.Usable() {
-		notes = append(notes, "not writable with this credential")
+		if strings.TrimSpace(a.Status) != "Active" {
+			notes = append(notes, "account status could not be confirmed")
+		} else {
+			notes = append(notes, "not writable with this credential")
+		}
 	}
 	if len(notes) > 0 {
 		return name + " — " + strings.Join(notes, ", ")

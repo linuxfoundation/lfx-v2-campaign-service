@@ -25,8 +25,10 @@ reach past.
 seven providers share `/test` and `/set-credential`; what differs is the extra ruled
 sub-path each carries:
 
-- `connection-(google-ads|meta-ads)` add **`/accounts`** — ad-account discovery
-  (google-ads under LFXV2-2023, meta-ads under LFXV2-3062).
+- `connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads)` add **`/accounts`** —
+  ad-account discovery (google-ads under LFXV2-2023, meta-ads under LFXV2-3062,
+  linkedin-ads and microsoft-ads under LFXV2-3064). Reddit and X are absent because
+  their clients have no `ListAdAccounts` to expose, not because the route was skipped.
 - `connection-hubspot` adds **`/emails`** — marketing-email search (LFXV2-3197). NOT
   `/accounts`: a HubSpot connection is already scoped to the portal its token
   authenticates against, so there is no account to discover. What the caller picks is

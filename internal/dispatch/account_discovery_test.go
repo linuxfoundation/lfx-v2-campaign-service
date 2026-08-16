@@ -366,6 +366,16 @@ func TestMicrosoftAccountLabelSurfacesWhyAnAccountCannotServe(t *testing.T) {
 			"LF Events (X1234567) — not writable with this credential",
 		},
 		{
+			// Usable() is false for a non-Active status AND for a read-only role, and
+			// StatusLabel renders nothing for an ABSENT or unrecognised status — so this
+			// case fell through to the role message and blamed a credential whose role
+			// (41) is writable. An operator was sent to check permissions that are fine.
+			// Raised by Copilot on #132.
+			"absent status is not blamed on the role",
+			microsoft.AdAccount{ID: "1234567", Name: "LF Events", Number: "X1234567", Status: "", RoleID: msWritableRole},
+			"LF Events (X1234567) — account status could not be confirmed",
+		},
+		{
 			"no name falls back to the number",
 			microsoft.AdAccount{ID: "1234567", Number: "X1234567", Status: "Active", RoleID: msWritableRole},
 			"X1234567",
