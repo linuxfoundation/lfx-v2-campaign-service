@@ -2657,7 +2657,8 @@ func TestCreateCampaign_TrailingEmptyGroupMatchIssuesNoCreate(t *testing.T) {
 // carries a server-side name filter (search=(name:(values:List(<name>)))) so the
 // lookup is O(matches), not O(account), and requests the API-max pageSize. It
 // also checks that a name containing Rest.li-reserved characters is encoded so it
-// can't break out of the List(...) literal.
+// can't break out of the List(...) literal, AND that spaces/pipes are percent-
+// encoded rather than left bare or form-encoded as "+" — LinkedIn 400s both.
 func TestFindMatch_SendsServerSideNameFilter(t *testing.T) {
 	// A name with a comma and parens — Rest.li-reserved inside List(...).
 	const lookupName = "Events | KubeCon, Inc. (2026) | TLF"
@@ -2666,7 +2667,10 @@ func TestFindMatch_SendsServerSideNameFilter(t *testing.T) {
 	var sawSearch, sawPageSize string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
-		sawSearch = r.URL.Query().Get("search")
+		// RawQuery, NOT .Query(): .Query() percent-DECODES, so a correctly
+		// encoded value and a bare one look identical through it — the exact
+		// blindness that let the "+"-for-space bug ship. Assert the wire bytes.
+		sawSearch = rawParam(r.URL.RawQuery, "search")
 		sawPageSize = r.URL.Query().Get("pageSize")
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
@@ -2694,16 +2698,117 @@ func TestFindMatch_SendsServerSideNameFilter(t *testing.T) {
 	}
 	// The name's own comma/parens must be Rest.li-encoded so they stay data, not
 	// structure. If they were bare, the List(...) literal would be corrupted.
-	if !strings.Contains(sawSearch, "KubeCon%2C Inc. %282026%29") {
+	// rawParam reads RawQuery WITHOUT decoding, so "%2C"/"%28"/"%29" here are the
+	// single escapes actually on the wire — not the result of one decode. (An
+	// earlier version of this comment described a "%252C" that decodes to "%2C",
+	// which is the double encoding this change exists to prevent.)
+	if !strings.Contains(sawSearch, "KubeCon%2C") || !strings.Contains(sawSearch, "%282026%29") {
 		t.Errorf("name's reserved chars must be Rest.li-encoded inside List(...), got %q", sawSearch)
 	}
-	// The bare event-name pipe/spaces survive one url-decode as plain text — they
-	// are not Rest.li-structural, so they must NOT be double-encoded.
-	if !strings.Contains(sawSearch, "Events | KubeCon") {
-		t.Errorf("non-reserved name text must survive as-is, got %q", sawSearch)
+	// Spaces and pipes must ALSO arrive encoded, and this is not cosmetic:
+	//   - a space rendered as "+" (what url.Values.Encode produces) is read by the
+	//     Rest.li parser as a literal plus, and the whole filter 400s
+	//     PARAM_INVALID on fieldPath "search";
+	//   - a bare "|" is illegal in a query component and LinkedIn rejects the
+	//     request with java.net.URISyntaxException.
+	// Both were verified against the live Marketing API at LinkedIn-Version
+	// 202602. Since every campaign name this client generates contains spaces and
+	// pipes, bare ones mean EVERY lookup fails and find-or-create can never find.
+	if strings.Contains(sawSearch, "Events | KubeCon") {
+		t.Errorf("space/pipe must not reach LinkedIn bare — they 400 the search: %q", sawSearch)
+	}
+	if !strings.Contains(sawSearch, "Events%20%7C%20KubeCon") {
+		t.Errorf("space must encode as %%20 and pipe as %%7C, got %q", sawSearch)
 	}
 	if sawPageSize != "1000" {
 		t.Errorf("expected pageSize=1000 (API max), got %q", sawPageSize)
+	}
+}
+
+// TestFindMatch_NameDelimitersSurviveTheWire pins the encoding against the
+// characters that do not merely need escaping inside the Rest.li literal but
+// would TRUNCATE the query at the URL layer:
+//
+//   - "&" starts another query parameter, so a lookup for "R&D Summit" would
+//     search for "R" and the rest would arrive as a bogus parameter;
+//   - "#" starts a fragment, so "C# Conf" would search for "C" and the tail
+//     would land in url.URL.Fragment, never reaching LinkedIn at all.
+//
+// Either one silently answers "no such campaign" about a campaign that exists —
+// a false absence, which the find-or-create caller resolves by creating a
+// DUPLICATE PAID campaign. An enumerated escape list shipped first and missed
+// both; this test is what makes the complete-encoder contract binding.
+//
+// The assertion round-trips through http.NewRequestWithContext because that is
+// where the truncation happens: the server's r.URL.Query() is the first place
+// the damage is observable, and a test that only inspected the string we built
+// would not see it.
+func TestFindMatch_NameDelimitersSurviveTheWire(t *testing.T) {
+	for _, name := range []string{
+		"R&D Summit",                                                            // & — would split the query
+		"C# Conf",                                                               // # — would start a fragment
+		"Events | KubeCon, Inc. (26)" /* Rest.li structural chars */, "50% Off", // % — must not double-encode
+		"日本語 イベント", // non-ASCII must not reach the wire raw
+		// A LITERAL plus. Correctness here depends on ORDER: url.QueryEscape runs first
+		// and turns a real "+" into %2B, and only then does ReplaceAll rewrite the
+		// space-derived "+" to %20. Reversing those two steps (or switching to
+		// url.PathEscape, which leaves "+" alone) would send a bare "+" — which the
+		// Rest.li parser reads as a LITERAL plus and rejects with 400 PARAM_INVALID
+		// (see restliEncode's doc, verified live at LinkedIn-Version 202602), aborting
+		// find-or-create rather than returning a clean miss. Nothing else in this table
+		// has a literal "+".
+		"AI + ML Summit",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var mu sync.Mutex
+			var seen, rawSeen string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				seen = r.URL.Query().Get("search")
+				rawSeen = rawParam(r.URL.RawQuery, "search")
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"elements":[],"metadata":{"nextPageToken":""}}`)
+			}))
+			defer srv.Close()
+
+			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+			if _, err := c.findByName(context.Background(), "adAccounts/123/adCampaigns", name); err != nil {
+				t.Fatalf("findByName(%q): %v", name, err)
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			// The server decodes one layer, so it must observe the filter with the
+			// name intact — structural syntax bare, the name itself verbatim.
+			want := "(name:(values:List(" + name + ")))"
+			if seen != want {
+				t.Errorf("name did not survive the wire:\n  sent name: %q\n  server saw: %q\n  want:       %q", name, seen, want)
+			}
+			// The decoded view above CANNOT see a space encoded as "+": Query()
+			// decodes "+" back to a space, so a correct %20 and a wrong + are
+			// identical through it — the exact blindness this branch exists to fix.
+			// Assert the raw bytes too, or dropping the "+"->%20 rewrite in
+			// restliEncode would leave this test green while the lookup 400s.
+			if strings.Contains(rawSeen, "+") {
+				t.Errorf("a space reached the wire as \"+\", which Rest.li reads as a literal plus (400 PARAM_INVALID): %q", rawSeen)
+			}
+			if strings.Contains(name, " ") && !strings.Contains(rawSeen, "%20") {
+				t.Errorf("space must be encoded as %%20 on the wire, got %q", rawSeen)
+			}
+			// Non-ASCII must ALSO be percent-encoded, and this needs its own raw check for
+			// the same reason the space did: Query() decodes, so encoded and raw UTF-8 are
+			// indistinguishable through it. Without this, an ASCII-only escape list would
+			// leave CJK bytes raw on the wire and every assertion above would still pass.
+			for _, r := range name {
+				if r > 127 {
+					if strings.ContainsRune(rawSeen, r) {
+						t.Errorf("non-ASCII %q reached the wire raw; it must be percent-encoded: %q", r, rawSeen)
+					}
+					break
+				}
+			}
+		})
 	}
 }
 
@@ -3848,4 +3953,18 @@ func TestClient_OverridesInjectedCheckRedirectWithoutMutatingCaller(t *testing.T
 	if caller.CheckRedirect != nil {
 		t.Error("caller's *http.Client CheckRedirect was mutated — the override must use a shallow copy")
 	}
+}
+
+// rawParam returns a query parameter's value from a RawQuery string WITHOUT
+// percent-decoding it, so a test can assert on the exact bytes sent on the wire.
+// net/url's Query() decodes, which makes a correctly-encoded value and a bare
+// one indistinguishable.
+func rawParam(rawQuery, key string) string {
+	for _, kv := range strings.Split(rawQuery, "&") {
+		k, v, found := strings.Cut(kv, "=")
+		if found && k == key {
+			return v
+		}
+	}
+	return ""
 }

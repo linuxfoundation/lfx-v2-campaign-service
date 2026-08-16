@@ -48,7 +48,7 @@ leaving headroom over reusing a number a sibling branch might renumber into.
 
 - `000001` — connection tables.
 - `000002` — brief, campaign, and async-job tables. Indexes: `campaign_jobs`
-  on `brief_id`; `campaigns` on `project_id`. `(brief_id, platform)` /
+  on `brief_id`; `campaigns` on `project_id`. `(brief_id, platform, variant)` /
   `(project_id, event_slug)` uniqueness covers those leftmost columns.
 - `000003` — brief `project_id` UUID→TEXT and partial-unique
   `(project_id, event_slug)` excluding archived rows.
@@ -118,7 +118,9 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   and a name-only guard then accepts it and drops the sole real uniqueness constraint,
   leaving the pair with none: every claim wins and concurrent retries double-create paid
   campaigns, silently. So the guard proves `indrelid = public.campaigns`, `indisunique`,
-  `indnkeyatts = 2` with key columns exactly `(brief_id, platform)` in order, and a
+  `indnkeyatts = 3` with key columns exactly `(brief_id, platform, variant)`
+  in order (widened by `000022`; `000023` verifies it and `000024` drops the
+  two-column form), and a
   partial predicate deparsing to `(status <> 'deleted'::text)`. Verified on PostgreSQL
   16.10: a non-unique index of the right name PASSED the old name-only guard and FAILS
   this one, as do a superset key list, a reversed column order, a non-partial index, a
@@ -139,7 +141,7 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   fails silently rather than loudly.
 
   The genuine hazard staging was meant to address is real, though: the PREVIOUS release's
-  bare `ON CONFLICT (brief_id, platform)` matches no index once the constraint is gone and
+  bare `ON CONFLICT (brief_id, platform, variant)` matches no index once the constraint is gone and
   errors on every dispatch claim (verified: works while the constraint exists, fails with
   "there is no unique or exclusion constraint matching the ON CONFLICT specification" after
   the drop). Since migrations run at pod boot against a shared database, Kubernetes' default
@@ -159,6 +161,33 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   (`GetCampaign`, `GetCampaignByPlatform`, `ReplaceCampaign`) also filters deleted
   rows — load-bearing for `GetCampaignByPlatform`, which the orchestrator uses to
   decide whether a pair was already dispatched.
+
+  `variant` (added by `000021`) names WHICH of a platform's campaign types a row is:
+  Google's UI offers Search and Demand Gen together and Performance Max is coming, so
+  one brief legitimately holds several `google-ads` campaigns. Every other provider
+  writes `'default'`, and every pre-`000021` row was backfilled to it, so the invariant
+  is unchanged for them — one live campaign per pair, now spelled with a third column.
+
+  **Authoring rule — expand/contract, one release apart.** The general form of the
+  constraint `000013`/`000014` had to break: *a migration that removes or narrows something
+  the N-1 release's SQL depends on ships one release AFTER the code change that stopped
+  depending on it.* Add the new shape (index, column, constraint) and move every read and
+  write onto it in release N; drop or narrow the old shape in release N+1, once no running
+  binary reads it. golang-migrate is linearly versioned and applied ascending, so this is
+  enforced at AUTHORING time — there is one migration stream and the version number IS the
+  ordering. "Stopped depending" means completely: the N-1 binary must not rely on the old
+  shape for ANY row it can still touch, INCLUDING soft-deleted rows. `000013`/`000014` is
+  the case that could not be split for exactly that reason — the old full constraint still
+  governed soft-deleted rows the delete path had to free, so deferring the drop shipped a
+  delete endpoint that silently did nothing. When a change genuinely cannot be staged apart,
+  a rollout strategy carries the ordering instead (here `Recreate`) — but only while
+  migrations run AT BOOT, because `Recreate` removes the old pod before the new one boots and
+  migrates. Once migrations move to a PreSync Job (linuxfoundation/lfx-self-serve#1543),
+  which runs BEFORE the Deployment sync while the N-1 ReplicaSet is still serving, `Recreate`
+  no longer covers an unstageable migration — that would need explicit old-pod shutdown
+  (scale the old Deployment to zero) or a maintenance window. That is the exception that
+  shows why the default is expand/contract, and the coupling the PreSync-Job work removes
+  the need for.
 
 - `000015` — `created_by` / `updated_by` JSONB on `campaign_briefs` (see *Actor
   attribution* below).

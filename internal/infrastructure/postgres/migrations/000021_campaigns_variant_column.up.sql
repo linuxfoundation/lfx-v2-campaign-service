@@ -1,0 +1,45 @@
+-- Copyright The Linux Foundation and each contributor to LFX.
+-- SPDX-License-Identifier: MIT
+
+-- Add the campaign VARIANT: the sub-division of a platform that produces a
+-- genuinely SEPARATE campaign, so one brief can hold more than one campaign on
+-- the same platform.
+--
+-- Why this exists. Google's Implementation tab offers Search and Demand Gen as
+-- simultaneous CHECKBOXES (`includeSearch` / `includeDemandGen`, both default
+-- true), and Performance Max is coming. Those are separate campaigns with
+-- separate budgets, formats and funnel stages -- the legacy Express path even
+-- names them differently ("Search" vs "DemandGen"). But `campaigns` is unique on
+-- (brief_id, platform) and both are `google-ads`, so a brief could hold only one
+-- of them: dispatching Demand Gen after Search silently REUSED the Search
+-- campaign and reported success without calling Google at all.
+--
+-- Why `variant` and not `channel`. `channel` is Google's word for it; Meta and
+-- Reddit call their own sub-division `objective`, and LinkedIn will have another.
+-- Naming the column after one platform's vocabulary would put that platform's
+-- model in a shared table and leave the same question open for the rest.
+-- `variant` names the CONCEPT: which sub-division of this platform this campaign
+-- is. Each new Google channel then becomes a value, not a schema change.
+--
+-- Why NOT NULL DEFAULT 'default'. Six of the seven providers do not sub-divide at
+-- all -- Meta's and Reddit's objectives configure a single campaign rather than
+-- multiplying it, and LinkedIn/X/Microsoft/HubSpot have no such concept. They use
+-- 'default' forever. Every EXISTING row is backfilled to 'default' by the DEFAULT,
+-- which is what keeps the widened unique index (000022) a no-op for them: one
+-- campaign per (brief, platform) still means one row, now spelled
+-- (brief, platform, 'default').
+--
+-- Deliberately NOT a CHECK constraint listing the values. The accepted set is
+-- per-platform and grows (performance-max next), and a CHECK would make each
+-- addition a migration on a live table. The service validates it -- an
+-- unrecognised value is refused before any upstream call, which is the guard that
+-- matters, since defaulting a typo would spend one channel's budget on another.
+--
+-- ONE STATEMENT per migration, per 000013's note: the pgx/v5 golang-migrate driver
+-- does not wrap a migration in a transaction, but a multi-statement file is
+-- batched and reintroduces that constraint -- which CONCURRENTLY cannot tolerate.
+-- The index build is 000022 and the old index drop is 000023 for exactly that
+-- reason, and the ordering comes free from golang-migrate applying versions in
+-- order.
+
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS variant TEXT NOT NULL DEFAULT 'default';

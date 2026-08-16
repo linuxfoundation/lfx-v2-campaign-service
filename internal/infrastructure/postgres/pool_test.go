@@ -232,7 +232,8 @@ func TestMigrationIndexOwners_FindsEveryCreatedIndex(t *testing.T) {
 
 // TestRequiredIndexes_CoversTheDispatchUniqueIndex pins the membership, not the message.
 //
-// uq_campaigns_brief_platform_live is the sole arbiter of (brief_id, platform) uniqueness
+// uq_campaigns_brief_platform_variant_live is the sole arbiter of
+// (brief_id, platform, variant) uniqueness
 // once 000014 drops campaigns_brief_id_platform_key, and 000014's guard checks it exactly
 // once — while 000014 runs. An index lost any time afterwards left a schema that booted
 // clean with concurrent claims free to double-create paid campaigns. Membership in
@@ -242,7 +243,7 @@ func TestMigrationIndexOwners_FindsEveryCreatedIndex(t *testing.T) {
 // healthy (TestMigration000014_GuardChecksIndexDefinition records the PostgreSQL 16.10 run
 // where a same-named NON-unique index passed the name-only form of 000014's own guard).
 func TestRequiredIndexes_CoversTheDispatchUniqueIndex(t *testing.T) {
-	const dispatchUnique = "uq_campaigns_brief_platform_live"
+	const dispatchUnique = "uq_campaigns_brief_platform_variant_live"
 
 	var got *requiredIndex
 	for i, ri := range requiredIndexes {
@@ -255,8 +256,11 @@ func TestRequiredIndexes_CoversTheDispatchUniqueIndex(t *testing.T) {
 
 	assert.Equal(t, "campaigns", got.table)
 	assert.True(t, got.unique, "a non-unique index of this name arbitrates nothing")
-	assert.Equal(t, []string{"brief_id", "platform"}, got.keys)
-	// Character-identical to the deparsed form 000014's guard compares against. Two
+	// (brief_id, platform, VARIANT) since 000022 — Google's Search and Demand Gen are
+	// separate campaigns under one brief, and keying on the pair alone made the second
+	// dispatch read the first's row and report a false success.
+	assert.Equal(t, []string{"brief_id", "platform", "variant"}, got.keys)
+	// Character-identical to the deparsed form 000023's guard compares against. Two
 	// checks on one definition are only two checks while they agree on what it is.
 	assert.Equal(t, "(status <> 'deleted'::text)", got.predicate)
 }

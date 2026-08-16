@@ -132,7 +132,8 @@ func TestMigrateRefusesADroppedRequiredIndex(t *testing.T) {
 // TestMigrateRefusesADroppedDispatchIndex is the same state for the OTHER required index,
 // and it is the one with money attached.
 //
-// Migration 000014 dropped campaigns_brief_id_platform_key, so uq_campaigns_brief_platform_live
+// Migration 000014 dropped campaigns_brief_id_platform_key and 000024 dropped the
+// two-column index that replaced it, so uq_campaigns_brief_platform_variant_live
 // is the sole arbiter of (brief_id, platform) uniqueness and the thing ClaimCampaignDispatch
 // rests on. 000014 guards its definition — but only once, while 000014 is running. An index
 // lost afterwards (an operator clearing invalid-index debris, a rebuild from 000013 whose
@@ -143,7 +144,7 @@ func TestMigrateRefusesADroppedDispatchIndex(t *testing.T) {
 	pool := dbtest.Pool(t)
 	ctx := context.Background()
 
-	const idx = "uq_campaigns_brief_platform_live"
+	const idx = "uq_campaigns_brief_platform_variant_live"
 
 	t.Cleanup(func() { restoreDispatchIndex(t, pool) })
 
@@ -284,9 +285,9 @@ func restoreDispatchIndex(t *testing.T, pool interface {
 },
 ) {
 	t.Helper()
-	restoreRequiredIndex(t, pool, "uq_campaigns_brief_platform_live",
-		"CREATE UNIQUE INDEX uq_campaigns_brief_platform_live"+
-			" ON campaigns (brief_id, platform) WHERE status <> 'deleted'")
+	restoreRequiredIndex(t, pool, "uq_campaigns_brief_platform_variant_live",
+		"CREATE UNIQUE INDEX uq_campaigns_brief_platform_variant_live"+
+			" ON campaigns (brief_id, platform, variant) WHERE status <> 'deleted'")
 }
 
 func restoreRequiredIndex(t *testing.T, pool interface {

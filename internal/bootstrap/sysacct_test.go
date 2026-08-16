@@ -338,8 +338,11 @@ func TestInstallRejectsMisshapenValues(t *testing.T) {
 		"google ads values in shape":              {model.ProviderGoogleAds, "8666746580", map[string]string{"login_customer_id": "9746983954"}, gaCreds, false},
 		"microsoft customer id not numeric":       {model.ProviderMicrosoftAds, "1234", map[string]string{"customer_id": "cus-9"}, msCreds, true},
 		"microsoft values in shape":               {model.ProviderMicrosoftAds, "1234", map[string]string{"customer_id": "9"}, msCreds, false},
-		"reddit account id with a path separator": {model.ProviderRedditAds, "t2_gv9../x", nil, rdCreds, true},
-		"reddit account id in shape":              {model.ProviderRedditAds, "t2_gv9wtbfa", nil, rdCreds, false},
+		// Reddit now REQUIRES conversion_pixel_id (see requiredConfigKeys), so the in-shape
+		// case must supply one -- these rows assert the ACCOUNT ID's shape, and omitting the
+		// pixel would make them fail for an unrelated reason and stop testing what they name.
+		"reddit account id with a path separator": {model.ProviderRedditAds, "t2_gv9../x", map[string]string{"conversion_pixel_id": "a2_pixel"}, rdCreds, true},
+		"reddit account id in shape":              {model.ProviderRedditAds, "t2_gv9wtbfa", map[string]string{"conversion_pixel_id": "a2_pixel"}, rdCreds, false},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -748,5 +751,109 @@ func TestClearedValueIsNotHeldToAValueShape(t *testing.T) {
 	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
 		model.ProviderGoogleAds, "", false, map[string]string{"login_customer_id": ""}, []byte(goodCreds)); err != nil {
 		t.Fatalf("clear rejected as a malformed value: %v", err)
+	}
+}
+
+// A Reddit system row without a conversion pixel is installable and DEAD, which is exactly
+// what requiredConfigKeys exists to prevent.
+//
+// The blast radius is what makes it worth its own test rather than a table row. The LF
+// system row is the FALLBACK for every project that has connected no Reddit account of its
+// own, and the Reddit client refuses EVERY campaign create without a pixel — not only the
+// "conversions" objective its API docs describe. So one pixel-less install silently refuses
+// paid creates for every fallback project, and the failure surfaces per-project at dispatch
+// rather than once, loudly, at install time.
+func TestInstallRefusesRedditWithoutAConversionPixel(t *testing.T) {
+	rdCreds := []byte(`{"client_id":"ci","client_secret":"cs","refresh_token":"rt"}`)
+	repo := &stubRepo{getErr: domain.ErrNotFound}
+	err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderRedditAds, "t2_gv9wtbfa", false, nil, rdCreds)
+	if err == nil {
+		t.Fatal("installed a Reddit system row with no conversion pixel; every project falling back to it would be refused at dispatch")
+	}
+	if !strings.Contains(err.Error(), "conversion_pixel_id") {
+		t.Errorf("error %q does not name the missing key, so the operator cannot act on it", err)
+	}
+	// Nothing may be written: a row that exists and cannot dispatch is worse than no row,
+	// because the fallback probe finds it and stops looking.
+	if repo.created != nil {
+		t.Errorf("wrote a dead row despite refusing: %+v", repo.created)
+	}
+}
+
+// The pixel satisfies the requirement wherever it comes from — including a rotation that
+// omits the flag but keeps the value already on the row. requireConfig checks the map about
+// to be WRITTEN, not the flags as typed, and this pins that distinction for Reddit.
+func TestInstallAcceptsRedditWithAConversionPixel(t *testing.T) {
+	rdCreds := []byte(`{"client_id":"ci","client_secret":"cs","refresh_token":"rt"}`)
+	repo := &stubRepo{getErr: domain.ErrNotFound}
+	err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderRedditAds, "t2_gv9wtbfa", false,
+		map[string]string{"conversion_pixel_id": "a2_pixel"}, rdCreds)
+	if err != nil {
+		t.Fatalf("InstallSystemCredentials: %v", err)
+	}
+	if repo.created == nil {
+		t.Fatal("no row was written")
+	}
+	if got := repo.created.ProviderConfig["conversion_pixel_id"]; got != "a2_pixel" {
+		t.Errorf("stored pixel = %q, want a2_pixel", got)
+	}
+}
+
+// A ROTATION of a pre-migration Reddit row must be refused too, not just a creation.
+//
+// The pixel joined requiredConfigKeys with migration 000025, so rows written before it
+// carry no conversion_pixel_id. mergeConfig returns nil when -config is omitted, and the
+// rotation branch used to gate requireConfig on that nil — so exactly this row could take
+// fresh credentials, report success, and remain unusable for every project that falls back
+// to it, surfacing per-project at dispatch instead of once here. The sibling test above
+// covers CREATION only (it stubs getErr: ErrNotFound), which is why this gap survived.
+func TestRotateRefusesRedditRowMissingTheConversionPixel(t *testing.T) {
+	rdCreds := []byte(`{"client_id":"ci2","client_secret":"cs2","refresh_token":"rt2"}`)
+	repo := &stubRepo{row: &model.Connection{
+		ProjectID:      model.SystemProjectID,
+		Provider:       model.ProviderRedditAds,
+		AccountID:      "t2_gv9wtbfa",
+		ProviderConfig: map[string]string{}, // pre-000025: no pixel
+	}}
+
+	// No -config supplied: the rotation carries credentials only.
+	err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderRedditAds, "", false, nil, rdCreds)
+	if err == nil {
+		t.Fatal("rotated a pixel-less Reddit system row; it reports success and stays unusable for every fallback project")
+	}
+	if !strings.Contains(err.Error(), "conversion_pixel_id") {
+		t.Errorf("error %q does not name the missing key, so the operator cannot act on it", err)
+	}
+	if repo.updated != nil {
+		t.Errorf("wrote new credentials onto a row that still cannot dispatch: %+v", repo.updated)
+	}
+}
+
+// The mirror case: a rotation that omits -config but whose EXISTING row already carries the
+// pixel must succeed. This is the behaviour the older test's comment claimed to cover but
+// did not — it exercised creation. Without this, the fix above could over-reject and break
+// every ordinary credential rotation.
+func TestRotateAcceptsRedditRowThatAlreadyHasThePixel(t *testing.T) {
+	rdCreds := []byte(`{"client_id":"ci2","client_secret":"cs2","refresh_token":"rt2"}`)
+	repo := &stubRepo{row: &model.Connection{
+		ProjectID:      model.SystemProjectID,
+		Provider:       model.ProviderRedditAds,
+		AccountID:      "t2_gv9wtbfa",
+		ProviderConfig: map[string]string{"conversion_pixel_id": "a2_pixel"},
+	}}
+
+	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderRedditAds, "", false, nil, rdCreds); err != nil {
+		t.Fatalf("a rotation of a row that already carries the pixel must succeed: %v", err)
+	}
+	if repo.updated == nil {
+		t.Fatal("no row was updated")
+	}
+	// The pixel must survive a rotation that did not mention it.
+	if got := repo.updated.ProviderConfig["conversion_pixel_id"]; got != "a2_pixel" {
+		t.Errorf("rotation dropped the existing pixel: got %q, want a2_pixel", got)
 	}
 }

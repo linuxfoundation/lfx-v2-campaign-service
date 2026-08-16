@@ -62,6 +62,11 @@ var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 
 // claimCampaignDispatchQuery inserts the placeholder 'pending' claim row.
 //
+// The conflict target names (brief_id, platform, VARIANT) since 000022 widened the
+// slot key so one brief can hold a Search AND a Demand Gen campaign on google-ads
+// (see that migration). The three columns and the predicate must match the index
+// EXACTLY -- Postgres infers the arbiter by matching both.
+//
 // The conflict target carries the partial index's predicate (`WHERE status <>
 // 'deleted'`) because 000013/000014 replaced the full UNIQUE (brief_id, platform)
 // constraint with a partial unique index over LIVE rows only. Postgres infers the
@@ -73,9 +78,9 @@ var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 // INSERT wins the claim cleanly. Pinned by
 // TestCampaignRepo_OnConflictCarriesLivePredicate.
 const claimCampaignDispatchQuery = `INSERT INTO campaigns
-	(project_id, brief_id, job_id, platform, campaign_name, status, created_by, updated_by)
-	VALUES ($1, $2, $3, $4, '', 'pending', $5, $5)
-	ON CONFLICT (brief_id, platform) WHERE status <> 'deleted' DO NOTHING`
+	(project_id, brief_id, job_id, platform, variant, campaign_name, status, created_by, updated_by)
+	VALUES ($1, $2, $3, $4, $5, '', 'pending', $6, $6)
+	ON CONFLICT (brief_id, platform, variant) WHERE status <> 'deleted' DO NOTHING`
 
 // ClaimCampaignDispatch atomically claims the right to dispatch (brief, platform)
 // by inserting a placeholder 'pending' campaign row. The (brief_id, platform)
@@ -112,18 +117,19 @@ const claimCampaignDispatchQuery = `INSERT INTO campaigns
 // after logging a warning — when the request carries no authenticated principal. NULL then
 // means "not recorded", which is the honest value; inventing a placeholder actor would make
 // the audit trail claim a principal that never acted.
-func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
+func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant, jobID string, by *model.Actor) (bool, *model.Campaign, error) {
+	variant = model.NormalizeVariant(variant)
 	createdBy, err := marshalActor(by)
 	if err != nil {
 		return false, nil, fmt.Errorf("claim campaign dispatch: %w", err)
 	}
-	tag, err := r.db.Exec(ctx, claimCampaignDispatchQuery, projectID, briefID, jobID, string(platform), createdBy)
+	tag, err := r.db.Exec(ctx, claimCampaignDispatchQuery, projectID, briefID, jobID, string(platform), variant, createdBy)
 	if err != nil {
 		return false, nil, fmt.Errorf("claim campaign dispatch: %w", err)
 	}
 	claimed := tag.RowsAffected() == 1
 
-	row, gerr := r.GetCampaignByPlatform(ctx, projectID, briefID, platform)
+	row, gerr := r.GetCampaignByPlatform(ctx, projectID, briefID, platform, variant)
 	if gerr != nil {
 		// The row must exist now (we or someone else just wrote it); a read failure
 		// here is a genuine error. If WE just inserted the pending row, roll it back
@@ -135,7 +141,7 @@ func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, bri
 			// BECAUSE ctx was cancelled, and reusing it for the DELETE would fail
 			// too, leaking the just-committed placeholder.
 			rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimRollbackTimeout)
-			if derr := r.DeleteDispatchClaim(rbCtx, briefID, platform); derr != nil {
+			if derr := r.DeleteDispatchClaim(rbCtx, briefID, platform, variant); derr != nil {
 				cancel()
 				// Double failure: both the post-insert read AND the rollback delete
 				// failed, so a 'pending' placeholder is orphaned and will block every
@@ -226,15 +232,15 @@ func (r *CampaignRepo) StuckDispatchClaims(ctx context.Context, limit int) ([]*m
 // DeleteDispatchClaim removes a still-'pending' claim row so a failed dispatch
 // doesn't permanently block the (brief, platform) pair. The status guard means
 // it can only ever delete a placeholder claim, never a created campaign.
-func (r *CampaignRepo) DeleteDispatchClaim(ctx context.Context, briefID string, platform model.Provider) error {
-	q := `DELETE FROM campaigns WHERE brief_id=$1 AND platform=$2 AND status='pending'`
-	if _, err := r.db.Exec(ctx, q, briefID, string(platform)); err != nil {
+func (r *CampaignRepo) DeleteDispatchClaim(ctx context.Context, briefID string, platform model.Provider, variant string) error {
+	q := `DELETE FROM campaigns WHERE brief_id=$1 AND platform=$2 AND variant=$3 AND status='pending'`
+	if _, err := r.db.Exec(ctx, q, briefID, string(platform), model.NormalizeVariant(variant)); err != nil {
 		return fmt.Errorf("delete dispatch claim: %w", err)
 	}
 	return nil
 }
 
-const campaignCols = `id::text, project_id::text, brief_id::text, job_id::text, platform, platform_campaign_id, campaign_name,
+const campaignCols = `id::text, project_id::text, brief_id::text, job_id::text, platform, variant, platform_campaign_id, campaign_name,
 	status, budget_amount, budget_type, start_date, end_date, config_snapshot, result, version,
 	created_by, updated_by, created_at, updated_at`
 
@@ -251,7 +257,7 @@ const getCampaignQuery = `SELECT ` + campaignCols + ` FROM campaigns
 // campaign exists to enable. At most one LIVE row can match (the partial unique
 // index), so this still returns at most one row.
 const getCampaignByPlatformQuery = `SELECT ` + campaignCols + ` FROM campaigns
-	WHERE brief_id=$1 AND platform=$2 AND project_id=$3 AND status <> 'deleted'`
+	WHERE brief_id=$1 AND platform=$2 AND project_id=$3 AND variant=$4 AND status <> 'deleted'`
 
 // GetCampaign returns a single campaign under a brief. Soft-deleted campaigns are
 // invisible to reads: a deleted campaign returns ErrNotFound (404), matching
@@ -275,8 +281,8 @@ func (r *CampaignRepo) GetCampaign(ctx context.Context, projectID, briefID, id s
 // ClaimCampaignDispatch — brief_id is a globally-unique UUID, so this guards a
 // future direct caller from reading across tenants with an attacker-influenced
 // briefID.
-func (r *CampaignRepo) GetCampaignByPlatform(ctx context.Context, projectID, briefID string, platform model.Provider) (*model.Campaign, error) {
-	c, err := scanCampaign(r.db.QueryRow(ctx, getCampaignByPlatformQuery, briefID, string(platform), projectID))
+func (r *CampaignRepo) GetCampaignByPlatform(ctx context.Context, projectID, briefID string, platform model.Provider, variant string) (*model.Campaign, error) {
+	c, err := scanCampaign(r.db.QueryRow(ctx, getCampaignByPlatformQuery, briefID, string(platform), projectID, model.NormalizeVariant(variant)))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound
@@ -292,10 +298,10 @@ func (r *CampaignRepo) GetCampaignByPlatform(ctx context.Context, projectID, bri
 // resurrecting the deleted one; the deleted row is preserved as the audit trail of
 // whatever may still exist upstream.
 const upsertCampaignQuery = `INSERT INTO campaigns
-	(project_id, brief_id, job_id, platform, platform_campaign_id, campaign_name, status,
+	(project_id, brief_id, job_id, platform, variant, platform_campaign_id, campaign_name, status,
 	 budget_amount, budget_type, start_date, end_date, config_snapshot, result, created_by, updated_by)
-	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-	ON CONFLICT (brief_id, platform) WHERE status <> 'deleted' DO UPDATE SET
+	VALUES ($1,$2,$3,$4,$16,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+	ON CONFLICT (brief_id, platform, variant) WHERE status <> 'deleted' DO UPDATE SET
 		job_id=EXCLUDED.job_id, platform_campaign_id=EXCLUDED.platform_campaign_id,
 		campaign_name=EXCLUDED.campaign_name, status=EXCLUDED.status,
 		budget_amount=EXCLUDED.budget_amount, budget_type=EXCLUDED.budget_type,
@@ -396,7 +402,7 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 		c.ProjectID, c.BriefID, c.JobID, string(c.Platform), nullStr(c.PlatformCampaignID),
 		c.CampaignName, c.Status, c.BudgetAmount, budgetTypeArg(c.BudgetType),
 		c.StartDate, c.EndDate, nullJSON(c.ConfigSnapshot), nullJSON(c.Result),
-		createdBy, updatedBy,
+		createdBy, updatedBy, model.NormalizeVariant(c.Variant),
 	)
 	upserted, err := scanCampaign(row)
 	if err != nil {
@@ -424,10 +430,16 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 //
 // A soft-deleted row sits outside the partial index, so a pair whose campaign was deleted
 // can be adopted afresh, exactly as it can be re-dispatched.
+// The variant is BOUND ($4), not the literal 'default' it used to be. Adoption establishes
+// the slot from what the platform reports the campaign actually is, and hardcoding 'default'
+// here silently discarded that: an adopted Demand Gen campaign landed in the Search slot,
+// leaving 'demand-gen' free for a later dispatch to fill with a SECOND paid campaign — the
+// exact duplicate the caller-side fix was written to prevent. The conflict target reads the
+// same column, so a hardcoded literal also made the DO NOTHING arm arbitrate the wrong slot.
 const adoptCampaignQuery = `INSERT INTO campaigns
-	(project_id, brief_id, platform, platform_campaign_id, campaign_name, status, result, created_by, updated_by)
-	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
-	ON CONFLICT (brief_id, platform) WHERE status <> 'deleted' DO NOTHING
+	(project_id, brief_id, platform, variant, platform_campaign_id, campaign_name, status, result, created_by, updated_by)
+	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
+	ON CONFLICT (brief_id, platform, variant) WHERE status <> 'deleted' DO NOTHING
 	RETURNING ` + campaignCols
 
 // lockAdoptBriefQuery re-reads the brief's CURRENT committed state under a row-level exclusive
@@ -481,8 +493,11 @@ func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, exp
 	if aerr != nil {
 		return nil, fmt.Errorf("adopt campaign: %w", aerr)
 	}
+	// NormalizeVariant, matching every other write path: the column is NOT NULL, and a bare
+	// "" would become a THIRD slot alongside 'default' rather than an error.
 	row := tx.QueryRow(ctx, adoptCampaignQuery,
-		c.ProjectID, c.BriefID, string(c.Platform), nullStr(c.PlatformCampaignID),
+		c.ProjectID, c.BriefID, string(c.Platform), model.NormalizeVariant(c.Variant),
+		nullStr(c.PlatformCampaignID),
 		c.CampaignName, c.Status, nullJSON(c.Result), adoptedBy,
 	)
 	adopted, err := scanCampaign(row)
@@ -1366,7 +1381,7 @@ func scanCampaign(row pgx.Row) (*model.Campaign, error) {
 		updatedBy  []byte
 	)
 	err := row.Scan(
-		&c.ID, &c.ProjectID, &c.BriefID, &c.JobID, &platform, &pcID, &c.CampaignName,
+		&c.ID, &c.ProjectID, &c.BriefID, &c.JobID, &platform, &c.Variant, &pcID, &c.CampaignName,
 		&c.Status, &c.BudgetAmount, &budgetType, &c.StartDate, &c.EndDate,
 		&c.ConfigSnapshot, &c.Result, &c.Version, &createdBy, &updatedBy, &c.CreatedAt, &c.UpdatedAt,
 	)
