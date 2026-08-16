@@ -1268,6 +1268,140 @@ func TestCreateCampaignImageUploadFailureDegradesVariant(t *testing.T) {
 	}
 }
 
+// TestUploadImageErrorClassification pins the error VOCABULARY uploadImage promises in its
+// doc comment, one outcome per case, so createVariantAd's per-variant handling keeps reading
+// the same three shapes do() produces:
+//   - pre-send (no token, no bytes, or a dial error before the request left) → a plain error,
+//     NOT *APIError and NOT *transportError, because nothing was uploaded;
+//   - non-2xx → *APIError carrying the Graph envelope (status/type/code);
+//   - a 2xx we cannot parse, or that names no hash → *transportError (ambiguous: the upload
+//     may have landed but we cannot name it, so the variant fails rather than attaching "").
+//
+// It calls uploadImage directly (in-package) rather than through CreateCampaign, so each branch
+// is exercised in isolation without the surrounding campaign/ad-set setup.
+func TestUploadImageErrorClassification(t *testing.T) {
+	// newClient points a client at url with a valid token+account, so only the case under test
+	// decides the outcome.
+	newClient := func(url string) *Client {
+		return NewClient(
+			Credentials{AccessToken: "tok-abc"},
+			AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+			WithBaseURL(url),
+			WithClock(fixedMetaClock()),
+		)
+	}
+	img := []byte("\x89PNG\r\n\x1a\n fake png bytes")
+
+	// asPlain asserts err is a non-nil plain error: neither of the two typed shapes.
+	asPlain := func(t *testing.T, err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("want a pre-send error, got nil")
+		}
+		var apiErr *APIError
+		var te *transportError
+		if errors.As(err, &apiErr) || errors.As(err, &te) {
+			t.Fatalf("want a plain error (nothing uploaded), got typed %T: %v", err, err)
+		}
+	}
+
+	t.Run("no access token is a pre-send plain error", func(t *testing.T) {
+		c := NewClient(
+			Credentials{}, // no token
+			AccountConfig{AccountID: "act_777", PageID: "987654321", CurrencyOffset: 100},
+			WithBaseURL("http://example.invalid"),
+			WithClock(fixedMetaClock()),
+		)
+		_, err := c.uploadImage(context.Background(), img, "image/png")
+		asPlain(t, err)
+	})
+
+	t.Run("no bytes is a pre-send plain error", func(t *testing.T) {
+		c := newClient("http://example.invalid")
+		_, err := c.uploadImage(context.Background(), nil, "image/png")
+		asPlain(t, err)
+	})
+
+	t.Run("a dial refusal before the request left is a plain error", func(t *testing.T) {
+		// A server closed before use gives its address a guaranteed-refused connection →
+		// ECONNREFUSED → isPreSendDialError → plain error, never the ambiguous transportError,
+		// because the request bytes never reached Meta.
+		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		url := srv.URL
+		srv.Close()
+		c := newClient(url)
+		_, err := c.uploadImage(context.Background(), img, "image/png")
+		asPlain(t, err)
+	})
+
+	t.Run("a non-2xx is an APIError carrying the Graph envelope", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"bad image","type":"OAuthException","code":100,"fbtrace_id":"AbC123"}}`)
+		}))
+		defer srv.Close()
+		c := newClient(srv.URL)
+		_, err := c.uploadImage(context.Background(), img, "image/png")
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) {
+			t.Fatalf("want *APIError, got %T: %v", err, err)
+		}
+		if apiErr.StatusCode != http.StatusBadRequest {
+			t.Errorf("StatusCode = %d, want 400", apiErr.StatusCode)
+		}
+		if apiErr.Code != 100 || apiErr.Type != "OAuthException" || apiErr.FBTraceID != "AbC123" {
+			t.Errorf("Graph envelope not carried: got type=%q code=%d fbtrace=%q", apiErr.Type, apiErr.Code, apiErr.FBTraceID)
+		}
+	})
+
+	t.Run("a 2xx naming no hash is a transportError", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			// A well-formed envelope whose only image carries an empty hash: the upload may have
+			// landed but we cannot name it.
+			_, _ = io.WriteString(w, `{"images":{"source":{"hash":"","url":"https://scontent.example/x.png"}}}`)
+		}))
+		defer srv.Close()
+		c := newClient(srv.URL)
+		_, err := c.uploadImage(context.Background(), img, "image/png")
+		var te *transportError
+		if !errors.As(err, &te) {
+			t.Fatalf("want *transportError for a hashless 2xx, got %T: %v", err, err)
+		}
+	})
+
+	t.Run("a 2xx we cannot parse is a transportError", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `this is not json`)
+		}))
+		defer srv.Close()
+		c := newClient(srv.URL)
+		_, err := c.uploadImage(context.Background(), img, "image/png")
+		var te *transportError
+		if !errors.As(err, &te) {
+			t.Fatalf("want *transportError for an unparseable 2xx, got %T: %v", err, err)
+		}
+	})
+
+	t.Run("a 2xx naming a hash returns it with no error", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"images":{"source":{"hash":"HASH_OK","url":"https://scontent.example/x.png"}}}`)
+		}))
+		defer srv.Close()
+		c := newClient(srv.URL)
+		hash, err := c.uploadImage(context.Background(), img, "image/png")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if hash != "HASH_OK" {
+			t.Errorf("hash = %q, want HASH_OK", hash)
+		}
+	})
+}
+
 func TestCreateCampaignLifetimeBudget(t *testing.T) {
 	adsetCap := newBodyCapture()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
