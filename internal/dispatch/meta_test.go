@@ -1402,3 +1402,69 @@ func TestMeta_ResolveVariantAssets_Rejections(t *testing.T) {
 		})
 	}
 }
+
+// TestMeta_DispatchPersistsVariantImageHash proves the C5 persistence contract end-to-end at the
+// dispatcher: a variant referencing a stored asset is resolved, its image uploaded, and the
+// returned image_hash lands in the persisted campaign.Result blob (as a meta.CampaignResult.Ads
+// entry) — the same blob metaAdSetID reads back. A regression that drops the hash before
+// persistence, or fails to marshal Ads into Result, must fail here.
+func TestMeta_DispatchPersistsVariantImageHash(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+		case strings.HasSuffix(r.URL.Path, "/adimages"):
+			_, _ = io.WriteString(w, `{"images":{"source":{"hash":"HASH_ABC","url":"https://scontent.example/c.png"}}}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	clock := func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }
+	reader := &fakeCreativeReader{asset: &model.CreativeAsset{Bytes: []byte("PNGDATA"), MimeType: model.MimeTypePNG}}
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(clock),
+	)
+	d.SetCreativeAssetRepo(reader)
+
+	cfg := json.RawMessage(`{"metaConfig":{
+		"budget":2500,"startDate":"2099-01-01","endDate":"2099-02-01",
+		"objective":"traffic","geoTargets":["US"],"currencyOffset":100,
+		"variants":[{"headline":"h","primaryText":"p","imageAssetId":"` + testAssetID + `"}]
+	}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if camp.Status != campaignStatusCreated {
+		t.Errorf("status = %q, want %q", camp.Status, campaignStatusCreated)
+	}
+	// The image_hash must survive into the persisted Result blob, read back the same way
+	// metaAdSetID reads it (as a meta.CampaignResult).
+	if len(camp.Result) == 0 {
+		t.Fatalf("campaign.Result blob is empty")
+	}
+	var blob meta.CampaignResult
+	if uerr := json.Unmarshal(camp.Result, &blob); uerr != nil {
+		t.Fatalf("unmarshal persisted Result: %v", uerr)
+	}
+	if len(blob.Ads) != 1 {
+		t.Fatalf("persisted Result.Ads = %d entries, want 1", len(blob.Ads))
+	}
+	if blob.Ads[0].ImageHash != "HASH_ABC" || blob.Ads[0].Variant != 1 {
+		t.Errorf("persisted Result.Ads[0] = %+v, want Variant 1 with ImageHash HASH_ABC", blob.Ads[0])
+	}
+}

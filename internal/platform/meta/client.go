@@ -2268,6 +2268,19 @@ type CampaignInput struct {
 	ReconcileByName bool
 }
 
+// AdResult is one successfully-created ad's identifiers, recorded per variant. ImageHash is the
+// account-scoped hash of the single image attached to this ad's creative (empty for a link-only
+// creative). It is what lets a reconcile pass (LFXV2-2665) tell which uploaded asset backs a live
+// ad without re-deriving it, and it round-trips through the persisted Result blob (metaAdSetID
+// reads that blob back as a CampaignResult). No json tags, matching CampaignResult's fields, so
+// the marshaled keys stay the Go field names on both the write (campaignFromMeta) and read sides.
+type AdResult struct {
+	Variant    int // 1-based, matching the "Variant N" creative name and utm_content=variant-N
+	AdID       string
+	CreativeID string
+	ImageHash  string
+}
+
 // CampaignResult mirrors MetaCampaignCreateResult.
 type CampaignResult struct {
 	Platform     string
@@ -2278,6 +2291,10 @@ type CampaignResult struct {
 	AdCount      int
 	MetaURL      string
 	Steps        []string
+	// Ads carries one entry per SUCCESSFULLY-created ad (so len(Ads) == AdCount), in variant
+	// order, each with its ad/creative ids and the image_hash attached to its creative. A
+	// per-variant failure contributes a Steps line, not an Ads entry.
+	Ads []AdResult
 }
 
 // ---------------------------------------------------------------------------
@@ -2838,6 +2855,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Mirrors the twitter/reddit clients' partial-result helper.
 	var adSetID string
 	adCount := 0
+	// ads accumulates one record per successfully-created ad, captured by reference so a
+	// partial result (returned on a downstream failure) reflects whatever was created before
+	// the failure point, exactly as adCount/adSetID do.
+	var ads []AdResult
 	partialResult := func() *CampaignResult {
 		return &CampaignResult{
 			Platform:     "meta-ads",
@@ -2848,6 +2869,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			AdCount:      adCount,
 			MetaURL:      fmt.Sprintf("%s/adsmanager/manage/campaigns?act=%s", c.adsManagerURL, strings.TrimPrefix(accountID, "act_")),
 			Steps:        steps,
+			Ads:          ads,
 		}
 	}
 
@@ -2991,7 +3013,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	for i, variant := range validVariants {
 		utmURL := buildUTMURL(in, i)
 
-		adID, creativeID, verr := c.createVariantAd(ctx, in, variant, adSetID, utmURL, i)
+		adID, creativeID, imageHash, verr := c.createVariantAd(ctx, in, variant, adSetID, utmURL, i)
 		if verr != nil {
 			// A cancelled or deadlined CALLER context is fatal: continuing would let
 			// us report a "successful" campaign after the caller's context died. Key
@@ -3036,6 +3058,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			continue
 		}
 		adCount++
+		ads = append(ads, AdResult{Variant: i + 1, AdID: adID, CreativeID: creativeID, ImageHash: imageHash})
 		// Show the SANITIZED display URL in the human-readable step (Steps may be
 		// persisted/logged), not the full utmURL — which preserves the caller's
 		// original query/fragment and could leak a secret like ?token=... The real
@@ -3205,17 +3228,19 @@ func (c *Client) uploadImage(ctx context.Context, image []byte, contentType stri
 	return "", &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("image upload returned no hash")}
 }
 
-// createVariantAd creates the adcreative and ad for one variant, returning the
-// ad id and creative id.
-func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant AdVariant, adSetID, utmURL string, i int) (adID, creativeID string, err error) {
+// createVariantAd creates the adcreative and ad for one variant, returning the ad id, creative
+// id, and the image_hash attached to the creative ("" for a link-only creative). imageHash is
+// surfaced (not just used internally) so the caller can record it in the per-ad result for
+// reconciliation. On a downstream failure it is returned alongside creativeID where the creative
+// was already created, mirroring how creativeID is surfaced for the orphan.
+func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant AdVariant, adSetID, utmURL string, i int) (adID, creativeID, imageHash string, err error) {
 	// Upload the variant's image (if any) FIRST, so a rejected image fails the variant before a
 	// creative/ad is created. The upload is idempotent (content-addressed), so a re-dispatch that
 	// reaches here again re-derives the same hash rather than duplicating the image. An empty
 	// image → imageHash stays "" → objectStorySpec builds a link-only creative.
-	var imageHash string
 	if len(variant.ImageBytes) > 0 {
 		if imageHash, err = c.uploadImage(ctx, variant.ImageBytes, variant.ImageMIME); err != nil {
-			return "", "", fmt.Errorf("upload image for variant %d: %w", i+1, err)
+			return "", "", "", fmt.Errorf("upload image for variant %d: %w", i+1, err)
 		}
 	}
 
@@ -3224,13 +3249,13 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 		"name":              fmt.Sprintf("%s - Variant %d", in.EventName, i+1),
 		"object_story_spec": objectStorySpec(c.account.PageID, utmURL, variant, imageHash),
 	}, &creativeResp); err != nil {
-		return "", "", err
+		return "", "", imageHash, err
 	}
 	if creativeResp.ID == "" {
 		// A 2xx with no id is AMBIGUOUS: Meta may have created the creative but we
 		// couldn't read its id. Wrap as transportError so the caller classifies it
 		// as "may exist" (createOutcomeAmbiguous) rather than a definite failure.
-		return "", "", &transportError{Method: http.MethodPost, Path: "/" + c.account.AccountID + "/adcreatives", Err: fmt.Errorf("creative creation returned no ID")}
+		return "", "", imageHash, &transportError{Method: http.MethodPost, Path: "/" + c.account.AccountID + "/adcreatives", Err: fmt.Errorf("creative creation returned no ID")}
 	}
 
 	var adResp createResponse
@@ -3243,15 +3268,15 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 		// The creative was already created; return its id alongside the error so
 		// the (non-fatal) caller can record the orphaned creative rather than
 		// silently discarding it.
-		return "", creativeResp.ID, err
+		return "", creativeResp.ID, imageHash, err
 	}
 	if adResp.ID == "" {
 		// A 2xx with no id is AMBIGUOUS: Meta may have created the ad but we couldn't
 		// read its id. Wrap as transportError so the caller classifies it as "may
 		// exist" (createOutcomeAmbiguous) rather than a definite failure.
-		return "", creativeResp.ID, &transportError{Method: http.MethodPost, Path: "/" + c.account.AccountID + "/ads", Err: fmt.Errorf("ad creation returned no ID")}
+		return "", creativeResp.ID, imageHash, &transportError{Method: http.MethodPost, Path: "/" + c.account.AccountID + "/ads", Err: fmt.Errorf("ad creation returned no ID")}
 	}
-	return adResp.ID, creativeResp.ID, nil
+	return adResp.ID, creativeResp.ID, imageHash, nil
 }
 
 func objectiveKeys() []string {

@@ -407,6 +407,17 @@ func TestCreateCampaignHappyPath(t *testing.T) {
 	if res.AdCount != 2 {
 		t.Errorf("ad count = %d, want 2", res.AdCount)
 	}
+	// Two link-only variants → two Ads records, each carrying its ids and an EMPTY image_hash
+	// (no image was uploaded). Pins that the per-ad result tracks AdCount on the link-only path.
+	if len(res.Ads) != 2 {
+		t.Errorf("res.Ads = %d entries, want 2 (== AdCount)", len(res.Ads))
+	} else {
+		for i, a := range res.Ads {
+			if a.Variant != i+1 || a.ImageHash != "" {
+				t.Errorf("res.Ads[%d] = %+v, want Variant %d with empty ImageHash (link-only)", i, a, i+1)
+			}
+		}
+	}
 	if res.Platform != "meta-ads" {
 		t.Errorf("platform = %q", res.Platform)
 	}
@@ -1182,6 +1193,15 @@ func TestCreateCampaignImageVariantUploadsAndAttachesHash(t *testing.T) {
 	}
 	if linkData["image_hash"] != "IMGHASH123" {
 		t.Errorf("creative link_data.image_hash = %v, want IMGHASH123", linkData["image_hash"])
+	}
+
+	// The per-ad result records the created ids AND the image_hash, so a reconcile pass can
+	// tell which uploaded asset backs the ad. len(Ads) must track AdCount.
+	if len(res.Ads) != 1 {
+		t.Fatalf("res.Ads = %d entries, want 1 (== AdCount)", len(res.Ads))
+	}
+	if got := res.Ads[0]; got.Variant != 1 || got.AdID != "ad_1" || got.CreativeID != "creative_1" || got.ImageHash != "IMGHASH123" {
+		t.Errorf("res.Ads[0] = %+v, want {Variant:1 AdID:ad_1 CreativeID:creative_1 ImageHash:IMGHASH123}", got)
 	}
 }
 
