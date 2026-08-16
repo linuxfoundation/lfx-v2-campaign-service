@@ -415,6 +415,16 @@ func linkedInAccountLabel(a linkedin.AdAccount) string {
 		notes = append(notes, "TEST account — never serves")
 	}
 	notes = append(notes, a.ServingHolds()...)
+	// Lifecycle and serving are INDEPENDENT, and only the first is a deny-list. StatusLabel()
+	// returns "" for ACTIVE, absent AND unrecognized alike, so a silent status cannot be read
+	// as a healthy one: an account whose lifecycle this package cannot vouch for still reports
+	// servingStatuses ["RUNNABLE"], and would otherwise render EXACTLY like a good account —
+	// the one answer a picker must never give, because the operator's next act is to bind a
+	// paid campaign to it. Active() is what distinguishes "ACTIVE" from "not confirmed", so
+	// qualify on it rather than on StatusLabel()'s emptiness.
+	if !a.Active() && a.StatusLabel() == "" {
+		notes = append(notes, "account status could not be confirmed")
+	}
 	// Servable() is an ALLOW-list: an absent or unrecognized servingStatuses is not evidence
 	// the account can spend. Say so only when nothing above already explains it, so an
 	// unrecognized hold is still visible rather than silently reading as fine.

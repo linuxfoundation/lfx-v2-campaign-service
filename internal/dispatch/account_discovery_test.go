@@ -327,6 +327,23 @@ func TestLinkedInAccountLabelSurfacesWhyAnAccountCannotServe(t *testing.T) {
 			linkedin.AdAccount{ID: "1", Name: "LF Events", Status: "ACTIVE"},
 			"LF Events — cannot currently serve",
 		},
+		{
+			// The gap every other case here misses by holding Status ACTIVE: lifecycle and
+			// serving are independent, so a RUNNABLE account whose lifecycle is ABSENT clears
+			// every serving check. StatusLabel() is "" for unrecognized as well as for ACTIVE,
+			// so without a term keyed on Active() this renders as "LF Events [USD]" — identical
+			// to the healthy row above, and the operator binds a paid campaign to it.
+			"absent lifecycle status is not treated as active",
+			linkedin.AdAccount{ID: "1", Name: "LF Events", Currency: "USD", ServingStatuses: []string{"RUNNABLE"}},
+			"LF Events [USD] — account status could not be confirmed",
+		},
+		{
+			// Same shape, but a status LinkedIn does document and this package does not map.
+			// It must not be silently upgraded to healthy either.
+			"unrecognized lifecycle status is not treated as active",
+			linkedin.AdAccount{ID: "1", Name: "LF Events", Status: "SOMETHING_NEW", ServingStatuses: []string{"RUNNABLE"}},
+			"LF Events — account status could not be confirmed",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
