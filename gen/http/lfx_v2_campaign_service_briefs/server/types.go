@@ -33,6 +33,17 @@ type FetchEventURLRequestBody struct {
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 }
 
+// UploadCreativeAssetRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP request body.
+type UploadCreativeAssetRequestBody struct {
+	// Declared MIME type of the uploaded bytes. The bytes are re-sniffed
+	// server-side and must match; the stored mime_type is the verified one.
+	ContentType *string `form:"content_type,omitempty" json:"content_type,omitempty" xml:"content_type,omitempty"`
+	// Raw image bytes, base64-encoded in the JSON request body.
+	Bytes []byte `form:"bytes,omitempty" json:"bytes,omitempty" xml:"bytes,omitempty"`
+}
+
 // CreateCampaignsRequestBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
 // request body.
@@ -240,6 +251,26 @@ type FetchEventURLResponseBody struct {
 	// Which strategy produced this record — the whole record came from exactly one
 	// of them
 	ExtractedFrom string `form:"extracted_from" json:"extracted_from" xml:"extracted_from"`
+}
+
+// UploadCreativeAssetResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body.
+type UploadCreativeAssetResponseBody struct {
+	// Creative asset UUID
+	ID string `form:"id" json:"id" xml:"id"`
+	// Owning project
+	ProjectID string `form:"project_id" json:"project_id" xml:"project_id"`
+	// Parent brief
+	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
+	// Stored image MIME type, as verified from the bytes (not merely the declared
+	// header)
+	MimeType string `form:"mime_type" json:"mime_type" xml:"mime_type"`
+	// Size of the stored image in bytes
+	ByteSize int64 `form:"byte_size" json:"byte_size" xml:"byte_size"`
+	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
+	// brief
+	Checksum string `form:"checksum" json:"checksum" xml:"checksum"`
 }
 
 // CreateCampaignsResponseBody is the type of the
@@ -806,6 +837,59 @@ type FetchEventURLInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "fetch-event-url" endpoint HTTP
 // response body for the "NotFound" error.
 type FetchEventURLNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UploadCreativeAssetBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "BadRequest" error.
+type UploadCreativeAssetBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UploadCreativeAssetConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "Conflict" error.
+type UploadCreativeAssetConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// UploadCreativeAssetServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type UploadCreativeAssetServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UploadCreativeAssetInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "InternalServerError" error.
+type UploadCreativeAssetInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// UploadCreativeAssetNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "NotFound" error.
+type UploadCreativeAssetNotFoundResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -1562,6 +1646,21 @@ func NewFetchEventURLResponseBody(res *lfxv2campaignservicebriefs.EventDetails) 
 	return body
 }
 
+// NewUploadCreativeAssetResponseBody builds the HTTP response body from the
+// result of the "upload-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUploadCreativeAssetResponseBody(res *lfxv2campaignservicebriefs.CreativeAsset) *UploadCreativeAssetResponseBody {
+	body := &UploadCreativeAssetResponseBody{
+		ID:        res.ID,
+		ProjectID: res.ProjectID,
+		BriefID:   res.BriefID,
+		MimeType:  res.MimeType,
+		ByteSize:  res.ByteSize,
+		Checksum:  res.Checksum,
+	}
+	return body
+}
+
 // NewCreateCampaignsResponseBody builds the HTTP response body from the result
 // of the "create-campaigns" endpoint of the "lfx-v2-campaign-service-briefs"
 // service.
@@ -2131,6 +2230,62 @@ func NewFetchEventURLInternalServerErrorResponseBody(res *lfxv2campaignservicebr
 // "lfx-v2-campaign-service-briefs" service.
 func NewFetchEventURLNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *FetchEventURLNotFoundResponseBody {
 	body := &FetchEventURLNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUploadCreativeAssetBadRequestResponseBody builds the HTTP response body
+// from the result of the "upload-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUploadCreativeAssetBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *UploadCreativeAssetBadRequestResponseBody {
+	body := &UploadCreativeAssetBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUploadCreativeAssetConflictResponseBody builds the HTTP response body
+// from the result of the "upload-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUploadCreativeAssetConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *UploadCreativeAssetConflictResponseBody {
+	body := &UploadCreativeAssetConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewUploadCreativeAssetServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "upload-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUploadCreativeAssetServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *UploadCreativeAssetServiceUnavailableResponseBody {
+	body := &UploadCreativeAssetServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUploadCreativeAssetInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "upload-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUploadCreativeAssetInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *UploadCreativeAssetInternalServerErrorResponseBody {
+	body := &UploadCreativeAssetInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewUploadCreativeAssetNotFoundResponseBody builds the HTTP response body
+// from the result of the "upload-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUploadCreativeAssetNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *UploadCreativeAssetNotFoundResponseBody {
+	body := &UploadCreativeAssetNotFoundResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -2786,6 +2941,20 @@ func NewFetchEventURLPayload(body *FetchEventURLRequestBody, projectID string, b
 	return v
 }
 
+// NewUploadCreativeAssetPayload builds a lfx-v2-campaign-service-briefs
+// service upload-creative-asset endpoint payload.
+func NewUploadCreativeAssetPayload(body *UploadCreativeAssetRequestBody, projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.UploadCreativeAssetPayload {
+	v := &lfxv2campaignservicebriefs.UploadCreativeAssetPayload{
+		ContentType: *body.ContentType,
+		Bytes:       body.Bytes,
+	}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
 // NewCreateCampaignsPayload builds a lfx-v2-campaign-service-briefs service
 // create-campaigns endpoint payload.
 func NewCreateCampaignsPayload(body *CreateCampaignsRequestBody, projectID string, briefID string, bearerToken *string) *lfxv2campaignservicebriefs.CreateCampaignsPayload {
@@ -2934,6 +3103,23 @@ func ValidateUpdateBriefRequestBody(body *UpdateBriefRequestBody) (err error) {
 func ValidateFetchEventURLRequestBody(body *FetchEventURLRequestBody) (err error) {
 	if body.URL == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("url", "body"))
+	}
+	return
+}
+
+// ValidateUploadCreativeAssetRequestBody runs the validations defined on
+// Upload-Creative-AssetRequestBody
+func ValidateUploadCreativeAssetRequestBody(body *UploadCreativeAssetRequestBody) (err error) {
+	if body.ContentType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("content_type", "body"))
+	}
+	if body.Bytes == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("bytes", "body"))
+	}
+	if body.ContentType != nil {
+		if !(*body.ContentType == "image/png" || *body.ContentType == "image/jpeg") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.content_type", *body.ContentType, []any{"image/png", "image/jpeg"}))
+		}
 	}
 	return
 }

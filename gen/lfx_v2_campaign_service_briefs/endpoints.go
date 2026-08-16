@@ -23,6 +23,7 @@ type Endpoints struct {
 	ApproveBrief         goa.Endpoint
 	DeleteBrief          goa.Endpoint
 	FetchEventURL        goa.Endpoint
+	UploadCreativeAsset  goa.Endpoint
 	CreateCampaigns      goa.Endpoint
 	AdoptCampaign        goa.Endpoint
 	GetCampaign          goa.Endpoint
@@ -47,6 +48,7 @@ func NewEndpoints(s Service) *Endpoints {
 		ApproveBrief:         NewApproveBriefEndpoint(s, a.JWTAuth),
 		DeleteBrief:          NewDeleteBriefEndpoint(s, a.JWTAuth),
 		FetchEventURL:        NewFetchEventURLEndpoint(s, a.JWTAuth),
+		UploadCreativeAsset:  NewUploadCreativeAssetEndpoint(s, a.JWTAuth),
 		CreateCampaigns:      NewCreateCampaignsEndpoint(s, a.JWTAuth),
 		AdoptCampaign:        NewAdoptCampaignEndpoint(s, a.JWTAuth),
 		GetCampaign:          NewGetCampaignEndpoint(s, a.JWTAuth),
@@ -69,6 +71,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ApproveBrief = m(e.ApproveBrief)
 	e.DeleteBrief = m(e.DeleteBrief)
 	e.FetchEventURL = m(e.FetchEventURL)
+	e.UploadCreativeAsset = m(e.UploadCreativeAsset)
 	e.CreateCampaigns = m(e.CreateCampaigns)
 	e.AdoptCampaign = m(e.AdoptCampaign)
 	e.GetCampaign = m(e.GetCampaign)
@@ -238,6 +241,29 @@ func NewFetchEventURLEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.End
 			return nil, err
 		}
 		return s.FetchEventURL(ctx, p)
+	}
+}
+
+// NewUploadCreativeAssetEndpoint returns an endpoint function that calls the
+// method "upload-creative-asset" of service "lfx-v2-campaign-service-briefs".
+func NewUploadCreativeAssetEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*UploadCreativeAssetPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.UploadCreativeAsset(ctx, p)
 	}
 }
 

@@ -33,6 +33,17 @@ type FetchEventURLRequestBody struct {
 	URL string `form:"url" json:"url" xml:"url"`
 }
 
+// UploadCreativeAssetRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP request body.
+type UploadCreativeAssetRequestBody struct {
+	// Declared MIME type of the uploaded bytes. The bytes are re-sniffed
+	// server-side and must match; the stored mime_type is the verified one.
+	ContentType string `form:"content_type" json:"content_type" xml:"content_type"`
+	// Raw image bytes, base64-encoded in the JSON request body.
+	Bytes []byte `form:"bytes" json:"bytes" xml:"bytes"`
+}
+
 // CreateCampaignsRequestBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
 // request body.
@@ -240,6 +251,26 @@ type FetchEventURLResponseBody struct {
 	// Which strategy produced this record — the whole record came from exactly one
 	// of them
 	ExtractedFrom *string `form:"extracted_from,omitempty" json:"extracted_from,omitempty" xml:"extracted_from,omitempty"`
+}
+
+// UploadCreativeAssetResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body.
+type UploadCreativeAssetResponseBody struct {
+	// Creative asset UUID
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Owning project
+	ProjectID *string `form:"project_id,omitempty" json:"project_id,omitempty" xml:"project_id,omitempty"`
+	// Parent brief
+	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
+	// Stored image MIME type, as verified from the bytes (not merely the declared
+	// header)
+	MimeType *string `form:"mime_type,omitempty" json:"mime_type,omitempty" xml:"mime_type,omitempty"`
+	// Size of the stored image in bytes
+	ByteSize *int64 `form:"byte_size,omitempty" json:"byte_size,omitempty" xml:"byte_size,omitempty"`
+	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
+	// brief
+	Checksum *string `form:"checksum,omitempty" json:"checksum,omitempty" xml:"checksum,omitempty"`
 }
 
 // CreateCampaignsResponseBody is the type of the
@@ -806,6 +837,59 @@ type FetchEventURLInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "fetch-event-url" endpoint HTTP
 // response body for the "NotFound" error.
 type FetchEventURLNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UploadCreativeAssetBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "BadRequest" error.
+type UploadCreativeAssetBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UploadCreativeAssetConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "Conflict" error.
+type UploadCreativeAssetConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// UploadCreativeAssetServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type UploadCreativeAssetServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UploadCreativeAssetInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "InternalServerError" error.
+type UploadCreativeAssetInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// UploadCreativeAssetNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// HTTP response body for the "NotFound" error.
+type UploadCreativeAssetNotFoundResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -1450,6 +1534,17 @@ func NewFetchEventURLRequestBody(p *lfxv2campaignservicebriefs.FetchEventURLPayl
 	return body
 }
 
+// NewUploadCreativeAssetRequestBody builds the HTTP request body from the
+// payload of the "upload-creative-asset" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewUploadCreativeAssetRequestBody(p *lfxv2campaignservicebriefs.UploadCreativeAssetPayload) *UploadCreativeAssetRequestBody {
+	body := &UploadCreativeAssetRequestBody{
+		ContentType: p.ContentType,
+		Bytes:       p.Bytes,
+	}
+	return body
+}
+
 // NewCreateCampaignsRequestBody builds the HTTP request body from the payload
 // of the "create-campaigns" endpoint of the "lfx-v2-campaign-service-briefs"
 // service.
@@ -2073,6 +2168,80 @@ func NewFetchEventURLInternalServerError(body *FetchEventURLInternalServerErrorR
 // NewFetchEventURLNotFound builds a lfx-v2-campaign-service-briefs service
 // fetch-event-url endpoint NotFound error.
 func NewFetchEventURLNotFound(body *FetchEventURLNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewUploadCreativeAssetCreativeAssetCreated builds a
+// "lfx-v2-campaign-service-briefs" service "upload-creative-asset" endpoint
+// result from a HTTP "Created" response.
+func NewUploadCreativeAssetCreativeAssetCreated(body *UploadCreativeAssetResponseBody) *lfxv2campaignservicebriefs.CreativeAsset {
+	v := &lfxv2campaignservicebriefs.CreativeAsset{
+		ID:        *body.ID,
+		ProjectID: *body.ProjectID,
+		BriefID:   *body.BriefID,
+		MimeType:  *body.MimeType,
+		ByteSize:  *body.ByteSize,
+		Checksum:  *body.Checksum,
+	}
+
+	return v
+}
+
+// NewUploadCreativeAssetBadRequest builds a lfx-v2-campaign-service-briefs
+// service upload-creative-asset endpoint BadRequest error.
+func NewUploadCreativeAssetBadRequest(body *UploadCreativeAssetBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewUploadCreativeAssetConflict builds a lfx-v2-campaign-service-briefs
+// service upload-creative-asset endpoint Conflict error.
+func NewUploadCreativeAssetConflict(body *UploadCreativeAssetConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewUploadCreativeAssetServiceUnavailable builds a
+// lfx-v2-campaign-service-briefs service upload-creative-asset endpoint
+// ServiceUnavailable error.
+func NewUploadCreativeAssetServiceUnavailable(body *UploadCreativeAssetServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewUploadCreativeAssetInternalServerError builds a
+// lfx-v2-campaign-service-briefs service upload-creative-asset endpoint
+// InternalServerError error.
+func NewUploadCreativeAssetInternalServerError(body *UploadCreativeAssetInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewUploadCreativeAssetNotFound builds a lfx-v2-campaign-service-briefs
+// service upload-creative-asset endpoint NotFound error.
+func NewUploadCreativeAssetNotFound(body *UploadCreativeAssetNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
 	v := &lfxv2campaignservicebriefs.NotFoundError{
 		Code:    *body.Code,
 		Message: *body.Message,
@@ -2989,6 +3158,38 @@ func ValidateFetchEventURLResponseBody(body *FetchEventURLResponseBody) (err err
 	return
 }
 
+// ValidateUploadCreativeAssetResponseBody runs the validations defined on
+// Upload-Creative-AssetResponseBody
+func ValidateUploadCreativeAssetResponseBody(body *UploadCreativeAssetResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.ProjectID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("project_id", "body"))
+	}
+	if body.BriefID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("brief_id", "body"))
+	}
+	if body.MimeType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("mime_type", "body"))
+	}
+	if body.ByteSize == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("byte_size", "body"))
+	}
+	if body.Checksum == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("checksum", "body"))
+	}
+	if body.ID != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.id", *body.ID, goa.FormatUUID))
+	}
+	if body.MimeType != nil {
+		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg"}))
+		}
+	}
+	return
+}
+
 // ValidateCreateCampaignsResponseBody runs the validations defined on
 // Create-CampaignsResponseBody
 func ValidateCreateCampaignsResponseBody(body *CreateCampaignsResponseBody) (err error) {
@@ -3710,6 +3911,72 @@ func ValidateFetchEventURLInternalServerErrorResponseBody(body *FetchEventURLInt
 // ValidateFetchEventURLNotFoundResponseBody runs the validations defined on
 // fetch-event-url_NotFound_response_body
 func ValidateFetchEventURLNotFoundResponseBody(body *FetchEventURLNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUploadCreativeAssetBadRequestResponseBody runs the validations
+// defined on upload-creative-asset_BadRequest_response_body
+func ValidateUploadCreativeAssetBadRequestResponseBody(body *UploadCreativeAssetBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUploadCreativeAssetConflictResponseBody runs the validations defined
+// on upload-creative-asset_Conflict_response_body
+func ValidateUploadCreativeAssetConflictResponseBody(body *UploadCreativeAssetConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
+	return
+}
+
+// ValidateUploadCreativeAssetServiceUnavailableResponseBody runs the
+// validations defined on upload-creative-asset_ServiceUnavailable_response_body
+func ValidateUploadCreativeAssetServiceUnavailableResponseBody(body *UploadCreativeAssetServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUploadCreativeAssetInternalServerErrorResponseBody runs the
+// validations defined on
+// upload-creative-asset_InternalServerError_response_body
+func ValidateUploadCreativeAssetInternalServerErrorResponseBody(body *UploadCreativeAssetInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateUploadCreativeAssetNotFoundResponseBody runs the validations defined
+// on upload-creative-asset_NotFound_response_body
+func ValidateUploadCreativeAssetNotFoundResponseBody(body *UploadCreativeAssetNotFoundResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

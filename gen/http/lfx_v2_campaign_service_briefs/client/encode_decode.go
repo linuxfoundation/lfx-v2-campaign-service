@@ -1272,6 +1272,176 @@ func DecodeFetchEventURLResponse(decoder func(*http.Response) goahttp.Decoder, r
 	}
 }
 
+// BuildUploadCreativeAssetRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-briefs" service
+// "upload-creative-asset" endpoint
+func (c *Client) BuildUploadCreativeAssetRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+		briefID   string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.UploadCreativeAssetPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "upload-creative-asset", "*lfxv2campaignservicebriefs.UploadCreativeAssetPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: UploadCreativeAssetLfxV2CampaignServiceBriefsPath(projectID, briefID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "upload-creative-asset", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeUploadCreativeAssetRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs upload-creative-asset server.
+func EncodeUploadCreativeAssetRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.UploadCreativeAssetPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "upload-creative-asset", "*lfxv2campaignservicebriefs.UploadCreativeAssetPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		body := NewUploadCreativeAssetRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+		}
+		return nil
+	}
+}
+
+// DecodeUploadCreativeAssetResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-briefs upload-creative-asset endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeUploadCreativeAssetResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - error: internal error
+func DecodeUploadCreativeAssetResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusCreated:
+			var (
+				body UploadCreativeAssetResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			err = ValidateUploadCreativeAssetResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			res := NewUploadCreativeAssetCreativeAssetCreated(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body UploadCreativeAssetBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			err = ValidateUploadCreativeAssetBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			return nil, NewUploadCreativeAssetBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body UploadCreativeAssetConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			err = ValidateUploadCreativeAssetConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			return nil, NewUploadCreativeAssetConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body UploadCreativeAssetServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			err = ValidateUploadCreativeAssetServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			return nil, NewUploadCreativeAssetServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body UploadCreativeAssetInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			err = ValidateUploadCreativeAssetInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			return nil, NewUploadCreativeAssetInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body UploadCreativeAssetNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			err = ValidateUploadCreativeAssetNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "upload-creative-asset", err)
+			}
+			return nil, NewUploadCreativeAssetNotFound(&body)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "upload-creative-asset", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildCreateCampaignsRequest instantiates a HTTP request object with method
 // and path set to call the "lfx-v2-campaign-service-briefs" service
 // "create-campaigns" endpoint
