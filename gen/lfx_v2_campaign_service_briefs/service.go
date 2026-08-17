@@ -34,11 +34,11 @@ type Service interface {
 	// not create anything.
 	FetchEventURL(context.Context, *FetchEventURLPayload) (res *EventDetails, err error)
 	// Upload an image asset for a brief so a Meta ad creative can reference it by
-	// id. Synchronous: the image is validated (PNG/JPEG, size and dimension
-	// limits) and stored, then the asset id is returned. Re-uploading identical
-	// bytes to the same brief returns the existing asset (idempotent). This does
-	// not touch any ad platform; the account-scoped Meta image_hash is resolved
-	// later, at campaign dispatch.
+	// id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored,
+	// then the asset id is returned. Re-uploading identical bytes to the same
+	// brief returns the existing asset (idempotent). This does not touch any ad
+	// platform; the account-scoped Meta image_hash is resolved later, at campaign
+	// dispatch.
 	UploadCreativeAsset(context.Context, *UploadCreativeAssetPayload) (res *CreativeAsset, err error)
 	// Create campaigns across the selected platforms (async -> job).
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)

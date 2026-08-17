@@ -1141,7 +1141,7 @@ func lfxV2CampaignServiceBriefsUsage() {
 	fmt.Fprintln(os.Stderr, `    approve-brief: Approve a brief for campaign creation.`)
 	fmt.Fprintln(os.Stderr, `    delete-brief: Archive a brief (soft delete).`)
 	fmt.Fprintln(os.Stderr, `    fetch-event-url: Fetch an event page and extract its details, for pre-filling a brief. Does not create anything.`)
-	fmt.Fprintln(os.Stderr, `    upload-creative-asset: Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size and dimension limits) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch.`)
+	fmt.Fprintln(os.Stderr, `    upload-creative-asset: Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch.`)
 	fmt.Fprintln(os.Stderr, `    create-campaigns: Create campaigns across the selected platforms (async -> job).`)
 	fmt.Fprintln(os.Stderr, `    adopt-campaign: Bind a campaign that ALREADY exists on the ad platform to this brief. The platform is read, never written: the campaign must already exist under the project's connection, and nothing is created upstream. Returns 404 when the platform holds no such campaign, 409 when this brief already has a live campaign on that platform / that campaign is already bound to another brief (in any project, since several foundations share one upstream ad account) / the brief lost approval during the read / the project has no ad-platform connection of its own, and 400 when the platform has no adoption capability wired. An adopted campaign supports metrics, delete and pause; activation is refused, because adoption does not verify the targeting the activate guard requires.`)
 	fmt.Fprintln(os.Stderr, `    get-campaign: Get one campaign under a brief; returns ETag.`)
@@ -1326,7 +1326,7 @@ func lfxV2CampaignServiceBriefsUploadCreativeAssetUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size and dimension limits) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch.`)
+	fmt.Fprintln(os.Stderr, `Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)

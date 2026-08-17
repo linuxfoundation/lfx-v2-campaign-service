@@ -500,7 +500,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("upload-creative-asset", func() {
-		Description("Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size and dimension limits) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch.")
+		Description("Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch.")
 		Payload(func() {
 			bearerToken()
 			// Permissive project identifier (UUID or slug), matching the other brief
