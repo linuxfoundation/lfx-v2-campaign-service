@@ -853,11 +853,16 @@ func TestLinkedIn_AccessTokenIsTrimmedOnceInTheHelper(t *testing.T) {
 // against the defect and proved nothing. The Authorization header is the only observable that
 // distinguishes adopting the trim from testing it.
 func TestLinkedIn_DispatchAdoptsTheTrimmedAccessToken(t *testing.T) {
+	// The handler runs on its own goroutine, so the capture is guarded — an unsynchronized
+	// capture is a data race under -race even though the read happens after Dispatch returns.
+	var mu sync.Mutex
 	var gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		if gotAuth == "" {
 			gotAuth = r.Header.Get("Authorization")
 		}
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
 			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
@@ -895,8 +900,12 @@ func TestLinkedIn_DispatchAdoptsTheTrimmedAccessToken(t *testing.T) {
 	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg); err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
-	if gotAuth != "Bearer padded-token" {
-		t.Errorf("Authorization = %q, want %q — Dispatch sent the RAW token, so a padded stored credential fails upstream while discovery succeeds", gotAuth, "Bearer padded-token")
+	mu.Lock()
+	auth := gotAuth
+	mu.Unlock()
+
+	if auth != "Bearer padded-token" {
+		t.Errorf("Authorization = %q, want %q — Dispatch sent the RAW token, so a padded stored credential fails upstream while discovery succeeds", auth, "Bearer padded-token")
 	}
 }
 
