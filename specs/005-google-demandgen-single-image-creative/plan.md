@@ -148,8 +148,12 @@ Google platform client and its dispatcher.
   present, upload the image asset (G2), build the ad, and `adGroupAds:mutate` it `PAUSED`.
   When absent, keep today's shell close-out step verbatim (backward compatible).
 - **Stamp the campaign channel on the result.** `CampaignResult` gains an explicit
-  `Channel` field (values `search` / `demand_gen`), stamped at create by BOTH paths —
-  `CreateDemandGenCampaign` writes `demand_gen`, the Search `CreateCampaign` writes `search`.
+  `Channel` field carrying the SAME vocabulary the input `googleAdsConfig.Channel` already
+  uses — the existing constants `googleAdsChannelSearch = "search"` and
+  `googleAdsChannelDemandGen = "demand-gen"` (hyphen), NOT a new spelling — stamped at create
+  by BOTH paths: `CreateDemandGenCampaign` writes `googleAdsChannelDemandGen`, the Search
+  `CreateCampaign` writes `googleAdsChannelSearch`. Reusing the constants means the value
+  round-trips with no normalisation and one source of truth for the vocabulary.
   This mirrors the existing `CustomerID` field, which is stamped on every result (including
   partials) precisely so a later toggle can make a decision the id alone can't support. The
   activation gate (G5) reads this field rather than inferring the channel from the presence of
@@ -180,9 +184,10 @@ Google platform client and its dispatcher.
   Search-only condition that would wrongly refuse a fully-provisioned Demand Gen campaign.
 - Make the gate channel-aware, keyed on the explicit `CampaignResult.Channel` field stamped at
   create (G3) — NOT inferred from keyword/asset presence:
-  - `Channel == "demand_gen"` → "provisioned" = a Demand Gen ad with its required assets exists
-    (recovered from the `result` blob, like `googleAdsChildIDs`).
-  - `Channel == "search"` → the existing ≥1-keyword-criterion condition, unchanged.
+  - `Channel == googleAdsChannelDemandGen` (`"demand-gen"`) → "provisioned" = a Demand Gen ad
+    with its required assets exists (recovered from the `result` blob, like `googleAdsChildIDs`).
+  - `Channel == googleAdsChannelSearch` (`"search"`) → the existing ≥1-keyword-criterion
+    condition, unchanged.
   - empty `Channel` (result predates the field) → fall back to the current keyword check, so no
     older Search campaign's gate behaviour changes.
 - An unprovisioned campaign of either channel is still refused with `ErrCampaignNotProvisioned`
