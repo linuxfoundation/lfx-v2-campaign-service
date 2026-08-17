@@ -74,10 +74,16 @@ type responsiveSearchAd struct {
 	Descriptions []adTextAsset `json:"descriptions"`
 }
 
-// adCreate is the "ad" object nested in an adGroupAd create.
+// adCreate is the "ad" object nested in an adGroupAd create. An ad carries EXACTLY ONE
+// ad-type payload: the Search path sets responsiveSearchAd, the Demand Gen path sets
+// demandGenMultiAssetResponsiveDisplayAd (demandgen_ad.go). Both are omitempty pointers so
+// each path serializes only its own type — a Search create is byte-identical to before this
+// field existed, and neither channel ever sends the other's shape (which the API rejects).
+// finalUrls is shared: it lives on the ad, not the ad-type, for both channels.
 type adCreate struct {
-	FinalUrls          []string            `json:"finalUrls"`
-	ResponsiveSearchAd *responsiveSearchAd `json:"responsiveSearchAd,omitempty"`
+	FinalUrls                              []string                                `json:"finalUrls"`
+	ResponsiveSearchAd                     *responsiveSearchAd                     `json:"responsiveSearchAd,omitempty"`
+	DemandGenMultiAssetResponsiveDisplayAd *demandGenMultiAssetResponsiveDisplayAd `json:"demandGenMultiAssetResponsiveDisplayAd,omitempty"`
 }
 
 // adGroupAdCreate is the create payload for adGroupAds:mutate.

@@ -45,10 +45,13 @@ type demandGenAdGroupCreate struct {
 // (`lfx-self-serve` `campaign-proxy.service.ts`'s `createDemandGenCampaign`), which
 // is what serves this channel today and is the behavioural reference.
 //
-// It deliberately creates NO AD and NO KEYWORDS. That is not an omission: Demand Gen
-// ads are image/video asset based, the assets are uploaded by a human in the Google
-// Ads UI, and the legacy path ends the same way with "upload images and publish in
-// Google Ads UI". Generating a text ad here would produce an ad the channel cannot
+// When in.Creative is supplied, it also builds the ad: it uploads the creative's three
+// image-role assets (pre-budget, see below) and creates a PAUSED
+// DemandGenMultiAssetResponsiveDisplayAd in the ad group. When in.Creative is nil it
+// creates NO AD and NO KEYWORDS and stops after the ad group — the legacy behaviour, where
+// Demand Gen ads were uploaded by a human in the Google Ads UI and the path ended with
+// "upload images and publish in Google Ads UI". It never creates KEYWORDS on either path:
+// Demand Gen has no keyword targeting, and a text/search ad would be one the channel cannot
 // serve.
 //
 // The partial-result contract matches CreateCampaign exactly, and that is the part
@@ -60,6 +63,27 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	pf, err := c.preflightCampaignKind(campaignKindDemandGen, in)
 	if err != nil {
 		return nil, err // pre-create: nothing was sent
+	}
+
+	// Demand Gen creative (optional). When present, validate it and upload its image assets
+	// BEFORE any budget mutate: a bad creative or a failed upload then leaves NO spending
+	// resource behind — an image asset is a non-spending, content-addressed library object
+	// (uploadImageAsset), so at worst a harmless orphan a retry re-resolves. This is the same
+	// fail-before-spending contract precomputeAdGroupAdInputs gives the Search path. When the
+	// creative is absent, the cascade stops after the ad group exactly as it always has — a
+	// paused shell whose ad a human uploads in the Google Ads UI.
+	var adInputs *demandGenAdInputs
+	var assetRefs demandGenAssetRefs
+	if in.Creative != nil {
+		adInputs, err = precomputeDemandGenAd(in)
+		if err != nil {
+			return nil, err // pre-create: nothing was sent
+		}
+		assetRefs, err = c.uploadDemandGenAssets(ctx, adInputs)
+		if err != nil {
+			// Pre-budget: no campaign or budget exists yet, so nothing spending is orphaned.
+			return nil, fmt.Errorf("google-ads demand gen creation aborted before any spending resource: %w", err)
+		}
 	}
 
 	campaignName := pf.campaignName
@@ -229,7 +253,20 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	// Until then a created campaign is geo-untargeted and the closing step says so, so
 	// nobody reads the absence as targeting that was applied.
 
-	// No ad and no keywords, deliberately — see the doc comment.
+	// When a creative was supplied, create the ad now — the image assets were uploaded
+	// pre-budget, so this only references them. createDemandGenAd stamps res.AdID and appends
+	// its own step; res already carries the budget/campaign/ad-group ids, so an ad-step failure
+	// is returned ALONGSIDE the partial (not as nil), matching every step above it.
+	if adInputs != nil {
+		if err := c.createDemandGenAd(ctx, adGroupResource, adGroupID, adInputs.finalURL, adInputs, assetRefs, res); err != nil {
+			return res, err
+		}
+		res.Steps = append(res.Steps, "Demand Gen campaign created (no geo targeting set) — review and publish in the Google Ads UI")
+		return res, nil
+	}
+
+	// No creative supplied: no ad and no keywords, deliberately — see the doc comment. A
+	// paused shell whose ad a human uploads in the Google Ads UI.
 	steps = append(steps, "Demand Gen campaign created (no geo targeting set) — add targeting, upload images and publish in the Google Ads UI")
 	res.Steps = steps
 	return res, nil
