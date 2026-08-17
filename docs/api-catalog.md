@@ -439,11 +439,16 @@ creative?: object               — OPTIONAL, Demand Gen only (`channel: demand-
                                   role: `marketingImageAssetId` (landscape 1.91:1),
                                   `squareMarketingImageAssetId` (square 1:1), `logoAssetId` (logo 1:1).
                                   Each ID must reference a creative asset already uploaded under this
-                                  brief (`POST .../creative-assets`). The Demand Gen image-ad build is
-                                  landing incrementally (LFXV2-2665): the field is accepted and
-                                  shape-validated now, but the ad is not created upstream until the
-                                  creative pipeline lands — until then a `demand-gen` campaign stays a
-                                  paused shell.
+                                  brief (`POST .../creative-assets`). When supplied, the dispatcher
+                                  resolves all three role assets to bytes BEFORE any upstream create
+                                  (a missing/foreign asset fails the job with nothing spent), then
+                                  builds a PAUSED single-image Demand Gen ad
+                                  (`DemandGenMultiAssetResponsiveDisplayAd`) upstream. Omitting
+                                  `creative` on a `demand-gen` campaign keeps the legacy paused-shell
+                                  behaviour (budget → campaign → ad group, no ad). Because Demand Gen
+                                  carries no keyword criteria, its ACTIVATE gate treats the campaign as
+                                  provisioned once its ad exists — the keyword requirement applies only
+                                  to the `search` channel.
 adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When true, the dispatcher first
                                   looks the composed campaign name up on the account and, if a single
                                   live campaign already carries it, ADOPTS that campaign instead of

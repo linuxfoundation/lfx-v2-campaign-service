@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/googleads"
-description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), and ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate."
+description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), single-image Demand Gen creative generation — content-addressed image-asset upload via assets:mutate, a format-keyed builder producing the three-role DemandGenMultiAssetResponsiveDisplayAd, and a channel-aware ACTIVATE provisioning gate keyed on the persisted CampaignResult.Channel so Demand Gen (no keywords, ad-is-the-deliverable) and Search (keyword-required) each gate on what actually makes them serve (GA-6), and ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate."
 resource: "internal/platform/googleads"
 tags:
   - platform-client
@@ -514,12 +514,28 @@ ad GA-3b creates, mirroring the reddit adapter's child-cascade contract:
   downstream and only the campaign is toggled.
 
 - **ACTIVATE is refused** with `domain.ErrCampaignNotProvisioned` (mapped to a 409 without
-  calling Google) unless the ad group/ad are fully provisioned AND GA-4's targeting step
-  persisted at least one keyword criterion (audience criteria alone are observation-only and
-  don't qualify — see "Keyword + audience targeting (GA-4)" below). A campaign without keyword
-  targeting cannot deliver, so enabling it would report false success. When the guard passes,
-  ACTIVATE cascades children-first (children activated before campaign) so a campaign never
-  reports ENABLED before its ad group/ad already do.
+  calling Google) unless the campaign is provisioned enough to actually serve — and what that
+  requires is **channel-specific**, keyed on the `CampaignResult.Channel` the create stamped into
+  the `Result` blob (`"search"` / `"demand-gen"`), NOT inferred from which of keyword/asset happens
+  to be present (inference would be circular):
+  - **Common to both channels:** the ad group/ad must be fully provisioned. A duplicate-name
+    orphan or UNCONFIRMED create leaves no child id to cascade to, so enabling only the campaign
+    would report success while nothing can serve.
+  - **Search** (or an empty `Channel` on a row created before the field existed) ADDITIONALLY
+    requires GA-4's targeting step to have persisted at least one keyword criterion (audience
+    criteria alone are observation-only and don't qualify — see "Keyword + audience targeting
+    (GA-4)" below); a Search campaign without keyword targeting cannot deliver, so enabling it
+    would report false success. The empty-`Channel` fallback keeps every row created before the
+    field existed on exactly its prior Search gate behaviour.
+  - **Demand Gen** attaches no keyword criteria by design — its single-image ad IS the
+    deliverable — so the ad-group/ad check above is the whole gate. A non-empty ad id there means
+    `createDemandGenAd` stamped it only AFTER its three image assets uploaded and the ad mutate
+    both succeeded (see "Demand Gen single-image creative (GA-6)" below), so an activatable Demand
+    Gen campaign is one whose ad exists. Requiring a keyword here would refuse a fully-provisioned
+    Demand Gen campaign forever.
+
+  When the guard passes, ACTIVATE cascades children-first (children activated before campaign) so a
+  campaign never reports ENABLED before its ad group/ad already do.
 
 - **Both directions are refused** with `domain.ErrCampaignAccountMismatch` (409, Google never
   contacted) when the campaign was created under a different customer than the project's
@@ -688,6 +704,58 @@ in SELECT returns one row aggregated over the whole window, not one row per day.
 Not yet verified against a live Google Ads account with >1 day of data in the
 window.
 
+## Demand Gen single-image creative (GA-6)
+
+Beside the Search path, the client also creates **Demand Gen** campaigns
+(`CreateDemandGenCampaign` in `demandgen.go`, `advertisingChannelType`
+`DEMAND_GEN`, `targetSpend` bidding). It used to be a PAUSED shell — budget →
+campaign → ad group, then stop, leaving the operator to build the ad in the
+Google Ads UI. GA-6 closes that gap: when the dispatch supplies a creative
+(`CampaignInput.Creative != nil`) the client builds a real, PAUSED Demand Gen
+image ad. A nil creative keeps the legacy shell path byte-for-byte untouched,
+so existing callers and tests are unchanged.
+
+**Image asset upload** (`assets.go`, `uploadImageAsset`). A thin
+`customers/{cid}/assets:mutate` that POSTs one `ImageAsset` with the raw bytes
+base64-encoded (no `name`, no `type` — Google infers both), returning the
+`customers/{cid}/assets/{id}` resource name via `firstResourceName` +
+`validateResourceKind("assets", …)`. It is deliberately **cache-free /
+content-addressed**: `idempotent = false` (a blind retry could double-create),
+and there is no app-side `(customer, checksum)` dedupe — Google is
+content-addressed for identical bytes (research O3, not live-verified), and the
+worst case of a missing dedupe is a harmless leaked library asset on a retry,
+never a spend. Empty bytes are rejected before the request; a
+malformed/foreign/absent 2xx resource name is treated as UNCONFIRMED.
+
+**Ad build** (`demandgen_ad.go`). Google has no dedicated single-image Demand
+Gen ad type: the non-carousel/non-video ad is
+`DemandGenMultiAssetResponsiveDisplayAd`, which requires image assets in **three
+aspect-ratio roles** — landscape marketing (1.91:1), square marketing (1:1) and
+logo (1:1) — plus a business name (≤ `maxBusinessNameRunes` = 25 runes).
+`precomputeDemandGenAd` validates with NO request first: an unknown media
+format, an absent-or-over-length business name, any missing image-role bytes,
+bad ad copy, or an over-length final URL all fail before the first `:mutate`. It
+reuses the Search `composeAdCopy` but caps headlines at `maxDemandGenHeadlines`
+= 5 (Demand Gen's max; RSA allows 15). `buildDemandGenAd` is format-keyed
+(`single_image` today; carousel/video add a case). `uploadDemandGenAssets`
+uploads the three roles in order to resource names, and `createDemandGenAd`
+mirrors the Search ad block exactly (ambiguous → UNCONFIRMED, definite 4xx →
+clean fail, full kind/account/composite/ad-group-id validation before the AdID
+is trusted). `adCreate` in `adgroup_ad.go` carries an `omitempty`
+`demandGenMultiAssetResponsiveDisplayAd` field beside `responsiveSearchAd`, so
+the Search create is byte-identical.
+
+**Ordering is fail-before-spending.** The three image assets upload BEFORE the
+budget `:mutate`, so a bad creative or a failed upload returns `(nil, err)` with
+nothing spent (at worst a harmless content-addressed library asset); a failure
+past the ad group returns a non-nil reconcilable partial (budget/campaign/
+ad-group ids) plus the error. The created `Result` blob carries the ad id and
+the resolved `Channel` (`"demand-gen"`), which the channel-aware ACTIVATE gate
+in GA-3c reads to know a Demand Gen campaign is provisioned by its ad rather
+than by a keyword. Dispatch-side resolution of the three role assets from stored
+bytes lives in `resolveDemandGenCreative` (see
+[internal/dispatch](internal-dispatch.md)).
+
 ## Scope
 
 GA-1 is the scaffold (auth + request layer + GAQL search); GA-2 is campaign
@@ -696,7 +764,8 @@ creation (`:mutate`); GA-3a is ad-copy generation and final-URL building
 creation cascade that consumes it; GA-3c is the dispatcher-level
 status-toggle cascade over that ad group/ad; GA-4 is keyword/audience-segment
 targeting on that same ad group; GA-5 is metrics reads (`metrics.go`, see
-above). The orchestrator dispatcher (registering
+above); GA-6 is the Demand Gen single-image creative build (`assets.go`,
+`demandgen_ad.go`) plus the channel-aware ACTIVATE gate. The orchestrator dispatcher (registering
 `google-ads` so briefs dispatch upstream) is wired in
 `internal/dispatch/googleads.go` (LFXV2-2636). Keyword actions
 (pause/adjust an individual keyword post-creation) follow in later GA
@@ -720,6 +789,22 @@ releasing on an empty id.
 It implements PAUSE/ACTIVATE cascading — see "Status toggling (GA-3c)" above for the
 cascade order and the ACTIVATE provisioning gate. Note the vocabulary: Google spells the
 serving state **ENABLED**, not ACTIVE.
+
+**Demand Gen creative resolution (GA-6, dispatch side).** For a Demand Gen dispatch the
+adapter first calls `resolveDemandGenCreative`, which reads all **three** role asset ids
+(marketing, square, logo) out of the brief config and loads each one's bytes through the
+`creativeAssetReader.GetAsset(ctx, projectID, briefID, assetID)` seam (the same tenant/brief
+scoped `CreativeAssetRepo` the upload endpoint writes). All three roles are REQUIRED; a
+missing id or a `GetAsset` failure is wrapped in `notCreated` (so `NoUpstreamCreate()` is
+true and the claim is released) BEFORE any upstream create runs — nothing is spent when the
+creative can't be assembled. Only then does it hand the resolved bytes to
+`CreateDemandGenCampaign` (GA-6, platform side). **The dispatcher — not the client — stamps
+`CampaignResult.Channel`** (`"search"` / `"demand-gen"`) onto the create result whenever the
+result is non-nil (covering success and reconcilable-partial alike), and `campaignFromGoogleAds`
+marshals it into the persisted `Result` blob; the adoption path stamps it the same way via
+`campaignFromGoogleAdsAdoption`. That persisted channel is exactly what the channel-aware
+ACTIVATE gate later keys on, so the gate never has to infer the channel from which criteria
+happen to be present.
 
 Microsoft Ads has a creation dispatcher; its status-TOGGLE capability lands separately.
 
