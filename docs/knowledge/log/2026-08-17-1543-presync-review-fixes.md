@@ -39,8 +39,11 @@ recomputes it independently. Mutating the function to return a hardcoded 24 fail
 Deployment rolls "keeps the previous release from being migrated out from under"; that is exactly
 what does happen — the hook completes while the OLD ReplicaSet is still serving. What makes the
 overlap safe is expand/contract migration authoring, not the ordering. What the ordering genuinely
-buys is failure handling: a failed Job halts the sync with logs and leaves the prior ReplicaSet on
-the old schema, rather than crash-looping a new pod on a half-migrated database. Stating it the
+buys is failure handling: a failed Job halts the sync with logs so the prior ReplicaSet keeps
+serving, rather than crash-looping a new pod on a half-migrated database. That is not a rollback
+— golang-migrate dirties the version before running SQL, and committed statements stay
+committed, so the prior release can be left pointed at a part-changed schema; expand/contract is
+what makes that survivable. Stating it the
 old way appeared to relax the authoring rule the repo depends on. It also now records what the
 new pods do about it: `VerifySchema` refuses an older or dirty schema, so a skipped Job surfaces
 as a pod that will not report ready rather than one querying columns that do not exist.

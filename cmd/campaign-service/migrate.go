@@ -29,8 +29,14 @@ import (
 // is the authoring rule this comment must not appear to relax.
 //
 // What the ordering genuinely buys is FAILURE HANDLING. A failure here fails the Job with
-// logs and halts the sync, leaving the prior ReplicaSet serving on the old schema, rather
-// than crash-looping a new pod on a half-migrated database.
+// logs and halts the sync, so the prior ReplicaSet keeps serving rather than a new pod
+// crash-looping against a half-migrated database.
+//
+// Note what that does NOT promise: the database is not rolled back. golang-migrate marks the
+// version dirty BEFORE running a migration's SQL, and statements that already committed stay
+// committed — so a failed Job can leave the schema part-changed, with the prior release still
+// pointed at it. Expand/contract is what keeps that survivable (the old binary only relies on
+// what it already had); halting the sync is what keeps it from getting worse.
 //
 // The new pods then VERIFY rather than trust that: postgres.VerifySchema refuses to serve
 // against a schema older than this binary requires, or one whose migration row is dirty. So a

@@ -33,8 +33,10 @@ VERIFIES the schema now (migrations run in the PreSync Job), and such a verdict 
 clear by retrying — the operator must run the rebuild DDL the error carries — so
 `postgres.IsPermanentMigrationErr` classifies it and BOTH the synchronous fast path
 (returns an error → process exits) and the background retry loop (logs ERROR and stops
-looping) refuse to 503-loop on it. (`migrate.ErrDirty` is now reachable only in the migrate
-Job, not at boot.) But a *transient* failure (DB unreachable / migration deadline within
+looping) refuse to 503-loop on it. (`migrate.ErrDirty` is reachable at boot as well as in the
+migrate Job: boot no longer migrates, but `postgres.VerifySchema` reads `schema_migrations`
+and returns it when the dirty flag is set.) But a *transient* failure (DB unreachable /
+migration deadline within
 `startupDBTimeout`, 15s per attempt) makes `NewContainer` boot the services in
 503 mode instead of returning an error: the health dependency is a `notReady`
 placeholder (a non-nil always-false checker — NOT nil, since a nil dep is treated

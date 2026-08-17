@@ -52,6 +52,11 @@ spec:
         app.kubernetes.io/component: migrate
     spec:
       restartPolicy: Never
+      # This pod talks to PostgreSQL and makes no Kubernetes API calls, so it needs no bound
+      # identity — but omitting this does not mean "no token": the default is to PROJECT the
+      # namespace's default ServiceAccount token into the pod. That would hand a pod already
+      # holding database credentials a cluster credential it never uses.
+      automountServiceAccountToken: false
       # Referenced ONLY when this chart does not create the account. serviceaccount.yaml carries
       # no hook annotation, so ArgoCD applies it in the ordinary Sync wave — AFTER this PreSync
       # hook — and the hook pod would reference an account that does not exist yet, failing a

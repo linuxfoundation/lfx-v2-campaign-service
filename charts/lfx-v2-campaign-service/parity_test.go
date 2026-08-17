@@ -865,3 +865,53 @@ func TestMigrateJobIsPreSyncHookRunningTheMigrateSubcommand(t *testing.T) {
 		t.Errorf("migrate Job must source the database from the campaign-service secret.\nrendered:\n%s", rendered)
 	}
 }
+
+// TestMigrateJobEnvIsAllowListed pins that the Job receives ONLY database variables.
+//
+// The assertions above check the allowed keys are PRESENT, which a regression back to ranging
+// over the whole of app.environment would also satisfy — while handing a one-shot migration pod
+// the serving release's secrets. Absence is the property that matters here, so it needs its own
+// test: this one supplies forbidden entries through BOTH routes into the Job's env
+// (app.environment and app.extraEnv, which leak independently) and asserts they do not render.
+func TestMigrateJobEnvIsAllowListed(t *testing.T) {
+	// Names chosen to match real values.yaml secrets — these are exactly what leaked before the
+	// allow-list, and CREDENTIAL_ENCRYPTION_KEY decrypts every stored ad-platform credential.
+	const (
+		forbiddenEnv   = "CREDENTIAL_ENCRYPTION_KEY"
+		forbiddenExtra = "AI_API_KEY"
+		allowedExtra   = "PGSSLMODE"
+	)
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skipf("helm not on PATH; skipping chart guard test: %v", err)
+	}
+	out, err := exec.Command("helm", "template", chartDir,
+		"--show-only", "templates/migrate-job.yaml",
+		"--set", "app.environment."+forbiddenEnv+".value=leaked-key-material",
+		"--set", "app.extraEnv[0].name="+forbiddenExtra+",app.extraEnv[0].value=leaked-ai-key",
+		"--set", "app.extraEnv[1].name="+allowedExtra+",app.extraEnv[1].value=require",
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template migrate-job failed: %v\n%s", err, out)
+	}
+	job := string(out)
+
+	// Match rendered env ENTRIES ("name: X") and the secret values, not the bare names — the
+	// template carries a comment naming these very variables to explain what it excludes, so a
+	// bare substring check fails on the documentation rather than on a leak.
+	for _, forbidden := range []string{
+		"name: " + forbiddenEnv,
+		"name: " + forbiddenExtra,
+		"leaked-key-material",
+		"leaked-ai-key",
+	} {
+		if strings.Contains(job, forbidden) {
+			t.Errorf("migrate Job leaked %q: the env allow-list must drop non-database variables from BOTH app.environment and app.extraEnv.\nrendered:\n%s", forbidden, job)
+		}
+	}
+	// The allow-list must not be so blunt it drops legitimate database tuning: a PG* variable
+	// supplied through extraEnv still belongs in the Job. Without this, "reject everything"
+	// would pass the assertions above.
+	if !strings.Contains(job, "name: "+allowedExtra) {
+		t.Errorf("migrate Job dropped %q, an allowed PG* variable supplied via extraEnv.\nrendered:\n%s", allowedExtra, job)
+	}
+}

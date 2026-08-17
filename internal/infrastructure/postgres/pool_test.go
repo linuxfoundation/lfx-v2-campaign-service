@@ -13,6 +13,9 @@ import (
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4"
+	"github.com/jackc/pgerrcode"
+	pgx "github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/migrations"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -96,6 +99,41 @@ func TestValidateMigrationDSN_ErrorDoesNotLeakSecret(t *testing.T) {
 	// The underlying pgx parse error must still be reachable for diagnostics.
 	if errors.Unwrap(err) == nil {
 		t.Error("the parse cause should remain reachable via errors.Unwrap")
+	}
+}
+
+// TestIsUnmigratedSchemaErr pins WHICH failed reads of schema_migrations are a schema verdict.
+//
+// The distinction is the whole point of the function: checkSchemaVersion wraps a verdict in
+// ErrSchemaOutOfDate, which IsPermanentMigrationErr classifies permanent — so a
+// misclassification here makes boot stop retrying. Before this split, every Scan error was
+// wrapped, and a connection reset between Connect and Scan permanently failed a pod against a
+// database that was merely blipping.
+func TestIsUnmigratedSchemaErr(t *testing.T) {
+	verdicts := map[string]error{
+		"table absent — nothing has ever migrated":     &pgconn.PgError{Code: pgerrcode.UndefinedTable, Message: `relation "schema_migrations" does not exist`},
+		"table present but empty — records no version": pgx.ErrNoRows,
+		"verdict reached through a wrap":               fmt.Errorf("query: %w", pgx.ErrNoRows),
+	}
+	for name, err := range verdicts {
+		if !isUnmigratedSchemaErr(err) {
+			t.Errorf("%s: must be treated as an unmigrated schema, got retryable", name)
+		}
+	}
+
+	// These say nothing about the schema. Each one is survivable by retrying, and each was
+	// classified PERMANENT before the fix.
+	transient := map[string]error{
+		"connection reset after Connect succeeded": errors.New("read tcp: connection reset by peer"),
+		"statement timeout":                        context.DeadlineExceeded,
+		"context cancelled mid-read":               context.Canceled,
+		"admin shutdown":                           &pgconn.PgError{Code: pgerrcode.AdminShutdown, Message: "terminating connection due to administrator command"},
+		"serialization failure":                    &pgconn.PgError{Code: pgerrcode.SerializationFailure},
+	}
+	for name, err := range transient {
+		if isUnmigratedSchemaErr(err) {
+			t.Errorf("%s: must stay retryable, got classified as an unmigrated schema", name)
+		}
 	}
 }
 

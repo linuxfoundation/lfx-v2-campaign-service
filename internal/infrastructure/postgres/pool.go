@@ -20,6 +20,8 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5/pgconn"
 	// pgxv5 is aliased because golang-migrate's driver above already occupies the
 	// identifier `pgx` (see the pgx.Postgres reference at the foot of this file).
 	pgxv5 "github.com/jackc/pgx/v5"
@@ -166,9 +168,13 @@ func Migrate(dsn string) error {
 // moved into the `migrate` subcommand (an ArgoCD PreSync Job): a pod must still fail closed
 // when a constraint-bearing index is missing or invalid — that is the guard /readyz relies
 // on — but must NOT change the schema itself, because the previous release may still be
-// serving during a rollout. The errors are the same permanent sentinels (ErrInvalidIndex,
-// ErrMissingRequiredIndex, ErrRequiredIndexMismatch), so IsPermanentMigrationErr classifies
-// a verification failure exactly as it classified the post-migration check.
+// serving during a rollout.
+//
+// It ALSO verifies the recorded migration version, which the index check cannot see — so its
+// failures are a superset of the post-migration check's: the index sentinels, plus
+// ErrSchemaOutOfDate and migrate.ErrDirty from checkSchemaVersion. Every one of them is
+// classified permanent by IsPermanentMigrationErr, which is what callers key their fail-fast
+// behaviour on. A transient read failure is deliberately NOT in that set and stays retryable.
 func VerifySchema(dsn string) error {
 	if err := checkSchemaVersion(dsn); err != nil {
 		return err
@@ -214,9 +220,21 @@ func checkSchemaVersion(dsn string) error {
 	var version uint32
 	var dirty bool
 	if err := conn.QueryRow(ctx, `SELECT version, dirty FROM schema_migrations`).Scan(&version, &dirty); err != nil {
-		// No table means no migration has ever run against this database — the same
-		// unusable state as an out-of-date one, and permanent until someone migrates.
-		return fmt.Errorf("%w: cannot read schema_migrations: %w", ErrSchemaOutOfDate, err)
+		// Only two shapes are a SCHEMA verdict. A missing table means no migration has ever
+		// run against this database, and no rows means the table exists but records nothing —
+		// both the same unusable state as an out-of-date one, and permanent until someone
+		// migrates.
+		//
+		// Everything else — a reset connection, a statement timeout, a read failing after
+		// Connect already succeeded — says nothing about the schema. Wrapping those in
+		// ErrSchemaOutOfDate would make IsPermanentMigrationErr stop the retry loop for a
+		// TRANSIENT database failure, turning a blip into a pod that never comes up. Connect
+		// above is left retryable for exactly this reason; a read on the same connection is
+		// no more of a verdict than dialling it was.
+		if isUnmigratedSchemaErr(err) {
+			return fmt.Errorf("%w: cannot read schema_migrations: %w", ErrSchemaOutOfDate, err)
+		}
+		return fmt.Errorf("read schema_migrations: %w", err)
 	}
 	if dirty {
 		// migrate.ErrDirty, not an index sentinel. IsPermanentMigrationErr already classifies it,
@@ -228,6 +246,25 @@ func checkSchemaVersion(dsn string) error {
 		return fmt.Errorf("%w: database is at migration %d but this binary requires at least %d; run the migrate Job before serving", ErrSchemaOutOfDate, version, want)
 	}
 	return nil
+}
+
+// isUnmigratedSchemaErr reports whether a failed read of schema_migrations is a statement
+// about the SCHEMA rather than about the connection.
+//
+// Only two shapes qualify: the table does not exist (nothing has ever migrated this
+// database), or it exists and holds no row (it records no version). Both are permanent until
+// someone runs the migrate Job.
+//
+// Every other error — a reset connection, a statement timeout, a cancelled context — is a
+// failed READ, and a failed read is not a verdict. Treating it as one would hand
+// IsPermanentMigrationErr a transient fault and stop the boot retry loop on a database that
+// would have answered a moment later.
+func isUnmigratedSchemaErr(err error) bool {
+	if errors.Is(err, pgxv5.ErrNoRows) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UndefinedTable
 }
 
 // latestMigrationVersion is the highest version among the EMBEDDED migrations — derived, not
