@@ -65,9 +65,12 @@ existing `responsiveSearchAd` pointer, `omitempty`).
 
 ## 3. Decision D2 — image asset upload (`assets:mutate`)
 
-**Decision:** G2's `uploadImageAsset(ctx, bytes, checksum) (assetResourceName, err)` posts to
+**Decision:** G2's `uploadImageAsset(ctx, bytes) (assetResourceName, err)` posts to
 `customers/{cid}/assets:mutate` (via the existing `customerPath` + `doRequest`,
-`idempotent=false` — a create) with one create operation:
+`idempotent=false` — a create) with one create operation. It takes no `checksum`
+argument: as-built the function holds no cache to key one against (see D3), so a checksum
+parameter would be dead weight; the SHA-256 lives in `creative_assets` and is the
+dispatcher's concern, not this thin uploader's.
 
 ```json
 { "operations": [ { "create": { "imageAsset": { "data": "<base64(bytes)>" } } } ] }
@@ -93,22 +96,42 @@ classification.
 ## 4. Decision D3 — idempotency & partial-result contract
 
 **Decision:** `uploadImageAsset` is a **non-idempotent** create: NOT retried on 429 (same
-rule as every other `:mutate`, `doRequest(..., idempotent=false)`), and its outcome is
-classified through the existing `createOutcomeAmbiguous` path. Idempotency across
-*retries of the whole dispatch* is provided by the app side: we hold the SHA-256
-`Checksum` in `creative_assets` and can skip re-upload, mirroring how the Meta client keys
-on the same checksum.
+rule as every other `:mutate`, `doRequest(..., idempotent=false)`, so a mutating 429 is
+never blind-retried into a double-create). It carries **no app-side cache and no
+partial-result contract**, and this corrects the premise this section shipped with.
 
-**Open (O3):** Google Ads content-addresses image assets server-side, so re-`create` of
-identical bytes MAY return the same resource name (no error) OR MAY reject as a duplicate.
-This decides whether G2 needs to catch a "duplicate asset" code or can rely on Google
-returning the existing resource name. **Must be confirmed by live probe before G2 lands.**
+**Correction to the original D3 premise.** The first draft said dispatch-level
+retry-idempotency comes from holding the SHA-256 `Checksum` in `creative_assets` and
+skipping re-upload, "mirroring how the Meta client keys on the same checksum." That is
+wrong on two counts, both discovered while building G2:
 
-**Partial-result:** the asset upload extends the existing
-`namePartial`/`budgetPartial`/`campaignPartial` chain in `CreateDemandGenCampaign` — an
-asset created but then an ad-create failure returns a non-nil result carrying the asset
-resource name(s), so nothing is stranded un-reconcilable (FR-007). This matches the
-contract already proven for budget→campaign→adGroup in `demandgen.go`.
+1. **The Meta client keeps no such cache.** `meta.uploadImage` is itself cache-free — it
+   re-`POST`s the bytes and relies on Meta content-addressing the image (identical bytes →
+   same hash). There was nothing to mirror; the premise mis-described the very code it
+   cited.
+2. **An in-`Client` cache would be inert here anyway.** `resolveGoogleAdsClient` builds a
+   **fresh `Client` per dispatch**, so a retry is a new dispatch with a new, empty cache. A
+   `(customerID, checksum)` map on the `Client` could only dedupe identical bytes *within a
+   single call* — never across the retries idempotency is actually about.
+
+So G2 mirrors Meta's *actual* shape: a thin, cache-free, content-addressed upload. The
+idempotency that matters comes from Google content-addressing image assets server-side
+(identical bytes re-resolve to the same `assets/{id}`), not from app bookkeeping.
+
+**Why no partial-result chain is needed (unlike budget→campaign→adGroup).** An image asset
+is a **non-spending library object**. A leaked duplicate never double-spends the way a
+duplicate budget/campaign would, so the caller does not have to reconcile "an asset may
+exist." `uploadImageAsset` therefore just returns `(resourceName, err)`; it does **not**
+extend the `namePartial`/`budgetPartial`/`campaignPartial` chain. When G3 wires it into the
+cascade, an asset uploaded before a later ad-create failure is simply an orphaned harmless
+library object — acceptable, and not something FR-007's reconcile contract must name.
+
+**Open (O3), now non-blocking.** Whether Google returns the existing resource name vs.
+rejects a duplicate `create` of identical bytes still could not be probed live (no Google
+Ads credentials on this workstation). But the design **no longer depends on the answer**:
+if Google does *not* dedupe, the worst case on a retry is one extra harmless library asset,
+never a double-spend. So O3 is documented but is **not a G2 blocker** — the earlier "must
+be confirmed before G2 lands" gate is lifted.
 
 ---
 
@@ -179,15 +202,17 @@ sandbox/real account, exactly as the `targetSpend` check was run.
 - **O2 — asset create shape.** `validateOnly` `assets:mutate` with
   `{imageAsset:{data:<base64>}}`: confirm it is accepted WITHOUT an explicit `type`, and
   that the response resource is `…/assets/{id}` (single-id). Feeds D2.
-- **O3 — asset idempotency.** Create the SAME image bytes twice (non-validateOnly, sandbox):
-  observe whether Google returns the existing resource name or a duplicate error. Decides
-  D3's error handling.
+- **O3 — asset idempotency (non-blocking, see D3).** Create the SAME image bytes twice
+  (non-validateOnly, sandbox): observe whether Google returns the existing resource name or
+  a duplicate error. Informative only — G2 no longer branches on the answer (a non-dedupe
+  worst case is one harmless orphaned library asset, never a double-spend), so this is not a
+  G2/G3 gate.
 - **O4 — targetSpend still 200 at current v23.** Re-confirm the campaign create the ad now
   hangs off still validates (guards against a v23 point-release regressing the
   already-verified `demandgen.go` payload).
 
-**Until O1–O3 are green, G2/G3 code is written to this research's best-known shapes but is
-NOT considered launch-verified.** Whoever has account access runs the probes and records
+**Until O1, O2 and O4 are green, G2/G3 code is written to this research's best-known shapes
+but is NOT considered launch-verified.** (O3 is informative, not a gate — see D3.) Whoever has account access runs the probes and records
 results in a dated `docs/knowledge/log/` fragment (per CLAUDE.md), the same way the
 `targetSpend` result is recorded inline in `demandgen.go:134`.
 
@@ -215,7 +240,7 @@ results in a dated `docs/knowledge/log/` fragment (per CLAUDE.md), the same way 
 |----------|-----------|---------|
 | D1 ad type / 3 roles | G1 (`CampaignInput` fields), G3 (builder) | FR-001, FR-002 |
 | D2 asset upload | G2 (`uploadImageAsset`) | FR-003 |
-| D3 idempotency / partials | G2, G3 | FR-007 |
+| D3 idempotency (cache-free, no asset partial) | G2, G3 | FR-007 |
 | D4 required fields / precompute | G3 | FR-004, FR-005, FR-008 |
 | D5 channel gate | G3 (stamp), G5 (gate) | FR-009 |
 | Reuse (no new storage) | G4 (dispatch resolve) | FR-010, FR-011 |
