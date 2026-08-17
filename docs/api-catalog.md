@@ -376,8 +376,10 @@ config — not this campaign config.
 Google Ads per-platform config. The dispatcher creates a PAUSED search campaign with an ad
 group + a Responsive Search Ad (GA-3), then attaches keyword/audience targeting to that ad
 group (GA-4) — without it, the ad group has zero criteria and the campaign can never serve,
-even once a human enables it. **Budget is in whole units of the ad ACCOUNT's currency**, not
-USD — the service does no FX conversion (mirroring `metaConfig`).
+even once a human enables it. That is the default `search` channel; setting `channel:
+demand-gen` instead dispatches a Demand Gen (Display) campaign, whose image creative is
+supplied through the `creative` field below. **Budget is in whole units of the ad ACCOUNT's
+currency**, not USD — the service does no FX conversion (mirroring `metaConfig`).
 
 ```
 budget: number                  — Whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…),
@@ -386,6 +388,11 @@ budget: number                  — Whole units of the account currency (e.g. 25
                                   during dispatch (a pre-create job failure, since CreateCampaigns is
                                   async). Omitting it leaves the shell with no budget, which fails the
                                   platform job asynchronously — supply it explicitly.
+channel?: 'search'|'demand-gen' — OPTIONAL Google Ads channel selector; defaults to `search`. `search`
+                                  dispatches the Responsive Search Ad campaign described by the fields
+                                  above. `demand-gen` dispatches a Demand Gen (Display: YouTube,
+                                  Discover, Gmail) campaign — the only channel on which `creative` below
+                                  is consulted. Values match the Google Ads Campaign Types table above.
 headlines?: string[]            — Optional Responsive Search Ad headlines (≤30 WEIGHTED chars
                                   each, 3-15 after padding). Trimmed, truncated, and de-duplicated;
                                   caller-supplied entries are accepted up to 15 (later entries
@@ -423,6 +430,18 @@ audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTI
                                   `targetingSetting.targetRestrictions` (AUDIENCE, bidOnly) on the ad group
                                   create so these segments stay observation-only rather than Google's
                                   default of restricting delivery to the audience alone.
+creative?: object               — OPTIONAL, Demand Gen only (`channel: demand-gen`); ignored on the
+                                  `search` channel. Carries the single-image Demand Gen ad's assets:
+                                  `mediaFormat` (currently only `single_image`), `businessName`
+                                  (≤25 chars), and three image-asset IDs — one per required aspect-ratio
+                                  role: `marketingImageAssetId` (landscape 1.91:1),
+                                  `squareMarketingImageAssetId` (square 1:1), `logoAssetId` (logo 1:1).
+                                  Each ID must reference a creative asset already uploaded under this
+                                  brief (`POST .../creative-assets`). The Demand Gen image-ad build is
+                                  landing incrementally (LFXV2-2665): the field is accepted and
+                                  shape-validated now, but the ad is not created upstream until the
+                                  creative pipeline lands — until then a `demand-gen` campaign stays a
+                                  paused shell.
 adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When true, the dispatcher first
                                   looks the composed campaign name up on the account and, if a single
                                   live campaign already carries it, ADOPTS that campaign instead of
