@@ -441,10 +441,15 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // this apart from a bad credential. The requirement the rule states is that a half-configured
 // connection is DIAGNOSABLE, not that the API returns a bespoke code for it.
 //
-// LinkedIn, Microsoft, Reddit and X keep Required("account_id"). For them there is still no
-// list to choose from, so relaxing the requirement would create a connection that can never
-// be finished from inside this API: the operator has to obtain the id out-of-band anyway, and
-// the only thing gained is a half-configured row.
+// LinkedIn, Microsoft, Reddit and X keep Required("account_id"), but no longer all for the
+// same reason, and the difference is what tells you how far each is from being relaxed.
+// Reddit and X still have NO list to choose from, so relaxing the requirement would create a
+// connection that can never be finished from inside this API: the operator has to obtain the
+// id out-of-band anyway, and the only thing gained is a half-configured row. LinkedIn and
+// Microsoft DO have a discovery endpoint as of LFXV2-3064 — the list exists — so what blocks
+// them is the other half: LinkedIn's create path does not tag the missing choice (see the
+// paragraph above), and Microsoft is not yet in accountDiscoveryProviders, which is what makes
+// an account-less row installable. Relaxing either without that is what the next rule forbids.
 //
 // Add the requirement back for Google Ads or Meta, or drop it for another provider, only
 // together with that provider's discovery endpoint AND its account_not_selected tagging.

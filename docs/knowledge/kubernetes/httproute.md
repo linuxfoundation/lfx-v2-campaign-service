@@ -33,7 +33,7 @@ sub-path each carries:
   `/accounts`: a HubSpot connection is already scoped to the portal its token
   authenticates against, so there is no account to discover. What the caller picks is
   which marketing email a campaign clones.
-- The remaining four carry neither.
+- Reddit and X carry neither.
 
 Folding these together would admit `/accounts` for hubspot and `/emails` for google-ads,
 neither of which is served — and a path the RuleSet does not rule is a route/rule parity

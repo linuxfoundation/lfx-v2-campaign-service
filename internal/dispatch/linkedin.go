@@ -91,7 +91,16 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
 		return nil, notCreated(fmt.Errorf("decode linkedin credentials: %w", err))
 	}
-	if strings.TrimSpace(creds.AccessToken) == "" {
+	// ASSIGN the trimmed token, do not merely test it. resolveLinkedInCredentials — which the
+	// discovery and toggle paths share — writes the trimmed value back, so testing it here while
+	// sending the raw one makes the two paths disagree about the SAME stored credential: a
+	// whitespace-padded token passes this check, lists accounts successfully through discovery,
+	// and is then sent padded from here for LinkedIn to reject. That is the misleading-discovery
+	// state the shared resolver exists to prevent, reintroduced by testing a value instead of
+	// adopting it. (The padding is refused at bootstrap install time, so this is defence in
+	// depth for rows written before that check or outside it — not a reachable path today.)
+	creds.AccessToken = strings.TrimSpace(creds.AccessToken)
+	if creds.AccessToken == "" {
 		return nil, notCreated(fmt.Errorf("linkedin credentials are incomplete (need accessToken)"))
 	}
 
