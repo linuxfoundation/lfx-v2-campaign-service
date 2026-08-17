@@ -864,9 +864,15 @@ func (c *Container) setPool(pool *postgres.Pool) {
 // ArgoCD PreSync Job, before the rollout. Boot only VERIFIES the schema (required/invalid
 // indexes and the migration version) and fails closed if a constraint-bearing index is missing
 // or invalid, if the schema is older than this binary requires, or if a migration left the row
-// dirty — the guard
-// /readyz relies on — so the previous release is never migrated out from under while it may
-// still be serving. Returns the live pool or an error.
+// dirty — the guard /readyz relies on.
+//
+// Scoped to BOOT deliberately: this says nothing about what the PreSync Job does to a release
+// that is already serving. The Job migrates while the previous ReplicaSet is still up — that is
+// the design, not an accident — and expand/contract authoring is what makes the overlap safe.
+// Stating it as "never migrated out from under" would advertise a guarantee PreSync does not
+// provide, and would read as licence to relax the authoring rule the repo depends on.
+//
+// Returns the live pool or an error.
 func initDatabase(parent context.Context, dsn string) (*postgres.Pool, error) {
 	ctx, cancel := context.WithTimeout(parent, startupDBTimeout)
 	defer cancel()
