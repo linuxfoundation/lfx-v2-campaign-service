@@ -41,4 +41,14 @@ what does happen — the hook completes while the OLD ReplicaSet is still servin
 overlap safe is expand/contract migration authoring, not the ordering. What the ordering genuinely
 buys is failure handling: a failed Job halts the sync with logs and leaves the prior ReplicaSet on
 the old schema, rather than crash-looping a new pod on a half-migrated database. Stating it the
-old way appeared to relax the authoring rule the repo depends on.
+old way appeared to relax the authoring rule the repo depends on. It also now records what the
+new pods do about it: `VerifySchema` refuses an older or dirty schema, so a skipped Job surfaces
+as a pod that will not report ready rather than one querying columns that do not exist.
+
+**Note on the error types.** The first version of the version gate wrapped BOTH the dirty and the
+out-of-date states in `ErrMissingRequiredIndex`, which made the surrounding recovery guidance
+prescribe index-rebuild DDL for two states that rebuild nothing. A dirty row is `migrate.ErrDirty`
+— already classified as permanent, and carrying the force/inspection semantics that are the real
+remedy — and an old schema is now its own `ErrSchemaOutOfDate`, whose remedy is running the Job.
+Three states, three remedies; collapsing them into one sentinel sends an operator to repair the
+wrong thing.

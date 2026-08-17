@@ -216,13 +216,16 @@ func checkSchemaVersion(dsn string) error {
 	if err := conn.QueryRow(ctx, `SELECT version, dirty FROM schema_migrations`).Scan(&version, &dirty); err != nil {
 		// No table means no migration has ever run against this database — the same
 		// unusable state as an out-of-date one, and permanent until someone migrates.
-		return fmt.Errorf("%w: cannot read schema_migrations: %w", ErrMissingRequiredIndex, err)
+		return fmt.Errorf("%w: cannot read schema_migrations: %w", ErrSchemaOutOfDate, err)
 	}
 	if dirty {
-		return fmt.Errorf("%w: schema_migrations is dirty at version %d; a migration failed partway and the schema matches no release", ErrMissingRequiredIndex, version)
+		// migrate.ErrDirty, not an index sentinel. IsPermanentMigrationErr already classifies it,
+		// and it carries the force/inspection semantics that are the actual remedy — telling an
+		// operator to rebuild an index here would send them to repair the wrong thing.
+		return migrate.ErrDirty{Version: int(version)}
 	}
 	if uint64(version) < want {
-		return fmt.Errorf("%w: database is at migration %d but this binary requires at least %d; run the migrate Job before serving", ErrMissingRequiredIndex, version, want)
+		return fmt.Errorf("%w: database is at migration %d but this binary requires at least %d; run the migrate Job before serving", ErrSchemaOutOfDate, version, want)
 	}
 	return nil
 }
@@ -281,6 +284,13 @@ var ErrInvalidIndex = errors.New("schema carries an INVALID index")
 // ErrInvalidIndex, done halfway, produces exactly this state.
 var ErrMissingRequiredIndex = errors.New("schema is missing an index it relies on for correctness")
 
+// ErrSchemaOutOfDate reports that the database is at an older migration version than this binary
+// requires. PERMANENT: waiting does not migrate anything, and the remedy is running the migrate
+// Job — NOT the index-rebuild DDL the index sentinels prescribe. Kept distinct for exactly that
+// reason: a caller that renders a recovery instruction must not tell an operator to rebuild an
+// index when the schema simply has not been migrated.
+var ErrSchemaOutOfDate = errors.New("database schema is older than this binary requires")
+
 // ErrRequiredIndexMismatch reports an index that carries a required index's NAME while
 // enforcing something else — non-unique, different keys, different predicate, different
 // table. It is a separate sentinel from ErrMissingRequiredIndex because the recovery is
@@ -323,6 +333,9 @@ const invalidIndexQuery = `SELECT c.relname
 // at boot `VerifySchema` runs it with no migration at all): a pod that
 // starts against a schema whose lease index is invalid must refuse rather than quietly
 // accept the duplicate builds the index was added to prevent.
+// checkNoInvalidIndexes is ONE PART of the boot-time gate, not the whole of it. VerifySchema
+// also runs checkSchemaVersion, which rejects a dirty migration row and a version older than the
+// latest embedded migration — states no index check can see.
 func checkNoInvalidIndexes(dsn string) error {
 	// This is a single catalog read (no migration is applied on the boot path). It runs
 	// against a reachable database, so a short independent deadline covers a connect plus
@@ -849,6 +862,7 @@ func IsPermanentMigrationErr(err error) bool {
 	return errors.As(err, &dirty) ||
 		errors.Is(err, ErrInvalidIndex) ||
 		errors.Is(err, ErrMissingRequiredIndex) ||
+		errors.Is(err, ErrSchemaOutOfDate) ||
 		errors.Is(err, ErrRequiredIndexMismatch)
 }
 

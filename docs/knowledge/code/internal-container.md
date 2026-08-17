@@ -63,8 +63,17 @@ dependency is still coming up.
 VERIFIES the schema (`postgres.VerifySchema`) — it no longer migrates. Schema MUTATION moved
 into the `migrate` subcommand, run as an ArgoCD PreSync Job before the rollout (see the
 *Migrate Job* concept), so boot only reads the catalog to confirm the schema is one this
-binary can serve: the required constraint-bearing indexes are present and valid, and no
-index is INVALID.
+binary can serve. Three states are rejected, and their remedies differ:
+
+- an index this binary relies on is missing or INVALID — rebuild DDL;
+- the schema is OLDER than the latest embedded migration — run the migrate Job;
+- `schema_migrations` is DIRTY, meaning a migration failed partway and the schema matches no
+  release — inspect and repair the migration state.
+
+Documenting all three as index drift would send an operator down the wrong recovery path, which
+is why the error carries the state and the log defers to it. A NEWER schema is accepted
+deliberately: during a rollout the Job has already run while the previous release is still
+serving, and expand/contract means the older binary works against it.
 
 `VerifySchema` is a bounded, read-only, idempotent catalog read, so — unlike the old
 migration path — overlapping boot retries are harmless and no serialization (`migrateMu` is

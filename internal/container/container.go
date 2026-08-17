@@ -337,8 +337,9 @@ func NewContainer(cfg *config.Config) (container *Container, err error) {
 		return c, nil
 	case postgres.IsPermanentMigrationErr(initErr):
 		// A schema the pod cannot serve against — a missing or invalid constraint-bearing
-		// index (migrations run in the PreSync Job now, so boot only VERIFIES) — can NEVER
-		// be cleared by retrying; it needs an operator to run the rebuild DDL the error
+		// index, an out-of-date schema, or a dirty migration row (migrations run in the PreSync
+		// Job now, so boot only VERIFIES) — can NEVER be cleared by retrying; it needs the
+		// state-specific recovery the nested error
 		// carries. Fail fast so the failure is loud (pod crash) rather than a silent 503
 		// loop that burns the startup-probe budget and then restarts to the same state.
 		return nil, fmt.Errorf("database schema is in a permanent-failure state (needs manual recovery): %w", initErr)
@@ -830,8 +831,10 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 		// A permanent schema-verification failure (a missing or invalid required index)
 		// will never clear by retrying, so stop the loop and surface it loudly. /readyz
 		// stays at 503 with no live pool, but the ERROR log makes the reason unambiguous
-		// instead of an endless silent "will retry" stream — an operator must run the
-		// rebuild DDL the error carries.
+		// instead of an endless silent "will retry" stream. The REMEDY is state-specific and
+		// carried by the nested error, not fixed: an out-of-date schema needs the migrate Job, a
+		// dirty one needs migration-state inspection, and only index drift needs rebuild DDL.
+		// Prescribing one of the three here would send an operator to repair the wrong thing.
 		if postgres.IsPermanentMigrationErr(err) {
 			slog.Error("background database initialization hit a permanent schema-verification failure (needs manual recovery); stopping retries",
 				"attempt", attempt, "error", err.Error())
@@ -859,7 +862,9 @@ func (c *Container) setPool(pool *postgres.Pool) {
 // initDatabase verifies the schema and opens the pool within a single bounded attempt.
 // Schema MUTATION no longer happens here: migrations run in the `migrate` subcommand as an
 // ArgoCD PreSync Job, before the rollout. Boot only VERIFIES the schema (required/invalid
-// indexes) and fails closed if a constraint-bearing index is missing or invalid — the guard
+// indexes and the migration version) and fails closed if a constraint-bearing index is missing
+// or invalid, if the schema is older than this binary requires, or if a migration left the row
+// dirty — the guard
 // /readyz relies on — so the previous release is never migrated out from under while it may
 // still be serving. Returns the live pool or an error.
 func initDatabase(parent context.Context, dsn string) (*postgres.Pool, error) {

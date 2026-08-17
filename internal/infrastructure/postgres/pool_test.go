@@ -105,6 +105,13 @@ func TestIsPermanentMigrationErr(t *testing.T) {
 	if !IsPermanentMigrationErr(dirty) {
 		t.Error("a wrapped migrate.ErrDirty must be classified permanent")
 	}
+	// An out-of-date schema is permanent for the same reason and a DIFFERENT remedy: no amount
+	// of retrying migrates anything, and the fix is running the migrate Job. Unclassified, boot
+	// would retry forever against a database that will never catch up on its own.
+	stale := fmt.Errorf("verify schema: %w", ErrSchemaOutOfDate)
+	if !IsPermanentMigrationErr(stale) {
+		t.Error("a wrapped ErrSchemaOutOfDate must be classified permanent")
+	}
 	// Connectivity / deadline / generic errors are NOT permanent (they should retry).
 	for _, transient := range []error{
 		errors.New("dial tcp: connection refused"),

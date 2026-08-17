@@ -52,15 +52,20 @@ spec:
         app.kubernetes.io/component: migrate
     spec:
       restartPolicy: Never
-      # Only an EXPLICITLY NAMED account is referenced here. A chart-created ServiceAccount
-      # carries no hook annotation, so ArgoCD applies it in the ordinary Sync wave — AFTER this
-      # PreSync hook. Naming it would make the hook pod reference an account that does not exist
-      # yet, and a first install would fail before any other resource applied. An externally
-      # managed account (serviceAccount.name) already exists, so referencing that is safe.
+      # Referenced ONLY when this chart does not create the account. serviceaccount.yaml carries
+      # no hook annotation, so ArgoCD applies it in the ordinary Sync wave — AFTER this PreSync
+      # hook — and the hook pod would reference an account that does not exist yet, failing a
+      # first install before any other resource applied.
+      #
+      # The condition is `not create`, NOT `name`. values.yaml explicitly supports create:true
+      # WITH a custom name, and serviceaccount.yaml honours it (`name | default .Chart.Name`), so
+      # a set name does not imply the account already exists — it is chart-created in that case
+      # and has the same ordering problem. Only create:false means an externally managed account
+      # that predates the sync.
       #
       # Falling back to the default account costs nothing: this Job talks only to PostgreSQL and
       # makes no Kubernetes API calls, so it needs no bound identity.
-      {{- if .Values.serviceAccount.name }}
+      {{- if and (not .Values.serviceAccount.create) .Values.serviceAccount.name }}
       serviceAccountName: {{ .Values.serviceAccount.name }}
       {{- end }}
       containers:

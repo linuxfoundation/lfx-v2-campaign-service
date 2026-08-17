@@ -31,6 +31,11 @@ import (
 // What the ordering genuinely buys is FAILURE HANDLING. A failure here fails the Job with
 // logs and halts the sync, leaving the prior ReplicaSet serving on the old schema, rather
 // than crash-looping a new pod on a half-migrated database.
+//
+// The new pods then VERIFY rather than trust that: postgres.VerifySchema refuses to serve
+// against a schema older than this binary requires, or one whose migration row is dirty. So a
+// skipped or partially-applied Job surfaces as a pod that will not report ready, not as a pod
+// serving queries against columns that do not exist.
 const migrateCmd = "migrate"
 
 // runMigrate applies every pending migration. args is the subcommand's own arguments
