@@ -2749,6 +2749,15 @@ func TestFindMatch_NameDelimitersSurviveTheWire(t *testing.T) {
 		"C# Conf",                                                               // # — would start a fragment
 		"Events | KubeCon, Inc. (26)" /* Rest.li structural chars */, "50% Off", // % — must not double-encode
 		"日本語 イベント", // non-ASCII must not reach the wire raw
+		// A LITERAL plus. Correctness here depends on ORDER: url.QueryEscape runs first
+		// and turns a real "+" into %2B, and only then does ReplaceAll rewrite the
+		// space-derived "+" to %20. Reversing those two steps (or switching to
+		// url.PathEscape, which leaves "+" alone) would send a bare "+" — which the
+		// Rest.li parser reads as a LITERAL plus and rejects with 400 PARAM_INVALID
+		// (see restliEncode's doc, verified live at LinkedIn-Version 202602), aborting
+		// find-or-create rather than returning a clean miss. Nothing else in this table
+		// has a literal "+".
+		"AI + ML Summit",
 	} {
 		t.Run(name, func(t *testing.T) {
 			var mu sync.Mutex
