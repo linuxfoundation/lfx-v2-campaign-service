@@ -418,12 +418,14 @@ keywords?: {text, matchType}[]  — OPTIONAL positive Search keyword criteria (G
                                   made. Left empty/omitted, the ad group has no criteria and can never
                                   serve — supply at least one for a campaign that should actually run.
 audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTING audiences to attach
-                                  to the ad group (GA-4) as observation-only criteria — bid/report on
-                                  the segment without narrowing delivery to it. This client does not
+                                  to the SEARCH ad group (GA-4, `search` channel only) as observation-only
+                                  criteria — bid/report on the segment without narrowing delivery to
+                                  it. This client does not
                                   create audiences; each entry must be a Customer Match user list
                                   (`.../userLists/{id}`) the caller already built elsewhere. Custom
-                                  audiences are not supported (limited to Display/Demand Gen/Gmail/Video/
-                                  Performance Max by Google; this client creates SEARCH campaigns only).
+                                  audiences are not supported here (Google limits them to Display/Demand
+                                  Gen/Gmail/Video/Performance Max); audienceSegments attaches only to the
+                                  SEARCH ad group (the `search` channel), which does not support them.
                                   Any other resource-name shape (customAudiences, userInterest,
                                   combinedAudience, etc.) is rejected. At most 20 entries; duplicates are
                                   deduped. When non-empty, the client sets the ad group's
