@@ -67,8 +67,14 @@ X still lack discovery, and LinkedIn — which gained a discovery endpoint in th
 the one provider missing the OTHER half. `resolveLinkedInCredentials` does tag a missing account
 with `domain.ErrAccountNotSelected`, but `LinkedInDispatcher.Dispatch` does not call it; the create
 path resolves inline and returns a bare `notCreated`, so the missing choice is never named.
-Microsoft, Reddit and X all tag it on a path create actually reaches. Either way an account-less row for them stays a dead row and the map
-keeps them out — see the comment on the map itself for the full reasoning. On a ROTATION the same omission means KEEP, because a rotation should not have to
+Microsoft, Reddit and X all tag it on a path create actually reaches. For Reddit, X and LinkedIn an
+account-less row would stay a DEAD row, which is why the map keeps them out. Microsoft is the
+exception and the distinction is worth keeping: it has both halves, so its absence from the map is
+a SEQUENCING decision rather than a missing capability — admitting it changes what the CLI accepts
+and belongs in its own change. Note also that this map is a different gate from
+`design/connection.go`'s `Required("account_id")`, which governs the public connection APIs; a
+provider can be behaviourally eligible for one and not yet admitted to the other. See the comment
+on the map itself for the full reasoning. On a ROTATION the same omission means KEEP, because a rotation should not have to
 restate the whole row.
 
 Preserve-by-default cannot express a removal, and this scope has no other writer that could —

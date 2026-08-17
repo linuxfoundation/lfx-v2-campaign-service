@@ -98,7 +98,10 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	// and is then sent padded from here for LinkedIn to reject. That is the misleading-discovery
 	// state the shared resolver exists to prevent, reintroduced by testing a value instead of
 	// adopting it. (The padding is refused at bootstrap install time, so this is defence in
-	// depth for rows written before that check or outside it — not a reachable path today.)
+	// depth. The bootstrap installer refuses padded values, but that is NOT the only writer: the
+	// public create-connection and set-credential APIs reach `credentialJSON`, which marshals and
+	// encrypts without trimming, so a padded token is persistable through supported input today.
+	// An earlier version of this comment called the path unreachable; it is not.)
 	creds.AccessToken = strings.TrimSpace(creds.AccessToken)
 	if creds.AccessToken == "" {
 		return nil, notCreated(fmt.Errorf("linkedin credentials are incomplete (need accessToken)"))

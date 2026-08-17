@@ -270,10 +270,13 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 //     ErrAccountNotSelected, but LinkedInDispatcher.Dispatch does not call it — it validates
 //     inline and answers an empty account id with a bare notCreated, so the create path names
 //     nothing. Routing Dispatch through the shared resolver is what would earn it a place.
-//   - Microsoft has BOTH. validateMicrosoftConnection is called by Dispatch itself and tags the
-//     missing choice, and discovery landed with this ticket. It is eligible and deliberately
-//     NOT added yet: that is a change to what this CLI accepts and belongs in its own commit
-//     rather than riding along with the endpoints.
+//   - Microsoft has BOTH halves. validateMicrosoftConnection is called by Dispatch itself and
+//     tags the missing choice, and discovery landed with this ticket. Its absence from this map
+//     is therefore a SEQUENCING decision, not a missing capability — adding it changes what this
+//     CLI accepts and belongs in its own commit rather than riding along with the endpoints.
+//     Note this map is a DIFFERENT gate from design/connection.go's Required("account_id"),
+//     which governs the public connection APIs; a provider can be eligible for one and not yet
+//     admitted to the other, which is exactly Microsoft's position.
 //
 // Stating which half is missing matters because the halves are earned separately, and an
 // enumeration of members goes stale silently — this comment described a Google/Meta-only world

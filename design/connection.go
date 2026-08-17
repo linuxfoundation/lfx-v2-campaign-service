@@ -446,10 +446,20 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // Reddit and X still have NO list to choose from, so relaxing the requirement would create a
 // connection that can never be finished from inside this API: the operator has to obtain the
 // id out-of-band anyway, and the only thing gained is a half-configured row. LinkedIn and
-// Microsoft DO have a discovery endpoint as of LFXV2-3064 — the list exists — so what blocks
-// them is the other half: LinkedIn's create path does not tag the missing choice (see the
-// paragraph above), and Microsoft is not yet in accountDiscoveryProviders, which is what makes
-// an account-less row installable. Relaxing either without that is what the next rule forbids.
+// Microsoft DO have a discovery endpoint as of LFXV2-3064 — the list exists. What blocks each
+// differs, and two independent gates are easy to conflate here:
+//
+//   - THIS Required("account_id") gates the PUBLIC connection APIs. LinkedIn stays required
+//     because it lacks the second half — its create path resolves inline and answers a missing
+//     account id with a bare notCreated, so the choice is never named (paragraph above).
+//     Microsoft has both halves and is therefore behaviourally eligible to have it relaxed.
+//   - accountDiscoveryProviders (internal/bootstrap/sysacct.go) gates only whether an
+//     account-less SYSTEM row is installable by the bootstrap CLI. Microsoft is deliberately
+//     not in it yet — that is a change to what the CLI accepts and belongs in its own commit.
+//
+// So Microsoft's exclusion here is a sequencing decision, not a missing capability; an earlier
+// version of this comment named the bootstrap map as its "other half", which contradicted the
+// paragraph above. Relaxing either gate without both halves is what the next rule forbids.
 //
 // Add the requirement back for Google Ads or Meta, or drop it for another provider, only
 // together with that provider's discovery endpoint AND its account_not_selected tagging.
