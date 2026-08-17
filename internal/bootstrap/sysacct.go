@@ -258,6 +258,26 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // the Google Ads case, and someone weighing the next provider should weigh the real one.
 //
 // The bar for adding a provider here is those two halves together, not either alone.
+//
+// CURRENT STATE after LFXV2-3064, which added the LinkedIn and Microsoft discovery endpoints —
+// the four excluded providers are no longer excluded for the same reason, and the difference is
+// what tells you how far each is from qualifying:
+//
+//   - Reddit and X lack the FIRST half. Neither platform client has a ListAdAccounts, so no
+//     discovery endpoint exists and nothing inside this API could tell an operator what to put
+//     in the account id.
+//   - LinkedIn has discovery but lacks the SECOND. resolveLinkedInCredentials tags
+//     ErrAccountNotSelected, but LinkedInDispatcher.Dispatch does not call it — it validates
+//     inline and answers an empty account id with a bare notCreated, so the create path names
+//     nothing. Routing Dispatch through the shared resolver is what would earn it a place.
+//   - Microsoft has BOTH. validateMicrosoftConnection is called by Dispatch itself and tags the
+//     missing choice, and discovery landed with this ticket. It is eligible and deliberately
+//     NOT added yet: that is a change to what this CLI accepts and belongs in its own commit
+//     rather than riding along with the endpoints.
+//
+// Stating which half is missing matters because the halves are earned separately, and an
+// enumeration of members goes stale silently — this comment described a Google/Meta-only world
+// for two tickets after that stopped being true.
 var accountDiscoveryProviders = map[model.Provider]bool{
 	model.ProviderGoogleAds: true,
 	model.ProviderMetaAds:   true,

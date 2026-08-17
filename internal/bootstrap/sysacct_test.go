@@ -507,12 +507,14 @@ func TestRotationRefusesWhenTheRowMovedUnderIt(t *testing.T) {
 // out. LinkedIn and Microsoft gained it in LFXV2-3064, so what excludes them now is the other
 // half: LinkedIn answers an empty account id with a generic failure rather than tagging it, and
 // Microsoft is simply not yet added to the map. Microsoft, Reddit and X do tag theirs with
-// domain.ErrAccountNotSelected. So an account-less LinkedIn system row installs,
-// reports success, and then fails every dispatch with nothing an operator can do to complete it;
-// for the other three the failure at least names the missing choice, and there is still no
-// endpoint that could tell the operator what to put there. That is the same installable-and-dead shape
-// requiredConfigKeys already guards, applied to the one column that is not part of
-// ProviderConfig.
+// domain.ErrAccountNotSelected. All four are REFUSED here — which is what the cases below
+// assert, and the reason the refusal exists differs per provider: for Reddit and X an
+// account-less row would be permanently dead, because no endpoint could tell the operator what
+// to put there; for LinkedIn the endpoint now exists but its create path names nothing, so the
+// operator is told a campaign failed without being told what to supply; Microsoft alone is
+// refused for neither reason — it qualifies and is simply not added yet, which is a deliberate
+// separate change. That is the same installable-and-dead shape requiredConfigKeys already
+// guards, applied to the one column that is not part of ProviderConfig.
 //
 // Meta is asserted as an ALLOWED case, not a refused one, and it is the case that keeps this
 // test honest about the rule: it has had discovery since LFXV2-3062 and was still refused here

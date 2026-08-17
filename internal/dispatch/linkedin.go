@@ -329,11 +329,18 @@ func (d *LinkedInDispatcher) resolveLinkedInCredentials(ctx context.Context, pro
 // Meta's discovery path draws the same distinction for the same reason; see
 // resolveMetaDiscoveryClient.
 //
-// Every OTHER check is shared with the dispatch path by calling through to it and treating
-// only the account-not-selected outcome as acceptable. Duplicating the status/decode/token
-// validation instead would let the two drift, so a credential rejected at dispatch could be
-// accepted here — which is the failure mode that makes a discovery endpoint actively
-// misleading rather than merely permissive.
+// Every OTHER check is shared with the TOGGLE and METRICS paths by calling through to
+// resolveLinkedInCredentials and treating only the account-not-selected outcome as acceptable.
+// Duplicating the status/decode/token validation instead would let those drift, so a credential
+// rejected at toggle could be accepted here — the failure mode that makes a discovery endpoint
+// actively misleading rather than merely permissive.
+//
+// NOT shared with Dispatch, and the distinction is worth stating precisely because an earlier
+// version of this comment claimed it was. Dispatch calls d.creds.resolve directly and validates
+// inline (see its own block above), so the two CAN drift — and did: Dispatch was sending an
+// untrimmed access token while this resolver trimmed it, which is why a padded credential listed
+// accounts here and failed on create. That is fixed, but by a regression test rather than by
+// shared code, so the invariant this comment may claim is the narrower one.
 func (d *LinkedInDispatcher) resolveLinkedInDiscoveryCredentials(ctx context.Context, projectID string, platform model.Provider) (linkedinCreds, error) {
 	_, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform)
 	switch {

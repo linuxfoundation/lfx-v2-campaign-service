@@ -18,11 +18,22 @@ account-less connection it is meant to rescue is exactly the one it would refuse
 Meta's discovery path already drew that distinction; both new paths follow it.
 
 Rather than duplicate the status / decode / completeness checks, each discovery
-path calls the DISPATCH resolver and tolerates exactly one error —
+path calls a SHARED resolver and tolerates exactly one error —
 `ErrAccountNotSelected` — propagating every other sentinel intact. Duplicating
-the validation would let the two drift, so a credential rejected at dispatch
-could be accepted here, which makes a discovery endpoint actively misleading
-rather than merely permissive. Both resolvers now return the validated credential
+the validation would let the paths drift, so a credential rejected on one could
+be accepted here, which makes a discovery endpoint actively misleading rather
+than merely permissive.
+
+**How much that shares differs by provider, and the difference is load-bearing.**
+Microsoft's `validateMicrosoftConnection` is called by `Dispatch` ITSELF, so
+discovery and create genuinely cannot diverge. LinkedIn's
+`resolveLinkedInCredentials` is shared by TOGGLE, METRICS and discovery —
+`Dispatch` validates inline and does not call it. So for LinkedIn the invariant
+is narrower than "cannot drift", and it has already drifted once in practice:
+`Dispatch` sent an untrimmed access token while the resolver trimmed it, so a
+padded credential listed accounts successfully and failed on create. That is
+fixed by a regression test rather than by shared code, which is the weaker
+guarantee and should be recorded as such. Both resolvers now return the validated credential
 ALONGSIDE the account-not-selected error so the discovery path can reuse it; every
 dispatch caller checks `err` first and cannot observe the value.
 
