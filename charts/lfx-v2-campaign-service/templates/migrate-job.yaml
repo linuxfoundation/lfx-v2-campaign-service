@@ -52,8 +52,16 @@ spec:
         app.kubernetes.io/component: migrate
     spec:
       restartPolicy: Never
-      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
-      serviceAccountName: {{ .Values.serviceAccount.name | default .Chart.Name }}
+      # Only an EXPLICITLY NAMED account is referenced here. A chart-created ServiceAccount
+      # carries no hook annotation, so ArgoCD applies it in the ordinary Sync wave — AFTER this
+      # PreSync hook. Naming it would make the hook pod reference an account that does not exist
+      # yet, and a first install would fail before any other resource applied. An externally
+      # managed account (serviceAccount.name) already exists, so referencing that is safe.
+      #
+      # Falling back to the default account costs nothing: this Job talks only to PostgreSQL and
+      # makes no Kubernetes API calls, so it needs no bound identity.
+      {{- if .Values.serviceAccount.name }}
+      serviceAccountName: {{ .Values.serviceAccount.name }}
       {{- end }}
       containers:
         - name: migrate
@@ -64,7 +72,17 @@ spec:
           # Run the migrate subcommand of the serving image (same binary as the Deployment).
           args: ["migrate"]
           env:
+          # DATABASE SETTINGS ONLY. The serving environment carries credentials this Job has no
+          # use for — CREDENTIAL_ENCRYPTION_KEY, SNOWFLAKE_PRIVATE_KEY, AI_API_KEY,
+          # INDEXER_SERVICE_TOKEN — and ranging over all of app.environment handed every one of
+          # them to a one-shot pod that only talks to PostgreSQL. Least privilege is the point:
+          # a migration Job is a smaller blast radius than the Deployment precisely because it
+          # should hold less.
+          #
+          # An ALLOW-LIST, not a deny-list. A deny-list is falsified by the next secret added to
+          # values.yaml, silently — the new key would flow here with nothing failing to say so.
           {{- range $name, $config := .Values.app.environment }}
+          {{- if or (eq $name "DATABASE_URL") (hasPrefix "PG" $name) }}
           - name: {{ $name }}
             {{- if hasKey $config "value" }}
             value: {{ $config.value | quote }}
@@ -73,8 +91,13 @@ spec:
               {{- toYaml $config.valueFrom | nindent 14 }}
             {{- end }}
           {{- end }}
-          {{- with .Values.app.extraEnv }}
-          {{- toYaml . | nindent 10 }}
+          {{- end }}
+          # extraEnv is the SECOND route the serving environment reaches this pod, and filtering
+          # only the first would leave the hole open. Same allow-list, applied per entry.
+          {{- range .Values.app.extraEnv }}
+          {{- if or (eq .name "DATABASE_URL") (hasPrefix "PG" .name) }}
+          - {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- end }}
           {{- with .Values.migrateJob.resources }}
           resources:

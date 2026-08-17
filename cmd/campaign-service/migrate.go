@@ -18,10 +18,19 @@ import (
 // a separate artifact.
 //
 // It is the single writer of schema. The server no longer migrates at boot (it only
-// VERIFIES the schema via postgres.VerifySchema), so running this Job to completion BEFORE
-// the Deployment rolls is what keeps the previous release from being migrated out from
-// under. A failure here fails the Job — with logs — and halts the sync, leaving the prior
-// ReplicaSet serving, rather than crash-looping a new pod.
+// VERIFIES the schema via postgres.VerifySchema).
+//
+// Be precise about what the PreSync ordering does and does not buy, because the intuitive
+// reading is backwards. Running before the Deployment rolls does NOT protect the previous
+// release from being migrated out from under it — that is exactly what happens: the hook
+// completes while the OLD ReplicaSet is still serving, so the prior release runs against the
+// NEW schema for the length of the rollout. What makes that overlap safe is that migrations
+// are expand/contract — additive and backward-compatible with the release before them — which
+// is the authoring rule this comment must not appear to relax.
+//
+// What the ordering genuinely buys is FAILURE HANDLING. A failure here fails the Job with
+// logs and halts the sync, leaving the prior ReplicaSet serving on the old schema, rather
+// than crash-looping a new pod on a half-migrated database.
 const migrateCmd = "migrate"
 
 // runMigrate applies every pending migration. args is the subcommand's own arguments

@@ -170,7 +170,92 @@ func Migrate(dsn string) error {
 // ErrMissingRequiredIndex, ErrRequiredIndexMismatch), so IsPermanentMigrationErr classifies
 // a verification failure exactly as it classified the post-migration check.
 func VerifySchema(dsn string) error {
+	if err := checkSchemaVersion(dsn); err != nil {
+		return err
+	}
 	return checkNoInvalidIndexes(dsn)
+}
+
+// checkSchemaVersion refuses to report ready against a database this binary would query
+// incorrectly.
+//
+// The index check alone cannot catch this. A database at an OLDER version can carry every
+// index this code requires and still lack a column it selects — migration 000025 adds
+// `conversion_pixel_id` for Reddit connections, so a v24 database passes every index
+// assertion and then errors on the first Reddit query. /readyz would report healthy while
+// requests fail, which is the readiness signal lying about the thing it exists to gate.
+//
+// Reachable without a broken deployment: a selective sync that skips the PreSync hook, a
+// restore from an older snapshot, or a restart after a migration failed partway.
+//
+// A DIRTY row fails too. golang-migrate sets it when a migration errored mid-flight, so the
+// schema is in neither the old shape nor the new one and no version number describes it.
+//
+// A NEWER database is accepted deliberately: during a rollout the migration has already run
+// while the previous release is still serving, and expand/contract guarantees the older
+// binary still works against the newer schema. Refusing it would fail every old pod the
+// moment the hook completed.
+func checkSchemaVersion(dsn string) error {
+	want, err := latestMigrationVersion()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), invalidIndexCheckTimeout)
+	defer cancel()
+
+	conn, err := pgxv5.Connect(ctx, dsn)
+	if err != nil {
+		// Connectivity, not a schema verdict — left retryable, matching checkNoInvalidIndexes.
+		return fmt.Errorf("connect for schema version check: %w", err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	var version uint32
+	var dirty bool
+	if err := conn.QueryRow(ctx, `SELECT version, dirty FROM schema_migrations`).Scan(&version, &dirty); err != nil {
+		// No table means no migration has ever run against this database — the same
+		// unusable state as an out-of-date one, and permanent until someone migrates.
+		return fmt.Errorf("%w: cannot read schema_migrations: %w", ErrMissingRequiredIndex, err)
+	}
+	if dirty {
+		return fmt.Errorf("%w: schema_migrations is dirty at version %d; a migration failed partway and the schema matches no release", ErrMissingRequiredIndex, version)
+	}
+	if uint64(version) < want {
+		return fmt.Errorf("%w: database is at migration %d but this binary requires at least %d; run the migrate Job before serving", ErrMissingRequiredIndex, version, want)
+	}
+	return nil
+}
+
+// latestMigrationVersion is the highest version among the EMBEDDED migrations — derived, not
+// hardcoded, so adding a migration cannot leave this check pinned to a stale number.
+func latestMigrationVersion() (uint64, error) {
+	entries, err := migrations.FS.ReadDir(".")
+	if err != nil {
+		return 0, fmt.Errorf("read embedded migrations: %w", err)
+	}
+	var highest uint64
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".up.sql") {
+			continue
+		}
+		idx := strings.IndexByte(name, '_')
+		if idx <= 0 {
+			continue
+		}
+		v, perr := strconv.ParseUint(name[:idx], 10, 64)
+		if perr != nil {
+			continue
+		}
+		if v > highest {
+			highest = v
+		}
+	}
+	if highest == 0 {
+		return 0, fmt.Errorf("no numbered migrations found in the embedded filesystem")
+	}
+	return highest, nil
 }
 
 // invalidIndexCheckTimeout bounds the catalog read that follows a migration (in `Migrate`)

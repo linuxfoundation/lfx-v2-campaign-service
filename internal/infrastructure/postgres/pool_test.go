@@ -415,3 +415,44 @@ func TestExecutableSQL(t *testing.T) {
 		"000009 executes no unconditional CREATE INDEX; every one it contains is prose or "+
 			"inside the DO block")
 }
+
+// TestLatestMigrationVersionTracksTheEmbeddedFiles pins that the expected schema version is
+// DERIVED rather than hardcoded.
+//
+// The failure this prevents is silent: a hardcoded constant left behind by the next migration
+// would make VerifySchema accept a database one version stale, which is the exact state it
+// exists to refuse. Deriving it means adding a migration updates the requirement automatically.
+func TestLatestMigrationVersionTracksTheEmbeddedFiles(t *testing.T) {
+	got, err := latestMigrationVersion()
+	if err != nil {
+		t.Fatalf("latestMigrationVersion: %v", err)
+	}
+
+	// Recomputed here from the same source, independently of the implementation's parsing, so
+	// this fails if either the files or the parser drift.
+	entries, err := migrations.FS.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read embedded migrations: %v", err)
+	}
+	var want uint64
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".up.sql") {
+			continue
+		}
+		var v uint64
+		if _, serr := fmt.Sscanf(name, "%06d_", &v); serr != nil {
+			continue
+		}
+		if v > want {
+			want = v
+		}
+	}
+
+	if want == 0 {
+		t.Fatal("no numbered .up.sql migrations found — the test's own premise is broken")
+	}
+	if got != want {
+		t.Errorf("latestMigrationVersion() = %d, want %d (highest embedded .up.sql)", got, want)
+	}
+}
