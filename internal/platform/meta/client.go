@@ -2270,7 +2270,7 @@ type CampaignInput struct {
 
 // AdResult is one successfully-created ad's identifiers, recorded per variant. ImageHash is the
 // account-scoped hash of the single image attached to this ad's creative (empty for a link-only
-// creative). It is what lets a reconcile pass (LFXV2-2665) tell which uploaded asset backs a live
+// creative). It is what lets a reconcile pass (LFXV2-3295) tell which uploaded asset backs a live
 // ad without re-deriving it, and it round-trips through the persisted Result blob (metaAdSetID
 // reads that blob back as a CampaignResult). No json tags, matching CampaignResult's fields, so
 // the marshaled keys stay the Go field names on both the write (campaignFromMeta) and read sides.

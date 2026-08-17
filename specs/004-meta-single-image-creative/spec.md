@@ -182,5 +182,5 @@ not a launch blocker, so it ranks below correctness of the happy path.
 - Existing-post promotion (`object_story_id`) and collection ads.
 - Real audience targeting beyond the current geo-country + placement targeting (interests,
   custom audiences, lookalikes).
-- Meta instant lead forms / `LEAD_GENERATION` parity (LFXV2-2665).
+- Meta instant lead forms / `LEAD_GENERATION` parity (deferred; not yet ticketed).
 - Auto-activation and the front-end toggle + confirmation UI (`lfx-self-serve`).
