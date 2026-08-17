@@ -147,6 +147,19 @@ Google platform client and its dispatcher.
 - Extend `CreateDemandGenCampaign`: after the ad group commits, when a creative reference is
   present, upload the image asset (G2), build the ad, and `adGroupAds:mutate` it `PAUSED`.
   When absent, keep today's shell close-out step verbatim (backward compatible).
+- **Stamp the campaign channel on the result.** `CampaignResult` gains an explicit
+  `Channel` field (values `search` / `demand_gen`), stamped at create by BOTH paths —
+  `CreateDemandGenCampaign` writes `demand_gen`, the Search `CreateCampaign` writes `search`.
+  This mirrors the existing `CustomerID` field, which is stamped on every result (including
+  partials) precisely so a later toggle can make a decision the id alone can't support. The
+  activation gate (G5) reads this field rather than inferring the channel from the presence of
+  keyword criteria vs. asset resource names — inference is fragile (a Search campaign
+  legitimately has zero keywords mid-provisioning; a future Demand Gen format may carry
+  neither today's shapes) and an activation decision on a paid campaign must not rest on it.
+  It is stamped on partials too, so a reconcile/toggle of an ambiguously-created campaign
+  still knows its channel. A result predating the field (empty `Channel`) falls back to the
+  current keyword-criterion check, exactly as the `CustomerID` account-mismatch guard skips
+  when the id is absent on an older row.
 - Validate ALL ad input (business name, logo resolvable, ≥1 marketing image, final URL) in a
   `precompute`-style step BEFORE the budget mutate (FR-008), mirroring the Search path's
   `precomputeAdGroupAdInputs`.
@@ -165,11 +178,15 @@ Google platform client and its dispatcher.
 ### G5 — Channel-aware ACTIVATE gate (`internal/dispatch/googleads.go`)
 - Today `ToggleStatus` refuses ACTIVATE unless GA-4 persisted ≥1 **keyword** criterion — a
   Search-only condition that would wrongly refuse a fully-provisioned Demand Gen campaign.
-- Make the gate channel-aware: for a Demand Gen campaign, "provisioned" = a Demand Gen ad
-  with its required assets exists (recovered from the `result` blob, like `googleAdsChildIDs`);
-  the keyword condition stays for Search. An unprovisioned Demand Gen campaign is still refused
-  with `ErrCampaignNotProvisioned` (409, Google never contacted). ACTIVATE still cascades
-  children-first.
+- Make the gate channel-aware, keyed on the explicit `CampaignResult.Channel` field stamped at
+  create (G3) — NOT inferred from keyword/asset presence:
+  - `Channel == "demand_gen"` → "provisioned" = a Demand Gen ad with its required assets exists
+    (recovered from the `result` blob, like `googleAdsChildIDs`).
+  - `Channel == "search"` → the existing ≥1-keyword-criterion condition, unchanged.
+  - empty `Channel` (result predates the field) → fall back to the current keyword check, so no
+    older Search campaign's gate behaviour changes.
+- An unprovisioned campaign of either channel is still refused with `ErrCampaignNotProvisioned`
+  (409, Google never contacted). ACTIVATE still cascades children-first.
 
 ### G6 — Tests
 - Unit (no DB): Demand Gen ad-builder output for single-image vs no-creative; `uploadImageAsset`
