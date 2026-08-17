@@ -502,22 +502,26 @@ func TestRotationRefusesWhenTheRowMovedUnderIt(t *testing.T) {
 // lifecycle state only where BOTH halves of a completable lifecycle are present — the
 // dispatcher can enumerate the accounts a credential reaches, AND the path that needs an
 // account id refuses an empty one by NAMING the missing choice, so the operator is told to go
-// and use that enumeration. Google Ads and Meta have both and are IN the map. Microsoft also has
-// both as of LFXV2-3064 and is refused here anyway — a sequencing decision, not a capability gap,
-// and the exception worth stating first because it is the one the rule does not explain. The
-// other three are refused on the merits, and no longer for the same reason. Reddit and X still lack DISCOVERY, which alone keeps them
-// out. LinkedIn and Microsoft gained it in LFXV2-3064, so what excludes them now is the other
-// half: LinkedIn answers an empty account id with a generic failure rather than tagging it, and
-// Microsoft is simply not yet added to the map. Microsoft, Reddit and X do tag theirs with
-// domain.ErrAccountNotSelected. All four are REFUSED here — which is what the cases below
-// assert, and the reason the refusal exists differs per provider: for Reddit and X an
-// account-less row would be permanently dead, because no endpoint could tell the operator what
-// to put there; for LinkedIn the endpoint now exists but its create path names nothing, so the
-// operator is told a campaign failed without being told what to supply; Microsoft alone is
-// refused for neither reason — it has both halves and its absence from the map is a sequencing
-// decision, not a missing capability. (This map gates the bootstrap CLI only; the public
-// connection APIs are gated separately by Required("account_id") in design/connection.go.) That is the same installable-and-dead shape requiredConfigKeys already
-// guards, applied to the one column that is not part of ProviderConfig.
+// and use that enumeration. Providers holding BOTH halves are in accountDiscoveryProviders and
+// may be installed credentials-first; every other provider is refused an empty account id.
+//
+// The membership is deliberately described as a rule rather than a roster: this comment has been
+// corrected three times by naming which providers sit on which side, and each correction was
+// falsified by the next ticket that moved one. Read accountDiscoveryProviders for the current
+// set. Microsoft is the one member worth calling out, because the rule does not explain it — it
+// holds both halves as of LFXV2-3064 and is still excluded, which is a sequencing decision, not
+// a capability gap.
+//
+// What this test actually exercises: LinkedIn's refusal directly (an empty account id must be
+// rejected), with Google Ads and Meta as the ALLOWED cases. The other excluded providers are
+// refused by the same map check but are not separately invoked here — the guard is one branch,
+// so covering it once covers them, but do not read this comment as a claim of per-provider
+// coverage.
+//
+// (This map gates the bootstrap CLI only; the public connection APIs are gated separately by
+// Required("account_id") in design/connection.go.) That is the same installable-and-dead shape
+// requiredConfigKeys already guards, applied to the one column that is not part of
+// ProviderConfig.
 //
 // Meta is asserted as an ALLOWED case, not a refused one, and it is the case that keeps this
 // test honest about the rule: it has had discovery since LFXV2-3062 and was still refused here
