@@ -502,10 +502,12 @@ func TestRotationRefusesWhenTheRowMovedUnderIt(t *testing.T) {
 // lifecycle state only where BOTH halves of a completable lifecycle are present — the
 // dispatcher can enumerate the accounts a credential reaches, AND the path that needs an
 // account id refuses an empty one by NAMING the missing choice, so the operator is told to go
-// and use that enumeration. Google Ads and Meta have both; none of the remaining four has both.
-// All four lack discovery, which is on its own enough to keep them out — LinkedIn additionally
-// answers an empty account id with a generic failure, while Microsoft, Reddit and X already tag
-// theirs with domain.ErrAccountNotSelected. So an account-less LinkedIn system row installs,
+// and use that enumeration. Google Ads and Meta have both; none of the remaining four has both,
+// but no longer for the same reason. Reddit and X still lack DISCOVERY, which alone keeps them
+// out. LinkedIn and Microsoft gained it in LFXV2-3064, so what excludes them now is the other
+// half: LinkedIn answers an empty account id with a generic failure rather than tagging it, and
+// Microsoft is simply not yet added to the map. Microsoft, Reddit and X do tag theirs with
+// domain.ErrAccountNotSelected. So an account-less LinkedIn system row installs,
 // reports success, and then fails every dispatch with nothing an operator can do to complete it;
 // for the other three the failure at least names the missing choice, and there is still no
 // endpoint that could tell the operator what to put there. That is the same installable-and-dead shape

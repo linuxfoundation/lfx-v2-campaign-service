@@ -139,10 +139,11 @@ var (
 	// as with account discovery, asking a platform this service cannot search is a caller
 	// error, not a transient upstream failure. Distinct from ErrAccountsUnsupported because
 	// the two capabilities are independent: HubSpot searches emails and has no ad accounts
-	// to enumerate, while Google Ads and Meta list accounts and search no emails. Named
-	// providers rather than "every ad platform": only those two implement AccountLister —
-	// LinkedIn, Reddit, X and Microsoft implement neither capability — so the sweeping form
-	// was false when written, and the independence argument never needed it.
+	// to enumerate, while the AccountLister providers list accounts and search no emails.
+	// Described as a SET rather than enumerated, because the membership grows: it was Google
+	// Ads and Meta when this was written, and LinkedIn and Microsoft joined in LFXV2-3064.
+	// An enumeration here is falsified by the next provider added, with nothing failing to
+	// say so — which is exactly what happened to the previous version of this comment.
 	ErrEmailSearchUnsupported = errors.New("email search is not supported for this platform")
 
 	// ErrAccountsUnsupported indicates the platform has no account-listing capability

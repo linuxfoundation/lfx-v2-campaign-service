@@ -775,3 +775,92 @@ func TestListAccounts_RejectsTheReservedSystemScope(t *testing.T) {
 		})
 	}
 }
+
+// TestListLinkedinAndMicrosoftAccounts_MessagesNameTheirOwnProvider extends the descriptor
+// assertion above to the two handlers LFXV2-3064 added.
+//
+// Same failure it guards against, and it is invisible to a status-code test: every handler
+// reaches the identical switch, so one wired to another provider's `accountDiscovery` answers
+// with the right STATUS and the wrong TEXT — a 404 naming google ads on a LinkedIn project, or a
+// 400 telling a Microsoft operator to check `access_token`, which a Microsoft credential does not
+// carry. The operator's next action is determined entirely by that text.
+//
+// The remedy strings are asserted on the FIELD NAMES the caller sends to set-credential, not the
+// persisted blob's Go field names, which an operator has no way to address.
+func TestListLinkedinAndMicrosoftAccounts_MessagesNameTheirOwnProvider(t *testing.T) {
+	newSvc := func(p model.Provider, dispatchErr error) *ConnectionService {
+		svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+		svc.SetOrchestrator(&Orchestrator{
+			dispatchers: map[model.Provider]PlatformDispatcher{
+				p: &mockAccountListerDispatcher{err: dispatchErr},
+			},
+		})
+		return svc
+	}
+
+	t.Run("linkedin 404 names linkedin, not google", func(t *testing.T) {
+		_, err := newSvc(model.ProviderLinkedInAds, domain.ErrNotFound).ListLinkedinAdsAccounts(
+			context.Background(), &conn.ListLinkedinAdsAccountsPayload{ProjectID: "p"})
+		notFound, ok := err.(*conn.NotFoundError)
+		if !ok {
+			t.Fatalf("expected NotFoundError, got %T: %v", err, err)
+		}
+		if !strings.Contains(notFound.Message, "linkedin ads") {
+			t.Errorf("message = %q, want it to name linkedin ads", notFound.Message)
+		}
+		if strings.Contains(notFound.Message, "google") || strings.Contains(notFound.Message, "meta") {
+			t.Errorf("message = %q names another provider on the linkedin endpoint", notFound.Message)
+		}
+	})
+
+	t.Run("linkedin 400 names the field a linkedin credential carries", func(t *testing.T) {
+		wrapped := fmt.Errorf("%w: %w: linkedin credentials need accessToken",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
+		_, err := newSvc(model.ProviderLinkedInAds, wrapped).ListLinkedinAdsAccounts(
+			context.Background(), &conn.ListLinkedinAdsAccountsPayload{ProjectID: "p"})
+		badRequest, ok := err.(*conn.BadRequestError)
+		if !ok {
+			t.Fatalf("expected BadRequestError, got %T: %v", err, err)
+		}
+		if !strings.Contains(badRequest.Message, "access_token") {
+			t.Errorf("remedy = %q, want it to name access_token", badRequest.Message)
+		}
+		if strings.Contains(badRequest.Message, "login_customer_id") {
+			t.Errorf("remedy = %q names a google ads field on the linkedin endpoint", badRequest.Message)
+		}
+	})
+
+	t.Run("microsoft 404 names microsoft, not google", func(t *testing.T) {
+		_, err := newSvc(model.ProviderMicrosoftAds, domain.ErrNotFound).ListMicrosoftAdsAccounts(
+			context.Background(), &conn.ListMicrosoftAdsAccountsPayload{ProjectID: "p"})
+		notFound, ok := err.(*conn.NotFoundError)
+		if !ok {
+			t.Fatalf("expected NotFoundError, got %T: %v", err, err)
+		}
+		if !strings.Contains(notFound.Message, "microsoft ads") {
+			t.Errorf("message = %q, want it to name microsoft ads", notFound.Message)
+		}
+		if strings.Contains(notFound.Message, "google") || strings.Contains(notFound.Message, "meta") {
+			t.Errorf("message = %q names another provider on the microsoft endpoint", notFound.Message)
+		}
+	})
+
+	// Microsoft's remedy is the one that differs most: four fields, none of which any other
+	// provider's remedy names. Wired to Meta's descriptor it would tell the operator to check
+	// access_token — a field a Microsoft credential does not have.
+	t.Run("microsoft 400 names all four fields a microsoft credential carries", func(t *testing.T) {
+		wrapped := fmt.Errorf("%w: %w: microsoft credentials incomplete",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
+		_, err := newSvc(model.ProviderMicrosoftAds, wrapped).ListMicrosoftAdsAccounts(
+			context.Background(), &conn.ListMicrosoftAdsAccountsPayload{ProjectID: "p"})
+		badRequest, ok := err.(*conn.BadRequestError)
+		if !ok {
+			t.Fatalf("expected BadRequestError, got %T: %v", err, err)
+		}
+		for _, field := range []string{"client_id", "client_secret", "developer_token", "refresh_token"} {
+			if !strings.Contains(badRequest.Message, field) {
+				t.Errorf("remedy = %q, want it to name %s", badRequest.Message, field)
+			}
+		}
+	})
+}
