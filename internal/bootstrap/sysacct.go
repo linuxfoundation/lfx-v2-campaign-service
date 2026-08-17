@@ -232,7 +232,9 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // The distinction is not cosmetic. The remaining adapters refuse an empty account id outright —
 // internal/dispatch/{linkedin,reddit,twitter,microsoft}.go each guard on it — so an
 // account-less system row for one of them is installable, reports success, and then fails
-// every dispatch with no path to completion. That is exactly the failure requiredConfigKeys
+// every dispatch. For Reddit, X and LinkedIn there is no path to completion (see the current
+// state below); Microsoft is the exception and its exclusion is sequencing alone, not a missing
+// capability. That is exactly the failure requiredConfigKeys
 // above exists to prevent, applied to the one column that is not part of ProviderConfig.
 //
 // **Membership is NOT "the dispatcher implements the service-side AccountLister".** (The

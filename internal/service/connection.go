@@ -498,8 +498,9 @@ func (s *ConnectionService) ListHubspotEmails(ctx context.Context, p *conn.ListH
 		// ErrEmailSearchUnsupported is the one arm classifyDiscoveryError cannot carry: it
 		// keys on ErrAccountsUnsupported, and the two are separate sentinels precisely
 		// because the capabilities are independent — HubSpot searches emails and has no ad
-		// accounts, while the ad platforms are the reverse — they enumerate accounts and
-		// search no emails. Stated as the SHAPE rather than by naming which providers
+		// accounts, while the AccountLister-capable platforms are the reverse — they enumerate
+		// accounts and search no emails. Not "the ad platforms": Reddit and X are ad platforms
+		// and implement neither capability, which is the membership distinction below. Stated as the SHAPE rather than by naming which providers
 		// implement AccountLister: that membership grows (LinkedIn and Microsoft joined
 		// Google Ads and Meta), and an enumerating comment is falsified by the next one
 		// added without anything failing.

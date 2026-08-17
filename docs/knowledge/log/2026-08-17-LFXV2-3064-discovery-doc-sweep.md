@@ -21,8 +21,10 @@ is what stops a third.
 Also corrected: `internal-dispatch.md`'s discovery intro (named two implementations, there are
 four) and a block comment in `internal/bootstrap/sysacct_test.go` asserting "All four lack
 discovery" — the four remaining providers are no longer excluded for the same reason. Reddit and X
-still lack discovery; LinkedIn and Microsoft have it and are excluded by the OTHER half, which is
-the distinction the map's own rule turns on.
+still lack discovery; LinkedIn has it but its create path names nothing, so it is excluded by the
+OTHER half. Microsoft is excluded by NEITHER — `validateMicrosoftConnection` already tags
+`ErrAccountNotSelected` on a path create reaches, so it has both halves and its absence from the
+map is sequencing alone. Lumping it in with LinkedIn was the error this entry itself made.
 
 **Tests** — `connection_accounts_test.go` covered the descriptor wiring for Google and Meta but not
 for the two handlers this ticket adds. Every handler reaches the identical switch, so one wired to
