@@ -113,6 +113,38 @@ type googleAdsConfig struct {
 	// case to the create path, where a duplicate name surfaces as a visible
 	// reconciliation outcome rather than a silent rebind.
 	AdoptExisting bool `json:"adoptExisting"`
+	// Creative is the OPTIONAL Demand Gen single-image creative block (channel
+	// "demand-gen" only). ABSENT/nil keeps today's paused-shell Demand Gen create — budget
+	// → campaign → ad group and NO ad — so every caller that predates this field is
+	// unaffected. When present, the Demand Gen create builds a real image ad from the
+	// referenced assets (mapped into CampaignInput and resolved to bytes at dispatch — G4).
+	// Ignored on the Search channel, whose ad is built from Headlines/Descriptions instead.
+	Creative *googleAdsCreativeConfig `json:"creative"`
+}
+
+// googleAdsCreativeConfig is the wire shape of googleAdsConfig.Creative: the caller's
+// Demand Gen single-image creative. Per
+// specs/005-google-demandgen-single-image-creative/research.md, a Demand Gen single-image
+// ad is the v23 DemandGenMultiAssetResponsiveDisplayAd, which requires image assets in
+// three distinct aspect-ratio roles — so a single file is not enough and three asset
+// references are carried, each an asset_id from the creative-asset upload endpoint
+// (POST .../briefs/{brief_id}/creative-assets). The dispatcher resolves each id to bytes
+// and the client uploads them per-account (a Google image Asset is per-customer, like
+// Meta's per-ad-account image_hash).
+type googleAdsCreativeConfig struct {
+	// MediaFormat is the creative shape: "single_image" today (googleads.MediaFormatSingleImage).
+	// Carousel/video are future formats that add a builder without changing this path.
+	MediaFormat string `json:"mediaFormat"`
+	// BusinessName is the advertiser name shown on the Demand Gen ad. Required by the ad
+	// type; the client's precompute step enforces presence and the ≤25-char limit.
+	BusinessName string `json:"businessName"`
+	// The three required image roles, each an asset_id. Distinct aspect ratios (a single
+	// file cannot fill all three): marketing = landscape 1.91:1, squareMarketing = 1:1,
+	// logo = 1:1. All resolved to bytes at dispatch (G4) and uploaded as Google image
+	// Assets (G2).
+	MarketingImageAssetID       string `json:"marketingImageAssetId"`
+	SquareMarketingImageAssetID string `json:"squareMarketingImageAssetId"`
+	LogoAssetID                 string `json:"logoAssetId"`
 }
 
 // GoogleAdsDispatcher creates Google Ads campaigns for the orchestrator.

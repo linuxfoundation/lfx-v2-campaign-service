@@ -2893,3 +2893,54 @@ func TestGoogleAds_DispatchRefusesUnknownChannel(t *testing.T) {
 		t.Errorf("error should name the problem, got %v", err)
 	}
 }
+
+// TestGoogleAds_CreativeConfigUnmarshals pins the G1 wire contract: a Demand Gen
+// `creative` block in the platform config decodes into googleAdsConfig.Creative with all
+// five fields on their JSON keys, and an ABSENT block leaves Creative nil so the Demand
+// Gen create keeps its paused-shell behaviour (the backward-compat property). This is the
+// contract half of the slice; the mapping into CampaignInput and byte resolution land in
+// G4, so no Dispatch/client call is exercised here.
+func TestGoogleAds_CreativeConfigUnmarshals(t *testing.T) {
+	const body = `{
+		"budget": 50,
+		"channel": "demand-gen",
+		"creative": {
+			"mediaFormat": "single_image",
+			"businessName": "Linux Foundation",
+			"marketingImageAssetId": "11111111-1111-1111-1111-111111111111",
+			"squareMarketingImageAssetId": "22222222-2222-2222-2222-222222222222",
+			"logoAssetId": "33333333-3333-3333-3333-333333333333"
+		}
+	}`
+	var cfg googleAdsConfig
+	if err := json.Unmarshal([]byte(body), &cfg); err != nil {
+		t.Fatalf("unmarshal creative config: %v", err)
+	}
+	if cfg.Creative == nil {
+		t.Fatal("creative block present in JSON but Creative is nil after unmarshal")
+	}
+	if got := cfg.Creative.MediaFormat; got != googleads.MediaFormatSingleImage {
+		t.Errorf("MediaFormat = %q, want %q", got, googleads.MediaFormatSingleImage)
+	}
+	if got := cfg.Creative.BusinessName; got != "Linux Foundation" {
+		t.Errorf("BusinessName = %q, want %q", got, "Linux Foundation")
+	}
+	if got := cfg.Creative.MarketingImageAssetID; got != "11111111-1111-1111-1111-111111111111" {
+		t.Errorf("MarketingImageAssetID = %q", got)
+	}
+	if got := cfg.Creative.SquareMarketingImageAssetID; got != "22222222-2222-2222-2222-222222222222" {
+		t.Errorf("SquareMarketingImageAssetID = %q", got)
+	}
+	if got := cfg.Creative.LogoAssetID; got != "33333333-3333-3333-3333-333333333333" {
+		t.Errorf("LogoAssetID = %q", got)
+	}
+
+	// Absent creative block → nil pointer → shell behaviour unchanged.
+	var noCreative googleAdsConfig
+	if err := json.Unmarshal([]byte(`{"budget": 50, "channel": "demand-gen"}`), &noCreative); err != nil {
+		t.Fatalf("unmarshal config without creative: %v", err)
+	}
+	if noCreative.Creative != nil {
+		t.Errorf("absent creative block must leave Creative nil, got %+v", noCreative.Creative)
+	}
+}

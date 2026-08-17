@@ -121,6 +121,63 @@ type CampaignInput struct {
 	// shapes and createAdGroupTargeting for why they're observation-only rather than
 	// restrictive.
 	AudienceSegments []string
+	// Creative is the OPTIONAL Demand Gen single-image creative (channel demand-gen
+	// only; the Search path never reads it). When nil, CreateDemandGenCampaign keeps
+	// today's paused-shell close-out — budget → campaign → ad group and NO ad — so every
+	// caller that predates this field is unaffected. When non-nil, the Demand Gen create
+	// additionally uploads the resolved image assets (G2) and builds a real
+	// DemandGenMultiAssetResponsiveDisplayAd (G3). The dispatcher fills the resolved image
+	// bytes from the asset ids before handing the input to the client (see the
+	// DemandGenCreative doc); the client works only from those bytes.
+	Creative *DemandGenCreative
+}
+
+// Demand Gen creative media formats. single_image is the only format the client builds
+// today; carousel and video are future formats (spec SC-005) that add a builder keyed on
+// this value without changing the single-image path.
+const (
+	// MediaFormatSingleImage is a single (non-carousel, non-video) Demand Gen image ad —
+	// a DemandGenMultiAssetResponsiveDisplayAd with one image per required aspect-ratio role.
+	MediaFormatSingleImage = "single_image"
+)
+
+// CreativeImage is one image role in a Demand Gen creative. AssetID is the CONFIG field —
+// the caller sets it (a creative_assets asset id) and the DISPATCHER resolves it — while
+// Bytes/MIME/Checksum are the RESOLVED image the client uploads, filled by the dispatcher
+// from AssetID and never from caller JSON (json:"-", so a config body cannot inject raw
+// bytes and a marshalled input never carries a multi-megabyte blob). This mirrors
+// meta.AdVariant's ImageAssetID vs ImageBytes split: the client depends on bytes+type, not
+// on the asset store, so a future carousel/video role can carry its own resolved bytes
+// through the same shape without the client learning a new storage type.
+type CreativeImage struct {
+	AssetID  string
+	Bytes    []byte `json:"-"`
+	MIME     string `json:"-"`
+	Checksum string `json:"-"`
+}
+
+// DemandGenCreative is the optional single-image creative for a Demand Gen campaign.
+//
+// Google Demand Gen has NO dedicated single-image ad type: the non-carousel/non-video ad
+// is the v23 DemandGenMultiAssetResponsiveDisplayAd, which requires image assets in THREE
+// distinct aspect-ratio roles (landscape marketing 1.91:1, square marketing 1:1, logo 1:1)
+// plus a business name — so "single image" here means a single non-carousel/non-video image
+// ad, not one image file. See specs/005-google-demandgen-single-image-creative/research.md
+// (§1, D1, D4) for the pinned v23 shapes and the required-field set.
+type DemandGenCreative struct {
+	// MediaFormat is the creative shape; MediaFormatSingleImage today. An unrecognised
+	// value is rejected by the client rather than defaulted (a typo must not silently
+	// build the wrong ad), mirroring the channel-value handling in the dispatcher.
+	MediaFormat string
+	// BusinessName is the advertiser name shown on the ad. Required by the ad type
+	// (v23, ≤ 25 chars); length/presence is enforced in the client's precompute step
+	// before any mutate, not here.
+	BusinessName string
+	// The three required image roles. Each is a distinct aspect ratio (see the type doc);
+	// a single file cannot satisfy all three, which is why there are three references.
+	MarketingImage       CreativeImage // landscape 1.91:1
+	SquareMarketingImage CreativeImage // square 1:1
+	Logo                 CreativeImage // logo 1:1
 }
 
 // CampaignResult reports what CreateCampaign created. The Google Ads hierarchy is
