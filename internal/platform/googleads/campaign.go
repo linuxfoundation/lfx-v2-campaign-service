@@ -216,6 +216,15 @@ type CampaignResult struct {
 	AudienceCriteriaIDs []string `json:"audienceCriteriaIds,omitempty"`
 	GoogleAdsURL        string   `json:"googleAdsUrl"`
 	Steps               []string `json:"steps"`
+	// Channel records WHICH campaign type this was ("search" / "demand-gen"), stamped by the
+	// dispatcher from its resolved channel — the platform client stays free of that wire
+	// vocabulary (it keeps only the CampaignKind display names). It is the SOLE authority the
+	// ACTIVATE gate keys on to decide what "provisioned" means: a Search campaign needs a
+	// keyword criterion to serve, a Demand Gen campaign needs its image ad, and inferring the
+	// channel from which of those happens to be present would be circular. Empty on rows created
+	// before this field existed (pre-LFXV2-3257 G5) — the gate falls back to the Search keyword
+	// check for those, so no older Search campaign's activation behaviour changes.
+	Channel string `json:"channel,omitempty"`
 }
 
 // mutateOperation is one {create: <resource>} entry in a :mutate request.

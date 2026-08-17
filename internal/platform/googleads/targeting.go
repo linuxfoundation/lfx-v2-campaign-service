@@ -73,9 +73,10 @@ type userListInfo struct {
 // There is deliberately no customAudience field. Google Ads has a
 // customAudience criterion, but validateAudienceSegments rejects every
 // customAudiences resource name before any mutate is built — Custom Audiences
-// are not supported on SEARCH campaigns, which is the only campaign type this
-// client creates. Carrying the field would make the payload advertise a
-// targeting shape this client can never populate.
+// are not supported on SEARCH campaigns, and this criteria path is wired ONLY
+// into the Search create cascade (the Demand Gen create the client also runs
+// attaches no keyword/audience criteria). Carrying the field would make the
+// payload advertise a targeting shape this path can never populate.
 type adGroupCriterionCreate struct {
 	AdGroup  string        `json:"adGroup"`
 	Status   string        `json:"status"`
@@ -198,9 +199,12 @@ func audienceCriterionField(resourceName string) (field string, ok bool) {
 // validateAudienceSegments trims/validates each caller-supplied audience
 // resource name and de-duplicates. Returns (nil, nil) for an empty input.
 // An unrecognized resource-name shape is a hard error — see
-// audienceCriterionField. This client creates only SEARCH campaigns, which
-// do not support Custom Audiences (Google limits them to Display, Demand Gen,
-// Gmail, Video, and Performance Max); only userLists are accepted.
+// audienceCriterionField. This validation is wired only into the Search create
+// cascade, and SEARCH campaigns do not support Custom Audiences (Google limits
+// them to Display, Demand Gen, Gmail, Video, and Performance Max); only
+// userLists are accepted. The client also creates Demand Gen campaigns, but
+// that path attaches no keyword/audience criteria, so this function never runs
+// for it — which is why the SEARCH-only rejection below is still accurate.
 func validateAudienceSegments(segments []string) ([]string, error) {
 	if len(segments) == 0 {
 		return nil, nil
@@ -219,7 +223,7 @@ func validateAudienceSegments(segments []string) ([]string, error) {
 		if !ok {
 			return nil, fmt.Errorf("google-ads: audience segment %q is not a recognized resource name (want a .../userLists/{id} Customer Match user-list resource name)", s)
 		}
-		// Reject customAudiences: this client only creates SEARCH campaigns,
+		// Reject customAudiences: this validation runs only for SEARCH campaigns,
 		// which do not support Custom Audiences per Google's documentation.
 		if field == "customAudience" {
 			return nil, fmt.Errorf("google-ads: custom audiences are not supported for SEARCH campaigns; only userLists are accepted")

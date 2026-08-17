@@ -1580,6 +1580,107 @@ func TestGoogleAds_ToggleStatus_ActivateSucceedsChildrenFirst(t *testing.T) {
 	}
 }
 
+// TestGoogleAds_ToggleStatus_ActivateDemandGenWithoutKeywordsSucceeds pins the channel-aware
+// activation gate this slice adds. A Demand Gen campaign attaches NO keyword criteria by design —
+// its provisioning is complete once its ad group and single-image ad exist. So the keyword
+// requirement that guards Search must NOT apply to it: with the resolved channel stamped as
+// "demand-gen" and ad group + ad ids present but no keywordCriteriaIds, ACTIVATE must succeed and
+// cascade all three mutates children-first, exactly as the provisioned-Search happy path does.
+// The gate keys on the stamped channel, not on keyword/asset presence (which would be circular:
+// "no keywords → unprovisioned" is precisely the Search rule this channel is exempt from).
+func TestGoogleAds_ToggleStatus_ActivateDemandGenWithoutKeywordsSucceeds(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
+	}))
+	defer apiSrv.Close()
+
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	camp := &model.Campaign{
+		Platform:           model.ProviderGoogleAds,
+		PlatformCampaignID: "777",
+		// Demand Gen: ad group + ad present, channel stamped, NO keywordCriteriaIds.
+		Result: json.RawMessage(`{"adGroupId":"333","adId":"444","channel":"demand-gen"}`),
+	}
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive); err != nil {
+		t.Fatalf("ACTIVATE of a provisioned Demand Gen campaign must succeed without keywords, got: %v", err)
+	}
+	mu.Lock()
+	gotPaths := append([]string(nil), paths...)
+	mu.Unlock()
+	if len(gotPaths) != 3 {
+		t.Fatalf("issued %d calls, want 3 (ad group, ad, campaign): %v", len(gotPaths), gotPaths)
+	}
+	wantSuffixes := []string{"adGroups:mutate", "adGroupAds:mutate", "campaigns:mutate"}
+	for i, want := range wantSuffixes {
+		if !strings.HasSuffix(gotPaths[i], want) {
+			t.Errorf("call %d = %v, want %v (children must be enabled before the campaign gate opens)", i, gotPaths[i], want)
+		}
+	}
+}
+
+// TestGoogleAds_ToggleStatus_ActivateExplicitSearchWithoutKeywordsIsNotProvisioned is the
+// companion refusal that proves the channel-aware gate does not leak the Demand Gen exemption to
+// Search. A campaign explicitly stamped "search" with ad group + ad ids but no keywordCriteriaIds
+// must still be refused with ErrCampaignNotProvisioned — the `channel != demand-gen` predicate
+// takes both explicit "search" and legacy empty-channel rows down the keyword-required path, so
+// the only campaigns exempted are those the dispatcher actually created as Demand Gen. The refusal
+// is local: no client is configured, so any API call would surface as a connection error, not this.
+func TestGoogleAds_ToggleStatus_ActivateExplicitSearchWithoutKeywordsIsNotProvisioned(t *testing.T) {
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+	)
+	camp := &model.Campaign{
+		Platform:           model.ProviderGoogleAds,
+		PlatformCampaignID: "777",
+		// Explicit Search channel, children present, but keyword targeting not provisioned.
+		Result: json.RawMessage(`{"adGroupId":"333","adId":"444","channel":"search"}`),
+	}
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected ACTIVATE to be refused: an explicit Search campaign still requires keyword criteria")
+	}
+	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
+		t.Errorf("expected ErrCampaignNotProvisioned, got %T: %v", err, err)
+	}
+}
+
+// TestGoogleAds_ToggleStatus_ActivateDemandGenRefusedWhenAdMissing pins the condition the Demand
+// Gen exemption does NOT relax: the ad group/ad id check is common to both channels. A Demand Gen
+// campaign whose ad create left no ad id has nothing to cascade to, so ACTIVATE must refuse locally
+// with ErrCampaignNotProvisioned rather than reaching the client with an empty id. Only the keyword
+// requirement is channel-specific; the child-id requirement is not.
+func TestGoogleAds_ToggleStatus_ActivateDemandGenRefusedWhenAdMissing(t *testing.T) {
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+	)
+	camp := &model.Campaign{
+		Platform:           model.ProviderGoogleAds,
+		PlatformCampaignID: "777",
+		// Demand Gen, but the ad id is absent — nothing to cascade the enable to.
+		Result: json.RawMessage(`{"adGroupId":"333","channel":"demand-gen"}`),
+	}
+	err := d.ToggleStatus(context.Background(), "proj", model.ProviderGoogleAds, camp, model.CampaignRunActive)
+	if err == nil {
+		t.Fatal("expected ACTIVATE to be refused when the Demand Gen ad id is missing")
+	}
+	if !errors.Is(err, domain.ErrCampaignNotProvisioned) {
+		t.Errorf("expected ErrCampaignNotProvisioned, got %T: %v", err, err)
+	}
+}
+
 // TestGoogleAds_Adoption_FindsAndAdoptsExistingCampaign tests the happy path for
 // adopt-on-create: a retried dispatch finds an existing campaign with the same name
 // and returns it as an adopted campaign without creating a new one or spending budget.
@@ -3255,5 +3356,13 @@ func TestGoogleAds_Dispatch_DemandGenCreativeReachesTheWire(t *testing.T) {
 	// The created ad id must land on the persisted campaign result blob.
 	if camp == nil || len(camp.Result) == 0 || !strings.Contains(string(camp.Result), "444") {
 		t.Errorf("persisted result must carry the created ad id 444, got %s", string(camp.Result))
+	}
+	// The dispatcher must stamp the resolved channel onto the persisted blob so the ACTIVATE
+	// gate reads what THIS dispatch created (demand-gen has no keyword requirement) rather than
+	// inferring it from keyword/asset presence. Without this, a demand-gen campaign — which
+	// carries no keyword criteria by design — would look identical to an unprovisioned Search
+	// campaign and be refused activation.
+	if !strings.Contains(string(camp.Result), `"channel":"demand-gen"`) {
+		t.Errorf("persisted result must record the resolved channel (\"demand-gen\"), got %s", string(camp.Result))
 	}
 }

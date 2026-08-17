@@ -330,7 +330,7 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 			return nil, notCreated(adoptErr)
 		}
 		if adoptID != "" {
-			return campaignFromGoogleAdsAdoption(ctx, adoptID, campaignName, accountID, res.label, cfg), nil
+			return campaignFromGoogleAdsAdoption(ctx, adoptID, campaignName, accountID, res.label, channel, cfg), nil
 		}
 	}
 	// The GA client's contract (mirrors reddit/meta/twitter): (nil, err) ONLY when
@@ -369,6 +369,15 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		// through to a create, so a future channel added there but not here cannot spend one
 		// channel's budget on another.
 		return nil, notCreated(fmt.Errorf("google ads: channel %q resolved but has no create path", channel))
+	}
+	// Stamp the resolved channel onto the result blob so the ACTIVATE gate reads what THIS
+	// dispatch created rather than inferring it from keyword/asset presence. Set on BOTH the
+	// success and the retained-partial return (result != nil), the two paths that persist the
+	// blob; the (nil, err) release path has no blob to stamp. The client leaves Channel empty —
+	// "search"/"demand-gen" is dispatch vocabulary, not the client's — so this is the only place
+	// it is written on a create.
+	if result != nil {
+		result.Channel = channel
 	}
 	if cerr != nil {
 		if result == nil {
@@ -497,7 +506,7 @@ func campaignFromGoogleAds(ctx context.Context, r *googleads.CampaignResult, cfg
 // outcome: the alternative is a duplicate paid campaign, and the shell is now recorded and
 // visible for reconciliation rather than orphaned. Completing a partial adoption is
 // LFXV2-3042's follow-up, and needs an ad-group lookup this client does not yet have.
-func campaignFromGoogleAdsAdoption(ctx context.Context, campaignID, campaignName, accountID, accountLabel string, cfg googleAdsConfig) *model.Campaign {
+func campaignFromGoogleAdsAdoption(ctx context.Context, campaignID, campaignName, accountID, accountLabel, channel string, cfg googleAdsConfig) *model.Campaign {
 	c := &model.Campaign{
 		PlatformCampaignID: campaignID,
 		CampaignName:       campaignName,
@@ -541,6 +550,11 @@ func campaignFromGoogleAdsAdoption(ctx context.Context, campaignID, campaignName
 		CustomerID:   accountID,
 		CampaignID:   campaignID,
 		CampaignName: campaignName,
+		// Record the channel this dispatch targeted, matching the create path. An adopted
+		// campaign is created_degraded with no ad-group/ad ids, so the ACTIVATE gate refuses it
+		// on the id check regardless of channel — but stamping keeps the blob's meaning uniform
+		// across create and adoption rather than leaving a silent hole a future reconcile trips on.
+		Channel:      channel,
 		GoogleAdsURL: "https://ads.google.com/aw/campaigns?ocid=" + accountID,
 		Steps:        []string{"Campaign adopted: " + campaignID + " (already exists on account, no budget/ad group created)"},
 	}
@@ -911,27 +925,31 @@ func (d *GoogleAdsDispatcher) ListAccounts(ctx context.Context, projectID string
 // Result blob.
 //
 // ACTIVATE is refused with ErrCampaignNotProvisioned (→409, raised locally without calling
-// Google) unless the Result blob shows the ad group/ad were fully provisioned AND at least one
-// keyword criterion was persisted by GA-4's targeting step. A campaign without targeting cannot
-// deliver, so activating it would report false success — the exact lie ErrCampaignNotProvisioned
-// exists to prevent. When the guard passes, ACTIVATE cascades children-first (children activated
-// before campaign) so a campaign never reports ENABLED before its children do.
+// Google) unless the Result blob shows the campaign is provisioned enough to SERVE. The gate is
+// channel-aware, keyed on the channel the create stamped (CampaignResult.Channel): both channels
+// require the ad group/ad to have been fully provisioned; a Search campaign ADDITIONALLY requires
+// at least one persisted keyword criterion (GA-4), while a Demand Gen campaign requires only its
+// image ad (whose AdID implies its assets) and has no keyword requirement. An empty channel (a
+// row created before G5) falls back to the Search keyword check, so no older campaign's behaviour
+// changes. A campaign that cannot deliver would report false success on activation — the exact lie
+// ErrCampaignNotProvisioned exists to prevent. When the guard passes, ACTIVATE cascades
+// children-first (children activated before campaign) so a campaign never reports ENABLED before
+// its children do.
 func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
 	gaStatus, err := googleAdsRunStatus(status)
 	if err != nil {
 		return err
 	}
-	// Refuse ACTIVATE if targeting was not successfully provisioned: GA-4 requires at least
-	// one keyword criterion before allowing activation (audience criteria alone are
-	// observation-only and do not qualify for activation, so they don't satisfy this gate).
-	// Checked below via the persisted KeywordCriteriaIDs in the Result blob — empty means
-	// keyword targeting was never attempted or failed before any criterion resource name
-	// could be parsed.
+	// Refuse ACTIVATE unless the campaign is provisioned enough to actually SERVE. What that
+	// requires is channel-specific, so the gate below reads the channel the create stamped in
+	// the Result blob (CampaignResult.Channel) rather than inferring it from which of
+	// keyword/asset happens to be present — inference would be circular.
 	adGroupID, adID := googleAdsChildIDs(campaign)
 	if gaStatus == googleads.StatusEnabled {
-		// Refuse ACTIVATE if the ad group/ad were never fully provisioned: a duplicate-name
-		// orphan or unconfirmed create (see createAdGroupAndAd) leaves no id to cascade to, so
-		// enabling just the campaign would report success while nothing can serve.
+		// Common to BOTH channels: the ad group/ad must have been fully provisioned. A
+		// duplicate-name orphan or unconfirmed create (see createAdGroupAndAd /
+		// createDemandGenAd) leaves no id to cascade to, so enabling just the campaign would
+		// report success while nothing can serve.
 		if strings.TrimSpace(adGroupID) == "" || strings.TrimSpace(adID) == "" {
 			return fmt.Errorf("%w: google ads campaign %s cannot be activated because its ad group/ad were not fully provisioned", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 		}
@@ -939,7 +957,18 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 		if campaign.Result != nil {
 			_ = json.Unmarshal(campaign.Result, &result)
 		}
-		if len(result.KeywordCriteriaIDs) == 0 {
+		// Channel-specific requirement:
+		//   - Demand Gen: the image ad IS the deliverable, and a non-empty AdID (checked above)
+		//     means it and its three required image assets were created — createDemandGenAd
+		//     stamps AdID only AFTER uploadDemandGenAssets and the ad mutate both succeed. Demand
+		//     Gen has no keywords, so the ad-id check is the whole gate; requiring a keyword
+		//     criterion here would wrongly refuse a fully-provisioned Demand Gen campaign forever.
+		//   - Search (or an empty channel on a pre-G5 row): a Search campaign cannot serve without
+		//     at least one keyword criterion — audience criteria alone are observation-only — so a
+		//     persisted KeywordCriteriaID is required. Empty means GA-4 targeting was never
+		//     attempted or failed before any criterion resource name could be parsed. The empty
+		//     fallback keeps every pre-G5 Search row's activation behaviour exactly as it was.
+		if result.Channel != googleAdsChannelDemandGen && len(result.KeywordCriteriaIDs) == 0 {
 			return fmt.Errorf("%w: google ads campaign %s cannot be activated because keyword targeting is not yet provisioned (at least one keyword criterion is required)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 		}
 	}
