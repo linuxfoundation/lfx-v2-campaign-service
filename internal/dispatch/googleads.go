@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
@@ -150,12 +152,33 @@ type googleAdsCreativeConfig struct {
 // GoogleAdsDispatcher creates Google Ads campaigns for the orchestrator.
 type GoogleAdsDispatcher struct {
 	creds *credsSource
-	opts  []googleads.Option
+	// creatives resolves a Demand Gen creative's role asset ids to image bytes at dispatch.
+	// Bound by registerDispatchers on the live and cold-start paths (SetCreativeAssetRepo);
+	// nil in the direct-construction tests that create no creative, where it is never read
+	// (resolveDemandGenCreative touches it only when a demand-gen config carries a Creative
+	// block). Reuses the same creativeAssetReader least-privilege slice as the Meta dispatcher.
+	creatives creativeAssetReader
+	opts      []googleads.Option
 }
 
-// NewGoogleAdsDispatcher builds the adapter from the connection repo + encryptor.
+// NewGoogleAdsDispatcher builds the adapter from the connection repo + encryptor. The
+// creative-asset read path is bound separately via SetCreativeAssetRepo (mirroring the Meta
+// dispatcher), so the many direct-construction tests that create no Demand Gen creative stay
+// unchanged.
 func NewGoogleAdsDispatcher(repo connReader, enc domain.Encryptor, opts ...googleads.Option) *GoogleAdsDispatcher {
 	return &GoogleAdsDispatcher{creds: newCredsSource(repo, enc), opts: opts}
+}
+
+// SetCreativeAssetRepo binds the creative-asset read path so a Demand Gen creative block
+// resolves its three role asset ids to bytes at dispatch. registerDispatchers calls it once at
+// construction, before the dispatcher is shared with the orchestrator, so no lock guards it. A
+// nil argument is ignored — mirroring the Meta dispatcher — leaving the dispatcher creative-less
+// rather than storing a value that would nil-panic when a config referenced an asset.
+func (d *GoogleAdsDispatcher) SetCreativeAssetRepo(r creativeAssetReader) {
+	if r == nil {
+		return
+	}
+	d.creatives = r
 }
 
 // Dispatch implements service.PlatformDispatcher for Google Ads.
@@ -274,6 +297,22 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	default:
 		return nil, notCreated(fmt.Errorf("google ads: unsupported channel %q (want %q or %q)", cfg.Channel, googleAdsChannelSearch, googleAdsChannelDemandGen))
 	}
+	// On the Demand Gen channel, an optional Creative block turns today's paused-shell create
+	// (budget → campaign → ad group, no ad) into a real image ad. Resolve the three role asset
+	// ids to bytes HERE — before adoption's lookup and before any create — so a bad reference
+	// (malformed id, unknown/foreign asset, missing role) fails the dispatch with notCreated
+	// (claim released) rather than after a paid campaign already exists. The client's precompute
+	// then enforces the creative's SHAPE (business-name length, per-role bytes) and uploads the
+	// assets before the budget. The Search channel IGNORES cfg.Creative — its ad is built from
+	// Headlines/Descriptions (see the googleAdsCreativeConfig doc) — so the resolution is gated on
+	// the channel, not merely on cfg.Creative != nil.
+	if channel == googleAdsChannelDemandGen && cfg.Creative != nil {
+		creative, resErr := d.resolveDemandGenCreative(ctx, brief, cfg.Creative)
+		if resErr != nil {
+			return nil, notCreated(resErr)
+		}
+		in.Creative = creative
+	}
 	campaignName := googleads.ComposeName(campaignKind, in)
 	// Adoption is OPT-IN (see googleAdsConfig.AdoptExisting for why the default must be
 	// off). When asked for: ComposeName is deterministic in the brief, so the caller is
@@ -360,6 +399,66 @@ func googleAdsKeywords(in []googleAdsKeywordConfig) []googleads.Keyword {
 		out[i] = googleads.Keyword{Text: kw.Text, MatchType: kw.MatchType}
 	}
 	return out
+}
+
+// resolveDemandGenCreative loads the three role image references (marketing, square marketing,
+// logo) into the bytes the Google Ads client uploads, returning a *googleads.DemandGenCreative
+// whose AssetID/Bytes/MIME are filled per role and whose MediaFormat/BusinessName pass through
+// verbatim (the client's precompute enforces their shape). Every failure here is a caller/wiring
+// error that MUST fail the dispatch BEFORE any upstream contact — the sole call site wraps the
+// returned error in notCreated so the (brief, platform) claim is released rather than stranded.
+// It is the Demand Gen analogue of the Meta dispatcher's resolveVariantAssets, and follows the
+// same rules:
+//   - a malformed asset id is rejected up front rather than handed to the UUID primary-key
+//     lookup (which would raise an opaque driver error);
+//   - a nil repo with a creative block is a wiring defect (registerDispatchers always binds it) —
+//     surfaced as a clear error, not a nil-panic;
+//   - an asset absent for THIS brief (missing, or another brief's/project's) is ErrNotFound from
+//     GetAsset's scoped lookup, reported as a bad reference.
+//
+// It differs from resolveVariantAssets in one way: all THREE roles are REQUIRED. A Meta variant
+// with no imageAssetId is a valid link-only creative that passes through; a Demand Gen
+// single-image ad is a DemandGenMultiAssetResponsiveDisplayAd that cannot be built without an
+// image in each of the three aspect-ratio roles, so an empty reference is a caller error caught
+// HERE with the role named, rather than surfacing later as the client's generic empty-bytes
+// rejection.
+func (d *GoogleAdsDispatcher) resolveDemandGenCreative(ctx context.Context, brief *model.CampaignBrief, cfg *googleAdsCreativeConfig) (*googleads.DemandGenCreative, error) {
+	creative := &googleads.DemandGenCreative{
+		MediaFormat:  cfg.MediaFormat,
+		BusinessName: cfg.BusinessName,
+	}
+	roles := []struct {
+		label   string
+		assetID string
+		dst     *googleads.CreativeImage
+	}{
+		{"marketing image", cfg.MarketingImageAssetID, &creative.MarketingImage},
+		{"square marketing image", cfg.SquareMarketingImageAssetID, &creative.SquareMarketingImage},
+		{"logo", cfg.LogoAssetID, &creative.Logo},
+	}
+	for _, r := range roles {
+		assetID := strings.TrimSpace(r.assetID)
+		if assetID == "" {
+			return nil, fmt.Errorf("google ads demand gen creative is missing the %s asset id", r.label)
+		}
+		if _, perr := uuid.Parse(assetID); perr != nil {
+			return nil, fmt.Errorf("google ads demand gen creative %s references creative asset %q, which is not a valid asset id", r.label, assetID)
+		}
+		if d.creatives == nil {
+			return nil, fmt.Errorf("google ads demand gen creative %s references creative asset %s but the creative-asset store is not configured", r.label, assetID)
+		}
+		asset, gerr := d.creatives.GetAsset(ctx, brief.ProjectID, brief.ID, assetID)
+		if gerr != nil {
+			if errors.Is(gerr, domain.ErrNotFound) {
+				return nil, fmt.Errorf("google ads demand gen creative %s references creative asset %s, which does not exist for this brief", r.label, assetID)
+			}
+			return nil, fmt.Errorf("google ads demand gen creative %s: load creative asset %s: %w", r.label, assetID, gerr)
+		}
+		r.dst.AssetID = assetID
+		r.dst.Bytes = asset.Bytes
+		r.dst.MIME = asset.MimeType
+	}
+	return creative, nil
 }
 
 // campaignFromGoogleAds maps the client result to the persistence model. The

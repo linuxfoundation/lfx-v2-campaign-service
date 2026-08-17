@@ -390,20 +390,25 @@ func NewContainer(cfg *config.Config) (container *Container, err error) {
 // dispatcher registered" for that platform (logged as a startup warning).
 // audiences is the audience repository the HubSpot (email) dispatcher reads to resolve a brief's
 // built send-list. The ad dispatchers don't need it, so it is a distinct arg rather than folded
-// into the connection repo. creatives is the creative-asset repository the Meta dispatcher reads
-// to resolve a variant's uploaded image to bytes; likewise distinct, and likewise only one
-// dispatcher needs it.
+// into the connection repo. creatives is the creative-asset repository the Meta and Google Ads
+// dispatchers read to resolve an uploaded image reference to bytes (Meta ad variants; Google Ads
+// Demand Gen single-image creatives); likewise distinct, and only those dispatchers need it.
 func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, audiences *postgres.AudienceRepo, creatives *postgres.CreativeAssetRepo) map[model.Provider]service.PlatformDispatcher {
 	// Construct the Meta dispatcher, then bind its creative-asset read path before boxing it into
 	// the interface map — the setter lives on the concrete type (see SetCreativeAssetRepo).
 	metaDisp := dispatch.NewMetaDispatcher(repo, enc)
 	metaDisp.SetCreativeAssetRepo(creatives)
+	// Google Ads' Demand Gen create resolves a single-image creative's three role asset ids to
+	// bytes at dispatch, so it reads the same creative-asset store as Meta — bind it before boxing
+	// into the interface map (the setter lives on the concrete type, mirroring Meta).
+	googleDisp := dispatch.NewGoogleAdsDispatcher(repo, enc)
+	googleDisp.SetCreativeAssetRepo(creatives)
 	return map[model.Provider]service.PlatformDispatcher{
 		model.ProviderRedditAds:    dispatch.NewRedditDispatcher(repo, enc),
 		model.ProviderLinkedInAds:  dispatch.NewLinkedInDispatcher(repo, enc),
 		model.ProviderMetaAds:      metaDisp,
 		model.ProviderTwitterAds:   dispatch.NewTwitterDispatcher(repo, enc),
-		model.ProviderGoogleAds:    dispatch.NewGoogleAdsDispatcher(repo, enc),
+		model.ProviderGoogleAds:    googleDisp,
 		model.ProviderHubSpot:      dispatch.NewHubSpotDispatcher(repo, enc, audiences),
 		model.ProviderMicrosoftAds: dispatch.NewMicrosoftDispatcher(repo, enc),
 	}

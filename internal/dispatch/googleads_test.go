@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2942,5 +2943,317 @@ func TestGoogleAds_CreativeConfigUnmarshals(t *testing.T) {
 	}
 	if noCreative.Creative != nil {
 		t.Errorf("absent creative block must leave Creative nil, got %+v", noCreative.Creative)
+	}
+}
+
+// ---- G4: Demand Gen creative resolution (resolveDemandGenCreative) ---------
+
+// Three distinct valid asset ids, one per role, so a test can prove each role maps to the
+// asset it referenced (a regression that swaps two roles fails on the mismatched bytes).
+const (
+	dgMarketingAssetID = "11111111-1111-4111-8111-111111111111"
+	dgSquareAssetID    = "22222222-2222-4222-8222-222222222222"
+	dgLogoAssetID      = "33333333-3333-4333-8333-333333333333"
+)
+
+// roleTaggedReader is a creativeAssetReader that returns a role-specific asset keyed on the
+// asset id, so resolveDemandGenCreative's per-role mapping is provable end to end: marketing →
+// "MKT", square → "SQR", logo → "LOGO". Records every (project, brief) scope it was asked for.
+type roleTaggedReader struct {
+	gotProj, gotBrief string
+	callCount         int
+}
+
+func (r *roleTaggedReader) GetAsset(_ context.Context, projectID, briefID, assetID string) (*model.CreativeAsset, error) {
+	r.callCount++
+	r.gotProj, r.gotBrief = projectID, briefID
+	switch assetID {
+	case dgMarketingAssetID:
+		return &model.CreativeAsset{Bytes: []byte("MKT"), MimeType: model.MimeTypePNG}, nil
+	case dgSquareAssetID:
+		return &model.CreativeAsset{Bytes: []byte("SQR"), MimeType: model.MimeTypeJPEG}, nil
+	case dgLogoAssetID:
+		return &model.CreativeAsset{Bytes: []byte("LOGO"), MimeType: model.MimeTypePNG}, nil
+	default:
+		return nil, domain.ErrNotFound
+	}
+}
+
+func demandGenCreativeConfig() *googleAdsCreativeConfig {
+	return &googleAdsCreativeConfig{
+		MediaFormat:                 googleads.MediaFormatSingleImage,
+		BusinessName:                "CNCF",
+		MarketingImageAssetID:       dgMarketingAssetID,
+		SquareMarketingImageAssetID: dgSquareAssetID,
+		LogoAssetID:                 dgLogoAssetID,
+	}
+}
+
+// TestGoogleAds_ResolveDemandGenCreative_HappyPath: a creative referencing three valid, existing
+// assets is loaded scoped to the brief's (project, brief), each role gets ITS asset's bytes+mime,
+// and MediaFormat/BusinessName pass through verbatim for the client's precompute to validate.
+func TestGoogleAds_ResolveDemandGenCreative_HappyPath(t *testing.T) {
+	reader := &roleTaggedReader{}
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{})
+	d.SetCreativeAssetRepo(reader)
+
+	creative, err := d.resolveDemandGenCreative(context.Background(), testBrief(), demandGenCreativeConfig())
+	if err != nil {
+		t.Fatalf("resolveDemandGenCreative: %v", err)
+	}
+	if reader.gotProj != "cncf" || reader.gotBrief != "brief-1" {
+		t.Errorf("GetAsset scoped to (%q,%q), want (cncf,brief-1)", reader.gotProj, reader.gotBrief)
+	}
+	if reader.callCount != 3 {
+		t.Errorf("GetAsset called %d times, want 3 (one per role)", reader.callCount)
+	}
+	if creative.MediaFormat != googleads.MediaFormatSingleImage || creative.BusinessName != "CNCF" {
+		t.Errorf("MediaFormat/BusinessName = %q/%q, want single_image/CNCF (passthrough)", creative.MediaFormat, creative.BusinessName)
+	}
+	// Each role must carry the bytes+mime of the asset IT referenced, and preserve its AssetID.
+	checks := []struct {
+		role string
+		img  googleads.CreativeImage
+		id   string
+		want string
+		mime string
+	}{
+		{"marketing", creative.MarketingImage, dgMarketingAssetID, "MKT", model.MimeTypePNG},
+		{"square", creative.SquareMarketingImage, dgSquareAssetID, "SQR", model.MimeTypeJPEG},
+		{"logo", creative.Logo, dgLogoAssetID, "LOGO", model.MimeTypePNG},
+	}
+	for _, c := range checks {
+		if string(c.img.Bytes) != c.want || c.img.MIME != c.mime {
+			t.Errorf("%s role bytes/mime = %q/%q, want %q/%q", c.role, c.img.Bytes, c.img.MIME, c.want, c.mime)
+		}
+		if c.img.AssetID != c.id {
+			t.Errorf("%s role AssetID = %q, want %q (preserved)", c.role, c.img.AssetID, c.id)
+		}
+	}
+}
+
+// TestGoogleAds_ResolveDemandGenCreative_Rejections: each boundary case fails with a clear,
+// role-named error and (except store-not-configured) never invents an image. Unlike Meta, an
+// EMPTY reference is a caller error here — all three roles are required.
+func TestGoogleAds_ResolveDemandGenCreative_Rejections(t *testing.T) {
+	cases := []struct {
+		name        string
+		reader      creativeAssetReader // nil → store not configured
+		mutate      func(*googleAdsCreativeConfig)
+		wantErrPart string
+		wantRole    string
+	}{
+		{
+			name:        "missing marketing role",
+			reader:      &roleTaggedReader{},
+			mutate:      func(c *googleAdsCreativeConfig) { c.MarketingImageAssetID = "  " },
+			wantErrPart: "is missing the marketing image asset id",
+			wantRole:    "marketing image",
+		},
+		{
+			name:        "malformed square id",
+			reader:      &roleTaggedReader{},
+			mutate:      func(c *googleAdsCreativeConfig) { c.SquareMarketingImageAssetID = "not-a-uuid" },
+			wantErrPart: "not a valid asset id",
+			wantRole:    "square marketing image",
+		},
+		{
+			name:        "store not configured",
+			reader:      nil,
+			mutate:      func(c *googleAdsCreativeConfig) {},
+			wantErrPart: "creative-asset store is not configured",
+			wantRole:    "marketing image",
+		},
+		{
+			name:        "asset does not exist",
+			reader:      &fakeCreativeReader{err: domain.ErrNotFound},
+			mutate:      func(c *googleAdsCreativeConfig) {},
+			wantErrPart: "does not exist for this brief",
+			wantRole:    "marketing image",
+		},
+		{
+			name:        "store error propagates",
+			reader:      &fakeCreativeReader{err: errors.New("db down")},
+			mutate:      func(c *googleAdsCreativeConfig) {},
+			wantErrPart: "db down",
+			wantRole:    "marketing image",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{})
+			if tc.reader != nil {
+				d.SetCreativeAssetRepo(tc.reader)
+			}
+			cfg := demandGenCreativeConfig()
+			tc.mutate(cfg)
+			_, err := d.resolveDemandGenCreative(context.Background(), testBrief(), cfg)
+			if err == nil {
+				t.Fatalf("expected an error")
+			}
+			if !strings.Contains(err.Error(), tc.wantErrPart) {
+				t.Errorf("error %q does not contain %q", err.Error(), tc.wantErrPart)
+			}
+			// The error must name the offending role so an operator can find it.
+			if !strings.Contains(err.Error(), tc.wantRole) {
+				t.Errorf("error %q does not identify the role %q", err.Error(), tc.wantRole)
+			}
+		})
+	}
+}
+
+// TestGoogleAds_Dispatch_SearchChannelIgnoresCreative proves the resolution is gated on the
+// channel, not merely on cfg.Creative != nil: a Search dispatch that happens to carry a creative
+// block must NOT touch the asset store (the Search ad is built from Headlines/Descriptions), so a
+// stray creative on a Search request cannot fail an otherwise-valid dispatch.
+func TestGoogleAds_Dispatch_SearchChannelIgnoresCreative(t *testing.T) {
+	opts, _ := googleAdsServers(t,
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+		},
+	)
+	reader := &roleTaggedReader{}
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	d.SetCreativeAssetRepo(reader)
+
+	// channel "search" (explicit) with a creative block that WOULD resolve if consulted.
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"search","creative":{
+		"mediaFormat":"single_image","businessName":"CNCF",
+		"marketingImageAssetId":"` + dgMarketingAssetID + `",
+		"squareMarketingImageAssetId":"` + dgSquareAssetID + `",
+		"logoAssetId":"` + dgLogoAssetID + `"}}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if reader.callCount != 0 {
+		t.Errorf("Search channel must not resolve the creative, GetAsset called %d times", reader.callCount)
+	}
+}
+
+// TestGoogleAds_Dispatch_DemandGenBadCreativeIsPreCreate: on the demand-gen channel a bad
+// creative reference fails the dispatch as NoUpstreamCreate (claim released) BEFORE any upstream
+// mutate — the whole point of resolving before the create. The server errors on any mutate to
+// prove nothing upstream was attempted.
+func TestGoogleAds_Dispatch_DemandGenBadCreativeIsPreCreate(t *testing.T) {
+	opts, _ := googleAdsServers(t,
+		func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("no budget mutate should be reached when the creative fails to resolve")
+			w.WriteHeader(http.StatusInternalServerError)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("no campaign mutate should be reached when the creative fails to resolve")
+			w.WriteHeader(http.StatusInternalServerError)
+		},
+	)
+	// A reader that has no such asset → ErrNotFound → a bad reference.
+	reader := &fakeCreativeReader{err: domain.ErrNotFound}
+	d := NewGoogleAdsDispatcher(fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{}, opts...)
+	d.SetCreativeAssetRepo(reader)
+
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"demand-gen","creative":{
+		"mediaFormat":"single_image","businessName":"CNCF",
+		"marketingImageAssetId":"` + dgMarketingAssetID + `",
+		"squareMarketingImageAssetId":"` + dgSquareAssetID + `",
+		"logoAssetId":"` + dgLogoAssetID + `"}}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+	if camp != nil {
+		t.Errorf("a pre-create creative failure must return a nil campaign, got %+v", camp)
+	}
+	var nuc interface{ NoUpstreamCreate() bool }
+	if err == nil || !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+		t.Errorf("a bad creative reference must be NoUpstreamCreate (release the claim), got %T: %v", err, err)
+	}
+}
+
+// TestGoogleAds_Dispatch_DemandGenCreativeReachesTheWire is the G4 acceptance test: a demand-gen
+// dispatch carrying a valid creative resolves the three roles to bytes, and those bytes reach the
+// client's assets:mutate upload (base64) BEFORE the budget, then the ad is created and its id
+// lands on the persisted campaign. Proves the dispatch→client wiring end to end.
+func TestGoogleAds_Dispatch_DemandGenCreativeReachesTheWire(t *testing.T) {
+	var (
+		mu             sync.Mutex
+		assetBodies    [][]byte
+		budgetSeen     bool
+		assetsBeforeBg bool
+		adSeen         bool
+		assetCounter   int
+	)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "assets:mutate"):
+			body, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			assetBodies = append(assetBodies, body)
+			assetCounter++
+			id := 400 + assetCounter
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/assets/`+strconv.Itoa(id)+`"}]}`)
+		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
+			mu.Lock()
+			budgetSeen = true
+			assetsBeforeBg = len(assetBodies) == 3 // all three assets uploaded before the budget
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
+		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroups/333"}]}`)
+		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
+			mu.Lock()
+			adSeen = true
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupAds/333~444"}]}`)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(apiSrv.Close)
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	t.Cleanup(tokenSrv.Close)
+
+	reader := &roleTaggedReader{}
+	d := NewGoogleAdsDispatcher(
+		fakeConnReader{conn: activeGoogleAdsConn(goodGoogleAdsCreds)}, identityEncryptor{},
+		googleads.WithTokenURL(tokenSrv.URL), googleads.WithBaseURL(apiSrv.URL),
+	)
+	d.SetCreativeAssetRepo(reader)
+
+	cfg := json.RawMessage(`{"googleAdsConfig":{"budget":50,"channel":"demand-gen","creative":{
+		"mediaFormat":"single_image","businessName":"CNCF",
+		"marketingImageAssetId":"` + dgMarketingAssetID + `",
+		"squareMarketingImageAssetId":"` + dgSquareAssetID + `",
+		"logoAssetId":"` + dgLogoAssetID + `"}}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderGoogleAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(assetBodies) != 3 {
+		t.Fatalf("expected 3 asset uploads, got %d", len(assetBodies))
+	}
+	if !budgetSeen || !adSeen {
+		t.Errorf("expected both a budget mutate (%v) and an ad mutate (%v)", budgetSeen, adSeen)
+	}
+	if !assetsBeforeBg {
+		t.Error("all three image assets must upload BEFORE the budget (fail before spending)")
+	}
+	// The resolved bytes must reach the wire as base64: "MKT" → "TUtU", "SQR" → "U1FS",
+	// "LOGO" → "TE9HTw==". A regression that drops the resolution ships empty data.
+	joined := string(bytes.Join(assetBodies, []byte("|")))
+	for _, want := range []string{"TUtU", "U1FS", "TE9HTw=="} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("asset upload bodies %q missing base64 %q (resolved bytes did not reach the wire)", joined, want)
+		}
+	}
+	// The created ad id must land on the persisted campaign result blob.
+	if camp == nil || len(camp.Result) == 0 || !strings.Contains(string(camp.Result), "444") {
+		t.Errorf("persisted result must carry the created ad id 444, got %s", string(camp.Result))
 	}
 }
