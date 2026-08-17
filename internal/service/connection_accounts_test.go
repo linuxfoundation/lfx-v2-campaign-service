@@ -750,6 +750,20 @@ func TestListAccounts_RejectsTheReservedSystemScope(t *testing.T) {
 				&conn.ListMetaAdsAccountsPayload{ProjectID: model.SystemProjectID})
 			return err
 		}},
+		// The two routes LFXV2-3064 added. The table enumerates every platform-facing endpoint
+		// deliberately: the guard lives in the shared listAccounts, so a wrapper that stopped
+		// calling it would expose the LF system credential's accounts through that one route
+		// while every other case here still passed.
+		{"linkedin ads", func(s *ConnectionService) error {
+			_, err := s.ListLinkedinAdsAccounts(context.Background(),
+				&conn.ListLinkedinAdsAccountsPayload{ProjectID: model.SystemProjectID})
+			return err
+		}},
+		{"microsoft ads", func(s *ConnectionService) error {
+			_, err := s.ListMicrosoftAdsAccounts(context.Background(),
+				&conn.ListMicrosoftAdsAccountsPayload{ProjectID: model.SystemProjectID})
+			return err
+		}},
 		// Not account discovery, same reserved scope. A GET here would decrypt the LF system
 		// credential and list the Linux Foundation's own marketing emails — subjects and all —
 		// for whoever asked.
