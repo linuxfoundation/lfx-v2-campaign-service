@@ -248,7 +248,7 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   fewest references to the number, not the branch you happen to be in** — a migration
   version leaks into prose and recovery code, and the leak, not the file name, is the cost.
   See *Migration numbering* below.
-- `000026` — `creative_assets` table (Meta single-image creatives, LFXV2-2665): an uploaded
+- `000026` — `creative_assets` table (Meta single-image creatives, LFXV2-3295): an uploaded
   image subordinate to a brief (`brief_id` REFERENCES `campaign_briefs(id)`), with `project_id`
   for tenant scoping, a `mime_type` CHECK constrained to `image/png`/`image/jpeg`, `byte_size`,
   a `checksum` (lowercase-hex SHA-256 of the bytes), the `bytes` themselves as `BYTEA`, and
@@ -1088,7 +1088,7 @@ Two guards live in the same transaction as the insert, and neither can be enforc
 The insert and its outbox index row are co-committed in one transaction, as every campaign
 write is — see `enqueueCampaignIndex`.
 
-## `CreativeAssetRepo` (Meta single-image creatives, LFXV2-2665)
+## `CreativeAssetRepo` (Meta single-image creatives, LFXV2-3295)
 
 `CreativeAssetRepo` backs `000026`'s `creative_assets` table with two methods, and both are
 built around the parent-brief gate and the content-addressed dedupe key.

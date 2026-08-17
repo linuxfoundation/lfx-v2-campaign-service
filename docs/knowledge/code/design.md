@@ -85,7 +85,7 @@ than `""`, which is the distinction a form being pre-filled actually needs.
 parameter it lands verbatim in access logs, proxy logs and browser history at every hop;
 as a body parameter it does not. That outweighs the idempotency `GET` would advertise.
 
-`upload-creative-asset` (`POST .../briefs/{brief_id}/creative-assets`, LFXV2-2665) is the
+`upload-creative-asset` (`POST .../briefs/{brief_id}/creative-assets`, LFXV2-3295) is the
 briefs service's image-upload method, backing the Meta single-image creative. It is
 SYNCHRONOUS — unlike `create-campaigns`, which returns a job — because it only validates and
 stores bytes and touches no ad platform. The `bytes` attribute is Goa's `Bytes` type (`[]byte`

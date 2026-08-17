@@ -196,7 +196,7 @@ without calling the dispatcher) AND that caller setting `ReconcileByName`. Until
 both land the lookup is exercised only by tests, which is the intended state — the
 capability is in place and deliberately unreached rather than on by default.
 
-## Image creatives (LFXV2-2665)
+## Image creatives (LFXV2-3295)
 
 Each ad variant can carry a single image. The variant field the CALLER sets is
 `AdVariant.ImageAssetID` (JSON `imageAssetId`) — an id into this brief's uploaded assets, NOT
@@ -247,7 +247,7 @@ just used internally) so each successfully-created ad records it in `AdResult.Im
 `CampaignResult.Ads` (one entry per created ad, `len(Ads) == AdCount`, in variant order). Like
 `CampaignResult`'s other fields these carry no json tags, so the hash round-trips through the
 persisted `Result` blob (written by `campaignFromMeta`, read back by `metaAdSetID`) under its Go
-field name. That is what lets a future reconcile pass (LFXV2-2665) tell which uploaded asset
+field name. That is what lets a future reconcile pass (LFXV2-3295) tell which uploaded asset
 backs a live ad without re-deriving it.
 
 ## Campaign status toggle

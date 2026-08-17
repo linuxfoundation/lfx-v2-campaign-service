@@ -1,4 +1,4 @@
-# 2026-08-17 — LFXV2-2665 creative-upload guard coverage
+# 2026-08-17 — LFXV2-3295 creative-upload guard coverage
 
 **Fix** — The three validation guards on `UploadCreativeAsset` had no binding test. Deleting any
 one of them — the `image.DecodeConfig` sniff, the format allow-list, or the declared-vs-sniffed

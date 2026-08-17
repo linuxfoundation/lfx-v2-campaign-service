@@ -82,7 +82,7 @@ and its `Shutdown` drains them (bounded) before the DB pool closes, and on
 startup jobs left non-terminal beyond a staleness cutoff are failed-forward (they
 cannot be safely resumed without provider idempotency keys).
 
-## Creative asset upload (LFXV2-2665)
+## Creative asset upload (LFXV2-3295)
 
 `BriefService.UploadCreativeAsset` (backing `POST .../briefs/{briefId}/creative-assets`)
 validates and stores an uploaded image so a Meta ad creative can later reference it by id. It

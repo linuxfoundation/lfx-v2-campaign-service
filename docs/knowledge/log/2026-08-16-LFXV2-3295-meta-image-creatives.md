@@ -1,4 +1,4 @@
-# 2026-08-16 — LFXV2-2665 Meta single-image ad creatives
+# 2026-08-16 — LFXV2-3295 Meta single-image ad creatives
 
 **Creation** — Meta campaigns can now carry a real single-image ad creative
 instead of a link-only one, end to end: upload an image against a brief, then
@@ -54,4 +54,4 @@ The pieces, and where each is documented:
 plus double-confirmation in `lfx-self-serve`; there is no server-side confirm
 flag. The client still creates everything PAUSED, unchanged. Video and carousel
 formats, and full LEAD_GENERATION / instant-form parity, remain deferred under
-the same LFXV2-2665 umbrella.
+the same LFXV2-3295 umbrella.
