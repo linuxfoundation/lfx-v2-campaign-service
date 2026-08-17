@@ -115,9 +115,14 @@ Google platform client and its dispatcher.
 
 ### G1 — Contract + config: creative reference on the Google path (`internal/dispatch/googleads.go`, `internal/platform/googleads/campaign.go`; `design/` only if needed)
 - Extend `googleAdsConfig` (the wire shape mapped from the `Any` config envelope) with an
-  optional creative block: `mediaFormat` (enum, `single_image` today), `imageAssetIds`
-  (`asset_id` UUIDs), `businessName`, and `logoAssetId`.
-- Extend `CampaignInput` with the matching optional fields the client consumes.
+  optional creative block. Per `research.md` §1/D1, a Demand Gen single-image ad is the v23
+  `DemandGenMultiAssetResponsiveDisplayAd`, which requires image assets in **three distinct
+  aspect-ratio roles** — so the block carries `mediaFormat` (enum, `single_image` today),
+  `businessName`, and THREE `asset_id` UUID references: `marketingImageAssetId` (landscape
+  1.91:1), `squareMarketingImageAssetId` (1:1), and `logoAssetId` (1:1 logo). "Single image"
+  means a single non-carousel/non-video image ad, NOT one image file (see research §1).
+- Extend `CampaignInput` with the matching optional fields the client consumes
+  (`BusinessName` + the three asset-id references).
 - Confirm no Goa DSL change is required (the `config` envelope is `Any`); if a documented
   example or catalog type must change, do it in `design/` + `make apigen` and commit `gen/**`
   together. Otherwise this is a struct/doc-only commit.
@@ -131,22 +136,28 @@ Google platform client and its dispatcher.
   (`apiError`/`transportError`/pre-send), and `firstResourceName` extraction.
 - Idempotent per (customer + checksum): a per-dispatch cache keyed by (customerID, checksum);
   the resolved resource name is persisted in `CampaignResult` (G4/G5) so a reconcile/retry
-  reuses it. Google-side dedupe of identical image bytes is confirmed in `research.md`; the
-  cache is the guaranteed layer regardless.
+  reuses it. Google-side dedupe of identical image bytes is NOT yet confirmed (research O3, a
+  pre-G2 live gate) — the app-side (customerID, checksum) cache is the guaranteed layer
+  regardless, and G2's duplicate-error handling is finalised once O3 resolves.
 - Content-addressed error handling mirrors the Meta `uploadImage` shape (and applies the
   same token-path discipline noted in the Meta token-trim audit — the access token is used
   exactly as the create/discovery paths resolve it, never a divergent copy).
 
 ### G3 — Google client: Demand Gen ad builder (`internal/platform/googleads/demandgen_ad.go`, `demandgen.go`)
 - `demandGenAdBuilder` keyed by media format. `singleImageDemandGenAd` produces the v23
-  Demand Gen responsive single-image ad payload (marketing image asset, business name, logo
-  asset, headlines/descriptions via the existing `composeAdCopy`, final URL via
-  `buildAdFinalURL`). Carousel/video builders are the planned future implementations of the
-  same interface (FR-006 / SC-005) — not built now. Exact v23 ad type + required-field set is
-  pinned in `research.md`.
+  `DemandGenMultiAssetResponsiveDisplayAd` payload (research D1/D4): `businessName`, the three
+  image roles as `{asset: <resourceName>}` (`marketingImages` / `squareMarketingImages` /
+  `logoImages`), `headlines`/`descriptions` via the existing `composeAdCopy`, and `finalUrls`
+  via `buildAdFinalURL` on the `ad` wrapper. **`composeAdCopy` is reused as-is** — its RSA
+  weight caps (headline 30 / description 90) sit within Demand Gen's limits (40 / 90) and its
+  min 3/2 satisfies Demand Gen's min 1/1 — **except the builder must truncate the composed
+  headlines to Demand Gen's max of 5** (composeAdCopy allows up to 15); do NOT widen the shared
+  `composeAdCopy` constants. Carousel/video builders are the planned future implementations of
+  the same interface (FR-006 / SC-005) — not built now. Exact v23 ad type + required-field set
+  + the live-`validateOnly` gates that must confirm it are in `research.md` (§5, §7).
 - Extend `CreateDemandGenCampaign`: after the ad group commits, when a creative reference is
-  present, upload the image asset (G2), build the ad, and `adGroupAds:mutate` it `PAUSED`.
-  When absent, keep today's shell close-out step verbatim (backward compatible).
+  present, upload the three image assets (G2), build the ad, and `adGroupAds:mutate` it
+  `PAUSED`. When absent, keep today's shell close-out step verbatim (backward compatible).
 - **Stamp the campaign channel on the result.** `CampaignResult` gains an explicit
   `Channel` field carrying the SAME vocabulary the input `googleAdsConfig.Channel` already
   uses — the existing constants `googleAdsChannelSearch = "search"` and
@@ -173,7 +184,8 @@ Google platform client and its dispatcher.
 
 ### G4 — Dispatch wiring (`internal/dispatch/googleads.go`)
 - Map the G1 creative config into `CampaignInput`.
-- Resolve each `imageAssetId`/`logoAssetId` to bytes via the reused `CreativeAssetRepo`,
+- Resolve each of the three role asset ids (`marketingImageAssetId` /
+  `squareMarketingImageAssetId` / `logoAssetId`) to bytes via the reused `CreativeAssetRepo`,
   scoped to (project, brief) — the `resolveVariantAssets` analogue from the Meta dispatcher.
   A malformed/absent/cross-brief asset fails the dispatch through the existing `notCreated`
   path, releasing the claim rather than stranding it (FR: no silent shell fallback).
