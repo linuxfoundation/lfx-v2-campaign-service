@@ -52,6 +52,10 @@ type campaignsAPI struct {
 	adPostBody string
 	adStatus   int
 	adSeen     *createAdsRequest
+	// Keyword (MS-4).
+	keywordPostBody string
+	keywordStatus   int
+	keywordSeen     *createKeywordsRequest
 }
 
 func (h *campaignsAPI) handler(t *testing.T) http.HandlerFunc {
@@ -83,6 +87,12 @@ func (h *campaignsAPI) handler(t *testing.T) http.HandlerFunc {
 		case strings.HasSuffix(p, "/Ads"):
 			decodeTo(t, r, h.adSeen)
 			writeStatusOr(w, h.adStatus, h.adPostBody, `{"AdIds":[987],"PartialErrors":[]}`)
+		case strings.HasSuffix(p, "/Keywords"):
+			decodeTo(t, r, h.keywordSeen)
+			// Default returns THREE ids because validInputWithKeywords sends three keywords, and
+			// the client treats a short id array as UNCONFIRMED (the response must describe what
+			// was sent). A test sending a different count scripts keywordPostBody itself.
+			writeStatusOr(w, h.keywordStatus, h.keywordPostBody, `{"KeywordIds":[701,702,703],"PartialErrors":[]}`)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, p)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -893,7 +903,7 @@ func newStatusCascadeClient(t *testing.T, rec *statusCascadeRecorder, replies ma
 func TestUpdateCampaignAndChildrenStatus_PauseGatesParentFirst(t *testing.T) {
 	rec := &statusCascadeRecorder{}
 	c := newStatusCascadeClient(t, rec, nil)
-	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused); err != nil {
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", nil, StatusPaused); err != nil {
 		t.Fatalf("UpdateCampaignAndChildrenStatus: %v", err)
 	}
 	if got := rec.entities(); !reflect.DeepEqual(got, []string{"Campaigns", "AdGroups", "Ads"}) {
@@ -959,7 +969,7 @@ func assertCascadeParentIDs(t *testing.T, calls []statusCall, expectedStatus ...
 func TestUpdateCampaignAndChildrenStatus_ActivateEnablesChildrenFirst(t *testing.T) {
 	rec := &statusCascadeRecorder{}
 	c := newStatusCascadeClient(t, rec, nil)
-	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusActive); err != nil {
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", nil, StatusActive); err != nil {
 		t.Fatalf("UpdateCampaignAndChildrenStatus: %v", err)
 	}
 	if got := rec.entities(); !reflect.DeepEqual(got, []string{"AdGroups", "Ads", "Campaigns"}) {
@@ -1000,7 +1010,7 @@ func TestUpdateCampaignAndChildrenStatus_PartialCascadeIsUnconfirmed(t *testing.
 		t.Run(tc.name, func(t *testing.T) {
 			rec := &statusCascadeRecorder{}
 			c := newStatusCascadeClient(t, rec, tc.replies)
-			err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", tc.status)
+			err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", nil, tc.status)
 			if err == nil {
 				t.Fatal("a rejected status PUT must not be reported as success")
 			}
@@ -1028,7 +1038,7 @@ func TestUpdateCampaignAndChildrenStatus_FirstStepFailureStaysDefinite(t *testin
 		t.Run(tc.name, func(t *testing.T) {
 			rec := &statusCascadeRecorder{}
 			c := newStatusCascadeClient(t, rec, map[string]string{tc.firstEntity: rejected})
-			err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", tc.status)
+			err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", nil, tc.status)
 			if err == nil {
 				t.Fatal("a rejected status PUT must not be reported as success")
 			}
@@ -1048,7 +1058,7 @@ func TestUpdateCampaignAndChildrenStatus_FirstStepFailureStaysDefinite(t *testin
 func TestUpdateCampaignAndChildrenStatus_PauseWithoutChildIDs(t *testing.T) {
 	rec := &statusCascadeRecorder{}
 	c := newStatusCascadeClient(t, rec, nil)
-	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "", "", StatusPaused); err != nil {
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "", "", nil, StatusPaused); err != nil {
 		t.Fatalf("pausing with unknown children must still gate the campaign, got: %v", err)
 	}
 	if got := rec.entities(); !reflect.DeepEqual(got, []string{"Campaigns"}) {
@@ -1092,7 +1102,7 @@ func TestUpdateCampaignAndChildrenStatus_RejectsBadInputWithoutCalling(t *testin
 		t.Run(tc.name, func(t *testing.T) {
 			rec := &statusCascadeRecorder{}
 			c := newStatusCascadeClient(t, rec, nil)
-			err := c.UpdateCampaignAndChildrenStatus(context.Background(), tc.campaignID, tc.adGroupID, tc.adID, tc.status)
+			err := c.UpdateCampaignAndChildrenStatus(context.Background(), tc.campaignID, tc.adGroupID, tc.adID, nil, tc.status)
 			if err == nil {
 				t.Fatal("malformed input must be rejected")
 			}
@@ -1111,7 +1121,7 @@ func TestUpdateCampaignAndChildrenStatus_RejectsBadInputWithoutCalling(t *testin
 func TestUpdateCampaignAndChildrenStatus_UndecodableBodyIsUnconfirmed(t *testing.T) {
 	rec := &statusCascadeRecorder{}
 	c := newStatusCascadeClient(t, rec, map[string]string{"Campaigns": `{"PartialErrors":`})
-	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused)
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", nil, StatusPaused)
 	if err == nil {
 		t.Fatal("an undecodable 200 must not be reported as success — the update may have applied")
 	}
@@ -1137,7 +1147,7 @@ func TestUpdateCampaignAndChildrenStatus_OmittedPartialErrorsIsUnconfirmed(t *te
 		t.Run(name, func(t *testing.T) {
 			rec := &statusCascadeRecorder{}
 			c := newStatusCascadeClient(t, rec, map[string]string{"Campaigns": body})
-			err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused)
+			err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", nil, StatusPaused)
 			if err == nil {
 				t.Fatal("a body that never reported PartialErrors must not read as success")
 			}
@@ -1160,7 +1170,7 @@ func TestUpdateCampaignAndChildrenStatus_AcceptsEmptyPartialErrorForms(t *testin
 		t.Run(name, func(t *testing.T) {
 			rec := &statusCascadeRecorder{}
 			c := newStatusCascadeClient(t, rec, map[string]string{"Campaigns": body})
-			if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused); err != nil {
+			if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", nil, StatusPaused); err != nil {
 				t.Fatalf("an explicitly empty PartialErrors means no failure, got: %v", err)
 			}
 		})
@@ -1199,7 +1209,7 @@ func TestUpdateCampaignAndChildrenStatus_RetriesThrottledStatusPut(t *testing.T)
 		}
 		_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
 	})
-	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused); err != nil {
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", nil, StatusPaused); err != nil {
 		t.Fatalf("a throttled status PUT must be retried, not surfaced: %v", err)
 	}
 	mu.Lock()
@@ -1217,7 +1227,7 @@ func TestUpdateCampaignAndChildrenStatus_RetriesThrottledStatusPut(t *testing.T)
 func TestUpdateCampaignAndChildrenStatus_PauseWithAdGroupOnly(t *testing.T) {
 	rec := &statusCascadeRecorder{}
 	c := newStatusCascadeClient(t, rec, nil)
-	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "", StatusPaused); err != nil {
+	if err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "", nil, StatusPaused); err != nil {
 		t.Fatalf("pausing with a known ad group and no ad must succeed, got: %v", err)
 	}
 	if got := rec.entities(); !reflect.DeepEqual(got, []string{"Campaigns", "AdGroups"}) {
@@ -1247,7 +1257,7 @@ func TestUpdateCampaignAndChildrenStatus_AppliedTextNamesOnlyRealChanges(t *test
 	rejected := `{"PartialErrors":[{"Code":1234,"Message":"nope"}]}`
 	rec := &statusCascadeRecorder{}
 	c := newStatusCascadeClient(t, rec, map[string]string{"AdGroups": rejected})
-	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused)
+	err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", nil, StatusPaused)
 	if err == nil {
 		t.Fatal("a rejected ad-group update must not be reported as success")
 	}
@@ -1304,7 +1314,7 @@ func TestUpdateCampaignAndChildrenStatus_CancelledContextStopsCascade(t *testing
 		}
 		return resp, err
 	})
-	err := c.UpdateCampaignAndChildrenStatus(ctx, "321", "654", "987", StatusPaused)
+	err := c.UpdateCampaignAndChildrenStatus(ctx, "321", "654", "987", nil, StatusPaused)
 	if err == nil {
 		t.Fatal("a cancelled cascade must not report success — the children were never paused")
 	}
@@ -1384,7 +1394,7 @@ func TestUpdateCampaignAndChildrenStatus_CancelledDuring429BackoffReportsUnconfi
 		}
 		return resp, err
 	})
-	err := c.UpdateCampaignAndChildrenStatus(ctx, "321", "654", "987", StatusPaused)
+	err := c.UpdateCampaignAndChildrenStatus(ctx, "321", "654", "987", nil, StatusPaused)
 	if err == nil {
 		t.Fatal("a cancellation during 429 backoff must report an error — the outcome is ambiguous")
 	}
@@ -1439,7 +1449,7 @@ func TestUpdateCampaignAndChildrenStatus_MalformedPartialErrorsList(t *testing.T
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = io.WriteString(w, tt.respBody)
 			})
-			err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", StatusPaused)
+			err := c.UpdateCampaignAndChildrenStatus(context.Background(), "321", "654", "987", nil, StatusPaused)
 			if tt.wantError && err == nil {
 				t.Errorf("response %q should be rejected but was accepted", tt.respBody)
 			}

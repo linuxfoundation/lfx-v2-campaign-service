@@ -351,10 +351,11 @@ hubspotConfig?: object          — HubSpot (email channel) params (see HubSpotC
 #### MicrosoftConfig (the `microsoftConfig` object)
 
 Microsoft Advertising (Bing) per-platform config. The dispatcher creates a PAUSED Search
-campaign with an ad group + a responsive search ad (auto-composed copy); targeting/keywords land
-in a later phase, so only the budget (and optionally a Campaign.TimeZone enum) is caller-supplied
-here. **Budget is in whole units of the ad ACCOUNT's currency**, not USD — the client does no FX
-conversion (mirroring `metaConfig`).
+campaign with an ad group + a responsive search ad (auto-composed copy), then attaches the
+`keywords` supplied here — without them the ad group has nothing to match a query against and the
+campaign can never serve, even once a human enables it (which is why `ToggleStatus` refuses to
+activate a campaign whose keywords were never provisioned). **Budget is in whole units of the ad
+ACCOUNT's currency**, not USD — the client does no FX conversion (mirroring `metaConfig`).
 
 ```
 budget: number                  — Whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…),
@@ -365,7 +366,32 @@ budget: number                  — Whole units of the account currency (e.g. 25
 timeZone?: string               — OPTIONAL Microsoft Campaign.TimeZone enum value. Microsoft marks
                                   the field deprecated but still requires it on Add; when omitted the
                                   client uses its default.
+keywords?: [{text, matchType}]  — Positive Search keywords attached to the created ad group. text is
+                                  capped at 100 characters (Microsoft's limit; Google Ads caps the
+                                  same field at 80) and matchType is Exact | Phrase | Broad —
+                                  Microsoft's PascalCase spelling, though the SCREAMING_CASE Google
+                                  Ads spelling is accepted and canonicalized. At most 60; duplicates
+                                  (case-insensitive, per match type) are dropped; an empty text, an
+                                  over-long one, a control character, or an unrecognized match type
+                                  is REJECTED before anything is created, not silently dropped.
+                                  Keywords are created PAUSED and enabled by the status toggle.
+                                  OMITTING THIS CREATES A CAMPAIGN THAT CAN NEVER SERVE and that
+                                  the status toggle will refuse to activate (409).
+cpcBid?: number                 — OPTIONAL ad-group max cost-per-click, in whole units of the account
+                                  currency (no micros, no FX). Omitted means UNSET, and Microsoft then
+                                  applies the account-currency minimum — a documented, serve-capable
+                                  floor, so omitting it is safe and the service invents no default. A
+                                  supplied value must be within [0.01, 1000]. A REUSED ad group keeps
+                                  its existing bid rather than being re-bid on a retry.
 ```
+
+There is deliberately **no `geoTargets`** here, unlike `redditConfig`/`metaConfig`/`linkedInConfig`.
+Microsoft's location targeting takes its own numeric `LocationId` values (from Microsoft's
+downloadable geographical-locations file) and accepts ISO 3166 country codes for targeting
+*nowhere* — the ISO table in Microsoft's Geographical Location Codes guide is scoped to account
+business addresses, not targeting. A `geoTargets: ["US"]` could therefore only be honoured via an
+invented ISO→LocationId mapping, so the field is not offered rather than being accepted and
+silently dropped. Tracked separately; it needs the locations file as a real input.
 
 The connection supplies the ad account id (`account_id`, the digits-only `CustomerAccountId`) and
 an OPTIONAL manager/MCC id (`customer_id`, the `CustomerId` header) via the Microsoft connection

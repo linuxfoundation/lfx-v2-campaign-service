@@ -126,13 +126,25 @@ const (
 // but AdGroupType and Language are set explicitly (Language is conditionally required when
 // the campaign sets no languages; AdGroupType pins the group to the responsive-search-ad-
 // capable "SearchStandard"). Status is set PAUSED (its Add default is already Paused, sent
-// explicitly for clarity). Targeting/bids use account defaults — the conservative choice
-// for a broker-created shell.
+// explicitly for clarity).
+//
+// CpcBid is the ad group's max cost-per-click and is OMITTED when the caller supplies none
+// (a nil pointer with omitempty). Omission is a documented, serve-capable state: Microsoft
+// sets an unset bid to "the minimum depending on your account's currency". Sending an
+// explicit {"Amount":0} instead would be a zero bid — a different and worse thing — which is
+// why this is a POINTER rather than a float64 with omitempty semantics of its own.
+//
+// NOTE for a future change: Microsoft has IGNORED bid strategies on ad groups and keywords
+// since April 2021 — "the request will be ignored without error" — so an AdGroup.BiddingScheme
+// added here would be a silent no-op. The bid strategy is the CAMPAIGN's (v13 defaults a
+// Search campaign to EnhancedCpcBiddingScheme), and CpcBid is the ad-group-level control that
+// still does something.
 type msAdGroup struct {
 	Name        string `json:"Name"`
 	Status      string `json:"Status"`
 	AdGroupType string `json:"AdGroupType"`
 	Language    string `json:"Language"`
+	CpcBid      *msBid `json:"CpcBid,omitempty"`
 }
 
 // createAdGroupsRequest is the POST /AdGroups body. The v13 AddAdGroups operation
@@ -238,6 +250,21 @@ func entityState(existed bool) string {
 //
 // campaignPartial() returns the result carrying everything known so far (campaign id +
 // name); this function extends it with the ad-group and ad ids/names as they land.
+// targeting carries the ALREADY-VALIDATED targeting inputs from CreateCampaign into the
+// ad-group/ad/keyword cascade. It exists so the values are validated exactly once, up front,
+// before anything is created: re-deriving them here would let the check that prevents an
+// orphaned tree drift away from the values actually sent.
+//
+// cpcBidSet distinguishes "no bid supplied" from "a bid of 0.0", which is the distinction
+// that decides whether the CpcBid field is SENT at all. Without it, an unset bid would be
+// serialized as {"Amount":0} — an explicit zero bid, which is not what Microsoft's
+// documented "unset takes the account-currency minimum" behaviour does.
+type targeting struct {
+	keywords  []Keyword
+	cpcBid    float64
+	cpcBidSet bool
+}
+
 func (c *Client) createAdGroupAndAd(
 	ctx context.Context,
 	in CampaignInput,
@@ -245,6 +272,7 @@ func (c *Client) createAdGroupAndAd(
 	alreadyExisted bool,
 	steps *[]string,
 	campaignPartial func() *CampaignResult,
+	tgt targeting,
 ) (*CampaignResult, error) {
 	// The ad destination URL (in.RegistrationURL) is validated up front in CreateCampaign,
 	// BEFORE the campaign create, so a bad URL fails cleanly without orphaning a PAUSED
@@ -282,7 +310,7 @@ func (c *Client) createAdGroupAndAd(
 	// (idempotent), the create is a mutation (not retried on 429). A cancellation
 	// during the lookup is a clean abort (nothing new created), but the CAMPAIGN
 	// already exists, so it is surfaced as a reconcilable partial rather than (nil,err).
-	adGroupID, existed, err := c.findOrCreateAdGroup(ctx, campaignID, adGroupName)
+	adGroupID, existed, err := c.findOrCreateAdGroup(ctx, campaignID, adGroupName, tgt.cpcBid, tgt.cpcBidSet)
 	if err != nil {
 		// ORDER MATTERS. createOutcomeAmbiguous catches a transportError FIRST — a ctx-cancel
 		// mid-HTTP-Do is wrapped as a transportError (whose Unwrap exposes context.Canceled),
@@ -306,9 +334,14 @@ func (c *Client) createAdGroupAndAd(
 	// an existing hierarchy.
 	hierState := fmt.Sprintf("campaign %s %s + ad group %s %s", campaignID, campaignState, adGroupID, entityState(adGroupExisted))
 	if existed {
-		*steps = append(*steps, fmt.Sprintf("Ad group already exists by name: %s (not re-created)", adGroupID))
+		*steps = append(*steps, fmt.Sprintf("Ad group already exists by name: %s (not re-created, bid unchanged)", adGroupID))
+	} else if tgt.cpcBidSet {
+		*steps = append(*steps, fmt.Sprintf("Ad group created: %s (PAUSED, CpcBid %.2f in the account currency)", adGroupID, tgt.cpcBid))
 	} else {
-		*steps = append(*steps, fmt.Sprintf("Ad group created: %s (PAUSED)", adGroupID))
+		// Say what the ABSENT bid means, rather than staying silent about it: Microsoft applies
+		// the account-currency minimum, and an operator reading these steps needs to know that
+		// the campaign has a real (if minimal) bid rather than none at all.
+		*steps = append(*steps, fmt.Sprintf("Ad group created: %s (PAUSED, no CpcBid set — Microsoft applies the account-currency minimum)", adGroupID))
 	}
 
 	adGroupWithIDPartial := func() *CampaignResult {
@@ -355,8 +388,57 @@ func (c *Client) createAdGroupAndAd(
 		*steps = append(*steps, fmt.Sprintf("Ad created: %s (PAUSED, ResponsiveSearch)", adID))
 	}
 
-	r := adGroupWithIDPartial()
-	r.AdID = adID
+	adWithIDPartial := func() *CampaignResult {
+		r := adGroupWithIDPartial()
+		r.AdID = adID
+		return r
+	}
+
+	// Step 5 (MS-4): attach the keywords. LAST, because it is the only step whose absence
+	// leaves a tree that is complete but inert — every earlier step is a prerequisite for it,
+	// and running it earlier would mean keywording an ad group whose ad might still fail.
+	//
+	// A pre-step context check, as at every other step: a cancelled context must not fire a
+	// mutating create whose outcome would then be UNCONFIRMED.
+	if len(tgt.keywords) > 0 {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return adWithIDPartial(), fmt.Errorf("microsoft-ads keyword step aborted (%s + ad %s; context done before the keyword step, no keywords created): %w", hierState, adID, ctxErr)
+		}
+		keywordIDs, kerr := c.createKeywords(ctx, adGroupID, tgt.keywords)
+		if kerr != nil {
+			// Same ordered classification as the ad group and ad: an ambiguous transport error or
+			// errNoID (malformed/short 2xx) stays UNCONFIRMED, because AddKeywords has NO
+			// idempotency key — a blind retry would add a second copy of every keyword rather
+			// than reconciling onto the first. Only a definite PartialError is a clean rejection.
+			switch {
+			case createOutcomeAmbiguous(kerr) || errors.Is(kerr, errNoID):
+				return adWithIDPartial(), fmt.Errorf("microsoft-ads keyword targeting UNCONFIRMED (%s + ad %s; keywords may exist — verify before retrying, a blind retry would duplicate them): %w", hierState, adID, kerr)
+			case errors.Is(kerr, context.Canceled) || errors.Is(kerr, context.DeadlineExceeded):
+				return adWithIDPartial(), fmt.Errorf("microsoft-ads keyword step aborted (%s + ad %s; context done, no keywords created): %w", hierState, adID, kerr)
+			case errors.Is(kerr, errPartialFailure):
+				return adWithIDPartial(), fmt.Errorf("microsoft-ads keyword targeting rejected (%s + ad %s): %w", hierState, adID, kerr)
+			default:
+				return adWithIDPartial(), fmt.Errorf("microsoft-ads keyword targeting failed (%s + ad %s): %w", hierState, adID, kerr)
+			}
+		}
+		r := adWithIDPartial()
+		r.KeywordIDs = keywordIDs
+		// Reports the number of ids PARSED, not the number of keywords sent: the two can differ
+		// for an oversized request whose id array is bounded on decode (see createKeywords), and
+		// claiming a count this run did not actually confirm is the kind of overstatement that
+		// makes a step log untrustworthy.
+		*steps = append(*steps, fmt.Sprintf("Keywords attached: %d (PAUSED — enable them with the campaign)", len(keywordIDs)))
+		r.AlreadyExisted = false // this run created keywords, so the tree is not untouched
+		r.Steps = *steps
+		return r, nil
+	}
+
+	// No keywords supplied. Say so explicitly in the steps: a campaign in this state is
+	// structurally complete but can never serve, and an operator reading the result needs
+	// that stated rather than inferred from a missing line.
+	*steps = append(*steps, "No keywords supplied — this campaign cannot serve until keywords are added")
+
+	r := adWithIDPartial()
 	// AlreadyExisted is true only when this run created NOTHING — i.e. the campaign, the
 	// ad group, AND the ad were all pre-existing. If any level was created this run, the
 	// run did produce something new, so the field must be false (its documented contract).
@@ -396,20 +478,28 @@ func unconfirmedLookupErr(ctx context.Context, ferr error) error {
 	return fmt.Errorf("idempotency lookup failed (cannot confirm the entity is absent; verify before retrying): %w: %w", ferr, errNoID)
 }
 
-func (c *Client) findOrCreateAdGroup(ctx context.Context, campaignID, name string) (id string, existed bool, err error) {
+func (c *Client) findOrCreateAdGroup(ctx context.Context, campaignID, name string, cpcBid float64, cpcBidSet bool) (id string, existed bool, err error) {
 	if existingID, ferr := c.findAdGroupByName(ctx, campaignID, name); ferr != nil {
 		return "", false, unconfirmedLookupErr(ctx, ferr)
 	} else if existingID != "" {
+		// A REUSED ad group keeps whatever bid it already has. This create-only path is not the
+		// place to push a new CpcBid onto a group a previous run (or a human) already configured:
+		// silently re-bidding an existing ad group would change what a live campaign pays on what
+		// is meant to be an idempotent retry.
 		return existingID, true, nil
+	}
+	adGroup := msAdGroup{
+		Name:        name,
+		Status:      adGroupStatusPaused,
+		AdGroupType: adGroupTypeSearchStandard,
+		Language:    adGroupLanguage,
+	}
+	if cpcBidSet {
+		adGroup.CpcBid = &msBid{Amount: cpcBid}
 	}
 	req := createAdGroupsRequest{
 		CampaignId: json.Number(campaignID),
-		AdGroups: []msAdGroup{{
-			Name:        name,
-			Status:      adGroupStatusPaused,
-			AdGroupType: adGroupTypeSearchStandard,
-			Language:    adGroupLanguage,
-		}},
+		AdGroups:   []msAdGroup{adGroup},
 	}
 	body, err := c.doRequest(ctx, http.MethodPost, "AdGroups", req, false)
 	if err != nil {
