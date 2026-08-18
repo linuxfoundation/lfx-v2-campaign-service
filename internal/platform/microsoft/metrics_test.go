@@ -217,6 +217,60 @@ func TestGetCampaignMetrics_SuccessWithNoURLIsNotAZero(t *testing.T) {
 	}
 }
 
+// headerOnlyCSV is the OTHER shape of "the report completed with no data": Microsoft ships
+// the file, with its metadata preamble, its full header naming every metric column, and its
+// copyright trailer — but not one data row between them.
+const headerOnlyCSV = `"Report Name:","Campaign Performance Report"
+"Report Time:","8/1/2026 - 8/14/2026"
+"Account:","LF Events"
+
+"CampaignId","Impressions","Clicks","Spend"
+"©2026 Microsoft Corporation. All rights reserved."
+`
+
+// TestGetCampaignMetrics_HeaderOnlyReportIsNotAZero is the download-side twin of
+// TestGetCampaignMetrics_SuccessWithNoURLIsNotAZero. That test covers the door where
+// Microsoft omits the file; this one covers the door where it ships a file containing only
+// a header. Both mean "the report completed carrying no data", and the adapter can no more
+// distinguish "the campaign served nothing" from "no such campaign in this account's scope"
+// in one than in the other — so both must answer ErrNoRowsInReport, never a zero.
+//
+// The missing-columns guard does NOT cover this: a header-only file NAMES all three metric
+// columns, so the lookups succeed and the fold runs over an empty row set, which without the
+// explicit guard returns a zero-valued CampaignMetrics and a nil error.
+func TestGetCampaignMetrics_HeaderOnlyReportIsNotAZero(t *testing.T) {
+	m := newMSMetricsServer(t, buildReportZip(t, headerOnlyCSV), 0)
+	c := newMetricsClient(t, m)
+
+	got, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowLast7Days)
+	if !errors.Is(err, ErrNoRowsInReport) {
+		t.Fatalf("want ErrNoRowsInReport for a header-only report, got err=%v", err)
+	}
+	if got != nil {
+		t.Errorf("a header-only report must not render as metrics, got %+v", got)
+	}
+}
+
+// TestFoldReportRows_HeaderOnlyIsNotAZero pins the guard at the unit it lives in, so a
+// refactor that moves the ZIP/CSV plumbing cannot quietly drop it. Asserting the zero-value
+// shape explicitly is the point: a nil error here would hand every consumer a measurement of
+// zero impressions, zero clicks and zero spend, synthesized from a file that measured
+// nothing at all.
+func TestFoldReportRows_HeaderOnlyIsNotAZero(t *testing.T) {
+	records := [][]string{
+		{"Report Name:", "Campaign Performance Report"},
+		{"CampaignId", "Impressions", "Clicks", "Spend"},
+		{"©2026 Microsoft Corporation. All rights reserved."},
+	}
+	got, err := foldReportRows(records, "1234567", model.MetricsWindowLast7Days)
+	if !errors.Is(err, ErrNoRowsInReport) {
+		t.Fatalf("want ErrNoRowsInReport, got err=%v metrics=%+v", err, got)
+	}
+	if got != nil {
+		t.Errorf("want no metrics alongside the sentinel, got %+v", got)
+	}
+}
+
 // TestGetCampaignMetrics_ReportErrorFailsFast proves a terminal Error status does not burn
 // the whole poll budget: retrying cannot help, so it must fail on the first Error.
 func TestGetCampaignMetrics_ReportErrorFailsFast(t *testing.T) {
@@ -485,23 +539,44 @@ func TestErrReportNotReady_DoesNotPromiseAResumableReport(t *testing.T) {
 // out issue two DISTINCT submits, so the second never polls the first's pending report. If
 // resumption is ever built, this test is the one that must change.
 func TestGetCampaignMetrics_RetryAfterNotReadySubmitsAFreshReport(t *testing.T) {
+	// These captures are written from httptest's handler goroutine and read from the test
+	// goroutine, so they are guarded — the same discipline msMetricsServer.mu applies to
+	// every other capture in this file.
+	//
+	// -race does NOT currently flag the unguarded version, and that was measured rather
+	// than assumed: removing the polledIDs lock and running -race -count=3 passes clean.
+	// The reason is that net/http serves a connection from a single goroutine and this
+	// client issues its requests strictly sequentially, so the handlers never actually
+	// overlap (a probe counting distinct handler goroutines across 20 sequential httptest
+	// requests reported exactly 1 — httptest spawns per CONNECTION, not per request).
+	// The lock stays because that safety rests on an invariant nothing here states or
+	// enforces: connection reuse plus a caller that never issues overlapping requests.
+	// A t.Parallel() sub-test, a concurrent second call, or disabled keep-alives would
+	// each break it and surface as an intermittent CI flake. See
+	// docs/knowledge/log/2026-08-18-LFXV2-3260-header-only-and-test-race.md.
+	var mu sync.Mutex
 	var submits int
+	var polledIDs []string
 	mux := http.NewServeMux()
 	mux.HandleFunc("/token", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
 	})
 	mux.HandleFunc("/Reporting/v13/GenerateReport/Submit", func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
 		submits++
+		n := submits
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"ReportRequestId":"rr-%d"}`, submits)
+		_, _ = fmt.Fprintf(w, `{"ReportRequestId":"rr-%d"}`, n)
 	})
-	var polledIDs []string
 	mux.HandleFunc("/Reporting/v13/GenerateReport/Poll", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			ReportRequestID string `json:"ReportRequestId"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
 		polledIDs = append(polledIDs, body.ReportRequestID)
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"ReportRequestStatus":{"Status":"Pending"}}`)
 	})
@@ -526,6 +601,8 @@ func TestGetCampaignMetrics_RetryAfterNotReadySubmitsAFreshReport(t *testing.T) 
 	if err := newCall(); !errors.Is(err, ErrReportNotReady) {
 		t.Fatalf("retry: want ErrReportNotReady, got %v", err)
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if submits != 2 {
 		t.Errorf("submits = %d, want 2 — each retry starts a NEW report", submits)
 	}

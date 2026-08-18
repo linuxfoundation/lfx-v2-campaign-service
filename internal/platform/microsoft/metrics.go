@@ -113,9 +113,12 @@ const (
 // you".
 var ErrReportNotReady = errors.New("microsoft report not ready within the poll budget (a retry starts a NEW report; it does not resume this one)")
 
-// ErrNoRowsInReport means the poll reported Success but named no file to download. The
-// adapter cannot tell "the campaign served nothing" from "no such campaign in this
-// account's scope", so it refuses to render either as a measured zero.
+// ErrNoRowsInReport means the report completed but carried no data. It covers BOTH shapes
+// that condition arrives in: a poll that reported Success while naming no file to download,
+// and a downloaded CSV whose header is followed by zero data rows. The adapter cannot tell
+// "the campaign served nothing" from "no such campaign in this account's scope", so it
+// refuses to render either as a measured zero — and since the two shapes carry identically
+// little information, they answer with the same sentinel.
 var ErrNoRowsInReport = errors.New("microsoft report completed with no downloadable rows")
 
 // ErrUnsupportedWindow is returned for a model.MetricsWindow this client does not map to a
@@ -461,6 +464,19 @@ func foldReportRows(records [][]string, campaignID string, window model.MetricsW
 		// Refuse rather than defaulting the missing column to zero: a zero that came from
 		// an absent column is indistinguishable, to every consumer, from a measured zero.
 		return nil, fmt.Errorf("microsoft report csv missing required columns (have %v)", header)
+	}
+	if len(rows) == 0 {
+		// A header with no data rows is the SAME condition as a Success carrying no
+		// download URL, arriving through the other door — and it must answer the same
+		// sentinel. GetCampaignMetrics refuses the no-URL form explicitly because this
+		// adapter cannot tell "the campaign served nothing" from "no such campaign in this
+		// account's scope"; a header-only file carries exactly as little information. The
+		// column guard directly above does NOT already cover it: the header names all
+		// three columns, so the lookups succeed and the fold below runs zero times,
+		// returning a zero-valued CampaignMetrics with a nil error — a measured zero
+		// synthesized from an empty file. Returning the sentinel keeps the two shapes
+		// indistinguishable to the caller, which is correct, because they are.
+		return nil, ErrNoRowsInReport
 	}
 
 	out := &model.CampaignMetrics{CampaignID: campaignID, Window: window}
