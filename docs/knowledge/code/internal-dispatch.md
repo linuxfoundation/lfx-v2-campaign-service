@@ -1058,6 +1058,42 @@ snake_case wire form. The config an adapter refuses to create without (LinkedIn 
 `page_id`, X `funding_instrument_id`) is required of the map about to be WRITTEN — on rotation the
 existing columns MERGED with the flags, since `Update` rewrites every config column.
 
+## Forced-primary mode: the system account as the account of record
+
+The section above is the DEFAULT — the system row is a fallback, used only when a project has no
+connection of its own. `LFX_FORCE_SYSTEM_ADS_ACCOUNT` (`constants.EnvForceSystemAdsAccount`,
+exactly `"true"` to enable, default off) inverts that for paid ads: every paid-ads campaign
+authenticates as the LF marketing-ops account regardless of any per-project connection, so the
+system row becomes the PRIMARY credential source, not the fallback. It is read once in
+`newCredsSource` from the environment — mirroring the dispatch-layer `REDDIT_METRICS_ENABLED`
+flag — rather than threaded through the seven `New*Dispatcher` constructors (191 call sites) and
+`Config`, since `credsSource` is the only consumer. Per-environment enablement is an ArgoCD
+overlay flip like the cutover flags; the branch stays dormant until an operator opts in. See
+[specs/006-force-system-ads-account](../../../specs/006-force-system-ads-account/spec.md).
+
+A guard at the top of `credsSource.resolve` routes to `resolveForcedSystem` when the flag is on,
+the provider `IsPaidAds()`, and the request is not already at `model.SystemProjectID`. All three
+matter:
+
+- **Gated on `IsPaidAds()`** — HubSpot/email is NEVER forced, the same trade the fallback's
+  `systemConn` refuses: forcing a project's audience build onto the system HubSpot row would write
+  its contacts into the LF portal. The default path still handles email exactly as before.
+- **`SystemProjectID` short-circuits** — a request already in the reserved scope drops to the
+  ordinary path; forcing it would re-issue the identical lookup, and there is no project
+  connection to override.
+- **Unconditional, unlike the fallback** — `resolveForcedSystem` does NOT consult
+  `Disconnected`. Forcing overrides a project's own choice by design, so a project that explicitly
+  disconnected its account is still dispatched on the system account. That is the deliberate
+  difference from the fallback, whose whole safety argument is that a disconnect is a statement it
+  must honour.
+
+It loads the system row directly (`Get(SystemProjectID, provider)` → `resolveConn`), holds it to
+the same validate-and-decrypt standard as any connection, marks the result `fromSystem = true`,
+and `systemOrigin`-tags every failure — so a system row that is missing or unusable **fails
+closed** with a not-created, system-origin error rather than falling through to the project
+connection the flag means to ignore. `resolveOwned` (adoption) is untouched: it never forced and
+never fell back.
+
 ## `CampaignAdopter` (optional capability)
 
 `CampaignAdopter` is a fourth OPTIONAL dispatcher interface, alongside `StatusToggler`,
