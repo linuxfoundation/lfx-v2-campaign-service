@@ -19,7 +19,9 @@ Prometheus registry (`Container.Metrics`), built BEFORE any wiring branch so `/m
 is served in no-database mode and during a cold start — a scrape target that only appears
 once the database is up is exactly backwards, since the DB-outage window is when a pod's
 metrics matter most. `setPool` is the single chokepoint that points the pool gauges at the
-live pool, so the cold-start retry path cannot recover and silently report no pool stats. The per-provider
+live pool, so the cold-start retry path cannot recover and silently report no pool stats.
+`Close` shuts the MeterProvider down LAST, after every source that records into it has
+stopped, and treats a flush failure as non-fatal so it cannot mask a real drain error. The per-provider
 PlatformDispatcher adapters are registered via `registerDispatchers` (see
 internal/dispatch), so campaign creation actually dispatches to the ad platforms;
 a provider without an adapter yet is logged at startup (`logMissingDispatchers`) and

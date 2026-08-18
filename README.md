@@ -38,10 +38,10 @@ Service metrics:
 | Metric | Type | Labels | What it answers |
 | --- | --- | --- | --- |
 | `campaign_dispatch_total` | counter | `platform`, `outcome` | Are campaigns actually landing on each ad platform? `outcome` is one of `success`, `skipped`, `failure`, `panic` — `panic` is separate because it is a bug in this service, not an upstream refusal. |
-| `campaign_job_transitions_total` | counter | `status` | Dispatch jobs reaching each state (`running`, `succeeded`, `partial`, `failed`). A growing gap between `running` and the terminal states means jobs are getting stuck. |
+| `campaign_job_transitions_total` | counter | `status` | Dispatch jobs reaching each state (`running`, `succeeded`, `partial`, `failed`). A growing gap between `running` and the terminal states means jobs are getting stuck — the terminal transition is recorded only when the status write actually persisted, so a job stuck by a failed write leaves the gap open rather than closing it. |
 | `campaign_upstream_calls_total` | counter | `platform`, `operation`, `outcome` | Upstream ad-platform API call volume and error rate. |
-| `campaign_upstream_call_duration_seconds` | histogram | `platform`, `operation`, `outcome` | Upstream ad-platform latency. Timed only after the pre-platform guards pass, so local refusals do not drag the quantiles toward zero. |
-| `campaign_db_pool_*` | gauge / counter | none | Database pool health: acquired, idle, total and max connections, plus canceled and empty acquires. Exported only when a pool is actually wired — see below. |
+| `campaign_upstream_call_duration_seconds` | histogram | `platform`, `operation`, `outcome` | Upstream ad-platform latency. Timed only after the pre-platform guards pass, so local refusals do not drag the quantiles toward zero. Bucketed on the service's own call budgets (10ms…45s, with edges on the 20s/30s/45s ceilings) rather than the OTel default, whose ms-scale boundaries would collapse every healthy call into one bucket. |
+| `campaign_db_pool_*` | gauge / counter | none | Database pool health: acquired, idle, total, max and newly-established connections, plus canceled and empty acquires. Exported only when a pool is actually wired — see below. |
 
 Plus the standard Go runtime and process collectors.
 
@@ -50,7 +50,9 @@ project id, job id, account id or URL as a label value — an unbounded
 label creates one retained time series per distinct value and is the
 classic way to take a Prometheus server down. `platform` is mapped
 through a closed provider set and anything outside it collapses to
-`unknown`; the outcome labels are closed enums. No metric name, label
+`unknown`; the outcome labels are closed enums; and `operation` passes a
+shape guard that admits short lower-snake tokens and degrades anything
+id-shaped or derived to `unknown`. No metric name, label
 or help string carries a credential, DSN or token.
 
 **Absent pool metrics are meaningful.** When no database is wired (no-DB

@@ -215,3 +215,114 @@ func TestNilRegistryRecordsAreSafe(t *testing.T) {
 		t.Errorf("Shutdown on nil registry = %v, want nil", err)
 	}
 }
+
+// TestUpstreamDurationUsesSecondScaleBuckets pins that the latency histogram is
+// exported with SECOND-scale bucket boundaries.
+//
+// Without the view, the OTel SDK's default explicit boundaries apply. Those are
+// chosen for millisecond values, and their first positive bucket is (0,5] -- fed
+// seconds, every healthy upstream call (a Google/Meta create is single-digit
+// seconds; a Microsoft request is capped at 30s) collapses into that one bucket and
+// the p50/p95/p99 the histogram exists to answer cannot separate 50ms from 4s.
+//
+// The assertion is on the SCRAPE OUTPUT rather than on the boundaries variable, so
+// it fails if the view stops applying -- a view whose selector misses does not error,
+// it silently restores the defaults.
+func TestUpstreamDurationUsesSecondScaleBuckets(t *testing.T) {
+	r, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	r.RecordUpstreamCall(context.Background(), model.ProviderGoogleAds, "create_campaign", "ok", 3.2)
+	body := scrape(t, r)
+
+	// Sub-second boundaries are the whole point: they are what the ms-scale default
+	// lacks, so their presence proves the view applied.
+	for _, want := range []string{
+		`le="0.01"`, `le="0.1"`, `le="0.5"`, `le="1"`, `le="2.5"`, `le="5"`, `le="20"`, `le="45"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("upstream duration histogram is missing bucket %s:\n%s", want, body)
+		}
+	}
+
+	// The SDK default boundaries run to 10000; their presence would mean the view did
+	// not apply and the ms-scale defaults are still in force.
+	if strings.Contains(body, `le="10000"`) {
+		t.Errorf("histogram still carries the SDK default ms-scale buckets:\n%s", body)
+	}
+
+	// A 3.2s observation must land at or below the 5s boundary, not in a catch-all.
+	if !strings.Contains(body, "campaign_upstream_call_duration_seconds_bucket") {
+		t.Errorf("no bucket series exported for the upstream duration histogram:\n%s", body)
+	}
+}
+
+// TestSafeOperationBoundsShape pins the boundary guard on the `operation` label.
+//
+// It is a SHAPE guard, not a closed enum: a new compile-time constant must pass
+// through untouched (a closed map would silently collapse a newly instrumented call
+// to "unknown"), while anything with the shape of a DERIVED string -- an id, a URL,
+// whitespace, or unbounded length -- must degrade to the bounded token instead of
+// minting one time series per distinct value.
+func TestSafeOperationBoundsShape(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		op   string
+		want string
+	}{
+		{"existing constant", "toggle_status", "toggle_status"},
+		{"a future constant passes through", "create_audience", "create_audience"},
+		{"empty", "", PlatformUnknown},
+		{"campaign id", "camp_9f3b21a7c4", PlatformUnknown},
+		{"url", "https://ads.example.com/v1/campaigns", PlatformUnknown},
+		{"whitespace", "toggle status", PlatformUnknown},
+		{"uppercase hex digest", "A1B2C3D4", PlatformUnknown},
+		{"digits", "campaign_12345", PlatformUnknown},
+		{"over length", strings.Repeat("a", 41), PlatformUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := safeOperation(tc.op); got != tc.want {
+				t.Errorf("safeOperation(%q) = %q, want %q", tc.op, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDerivedOperationDoesNotReachScrape plants an id-shaped operation token and
+// asserts it is absent from the exposition output, mirroring
+// TestUnknownPlatformDoesNotReachScrape for the operation label.
+func TestDerivedOperationDoesNotReachScrape(t *testing.T) {
+	r := newTestRegistry(t)
+	const secretish = "campaign_9f3b21a7c4e8"
+	r.RecordUpstreamCall(context.Background(), model.ProviderGoogleAds, secretish, CallOK, 1.5)
+
+	body := scrape(t, r)
+	if strings.Contains(body, secretish) {
+		t.Errorf("a derived operation token reached the scrape output:\n%s", body)
+	}
+	if !strings.Contains(body, PlatformUnknown) {
+		t.Errorf("the derived operation did not degrade to %q:\n%s", PlatformUnknown, body)
+	}
+}
+
+// TestPoolNewConnectionsExported pins that PoolStats.NewConnsCount reaches the
+// scrape. The field was previously collected from the pool but exported by no
+// instrument, so the struct implied a series /metrics did not actually serve.
+func TestPoolNewConnectionsExported(t *testing.T) {
+	r := newTestRegistry(t)
+	r.SetPoolStats(func() (PoolStats, bool) {
+		return PoolStats{
+			AcquiredConns: 3, IdleConns: 5, TotalConns: 8, MaxConns: 10,
+			NewConnsCount: 42, CanceledAcquires: 1, EmptyAcquires: 2,
+		}, true
+	})
+
+	body := scrape(t, r)
+	if !strings.Contains(body, "campaign_db_pool_new_connections_total") {
+		t.Errorf("scrape output missing the new-connections counter:\n%s", body)
+	}
+	if !strings.Contains(body, "42") {
+		t.Errorf("the new-connections value was not exported:\n%s", body)
+	}
+}

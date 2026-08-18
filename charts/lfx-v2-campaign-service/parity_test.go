@@ -830,3 +830,90 @@ func TestWhitespaceOnlyBypassValueStillRenders(t *testing.T) {
 		t.Errorf("rendered deployment is missing the bypass key entirely:\n%s", out)
 	}
 }
+
+// helmTemplateWithSet renders one template file with extra --set arguments, so a
+// test can render the chart the way a HOSTILE or careless operator would configure
+// it rather than only at its defaults.
+func helmTemplateWithSet(t *testing.T, showOnly string, sets ...string) string {
+	t.Helper()
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skipf("helm not on PATH; skipping chart test: %v", err)
+	}
+	args := []string{"template", chartDir, "--show-only", showOnly}
+	for _, s := range sets {
+		args = append(args, "--set", s)
+	}
+	out, err := exec.Command("helm", args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template %s %v failed: %v\n%s", showOnly, sets, err, out)
+	}
+	return string(out)
+}
+
+// podAnnotationValues returns every value rendered for the given annotation key in
+// the pod template. It returns a SLICE rather than one value on purpose: the bug
+// this guards against renders the key TWICE, and a helper that returned only the
+// first (or last) match would hide exactly that.
+func podAnnotationValues(manifest, key string) []string {
+	var out []string
+	for _, line := range strings.Split(manifest, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, key+":") {
+			out = append(out, strings.TrimSpace(strings.TrimPrefix(trimmed, key+":")))
+		}
+	}
+	return out
+}
+
+// TestScrapePortCannotDriftFromServicePort pins the invariant the values.yaml and
+// README both assert: prometheus.io/port is DERIVED from service.port and cannot be
+// overridden through podAnnotations.
+//
+// The template renders the derived key and then merges the user's podAnnotations. If
+// that map is merged verbatim, a user-set prometheus.io/port renders a SECOND copy of
+// the key whose value wins under YAML's last-key-wins rule, silently pointing the
+// scraper at a port the container is not listening on. `omit` is what makes the
+// documented invariant true rather than merely intended.
+func TestScrapePortCannotDriftFromServicePort(t *testing.T) {
+	const deployment = "templates/deployment.yaml"
+
+	t.Run("default render derives the port exactly once", func(t *testing.T) {
+		got := podAnnotationValues(helmTemplate(t, deployment), "prometheus.io/port")
+		if len(got) != 1 {
+			t.Fatalf("prometheus.io/port rendered %d times, want exactly 1: %v", len(got), got)
+		}
+		if got[0] != `"8080"` {
+			t.Errorf("prometheus.io/port = %s, want \"8080\" (the default service.port)", got[0])
+		}
+	})
+
+	t.Run("a user override cannot change or duplicate the key", func(t *testing.T) {
+		manifest := helmTemplateWithSet(t, deployment, `podAnnotations.prometheus\.io/port=9999`)
+		got := podAnnotationValues(manifest, "prometheus.io/port")
+		if len(got) != 1 {
+			t.Fatalf("a podAnnotations override rendered prometheus.io/port %d times, want exactly 1: %v", len(got), got)
+		}
+		if strings.Contains(got[0], "9999") {
+			t.Errorf("the scrape port drifted to %s via podAnnotations; it must stay derived from service.port", got[0])
+		}
+	})
+
+	t.Run("the derived port tracks service.port", func(t *testing.T) {
+		manifest := helmTemplateWithSet(t, deployment, "service.port=9090")
+		got := podAnnotationValues(manifest, "prometheus.io/port")
+		if len(got) != 1 || got[0] != `"9090"` {
+			t.Errorf("prometheus.io/port = %v, want [\"9090\"] after setting service.port", got)
+		}
+	})
+
+	t.Run("unrelated podAnnotations still pass through", func(t *testing.T) {
+		manifest := helmTemplateWithSet(t, deployment, `podAnnotations.example\.com/owner=marketing`)
+		if got := podAnnotationValues(manifest, "example.com/owner"); len(got) != 1 || got[0] != "marketing" {
+			t.Errorf("a non-reserved podAnnotation was dropped: %v", got)
+		}
+		// The scrape keys set in values.yaml must survive the omit.
+		if got := podAnnotationValues(manifest, "prometheus.io/scrape"); len(got) != 1 {
+			t.Errorf("prometheus.io/scrape rendered %d times, want 1: %v", len(got), got)
+		}
+	})
+}

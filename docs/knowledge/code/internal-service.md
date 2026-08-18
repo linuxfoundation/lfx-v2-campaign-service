@@ -63,9 +63,23 @@ tests do not drag in a Prometheus registry, and injected via `SetMetrics` from t
 `newOrchestrator` helper both construction paths route through. It defaults to a no-op,
 never nil, so every record site is unconditional. A recovered dispatcher panic gets its
 OWN outcome rather than folding into `failure`: a panic is a bug in this service, not an
-upstream refusal, and the two want different responses from whoever is on call. Upstream
+upstream refusal, and the two want different responses from whoever is on call. A panic
+raised AFTER a dispatch has completed is a different case: a `dispatched` flag makes the
+recover arm leave the stored result alone, because the campaign really was created
+upstream and reporting it failed would invite a retry that could double-create a PAID
+campaign — losing one metric is strictly cheaper. Upstream
 calls are timed only AFTER the pre-platform guards pass, so local refusals (which return
-in nanoseconds) do not drag the latency quantiles toward zero. Dispatch is idempotent: a brief already
+in nanoseconds) do not drag the latency quantiles toward zero.
+
+The RUNNING and TERMINAL job transitions are recorded with deliberately OPPOSITE rules.
+RUNNING is recorded on **attempt** (dispatch proceeds whether or not the status write
+lands, so gating it would under-count during a database blip). The terminal one is
+recorded only after a **successful** write, via the single `terminalize` helper both
+finalize paths route through: `campaign_job_transitions_total` exists so a stuck job
+shows up as the gap between `running` and the terminal statuses, and a job whose terminal
+write failed is still `running` in the database — counting its terminal would close the
+gap for exactly the rows the alert hunts. Such rows are terminalized later by the
+recovery sweeper, and the gap stays open until they are. Dispatch is idempotent: a brief already
 carrying a COMPLETED campaign for a platform is reused rather than re-created. The
 idempotency fast-path lookup (`GetCampaignByPlatform`) distinguishes its outcomes: an
 existing campaign with an upstream id AND a terminal status (`created` /

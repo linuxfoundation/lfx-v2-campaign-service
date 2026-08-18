@@ -1081,6 +1081,16 @@ func (c *Container) Close(ctx context.Context) error {
 	if c.indexPublisher != nil {
 		c.indexPublisher.Close()
 	}
+	// Shut the MeterProvider down LAST, after every source that records into it has
+	// stopped. Doing it earlier would drop the shutdown-path measurements (the dispatch
+	// drain's own outcomes) and leave instruments recording into a stopped provider.
+	// Non-fatal: /metrics is an observability surface, so a flush failure must not
+	// override a real shutdown error from the drain above.
+	if c.Metrics != nil {
+		if err := c.Metrics.Shutdown(ctx); err != nil {
+			slog.Warn("error shutting down the metrics provider", "error", err)
+		}
+	}
 	return shutdownErr
 }
 

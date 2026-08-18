@@ -181,6 +181,47 @@ type Registry struct {
 	poolStats PoolStatsFunc
 }
 
+// upstreamDurationBoundaries are the explicit bucket boundaries, in SECONDS, for
+// campaign_upstream_call_duration_seconds.
+//
+// They are set from the call budgets this service actually enforces, NOT from the
+// OTel SDK default. The default boundaries ({0, 5, 10, 25, 50, 75, 100, 250, ...})
+// are chosen for millisecond-valued observations; fed seconds, their first positive
+// bucket is (0,5], so every healthy upstream call — a Google/Meta create is single-
+// digit seconds, a Microsoft request is capped at 30s — lands in one bucket and the
+// p50/p95/p99 this histogram exists to answer cannot tell 50ms from 4s apart.
+//
+// The ladder spans 10ms (a fast cached read) to 45s, the largest ceiling any
+// instrumented call can reach (toggleCallTimeout). The 20s and 45s boundaries are
+// deliberately ON the read and toggle ceilings so a bucket edge coincides with
+// "this call timed out", and 30s sits on the Microsoft per-request ceiling.
+var upstreamDurationBoundaries = []float64{
+	0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30, 45,
+}
+
+// upstreamDurationView pins the bucket boundaries above onto the upstream-latency
+// histogram. It selects by instrument name so the other instruments (counters and
+// the pool observables) keep their defaults.
+func upstreamDurationView() sdkmetric.Option {
+	return sdkmetric.WithView(sdkmetric.NewView(
+		sdkmetric.Instrument{
+			Name: upstreamDurationInstrument,
+			Kind: sdkmetric.InstrumentKindHistogram,
+		},
+		sdkmetric.Stream{
+			Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
+				Boundaries: upstreamDurationBoundaries,
+				NoMinMax:   false,
+			},
+		},
+	))
+}
+
+// upstreamDurationInstrument is the instrument name, shared by the registration
+// below and the view that sets its buckets. They MUST agree: a view whose selector
+// misses simply does not apply, silently restoring the ms-scale defaults.
+const upstreamDurationInstrument = "campaign_upstream_call_duration_seconds"
+
 // New builds a Registry with its own Prometheus registry and MeterProvider.
 //
 // The registry is created empty rather than using prometheus.DefaultRegisterer:
@@ -201,7 +242,7 @@ func New() (*Registry, error) {
 	if err != nil {
 		return nil, err
 	}
-	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(exp))
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(exp), upstreamDurationView())
 	meter := provider.Meter("github.com/linuxfoundation/lfx-v2-campaign-service")
 
 	r := &Registry{registry: reg, provider: provider}
@@ -228,7 +269,7 @@ func New() (*Registry, error) {
 	}
 
 	if r.upstreamDuration, err = meter.Float64Histogram(
-		"campaign_upstream_call_duration_seconds",
+		upstreamDurationInstrument,
 		metric.WithDescription("Upstream ad-platform API call latency by platform and operation."),
 		metric.WithUnit("s"),
 	); err != nil {
@@ -304,6 +345,17 @@ func (r *Registry) registerPoolGauges(meter metric.Meter) error {
 	if err != nil {
 		return err
 	}
+	// Exported rather than dropped: PoolStats.NewConnsCount is already collected from
+	// the pool, and connection-establishment rate is what separates "the pool is busy"
+	// from "the pool is churning" -- a steady climb here against a flat total means
+	// connections are being opened and discarded rather than reused.
+	newConns, err := meter.Int64ObservableCounter(
+		"campaign_db_pool_new_connections_total",
+		metric.WithDescription("Database connections established by the pool since start."),
+	)
+	if err != nil {
+		return err
+	}
 
 	_, err = meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
 		f := r.currentPoolStats()
@@ -324,8 +376,9 @@ func (r *Registry) registerPoolGauges(meter metric.Meter) error {
 		o.ObserveInt64(maxConns, s.MaxConns)
 		o.ObserveInt64(canceled, s.CanceledAcquires)
 		o.ObserveInt64(empty, s.EmptyAcquires)
+		o.ObserveInt64(newConns, s.NewConnsCount)
 		return nil
-	}, acquired, idle, total, maxConns, canceled, empty)
+	}, acquired, idle, total, maxConns, canceled, empty, newConns)
 	return err
 }
 
@@ -350,20 +403,45 @@ func (r *Registry) RecordJobTransition(ctx context.Context, status model.JobStat
 	))
 }
 
+// safeOperation is a SHAPE guard on the operation label, not a closed enum.
+//
+// A closed map is deliberately avoided: the operation vocabulary is per-platform
+// and grows as call sites are instrumented, so a map here would silently collapse
+// a newly instrumented call to "unknown" -- the failure mode is invisible, because
+// the metric keeps being served and simply stops distinguishing the new operation.
+//
+// What this DOES catch is the boundary case the constants cannot: a future caller
+// passing a DERIVED string. Every legitimate token is a short lower-snake literal,
+// so anything carrying an id, a URL, whitespace or arbitrary length is rejected to
+// the bounded PlatformUnknown rather than minting a series. This bounds the damage
+// of a mistake without penalising a correct new constant.
+func safeOperation(op string) string {
+	const maxOperationLen = 40
+	if op == "" || len(op) > maxOperationLen {
+		return PlatformUnknown
+	}
+	for _, r := range op {
+		if (r < 'a' || r > 'z') && r != '_' {
+			return PlatformUnknown
+		}
+	}
+	return op
+}
+
 // RecordUpstreamCall records one upstream ad-platform API call and its latency.
 //
 // operation is a caller-supplied token and MUST be a compile-time constant (the
 // callers pass literals such as "create_campaign"), never anything derived from
-// a request, a URL or an upstream response. It is bounded by review, not by a
-// map, because the operation vocabulary is per-platform and a closed map here
-// would silently collapse a newly instrumented call to "unknown".
+// a request, a URL or an upstream response. It passes through safeOperation, a
+// shape guard rather than a closed enum -- see that function for why the
+// vocabulary is deliberately open-ended.
 func (r *Registry) RecordUpstreamCall(ctx context.Context, platform model.Provider, operation, outcome string, seconds float64) {
 	if r == nil || r.upstreamCalls == nil {
 		return
 	}
 	attrs := metric.WithAttributes(
 		attribute.String("platform", SafePlatform(platform)),
-		attribute.String("operation", operation),
+		attribute.String("operation", safeOperation(operation)),
 		attribute.String("outcome", safeCallOutcome(outcome)),
 	)
 	r.upstreamCalls.Add(ctx, 1, attrs)

@@ -29,9 +29,12 @@ replicaCount: 1
 # deployment overriding podAnnotations must re-declare the scrape keys to keep
 # being scraped.
 #
-# prometheus.io/port is NOT set here. The template derives it from service.port so
-# the two cannot drift: a deployment that changes service.port would otherwise keep
-# a hardcoded 8080 here and be scraped on a port nothing listens on.
+# prometheus.io/port is NOT set here, and is RESERVED. The template derives it from
+# service.port so the two cannot drift: a deployment that changes service.port would
+# otherwise keep a hardcoded 8080 here and be scraped on a port nothing listens on.
+# Setting it under podAnnotations has NO effect — the template omits that one key from
+# this map before merging it, so the derived value always wins. Every other annotation
+# set here passes through untouched.
 podAnnotations:
   prometheus.io/scrape: "true"
   prometheus.io/path: "/metrics"

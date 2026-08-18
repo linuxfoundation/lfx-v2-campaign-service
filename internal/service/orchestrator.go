@@ -407,11 +407,18 @@ type Orchestrator struct {
 	sem chan struct{}
 }
 
-// NewOrchestrator constructs an Orchestrator. dispatchers may be empty; a
-// platform with no registered dispatcher is recorded as a failed result.
 // SetIndexer injects the Query Service index publisher. Separate from the constructor
 // so existing NewOrchestrator call sites (mostly tests) are unaffected and default to
 // Noop, mirroring BriefService.SetIndexer.
+func (o *Orchestrator) SetIndexer(p indexer.Publisher) {
+	if p == nil {
+		return
+	}
+	o.indexerMu.Lock()
+	defer o.indexerMu.Unlock()
+	o.indexer = p
+}
+
 // Upstream operation tokens. COMPILE-TIME CONSTANTS, never derived from a request,
 // a URL or an upstream response — the `operation` label is bounded by this list
 // being the only thing passed to recordUpstream.
@@ -477,15 +484,6 @@ func (o *Orchestrator) dispatchMetrics() DispatchMetrics {
 	return o.metrics
 }
 
-func (o *Orchestrator) SetIndexer(p indexer.Publisher) {
-	if p == nil {
-		return
-	}
-	o.indexerMu.Lock()
-	defer o.indexerMu.Unlock()
-	o.indexer = p
-}
-
 // IndexerIsNoop reports whether this orchestrator would publish nothing. Exported for
 // the container's wiring tests — see BriefService.IndexerIsNoop for why this is needed.
 func (o *Orchestrator) IndexerIsNoop() bool {
@@ -541,6 +539,8 @@ func (o *Orchestrator) indexingIsDisabled() bool {
 	return o.indexingDisabled
 }
 
+// NewOrchestrator constructs an Orchestrator. dispatchers may be empty; a
+// platform with no registered dispatcher is recorded as a failed result.
 func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobRepository, dispatchers map[model.Provider]PlatformDispatcher) *Orchestrator {
 	if dispatchers == nil {
 		dispatchers = map[model.Provider]PlatformDispatcher{}
@@ -827,12 +827,34 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 				return nil
 			}
 
+			// dispatched records that dispatchPlatform RETURNED and its result was
+			// already stored in results[i]. It is what makes the recover arm below
+			// able to tell "the dispatch itself panicked" from "the dispatch
+			// succeeded and something after it panicked" — see there for why the
+			// distinction decides whether a paid campaign gets reported as failed.
+			dispatched := false
+
 			// Recover from a panic in a dispatcher (or future code here): a panic
 			// in this detached goroutine would otherwise crash the whole process
 			// mid-job. Record it as a platform failure and keep the group intact.
 			defer func() {
 				if r := recover(); r != nil {
 					slog.ErrorContext(gctx, "panic during platform dispatch", "platform", p, "job_id", jobID, "panic", r)
+					// Only synthesize a failure when the dispatch had NOT already
+					// completed. A panic raised AFTER dispatchPlatform returned (the
+					// outcome-recording call below is the only such code today) must
+					// not rewrite a stored success: the campaign really was created
+					// upstream, and reporting it failed would invite a reconcile or
+					// retry that could double-create a PAID campaign. Losing the
+					// metric for that platform is the strictly cheaper failure.
+					//
+					// rerr is cleared on BOTH arms: recovering but returning the panic
+					// as the group error would cancel every sibling platform's context,
+					// which is the crash this recovery exists to prevent.
+					rerr = nil
+					if dispatched {
+						return
+					}
 					res.OK = false
 					res.Error = "internal error during dispatch"
 					results[i] = res
@@ -846,13 +868,17 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 				}
 			}()
 
-			// Deliberately a NEW variable rather than assigning the outer res: the
-			// recover arm above rewrites res into a failure, and widening res's
-			// lifetime to hold a completed dispatch would let a panic raised AFTER
-			// this point (in the recording call below) rewrite a success into a
-			// failure — a result the pre-metrics code could never produce.
+			// Deliberately a NEW variable rather than assigning the outer res, which
+			// the recover arm rewrites into a failure. Keeping the completed dispatch
+			// out of res, together with the `dispatched` flag the recover arm checks,
+			// is what stops a panic raised AFTER this point (the recording call below)
+			// from turning a created-upstream campaign into a failed result.
 			done := o.dispatchPlatform(gctx, jobID, brief, p, config, by)
 			results[i] = done
+			// Set BEFORE the recording call: it is the only code that can panic after
+			// the result is stored, and the flag is what tells the recover arm not to
+			// overwrite it.
+			dispatched = true
 			o.dispatchMetrics().RecordDispatch(gctx, p, dispatchOutcomeFor(done))
 			return nil
 		})
@@ -872,22 +898,37 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 	finCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), jobFinalizeTimeout)
 	defer cancel()
 
+	// The TERMINAL transitions below are recorded only on a SUCCESSFUL status write,
+	// the opposite of the RUNNING transition above, which is deliberately recorded on
+	// attempt. The asymmetry is the point: campaign_job_transitions_total exists so a
+	// stuck job shows up as a gap between the running count and the terminal count.
+	// A job whose terminal write failed is still `running` in the database and IS the
+	// stuck job the alert hunts, so counting its terminal here would close the gap for
+	// exactly the rows the metric exists to expose. Such rows are terminalized later by
+	// the recovery sweeper (FailStuckJobs), and the gap stays open until they are.
 	status := aggregateStatus(results)
 	payload, err := json.Marshal(results)
 	if err != nil {
 		// Don't store a null result (which would make the job unpollable);
 		// record the marshal failure in the job's error field and fail the job.
 		slog.ErrorContext(finCtx, "failed to marshal job result", "job_id", jobID, "error", err)
-		if uerr := o.jobs.UpdateJobStatus(finCtx, jobID, model.JobFailed, nil, "failed to serialize job result: "+err.Error()); uerr != nil {
-			slog.ErrorContext(finCtx, "failed to finalize campaign job", "job_id", jobID, "error", uerr)
-		}
-		o.dispatchMetrics().RecordJobTransition(finCtx, model.JobFailed)
+		o.terminalize(finCtx, jobID, model.JobFailed, nil, "failed to serialize job result: "+err.Error())
 		return
 	}
-	if err := o.jobs.UpdateJobStatus(finCtx, jobID, status, payload, ""); err != nil {
-		slog.ErrorContext(finCtx, "failed to finalize campaign job", "job_id", jobID, "error", err)
+	o.terminalize(finCtx, jobID, status, payload, "")
+}
+
+// terminalize writes a job's TERMINAL status and records the transition only if
+// that write succeeded. Both finalize paths (the normal one and the marshal
+// failure) go through it so the metric can never be recorded for a status that
+// did not persist — see the asymmetry note at the finalize site for why the
+// terminal transition is guarded where the RUNNING one is not.
+func (o *Orchestrator) terminalize(ctx context.Context, jobID string, status model.JobStatus, payload []byte, jobErr string) {
+	if err := o.jobs.UpdateJobStatus(ctx, jobID, status, payload, jobErr); err != nil {
+		slog.ErrorContext(ctx, "failed to finalize campaign job", "job_id", jobID, "error", err)
+		return
 	}
-	o.dispatchMetrics().RecordJobTransition(finCtx, status)
+	o.dispatchMetrics().RecordJobTransition(ctx, status)
 }
 
 // dispatchOutcomeFor maps a platform result onto the CLOSED outcome enum. Skipped

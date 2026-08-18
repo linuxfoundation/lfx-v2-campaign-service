@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/infrastructure/metrics"
-description: "Prometheus registry and instruments served at the unauthenticated /metrics endpoint: dispatch outcomes, job transitions, upstream platform latency and DB pool health, with every label bounded to a closed set."
+description: "Prometheus registry and instruments served at the unauthenticated /metrics endpoint: dispatch outcomes, job transitions, upstream platform latency and DB pool health, with every label bounded and the latency histogram bucketed to the service's own call budgets."
 resource: "internal/infrastructure/metrics"
 ---
 
@@ -45,14 +45,37 @@ closed enums guarded the same way. A provider constant added to the domain witho
 being added here therefore degrades to a visible `unknown` rather than minting an
 unbounded label.
 
-`operation` on the upstream instruments is the one label bounded by review rather
-than by a map: the vocabulary is per-platform, and a closed map would silently
-collapse a newly instrumented call to `unknown`. Every caller passes a
-compile-time constant.
+`operation` on the upstream instruments is bounded by SHAPE rather than by a closed
+map. A map was deliberately rejected: the vocabulary is per-platform and grows as
+call sites are instrumented, so a closed set would silently collapse each newly
+instrumented call to `unknown` — invisible, because the metric keeps being served.
+`safeOperation` instead admits short lower-snake tokens (so a correct new constant
+passes through untouched) and degrades anything carrying digits, uppercase,
+whitespace, punctuation or excess length — the shape of a *derived* string — to the
+bounded token. Every caller still passes a compile-time constant; the guard bounds
+the damage of a future one that does not.
 
 No metric name, label or help string carries a credential, DSN or token, and the
 outcome labels are derived from an error's PRESENCE only — never its value, which
 can embed account ids and response fragments.
+
+## Histogram buckets come from the call budgets
+
+`campaign_upstream_call_duration_seconds` records **seconds**, so it must not use
+the OTel SDK's default explicit boundaries — those are chosen for millisecond
+values, and their first positive bucket is `(0, 5]`. Fed seconds, every healthy
+upstream call collapses into that single bucket and the quantiles the histogram
+exists to produce cannot separate 50ms from 4s.
+
+`upstreamDurationView` therefore pins second-scale boundaries derived from the
+ceilings this service enforces: `toggleCallTimeout` (45s), the 20s read paths, and
+the Microsoft client's 30s per-request cap. Bucket edges sit **on** those ceilings,
+so "this call timed out" is a boundary rather than smeared across a bucket.
+
+The view selects by instrument name, and a selector that misses does not error — it
+silently restores the ms-scale defaults. The name is a shared constant used by both
+the registration and the view, and the test asserts boundaries in the **scrape
+output** rather than reading the boundaries variable, so drift fails loudly.
 
 ## Absent pool metrics rather than zeroes
 
