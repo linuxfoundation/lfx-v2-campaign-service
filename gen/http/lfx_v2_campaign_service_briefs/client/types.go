@@ -330,6 +330,26 @@ type GetCampaignMetricsResponseBody struct {
 	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
 }
 
+// GetBriefMetricsResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
+// response body.
+type GetBriefMetricsResponseBody struct {
+	// Brief UUID
+	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
+	// The window REQUESTED for this read. Per-platform defaults still apply when
+	// it is omitted, so an individual row may have been read over a narrower
+	// window than this — X Ads caps queryable ranges at 7 days. Each row's own
+	// metrics.window is what that row actually covers.
+	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
+	// One row per campaign on the brief, in a stable order. Includes rows that
+	// could not be read.
+	Rows []*BriefMetricsRowResponseBody `form:"rows,omitempty" json:"rows,omitempty" xml:"rows,omitempty"`
+	// How many rows carry a measurement. Compare against the length of rows before
+	// presenting any cross-campaign total — a total over 2 of 6 campaigns is not
+	// the brief's performance.
+	OKCount *int `form:"ok_count,omitempty" json:"ok_count,omitempty" xml:"ok_count,omitempty"`
+}
+
 // GenerateEmailCopyResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
 // response body.
@@ -1024,6 +1044,59 @@ type GetCampaignMetricsNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetBriefMetricsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
+// response body for the "BadRequest" error.
+type GetBriefMetricsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetBriefMetricsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
+// response body for the "Conflict" error.
+type GetBriefMetricsConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetBriefMetricsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type GetBriefMetricsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetBriefMetricsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
+// response body for the "InternalServerError" error.
+type GetBriefMetricsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetBriefMetricsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
+// response body for the "NotFound" error.
+type GetBriefMetricsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GenerateEmailCopyBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -1393,6 +1466,53 @@ type EmailMetricsResponseBody struct {
 	Bounces *int64 `form:"bounces,omitempty" json:"bounces,omitempty" xml:"bounces,omitempty"`
 	// Unsubscribes, to date
 	Unsubscribes *int64 `form:"unsubscribes,omitempty" json:"unsubscribes,omitempty" xml:"unsubscribes,omitempty"`
+}
+
+// BriefMetricsRowResponseBody is used to define fields on response body types.
+type BriefMetricsRowResponseBody struct {
+	// Campaign UUID
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// The channel this campaign runs on
+	Platform *string `form:"platform,omitempty" json:"platform,omitempty" xml:"platform,omitempty"`
+	// Whether this row carries a measurement. ONLY `ok` does.
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// The measurement. Present if and ONLY if status is `ok`; absent otherwise —
+	// never zero-filled, because a zero is a claim.
+	Metrics *CampaignMetricsResponseBody `form:"metrics,omitempty" json:"metrics,omitempty" xml:"metrics,omitempty"`
+	// Why this row carries no measurement, in consumer-safe wording. Absent when
+	// status is `ok`.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// CampaignMetricsResponseBody is used to define fields on response body types.
+type CampaignMetricsResponseBody struct {
+	// Campaign UUID
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// The id the CHANNEL returned when the campaign was created. On an ad platform
+	// that is its campaign id; on the email channel it is the HubSpot
+	// marketing-email id of the cloned draft, which is what the metrics read
+	// queries by.
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// The reporting window that was REQUESTED. On the ad platforms it is also the
+	// period the counters cover. On the email channel it is not: it selects which
+	// emails are in scope by their send date, and the counters are then that
+	// email's totals to date — see the email object.
+	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
+	// Impressions over the window on an ad platform; opens to date on the email
+	// channel
+	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
+	// Clicks over the window on an ad platform; clicks to date on the email channel
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Cost over the window, in micro-units of the platform's native currency
+	// (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter,
+	// etc.). Always 0 on the email channel, which bills no per-send cost — do not
+	// blend that 0 into a cross-channel cost-per-acquisition.
+	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
+	// Clicks/Impressions, 0 when Impressions is 0
+	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
+	// Email-channel counters. Present only for the email channel (HubSpot); absent
+	// for every ad platform.
+	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
 }
 
 // CampaignUpdateInputRequestBody is used to define fields on request body
@@ -2380,6 +2500,83 @@ func NewGetCampaignMetricsNotFound(body *GetCampaignMetricsNotFoundResponseBody)
 	return v
 }
 
+// NewGetBriefMetricsBriefMetricsOK builds a "lfx-v2-campaign-service-briefs"
+// service "get-brief-metrics" endpoint result from a HTTP "OK" response.
+func NewGetBriefMetricsBriefMetricsOK(body *GetBriefMetricsResponseBody) *lfxv2campaignservicebriefs.BriefMetrics {
+	v := &lfxv2campaignservicebriefs.BriefMetrics{
+		BriefID: *body.BriefID,
+		Window:  *body.Window,
+		OKCount: *body.OKCount,
+	}
+	v.Rows = make([]*lfxv2campaignservicebriefs.BriefMetricsRow, len(body.Rows))
+	for i, val := range body.Rows {
+		if val == nil {
+			v.Rows[i] = nil
+			continue
+		}
+		v.Rows[i] = unmarshalBriefMetricsRowResponseBodyToLfxv2campaignservicebriefsBriefMetricsRow(val)
+	}
+
+	return v
+}
+
+// NewGetBriefMetricsBadRequest builds a lfx-v2-campaign-service-briefs service
+// get-brief-metrics endpoint BadRequest error.
+func NewGetBriefMetricsBadRequest(body *GetBriefMetricsBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetBriefMetricsConflict builds a lfx-v2-campaign-service-briefs service
+// get-brief-metrics endpoint Conflict error.
+func NewGetBriefMetricsConflict(body *GetBriefMetricsConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewGetBriefMetricsServiceUnavailable builds a lfx-v2-campaign-service-briefs
+// service get-brief-metrics endpoint ServiceUnavailable error.
+func NewGetBriefMetricsServiceUnavailable(body *GetBriefMetricsServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetBriefMetricsInternalServerError builds a
+// lfx-v2-campaign-service-briefs service get-brief-metrics endpoint
+// InternalServerError error.
+func NewGetBriefMetricsInternalServerError(body *GetBriefMetricsInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetBriefMetricsNotFound builds a lfx-v2-campaign-service-briefs service
+// get-brief-metrics endpoint NotFound error.
+func NewGetBriefMetricsNotFound(body *GetBriefMetricsNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
 // NewGenerateEmailCopyEmailCopyOK builds a "lfx-v2-campaign-service-briefs"
 // service "generate-email-copy" endpoint result from a HTTP "OK" response.
 func NewGenerateEmailCopyEmailCopyOK(body *GenerateEmailCopyResponseBody) *lfxv2campaignservicebriefs.EmailCopy {
@@ -3095,6 +3292,36 @@ func ValidateGetCampaignMetricsResponseBody(body *GetCampaignMetricsResponseBody
 	if body.Email != nil {
 		if err2 := ValidateEmailMetricsResponseBody(body.Email); err2 != nil {
 			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateGetBriefMetricsResponseBody runs the validations defined on
+// Get-Brief-MetricsResponseBody
+func ValidateGetBriefMetricsResponseBody(body *GetBriefMetricsResponseBody) (err error) {
+	if body.BriefID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("brief_id", "body"))
+	}
+	if body.Window == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("window", "body"))
+	}
+	if body.Rows == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("rows", "body"))
+	}
+	if body.OKCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ok_count", "body"))
+	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days" || *body.Window == "last_14_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
+		}
+	}
+	for _, e := range body.Rows {
+		if e != nil {
+			if err2 := ValidateBriefMetricsRowResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
 		}
 	}
 	return
@@ -3979,6 +4206,71 @@ func ValidateGetCampaignMetricsNotFoundResponseBody(body *GetCampaignMetricsNotF
 	return
 }
 
+// ValidateGetBriefMetricsBadRequestResponseBody runs the validations defined
+// on get-brief-metrics_BadRequest_response_body
+func ValidateGetBriefMetricsBadRequestResponseBody(body *GetBriefMetricsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetBriefMetricsConflictResponseBody runs the validations defined on
+// get-brief-metrics_Conflict_response_body
+func ValidateGetBriefMetricsConflictResponseBody(body *GetBriefMetricsConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists"}))
+		}
+	}
+	return
+}
+
+// ValidateGetBriefMetricsServiceUnavailableResponseBody runs the validations
+// defined on get-brief-metrics_ServiceUnavailable_response_body
+func ValidateGetBriefMetricsServiceUnavailableResponseBody(body *GetBriefMetricsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetBriefMetricsInternalServerErrorResponseBody runs the validations
+// defined on get-brief-metrics_InternalServerError_response_body
+func ValidateGetBriefMetricsInternalServerErrorResponseBody(body *GetBriefMetricsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetBriefMetricsNotFoundResponseBody runs the validations defined on
+// get-brief-metrics_NotFound_response_body
+func ValidateGetBriefMetricsNotFoundResponseBody(body *GetBriefMetricsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGenerateEmailCopyBadRequestResponseBody runs the validations defined
 // on generate-email-copy_BadRequest_response_body
 func ValidateGenerateEmailCopyBadRequestResponseBody(body *GenerateEmailCopyBadRequestResponseBody) (err error) {
@@ -4429,6 +4721,68 @@ func ValidateEmailMetricsResponseBody(body *EmailMetricsResponseBody) (err error
 	}
 	if body.Unsubscribes == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("unsubscribes", "body"))
+	}
+	return
+}
+
+// ValidateBriefMetricsRowResponseBody runs the validations defined on
+// brief-metrics-rowResponseBody
+func ValidateBriefMetricsRowResponseBody(body *BriefMetricsRowResponseBody) (err error) {
+	if body.CampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
+	}
+	if body.Platform == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform", "body"))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	if body.Status != nil {
+		if !(*body.Status == "ok" || *body.Status == "unsupported" || *body.Status == "not_ready" || *body.Status == "connection_problem" || *body.Status == "failed") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"ok", "unsupported", "not_ready", "connection_problem", "failed"}))
+		}
+	}
+	if body.Metrics != nil {
+		if err2 := ValidateCampaignMetricsResponseBody(body.Metrics); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateCampaignMetricsResponseBody runs the validations defined on
+// campaign-metricsResponseBody
+func ValidateCampaignMetricsResponseBody(body *CampaignMetricsResponseBody) (err error) {
+	if body.CampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
+	}
+	if body.PlatformCampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "body"))
+	}
+	if body.Window == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("window", "body"))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", "body"))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
+	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days" || *body.Window == "last_14_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
+		}
+	}
+	if body.Email != nil {
+		if err2 := ValidateEmailMetricsResponseBody(body.Email); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
 	}
 	return
 }

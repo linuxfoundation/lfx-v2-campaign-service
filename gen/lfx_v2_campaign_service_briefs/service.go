@@ -59,6 +59,16 @@ type Service interface {
 	// which emails are in scope by send date and the counters are those emails'
 	// totals to date.
 	GetCampaignMetrics(context.Context, *GetCampaignMetricsPayload) (res *CampaignMetrics, err error)
+	// Read live performance metrics for EVERY campaign on a brief in one request,
+	// by calling each campaign's platform directly. A pure read — never persisted.
+	// Unlike get-campaign-metrics, a failure on one campaign does not fail the
+	// request: each row carries its own status, and a row that could not be read
+	// carries NO counters rather than zeroes, so a consumer can distinguish a
+	// campaign that served nothing from one that could not be measured. Rows are
+	// returned for every campaign on the brief, including unreadable ones. There
+	// is no cross-channel cost total: cost is denominated in each platform's own
+	// currency and this service performs no FX conversion.
+	GetBriefMetrics(context.Context, *GetBriefMetricsPayload) (res *BriefMetrics, err error)
 	// Generate AI-written email copy (subject, preheader, body, CTA) for a
 	// campaign brief. Returns immediately with generated text; does NOT persist to
 	// the brief. The AI model is optional — without it configured this endpoint
@@ -113,7 +123,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [16]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "delete-campaign", "get-job"}
+var MethodNames = [17]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "delete-campaign", "get-job"}
 
 // AdoptCampaignPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service adopt-campaign method.
@@ -193,6 +203,40 @@ type BriefInput struct {
 	Keywords any
 	// Targeting recommendation
 	Targeting any
+}
+
+// BriefMetrics is the result type of the lfx-v2-campaign-service-briefs
+// service get-brief-metrics method.
+type BriefMetrics struct {
+	// Brief UUID
+	BriefID string
+	// The window REQUESTED for this read. Per-platform defaults still apply when
+	// it is omitted, so an individual row may have been read over a narrower
+	// window than this — X Ads caps queryable ranges at 7 days. Each row's own
+	// metrics.window is what that row actually covers.
+	Window string
+	// One row per campaign on the brief, in a stable order. Includes rows that
+	// could not be read.
+	Rows []*BriefMetricsRow
+	// How many rows carry a measurement. Compare against the length of rows before
+	// presenting any cross-campaign total — a total over 2 of 6 campaigns is not
+	// the brief's performance.
+	OKCount int
+}
+
+type BriefMetricsRow struct {
+	// Campaign UUID
+	CampaignID string
+	// The channel this campaign runs on
+	Platform string
+	// Whether this row carries a measurement. ONLY `ok` does.
+	Status string
+	// The measurement. Present if and ONLY if status is `ok`; absent otherwise —
+	// never zero-filled, because a zero is a claim.
+	Metrics *CampaignMetrics
+	// Why this row carries no measurement, in consumer-safe wording. Absent when
+	// status is `ok`.
+	Reason *string
 }
 
 // Campaign is the result type of the lfx-v2-campaign-service-briefs service
@@ -407,6 +451,22 @@ type GenerateEmailCopyPayload struct {
 	ProjectID string
 	// Brief UUID
 	BriefID string
+}
+
+// GetBriefMetricsPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service get-brief-metrics method.
+type GetBriefMetricsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Platform-agnostic reporting window applied to every campaign; defaults to
+	// last_30_days when omitted, except on platforms whose API cannot serve that
+	// range (e.g. X Ads, capped at 7 days), which fall back to the widest range
+	// they support. A row's own metrics.window records what it actually covers.
+	Window *string
 }
 
 // GetBriefPayload is the payload type of the lfx-v2-campaign-service-briefs

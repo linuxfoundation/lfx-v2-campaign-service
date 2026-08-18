@@ -649,6 +649,17 @@ func (r *campaignEditRepo) GetCampaign(context.Context, string, string, string) 
 	cp := *r.cur
 	return &cp, nil
 }
+
+// ListCampaignsForBrief returns the single stored campaign, matching what this fake's
+// GetCampaign serves. Returns an empty slice rather than nil when there is none, mirroring
+// the real repository's "a brief with no campaigns is an ordinary state" contract.
+func (r *campaignEditRepo) ListCampaignsForBrief(context.Context, string, string) ([]*model.Campaign, error) {
+	if r.cur == nil {
+		return []*model.Campaign{}, nil
+	}
+	return []*model.Campaign{r.cur}, nil
+}
+
 func (r *campaignEditRepo) GetCampaignByPlatform(context.Context, string, string, model.Provider, string) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }

@@ -26,6 +26,7 @@ type Client struct {
 	AdoptCampaignEndpoint        goa.Endpoint
 	GetCampaignEndpoint          goa.Endpoint
 	GetCampaignMetricsEndpoint   goa.Endpoint
+	GetBriefMetricsEndpoint      goa.Endpoint
 	GenerateEmailCopyEndpoint    goa.Endpoint
 	UpdateCampaignEndpoint       goa.Endpoint
 	ToggleCampaignStatusEndpoint goa.Endpoint
@@ -35,7 +36,7 @@ type Client struct {
 
 // NewClient initializes a "lfx-v2-campaign-service-briefs" service client
 // given the endpoints.
-func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, createCampaigns, adoptCampaign, getCampaign, getCampaignMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, deleteCampaign, getJob goa.Endpoint) *Client {
+func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, createCampaigns, adoptCampaign, getCampaign, getCampaignMetrics, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, deleteCampaign, getJob goa.Endpoint) *Client {
 	return &Client{
 		CreateBriefEndpoint:          createBrief,
 		FindBriefEndpoint:            findBrief,
@@ -48,6 +49,7 @@ func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, dele
 		AdoptCampaignEndpoint:        adoptCampaign,
 		GetCampaignEndpoint:          getCampaign,
 		GetCampaignMetricsEndpoint:   getCampaignMetrics,
+		GetBriefMetricsEndpoint:      getBriefMetrics,
 		GenerateEmailCopyEndpoint:    generateEmailCopy,
 		UpdateCampaignEndpoint:       updateCampaign,
 		ToggleCampaignStatusEndpoint: toggleCampaignStatus,
@@ -252,6 +254,24 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, p *GetCampaignMetricsPa
 		return
 	}
 	return ires.(*CampaignMetrics), nil
+}
+
+// GetBriefMetrics calls the "get-brief-metrics" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// GetBriefMetrics may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) GetBriefMetrics(ctx context.Context, p *GetBriefMetricsPayload) (res *BriefMetrics, err error) {
+	var ires any
+	ires, err = c.GetBriefMetricsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*BriefMetrics), nil
 }
 
 // GenerateEmailCopy calls the "generate-email-copy" endpoint of the

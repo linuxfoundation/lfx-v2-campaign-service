@@ -199,6 +199,65 @@ The `window` query parameter is a closed, platform-agnostic vocabulary
 query syntax; the mapping (and any platform-specific validation, e.g. an allow-list guard
 against GAQL injection) lives in the platform client package, not here.
 
+## Brief-wide metrics read
+
+`BriefService.GetBriefMetrics` (backing `GET .../briefs/{id}/metrics`) reads every campaign on
+a brief in one request. It is the same read-through as the campaign-scoped handler above,
+fanned out over `ListCampaignsForBrief` with an `errgroup` bounded by
+`briefMetricsConcurrency` (4). That limit is deliberately local rather than the dispatch
+semaphore: these are read-only GETs that create nothing, so they need none of dispatch's
+spend-safety ceilings, and borrowing that semaphore would let a metrics read starve a paid
+create waiting for a slot.
+
+**The failure model is the whole point of the endpoint.** A brief spans several platforms and
+each read can fail independently, so the states the campaign-scoped handler expresses as
+distinct HTTP responses cannot be HTTP responses here — one campaign's 409 must not fail the
+other five. `classifyBriefMetricsErr` maps each sentinel onto a per-row status instead:
+`unsupported` (the 400s), `not_ready` (a 409 — the campaign has nothing to report yet),
+`connection_problem` (a 404, three 409s or a 500 depending on the defect; they collapse because
+the remedy is identical, an operator repairs the connection) and `failed` (the 503 default). `not_ready` and `failed` are
+deliberately NOT merged — a staged email draft and an ad-platform outage produce the same
+absence of numbers and want opposite responses.
+
+Two sentinels reach this path WITHOUT `ErrConnectionNotUsable` and so need their own arms
+above the connection ones, or they fall through to the retryable default and tell an operator
+to retry something only a human edit clears: `domain.ErrNotFound` (no connection row for this
+project and provider — a 404 on the campaign-scoped endpoint) and
+`domain.ErrCredentialDecryptionFailed` (a corrupted row or a rotated
+`CREDENTIAL_ENCRYPTION_KEY` — a 500). The decrypt case logs at ERROR rather than WARN, because
+the cheap discriminator between one bad row and a key rotation breaking every project is the
+COUNT of those lines, and it logs NO error text: `domain.Encryptor` is an interface, so its
+error may quote ciphertext or key material, and `safeErrSummary` normalises rather than
+redacts. `domain.ErrSystemConnectionNotUsable` keeps its own arm above the general
+connection one for a different reason: the general wording tells the operator to reconnect,
+and this fires precisely when the project has NO connection of its own to reconnect — it fell
+back to the shared LF row. It logs at ERROR alongside the decrypt case, since a broken LF
+system row fails every project depending on it.
+
+**A non-`ok` row omits `metrics` entirely rather than carrying zeroes.** A zero is a
+measurement; substituting one for a campaign that could not be read is indistinguishable from
+a campaign that genuinely served nothing, and that substitution is what turns an outage into
+an apparent performance result. `ok_count` exists so a consumer can see a cross-campaign total
+covers 2 of 6 before presenting it.
+
+Each `g.Go` returns `nil` even on error, and that is load-bearing rather than sloppy:
+returning the error would cancel the errgroup's context and abandon campaigns whose reads had
+not yet started, so the aggregate would report failures it never actually attempted.
+
+`reason` is a fixed sentence chosen in `classifyBriefMetricsErr`, never the adapter's error
+text, which can carry a platform's own response body or operator-supplied account identifiers
+— the same redaction rule the campaign-scoped handler's account-mismatch arm follows.
+
+There is no cross-channel cost total. `cost_micros` is micro-units of each platform's OWN
+native currency and this service performs no FX conversion, so a sum would carry no currency.
+
+## Window semantics, shared by both metrics reads
+
+Everything below applies to `GetCampaignMetrics` AND `GetBriefMetrics` — it describes the
+window vocabulary and the per-platform defaults, not either handler's own behaviour. It is
+its own section so a reader tracing the campaign-scoped read does not miss it by stopping at
+the brief-wide section above.
+
 One caveat the vocabulary cannot express: for the HubSpot email channel the window selects
 which EMAILS are in scope by send date, not which events are counted, so the counters are
 the email's totals to date and two different windows containing the send date return

@@ -237,6 +237,46 @@ var EmailMetrics = Type("email-metrics", func() {
 	Required("sent", "delivered", "opens", "clicks", "bounces", "unsubscribes")
 })
 
+// BriefMetricsRow is one campaign's slot in the brief-wide metrics read.
+//
+// Every campaign on the brief gets a row, INCLUDING the ones that could not be read. That is
+// the point of the type: a brief spans several platforms, each read can fail independently,
+// and a consumer that cannot tell "measured zero" from "could not measure" will render an
+// outage as a performance result. The single-campaign endpoint expresses these states as HTTP
+// errors, which an aggregate cannot do — one campaign's 409 must not fail the other five.
+var BriefMetricsRow = Type("brief-metrics-row", func() {
+	Attribute("campaign_id", String, "Campaign UUID", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("platform", String, "The channel this campaign runs on", func() { Example("linkedin-ads") })
+	Attribute("status", String, "Whether this row carries a measurement. ONLY `ok` does.", briefMetricsRowStatusEnum)
+	// Deliberately optional, and absent on every non-ok status rather than zero-filled. A
+	// zeroed row is indistinguishable from a campaign that genuinely served nothing, which is
+	// the exact substitution that turned a failed dashboard read into a "pause losing
+	// campaigns" recommendation.
+	Attribute("metrics", CampaignMetrics, "The measurement. Present if and ONLY if status is `ok`; absent otherwise — never zero-filled, because a zero is a claim.")
+	// Safe to render. The service maps each internal failure onto a fixed sentence here
+	// rather than forwarding the adapter's error text, which can carry a platform's own
+	// response body or operator-supplied account identifiers.
+	Attribute("reason", String, "Why this row carries no measurement, in consumer-safe wording. Absent when status is `ok`.", func() {
+		Example("this window is not supported for the campaign's platform")
+	})
+	Required("campaign_id", "platform", "status")
+})
+
+// BriefMetrics is every campaign on a brief, read in one request.
+var BriefMetrics = Type("brief-metrics", func() {
+	Attribute("brief_id", String, "Brief UUID", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("window", String, "The window REQUESTED for this read. Per-platform defaults still apply when it is omitted, so an individual row may have been read over a narrower window than this — X Ads caps queryable ranges at 7 days. Each row's own metrics.window is what that row actually covers.", metricsWindowEnum)
+	Attribute("rows", ArrayOf(BriefMetricsRow), "One row per campaign on the brief, in a stable order. Includes rows that could not be read.")
+	Attribute("ok_count", Int, "How many rows carry a measurement. Compare against the length of rows before presenting any cross-campaign total — a total over 2 of 6 campaigns is not the brief's performance.", func() { Example(2) })
+	// No cross-channel cost total. cost_micros is in micro-units of each platform's OWN
+	// native currency and this service performs no FX conversion (see the note on
+	// campaign-metrics.cost_micros), so summing LinkedIn USD with X's billing unit would
+	// produce a number with no currency and no meaning. Impressions and clicks are unitless
+	// and could be summed, but are left to the consumer alongside ok_count rather than
+	// presented here as a whole-brief figure the row set may not support.
+	Required("brief_id", "window", "rows", "ok_count")
+})
+
 // EmailCopy holds AI-generated email copy for a campaign brief.
 var EmailCopy = Type("email-copy", func() {
 	Attribute("subject", String, "Email subject line", func() {
@@ -584,6 +624,26 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		})
 	})
 
+	Method("get-brief-metrics", func() {
+		Description("Read live performance metrics for EVERY campaign on a brief in one request, by calling each campaign's platform directly. A pure read — never persisted. Unlike get-campaign-metrics, a failure on one campaign does not fail the request: each row carries its own status, and a row that could not be read carries NO counters rather than zeroes, so a consumer can distinguish a campaign that served nothing from one that could not be measured. Rows are returned for every campaign on the brief, including unreadable ones. There is no cross-channel cost total: cost is denominated in each platform's own currency and this service performs no FX conversion.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			Attribute("window", String, "Platform-agnostic reporting window applied to every campaign; defaults to last_30_days when omitted, except on platforms whose API cannot serve that range (e.g. X Ads, capped at 7 days), which fall back to the widest range they support. A row's own metrics.window records what it actually covers.", metricsWindowEnum)
+			Required("project_id", "brief_id")
+		})
+		Result(BriefMetrics)
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/metrics")
+			Header("bearer_token:Authorization")
+			Param("window")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
 	Method("generate-email-copy", func() {
 		Description("Generate AI-written email copy (subject, preheader, body, CTA) for a campaign brief. Returns immediately with generated text; does NOT persist to the brief. The AI model is optional — without it configured this endpoint returns 503.")
 		Payload(func() {
@@ -714,6 +774,37 @@ func campaignIDAttr() {
 // can't represent (or vice versa) would silently diverge otherwise.
 func metricsWindowEnum() {
 	Enum("today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month")
+}
+
+// briefMetricsRowStatusEnum is the per-row outcome vocabulary for a brief-wide metrics read.
+//
+// The values are DERIVED from the failure modes GetCampaignMetrics already distinguishes as
+// separate HTTP responses, collapsed only where the consumer's next action is identical:
+//
+//   - ok                 — the read succeeded. The only status carrying a measurement.
+//   - unsupported        — this platform has no metrics-read dispatcher, or cannot serve the
+//     requested window (X Ads caps ranges at 7 days). A 400 on the
+//     single-campaign endpoint. Retrying is pointless; narrowing the
+//     window may help.
+//   - not_ready          — the campaign has no platform campaign id yet, or the platform
+//     reported no data for the window. A 409. Common and benign: an
+//     email campaign staged as a draft reads this way until a human
+//     sends it. NOT an error to surface as a failure.
+//   - connection_problem — the connection cannot serve this campaign: no connection row,
+//     provenance unknown, a different account than the current connection,
+//     undecryptable credentials, or an unusable connection including the
+//     LF system fallback. Deliberately does NOT name a single HTTP code —
+//     those defects answer 404, 409 and 500 on the single-campaign
+//     endpoint. They collapse here because the REMEDY is identical: an
+//     operator repairs the connection. Retrying never helps.
+//   - failed             — the platform read itself failed. A 5xx on the single-campaign
+//     endpoint. Transient; retrying may succeed.
+//
+// `not_ready` and `failed` are deliberately NOT merged. A staged email draft and an ad-platform
+// outage produce the same absence of numbers and want opposite responses — one is the expected
+// steady state before a send, the other is an incident.
+func briefMetricsRowStatusEnum() {
+	Enum("ok", "unsupported", "not_ready", "connection_problem", "failed")
 }
 
 // commonBriefErrors declares the standard error set for a brief method.
