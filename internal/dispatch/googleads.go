@@ -99,6 +99,20 @@ type googleAdsConfig struct {
 	// not created by this dispatcher. See googleads.validateAudienceSegments for the
 	// accepted shapes.
 	AudienceSegments []string `json:"audienceSegments"`
+	// GeoTargets are ISO 3166-1 alpha-2 country codes the campaign should serve in
+	// (LFXV2-3283), spelled exactly as the meta and reddit configs spell them so a
+	// caller does not have to learn a third vocabulary for the same idea. The client
+	// resolves each to a Google numeric geo target constant and attaches location
+	// criteria at the level the channel requires — campaign for Search, ad group for
+	// Demand Gen.
+	//
+	// Left empty, NO location criteria are created and the campaign serves wherever the
+	// ad ACCOUNT's defaults allow, which for an event campaign is usually worldwide.
+	// That is the pre-LFXV2-3283 behaviour and it is preserved deliberately: every
+	// caller predating this field omits it, and failing their creates outright would
+	// break dispatches that work today. An untargeted create is instead made VISIBLE —
+	// see the warning log in Dispatch — rather than silently accepted or refused.
+	GeoTargets []string `json:"geoTargets"`
 	// AdoptExisting opts THIS dispatch in to adopting a campaign that already carries the
 	// composed name instead of creating one. It defaults to FALSE, and the default is the
 	// safety property, not a convenience: ComposeName is deterministic in
@@ -181,6 +195,7 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		Descriptions:     cfg.Descriptions,
 		Keywords:         googleAdsKeywords(cfg.Keywords),
 		AudienceSegments: cfg.AudienceSegments,
+		GeoTargets:       cfg.GeoTargets,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: the
 		// GA client composes the budget/campaign/ad-group names from these, and a retry
 		// with the same suffix is rejected by whichever family it reaches first —
@@ -190,6 +205,20 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		// UNCONFIRMED-already-exists rather than creating a second paid campaign — a
 		// poor-man's idempotency key until LFXV2-2665 lands provider idempotency keys.
 		NameSuffix: brief.ID,
+	}
+
+	// An untargeted create is ACCEPTED (see googleAdsConfig.GeoTargets for why refusing
+	// would break every caller predating the field) but never SILENT. A campaign created
+	// from a brief with no geo targets spends its whole budget worldwide the moment a
+	// human enables it, which is the defect LFXV2-3283 fixes; when it happens, it should
+	// be findable in the logs rather than inferred from a Google Ads bill. Logged at WARN
+	// for that reason, and it carries no caller values — only the brief id, which the rest
+	// of this file already logs.
+	if len(cfg.GeoTargets) == 0 {
+		slog.WarnContext(ctx, "google ads campaign dispatched with NO geo targeting (it will serve wherever the ad account allows once enabled)",
+			"brief_id", brief.ID,
+			"channel", cfg.Channel,
+		)
 	}
 
 	// login_customer_id is the OPTIONAL manager (MCC) account the ad account is accessed

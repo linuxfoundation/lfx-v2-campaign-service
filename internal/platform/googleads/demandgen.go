@@ -216,21 +216,34 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	steps = append(steps, fmt.Sprintf("Ad group created: %s", adGroupID))
 	res.Steps = steps
 
-	// GEO IS DELIBERATELY NOT SET HERE.
+	// Step 4: geo. Location criteria go on the AD GROUP here, NOT the campaign —
+	// Demand Gen rejects campaign-level location criteria, which is why this is a
+	// different call from the Search path's (see geo.go). Both channels now resolve
+	// the same caller-supplied country codes through the same map, so neither has
+	// targeting the other lacks (LFXV2-3283).
 	//
-	// The legacy implementation attaches location criteria at AD-GROUP level (Demand
-	// Gen rejects campaign-level ones) using its own GEO_TARGET_MAP. This client has
-	// no geo support at all — `CampaignInput` carries no GeoTargets field and the
-	// Search path sets no location criteria either — so adding a Demand-Gen-only geo
-	// path would mean inventing a geo-constant mapping that the rest of the client
-	// does not have, and quietly giving one channel targeting the other lacks.
-	//
-	// Parity with the legacy path on geo is its own change, applying to BOTH channels.
-	// Until then a created campaign is geo-untargeted and the closing step says so, so
-	// nobody reads the absence as targeting that was applied.
+	// A failure is returned ALONGSIDE the non-nil res, like every step past the
+	// campaign create: the campaign and ad group exist and are reconcilable either way.
+	if len(pf.geoConstantIDs) > 0 {
+		geoIDs, geoErr := c.createAdGroupGeoTargeting(ctx, adGroupResource, adGroupID, pf.geoConstantIDs)
+		if geoErr != nil {
+			return res, geoErr
+		}
+		res.GeoCriterionIDs = geoIDs
+		steps = append(steps, fmt.Sprintf("Geo targeting applied: %d ad-group location criteria (%s)", len(geoIDs), strings.Join(in.GeoTargets, ", ")))
+		res.Steps = steps
+	}
 
 	// No ad and no keywords, deliberately — see the doc comment.
-	steps = append(steps, "Demand Gen campaign created (no geo targeting set) — add targeting, upload images and publish in the Google Ads UI")
+	//
+	// The closing step reports geo HONESTLY rather than with a fixed string: it used to
+	// say "no geo targeting set" unconditionally, which would now be a lie on every
+	// targeted create.
+	if len(res.GeoCriterionIDs) > 0 {
+		steps = append(steps, "Demand Gen campaign created — upload images and publish in the Google Ads UI")
+	} else {
+		steps = append(steps, "Demand Gen campaign created (no geo targeting set) — add targeting, upload images and publish in the Google Ads UI")
+	}
 	res.Steps = steps
 	return res, nil
 }
