@@ -294,6 +294,22 @@ the editorially-rejected keyword "already existed" — a keyword that does not e
 never will. A mixed batch therefore stays on the `errPartialFailure` path, where the created
 ids are still carried out and the rejection is still surfaced.
 
+The ALL test is only as good as the error set it can see. `boundedErrorItems` retains
+`maxDecodedErrorItems` (16) entries per array to bound memory against an 8 MiB fault body,
+while `AddKeywords` sends up to `maxKeywords` (60) and a reuse retry re-posts the whole batch —
+so a typical brief returns one duplicate per keyword and the array is routinely truncated. A
+rejection past the cap is discarded during decode, leaving the retained prefix reading as
+wholly-duplicate.
+
+Refusing whenever the array was `Truncated` closed that hole but refused the ordinary
+converge-on-reuse case for any brief over 16 keywords, and no count can replace it:
+`PartialErrors` is sparse, and a duplicate and a genuine rejection are each exactly one error.
+The classification is therefore made **during decode**, where every element is visible before
+the ones past the cap are dropped. `NonDuplicateKeywords` tallies the entries carrying an actual
+error code that is not an already-exists keyword code, over the whole wire array; the call site
+requires it to be zero. Presence is tested on the raw bytes, so an unparseable-but-present code
+counts as a rejection rather than collapsing into the null-placeholder answer.
+
 **Why the skip had to go.** "The ad group exists" and "its keywords exist" are DIFFERENT facts,
 and they come apart on the FIRST run: if run 1 creates the ad group then fails before the
 keywords land (an ad failure, an UNCONFIRMED keyword step, a 429), run 2 finds the group, skips,

@@ -47,9 +47,9 @@ invisible.
 
 The ALL test does not need a count, it needs to have SEEN every error. So the classification is
 performed in `UnmarshalJSON`, the one place every element passes through — including the ones
-about to be dropped for memory. `boundedErrorItems` gains `NonDuplicates`, a tally over the WHOLE
+about to be dropped for memory. `boundedErrorItems` gains `NonDuplicateKeywords`, a tally over the WHOLE
 wire array of entries carrying an actual error code that is not an already-exists keyword code.
-The call site asks `NonDuplicates == 0`.
+The call site asks `NonDuplicateKeywords == 0`.
 
 A large full-duplicate batch now converges; a batch whose rejection sits at index 40 of 60 is
 still refused, because the tally counted it even though `Items` does not hold it. The O(1) memory
@@ -61,8 +61,11 @@ The tally keeps it structural at any size.
 
 The single-item test is factored into `isNonDuplicateKeywordItem`, shared by the streaming tally
 and `isDuplicateKeywordPartial`, so the two can never drift apart about which spellings count as
-already-exists. `Truncated` is retained and still load-bearing (mutating it away fails tests):
-this adds the missing term rather than reverting the previous fix.
+already-exists. `Truncated` is retained, but the honest statement of its status is narrower than
+"still load-bearing": after this change no PRODUCTION path reads it — the flag is written during
+decode and asserted only by tests, which is why mutating it away fails them. It stays because it
+still describes the array truthfully and is the natural signal for any future consumer that needs
+to know the set is a prefix; the term now doing the safety work at the call site is the tally.
 
 ## Mutation-tested
 
@@ -71,7 +74,7 @@ Nine compiling mutations, each checked for whether it could be OBSERVED:
 - gate → `!Truncated` (the head behaviour) → **caught** by the new liveness test. This is the
   regression itself.
 - gate → `true` (no guard) → **caught** by the retained truncation test.
-- gate → `NonDuplicates != 0` (inverted) → caught.
+- gate → `NonDuplicateKeywords != 0` (inverted) → caught.
 - tally never increments → caught.
 - tally moved INSIDE the retention test, so only retained items count → **caught**. This is the
   most valuable kill: it proves the safety test genuinely exercises the discarded region rather
@@ -85,7 +88,7 @@ Nine compiling mutations, each checked for whether it could be OBSERVED:
 - `Truncated` never set → caught (the flag is still live).
 - dropping the `isDuplicateKeywordPartial` conjunct at the call site → **SURVIVED, and stays
   survived.** This is a finding, not a coverage gap: the enclosing `partialErrorsHaveAny` already
-  establishes that a retained item carries an ACTUAL code, so with `NonDuplicates == 0` the
+  establishes that a retained item carries an ACTUAL code, so with `NonDuplicateKeywords == 0` the
   predicate cannot currently disagree — an all-null retained prefix diverts to the UNCONFIRMED
   path before reaching this branch (verified by probe). The conjunct is defensive redundancy. It
   is KEPT so the branch stays correct on its own reading rather than depending on a non-local
@@ -96,6 +99,6 @@ Nine compiling mutations, each checked for whether it could be OBSERVED:
 
 `TestCreateCampaign_FullDuplicateBatchLargerThanTheCapStillSucceeds` sends 38 all-duplicate
 keywords and was verified to FAIL at head `6e12d304` ("must converge, not fail") before the fix.
-`TestBoundedErrorItems_NonDuplicatesCountsPastTheRetentionCap` pins the tally at the decode layer,
+`TestBoundedErrorItems_NonDuplicateKeywordsCountsPastTheRetentionCap` pins the tally at the decode layer,
 including the case where the retained prefix looks wholly duplicate but the count does not.
 The prior safety test is unchanged and still passing.

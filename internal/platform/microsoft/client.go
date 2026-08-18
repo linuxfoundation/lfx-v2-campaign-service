@@ -1029,40 +1029,41 @@ const maxDecodedErrorItems = maxRetainedErrorCodes
 // never evidence there was none, at any size — and keeps the O(1) memory bound the cap exists
 // for.
 //
-// Refusing outright on Truncated, however, was too strong, and counting the discarded items was
-// not enough to replace it. A reuse retry re-posts the whole batch, so every keyword of a
-// typical ~38-keyword brief returns a duplicate — one error each, past the 16-item cap — and
-// refusing there rejected the ordinary converge-on-reuse case for any brief over 16 keywords.
+// Refusing outright on Truncated, however, was too strong: a reuse retry re-posts the whole
+// batch, so an ordinary brief returns one duplicate per keyword and exceeds the cap every time,
+// which rejected the very converge-on-reuse case the duplicate path exists for. A COUNT of the
+// discarded entries cannot replace it either — the ALL test needs to know what each error IS,
+// and a duplicate and a genuine rejection are each exactly one error. (PartialErrors is also
+// SPARSE, carrying an entry only for a FAILED item, so the count is not even well-defined
+// against the request.) Both alternatives, and why they were rejected, are recorded in
+// docs/knowledge/log/2026-08-18-LFXV2-3279-truncation-refused-the-ordinary-reuse.md.
 //
-// Recording only a COUNT of the discarded entries does not rescue it. The ALL-duplicate test
-// needs to know what each error IS, and a duplicate and a genuine rejection are both exactly
-// one error: a batch of 60 keywords returning 60 errors is fully accounted for by any counting
-// argument whether or not an editorial rejection hides at index 40. Arithmetic over totals can
-// prove how MANY errors exist; it cannot prove they are all duplicates. (Nor is the count even
-// well-defined against the request: PartialErrors is SPARSE, carrying an entry only for a
-// FAILED item, so it legitimately runs shorter than the batch whenever some entries succeeded.)
-//
-// So the classification is done DURING decode, where every element is seen. NonDuplicates
-// tallies the entries that carry an actual error code which is not an already-exists keyword
-// code — including the ones dropped for memory. A consumer can then ask the ALL question of the
-// whole array while still holding only maxDecodedErrorItems of it, which is what lets a
-// large full-duplicate batch converge without ever reading completeness off a prefix.
+// So the classification is done DURING decode, where every element is seen.
+// NonDuplicateKeywords tallies the entries that carry an actual error code which is not an
+// already-exists keyword code — including the ones dropped for memory. A consumer can then ask
+// the ALL question of the whole array while still holding only maxDecodedErrorItems of it.
 type boundedErrorItems struct {
 	Items []msErrorItem
 	// Truncated reports that the body carried MORE error items than were retained, so Items
 	// is a prefix of the real error set rather than the whole of it.
 	Truncated bool
-	// NonDuplicates counts elements carrying an actual error code that is NOT an already-exists
-	// keyword code, over the WHOLE wire array rather than the retained prefix. Null/placeholder
-	// slots carry no code and are not counted. Zero means every error in the entire array — seen
+	// NonDuplicateKeywords counts elements carrying an actual error code that is NOT an
+	// already-exists KEYWORD code (1517/1542 and their symbolic spellings), over the WHOLE wire
+	// array rather than the retained prefix. Zero means every error in the entire array — seen
 	// or discarded — was a duplicate, which is the only thing that licenses duplicate-only
 	// classification of a truncated array.
+	//
+	// A slot counts as an error when its Code/ErrorCode is PRESENT and non-null on the wire,
+	// not merely when that value can be rendered to a code string: an unparseable code is an
+	// error this client cannot name, and naming-failure must not read as absence-of-error. Only
+	// genuinely absent/null fields — an index-aligned array's padding for a succeeded entry —
+	// are skipped. See isNonDuplicateKeywordItem.
 	//
 	// Only the keyword path consults this; the campaign/ad-group/ad arrays that share this type
 	// compute it and ignore it. That is deliberate — the tally must be taken during decode, which
 	// is the one place every element is visible, and counting is side-effect free, so an unread
 	// value on those paths costs a comparison per item and changes no behaviour.
-	NonDuplicates int
+	NonDuplicateKeywords int
 }
 
 func (b *boundedErrorItems) UnmarshalJSON(data []byte) error {
@@ -1086,7 +1087,7 @@ func (b *boundedErrorItems) UnmarshalJSON(data []byte) error {
 		// than the retained prefix. The loop already had to visit this element to advance the
 		// stream, so this is free and stays O(1) in memory.
 		if isNonDuplicateKeywordItem(it) {
-			b.NonDuplicates++
+			b.NonDuplicateKeywords++
 		}
 		if len(b.Items) < maxDecodedErrorItems {
 			b.Items = append(b.Items, it)

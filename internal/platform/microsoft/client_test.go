@@ -702,13 +702,13 @@ func TestDoRequest_429BodyReadFailureStillRetries(t *testing.T) {
 	}
 }
 
-// TestBoundedErrorItems_NonDuplicatesCountsPastTheRetentionCap pins the tally directly, at the
+// TestBoundedErrorItems_NonDuplicateKeywordsCountsPastTheRetentionCap pins the tally directly, at the
 // decode layer, independent of any CreateCampaign wiring.
 //
 // The retained slice stops at maxDecodedErrorItems, so a consumer that needs to know whether the
-// WHOLE array was duplicates cannot learn it from Items. NonDuplicates is taken during decode,
+// WHOLE array was duplicates cannot learn it from Items. NonDuplicateKeywords is taken during decode,
 // where every element is seen exactly once before the ones past the cap are discarded.
-func TestBoundedErrorItems_NonDuplicatesCountsPastTheRetentionCap(t *testing.T) {
+func TestBoundedErrorItems_NonDuplicateKeywordsCountsPastTheRetentionCap(t *testing.T) {
 	dup := func(i int) string {
 		return fmt.Sprintf(`{"Index":%d,"Code":1517,"ErrorCode":"CampaignServiceDuplicateKeyword"}`, i)
 	}
@@ -731,8 +731,8 @@ func TestBoundedErrorItems_NonDuplicatesCountsPastTheRetentionCap(t *testing.T) 
 		if len(b.Items) != maxDecodedErrorItems {
 			t.Errorf("retained %d items, want the %d cap", len(b.Items), maxDecodedErrorItems)
 		}
-		if b.NonDuplicates != 0 {
-			t.Errorf("NonDuplicates = %d, want 0: every one of the 60 errors is a duplicate", b.NonDuplicates)
+		if b.NonDuplicateKeywords != 0 {
+			t.Errorf("NonDuplicateKeywords = %d, want 0: every one of the 60 errors is a duplicate", b.NonDuplicateKeywords)
 		}
 	})
 
@@ -754,8 +754,8 @@ func TestBoundedErrorItems_NonDuplicatesCountsPastTheRetentionCap(t *testing.T) 
 		if isDuplicateKeywordPartial(b.Items) != true {
 			t.Fatal("precondition: the RETAINED prefix must look wholly duplicate for this to be meaningful")
 		}
-		if b.NonDuplicates != 1 {
-			t.Errorf("NonDuplicates = %d, want 1: the editorial rejection at index 40 was discarded but must still be counted", b.NonDuplicates)
+		if b.NonDuplicateKeywords != 1 {
+			t.Errorf("NonDuplicateKeywords = %d, want 1: the editorial rejection at index 40 was discarded but must still be counted", b.NonDuplicateKeywords)
 		}
 	})
 
@@ -772,8 +772,51 @@ func TestBoundedErrorItems_NonDuplicatesCountsPastTheRetentionCap(t *testing.T) 
 		if err := b.UnmarshalJSON([]byte(`[` + strings.Join(items, ",") + `]`)); err != nil {
 			t.Fatalf("UnmarshalJSON: %v", err)
 		}
-		if b.NonDuplicates != 0 {
-			t.Errorf("NonDuplicates = %d, want 0: null padding for a succeeded entry is not a rejection", b.NonDuplicates)
+		if b.NonDuplicateKeywords != 0 {
+			t.Errorf("NonDuplicateKeywords = %d, want 0: null padding for a succeeded entry is not a rejection", b.NonDuplicateKeywords)
+		}
+	})
+
+	t.Run("a present but unparseable code is a rejection, not a placeholder", func(t *testing.T) {
+		// codeString cannot render an object/array/bool/whitespace code, so it returns "" for
+		// each — the same value a genuine null placeholder produces. If the tally tested only
+		// codeString, an error this client cannot NAME would be indistinguishable from an entry
+		// that succeeded, and past the retention cap neither term of the caller's guard could
+		// see it. "Cannot classify" must fail closed to the rejection path.
+		for _, shape := range []struct{ name, code string }{
+			{"object", `{"Value":1042}`},
+			{"array", `[1042]`},
+			{"bool", `true`},
+			{"whitespace string", `"   "`},
+		} {
+			var b boundedErrorItems
+			body := `[{"Index":0,"Code":` + shape.code + `,"ErrorCode":` + shape.code + `}]`
+			if err := b.UnmarshalJSON([]byte(body)); err != nil {
+				t.Fatalf("%s: UnmarshalJSON: %v", shape.name, err)
+			}
+			if b.NonDuplicateKeywords != 1 {
+				t.Errorf("%s code: NonDuplicateKeywords = %d, want 1: an unrecognizable code is an unclassifiable ERROR, and treating it as a placeholder would report a genuine rejection as a clean duplicate-only success",
+					shape.name, b.NonDuplicateKeywords)
+			}
+		}
+	})
+
+	t.Run("an absent or explicitly null code is still a placeholder", func(t *testing.T) {
+		// The complement of the case above: presence is tested on the RAW bytes, so a field that
+		// is genuinely missing or JSON null must still read as padding for a succeeded entry.
+		// Over-counting these would refuse the ordinary mixed batch this PR exists to converge.
+		for _, body := range []string{
+			`[{"Index":0}]`,
+			`[{"Index":0,"Code":null,"ErrorCode":null}]`,
+			`[null]`,
+		} {
+			var b boundedErrorItems
+			if err := b.UnmarshalJSON([]byte(body)); err != nil {
+				t.Fatalf("%s: UnmarshalJSON: %v", body, err)
+			}
+			if b.NonDuplicateKeywords != 0 {
+				t.Errorf("%s: NonDuplicateKeywords = %d, want 0: a null/absent code is a succeeded entry's padding, not a rejection", body, b.NonDuplicateKeywords)
+			}
 		}
 	})
 }

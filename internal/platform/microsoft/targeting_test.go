@@ -1152,11 +1152,16 @@ func TestCreateCampaign_TruncatedErrorArrayIsNotDuplicateOnlySuccess(t *testing.
 // !Truncated therefore refused the ORDINARY reuse case: the converge-on-reuse behaviour was
 // live only for briefs of 16 keywords or fewer.
 //
-// The distinguishing fact is arithmetic, not truncation. A batch where every keyword is a
-// duplicate produces EXACTLY as many error items as keywords sent. When the wire reports 38
-// errors for 38 keywords and every retained error is a duplicate, no discarded item can be a
-// genuine rejection OF A KEYWORD THAT SUCCEEDED — because none succeeded; the count leaves no
-// room for an unaccounted-for entry.
+// The distinguishing fact is not arithmetic. PartialErrors is SPARSE — it carries an entry only
+// for a FAILED keyword — so the error count legitimately runs shorter than the batch whenever
+// some succeeded, and a count that DOES match is equally consistent with a genuine rejection
+// hiding past the cap: a duplicate and an editorial rejection are each exactly one error. No
+// total can tell them apart.
+//
+// What licenses the classification is having SEEN every error. NonDuplicateKeywords is tallied during
+// decode, where each element passes through before the ones past the cap are dropped, so zero
+// means every error in the WHOLE wire array — retained or discarded — was an already-exists
+// keyword. That is the term under test here.
 func TestCreateCampaign_FullDuplicateBatchLargerThanTheCapStillSucceeds(t *testing.T) {
 	// 38 = the product's typical brief, comfortably past maxDecodedErrorItems (16).
 	const n = 38
@@ -1256,5 +1261,70 @@ func TestCreateCampaign_NullPaddedSuccessesPastTheCapAreNotRejections(t *testing
 	// Keywords were created, so the tree is not untouched.
 	if res.AlreadyExisted {
 		t.Error("AlreadyExisted = true, want false: this run created keywords")
+	}
+}
+
+// TestCreateCampaign_UnparseableCodePastTheCapIsNotDuplicateOnlySuccess pins the fail-closed
+// half of the decode-time tally, and it is the case that regressed when the tally replaced the
+// !Truncated gate.
+//
+// The tally answers "was every error a duplicate?" by naming each error's code. codeString
+// renders a code only when it is a JSON string or number; for an object, array, bool or blank
+// string it returns "", which is also what a genuine null placeholder yields. Testing the
+// rendered string alone therefore folds an UNPARSEABLE code — an error this client cannot name
+// — into the placeholder answer "not a rejection".
+//
+// Past the 16-item retention cap that is invisible to both terms of the guard: the item is
+// discarded from Items so isDuplicateKeywordPartial never sees it, and a codeString-based tally
+// would not have counted it. The batch reads as wholly-duplicate and a genuine editorial
+// rejection is reported to the operator as a clean converge-on-reuse success — keywords the
+// operator believes are attached, that do not exist and never will.
+//
+// The !Truncated gate this change replaced happened to refuse this input, so the tally must
+// carry the property forward rather than lose it: presence is tested on the raw bytes, and an
+// unrecognized-but-present code counts as a rejection.
+func TestCreateCampaign_UnparseableCodePastTheCapIsNotDuplicateOnlySuccess(t *testing.T) {
+	const (
+		n           = 38 // past maxDecodedErrorItems (16), so index 30 is discarded during decode
+		rejectionAt = 30
+	)
+	in := validInput()
+	in.Keywords = make([]Keyword, 0, n)
+	for i := 0; i < n; i++ {
+		in.Keywords = append(in.Keywords, Keyword{Text: fmt.Sprintf("keyword %02d", i), MatchType: MatchTypeExact})
+	}
+	name := composeName(in)
+	adGroupName := composeAdGroupName(in)
+	finalURL := buildAdFinalURL(in)
+
+	ids := make([]string, 0, n)
+	errs := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		ids = append(ids, "null")
+		if i == rejectionAt {
+			// A real editorial rejection whose codes arrive as objects rather than scalars.
+			errs = append(errs, fmt.Sprintf(
+				`{"Index":%d,"Code":{"Value":1042},"ErrorCode":{"Value":"CampaignServiceEditorialError"}}`, i))
+			continue
+		}
+		errs = append(errs, fmt.Sprintf(
+			`{"Index":%d,"Code":1517,"ErrorCode":"CampaignServiceDuplicateKeyword"}`, i))
+	}
+
+	api := &campaignsAPI{
+		getBody:        `{"Campaigns":[{"Id":999,"Name":` + jsonString(name) + `}]}`,
+		adGroupGetBody: `{"AdGroups":[{"Id":111,"Name":` + jsonString(adGroupName) + `}]}`,
+		adGetBody:      `{"Ads":[{"Id":222,"FinalUrls":[` + jsonString(finalURL) + `]}]}`,
+		keywordPostBody: `{"KeywordIds":[` + strings.Join(ids, ",") + `],"PartialErrors":[` +
+			strings.Join(errs, ",") + `]}`,
+	}
+	c := newAPIClient(t, api.handler(t))
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatalf("an unclassifiable error discarded past the cap must NOT be reported as a duplicate-only success (AlreadyExisted=%v)", res.AlreadyExisted)
+	}
+	if res.AlreadyExisted {
+		t.Error("AlreadyExisted = true, want false: a genuine rejection travelled with the duplicates")
 	}
 }
