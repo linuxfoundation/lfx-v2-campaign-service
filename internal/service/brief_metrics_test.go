@@ -235,6 +235,10 @@ func TestGetBriefMetrics_SentinelsMapToTheirRowStatus(t *testing.T) {
 		// "not usable" appears in both, so it passed whether or not the system case had its
 		// own arm — and the general wording tells a project with no connection of its own to
 		// "reconnect it", which it cannot do.
+		"no ad account chosen on the connection": {
+			err: domain.ErrAccountNotSelected, platform: model.ProviderGoogleAds,
+			wantStatus: "connection_problem", wantReason: "no ad account has been selected",
+		},
 		"system fallback connection unusable": {
 			err: domain.ErrSystemConnectionNotUsable, platform: model.ProviderLinkedInAds,
 			wantStatus: "connection_problem", wantReason: "shared LF connection",
@@ -402,6 +406,55 @@ func TestGetBriefMetrics_ExcludesAnotherProjectsCampaign(t *testing.T) {
 	}
 	if len(res.Rows) != 1 {
 		t.Errorf("got %d rows, want 1 — only this project's campaign", len(res.Rows))
+	}
+}
+
+// A missing or archived brief is a request-level 404, NOT an empty row set. The distinction is
+// the same one this endpoint exists to make: "this brief has no campaigns" and "there is no such
+// brief" are different answers, and rows=[] with ok_count=0 asserts the first.
+//
+// Also asserts nothing downstream ran: the guard must refuse BEFORE listing campaigns or
+// contacting any platform.
+func TestGetBriefMetrics_MissingBriefIs404WithNoDownstreamCalls(t *testing.T) {
+	disp := newPerCampaignDispatcher()
+	s := newBriefMetricsService(t, disp, campaignOn("c1", model.ProviderGoogleAds))
+
+	_, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{
+		ProjectID: "cncf", BriefID: "no-such-brief",
+	})
+
+	var notFound *briefs.NotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("want a 404 NotFoundError, got %T: %v", err, err)
+	}
+	if disp.callCount() != 0 {
+		t.Errorf("the platform was contacted %d times for a brief that does not exist", disp.callCount())
+	}
+}
+
+// An ARCHIVED brief is unreadable for the same reason a missing one is — GetBrief refuses it —
+// so it must not degrade into an empty row set either.
+func TestGetBriefMetrics_ArchivedBriefIs404(t *testing.T) {
+	disp := newPerCampaignDispatcher()
+	repo := newFakeBriefRepo()
+	// The real GetBrief filters `status <> 'archived'` (brief_repo.go:68), so an archived brief
+	// reads as ErrNotFound. The fake keys on presence alone, so the archived case is modelled
+	// the way the repository ANSWERS it rather than by storing a status the fake would ignore.
+	repo.getErr = domain.ErrNotFound
+	cr := &fakeCampaignRepo{byID: map[string]*model.Campaign{}}
+	jobs := newFakeJobRepo()
+	s := NewBriefService(repo, cr, jobs, NewOrchestrator(cr, jobs,
+		map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp}))
+
+	_, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1",
+	})
+	var notFound *briefs.NotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("an archived brief must be unreadable, got %T: %v", err, err)
+	}
+	if disp.callCount() != 0 {
+		t.Errorf("the platform was contacted %d times for an archived brief", disp.callCount())
 	}
 }
 

@@ -250,6 +250,13 @@ text, which can carry a platform's own response body or operator-supplied accoun
 There is no cross-channel cost total. `cost_micros` is micro-units of each platform's OWN
 native currency and this service performs no FX conversion, so a sum would carry no currency.
 
+## Window semantics, shared by both metrics reads
+
+Everything below applies to `GetCampaignMetrics` AND `GetBriefMetrics` — it describes the
+window vocabulary and the per-platform defaults, not either handler's own behaviour. It is
+its own section so a reader tracing the campaign-scoped read does not miss it by stopping at
+the brief-wide section above.
+
 One caveat the vocabulary cannot express: for the HubSpot email channel the window selects
 which EMAILS are in scope by send date, not which events are counted, so the counters are
 the email's totals to date and two different windows containing the send date return

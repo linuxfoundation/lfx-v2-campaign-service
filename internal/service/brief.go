@@ -1897,6 +1897,11 @@ func classifyBriefMetricsErr(err error, platform model.Provider) (status, reason
 		// to reconnect. creds.go wraps this ALONGSIDE ErrConnectionNotUsable, so a merged arm
 		// silently answers with the wrong instruction — which is what makes the tag decorative.
 		return "connection_problem", "this project has no connection of its own for the campaign's platform and the shared LF connection is not usable — an operator must repair it"
+	case errors.Is(err, domain.ErrAccountNotSelected):
+		// Above the general arm: production wraps this ALONGSIDE ErrConnectionNotUsable, so a
+		// merged arm matches first and tells the operator to reconnect credentials when the
+		// actual fix is choosing an ad account on the connection they already have.
+		return "connection_problem", "no ad account has been selected on this project's connection for the campaign's platform — choose one to read metrics"
 	case errors.Is(err, domain.ErrConnectionNotUsable):
 		return "connection_problem", "this project's connection for the campaign's platform is not usable — reconnect it to read metrics"
 	default:
@@ -1978,10 +1983,23 @@ func (s *BriefService) GetBriefMetrics(ctx context.Context, p *briefs.GetBriefMe
 					"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", c.ID,
 					"platform", c.Platform, "window", string(window), "row_status", status,
 				}
-				// NO error text on the decrypt arm. domain.Encryptor is an INTERFACE, so its
-				// error is whatever an implementation returns and may quote ciphertext or key
-				// material; safeErrSummary normalises and truncates, it does not redact.
-				if !errors.Is(merr, domain.ErrCredentialDecryptionFailed) {
+				// What may be logged depends on the CLASS of failure, not on convenience.
+				//
+				// safeErrSummary normalises and truncates; it does not REDACT. A decrypt error
+				// comes from the Encryptor INTERFACE and may quote ciphertext or key material,
+				// and an unusable-connection cause can embed fragments of a decrypted blob. So
+				// neither gets error text: connection failures log the fixed reason TOKEN that
+				// GetCampaignMetrics logs, and the decrypt arm logs nothing at all.
+				//
+				// This matters more here than on the campaign-scoped handler: a brief-wide read
+				// fans out across every campaign, so one malformed credential row would write
+				// its fragments once per campaign into centralised logs.
+				switch {
+				case errors.Is(merr, domain.ErrCredentialDecryptionFailed):
+					// Nothing. Not even a reason token — the cause is the encryptor's.
+				case status == "connection_problem":
+					attrs = append(attrs, "reason", unusableConnectionReason(merr))
+				default:
 					attrs = append(attrs, "error", safeErrSummary(merr))
 				}
 				slog.Log(gctx, lvl, "brief metrics row could not be read", attrs...)

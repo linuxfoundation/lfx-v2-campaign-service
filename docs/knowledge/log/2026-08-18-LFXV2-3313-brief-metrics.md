@@ -103,3 +103,32 @@ arm, raised to ERROR for the same count-is-the-discriminator reason as the decry
 the test's `wantReason` tightened from "not usable" (which both arms contain, so it passed
 either way) to a phrase only the system arm carries. Mutation-verified: re-merging the arms now
 fails.
+
+**Fix (dealako review)** — Four findings on PR #136, all evidenced against the campaign-scoped
+handler and all correct.
+
+`classifyBriefMetricsErr` had no `ErrAccountNotSelected` arm. Production wraps it ALONGSIDE
+`ErrConnectionNotUsable`, so the general arm matched first and told the operator to reconnect
+credentials when the fix is choosing an ad account on the connection they already have — the
+opposite remediation. Its own arm now sits above the general one.
+
+The log line appended `safeErrSummary(merr)` on connection failures. `GetCampaignMetrics`
+deliberately does not: it logs `unusableConnectionReason(merr)`, a fixed token, because
+`safeErrSummary` normalises and truncates rather than redacts and an unusable-connection cause
+can embed fragments of a decrypted blob. That exposure is worse on this endpoint than on the
+campaign-scoped one, because a brief-wide read fans out across every campaign — one malformed
+credential row would write its fragments once per campaign. Connection arms now log the reason
+token; the decrypt arm logs nothing at all.
+
+The 404 guard for a missing or archived brief had no test. Both are now covered, including that
+nothing downstream runs. Mutation-verified with a COMPILING mutation — deleting the guard
+outright only breaks the build, which proves nothing; swallowing the error instead makes the
+request answer `<nil>` with an empty row set, exactly the "this brief has no campaigns" lie the
+guard exists to prevent. Note the archived case is modelled the way the repository ANSWERS it
+(`ErrNotFound`), since the real query filters `status <> 'archived'` (`brief_repo.go:68`) and the
+fake keys on presence alone.
+
+The shared window semantics — the HubSpot caveat and `defaultMetricsWindowFor` — were left
+sitting under the brief-wide heading after the insertion, where a reader tracing the
+campaign-scoped read would stop before reaching them. They now have their own section stating
+that they apply to both handlers.
