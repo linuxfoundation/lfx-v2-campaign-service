@@ -57,6 +57,14 @@ disabled path costs one env read. With the gate off the read returns
 `ErrMetricsUnsupported`, which the service maps to the same 400 a platform with
 no metrics adapter at all returns.
 
+The pod template carries the Prometheus scrape annotations by default (LFXV2-3221):
+`prometheus.io/scrape` and `prometheus.io/path` come from `values.yaml`, while
+`prometheus.io/port` is rendered from `service.port` in the TEMPLATE rather than
+hardcoded in values, so the scrape port cannot drift from the port the container
+listens on. A deployment that overrides `podAnnotations` replaces the map and must
+re-declare the scrape keys. `/metrics` is scraped on the pod IP and is deliberately
+absent from the HTTPRoute and RuleSet, exactly like the health probes.
+
 Probes: `livez` restarts a hung process (never touches the DB); `readyz` gates
 traffic on DB connectivity. The `startupProbe` on `/readyz` carries a ~90s
 `failureThreshold` budget for a database cold start. This budget is meaningful

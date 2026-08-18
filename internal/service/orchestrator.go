@@ -326,10 +326,41 @@ func dispatchErrIsPreCreate(err error) bool {
 }
 
 // Orchestrator runs async multi-platform campaign creation for a brief.
+// DispatchMetrics records dispatch and job-state observations. It is declared
+// HERE, as a narrow interface, rather than importing internal/infrastructure/metrics:
+// the orchestrator's dependencies are all interfaces it owns, and a concrete
+// import would make every orchestrator test drag in a Prometheus registry.
+//
+// The implementation must be safe for concurrent use — dispatch runs record from
+// one goroutine per platform.
+type DispatchMetrics interface {
+	RecordDispatch(ctx context.Context, platform model.Provider, outcome string)
+	RecordJobTransition(ctx context.Context, status model.JobStatus)
+	RecordUpstreamCall(ctx context.Context, platform model.Provider, operation, outcome string, seconds float64)
+}
+
+// Dispatch outcome tokens. These MIRROR the constants in
+// internal/infrastructure/metrics, which is what bounds the label's cardinality;
+// they are duplicated rather than imported to keep this package free of the
+// metrics dependency. metrics.safeOutcome collapses anything it does not
+// recognise, so a drift here degrades to "unknown" rather than minting series.
+const (
+	dispatchOutcomeSuccess = "success"
+	dispatchOutcomeSkipped = "skipped"
+	dispatchOutcomeFailure = "failure"
+	dispatchOutcomePanic   = "panic"
+)
+
 type Orchestrator struct {
 	campaigns   domain.CampaignRepository
 	jobs        domain.JobRepository
 	dispatchers map[model.Provider]PlatformDispatcher
+
+	// metricsMu guards metrics, which SetMetrics late-binds from the container for
+	// the same reason as indexer above. Never nil after construction: defaults to
+	// a no-op so every record site can call it unconditionally.
+	metricsMu sync.RWMutex
+	metrics   DispatchMetrics
 
 	// indexerMu guards indexer, which SetIndexer late-binds from the container.
 	// Campaign CREATES land here (dispatchOne persists them), not in BriefService,
@@ -381,6 +412,71 @@ type Orchestrator struct {
 // SetIndexer injects the Query Service index publisher. Separate from the constructor
 // so existing NewOrchestrator call sites (mostly tests) are unaffected and default to
 // Noop, mirroring BriefService.SetIndexer.
+// Upstream operation tokens. COMPILE-TIME CONSTANTS, never derived from a request,
+// a URL or an upstream response — the `operation` label is bounded by this list
+// being the only thing passed to recordUpstream.
+const (
+	opToggleStatus   = "toggle_status"
+	opReadMetrics    = "read_metrics"
+	opLookupCampaign = "lookup_campaign"
+	opListAccounts   = "list_accounts"
+	opSearchEmails   = "search_emails"
+)
+
+// recordUpstream times one upstream platform call. It is called ONLY after the
+// pre-platform guards have passed, so the histogram measures actual network work
+// rather than local refusals — a "no dispatcher registered" rejection returns in
+// nanoseconds and would drag every latency quantile toward zero.
+//
+// The outcome is derived from the error's PRESENCE only. The error VALUE never
+// becomes a label: upstream errors embed account ids, campaign ids and response
+// fragments, all unbounded.
+func (o *Orchestrator) recordUpstream(ctx context.Context, platform model.Provider, operation string, start time.Time, err error) {
+	outcome := callOutcomeOK
+	if err != nil {
+		outcome = callOutcomeError
+	}
+	o.dispatchMetrics().RecordUpstreamCall(ctx, platform, operation, outcome, time.Since(start).Seconds())
+}
+
+// Upstream call outcome tokens, mirroring internal/infrastructure/metrics for the
+// same reason as the dispatch outcomes above.
+const (
+	callOutcomeOK    = "ok"
+	callOutcomeError = "error"
+)
+
+// noopDispatchMetrics is the default recorder, so a call site never needs a nil
+// check and an orchestrator built without metrics behaves identically.
+type noopDispatchMetrics struct{}
+
+func (noopDispatchMetrics) RecordDispatch(context.Context, model.Provider, string) {}
+func (noopDispatchMetrics) RecordJobTransition(context.Context, model.JobStatus)   {}
+func (noopDispatchMetrics) RecordUpstreamCall(context.Context, model.Provider, string, string, float64) {
+}
+
+// SetMetrics late-binds the metrics recorder from the container. Passing nil
+// restores the no-op rather than storing nil, so the record sites stay
+// unconditional.
+func (o *Orchestrator) SetMetrics(m DispatchMetrics) {
+	o.metricsMu.Lock()
+	if m == nil {
+		m = noopDispatchMetrics{}
+	}
+	o.metrics = m
+	o.metricsMu.Unlock()
+}
+
+// dispatchMetrics returns the current recorder under the read lock.
+func (o *Orchestrator) dispatchMetrics() DispatchMetrics {
+	o.metricsMu.RLock()
+	defer o.metricsMu.RUnlock()
+	if o.metrics == nil {
+		return noopDispatchMetrics{}
+	}
+	return o.metrics
+}
+
 func (o *Orchestrator) SetIndexer(p indexer.Publisher) {
 	if p == nil {
 		return
@@ -456,6 +552,7 @@ func NewOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobReposit
 		jobs:          jobs,
 		dispatchers:   dispatchers,
 		indexer:       indexer.Noop{},
+		metrics:       noopDispatchMetrics{},
 		rootCtx:       rootCtx,
 		rootCancel:    rootCancel,
 		sweeperCtx:    sweeperCtx,
@@ -691,6 +788,11 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 	if err := o.jobs.UpdateJobStatus(ctx, jobID, model.JobRunning, nil, ""); err != nil {
 		slog.ErrorContext(ctx, "failed to mark campaign job running", "job_id", jobID, "error", err)
 	}
+	// Recorded after the write is ATTEMPTED rather than only on success: the job is
+	// running either way (dispatch proceeds below regardless), so gating this on the
+	// write would under-count running jobs during a database blip and make the
+	// transition counters disagree with the work actually performed.
+	o.dispatchMetrics().RecordJobTransition(ctx, model.JobRunning)
 
 	results := make([]platformResult, len(platforms))
 	g, gctx := errgroup.WithContext(ctx)
@@ -721,6 +823,7 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 					res.Error = "dispatch queue timed out waiting for a slot"
 				}
 				results[i] = res
+				o.dispatchMetrics().RecordDispatch(gctx, p, dispatchOutcomeFailure)
 				return nil
 			}
 
@@ -733,11 +836,24 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 					res.OK = false
 					res.Error = "internal error during dispatch"
 					results[i] = res
+					// A panic gets its OWN outcome rather than folding into "failure":
+					// it is a bug in this service, not an upstream platform refusing a
+					// campaign, and the two want different responses from whoever is
+					// on call. The recovered value is NEVER used as a label — it is
+					// unbounded and can embed ids.
+					o.dispatchMetrics().RecordDispatch(gctx, p, dispatchOutcomePanic)
 					rerr = nil
 				}
 			}()
 
-			results[i] = o.dispatchPlatform(gctx, jobID, brief, p, config, by)
+			// Deliberately a NEW variable rather than assigning the outer res: the
+			// recover arm above rewrites res into a failure, and widening res's
+			// lifetime to hold a completed dispatch would let a panic raised AFTER
+			// this point (in the recording call below) rewrite a success into a
+			// failure — a result the pre-metrics code could never produce.
+			done := o.dispatchPlatform(gctx, jobID, brief, p, config, by)
+			results[i] = done
+			o.dispatchMetrics().RecordDispatch(gctx, p, dispatchOutcomeFor(done))
 			return nil
 		})
 	}
@@ -765,10 +881,27 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 		if uerr := o.jobs.UpdateJobStatus(finCtx, jobID, model.JobFailed, nil, "failed to serialize job result: "+err.Error()); uerr != nil {
 			slog.ErrorContext(finCtx, "failed to finalize campaign job", "job_id", jobID, "error", uerr)
 		}
+		o.dispatchMetrics().RecordJobTransition(finCtx, model.JobFailed)
 		return
 	}
 	if err := o.jobs.UpdateJobStatus(finCtx, jobID, status, payload, ""); err != nil {
 		slog.ErrorContext(finCtx, "failed to finalize campaign job", "job_id", jobID, "error", err)
+	}
+	o.dispatchMetrics().RecordJobTransition(finCtx, status)
+}
+
+// dispatchOutcomeFor maps a platform result onto the CLOSED outcome enum. Skipped
+// is checked before OK because a skipped platform is reported with OK=true (no
+// campaign was created, so counting it as a success would inflate the dispatch
+// success rate with work never attempted).
+func dispatchOutcomeFor(res platformResult) string {
+	switch {
+	case res.Skipped:
+		return dispatchOutcomeSkipped
+	case res.OK:
+		return dispatchOutcomeSuccess
+	default:
+		return dispatchOutcomeFailure
 	}
 }
 
@@ -1391,7 +1524,10 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// delivered. A context deadline surfaces as UNCONFIRMED (the caller reports verify/retry).
 	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
 	defer cancel()
-	return toggler.ToggleStatus(callCtx, projectID, platform, campaign, status)
+	start := time.Now()
+	terr := toggler.ToggleStatus(callCtx, projectID, platform, campaign, status)
+	o.recordUpstream(ctx, platform, opToggleStatus, start, terr)
+	return terr
 }
 
 // ReadCampaignMetrics fetches live performance metrics for one campaign from its ad
@@ -1412,7 +1548,9 @@ func (o *Orchestrator) ReadCampaignMetrics(ctx context.Context, projectID string
 	}
 	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
 	defer cancel()
+	start := time.Now()
 	m, rerr := reader.ReadMetrics(callCtx, projectID, platform, campaign, window)
+	o.recordUpstream(ctx, platform, opReadMetrics, start, rerr)
 	if rerr != nil {
 		return nil, rerr
 	}
@@ -1449,7 +1587,9 @@ func (o *Orchestrator) LookupPlatformCampaign(ctx context.Context, projectID str
 	}
 	callCtx, cancel := context.WithTimeout(ctx, adoptLookupTimeout)
 	defer cancel()
+	start := time.Now()
 	ref, err := adopter.LookupCampaign(callCtx, projectID, platform, platformCampaignID)
+	o.recordUpstream(ctx, platform, opLookupCampaign, start, err)
 	if err != nil {
 		return nil, err
 	}
@@ -1491,7 +1631,9 @@ func (o *Orchestrator) ReadAccounts(ctx context.Context, projectID string, platf
 	}
 	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
 	defer cancel()
+	start := time.Now()
 	accounts, aerr := lister.ListAccounts(callCtx, projectID, platform)
+	o.recordUpstream(ctx, platform, opListAccounts, start, aerr)
 	if aerr != nil {
 		return nil, aerr
 	}
@@ -1539,7 +1681,9 @@ func (o *Orchestrator) SearchEmails(ctx context.Context, projectID string, platf
 	}
 	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
 	defer cancel()
+	start := time.Now()
 	emails, serr := searcher.SearchEmails(callCtx, projectID, platform, query)
+	o.recordUpstream(ctx, platform, opSearchEmails, start, serr)
 	if serr != nil {
 		return nil, serr
 	}

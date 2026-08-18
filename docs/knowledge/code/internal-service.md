@@ -55,7 +55,17 @@ an explicit `UpdateBrief`, so edits to the AI-generated copy are never silently 
 (`CreateCampaigns`) requires an approved brief, rejects empty and duplicate
 platform sets (a duplicate would create two paid upstream campaigns), then hands
 off to the `Orchestrator`, which persists a job and dispatches per platform
-asynchronously (bounded concurrency). Dispatch is idempotent: a brief already
+asynchronously (bounded concurrency). The orchestrator records dispatch outcomes,
+job state transitions and upstream platform latency through the `DispatchMetrics`
+interface — declared in THIS package rather than importing
+[internal/infrastructure/metrics](internal-infrastructure-metrics.md), so orchestrator
+tests do not drag in a Prometheus registry, and injected via `SetMetrics` from the one
+`newOrchestrator` helper both construction paths route through. It defaults to a no-op,
+never nil, so every record site is unconditional. A recovered dispatcher panic gets its
+OWN outcome rather than folding into `failure`: a panic is a bug in this service, not an
+upstream refusal, and the two want different responses from whoever is on call. Upstream
+calls are timed only AFTER the pre-platform guards pass, so local refusals (which return
+in nanoseconds) do not drag the latency quantiles toward zero. Dispatch is idempotent: a brief already
 carrying a COMPLETED campaign for a platform is reused rather than re-created. The
 idempotency fast-path lookup (`GetCampaignByPlatform`) distinguishes its outcomes: an
 existing campaign with an upstream id AND a terminal status (`created` /

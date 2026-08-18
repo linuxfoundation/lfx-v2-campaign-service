@@ -12,9 +12,62 @@ campaign creation and management.
   requests (readiness probe), including a PostgreSQL connectivity
   check. Returns `200` with a `text/plain` body of `OK` when ready,
   or `503` when not ready.
+- `/metrics`: `GET` — Prometheus metrics in the text exposition
+  format. Served on the same port as the API, and available in
+  no-database mode and during a cold start (a scrape target that only
+  appears once the database is up is exactly backwards). See
+  [Metrics](#metrics) below.
 
-Both endpoints are unauthenticated and are excluded from the generated
-public API documentation.
+These three endpoints are unauthenticated and are excluded from the
+generated public API documentation. They are also absent from the Helm
+chart's `HTTPRoute` and Heimdall `RuleSet`, so they are reachable only
+in-cluster (kubelet probes and the Prometheus scraper), never through
+the public gateway.
+
+## Metrics
+
+`GET /metrics` serves the Prometheus text exposition format. The
+endpoint takes **no configuration** — there is no environment variable
+to enable it and no separate metrics port. It is independent of the
+`OTEL_*` settings below: `OTEL_METRICS_EXPORTER` defaults to `none`, so
+wiring these instruments to the OTLP pipeline would leave `/metrics`
+empty in the default deployment.
+
+Service metrics:
+
+| Metric | Type | Labels | What it answers |
+| --- | --- | --- | --- |
+| `campaign_dispatch_total` | counter | `platform`, `outcome` | Are campaigns actually landing on each ad platform? `outcome` is one of `success`, `skipped`, `failure`, `panic` — `panic` is separate because it is a bug in this service, not an upstream refusal. |
+| `campaign_job_transitions_total` | counter | `status` | Dispatch jobs reaching each state (`running`, `succeeded`, `partial`, `failed`). A growing gap between `running` and the terminal states means jobs are getting stuck. |
+| `campaign_upstream_calls_total` | counter | `platform`, `operation`, `outcome` | Upstream ad-platform API call volume and error rate. |
+| `campaign_upstream_call_duration_seconds` | histogram | `platform`, `operation`, `outcome` | Upstream ad-platform latency. Timed only after the pre-platform guards pass, so local refusals do not drag the quantiles toward zero. |
+| `campaign_db_pool_*` | gauge / counter | none | Database pool health: acquired, idle, total and max connections, plus canceled and empty acquires. Exported only when a pool is actually wired — see below. |
+
+Plus the standard Go runtime and process collectors.
+
+**Label cardinality.** No metric here carries a campaign id, brief id,
+project id, job id, account id or URL as a label value — an unbounded
+label creates one retained time series per distinct value and is the
+classic way to take a Prometheus server down. `platform` is mapped
+through a closed provider set and anything outside it collapses to
+`unknown`; the outcome labels are closed enums. No metric name, label
+or help string carries a credential, DSN or token.
+
+**Absent pool metrics are meaningful.** When no database is wired (no-DB
+mode, or a cold start before the pool opens) the `campaign_db_pool_*`
+series are **not exported at all**, rather than exported as zeroes. A
+zero is a measurement: reporting `max_connections=0` for a service
+running without a database is indistinguishable from a pool that has
+collapsed, and would fire a false exhaustion alert.
+
+**Scraping.** The chart sets `prometheus.io/scrape`,
+`prometheus.io/path` and `prometheus.io/port` on the pod template by
+default, so a discovery-based collector picks the pod up with no further
+configuration. `prometheus.io/port` is derived from `service.port` in
+the template rather than hardcoded in `values.yaml`, so the scrape port
+cannot drift from the port the container listens on. A deployment that
+overrides `podAnnotations` replaces the map, so it must re-declare
+`prometheus.io/scrape` and `prometheus.io/path` to keep being scraped.
 
 ## Environment variables
 

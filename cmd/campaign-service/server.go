@@ -25,6 +25,7 @@ import (
 	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/container"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/metrics"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/middleware"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/log"
@@ -77,11 +78,28 @@ func StartServer(ctx context.Context, cfg *config.Config) error {
 // actually reachable (the bug this fixes — routes that compile but are never
 // mounted return 404) without standing up a full server. It returns an error
 // only for a programmer-level mis-wiring (nil endpoints).
-func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints, audienceEndpoints *audiencesvc.Endpoints) (goahttp.Muxer, error) {
+func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints, audienceEndpoints *audiencesvc.Endpoints, promReg *metrics.Registry) (goahttp.Muxer, error) {
 	mux := goahttp.NewMuxer()
 	if cfg.Debug {
 		debug.MountPprofHandlers(debug.Adapt(mux))
 		debug.MountDebugLogEnabler(debug.Adapt(mux))
+	}
+
+	// Mount /metrics DIRECTLY on the muxer rather than declaring it in design/.
+	// Two reasons, and the first is a hard requirement: a Goa method would be
+	// published in the OpenAPI documents unless it carried
+	// Meta("swagger:generate", "false") — the mechanism /livez and /readyz use —
+	// so keeping it out of the design keeps it out of the spec BY CONSTRUCTION
+	// rather than by remembering an annotation. Second, the Prometheus text
+	// exposition format is not a Goa result type; routing it through the
+	// generated encoder would buy nothing.
+	//
+	// It is UNAUTHENTICATED, exactly as /livez and /readyz are — the scraper
+	// carries no bearer token. Like those two, /metrics is deliberately absent
+	// from the chart's HTTPRoute and Heimdall RuleSet, so it is reachable only
+	// in-cluster (kubelet/Prometheus) and never through the public gateway.
+	if promReg != nil {
+		mux.Handle(http.MethodGet, "/metrics", promReg.Handler().ServeHTTP)
 	}
 
 	koDataPath := os.Getenv("KO_DATA_PATH")
@@ -133,7 +151,7 @@ func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints,
 }
 
 func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints, connEndpoints *connsvc.Endpoints, briefEndpoints *briefsvc.Endpoints, audienceEndpoints *audiencesvc.Endpoints, cont *container.Container) error {
-	mux, err := buildMux(ctx, cfg, endpoints, connEndpoints, briefEndpoints, audienceEndpoints)
+	mux, err := buildMux(ctx, cfg, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, cont.Metrics)
 	if err != nil {
 		return err
 	}
