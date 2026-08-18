@@ -201,8 +201,15 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 func (c *Client) submitReport(ctx context.Context, campaignID string, start, end time.Time) (string, error) {
 	body := map[string]any{
 		"ReportRequest": map[string]any{
-			"Type":                   "CampaignPerformanceReportRequest",
-			"Format":                 "Csv",
+			"Type":   "CampaignPerformanceReportRequest",
+			"Format": "Csv",
+			// false, deliberately. Microsoft fails a true request outright with
+			// NoCompleteDataAvaliable (2004) when the window is not fully processed, which
+			// would make every window including today unreadable. The cost is that the last
+			// day of the window may be an under-count, flagged in the report's header block
+			// rather than the HTTP status. foldReportRows reads that flag and refuses the
+			// report (see ErrReportDataIncomplete); without that check this setting would
+			// render a partial total as a complete measurement.
 			"ReturnOnlyCompleteData": false,
 			"Aggregation":            "Summary",
 			"Columns": []string{
@@ -228,15 +235,30 @@ func (c *Client) submitReport(ctx context.Context, campaignID string, start, end
 			// one that reliably returns the wrong number; submitReport names 2027 explicitly
 			// in its error so the first live run diagnoses it in one read.
 			//
-			// Ids go out as json.Number, NOT as strings: Microsoft types these as `long`,
-			// and campaign.go already sends AccountId that way — its comment records that
-			// mistyping it rejects the request outright. A quoted id here would fail
-			// deserialization the first time the gate is flipped on.
+			// Ids go out as QUOTED STRINGS, not as bare JSON numbers — the opposite of
+			// what campaign.go does, deliberately, because campaign.go is a different API.
+			// Its precedent is Campaign Management v13; this is Reporting v13, and the two
+			// are versioned in lockstep but are not one contract.
+			//
+			// Microsoft's own Reporting v13 JSON reference renders every `long` in this
+			// request as a quoted string, and its placeholder convention distinguishes the
+			// two cases rather than quoting everything: CampaignReportScope and
+			// AccountThroughCampaignReportScope show "AccountId": "LongValueHere" and
+			// "CampaignId": "LongValueHere" QUOTED, while ReportTime's Day/Month/Year on
+			// the same page show IntValueHere UNQUOTED. `long` quoted, `int` bare, in one
+			// document — so the quoting is a type signal, not a docs-formatting habit.
+			//
+			// That is also the safe direction independent of the docs: a 64-bit id exceeds
+			// the 2^53 a JSON number represents exactly, and a server that accepts `long`
+			// parses a numeric string, whereas a bare number risks a silent precision loss
+			// on a large id. Sending an id that has been rounded would scope the report to
+			// the wrong campaign and report ANOTHER campaign's numbers as this one's —
+			// the failure-as-measurement class this file refuses everywhere.
 			"Scope": map[string]any{
 				"Campaigns": []map[string]any{
 					{
-						"AccountId":  json.Number(c.account.AccountID),
-						"CampaignId": json.Number(campaignID),
+						"AccountId":  c.account.AccountID,
+						"CampaignId": campaignID,
 					},
 				},
 			},
@@ -469,9 +491,16 @@ func parseReportZip(data []byte, campaignID string, window model.MetricsWindow) 
 // emits the columns in its own order, and a positional read would silently swap Clicks and
 // Spend if that order ever changed — producing plausible numbers that are simply wrong.
 func foldReportRows(records [][]string, campaignID string, window model.MetricsWindow) (*model.CampaignMetrics, error) {
-	header, rows, err := reportHeaderAndRows(records)
+	header, rows, preamble, err := reportHeaderAndRows(records)
 	if err != nil {
 		return nil, err
+	}
+	// Checked BEFORE the columns are read: an incomplete report is refused on the flag
+	// alone, whatever the rows happen to contain. Checking it after would let a report
+	// whose flagged data also happened to be malformed report the parse error instead,
+	// hiding the more important fact that the numbers were never complete.
+	if reportDataIsIncomplete(preamble) {
+		return nil, ErrReportDataIncomplete
 	}
 	idx := map[string]int{}
 	for i, name := range header {
@@ -562,31 +591,131 @@ func foldReportRows(records [][]string, campaignID string, window model.MetricsW
 // reportHeaderAndRows finds the header row and returns it with the data rows that follow.
 //
 // Microsoft's CSV is not a bare table: it is prefixed with report-metadata lines (name,
-// date range, account) before the real header, and suffixed with a "©" copyright line.
-// Scanning for the header rather than assuming records[0] is what keeps this from reading
-// a metadata line as column names.
-func reportHeaderAndRows(records [][]string) (header []string, rows [][]string, err error) {
+// date range, account) before the real header, and suffixed with a one-column copyright
+// line. Scanning for the header rather than assuming records[0] is what keeps this from
+// reading a metadata line as column names.
+func reportHeaderAndRows(records [][]string) (header []string, rows [][]string, preamble [][]string, err error) {
 	for i, row := range records {
 		for _, cell := range row {
 			if strings.EqualFold(strings.TrimSpace(cell), "CampaignId") {
-				return row, dropTrailerRows(records[i+1:]), nil
+				return row, dropTrailerRows(records[i+1:]), records[:i], nil
 			}
 		}
 	}
-	return nil, nil, fmt.Errorf("microsoft report csv has no header row")
+	return nil, nil, nil, fmt.Errorf("microsoft report csv has no header row")
+}
+
+// ErrReportDataIncomplete means Microsoft flagged the report's own data as incomplete.
+//
+// submitReport sends ReturnOnlyCompleteData=false. Microsoft documents the two settings as
+// a genuine trade, not a preference: with true, a report whose window is not fully processed
+// FAILS outright with NoCompleteDataAvaliable (2004) — which would make any window including
+// today unreadable, i.e. most of them. With false the report builds from what has been
+// processed so far, and the last day of the window may be an under-count.
+//
+// Microsoft signals that in the report's own header block, never in the HTTP status:
+//
+//	"Potential Incomplete Data: true"
+//
+// Nothing downstream carries the caveat. The metrics endpoint answers 200 with an
+// impressions/clicks/spend triple, and a partial total is indistinguishable, to every
+// consumer, from a complete measurement of a smaller number.
+//
+// So a flagged report is REFUSED rather than surfaced. There is no field on
+// model.CampaignMetrics for "these numbers are provisional", and adding one would have to be
+// honoured by every consumer to mean anything — until then, returning the numbers WOULD be
+// the silent under-count. Refusing is recoverable in a way a wrong number is not: the caller
+// can retry once Microsoft's aggregation settles, and the error says so. This is the same
+// failure-as-measurement refusal the rest of this file applies to a header-only file, a
+// missing column and a short row.
+var ErrReportDataIncomplete = errors.New("microsoft flagged this report's data as incomplete (the last day of the window may still be aggregating); the totals would be an under-count")
+
+// incompleteDataMarker is the header-block label Microsoft uses to flag a partially-processed
+// report, lowercased for a case-insensitive match. Microsoft documents the line as
+// "Potential Incomplete Data: true". Matched on the cell PREFIX because the label and its
+// value may arrive as one cell (Microsoft quotes the whole "Key: Value" line, which is how
+// its documented sample renders it) or as two, should the writer ever split on the colon.
+const incompleteDataMarker = "potential incomplete data"
+
+// reportDataIsIncomplete reports whether the CSV header block flags the data as incomplete.
+//
+// It returns true ONLY on an explicit affirmative value, for two documented reasons. First,
+// a complete report emits the same label with "false", which must not be refused. Second,
+// the whole header block DISAPPEARS when ExcludeReportHeader is true, so the label's absence
+// is not evidence of completeness — Microsoft states plainly that with
+// ReturnOnlyCompleteData=false "there is no indication as to whether the data is complete".
+// Refusing on absence would therefore fail every report rather than the partial ones, which
+// is the wrong-rejection failure this file is careful to avoid; the honest scope of this
+// guard is "refuse what Microsoft explicitly flags", not "prove completeness".
+func reportDataIsIncomplete(preamble [][]string) bool {
+	for _, row := range preamble {
+		for i, cell := range row {
+			normalized := strings.ToLower(strings.TrimSpace(cell))
+			if !strings.HasPrefix(normalized, incompleteDataMarker) {
+				continue
+			}
+			// Same cell: "Potential Incomplete Data: true".
+			rest := strings.TrimSpace(strings.TrimPrefix(normalized, incompleteDataMarker))
+			rest = strings.TrimSpace(strings.TrimPrefix(rest, ":"))
+			if isAffirmative(rest) {
+				return true
+			}
+			// Adjacent cell: "Potential Incomplete Data:", "true".
+			if i+1 < len(row) && isAffirmative(strings.ToLower(strings.TrimSpace(row[i+1]))) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isAffirmative recognises the affirmative renderings a CSV boolean can arrive as. Anything
+// else — including the empty string — is NOT treated as a yes, so only an explicit flag
+// refuses the report.
+func isAffirmative(v string) bool {
+	switch v {
+	case "true", "yes", "1":
+		return true
+	default:
+		return false
+	}
 }
 
 // dropTrailerRows removes the copyright/blank trailer lines that follow the data.
 //
-// The trailer is identified POSITIVELY — blank, or a first cell beginning with "©" — rather
-// than by being narrower than the header. Width is not evidence of a trailer: an earlier
-// revision dropped every row shorter than the header on the reasoning that "a DATA row
-// always carries the full column set", which is an assumption about response SHAPE on a
-// contract this file declares UNVERIFIED. A real data row missing a trailing field was
-// therefore discarded silently, and its impressions/clicks/spend vanished into a total that
-// still looked clean — the same indistinguishable-zero failure the missing-column guard in
-// foldReportRows refuses by name. A short row now survives this filter and reaches
+// The trailer is identified POSITIVELY — blank, or a SINGLE-CELL row that cannot be a data
+// row, or a first cell carrying a copyright marker — rather than by being narrower than the
+// header. Width alone is not evidence of a trailer: an earlier revision dropped every row
+// shorter than the header on the reasoning that "a DATA row always carries the full column
+// set", which is an assumption about response SHAPE on a contract this file declares
+// UNVERIFIED. A real data row missing a trailing field was therefore discarded silently, and
+// its impressions/clicks/spend vanished into a total that still looked clean — the same
+// indistinguishable-zero failure the missing-column guard in foldReportRows refuses by name.
+// A short-but-multi-cell row still survives this filter and reaches
 // parseReportInt/parseReportFloat, whose existing short-row error reports it.
+//
+// The copyright marker is matched on BOTH "@" and the © symbol. Microsoft's published sample
+// report and its ExcludeReportFooter description both render the footer as
+// "@2020 Microsoft Corporation. All rights reserved. " — an "@", not a ©. This file's
+// fixtures previously assumed © throughout, so the suite could only prove the parser agreed
+// with itself. Both are accepted rather than swapping one guess for another: a locale,
+// report-writer version or documentation revision could plausibly produce either, this
+// contract is UNVERIFIED, and the cost of accepting both is nil — neither character can
+// begin a legitimate numeric data row, so no measurement is lost by treating either as a
+// trailer. Recognising only one is the failure that matters: the real footer would survive
+// the filter, reach foldReportRows as a data row, and fail parseReportInt, turning EVERY
+// otherwise-successful live report into a parse error.
+//
+// Matching on the marker PREFIX rather than the full sentence is deliberate — the year in
+// the footer is dynamic, so pinning the literal text would break each January.
+//
+// The single-cell rule generalises past the marker instead of enumerating it. A trailer line
+// is one unquoted sentence, so Microsoft's CSV writer emits it as ONE cell, whereas a data
+// row always carries at least the campaign id AND a metric — the fold needs three named
+// columns, so a one-cell row can never satisfy it. This is deliberately narrow: it rejects
+// only rows that could not have been measurements anyway. A wrong rejection here is a silent
+// under-count, which is the failure class this file exists to prevent, so the rule stops at
+// what is provable rather than guessing at trailer text.
 func dropTrailerRows(rows [][]string) [][]string {
 	out := make([][]string, 0, len(rows))
 	for _, row := range rows {
@@ -600,12 +729,35 @@ func dropTrailerRows(rows [][]string) [][]string {
 		if blank {
 			continue
 		}
-		if len(row) > 0 && strings.HasPrefix(strings.TrimSpace(row[0]), "©") {
+		// A single-cell row after the data section cannot be a measurement: foldReportRows
+		// needs three distinct columns to read one. Dropping it costs nothing and catches
+		// the trailer whatever wording or symbol Microsoft renders it with.
+		if len(row) == 1 {
+			continue
+		}
+		if isReportTrailerCell(row[0]) {
 			continue
 		}
 		out = append(out, row)
 	}
 	return out
+}
+
+// reportTrailerMarkers are the leading characters Microsoft's CSV copyright trailer has been
+// documented with. Both are accepted deliberately — see dropTrailerRows.
+var reportTrailerMarkers = []string{"©", "@"}
+
+// isReportTrailerCell reports whether a first cell begins with a copyright-trailer marker.
+// Kept separate from the single-cell rule so a trailer that arrives with a stray trailing
+// delimiter — rendering it as two cells rather than one — is still recognised.
+func isReportTrailerCell(cell string) bool {
+	trimmed := strings.TrimSpace(cell)
+	for _, marker := range reportTrailerMarkers {
+		if strings.HasPrefix(trimmed, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // parseReportInt reads an integer cell, treating an empty cell as zero.

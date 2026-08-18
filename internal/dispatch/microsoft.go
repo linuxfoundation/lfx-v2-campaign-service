@@ -370,15 +370,34 @@ func (d *MicrosoftDispatcher) ReadMetrics(ctx context.Context, projectID string,
 		}
 		// A report still building is deliberately NOT mapped to either metrics sentinel:
 		// both mean 400 ("this cannot work"), and a retryable timing condition is neither
-		// unsupported nor permanent. It propagates as an ordinary error — a 500 the caller
-		// can retry — until a distinct retryable sentinel exists (there is none today; see
-		// internal/domain/errors.go, which defines only ErrMetricsUnsupported and
-		// ErrMetricsWindowUnsupported). Returning zeroes here instead would be the worse
-		// failure: a timing condition rendered as a measurement.
+		// unsupported nor permanent. It propagates as an ordinary error, which the service
+		// layer's metrics switch answers from its default arm — a 503, not a 500 (see the
+		// ConnServiceUnavailableError default in internal/service/brief.go). That is the
+		// right code for this condition: a 503 promises that waiting might help, and for a
+		// report whose build time varies around the poll budget it genuinely might. It
+		// stays on the default arm until a distinct retryable sentinel exists (there is
+		// none today; see internal/domain/errors.go, which defines only
+		// ErrMetricsUnsupported, ErrMetricsWindowUnsupported and ErrNoMetricsInWindow).
+		// Returning zeroes here instead would be the worse failure: a timing condition
+		// rendered as a measurement.
 		// Success-with-no-rows: the platform answered, but the adapter cannot tell "no
 		// activity" from "no such campaign in scope". Same mapping hubspot.go uses.
 		if errors.Is(err, microsoft.ErrNoRowsInReport) {
 			return nil, fmt.Errorf("get campaign metrics from microsoft: %w", errors.Join(domain.ErrNoMetricsInWindow, err))
+		}
+		if errors.Is(err, microsoft.ErrReportDataIncomplete) {
+			// Microsoft flagged the report's own data as still aggregating. Like
+			// ErrReportNotReady this is a TIMING condition, not a campaign with no data, so
+			// it must not become either metrics sentinel — both mean 400, and a 400 tells
+			// the caller to stop asking. It rides the default 503 arm instead, which is the
+			// honest code here: waiting genuinely does help, because the same window
+			// re-read after Microsoft finishes processing returns complete numbers.
+			//
+			// What it must NOT do is return the partial totals. They would be a 200 that
+			// under-counts, indistinguishable from a complete measurement of a smaller
+			// number — the failure-as-measurement class this pipeline refuses throughout.
+			return nil, fmt.Errorf("get campaign metrics from microsoft (microsoft flagged the report data as "+
+				"incomplete, so the totals would under-count; re-read once the window has finished processing): %w", err)
 		}
 		if errors.Is(err, microsoft.ErrReportNotReady) {
 			// State the retry's real semantics rather than an encouraging "retry shortly":

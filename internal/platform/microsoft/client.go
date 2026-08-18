@@ -694,8 +694,10 @@ func (c *Client) doCustomerRequest(ctx context.Context, method, path string, bod
 // and outcome classification.
 //
 // It is account-scoped (unlike doCustomerRequest): a report is always about ONE account's
-// data, so CustomerAccountId must be attached and validateAccountIDs must run — the account
-// id also reaches the request body via Scope.AccountIds.
+// data, so CustomerAccountId must be attached and validateAccountIDs must run. The account
+// id also reaches the request body, but via Scope.Campaigns[].AccountId — NOT via
+// Scope.AccountIds, which submitReport deliberately omits because that element is UNIONed
+// with Campaigns and would widen a campaign-scoped read to the whole account.
 func (c *Client) doReportingRequest(ctx context.Context, method, path string, body any, idempotent bool) ([]byte, error) {
 	if err := c.validateAccountIDs(); err != nil {
 		return nil, err

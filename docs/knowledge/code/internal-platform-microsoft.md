@@ -448,8 +448,19 @@ is reported. The running TOTALS are overflow-checked as well as the per-row valu
 `reddit/metrics.go` — per-row guards bound each value but say nothing about the sum the
 dashboard renders.
 
-The one path where zeroes are truthful is a `Success` status with no download URL —
-Microsoft's "report built, no rows". Every other empty outcome in this file is an error.
+There is no path in this file where a zero is synthesized. Both empty shapes — a `Success`
+status naming no download URL, and a downloaded CSV whose header is followed by no data rows
+— answer `ErrNoRowsInReport`, which the dispatcher maps onto `domain.ErrNoMetricsInWindow`.
+The adapter cannot tell "the campaign served nothing" from "no such campaign in this
+account's scope", and the two shapes carry identically little information, so neither is
+rendered as a measured zero.
+
+A report Microsoft flags as partial is refused too. `ReturnOnlyCompleteData` is sent `false`
+so a window including today can build at all, which means the totals may be an under-count;
+Microsoft signals that in the CSV preamble rather than the HTTP status. The parser reads
+that flag and answers `ErrReportDataIncomplete` instead of returning the numbers, because
+`model.CampaignMetrics` has no field for "provisional" and a partial total is
+indistinguishable from a complete measurement of a smaller number.
 
 Reads are gated behind `MICROSOFT_METRICS_ENABLED` (chart default `"false"`), mirroring
 `REDDIT_METRICS_ENABLED`: the v13 Reporting contract was implemented from published
