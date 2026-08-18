@@ -39,10 +39,21 @@
 -- never re-runs them, so amending an applied migration silently skips every database that
 -- already ran it.
 --
--- Plain CREATE INDEX, not CONCURRENTLY. golang-migrate runs each migration inside a
--- transaction and CONCURRENTLY cannot run in one (000018 is the exception and pays for it
--- with the -p 1 serialization the Makefile documents). campaign_jobs is small at the time
--- this lands — the prune is what keeps it that way — so the brief write lock is acceptable.
-CREATE INDEX IF NOT EXISTS idx_campaign_jobs_retention
+-- CONCURRENTLY, and alone in this file. An earlier revision of this comment claimed
+-- golang-migrate wraps each migration in a transaction so CONCURRENTLY could not be used —
+-- that is backwards. 000008 and 000018 both record the verified fact: the pgx/v5
+-- golang-migrate driver executes each migration with a bare ExecContext and does NOT wrap
+-- it in a transaction. Nineteen migration files already use CONCURRENTLY, and
+-- migrations/README.md makes "CONCURRENTLY alone in its file" the standing rule.
+--
+-- The old justification was also self-undermining: it argued a brief write lock is fine
+-- because campaign_jobs is small, on the very migration whose PR exists because the table
+-- grows without bound. A plain CREATE INDEX takes an ACCESS EXCLUSIVE lock, so on the
+-- deployment that most needs this prune — one with millions of accumulated rows — it would
+-- block every job write for the duration of the build.
+--
+-- Nothing else may be added to this file: a second statement would put both into one
+-- implicit transaction, which CONCURRENTLY forbids.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_campaign_jobs_retention
     ON campaign_jobs (updated_at)
     WHERE status IN ('succeeded', 'partial', 'failed');
