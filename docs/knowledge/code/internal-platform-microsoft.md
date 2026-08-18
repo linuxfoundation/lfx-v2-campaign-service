@@ -264,29 +264,60 @@ future work: Microsoft has IGNORED bid strategies on ad groups and keywords sinc
 ("the request will be ignored without error"), so an `AdGroup.BiddingScheme` would be a silent
 no-op — the bid strategy is the CAMPAIGN's (v13 defaults Search to `EnhancedCpcBiddingScheme`).
 
-**A REUSED ad group is NOT re-keyworded** — the keyword counterpart of the reused-bid rule
-above, and the one place where "idempotent retry" has teeth, because getting it wrong spends
-money. `AddKeywords` has **no idempotency key** and v13 exposes **no keyword READ** (there is
-no `GetKeywordsByAdGroupId`, no list, nothing to reconcile against), so when the ad group is
-found by name the client cannot know which keywords already hang off it. Posting the batch
-anyway is not a retry but a SECOND COPY of every keyword: duplicate criteria bidding on the
-same terms, so the campaign pays twice for traffic approved once. Since the duplicate could
-never be detected from here, the step is skipped and the `steps` output says so — that it was
-skipped, why, and that a keyword added since the first run needs attaching by hand. The
-acknowledged cost is that a genuinely-new keyword goes unattached; that is the lesser harm,
-since a missing keyword under-serves visibly while a duplicated one silently doubles a bid.
-**Knock-on:** `KeywordIDs` is empty on this path (no ids were parsed, and none can be read),
-so the dispatcher's ACTIVATE guard refuses the campaign even though its keywords exist
-upstream. Deliberate — the ids needed to enable those Paused keywords are precisely what the
-run could not learn, so activating would claim success while every keyword stayed Paused.
+**A REUSED ad group IS re-keyworded**, and the reason is a documented Microsoft behaviour
+rather than a preference. `AddKeywords` has **no idempotency key** and v13 exposes **no keyword
+READ** (no `GetKeywordsByAdGroupId`, no list), so when the ad group is found by name the client
+cannot enumerate what already hangs off it. An earlier revision treated that blindness as a
+reason to SKIP the step, believing a re-post would create a SECOND COPY of every keyword and
+double the bid on those terms. **That belief is false.** Microsoft rejects a keyword that
+already exists on the ad group rather than duplicating it:
+
+* `CampaignServiceDuplicateKeyword` (**1517**) — "An attempt was made to create a duplicate of
+  a keyword that already exists."
+* `CampaignServiceKeywordAndMatchTypeCombinationAlreadyExists` (**1542**) — "A keyword with the
+  specified match type already exists."
+
+Comparison is by **normalized** form, not literal text: case, whitespace, accents, number/date
+formatting and punctuation are folded first, so `Car`, `car` and `car.` are one keyword. A
+re-post therefore duplicates nothing — each already-present keyword returns a per-entity
+`PartialError` on a 200 and each genuinely NEW one is created, which is exactly the reconcile
+behaviour the skip approximated, enforced by Microsoft instead of guessed at locally. Both
+codes are recognized under **either** spelling (symbolic enum or numeric `Code`) by
+`isDuplicateKeywordPartial`, and a batch whose only rejections are duplicates is **not** an
+error: it returns the ids of whatever was newly created, with a `steps` line saying the rest
+already existed.
+
+`isDuplicateKeywordPartial` requires **every** actual error to be a duplicate, not merely one
+of them. A batch can mix a duplicate with a GENUINE rejection (editorial disapproval, bad bid,
+over-length term); an ANY test would report that whole batch as success and tell the operator
+the editorially-rejected keyword "already existed" — a keyword that does not exist upstream and
+never will. A mixed batch therefore stays on the `errPartialFailure` path, where the created
+ids are still carried out and the rejection is still surfaced.
+
+**Why the skip had to go.** "The ad group exists" and "its keywords exist" are DIFFERENT facts,
+and they come apart on the FIRST run: if run 1 creates the ad group then fails before the
+keywords land (an ad failure, an UNCONFIRMED keyword step, a 429), run 2 finds the group, skips,
+and returns success with no keywords. The row persists empty `KeywordIDs` and
+`MicrosoftDispatcher.ToggleStatus` then refuses ACTIVATE **forever** with
+`ErrCampaignNotProvisioned` — a campaign no automated path can turn on, with no keyword read
+available to repair it. Posting is both the safe direction and the terminating one.
+
+**Knock-on:** when EVERY supplied keyword was already attached, `KeywordIDs` is still empty — a
+duplicate entry returns a null id slot and v13 has no read to resolve it — so the ACTIVATE guard
+refuses a campaign whose keywords do exist upstream. Deliberate: the ids needed to enable those
+Paused keywords are precisely what the run could not learn, so activating would claim success
+while every keyword stayed Paused. Reconciliation (LFXV2-2665) is what resolves that; the
+keyword-less tree, which is the case that mattered, now provisions on its own.
 
 **Ordering and classification.** The keyword step runs LAST, after the ad, because every
 earlier step is its prerequisite and keywording an ad group whose ad might still fail would
 leave paid criteria on an incomplete tree. Both the keyword list and the bid are validated **up
 front in `CreateCampaign`**, before the campaign create, for the same reason the URL and ad copy
 are: a bad value discovered at the last step would fail after a PAUSED campaign, ad group and ad
-already exist. The create is **not retried on 429** — AddKeywords has no idempotency key and
-Microsoft enforces no uniqueness on a keyword, so a retry ADDS a second copy of every one. A
+already exist. The create is **not retried on 429** — AddKeywords has no idempotency key, and while
+Microsoft refuses an exact (normalized) duplicate, an automatic in-flight retry is still not
+the place to rely on that: a 429 leaves the batch's outcome unknown, and the reuse path above
+is the deliberate, observable place where a re-post is made. A
 definite `PartialError` is a per-entity rejection, but NOT necessarily a total one: `AddKeywords`
 is a batch with an index-aligned response, so `[701, null, 703]` with one `PartialError` means two
 keywords were created. Those ids travel out WITH the error — they are what the status cascade

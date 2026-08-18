@@ -398,43 +398,37 @@ func (c *Client) createAdGroupAndAd(
 	// leaves a tree that is complete but inert — every earlier step is a prerequisite for it,
 	// and running it earlier would mean keywording an ad group whose ad might still fail.
 	//
-	// A REUSED ad group is NOT re-keyworded, and this is the one step where that rule has
-	// teeth. v13's AddKeywords has NO idempotency key and there is no keyword READ operation
-	// anywhere in this client — no GetKeywordsByAdGroupId, no list, nothing to reconcile
-	// against — so on the reuse path the client cannot know which of these keywords already
-	// hang off the group. Posting them "just in case" is therefore not a retry, it is a
-	// SECOND COPY of every keyword: duplicate criteria, duplicate bids on the same terms,
-	// and real duplicated spend the moment the campaign is enabled. Since the duplicate can
-	// never be detected from here, the only safe direction is not to create it.
+	// A REUSED ad group IS re-keyworded, and the reason is a documented Microsoft behaviour
+	// rather than a preference. v13 exposes NO keyword read (no GetKeywordsByAdGroupId, no
+	// list), so on the reuse path this client cannot enumerate what already hangs off the
+	// group. The earlier version of this step treated that blindness as a reason to SKIP,
+	// on the belief that re-posting would create a second copy of every keyword and double
+	// the bid on those terms. That belief is FALSE, and Microsoft says so directly:
 	//
-	// This is the SAME rule findOrCreateAdGroup already applies one step earlier, where a
-	// reused group keeps whatever CpcBid it has rather than being re-bid by a create-only
-	// retry. Keywords are that group's other spend-bearing attribute, so leaving them alone
-	// is the consistent choice, not a special case.
+	//   - AddKeywords rejects a keyword that already exists in the ad group with
+	//     CampaignServiceDuplicateKeyword (1517), "An attempt was made to create a duplicate
+	//     of a keyword that already exists", and the text+match-type pair with
+	//     CampaignServiceKeywordAndMatchTypeCombinationAlreadyExists (1542).
+	//   - Comparison is by NORMALIZED form, not literal text: case, whitespace, accents,
+	//     number/date formatting and punctuation are all folded before the duplicate check,
+	//     so "Car", "car" and "car." are one keyword to Microsoft.
 	//
-	// THE COST, stated plainly rather than buried: a keyword ADDED to the brief between the
-	// first run and this one will not be attached, so the campaign targets the older list.
-	// That is the lesser harm by a wide margin — a missing keyword under-serves and is
-	// visible in the steps below, whereas a duplicated keyword silently doubles the bid on a
-	// term nobody re-approved. Attaching the new one is a human's call in the Bing UI (or a
-	// real reconcile once a keyword read exists); over-spending is nobody's call.
-	if adGroupExisted && len(tgt.keywords) > 0 {
-		// The count reported is the number of SUPPLIED keywords that were not posted — NOT a
-		// count of what the ad group already has, which this client has no way to read and must
-		// not imply it knows.
-		*steps = append(*steps, fmt.Sprintf(
-			"Keywords NOT re-posted: ad group %s already existed, so its existing keywords were left unchanged and the %d supplied keyword(s) were not sent (v13 AddKeywords has no idempotency key and v13 exposes no keyword read, so re-posting would duplicate every keyword and double the bid on those terms). Any keyword added to the brief since the first run must be attached manually.",
-			adGroupID, len(tgt.keywords)))
-
-		r := adWithIDPartial()
-		// AlreadyExisted follows its documented contract: true only when this run created
-		// NOTHING. Reaching here means the ad group pre-existed and no keyword was posted, so
-		// the campaign and ad levels alone decide it.
-		r.AlreadyExisted = alreadyExisted && adExisted
-		r.Steps = *steps
-		return r, nil
-	}
-
+	// So a re-post does not duplicate anything. Each already-present keyword comes back as a
+	// per-entity PartialError on a 200, and each genuinely NEW one is created — which is
+	// exactly the reconcile behaviour the skip was written to approximate, except it is
+	// enforced by Microsoft instead of guessed at here. There is no duplicated criterion and
+	// no doubled bid to protect against.
+	//
+	// The skip, meanwhile, created a defect that no automated path could clear. "The ad group
+	// exists" and "its keywords exist" are DIFFERENT facts, and they come apart on the very
+	// first run: if run 1 creates the ad group and then fails before the keywords land (an ad
+	// failure, an UNCONFIRMED keyword step, a 429), run 2 finds the group, skips, and returns
+	// SUCCESS with no keywords. The persisted row then carries empty KeywordIDs, and
+	// MicrosoftDispatcher.ToggleStatus refuses ACTIVATE forever with ErrCampaignNotProvisioned
+	// — a campaign that can never be turned on, and no keyword read with which to repair it.
+	//
+	// Posting is therefore both the safe direction AND the one that terminates: the duplicate
+	// is refused by Microsoft, and the keyword-less tree finishes provisioning.
 	// A pre-step context check, as at every other step: a cancelled context must not fire a
 	// mutating create whose outcome would then be UNCONFIRMED.
 	if len(tgt.keywords) > 0 {
@@ -448,6 +442,38 @@ func (c *Client) createAdGroupAndAd(
 			// idempotency key — a blind retry would add a second copy of every keyword rather
 			// than reconciling onto the first. Only a definite PartialError is a clean rejection.
 			switch {
+			// A DUPLICATE rejection is checked FIRST, and it is not an error path at all: it
+			// means every refused keyword is already attached to the ad group, which is the
+			// state the caller asked for. This is the arm that makes a re-run against a reused
+			// ad group converge instead of failing — Microsoft refuses the already-present
+			// keywords (1517/1542) and creates any genuinely new one, so the batch's outcome is
+			// "the ad group now carries the requested keywords".
+			//
+			// It sits above errPartialFailure because errDuplicateKeywords WRAPS it, so the
+			// broad arm would otherwise win and report a rejection.
+			//
+			// The ids of the pre-existing keywords are NOT knowable (a duplicate entry gets a
+			// null id slot, and v13 has no keyword read), so KeywordIDs carries only what THIS
+			// run created. When that is empty the tree is correct upstream but this run learned
+			// no ids, and the dispatcher's ACTIVATE guard still refuses — the honest answer,
+			// since enabling keywords requires their ids. Reconciliation (LFXV2-2665) is what
+			// resolves that; inventing ids here would be worse than refusing.
+			case isDuplicateKeywordErr(kerr):
+				r := adWithIDPartial()
+				r.KeywordIDs = keywordIDs
+				if len(keywordIDs) > 0 {
+					*steps = append(*steps, fmt.Sprintf(
+						"Keywords attached: %d new (PAUSED); the remaining supplied keyword(s) already existed on ad group %s and were left unchanged (Microsoft refuses a duplicate rather than creating a second copy, so no keyword was duplicated and no bid doubled).",
+						len(keywordIDs), adGroupID))
+				} else {
+					*steps = append(*steps, fmt.Sprintf(
+						"Keywords NOT re-created: all %d supplied keyword(s) already existed on ad group %s and were left unchanged (Microsoft refuses a duplicate rather than creating a second copy, so no keyword was duplicated and no bid doubled). Their ids are not readable in v13, so this run recorded none.",
+						len(tgt.keywords), adGroupID))
+				}
+				// This run created something only if at least one keyword was new.
+				r.AlreadyExisted = alreadyExisted && adGroupExisted && adExisted && len(keywordIDs) == 0
+				r.Steps = *steps
+				return r, nil
 			case createOutcomeAmbiguous(kerr) || errors.Is(kerr, errNoID):
 				return adWithIDPartial(), fmt.Errorf("microsoft-ads keyword targeting UNCONFIRMED (%s + ad %s; keywords may exist — verify before retrying, a blind retry would duplicate them): %w", hierState, adID, kerr)
 			case errors.Is(kerr, context.Canceled) || errors.Is(kerr, context.DeadlineExceeded):

@@ -178,18 +178,22 @@ type CampaignResult struct {
 	// KeywordIDs are the ids of the keywords THIS RUN attached to the ad group by the MS-4
 	// targeting step. Empty does NOT mean the ad group has no keywords upstream; it means
 	// this run parsed no ids, which happens when no keyword input was supplied, when the
-	// step failed before any id could be parsed, or when the ad group ALREADY EXISTED and
-	// the keyword step was skipped to avoid duplicating the keywords a prior run created
-	// (see createAdGroupAndAd — v13 offers no keyword read, so those ids are unknowable
-	// here). The first two are distinguished from each other by whether an error accompanied
-	// the result; the third is identifiable by its Steps entry.
+	// step failed before any id could be parsed, or when EVERY supplied keyword was already
+	// attached and Microsoft refused it as a duplicate (a duplicate entry returns a null id
+	// slot, and v13 offers no keyword read with which to resolve it). The first two are
+	// distinguished from each other by whether an error accompanied the result; the third is
+	// identifiable by its Steps entry and carries no error.
 	//
 	// CONSEQUENCE for the dispatcher's toggle guard, which refuses ACTIVATE when this is
-	// empty: on the skip path it refuses a campaign whose keywords do exist upstream. That
-	// is deliberate — the ids needed to enable those keywords are precisely what this run
-	// could not learn, so activating would report success while leaving every keyword
-	// Paused. Refusing is the honest answer, and reconciliation (LFXV2-2665) is what
-	// resolves it.
+	// empty: on the all-duplicate path it refuses a campaign whose keywords do exist
+	// upstream. That is deliberate — the ids needed to enable those Paused keywords are
+	// precisely what this run could not learn, so activating would report success while
+	// leaving every keyword Paused. Refusing is the honest answer, and reconciliation
+	// (LFXV2-2665) is what resolves it.
+	//
+	// The tree does NOT deadlock on the case that matters, though: an ad group that exists
+	// with NO keywords is re-keyworded on the next run (they are posted, not skipped), so the
+	// ids land and ACTIVATE succeeds.
 	KeywordIDs []string `json:"keywordIds,omitempty"`
 	// AlreadyExisted is true ONLY when this run created NOTHING — i.e. the campaign, the ad
 	// group, AND the ad were all matched as pre-existing (by name / by destination) and no
@@ -733,6 +737,75 @@ func isDuplicateCampaignPartial(items []msErrorItem) bool {
 
 // isDuplicateCampaignNameErr reports whether err is the duplicate-name rejection.
 func isDuplicateCampaignNameErr(err error) bool { return errors.Is(err, errDuplicateName) }
+
+// errDuplicateKeywords marks an AddKeywords batch in which at least one entry was refused
+// because that keyword ALREADY EXISTS on the ad group. It wraps errPartialFailure so any
+// existing errors.Is(err, errPartialFailure) classification still matches, but it is
+// distinguishable so the ad-group cascade can treat "already attached" as the success it is
+// rather than as a rejection.
+//
+// This is what makes re-posting to a REUSED ad group safe. v13 has no keyword read, so a
+// re-run cannot enumerate what is already attached and posts the whole batch; Microsoft
+// refuses each already-present keyword instead of creating a second copy, so no criterion is
+// duplicated and no bid is doubled.
+var errDuplicateKeywords = fmt.Errorf("%w (keyword already exists on the ad group)", errPartialFailure)
+
+// Microsoft's PartialError codes for a keyword that already exists on the ad group. As with
+// the duplicate-campaign codes, v13 surfaces these either as the symbolic ErrorCode enum or
+// as the equivalent numeric Code in a BatchError, so both spellings must be recognized.
+//
+//   - 1517 CampaignServiceDuplicateKeyword: "An attempt was made to create a duplicate of a
+//     keyword that already exists."
+//   - 1542 CampaignServiceKeywordAndMatchTypeCombinationAlreadyExists: "A keyword with the
+//     specified match type already exists."
+//
+// Both are matched because the same re-post can trip either one: 1517 on the normalized
+// keyword text, 1542 when the text is new to the group only in combination with its match
+// type.
+const (
+	errCodeDuplicateKeyword              = "CampaignServiceDuplicateKeyword"
+	errCodeDuplicateKeywordNumeric       = "1517"
+	errCodeKeywordMatchTypeExists        = "CampaignServiceKeywordAndMatchTypeCombinationAlreadyExists"
+	errCodeKeywordMatchTypeExistsNumeric = "1542"
+)
+
+// isDuplicateKeywordPartial reports whether EVERY actual error in a PartialErrors array is an
+// already-exists keyword rejection (under any of its four spellings).
+//
+// ALL, not ANY, and the difference is a real defect rather than a stylistic one. A batch can
+// mix a duplicate with a GENUINE rejection — an editorial disapproval, a bad bid, an
+// over-length term. An ANY test would classify that whole batch as "already attached", return
+// nil error, and tell the operator the editorially-rejected keyword "already existed on the ad
+// group" — a keyword that in fact does not exist and never will. The run would report success
+// for targeting it did not achieve.
+//
+// So a mixed batch stays on the errPartialFailure path, where the created ids are still
+// carried out and the rejection is still surfaced. Only a wholly-duplicate batch is the no-op
+// that can be reported as success.
+//
+// Null placeholder entries are ignored the same way partialErrorsHaveAny ignores them: an
+// index-aligned PartialErrors array can carry zero-value items for the entries that succeeded,
+// and those are not errors to classify.
+func isDuplicateKeywordPartial(items []msErrorItem) bool {
+	found := false
+	for _, it := range items {
+		if codeString(it.ErrorCode) == "" && codeString(it.Code) == "" {
+			continue // a null/placeholder slot, not an error
+		}
+		one := []msErrorItem{it}
+		if !partialErrorsHaveCode(one, errCodeDuplicateKeyword) &&
+			!partialErrorsHaveCode(one, errCodeDuplicateKeywordNumeric) &&
+			!partialErrorsHaveCode(one, errCodeKeywordMatchTypeExists) &&
+			!partialErrorsHaveCode(one, errCodeKeywordMatchTypeExistsNumeric) {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
+// isDuplicateKeywordErr reports whether err is the already-exists keyword rejection.
+func isDuplicateKeywordErr(err error) bool { return errors.Is(err, errDuplicateKeywords) }
 
 // firstCampaignID decodes a create-Campaigns 200 body and returns the created
 // campaign id. It errors when:

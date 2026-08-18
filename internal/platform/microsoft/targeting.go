@@ -324,6 +324,23 @@ func (c *Client) createKeywords(ctx context.Context, adGroupID string, keywords 
 				created = append(created, id)
 			}
 		}
+		// A DUPLICATE rejection is not a failure — it is Microsoft confirming the keyword is
+		// already on the ad group. v13 exposes no keyword read, so a re-run against a reused
+		// ad group cannot know which keywords are already attached and re-posts the whole
+		// batch; the ones that exist come back as CampaignServiceDuplicateKeyword (1517) or
+		// CampaignServiceKeywordAndMatchTypeCombinationAlreadyExists (1542), matched on the
+		// NORMALIZED form (case, whitespace, accents and punctuation are folded). Treating
+		// that as a rejection would report "keyword targeting rejected" for an ad group whose
+		// targeting is exactly what was asked for.
+		//
+		// The ids of the pre-existing keywords are NOT recoverable here — a duplicate entry
+		// gets a null id slot and there is no read to resolve it — so this reports the
+		// duplicates rather than inventing ids for them. errDuplicateKeywords carries that
+		// distinction to the caller, which decides what the tree's state means.
+		if isDuplicateKeywordPartial(resp.PartialErrors) {
+			return created, fmt.Errorf("%w (%d of %d keywords were created; the rest already existed): %s",
+				errDuplicateKeywords, len(created), len(msKeywords), partialErrorCodes(resp.PartialErrors))
+		}
 		if len(created) == 0 {
 			// Every entry was rejected: a clean failure, nothing to reconcile.
 			return nil, fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors))
