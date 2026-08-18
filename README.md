@@ -236,6 +236,20 @@ openssl rand -base64 32
   only after the contract is verified against a live Microsoft ad
   account.
 
+- `LFX_FORCE_SYSTEM_ADS_ACCOUNT` (default unset, i.e. OFF) — makes the
+  LF-owned system account (`system:linuxfoundation`) the PRIMARY
+  credential source for every paid-ads dispatch, so every campaign
+  authenticates as the marketing-ops account regardless of any
+  per-project connection (the system row is otherwise only a fallback
+  for projects that have connected no account of their own). Only the
+  exact value `true` enables it; unset or any other value (including
+  `TRUE` or a typo) leaves the default resolution. HubSpot/email is
+  never forced (the path gates on the paid-ads channel kind), and a
+  missing or unusable system row fails the dispatch closed rather than
+  falling through to the project connection. Read once at startup like
+  `REDDIT_METRICS_ENABLED`; enable per-environment via the ArgoCD
+  overlay. See `specs/006-force-system-ads-account`.
+
 ### Snowflake (optional, audience building)
 
 Read-only warehouse access, used ONLY to resolve an event's past editions when
