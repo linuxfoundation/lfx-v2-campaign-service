@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/twitter"
-description: "X (Twitter) Ads v12 client: OAuth 1.0a signing and the campaign -> line_item -> promoted_tweet creation flow."
+description: "X (Twitter) Ads v12 client: OAuth 1.0a signing, ad-account discovery, and the campaign -> line_item -> promoted_tweet creation flow."
 resource: "internal/platform/twitter"
 tags:
   - platform-client
@@ -10,6 +10,7 @@ tags:
   - oauth1
   - go-package
   - metrics
+  - account-discovery
 timestamp: "2026-08-05T00:00:00Z"
 ---
 
@@ -170,6 +171,70 @@ decode failure. **UNVERIFIED ASSUMPTION**: the required `metric_groups=ENGAGEMEN
 CTR is computed as clicks/impressions (0 when
 impressions is 0, never dividing by zero). Campaigns with zero activity in the window return
 zero-value metrics (not an error).
+
+## Ad-account discovery
+
+`ListAdAccounts` (`accounts.go`, LFXV2-3319) enumerates every X Ads account the client's
+OAuth 1.0a user context can reach, so a connection that holds only credentials — or one
+being re-pointed at a different account — can ask which accounts are available. The request
+is `GET {base}/{version}/accounts`, the COLLECTION form of the `/accounts/{id}` resource
+every other call in this client is nested under; X documents it as "a listing of advertising
+accounts that the current user has access to". No account id appears anywhere in the path or
+query, which is what makes it callable before an account has been chosen.
+
+**It is the one call that must NOT go through `doRequest`.** That helper roots every path at
+`accountURL()` — `/accounts/{id}` — so routing discovery through it would ask about a single
+account while returning a plausible list. It uses `doRequestAbs` instead, the same escape
+hatch the stats endpoint uses, which applies the identical OAuth1 signing, redirect policy,
+bounded read and three-way error classification. `logPath` is the bare `accounts` label, never
+the request URL, because the URL carries the cursor query and `apiError`/`transportError`
+render their `Path` into strings that are persisted into a campaign's Steps.
+
+**Optional narrowing parameters are all deliberately unsent.** `account_ids` scopes to a
+caller-supplied subset, `q` prefix-matches on name, `sort_by` reorders; sending any would
+silently narrow the picker to whatever the code guessed, and a caller cannot tell a narrowed
+list from a complete one. `with_deleted` is unsent too, taking X's documented default of
+`false` — but the `deleted` flag is still carried per row rather than assumed, so a flagged
+row cannot pass as live. `count=1000` is X's documented maximum (min 1, max 1000, default
+200); requesting the maximum raises how many accounts the walk can enumerate at all, since
+the page cap bounds the total.
+
+**Empty must stay distinguishable from failure, and X does not document the zero-account
+case.** The choice made is the fail-loud one: an empty, non-nil slice with a nil error is
+returned ONLY when X sent `"data":[]` together with an explicit `next_cursor` — a body that
+affirmatively says "here is the set, and it is empty". Anything less is an error, so an empty
+answer always means X said the set was empty, never that the call failed.
+
+Two absence guards implement that, and both are subtler than they look:
+
+* **`"data":null` is not nil.** `encoding/json` stores the four bytes `null` in a
+  `json.RawMessage`, so an absent `data` and an explicit null cannot be told apart by a nil
+  check on the raw field — and `null` then unmarshals into a nil element slice, reporting a
+  healthy zero accounts. The guard therefore tests the DECODED slice for nil after decoding:
+  a present `[]` yields a non-nil empty slice, while both absent and null leave it nil.
+* **An absent `next_cursor` is not exhaustion.** X documents termination as an explicit null
+  ("If less than `count` entities are returned in the current page of the result set, the
+  `next_cursor` value will be `null`"), so a body carrying no such key never said the walk was
+  finished. Because a plain string field collapses null and absent onto `""`, `apiResponse`
+  gained a `NextCursorPresent` bit populated by a custom `UnmarshalJSON`. `findByName`
+  deliberately does not consult it — its walk already errors rather than reporting "not found"
+  when it runs out of pages.
+
+A walk that cannot be completed is an ERROR, never a short list: a repeated cursor, the
+`adAccountMaxPages` (20) cap, a `data` that is not an array, and a row whose id fails
+`accountIDRe` all return nil rather than what was collected. The id check reuses the SAME
+regexp every account-scoped path validates a configured id against, so an account this walk
+offers must be one the client will later accept. A bad row fails the WHOLE walk rather than
+being skipped, because a response shape that far from the documented one means the rest of it
+is not trustworthy either — and a partial list looks complete.
+
+**Unusable accounts are RETURNED, labelled, never filtered.** Accounts under review, rejected,
+or flagged deleted all come back carrying their reason; dropping them would answer "your
+credential reaches no ad accounts" about an account sitting right there. `approvalStatusLabels`
+is an ALLOW-LIST of KNOWN-BAD values, because **X publishes no complete `approval_status`
+enum** — its reference shows only `ACCEPTED`. An unrecognized or absent status therefore yields
+`""` from `ApprovalLabel()`, which is not a claim the account is fine, only that this package
+has nothing to say; the raw value still travels to the caller in `Status`.
 
 ## Dispatch adapter (internal/dispatch)
 

@@ -7231,6 +7231,155 @@ func DecodeListMicrosoftAdsAccountsResponse(decoder func(*http.Response) goahttp
 	}
 }
 
+// BuildListTwitterAdsAccountsRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "list-twitter-ads-accounts" endpoint
+func (c *Client) BuildListTwitterAdsAccountsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.ListTwitterAdsAccountsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", "*lfxv2campaignserviceconnections.ListTwitterAdsAccountsPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ListTwitterAdsAccountsLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeListTwitterAdsAccountsRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-connections list-twitter-ads-accounts server.
+func EncodeListTwitterAdsAccountsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.ListTwitterAdsAccountsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", "*lfxv2campaignserviceconnections.ListTwitterAdsAccountsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		return nil
+	}
+}
+
+// DecodeListTwitterAdsAccountsResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// list-twitter-ads-accounts endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+// DecodeListTwitterAdsAccountsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - error: internal error
+func DecodeListTwitterAdsAccountsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ListTwitterAdsAccountsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", err)
+			}
+			err = ValidateListTwitterAdsAccountsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", err)
+			}
+			res := NewListTwitterAdsAccountsResultOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ListTwitterAdsAccountsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", err)
+			}
+			err = ValidateListTwitterAdsAccountsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", err)
+			}
+			return nil, NewListTwitterAdsAccountsBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ListTwitterAdsAccountsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", err)
+			}
+			err = ValidateListTwitterAdsAccountsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", err)
+			}
+			return nil, NewListTwitterAdsAccountsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ListTwitterAdsAccountsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", err)
+			}
+			err = ValidateListTwitterAdsAccountsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", err)
+			}
+			return nil, NewListTwitterAdsAccountsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ListTwitterAdsAccountsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", err)
+			}
+			err = ValidateListTwitterAdsAccountsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", err)
+			}
+			return nil, NewListTwitterAdsAccountsNotFound(&body)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildListHubspotEmailsRequest instantiates a HTTP request object with method
 // and path set to call the "lfx-v2-campaign-service-connections" service
 // "list-hubspot-emails" endpoint

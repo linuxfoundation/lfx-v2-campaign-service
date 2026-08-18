@@ -395,10 +395,52 @@ func defaultNonce() string {
 
 // apiResponse is the loose envelope returned by X Ads endpoints.
 type apiResponse struct {
+	// Data is the raw `data` value. It is nil when the field was ABSENT or null and
+	// non-nil (e.g. []byte("[]")) when it was present, which is what lets a caller
+	// distinguish an intentionally empty result set from a body that carries none.
 	Data json.RawMessage `json:"data"`
 	// NextCursor is set on cursor-paginated list endpoints (campaigns,
 	// line_items). Empty when there are no further pages.
 	NextCursor string `json:"next_cursor"`
+	// NextCursorPresent reports whether the `next_cursor` KEY appeared in the body at
+	// all, which NextCursor alone cannot express: X documents exhaustion as an explicit
+	// null ("If less than count entities are returned in the current page of the result
+	// set, the next_cursor value will be null"), and both a null and an absent field
+	// decode to "".
+	//
+	// The difference matters only where a short list is indistinguishable from a
+	// complete one — ListAdAccounts, whose contract is that it returns EVERY account or
+	// an error, so a body that does not carry the field X's contract says it carries
+	// cannot be allowed to terminate the walk. findByName deliberately does NOT consult
+	// it: its cursor loop is bounded by a match it is searching FOR, and it already
+	// treats running out of pages as an error rather than as "not found", so an absent
+	// cursor there costs at most a missed match on a malformed body, which its own page
+	// cap already answers with an error.
+	NextCursorPresent bool `json:"-"`
+}
+
+// UnmarshalJSON decodes the envelope and additionally records whether `next_cursor` was
+// present as a KEY. encoding/json cannot express key-presence on a plain string field, and
+// a pointer would change NextCursor's type for every existing caller; this keeps the
+// decoded value identical and adds the one bit that absence carries.
+func (r *apiResponse) UnmarshalJSON(b []byte) error {
+	// A distinct type breaks the recursion into this method.
+	type envelope apiResponse
+	var e envelope
+	if err := json.Unmarshal(b, &e); err != nil {
+		return err
+	}
+	// Decode a second time into a key-presence map. This cannot fail for a body the
+	// first pass accepted UNLESS the body is a valid JSON non-object (a bare array,
+	// string or number), which no X envelope is — treat that as no key present rather
+	// than as an error, so the presence bit degrades to the conservative answer instead
+	// of rejecting a body the shared path already accepted.
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(b, &keys); err == nil {
+		_, e.NextCursorPresent = keys["next_cursor"]
+	}
+	*r = apiResponse(e)
+	return nil
 }
 
 // apiError is a non-2xx response from the X Ads API. It carries status/method/path

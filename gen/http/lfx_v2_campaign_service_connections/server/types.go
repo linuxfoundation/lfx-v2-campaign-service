@@ -755,6 +755,13 @@ type ListMicrosoftAdsAccountsResponseBody struct {
 	Accounts []*AccessibleAccountResponseBody `form:"accounts" json:"accounts" xml:"accounts"`
 }
 
+// ListTwitterAdsAccountsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint HTTP response body.
+type ListTwitterAdsAccountsResponseBody struct {
+	Accounts []*AccessibleAccountResponseBody `form:"accounts" json:"accounts" xml:"accounts"`
+}
+
 // ListHubspotEmailsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
 // HTTP response body.
@@ -2763,6 +2770,46 @@ type ListMicrosoftAdsAccountsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListTwitterAdsAccountsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListTwitterAdsAccountsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListTwitterAdsAccountsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListTwitterAdsAccountsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListTwitterAdsAccountsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListTwitterAdsAccountsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListTwitterAdsAccountsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint HTTP response body for the "NotFound" error.
+type ListTwitterAdsAccountsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ListHubspotEmailsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-hubspot-emails" endpoint
 // HTTP response body for the "BadRequest" error.
@@ -3504,6 +3551,26 @@ func NewListLinkedinAdsAccountsResponseBody(res *lfxv2campaignserviceconnections
 // "lfx-v2-campaign-service-connections" service.
 func NewListMicrosoftAdsAccountsResponseBody(res *lfxv2campaignserviceconnections.ListMicrosoftAdsAccountsResult) *ListMicrosoftAdsAccountsResponseBody {
 	body := &ListMicrosoftAdsAccountsResponseBody{}
+	if res.Accounts != nil {
+		body.Accounts = make([]*AccessibleAccountResponseBody, len(res.Accounts))
+		for i, val := range res.Accounts {
+			if val == nil {
+				body.Accounts[i] = nil
+				continue
+			}
+			body.Accounts[i] = marshalLfxv2campaignserviceconnectionsAccessibleAccountToAccessibleAccountResponseBody(val)
+		}
+	} else {
+		body.Accounts = []*AccessibleAccountResponseBody{}
+	}
+	return body
+}
+
+// NewListTwitterAdsAccountsResponseBody builds the HTTP response body from the
+// result of the "list-twitter-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsAccountsResponseBody(res *lfxv2campaignserviceconnections.ListTwitterAdsAccountsResult) *ListTwitterAdsAccountsResponseBody {
+	body := &ListTwitterAdsAccountsResponseBody{}
 	if res.Accounts != nil {
 		body.Accounts = make([]*AccessibleAccountResponseBody, len(res.Accounts))
 		for i, val := range res.Accounts {
@@ -5724,6 +5791,50 @@ func NewListMicrosoftAdsAccountsNotFoundResponseBody(res *lfxv2campaignserviceco
 	return body
 }
 
+// NewListTwitterAdsAccountsBadRequestResponseBody builds the HTTP response
+// body from the result of the "list-twitter-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsAccountsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListTwitterAdsAccountsBadRequestResponseBody {
+	body := &ListTwitterAdsAccountsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListTwitterAdsAccountsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "list-twitter-ads-accounts" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsAccountsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListTwitterAdsAccountsServiceUnavailableResponseBody {
+	body := &ListTwitterAdsAccountsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListTwitterAdsAccountsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "list-twitter-ads-accounts" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsAccountsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListTwitterAdsAccountsInternalServerErrorResponseBody {
+	body := &ListTwitterAdsAccountsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListTwitterAdsAccountsNotFoundResponseBody builds the HTTP response body
+// from the result of the "list-twitter-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListTwitterAdsAccountsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListTwitterAdsAccountsNotFoundResponseBody {
+	body := &ListTwitterAdsAccountsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewListHubspotEmailsBadRequestResponseBody builds the HTTP response body
 // from the result of the "list-hubspot-emails" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -6264,6 +6375,17 @@ func NewListLinkedinAdsAccountsPayload(projectID string, bearerToken *string) *l
 // endpoint payload.
 func NewListMicrosoftAdsAccountsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListMicrosoftAdsAccountsPayload {
 	v := &lfxv2campaignserviceconnections.ListMicrosoftAdsAccountsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListTwitterAdsAccountsPayload builds a
+// lfx-v2-campaign-service-connections service list-twitter-ads-accounts
+// endpoint payload.
+func NewListTwitterAdsAccountsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListTwitterAdsAccountsPayload {
+	v := &lfxv2campaignserviceconnections.ListTwitterAdsAccountsPayload{}
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken
 

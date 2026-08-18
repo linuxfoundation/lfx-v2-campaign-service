@@ -268,9 +268,22 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // the four excluded providers are no longer excluded for the same reason, and the difference is
 // what tells you how far each is from qualifying:
 //
-//   - Reddit and X lack the FIRST half. Neither platform client has a ListAdAccounts, so no
+//   - Reddit lacks the FIRST half. Its platform client has no ListAdAccounts, so no
 //     discovery endpoint exists and nothing inside this API could tell an operator what to put
 //     in the account id.
+//   - X has BOTH halves as of LFXV2-3319, which added twitter.ListAdAccounts and
+//     TwitterDispatcher.ListAccounts. The second half it already had, and had had all
+//     along: validateTwitterConnection tags an empty account id with BOTH
+//     ErrConnectionNotUsable and ErrAccountNotSelected, and Dispatch calls that validator
+//     ITSELF rather than validating inline — so unusableConnectionReason reports
+//     "account_not_selected" and the create failure names the missing choice. That is the
+//     Microsoft shape, not the LinkedIn one, and the distinction is the whole point of
+//     stating which half is missing: X was excluded for the first half alone, so supplying
+//     it completed the pair without any change to the create path. X's toggle and metrics
+//     paths share the same validator and answer synchronously, so unlike Meta the naming is
+//     not log-only there. Its absence from this map is therefore a SEQUENCING decision, not
+//     a missing capability — the same position Microsoft is in, and for the same reason:
+//     adding it changes what this CLI accepts and belongs in its own commit.
 //   - LinkedIn has discovery but lacks the SECOND. resolveLinkedInCredentials tags
 //     ErrAccountNotSelected, but LinkedInDispatcher.Dispatch does not call it — it validates
 //     inline and answers an empty account id with a bare notCreated, so the create path names

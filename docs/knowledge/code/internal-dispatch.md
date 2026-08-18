@@ -435,9 +435,18 @@ the client will actually use.
 `GoogleAdsDispatcher.ListAccounts(ctx, projectID, platform) ([]model.AccessibleAccount, error)`
 enumerates the ad accounts reachable **upstream at the provider** with the connection's stored
 credential. It exists so an operator configuring a connection can pick the right account instead
-of pasting a customer ID by hand. `MetaDispatcher`, `LinkedInDispatcher` and `MicrosoftDispatcher`
-implement it too — four in total, the last two added in LFXV2-3064. Reddit and X do not, because
-their platform clients expose no `ListAdAccounts` for a dispatcher method to call.
+of pasting a customer ID by hand. `MetaDispatcher`, `LinkedInDispatcher`, `MicrosoftDispatcher` and
+`TwitterDispatcher` implement it too — five in total, two added in LFXV2-3064 and X in
+LFXV2-3319. Reddit does not, because its platform client exposes no `ListAdAccounts` for a
+dispatcher method to call.
+
+`TwitterDispatcher.ListAccounts` shares `validateTwitterConnection` with `Dispatch` and
+`ToggleStatus`, tolerating exactly one of its outcomes — `ErrAccountNotSelected`, the state the
+endpoint serves — and propagating every other sentinel intact so the 400-vs-503 mapping stays
+pinned. That is the MICROSOFT shape rather than the LinkedIn one, and the difference matters:
+X's `Dispatch` calls the shared validator ITSELF rather than validating inline, so discovery and
+create genuinely cannot drift. It also does not require `funding_instrument_id` — a create-only
+field an account-less connection has no reason to have chosen yet.
 
 **Now fully wired.** The adapter landed one PR ahead of its caller; both halves are present as of
 this change. `internal/service/orchestrator.go` declares `AccountLister` alongside `StatusToggler`
@@ -770,7 +779,7 @@ One arm is NOT shared. A dispatcher with no `EmailSearcher` yields `ErrEmailSear
 a separate sentinel from `ErrAccountsUnsupported`, because the two capabilities are genuinely
 independent: HubSpot searches emails and has no ad accounts, while the ad platforms that
 implement `AccountLister` are the reverse — Google Ads, Meta, LinkedIn and Microsoft as of
-LFXV2-3064. Reddit and X implement neither capability, their clients having no
+LFXV2-3064, plus X as of LFXV2-3319. Reddit implements neither capability, its client having no
 `ListAdAccounts`. Folding the two sentinels into one
 would make "this platform cannot do X" ambiguous about which X.
 

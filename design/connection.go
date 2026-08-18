@@ -798,10 +798,10 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	// a generated method for a provider that cannot answer it would be a 400 by
 	// construction.
 	//
-	// Google Ads, Meta, LinkedIn and Microsoft have one. X and Reddit do not: neither
-	// platform client has a ListAdAccounts, so their account id stays hand-entered on the
-	// connection until one is built. Do not add a method here for either without the
-	// dispatcher side — the endpoint would exist and always fail.
+	// Google Ads, Meta, LinkedIn, Microsoft and X have one. Reddit does not: its platform
+	// client has no ListAdAccounts, so its account id stays hand-entered on the connection
+	// until one is built. Do not add a method here for it without the dispatcher side —
+	// the endpoint would exist and always fail.
 	Method("list-google-ads-accounts", func() {
 		Description("Enumerate the Google Ads ad accounts accessible via the stored connection credential.")
 		Payload(func() {
@@ -937,6 +937,44 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
 			GET("/projects/{project_id}/connection-microsoft-ads/accounts")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("BadRequest", StatusBadRequest)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("list-twitter-ads-accounts", func() {
+		Description("Enumerate the X/Twitter Ads accounts accessible via the stored connection " +
+			"credential. Returns account ids as the alphanumeric handle X uses, ready to store as " +
+			"the connection's account_id. Accounts that are under review, rejected or deleted are " +
+			"RETURNED with the reason in the label rather than hidden, so a caller whose only " +
+			"account is unusable sees it and why.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Required("project_id")
+		})
+		Result(func() {
+			// Per-provider example, for the reason spelled out on list-google-ads-accounts:
+			// X's ids are alphanumeric handles, not digits, so the shared element type's
+			// example would misdescribe the one field a caller has to store.
+			Attribute("accounts", ArrayOf(AccessibleAccount), func() {
+				Example([]map[string]any{
+					{"id": "18ce54d4x5t", "label": "Linux Foundation"},
+					{"id": "8r7gb", "label": "CNCF — under review"},
+				})
+			})
+			Required("accounts")
+		})
+		Error("NotFound", NotFoundError, "Resource not found")
+		Error("BadRequest", BadRequestError, "Bad request")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-twitter-ads/accounts")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)

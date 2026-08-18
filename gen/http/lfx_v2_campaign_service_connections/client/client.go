@@ -202,6 +202,10 @@ type Client struct {
 	// the list-microsoft-ads-accounts endpoint.
 	ListMicrosoftAdsAccountsDoer goahttp.Doer
 
+	// ListTwitterAdsAccounts Doer is the HTTP client used to make requests to the
+	// list-twitter-ads-accounts endpoint.
+	ListTwitterAdsAccountsDoer goahttp.Doer
+
 	// ListHubspotEmails Doer is the HTTP client used to make requests to the
 	// list-hubspot-emails endpoint.
 	ListHubspotEmailsDoer goahttp.Doer
@@ -273,6 +277,7 @@ func NewClient(
 		ListMetaAdsAccountsDoer:       doer,
 		ListLinkedinAdsAccountsDoer:   doer,
 		ListMicrosoftAdsAccountsDoer:  doer,
+		ListTwitterAdsAccountsDoer:    doer,
 		ListHubspotEmailsDoer:         doer,
 		RestoreResponseBody:           restoreBody,
 		scheme:                        scheme,
@@ -1386,6 +1391,30 @@ func (c *Client) ListMicrosoftAdsAccounts() goa.Endpoint {
 		resp, err := c.ListMicrosoftAdsAccountsDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ListTwitterAdsAccounts returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service list-twitter-ads-accounts server.
+func (c *Client) ListTwitterAdsAccounts() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeListTwitterAdsAccountsRequest(c.encoder)
+		decodeResponse = DecodeListTwitterAdsAccountsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildListTwitterAdsAccountsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ListTwitterAdsAccountsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", err)
 		}
 		return decodeResponse(resp)
 	}

@@ -244,6 +244,19 @@ var microsoftAdsAccountDiscovery = accountDiscovery{
 		"with client_id, client_secret, developer_token and refresh_token set",
 }
 
+// twitterAdsAccountDiscovery names X's OAuth 1.0a FOUR-tuple, not a single token. Every
+// other ad platform here authenticates with one credential field, so a copied remedy would
+// send an X operator looking for an access_token that is only a quarter of what their
+// connection stores — and the status-code assertions would all still pass while it did.
+// These are the PUBLISHED wire names from design/connection.go's TwitterAdsCredentials,
+// which is what a caller can act on, not the PascalCase Go keys the blob is persisted under.
+var twitterAdsAccountDiscovery = accountDiscovery{
+	provider:    model.ProviderTwitterAds,
+	displayName: "x/twitter ads",
+	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
+		"with consumer_key, consumer_secret, access_token and access_token_secret set",
+}
+
 // hubspotEmailDiscovery reuses the account-discovery status mapping for the email-template
 // search. Not account discovery — HubSpot has no ad account to choose, since the connection is
 // scoped to the portal its token authenticates against — but every arm of that mapping applies
@@ -459,6 +472,21 @@ func (s *ConnectionService) ListMicrosoftAdsAccounts(ctx context.Context, p *con
 		return nil, err
 	}
 	return &conn.ListMicrosoftAdsAccountsResult{Accounts: accounts}, nil
+}
+
+// ListTwitterAdsAccounts enumerates the X Ads accounts the stored credential reaches.
+//
+// X's ids arrive as ALPHANUMERIC handles (e.g. "18ce54d4x5t"), not digits, and are returned
+// that way: that is the form the connection's account_id takes (both are constrained to
+// ^[A-Za-z0-9]+$), so the answer is directly assignable rather than needing the caller to
+// reformat it. This is the one shape difference from LinkedIn and Microsoft, whose ids are
+// digits — an assumption that X's are numeric would reject every real answer.
+func (s *ConnectionService) ListTwitterAdsAccounts(ctx context.Context, p *conn.ListTwitterAdsAccountsPayload) (*conn.ListTwitterAdsAccountsResult, error) {
+	accounts, err := s.listAccounts(ctx, p.ProjectID, twitterAdsAccountDiscovery)
+	if err != nil {
+		return nil, err
+	}
+	return &conn.ListTwitterAdsAccountsResult{Accounts: accounts}, nil
 }
 
 // ─── HubSpot (email channel) ───

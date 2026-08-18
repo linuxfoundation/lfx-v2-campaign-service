@@ -66,6 +66,7 @@ type Server struct {
 	ListMetaAdsAccounts       http.Handler
 	ListLinkedinAdsAccounts   http.Handler
 	ListMicrosoftAdsAccounts  http.Handler
+	ListTwitterAdsAccounts    http.Handler
 	ListHubspotEmails         http.Handler
 }
 
@@ -143,6 +144,7 @@ func New(
 			{"ListMetaAdsAccounts", "GET", "/projects/{project_id}/connection-meta-ads/accounts"},
 			{"ListLinkedinAdsAccounts", "GET", "/projects/{project_id}/connection-linkedin-ads/accounts"},
 			{"ListMicrosoftAdsAccounts", "GET", "/projects/{project_id}/connection-microsoft-ads/accounts"},
+			{"ListTwitterAdsAccounts", "GET", "/projects/{project_id}/connection-twitter-ads/accounts"},
 			{"ListHubspotEmails", "GET", "/projects/{project_id}/connection-hubspot/emails"},
 		},
 		CreateGoogleAds:           NewCreateGoogleAdsHandler(e.CreateGoogleAds, mux, decoder, encoder, errhandler, formatter),
@@ -191,6 +193,7 @@ func New(
 		ListMetaAdsAccounts:       NewListMetaAdsAccountsHandler(e.ListMetaAdsAccounts, mux, decoder, encoder, errhandler, formatter),
 		ListLinkedinAdsAccounts:   NewListLinkedinAdsAccountsHandler(e.ListLinkedinAdsAccounts, mux, decoder, encoder, errhandler, formatter),
 		ListMicrosoftAdsAccounts:  NewListMicrosoftAdsAccountsHandler(e.ListMicrosoftAdsAccounts, mux, decoder, encoder, errhandler, formatter),
+		ListTwitterAdsAccounts:    NewListTwitterAdsAccountsHandler(e.ListTwitterAdsAccounts, mux, decoder, encoder, errhandler, formatter),
 		ListHubspotEmails:         NewListHubspotEmailsHandler(e.ListHubspotEmails, mux, decoder, encoder, errhandler, formatter),
 	}
 }
@@ -246,6 +249,7 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.ListMetaAdsAccounts = m(s.ListMetaAdsAccounts)
 	s.ListLinkedinAdsAccounts = m(s.ListLinkedinAdsAccounts)
 	s.ListMicrosoftAdsAccounts = m(s.ListMicrosoftAdsAccounts)
+	s.ListTwitterAdsAccounts = m(s.ListTwitterAdsAccounts)
 	s.ListHubspotEmails = m(s.ListHubspotEmails)
 }
 
@@ -301,6 +305,7 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountListMetaAdsAccountsHandler(mux, h.ListMetaAdsAccounts)
 	MountListLinkedinAdsAccountsHandler(mux, h.ListLinkedinAdsAccounts)
 	MountListMicrosoftAdsAccountsHandler(mux, h.ListMicrosoftAdsAccounts)
+	MountListTwitterAdsAccountsHandler(mux, h.ListTwitterAdsAccounts)
 	MountListHubspotEmailsHandler(mux, h.ListHubspotEmails)
 }
 
@@ -2785,6 +2790,61 @@ func NewListMicrosoftAdsAccountsHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "list-microsoft-ads-accounts")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountListTwitterAdsAccountsHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
+// endpoint.
+func MountListTwitterAdsAccountsHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/connection-twitter-ads/accounts", f)
+}
+
+// NewListTwitterAdsAccountsHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-connections" service
+// "list-twitter-ads-accounts" endpoint.
+func NewListTwitterAdsAccountsHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeListTwitterAdsAccountsRequest(mux, decoder)
+		encodeResponse = EncodeListTwitterAdsAccountsResponse(encoder)
+		encodeError    = EncodeListTwitterAdsAccountsError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "list-twitter-ads-accounts")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
 		payload, err := decodeRequest(r)
 		if err != nil {
