@@ -21,7 +21,7 @@ import (
 )
 
 // Microsoft Advertising reporting differs from every other platform client in this repo:
-// the other five answer GetCampaignMetrics with ONE synchronous request, while Microsoft's
+// every other platform client answers GetCampaignMetrics with ONE synchronous request, while Microsoft's
 // Reporting service is a three-step asynchronous pipeline —
 //
 //	POST Reporting/v13/GenerateReport/Submit  -> a ReportRequestId
@@ -49,12 +49,17 @@ const (
 	// three services are versioned in lockstep at v13.
 	msReportingBaseURL = "https://reporting.api.bingads.microsoft.com"
 
-	// reportPollBudget bounds the ENTIRE submit+poll phase. Chosen well under the 60s
-	// platform ingress timeout so a slow report surfaces as a clean "not ready yet"
-	// instead of a gateway 504 the caller cannot interpret. The download is deliberately
-	// NOT part of this budget: once Success is reported the file exists and the transfer
-	// is a plain GET, so cutting it off would discard a report we already paid to build.
-	reportPollBudget = 20 * time.Second
+	// reportPollBudget bounds the ENTIRE submit+poll phase. The binding deadline is NOT
+	// the 60s platform ingress: Orchestrator.ReadCampaignMetrics wraps every metrics call
+	// in metricsCallTimeout (20s), so the budget must sit under THAT or the caller's
+	// context cancels first and ErrReportNotReady can never be produced — the sentinel,
+	// its message and the dispatcher's classification arm would all be dead code.
+	// 15s leaves headroom for the download, which is deliberately NOT part of this budget:
+	// once Success is reported the file exists and the transfer is a plain GET, so cutting
+	// it off would discard a report we already paid to build.
+	//
+	// TestReportPollBudgetStaysUnderTheMetricsCallTimeout pins this relationship.
+	reportPollBudget = 15 * time.Second
 
 	// reportPollInterval is the delay between Poll calls. Microsoft documents a
 	// recommended floor of ~1s; polling faster earns 429s that the shared retry policy
@@ -245,11 +250,19 @@ func (c *Client) pollOnce(ctx context.Context, reportID string) (string, string,
 func (c *Client) downloadReport(ctx context.Context, downloadURL, campaignID string, window model.MetricsWindow) (*model.CampaignMetrics, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("build microsoft report download request: %w", err)
+		// The cause is NOT wrapped: net/http builds a *url.Error carrying the full URL,
+		// and this URL's query string IS the credential. Same reasoning as do()'s
+		// fullURL/path split — a URL in an error is a disclosure surface.
+		return nil, errors.New("build microsoft report download request")
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("download microsoft report: %w", err)
+		// Report only whether the transfer is retryable. The *url.Error the transport
+		// returns renders the pre-signed URL, sig= included, in its Error() string.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("download microsoft report: %w", context.Cause(ctx))
+		}
+		return nil, errors.New("download microsoft report: transport error")
 	}
 	defer func() {
 		// Drain before close so the connection returns to the idle pool: a body closed

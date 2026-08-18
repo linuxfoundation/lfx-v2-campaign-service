@@ -412,7 +412,7 @@ Two further details belong to this layer specifically:
 
 ## Metrics read (asynchronous, default-OFF)
 
-`GetCampaignMetrics(ctx, campaignID, window)` answers the same question as the other five
+`GetCampaignMetrics(ctx, campaignID, window)` answers the same question as every other client
 platform clients, but Microsoft is the only one whose reporting is ASYNCHRONOUS. The
 pipeline is `POST Reporting/v13/GenerateReport/Submit` (returns a `ReportRequestId`) ->
 `POST .../Poll` (`Pending` | `Success` | `Error`, plus a pre-signed download URL) -> `GET`

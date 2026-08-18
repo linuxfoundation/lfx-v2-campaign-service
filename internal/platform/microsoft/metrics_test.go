@@ -394,3 +394,77 @@ func TestGetCampaignMetrics_ContextCancelStopsPolling(t *testing.T) {
 		t.Errorf("want context.Canceled, got %v", err)
 	}
 }
+
+// advancingClock returns a clock that moves forward by step on every call, so the poll
+// budget can actually expire. The suite's default clock is a CONSTANT, which makes
+// `c.now().Add(reportPollInterval).Before(deadline)` permanently true — the budget check
+// can never fire and ErrReportNotReady is unreachable from any test using it.
+func advancingClock(start time.Time, step time.Duration) func() time.Time {
+	n := 0
+	return func() time.Time {
+		t := start.Add(time.Duration(n) * step)
+		n++
+		return t
+	}
+}
+
+// TestGetCampaignMetrics_BudgetExpiryReturnsNotReady drives a server that never leaves
+// Pending and asserts the budget produces ErrReportNotReady rather than leaking the
+// caller's context error. Without an advancing clock this branch cannot be reached.
+func TestGetCampaignMetrics_BudgetExpiryReturnsNotReady(t *testing.T) {
+	// pollsBefore far beyond the budget: the server stays Pending forever.
+	m := newMSMetricsServer(t, buildReportZip(t, realisticCSV), 100000)
+	c := NewClient(
+		Credentials{ClientID: "cid", ClientSecret: "sec", DeveloperToken: "dev", RefreshToken: "ref"},
+		AccountConfig{AccountID: "9999999", Label: "LF Events"},
+		WithReportingBaseURL(m.srv.URL),
+		WithTokenURL(m.srv.URL+"/token"),
+		WithClock(advancingClock(time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC), reportPollInterval)),
+	)
+
+	_, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowLast7Days)
+	if err == nil {
+		t.Fatal("expected an error when the report never leaves Pending")
+	}
+	if !errors.Is(err, ErrReportNotReady) {
+		t.Errorf("want ErrReportNotReady, got %v", err)
+	}
+}
+
+// TestReportPollBudgetStaysUnderTheMetricsCallTimeout pins the relationship the budget
+// depends on. Orchestrator.ReadCampaignMetrics bounds every metrics call at 20s; if the
+// poll budget ever reaches that, the caller's context cancels first and ErrReportNotReady
+// becomes dead code in production while every test still passes.
+func TestReportPollBudgetStaysUnderTheMetricsCallTimeout(t *testing.T) {
+	// Mirrors internal/service/orchestrator.go's metricsCallTimeout. Duplicated rather
+	// than imported: internal/platform must not depend on internal/service.
+	const metricsCallTimeout = 20 * time.Second
+	if reportPollBudget >= metricsCallTimeout {
+		t.Fatalf("reportPollBudget (%s) must be < metricsCallTimeout (%s), or the caller's "+
+			"context cancels before the budget and ErrReportNotReady is unreachable",
+			reportPollBudget, metricsCallTimeout)
+	}
+}
+
+// TestDownloadReportErrorsOmitThePresignedURL pins the redaction. The download URL's
+// query string IS the credential, and net/http's *url.Error renders the whole URL —
+// so wrapping the transport cause leaks sig= into any log that prints the error.
+func TestDownloadReportErrorsOmitThePresignedURL(t *testing.T) {
+	c := NewClient(
+		Credentials{ClientID: "cid", ClientSecret: "sec", DeveloperToken: "dev", RefreshToken: "ref"},
+		AccountConfig{AccountID: "9999999", Label: "LF Events"},
+	)
+	const secret = "SECRETSIGNATUREVALUE"
+	u := "https://nonexistent.invalid.example/report.zip?skoid=ACCT&sig=" + secret
+
+	_, err := c.downloadReport(context.Background(), u, "1234567", model.MetricsWindowLast7Days)
+	if err == nil {
+		t.Fatal("expected a transport error against an unroutable host")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Errorf("pre-signed signature leaked into the error: %s", err.Error())
+	}
+	if strings.Contains(err.Error(), "nonexistent.invalid.example") {
+		t.Errorf("download URL leaked into the error: %s", err.Error())
+	}
+}

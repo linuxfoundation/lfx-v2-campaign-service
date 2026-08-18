@@ -166,7 +166,7 @@ Which adapters honour it today:
 | Google Ads | yes | `validateGoogleAdsCredentials` — dispatch, toggle, metrics, discovery |
 | Reddit | yes | `resolveRedditClient` — dispatch, toggle, metrics |
 | X/Twitter | yes | `validateTwitterConnection` — dispatch, toggle, metrics |
-| Microsoft Ads | yes | `validateMicrosoftConnection` — dispatch, toggle (no metrics; async Reporting API) |
+| Microsoft Ads | yes | `validateMicrosoftConnection` — dispatch, toggle, metrics (async Reporting API; default-OFF) |
 | Meta | yes | `resolveMetaCredentials` — dispatch, toggle, metrics (LFXV2-3061) |
 | LinkedIn | yes | `resolveLinkedInCredentials` — toggle, metrics (LFXV2-3196); Dispatch keeps its own inline checks, which wrap in `notCreated()` to release the claim |
 | HubSpot (email) | **n/a** | out of scope — see below |
@@ -248,16 +248,25 @@ platform's actual query syntax (e.g. Google Ads' GAQL `DURING` literals, Meta's 
 guard against GAQL injection) belongs in that platform's client package, not in the adapter or
 the orchestrator.
 
-**Microsoft Ads is NOT a `MetricsReader` and is not expected to become one under this
-contract.** Its Campaign Management API v13 (REST/JSON, synchronous — what the existing
-create dispatcher and status toggle use) has no metrics surface. Metrics live in a wholly
-separate service, the Reporting API v13: SOAP, and asynchronous
-(`SubmitGenerateReport` → poll `PollGenerateReport` until the status leaves `Pending` →
-download a zipped CSV via a `ReportDownloadUrl`). There is no synchronous "impressions for
-this campaign" call, so it cannot satisfy `ReadMetrics`'s one-bounded-call contract within
-`metricsCallTimeout` (20s). Closing this gap needs a design decision (e.g. a bounded
-submit-and-poll with a hard ceiling, or a persisted/sweeper-refreshed snapshot instead of a
-live read) — deferred, not attempted here.
+**Microsoft Ads implements `MetricsReader` as of LFXV2-3260**, but the read is gated OFF
+by default. Its Campaign Management API v13 (REST/JSON, synchronous — what the create
+dispatcher and status toggle use) has no metrics surface; metrics live in a separate
+service, the Reporting API v13. That API is **REST/JSON, not SOAP** — an earlier revision of
+this document said SOAP — and it is asynchronous (`SubmitGenerateReport` → poll
+`PollGenerateReport` until the status leaves `Pending` → download a zipped CSV via a
+`ReportDownloadUrl`).
+
+The adapter absorbs the asynchrony behind one bounded call: `reportPollBudget` (15s) caps
+the whole submit+poll phase and must stay strictly under `metricsCallTimeout` (20s), or the
+caller's context cancels first and `ErrReportNotReady` becomes unreachable —
+`TestReportPollBudgetStaysUnderTheMetricsCallTimeout` pins that relationship. The download
+sits outside the budget deliberately: once `Success` is reported the file exists, and
+cutting off the transfer would discard a report already paid for.
+
+Because the request/response shapes follow Microsoft's published documentation but have
+never been exercised against a live Bing account, `ReadMetrics` answers
+`domain.ErrMetricsUnsupported` unless `MICROSOFT_METRICS_ENABLED` is exactly `"true"` —
+the same fail-closed gate Reddit uses. Delete the gate once the shape is confirmed live.
 
 **Meta** also implements it: `MetaDispatcher.ReadMetrics` resolves the connection the same way
 `ToggleStatus`/`Dispatch` do, then calls `meta.Client.GetCampaignMetrics`, which issues a single
