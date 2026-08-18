@@ -271,10 +271,20 @@ front in `CreateCampaign`**, before the campaign create, for the same reason the
 are: a bad value discovered at the last step would fail after a PAUSED campaign, ad group and ad
 already exist. The create is **not retried on 429** — AddKeywords has no idempotency key and
 Microsoft enforces no uniqueness on a keyword, so a retry ADDS a second copy of every one. A
-definite `PartialError` is a clean rejection (nothing created); a short/null-slot id array or an
-unparseable 2xx is UNCONFIRMED, because the keywords may exist and a blind retry would
-duplicate them. `CampaignResult.KeywordIDs` carries the parsed ids, and the step text reports
-the count PARSED rather than the count sent (the id array is bounded on decode).
+definite `PartialError` is a per-entity rejection, but NOT necessarily a total one: `AddKeywords`
+is a batch with an index-aligned response, so `[701, null, 703]` with one `PartialError` means two
+keywords were created. Those ids travel out WITH the error — they are what the status cascade
+enables on ACTIVATE, and what stops a reconciliation double-creating the entries that succeeded —
+and the message carries the count (`2 of 3 keywords were created`). Only an all-rejected batch is
+a clean failure with nothing to reconcile. A short/null-slot id array with no `PartialError`, or
+an unparseable 2xx, is UNCONFIRMED: the keywords may exist and a blind retry would duplicate them.
+
+`CampaignResult.KeywordIDs` carries the ids, and on a successful create the count equals the
+count SENT: input is capped at `maxKeywords`, the id array decodes through `boundedKeywordIDs`
+(bounded by the same cap rather than by the 16-item error-array bound), and success requires one
+usable id per keyword. The step text previously hedged to a "count PARSED" because that decode
+bound made a valid response come back short — LFXV2-3279 closed that, so the count is now a
+confirmed figure.
 
 **GEO TARGETING IS NOT IMPLEMENTED, and the reason is an API constraint rather than a scoping
 preference.** Microsoft takes location criteria at the CAMPAIGN level
