@@ -1037,7 +1037,26 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// NoUpstreamCreate) that the error occurred before any create call (e.g.
 		// input/config validation), in which case releasing the claim to allow a
 		// retry is safe.
-		if dispatchErrIsPreCreate(derr) {
+		//
+		// `campaign == nil` is an INDEPENDENT precondition on that release, not a
+		// restatement of the error check. NoUpstreamCreate is a claim the DISPATCHER
+		// makes about its own error; a non-nil campaign is evidence from the same
+		// return that something was built for an upstream resource. When the two
+		// disagree, the evidence wins and the claim is RETAINED — releasing it would
+		// free the (brief, platform) slot and authorize a duplicate PAID create,
+		// which is the one failure this claim exists to prevent.
+		//
+		// The condition keys on `campaign == nil` ALONE, deliberately not on
+		// campaign.PlatformCampaignID != "". An id-less partial is exactly the
+		// group-orphan / ambiguous-create shape the retain branch below persists via
+		// its `len(campaign.Result) > 0` arm: the id is empty BY DESIGN while a real
+		// upstream resource exists. Testing the id would route those straight back
+		// into the release path and reintroduce the double-create.
+		//
+		// No dispatcher returns this pairing today (every preCreateError is returned
+		// with a nil campaign), so this is a guard against a future adapter, not a
+		// live bug. It is cheap, and the failure it prevents costs real money.
+		if dispatchErrIsPreCreate(derr) && campaign == nil {
 			// The reason token is carried on THIS branch only, and only for the errors it
 			// has a vocabulary for. Pre-create is where the connection faults land — a
 			// resolve that could not produce a usable client never reached the provider —

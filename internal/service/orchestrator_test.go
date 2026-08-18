@@ -1568,6 +1568,199 @@ func TestOrchestrator_PartialDispatchErrorPersistsUpstreamID(t *testing.T) {
 	}
 }
 
+// preCreateWithPartialDispatcher returns a NON-NIL campaign ALONGSIDE an error that
+// claims NoUpstreamCreate. That pairing is self-contradictory: the error disowns the
+// create while the campaign is evidence something was built for an upstream resource.
+//
+// This is the fixture shape the release guard must EXCLUDE, which is the whole point of
+// writing it. PR #125's reap predicate was "verified" only against fixtures matching its
+// own premise, so the test could never contradict the belief under test. A guard whose
+// safety argument is a predicate is only pinned by a fixture that the predicate must
+// refuse — so this dispatcher deliberately produces the disagreement, and the assertions
+// below demand the claim survive it.
+//
+// withID toggles between the two real partial shapes: an id-carrying partial, and the
+// id-less group-orphan whose id is empty BY DESIGN while a paid resource exists upstream.
+// Both must retain; keying the guard on the id would release the second one.
+type preCreateWithPartialDispatcher struct{ withID bool }
+
+func (d preCreateWithPartialDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, p model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	c := &model.Campaign{
+		Status:       "unconfirmed",
+		Result:       json.RawMessage(`{"campaignGroupId":"g1"}`),
+		CampaignName: "n",
+	}
+	if d.withID {
+		c.PlatformCampaignID = "pc-orphan-" + string(p)
+	}
+	return c, preCreateErr{}
+}
+
+// TestOrchestrator_PreCreateErrorWithPartialRetainsClaim pins the independent
+// `campaign == nil` precondition on releasing a dispatch claim.
+//
+// Releasing here would delete the pending row and free the (brief, platform) slot, so the
+// next dispatch would create a SECOND paid campaign for a brief that already has one. The
+// dispatcher's NoUpstreamCreate is only its own assertion about its error; a non-nil
+// campaign is evidence from the same return that contradicts it, and the money-losing
+// direction is to believe the assertion.
+//
+// MUTATION CHECK (verified, compiling): reverting the guard to `if
+// dispatchErrIsPreCreate(derr) {` fails both subtests — the claim is released and the row
+// vanishes. Narrowing it to `campaign == nil || campaign.PlatformCampaignID == ""` still
+// compiles and still fails id_less, which is why that subtest exists separately.
+func TestOrchestrator_PreCreateErrorWithPartialRetainsClaim(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		withID bool
+	}{
+		{"id_carrying_partial", true},
+		// The decisive case: the id is empty by design, so a guard keyed on the id
+		// would route this straight back into the release path.
+		{"id_less_group_orphan", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			jobs := newFakeJobRepo()
+			camps := &fakeCampaignRepo{}
+			orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+				model.ProviderGoogleAds: preCreateWithPartialDispatcher{withID: tc.withID},
+			})
+			brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+			id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			if j := waitForTerminal(t, jobs, id); j.Status != model.JobFailed {
+				t.Errorf("status = %s, want failed", j.Status)
+			}
+
+			camps.mu.Lock()
+			defer camps.mu.Unlock()
+			row, ok := camps.existing[slotKey("b1", model.ProviderGoogleAds, model.VariantDefault)]
+			if !ok {
+				t.Fatal("claim was RELEASED after a pre-create error carrying a non-nil campaign; " +
+					"the freed slot lets the next dispatch create a duplicate PAID campaign")
+			}
+			// Non-terminal, so a retry reconciles instead of reading it as a success.
+			if row.Status != "pending" && row.Status != "unconfirmed" {
+				t.Errorf("retained row Status = %q, want a non-terminal reconcilable status", row.Status)
+			}
+			// The orphan must be RECORDED, not just blocked — an anonymous claim is
+			// indistinguishable from a live concurrent dispatch on a later retry.
+			if len(camps.upserted) != 1 {
+				t.Fatalf("upserted %d campaigns, want 1 (the partial must be persisted to be reconcilable)", len(camps.upserted))
+			}
+			if len(camps.upserted[0].Result) == 0 {
+				t.Error("persisted partial carries no Result blob, so the orphan is not reconcilable")
+			}
+		})
+	}
+}
+
+// barrierDispatcher makes every concurrent dispatcher goroutine rendezvous BEFORE
+// returning, so all of them observe the same pre-claim state.
+//
+// A time.Sleep cannot establish this: the degenerate serial interleaving (one goroutine
+// finishing entirely before the next starts) satisfies a sleep and passes vacuously, which
+// means a broken guard would still go green. The barrier makes the contended ordering the
+// ONLY reachable one — every party must arrive before any may proceed — so a regression
+// fails deterministically rather than flakily.
+// Arrivals are counted under a mutex rather than tracked by a WaitGroup because the
+// number of parties that actually reach Dispatch is not known up front: only the claim
+// WINNER gets through, and the losers are skipped before the provider is called. A
+// WaitGroup sized to N would therefore never reach zero.
+type barrierDispatcher struct {
+	mu       sync.Mutex
+	arrived  int
+	want     int
+	release  chan struct{}
+	released bool
+}
+
+// arrive blocks the caller until `want` parties have arrived, then opens the gate for
+// all of them at once. openGate lets the test release a barrier that can no longer be
+// satisfied (because claim losers never call Dispatch) without leaking blocked goroutines.
+func (d *barrierDispatcher) openGate() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.released {
+		d.released = true
+		close(d.release)
+	}
+}
+
+func (d *barrierDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, p model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	d.mu.Lock()
+	d.arrived++
+	reached := d.arrived >= d.want
+	d.mu.Unlock()
+	if reached {
+		d.openGate()
+	}
+	// Every party blocks here until the gate opens, so no goroutine can complete its
+	// dispatch before the others have started theirs.
+	<-d.release
+	return &model.Campaign{
+		Status:       "unconfirmed",
+		Result:       json.RawMessage(`{"campaignGroupId":"g1"}`),
+		CampaignName: "n",
+	}, preCreateErr{}
+}
+
+// TestOrchestrator_ConcurrentPreCreatePartialsKeepOneClaim proves the single-flight claim
+// survives the contended case: N dispatches for the SAME (brief, platform) that all reach
+// the provider simultaneously and all come back with the contradictory pairing.
+//
+// Exactly one may win the claim; the losers must be skipped rather than re-dispatched, and
+// crucially NONE of them may release the winner's row. With the guard reverted, each loser
+// that takes the release path deletes the shared pending row and reopens the slot.
+func TestOrchestrator_ConcurrentPreCreatePartialsKeepOneClaim(t *testing.T) {
+	const parties = 4
+
+	d := &barrierDispatcher{want: parties, release: make(chan struct{})}
+
+	jobs := newFakeJobRepo()
+	camps := &fakeCampaignRepo{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: d,
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+
+	ids := make([]string, 0, parties)
+	var mu sync.Mutex
+	var starters sync.WaitGroup
+	for range parties {
+		starters.Add(1)
+		go func() {
+			defer starters.Done()
+			id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			ids = append(ids, id)
+			mu.Unlock()
+		}()
+	}
+	// Every Start has returned, so no further party can arrive at the barrier. If the
+	// claim serialized the dispatches (the common case: one winner, N-1 skipped), the
+	// arrival count never reaches `want`, so open the gate explicitly to unblock the
+	// winner rather than deadlocking.
+	d.openGate()
+	starters.Wait()
+
+	for _, id := range ids {
+		waitForTerminal(t, jobs, id)
+	}
+
+	camps.mu.Lock()
+	defer camps.mu.Unlock()
+	if _, ok := camps.existing[slotKey("b1", model.ProviderGoogleAds, model.VariantDefault)]; !ok {
+		t.Fatal("no claim survived the concurrent pre-create partials; the slot is free and " +
+			"the next dispatch will create a duplicate PAID campaign")
+	}
+}
+
 // blockingSweepJobRepo blocks inside FailStuckJobs until its context is
 // cancelled, letting a test prove that cancelling the sweeper's context
 // interrupts an in-flight sweep promptly (rather than the sweep running to its
