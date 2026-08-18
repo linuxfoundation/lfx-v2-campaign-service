@@ -18,6 +18,22 @@ func TestJobStatus_Terminal(t *testing.T) {
 			t.Errorf("%s.Terminal() = %v, want %v", s, got, want)
 		}
 	}
+
+	// This expectation table IS the classification, so it must cover the whole vocabulary.
+	// Consumers derive their status lists from AllJobStatuses (the retention prune's
+	// allow-list among them); a status added to that list without a line above would be
+	// unclassified here while every consumer silently started iterating it.
+	if len(terminal) != len(AllJobStatuses) {
+		t.Errorf("the expectation table covers %d statuses but the vocabulary has %d: %v",
+			len(terminal), len(AllJobStatuses), AllJobStatuses)
+	}
+	for _, s := range AllJobStatuses {
+		if _, ok := terminal[s]; !ok {
+			t.Errorf("%q is in AllJobStatuses but unclassified here: every status must be "+
+				"deliberately declared terminal or non-terminal, because the retention "+
+				"prune deletes on the answer", s)
+		}
+	}
 }
 
 func TestProgramType_Valid(t *testing.T) {

@@ -210,6 +210,24 @@ func TestMicrosoft_DispatchSuccessMapsResultAndCreds(t *testing.T) {
 	if creds.customerHeader != "9999999" {
 		t.Errorf("CustomerId header = %q, want the connection's customer_id 9999999", creds.customerHeader)
 	}
+	// The create must STAMP the creating account into the persisted blob: it is the sole
+	// input to the provenance guard on the read/toggle paths. Asserting the VALUE (not just
+	// the key's presence) is what makes this catch a stamp wired to the wrong field — the
+	// account id must be the connection's 1234567, not the MCC customer_id 9999999.
+	var blob struct {
+		AccountID string `json:"accountId"`
+	}
+	if err := json.Unmarshal(camp.Result, &blob); err != nil {
+		t.Fatalf("result blob must be valid JSON: %v", err)
+	}
+	if blob.AccountID != "1234567" {
+		t.Errorf("result blob accountId = %q, want the creating account 1234567 — the provenance guard reads this field", blob.AccountID)
+	}
+	// And the guard must actually accept what the create just wrote: a stamp the reader
+	// cannot parse would leave every new row silently unguarded.
+	if got := microsoftCreationAccountID(camp); got != "1234567" {
+		t.Errorf("microsoftCreationAccountID(created campaign) = %q, want 1234567", got)
+	}
 }
 
 // TestMicrosoft_AmbiguousCreateRetainsClaim: when the campaign lookup is absent but the create
@@ -698,5 +716,101 @@ func TestMicrosoft_ToggleStatus_PauseWithOrphanAdIsNotProvisioned(t *testing.T) 
 	mu.Unlock()
 	if sawRequest {
 		t.Error("the refusal is a local row check — no token or API request may be made")
+	}
+}
+
+// TestMicrosoft_ToggleStatus_ForeignAccountIs409AndNeverMutates pins the account-provenance
+// guard on the TOGGLE path. It matters MORE here than on the read: Microsoft campaign ids are
+// unique only WITHIN an ad account, so after UpdateMicrosoftAds re-points a project's
+// connection, the stored id addressed against the new account can collide with an unrelated
+// campaign and PAUSE OR ACTIVATE something this project does not own. The refusal must be a
+// non-retryable ErrCampaignAccountMismatch (409) raised before Microsoft is contacted, and it
+// must sit above BOTH branches — pause and activate.
+func TestMicrosoft_ToggleStatus_ForeignAccountIs409AndNeverMutates(t *testing.T) {
+	for _, status := range []string{model.CampaignRunPaused, model.CampaignRunActive} {
+		t.Run("status="+status, func(t *testing.T) {
+			tokenSrv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+				t.Error("no token may be fetched for a campaign owned by another ad account")
+			}))
+			defer tokenSrv.Close()
+			apiSrv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+				t.Error("Microsoft must not be mutated for a campaign owned by another ad account")
+			}))
+			defer apiSrv.Close()
+
+			// activeMicrosoftConn resolves to account 1234567; the row records 7654321.
+			d := NewMicrosoftDispatcher(
+				fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+				microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL),
+			)
+			camp := &model.Campaign{
+				Platform:           model.ProviderMicrosoftAds,
+				PlatformCampaignID: "321",
+				Result:             json.RawMessage(`{"accountId":"7654321","campaignId":"321","adGroupId":"654","adId":"987"}`),
+			}
+			err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, status)
+			if err == nil {
+				t.Fatal("expected a mismatch error")
+			}
+			if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+				t.Errorf("error must wrap ErrCampaignAccountMismatch (409), got %T: %v", err, err)
+			}
+			// Assert the VALUES: the message must name the account the campaign was created
+			// under and the one the connection resolves to today.
+			if !strings.Contains(err.Error(), "7654321") || !strings.Contains(err.Error(), "1234567") {
+				t.Errorf("error must name the created account (7654321) and the resolved one (1234567), got %v", err)
+			}
+		})
+	}
+}
+
+// TestMicrosoft_ToggleStatus_MatchingOrUnknownAccountStillToggles is the guard's other half:
+// a row recording the SAME account, and a legacy row recording none at all, must still toggle.
+// Absence means "unknown, proceed" — turning it into a refusal would strand every campaign
+// created before the account id was stamped into the result blob.
+func TestMicrosoft_ToggleStatus_MatchingOrUnknownAccountStillToggles(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result string
+	}{
+		{"matching accountId", `{"accountId":"1234567","campaignId":"321","adGroupId":"654","adId":"987"}`},
+		{"no provenance recorded", `{"campaignId":"321","adGroupId":"654","adId":"987"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var puts int
+			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+			}))
+			defer tokenSrv.Close()
+			apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPut {
+					mu.Lock()
+					puts++
+					mu.Unlock()
+				}
+				_, _ = io.WriteString(w, `{"PartialErrors":[]}`)
+			}))
+			defer apiSrv.Close()
+
+			d := NewMicrosoftDispatcher(
+				fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+				microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL),
+			)
+			camp := &model.Campaign{
+				Platform:           model.ProviderMicrosoftAds,
+				PlatformCampaignID: "321",
+				Result:             json.RawMessage(tc.result),
+			}
+			if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.CampaignRunPaused); err != nil {
+				t.Fatalf("this row does not prove a mismatch and must still toggle: %v", err)
+			}
+			mu.Lock()
+			got := puts
+			mu.Unlock()
+			if got == 0 {
+				t.Error("the toggle must reach Microsoft, not stop at the provenance guard")
+			}
+		})
 	}
 }

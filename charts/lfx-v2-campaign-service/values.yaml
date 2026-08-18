@@ -251,6 +251,20 @@ app:
     REDDIT_METRICS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to Microsoft Advertising metrics reads. Default off
+    # for the same reason as REDDIT_METRICS_ENABLED above: the v13 Reporting
+    # contract was implemented from Microsoft's published documentation and has
+    # NOT been exercised against a live Microsoft Advertising account, so a
+    # guessed request/response shape would return a 200 that looks authoritative.
+    # Microsoft's pipeline is also unlike every other platform's — an
+    # asynchronous submit/poll/download returning a zipped CSV — so there is more
+    # surface to be wrong about than a single JSON GET. Any value other than
+    # "true" is treated as off, so a typo fails closed.
+    # Flip to "true" only after the shape is verified against a live Microsoft
+    # ad account; at that point the gate is removed and this key goes away.
+    MICROSOFT_METRICS_ENABLED:
+      value: "false"
+
     # Comma-separated NETWORK-SPECIFIC RFC 6052 NAT64 prefixes for this cluster,
     # e.g. "2001:db8:64::/96". Empty is correct for a cluster with no NAT64, and is
     # the default because a wrong value is worse than none.
@@ -267,6 +281,31 @@ app:
     # PANICS at startup rather than decoding at the wrong offset for the pod's lifetime.
     EVENT_URL_NAT64_PREFIXES:
       value: ""
+
+    # How long a TERMINAL campaign job (succeeded, partial or failed) is kept before
+    # the retention sweeper deletes it. A Go duration string; "4320h" is 180 days.
+    #
+    # campaign_jobs is otherwise append-only — nothing else in the service ever deletes
+    # a row — so without this the table grows with every brief dispatch forever, and the
+    # stuck-job recovery sweep pays for that growth on every pass.
+    #
+    # Deliberately LONG, and deliberately explicit here rather than left to the code
+    # default, so the retention actually in force for a deployment is visible in the
+    # values file. These rows are the audit trail of real ad spend: a job records that a
+    # brief was dispatched, to which platforms, and what each one returned. Shorten it
+    # only against a stated retention requirement — the cost of keeping a row too long
+    # is disk, while the cost of deleting one too early is an unrecoverable gap in the
+    # spend record.
+    #
+    # Only TERMINAL jobs are ever eligible. A queued or running row is never deleted at
+    # any age: an old non-terminal row is a STUCK job, which is exactly the record an
+    # operator needs in order to investigate a dispatch that never finished.
+    #
+    # An unset, empty, unparseable ("30 days", "7d" — neither is a valid Go duration) or
+    # non-positive value falls back to the 180-day default rather than to a short window,
+    # so a typo here cannot cause early deletion.
+    CAMPAIGN_JOB_RETENTION:
+      value: "4320h"
 
     # AES-256-GCM key for encrypting ad-platform connection credentials at rest.
     # Required whenever a database URL is configured (PG* / DATABASE_URL), because

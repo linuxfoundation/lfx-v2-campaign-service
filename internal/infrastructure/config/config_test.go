@@ -4,11 +4,13 @@
 package config
 
 import (
+	"flag"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 	"github.com/stretchr/testify/assert"
@@ -604,4 +606,74 @@ func TestResolveDatabaseURL_IncompletePGVarsAreRefusedNotIgnored(t *testing.T) {
 	assert.Contains(t, err.Error(), "PGPASSWORD")
 	assert.Contains(t, err.Error(), "PGDATABASE")
 	assert.NotContains(t, err.Error(), "explicit", "the error must not echo the DSN")
+}
+
+// TestParseRetention pins that EVERY unusable input falls back to 0 ("use the long default"),
+// never to a short window.
+//
+// CAMPAIGN_JOB_RETENTION governs deletion of campaign_jobs rows, which are the audit trail of
+// real ad spend. The asymmetry matters: falling back keeps MORE history than asked for, which
+// is safe, while any reading of a malformed value as a short window silently destroys records.
+// "30 days" and "7d" are included because they are the plausible typos — neither is a valid Go
+// duration, and both would otherwise be tempting to coerce.
+func TestParseRetention(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want time.Duration
+	}{
+		{"unset", "", 0},
+		{"whitespace", "   ", 0},
+		{"unparseable words", "30 days", 0},
+		{"unparseable shorthand", "7d", 0},
+		{"garbage", "forever", 0},
+		{"zero", "0h", 0},
+		{"negative", "-24h", 0},
+		{"valid hours", "4320h", 4320 * time.Hour},
+		{"valid compound", "1h30m", 90 * time.Minute},
+		{"surrounding whitespace is trimmed", "  720h  ", 720 * time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, parseRetention(tc.in),
+				"a value this service cannot use must fall back to the long default, never to a short window")
+		})
+	}
+}
+
+// TestLoadCampaignJobRetentionFromEnv pins the wiring from the environment variable to the
+// Config field, so a rename or a dropped assignment cannot leave the setting silently inert.
+//
+// It calls LoadConfig, which is the whole point: an earlier version of this test asserted
+// parseRetention(os.Getenv(...)) directly, which re-implements the line under test instead of
+// running it. Deleting the CampaignJobRetention assignment from LoadConfig left that version
+// green — the operator's window would reach nothing, and the feature would be inert with a
+// passing wiring test. Only reading the field off the value LoadConfig returns can catch that.
+func TestLoadCampaignJobRetentionFromEnv(t *testing.T) {
+	// LoadConfig registers its flags on the global flag.CommandLine and calls flag.Parse, so a
+	// second call would panic with "flag redefined" and the first would try to parse the test
+	// binary's own arguments. Both are replaced for the duration of this test and restored
+	// after, which is what makes calling the real function from a test viable at all.
+	loadConfig := func() *Config {
+		t.Helper()
+		orig := flag.CommandLine
+		origArgs := os.Args
+		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+		os.Args = []string{origArgs[0]}
+		defer func() { flag.CommandLine, os.Args = orig, origArgs }()
+		return LoadConfig()
+	}
+
+	t.Setenv(constants.EnvCampaignJobRetention, "720h")
+	assert.Equal(t, 720*time.Hour, loadConfig().CampaignJobRetention,
+		"CAMPAIGN_JOB_RETENTION must reach Config.CampaignJobRetention through LoadConfig itself")
+
+	// The name is part of the contract: the chart and the docs both spell it out, so a rename
+	// here is a silent break for every deployment that sets it.
+	assert.Equal(t, "CAMPAIGN_JOB_RETENTION", constants.EnvCampaignJobRetention)
+
+	// The fallback arm, also through LoadConfig: an unusable value must leave the field at 0
+	// ("use the long repository default"), never at a short window.
+	t.Setenv(constants.EnvCampaignJobRetention, "30 days")
+	assert.Equal(t, time.Duration(0), loadConfig().CampaignJobRetention,
+		"an unparseable window must fall back to the repository default, never to a short window")
 }

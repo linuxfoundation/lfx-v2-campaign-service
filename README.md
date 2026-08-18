@@ -188,6 +188,51 @@ openssl rand -base64 32
   sets it to `"false"`
   (`charts/lfx-v2-campaign-service/values.yaml`); flip it only after
   the contract is verified against a live Reddit ad account.
+- `CAMPAIGN_JOB_RETENTION` (default `4320h`, i.e. 180 days) — how long a
+  **terminal** campaign job (`succeeded`, `partial`, `failed`) is kept
+  before the retention sweeper deletes it. A Go duration string.
+
+  `campaign_jobs` is otherwise append-only: nothing else in the service
+  deletes a row, so without the sweeper the table grows with every brief
+  dispatch forever, and the stuck-job recovery sweep pays for that
+  growth on every pass. One bounded, ordered batch is deleted per pass
+  (see `JobRepo.PruneTerminalJobs`), so a large backlog drains over
+  several passes rather than in one long transaction. Every replica runs
+  it without leader election, exactly as the stuck-job sweeper does —
+  overlapping passes are harmless because the delete is bounded and
+  idempotent.
+
+  Only **terminal** jobs are ever eligible, enumerated as an allow-list
+  rather than as "not queued/running". A queued or running row is never
+  deleted at any age: an old non-terminal row is a **stuck job**, which
+  is precisely the record needed to investigate a dispatch that never
+  finished. (The recovery sweeper fails those out after 15m, at which
+  point they become terminal and their retention window starts from that
+  transition.) Age is measured on `updated_at` — when the job reached
+  its terminal state — so a job created months ago but completed
+  yesterday counts as recent history.
+
+  The default is deliberately long because these rows are the audit
+  trail of real ad spend. Unset, empty, unparseable (`30 days` and `7d`
+  are **not** valid Go durations) and non-positive values all fall back
+  to the 180-day default rather than to a short window, so a typo cannot
+  cause early deletion — the rejected value is logged at startup.
+
+- `MICROSOFT_METRICS_ENABLED` (default unset, i.e. OFF) — opts a
+  deployment IN to Microsoft Advertising (Bing Ads) metrics reads.
+  Only the exact value `true` enables them; unset or any other value
+  (including `TRUE` or a typo) fails closed, and
+  `GET .../campaigns/{campaign_id}/metrics` answers 400 "not
+  supported for this campaign's platform" for a Microsoft campaign.
+  Off by default because the v13 Reporting contract was implemented
+  from Microsoft's published documentation and has NOT been exercised
+  against a live Microsoft Advertising account. Microsoft's pipeline
+  is also unlike every other platform's — an asynchronous
+  submit/poll/download returning a zipped CSV rather than one JSON
+  GET — so there is more surface to be wrong about. The chart sets it
+  to `"false"` (`charts/lfx-v2-campaign-service/values.yaml`); flip it
+  only after the contract is verified against a live Microsoft ad
+  account.
 
 ### Snowflake (optional, audience building)
 

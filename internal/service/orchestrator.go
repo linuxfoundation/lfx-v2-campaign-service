@@ -401,6 +401,13 @@ type Orchestrator struct {
 	sweeperCtx    context.Context
 	sweeperCancel context.CancelFunc
 	sweeperOnce   sync.Once
+	// jobRetention is how long a TERMINAL job is kept before the retention sweeper
+	// prunes it. Zero means "use the repository default" (see
+	// postgres.DefaultJobRetention) — SetJobRetention installs any POSITIVE window,
+	// including one shorter (so more deleting) than the default, and refuses only
+	// non-positive values, which are what an unset or unparseable
+	// CAMPAIGN_JOB_RETENTION produces.
+	jobRetention time.Duration
 	// sem is a process-wide semaphore bounding concurrent provider dispatches
 	// across ALL jobs (a per-job errgroup limit would let N concurrent jobs each
 	// get maxParallelDispatch slots, leaving total provider calls unbounded).
@@ -606,6 +613,91 @@ func (o *Orchestrator) StartRecoverySweeper() {
 					}
 				} else if n > 0 {
 					slog.InfoContext(o.sweeperCtx, "periodic stuck-job sweep recovered jobs", "count", n)
+				}
+			}
+		}
+	}()
+}
+
+// jobRetentionSweepInterval is how often the retention sweeper prunes terminal job history.
+//
+// Hourly, not every few seconds like the outbox relay. Retention is measured in months, so the
+// only thing a faster cadence buys is a smaller per-pass batch; what it costs is a repeated
+// scan on every replica for rows that, in the steady state, are not there. An hour keeps the
+// table bounded on a timescale that matters for disk while leaving the prune invisible next to
+// the dispatch workload.
+const jobRetentionSweepInterval = time.Hour
+
+// jobRetentionPassTimeout bounds one prune so a slow database cannot wedge the goroutine.
+// Larger than jobFinalizeTimeout because this statement may delete a full batch under a
+// first-run backlog, and it is not on any request path.
+const jobRetentionPassTimeout = 30 * time.Second
+
+// SetJobRetention installs the operator-configured retention window for TERMINAL jobs.
+//
+// A non-positive duration leaves the repository default in place. A window SHORTER than
+// postgres.DefaultJobRetention is accepted — operators legitimately want a shorter one — but
+// zero or negative is treated as "unset" rather than "retain nothing", because that is exactly
+// what a missing or unparseable environment variable produces, and reading it as "delete
+// everything" would destroy the spend record on a config typo.
+//
+// Call before StartJobRetentionSweeper; the sweeper reads the field once per pass under no
+// lock, so it must be set during construction rather than concurrently with a running sweeper.
+func (o *Orchestrator) SetJobRetention(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	o.jobRetention = d
+}
+
+// StartJobRetentionSweeper launches a background goroutine that periodically deletes TERMINAL
+// campaign_jobs rows past the retention window, bounding a table that is otherwise append-only
+// and grows with every brief dispatch forever.
+//
+// Deliberately mirrors StartRecoverySweeper's lifetime handling rather than inventing its own:
+// tracked by wg so Shutdown waits for it before the pool closes, but owned by sweeperCtx, which
+// Shutdown cancels FIRST — so a prune already blocked in the database is interrupted promptly
+// and its shutdown never competes with the dispatch-drain budget. Call once after construction.
+//
+// Runs on every replica with no leader election, exactly as the recovery sweeper does. Two pods
+// pruning at once is harmless: the DELETE is bounded and idempotent, so the second simply finds
+// fewer rows.
+func (o *Orchestrator) StartJobRetentionSweeper() {
+	o.StartJobRetentionSweeperWithInterval(jobRetentionSweepInterval)
+}
+
+// StartJobRetentionSweeperWithInterval is StartJobRetentionSweeper with the tick injected.
+//
+// It exists so a test can drive the sweeper LOOP rather than calling PruneTerminalJobs
+// directly: a mis-wired ticker or a select arm returning on the wrong channel would pass
+// every direct-call test while pruning nothing in production. Callers outside tests should
+// use StartJobRetentionSweeper so the interval stays a single constant.
+func (o *Orchestrator) StartJobRetentionSweeperWithInterval(interval time.Duration) {
+	o.wg.Add(1)
+	go func() {
+		defer o.wg.Done()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-o.sweeperCtx.Done():
+				return
+			case <-ticker.C:
+				// Derived from sweeperCtx (NOT detached) so cancelling it at Shutdown
+				// aborts a prune already blocked mid-statement rather than letting it run
+				// to its own timeout against a closing pool.
+				sctx, cancel := context.WithTimeout(o.sweeperCtx, jobRetentionPassTimeout)
+				n, err := o.jobs.PruneTerminalJobs(sctx, o.jobRetention, 0)
+				cancel()
+				if err != nil {
+					// A cancellation here is the expected outcome when Shutdown interrupts
+					// an in-flight prune, not a real failure. A prune failure otherwise
+					// costs disk, never correctness — log it and wait for the next tick.
+					if o.sweeperCtx.Err() == nil {
+						slog.ErrorContext(o.sweeperCtx, "terminal job retention sweep failed", "error", err)
+					}
+				} else if n > 0 {
+					slog.InfoContext(o.sweeperCtx, "terminal job retention sweep pruned jobs", "count", n)
 				}
 			}
 		}
