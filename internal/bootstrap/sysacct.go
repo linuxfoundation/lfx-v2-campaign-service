@@ -232,7 +232,12 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // The distinction is not cosmetic. The remaining adapters refuse an empty account id outright —
 // internal/dispatch/{linkedin,reddit,twitter,microsoft}.go each guard on it — so an
 // account-less system row for one of them is installable, reports success, and then fails
-// every dispatch with no path to completion. That is exactly the failure requiredConfigKeys
+// every dispatch. What differs is whether the operator can RECOVER. Reddit and X have no
+// discovery endpoint, so an account-less row is unrecoverable from inside this API. LinkedIn
+// does have one — call discovery, rerun bootstrap with the chosen id — so its row is
+// recoverable; what it lacks is DIAGNOSIS, because the create failure names nothing, leaving
+// the operator with no reason to go looking. Microsoft is excluded by neither: it has both
+// halves and its absence is sequencing alone (see the current state below). That is exactly the failure requiredConfigKeys
 // above exists to prevent, applied to the one column that is not part of ProviderConfig.
 //
 // **Membership is NOT "the dispatcher implements the service-side AccountLister".** (The
@@ -258,6 +263,29 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // the Google Ads case, and someone weighing the next provider should weigh the real one.
 //
 // The bar for adding a provider here is those two halves together, not either alone.
+//
+// CURRENT STATE after LFXV2-3064, which added the LinkedIn and Microsoft discovery endpoints —
+// the four excluded providers are no longer excluded for the same reason, and the difference is
+// what tells you how far each is from qualifying:
+//
+//   - Reddit and X lack the FIRST half. Neither platform client has a ListAdAccounts, so no
+//     discovery endpoint exists and nothing inside this API could tell an operator what to put
+//     in the account id.
+//   - LinkedIn has discovery but lacks the SECOND. resolveLinkedInCredentials tags
+//     ErrAccountNotSelected, but LinkedInDispatcher.Dispatch does not call it — it validates
+//     inline and answers an empty account id with a bare notCreated, so the create path names
+//     nothing. Routing Dispatch through the shared resolver is what would earn it a place.
+//   - Microsoft has BOTH halves. validateMicrosoftConnection is called by Dispatch itself and
+//     tags the missing choice, and discovery landed with this ticket. Its absence from this map
+//     is therefore a SEQUENCING decision, not a missing capability — adding it changes what this
+//     CLI accepts and belongs in its own commit rather than riding along with the endpoints.
+//     Note this map is a DIFFERENT gate from design/connection.go's Required("account_id"),
+//     which governs the public connection APIs; a provider can be eligible for one and not yet
+//     admitted to the other, which is exactly Microsoft's position.
+//
+// Stating which half is missing matters because the halves are earned separately, and an
+// enumeration of members goes stale silently — this comment described a Google/Meta-only world
+// for two tickets after that stopped being true.
 var accountDiscoveryProviders = map[model.Provider]bool{
 	model.ProviderGoogleAds: true,
 	model.ProviderMetaAds:   true,

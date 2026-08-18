@@ -91,7 +91,19 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
 		return nil, notCreated(fmt.Errorf("decode linkedin credentials: %w", err))
 	}
-	if strings.TrimSpace(creds.AccessToken) == "" {
+	// ASSIGN the trimmed token, do not merely test it. resolveLinkedInCredentials — which the
+	// discovery and toggle paths share — writes the trimmed value back, so testing it here while
+	// sending the raw one makes the two paths disagree about the SAME stored credential: a
+	// whitespace-padded token passes this check, lists accounts successfully through discovery,
+	// and is then sent padded from here for LinkedIn to reject. That is the misleading-discovery
+	// state the shared resolver exists to prevent, reintroduced by testing a value instead of
+	// adopting it. (The padding is refused at bootstrap install time, so this is defence in
+	// depth. The bootstrap installer refuses padded values, but that is NOT the only writer: the
+	// public create-connection and set-credential APIs reach `credentialJSON`, which marshals and
+	// encrypts without trimming, so a padded token is persistable through supported input today.
+	// An earlier version of this comment called the path unreachable; it is not.)
+	creds.AccessToken = strings.TrimSpace(creds.AccessToken)
+	if creds.AccessToken == "" {
 		return nil, notCreated(fmt.Errorf("linkedin credentials are incomplete (need accessToken)"))
 	}
 
@@ -299,10 +311,149 @@ func (d *LinkedInDispatcher) resolveLinkedInCredentials(ctx context.Context, pro
 		// constructed with a RuntimeConfig naming the account, so an empty one cannot reach
 		// the platform at all. Tagged so the reason token names the missing CHOICE rather
 		// than surfacing as an unclassified failure with no path to completion.
-		return nil, linkedinCreds{}, fmt.Errorf("%w: %w: linkedin connection for project %s has no account id",
+		// creds is returned ALONGSIDE the error, not discarded. By this point the credential
+		// has passed every other check, and the discovery path needs exactly that: a valid
+		// token on a connection that has chosen no account. Returning it lets discovery
+		// reuse this one validation instead of re-decrypting and re-validating, which is
+		// what would let the two paths drift. Every dispatch caller checks err first and so
+		// cannot observe the value.
+		return res, creds, fmt.Errorf("%w: %w: linkedin connection for project %s has no account id",
 			domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected, projectID)
 	}
 	return res, creds, nil
+}
+
+// resolveLinkedInDiscoveryCredentials is resolveLinkedInCredentials WITHOUT the account-id
+// requirement, and that omission is the entire point.
+//
+// Account discovery exists to answer "which ad account should this connection use?", so
+// demanding one would make the endpoint reachable only by connections that no longer need
+// it — the account-less connection it is meant to rescue is exactly the one it would refuse.
+// Meta's discovery path draws the same distinction for the same reason; see
+// resolveMetaDiscoveryClient.
+//
+// Every OTHER check is shared with the TOGGLE and METRICS paths by calling through to
+// resolveLinkedInCredentials and treating only the account-not-selected outcome as acceptable.
+// Duplicating the status/decode/token validation instead would let those drift, so a credential
+// rejected at toggle could be accepted here — the failure mode that makes a discovery endpoint
+// actively misleading rather than merely permissive.
+//
+// NOT shared with Dispatch, and the distinction is worth stating precisely because an earlier
+// version of this comment claimed it was. Dispatch calls d.creds.resolve directly and validates
+// inline (see its own block above), so the two CAN drift — and did: Dispatch was sending an
+// untrimmed access token while this resolver trimmed it, which is why a padded credential listed
+// accounts here and failed on create. That is fixed, but by a regression test rather than by
+// shared code, so the invariant this comment may claim is the narrower one.
+func (d *LinkedInDispatcher) resolveLinkedInDiscoveryCredentials(ctx context.Context, projectID string, platform model.Provider) (linkedinCreds, error) {
+	_, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform)
+	switch {
+	case err == nil:
+		return creds, nil
+	case errors.Is(err, domain.ErrAccountNotSelected):
+		// The one error this endpoint exists to serve: everything about the connection is
+		// valid except the choice this call is meant to inform. The resolver returns the
+		// validated credential alongside that error precisely so discovery can proceed
+		// without re-decrypting or re-validating anything.
+		return creds, nil
+	default:
+		// Any other failure is a real defect in the connection and must propagate with its
+		// sentinel intact, so the endpoint's 400-vs-503 mapping stays pinned to the same
+		// sentinels the dispatch path answers with.
+		return linkedinCreds{}, err
+	}
+}
+
+// ListAccounts discovers the ad accounts reachable via the project's stored, encrypted
+// LinkedIn connection credential, returning the bare numeric account id the connection's
+// account_id takes verbatim, plus a display label.
+//
+// It satisfies the service-side AccountLister interface, which Orchestrator.ReadAccounts
+// type-asserts on the dispatcher for the requested platform. It deliberately does NOT
+// require an account id to be selected — see resolveLinkedInDiscoveryCredentials.
+func (d *LinkedInDispatcher) ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error) {
+	creds, err := d.resolveLinkedInDiscoveryCredentials(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	// RuntimeConfig is left ZERO: the accounts finder asks what the TOKEN reaches, so
+	// scoping the client to one of the answers would narrow the response to a subset of
+	// the question. Same rationale as meta's zero AccountConfig.
+	client := linkedin.NewClient(linkedin.Credentials{AccessToken: creds.AccessToken}, linkedin.RuntimeConfig{}, d.opts...)
+	adAccounts, lerr := client.ListAdAccounts(ctx)
+	if lerr != nil {
+		return nil, lerr
+	}
+	// make(..., 0, n), never nil: a token that legitimately reaches zero ad accounts is an
+	// empty ANSWER, not an error, and Orchestrator.ReadAccounts rejects a nil result as a
+	// contract violation precisely so empty keeps its meaning.
+	accounts := make([]model.AccessibleAccount, 0, len(adAccounts))
+	for _, a := range adAccounts {
+		accounts = append(accounts, model.AccessibleAccount{ID: a.ID, Label: linkedInAccountLabel(a)})
+	}
+	return accounts, nil
+}
+
+// linkedInAccountLabel builds the string a picker shows for one ad account.
+//
+// It never returns "" for an account carrying any identifying information: an account with
+// no name falls back to its id, because a blank row in a picker is unpickable and the id is
+// what actually gets stored.
+//
+// Everything that decides whether the account can actually be USED is rendered, because a
+// lifecycle status alone does not answer it. LinkedIn reports three independent things and
+// the client carries a purpose-built rendering for each:
+//
+//   - StatusLabel() — a KNOWN-BAD lifecycle status, "" for ACTIVE/absent/unrecognized. An
+//     empty label is not a claim the account is fine, only that this package has nothing to
+//     say, so it is never rendered as reassurance.
+//   - ServingHolds() — why an otherwise-ACTIVE account cannot serve. An account can be
+//     ACTIVE and on BILLING_HOLD simultaneously; showing only the status would present it
+//     as normal.
+//   - Test — LinkedIn's immutable test-account flag. Test accounts never serve, never bill,
+//     and auto-reject creatives, so a real campaign bound to one silently does nothing.
+//     Surfaced rather than filtered: someone wiring up an integration is looking for
+//     exactly this account.
+//
+// Currency rides along because budgets and bids are denominated in it and this client does
+// no FX conversion — a picker offering a USD and a JPY account with the same number beside
+// them is offering two very different things.
+func linkedInAccountLabel(a linkedin.AdAccount) string {
+	name := strings.TrimSpace(a.Name)
+	if name == "" {
+		name = a.ID
+	}
+	if c := strings.TrimSpace(a.Currency); c != "" {
+		name += " [" + c + "]"
+	}
+
+	var notes []string
+	if s := a.StatusLabel(); s != "" {
+		notes = append(notes, s)
+	}
+	if a.Test {
+		notes = append(notes, "TEST account — never serves")
+	}
+	notes = append(notes, a.ServingHolds()...)
+	// Lifecycle and serving are INDEPENDENT, and only the first is a deny-list. StatusLabel()
+	// returns "" for ACTIVE, absent AND unrecognized alike, so a silent status cannot be read
+	// as a healthy one: an account whose lifecycle this package cannot vouch for still reports
+	// servingStatuses ["RUNNABLE"], and would otherwise render EXACTLY like a good account —
+	// the one answer a picker must never give, because the operator's next act is to bind a
+	// paid campaign to it. Active() is what distinguishes "ACTIVE" from "not confirmed", so
+	// qualify on it rather than on StatusLabel()'s emptiness.
+	if !a.Active() && a.StatusLabel() == "" {
+		notes = append(notes, "account status could not be confirmed")
+	}
+	// Servable() is an ALLOW-list: an absent or unrecognized servingStatuses is not evidence
+	// the account can spend. Say so only when nothing above already explains it, so an
+	// unrecognized hold is still visible rather than silently reading as fine.
+	if len(notes) == 0 && !a.Servable() {
+		notes = append(notes, "cannot currently serve")
+	}
+	if len(notes) > 0 {
+		return name + " — " + strings.Join(notes, ", ")
+	}
+	return name
 }
 
 // ReadMetrics returns live campaign metrics from LinkedIn's Ad Analytics API for the

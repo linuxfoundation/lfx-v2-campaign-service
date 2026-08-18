@@ -59,12 +59,14 @@ type Client struct {
 	SetCredentialHubspotEndpoint      goa.Endpoint
 	ListGoogleAdsAccountsEndpoint     goa.Endpoint
 	ListMetaAdsAccountsEndpoint       goa.Endpoint
+	ListLinkedinAdsAccountsEndpoint   goa.Endpoint
+	ListMicrosoftAdsAccountsEndpoint  goa.Endpoint
 	ListHubspotEmailsEndpoint         goa.Endpoint
 }
 
 // NewClient initializes a "lfx-v2-campaign-service-connections" service client
 // given the endpoints.
-func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds, createLinkedinAds, getLinkedinAds, updateLinkedinAds, deleteLinkedinAds, testLinkedinAds, setCredentialLinkedinAds, createMetaAds, getMetaAds, updateMetaAds, deleteMetaAds, testMetaAds, setCredentialMetaAds, createRedditAds, getRedditAds, updateRedditAds, deleteRedditAds, testRedditAds, setCredentialRedditAds, createTwitterAds, getTwitterAds, updateTwitterAds, deleteTwitterAds, testTwitterAds, setCredentialTwitterAds, createMicrosoftAds, getMicrosoftAds, updateMicrosoftAds, deleteMicrosoftAds, testMicrosoftAds, setCredentialMicrosoftAds, createHubspot, getHubspot, updateHubspot, deleteHubspot, testHubspot, setCredentialHubspot, listGoogleAdsAccounts, listMetaAdsAccounts, listHubspotEmails goa.Endpoint) *Client {
+func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds, createLinkedinAds, getLinkedinAds, updateLinkedinAds, deleteLinkedinAds, testLinkedinAds, setCredentialLinkedinAds, createMetaAds, getMetaAds, updateMetaAds, deleteMetaAds, testMetaAds, setCredentialMetaAds, createRedditAds, getRedditAds, updateRedditAds, deleteRedditAds, testRedditAds, setCredentialRedditAds, createTwitterAds, getTwitterAds, updateTwitterAds, deleteTwitterAds, testTwitterAds, setCredentialTwitterAds, createMicrosoftAds, getMicrosoftAds, updateMicrosoftAds, deleteMicrosoftAds, testMicrosoftAds, setCredentialMicrosoftAds, createHubspot, getHubspot, updateHubspot, deleteHubspot, testHubspot, setCredentialHubspot, listGoogleAdsAccounts, listMetaAdsAccounts, listLinkedinAdsAccounts, listMicrosoftAdsAccounts, listHubspotEmails goa.Endpoint) *Client {
 	return &Client{
 		CreateGoogleAdsEndpoint:           createGoogleAds,
 		GetGoogleAdsEndpoint:              getGoogleAds,
@@ -110,6 +112,8 @@ func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, 
 		SetCredentialHubspotEndpoint:      setCredentialHubspot,
 		ListGoogleAdsAccountsEndpoint:     listGoogleAdsAccounts,
 		ListMetaAdsAccountsEndpoint:       listMetaAdsAccounts,
+		ListLinkedinAdsAccountsEndpoint:   listLinkedinAdsAccounts,
+		ListMicrosoftAdsAccountsEndpoint:  listMicrosoftAdsAccounts,
 		ListHubspotEmailsEndpoint:         listHubspotEmails,
 	}
 }
@@ -818,6 +822,40 @@ func (c *Client) ListMetaAdsAccounts(ctx context.Context, p *ListMetaAdsAccounts
 		return
 	}
 	return ires.(*ListMetaAdsAccountsResult), nil
+}
+
+// ListLinkedinAdsAccounts calls the "list-linkedin-ads-accounts" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+// ListLinkedinAdsAccounts may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) ListLinkedinAdsAccounts(ctx context.Context, p *ListLinkedinAdsAccountsPayload) (res *ListLinkedinAdsAccountsResult, err error) {
+	var ires any
+	ires, err = c.ListLinkedinAdsAccountsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ListLinkedinAdsAccountsResult), nil
+}
+
+// ListMicrosoftAdsAccounts calls the "list-microsoft-ads-accounts" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+// ListMicrosoftAdsAccounts may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) ListMicrosoftAdsAccounts(ctx context.Context, p *ListMicrosoftAdsAccountsPayload) (res *ListMicrosoftAdsAccountsResult, err error) {
+	var ires any
+	ires, err = c.ListMicrosoftAdsAccountsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ListMicrosoftAdsAccountsResult), nil
 }
 
 // ListHubspotEmails calls the "list-hubspot-emails" endpoint of the

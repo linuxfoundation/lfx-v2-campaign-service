@@ -194,6 +194,14 @@ type Client struct {
 	// list-meta-ads-accounts endpoint.
 	ListMetaAdsAccountsDoer goahttp.Doer
 
+	// ListLinkedinAdsAccounts Doer is the HTTP client used to make requests to the
+	// list-linkedin-ads-accounts endpoint.
+	ListLinkedinAdsAccountsDoer goahttp.Doer
+
+	// ListMicrosoftAdsAccounts Doer is the HTTP client used to make requests to
+	// the list-microsoft-ads-accounts endpoint.
+	ListMicrosoftAdsAccountsDoer goahttp.Doer
+
 	// ListHubspotEmails Doer is the HTTP client used to make requests to the
 	// list-hubspot-emails endpoint.
 	ListHubspotEmailsDoer goahttp.Doer
@@ -263,6 +271,8 @@ func NewClient(
 		SetCredentialHubspotDoer:      doer,
 		ListGoogleAdsAccountsDoer:     doer,
 		ListMetaAdsAccountsDoer:       doer,
+		ListLinkedinAdsAccountsDoer:   doer,
+		ListMicrosoftAdsAccountsDoer:  doer,
 		ListHubspotEmailsDoer:         doer,
 		RestoreResponseBody:           restoreBody,
 		scheme:                        scheme,
@@ -1326,6 +1336,56 @@ func (c *Client) ListMetaAdsAccounts() goa.Endpoint {
 		resp, err := c.ListMetaAdsAccountsDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-meta-ads-accounts", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ListLinkedinAdsAccounts returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service list-linkedin-ads-accounts
+// server.
+func (c *Client) ListLinkedinAdsAccounts() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeListLinkedinAdsAccountsRequest(c.encoder)
+		decodeResponse = DecodeListLinkedinAdsAccountsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildListLinkedinAdsAccountsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ListLinkedinAdsAccountsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-linkedin-ads-accounts", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ListMicrosoftAdsAccounts returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service list-microsoft-ads-accounts
+// server.
+func (c *Client) ListMicrosoftAdsAccounts() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeListMicrosoftAdsAccountsRequest(c.encoder)
+		decodeResponse = DecodeListMicrosoftAdsAccountsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildListMicrosoftAdsAccountsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ListMicrosoftAdsAccountsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-microsoft-ads-accounts", err)
 		}
 		return decodeResponse(resp)
 	}

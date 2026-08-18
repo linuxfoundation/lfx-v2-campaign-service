@@ -840,6 +840,75 @@ func TestLinkedIn_AccessTokenIsTrimmedOnceInTheHelper(t *testing.T) {
 	}
 }
 
+// Dispatch must ADOPT the trimmed token, not merely test it — and this is the case the helper
+// test above cannot reach, because Dispatch does not go through resolveLinkedInCredentials; it
+// decodes inline. An earlier revision only tested TrimSpace(token) == "" and then sent the raw
+// value, so a padded stored credential listed accounts successfully through discovery (which
+// shares the helper) and was rejected upstream on create: the same connection working on one
+// path and failing on the other, which is the misleading-discovery state the helper exists to
+// prevent.
+//
+// Asserted on the WIRE. An earlier version of this test only checked that Dispatch did not
+// reject the padded token as incomplete, which was true BEFORE the fix as well — it passed
+// against the defect and proved nothing. The Authorization header is the only observable that
+// distinguishes adopting the trim from testing it.
+func TestLinkedIn_DispatchAdoptsTheTrimmedAccessToken(t *testing.T) {
+	// The handler runs on its own goroutine, so the capture is guarded — an unsynchronized
+	// capture is a data race under -race even though the read happens after Dispatch returns.
+	var mu sync.Mutex
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		if gotAuth == "" {
+			gotAuth = r.Header.Get("Authorization")
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
+			return
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			w.Header().Set("x-restli-id", "urn:li:sponsoredCampaign:200")
+			_, _ = io.WriteString(w, `{}`)
+		case strings.Contains(r.URL.Path, "posts"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:400"}`)
+		default:
+			http.Error(w, "unexpected path "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	clock := func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: activeLinkedInConn(`{"AccessToken":"  padded-token  ","clientId":"c","clientSecret":"s"}`)},
+		identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(clock),
+	)
+	cfg := json.RawMessage(`{"linkedInConfig":{
+		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
+		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
+		"targetingProfile":"cloud-native",
+		"targetingProfiles":[{"id":"cloud-native","label":"Cloud Native","skills":["urn:li:skill:1"],"groups":["urn:li:group:100"]}],
+		"variants":[{"introText":"Join us — it's great and long enough","headline":"KubeCon 2099"}]
+	}}`)
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	mu.Lock()
+	auth := gotAuth
+	mu.Unlock()
+
+	if auth != "Bearer padded-token" {
+		t.Errorf("Authorization = %q, want %q — Dispatch sent the RAW token, so a padded stored credential fails upstream while discovery succeeds", auth, "Bearer padded-token")
+	}
+}
+
 func TestLinkedIn_UnusableReasonsAreClassified(t *testing.T) {
 	cases := []struct {
 		name string

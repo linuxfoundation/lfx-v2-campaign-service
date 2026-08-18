@@ -304,12 +304,14 @@ that cannot serve is exactly what the sentinel exists to prevent.
 
 ## Account discovery
 
-`ConnectionService.ListGoogleAdsAccounts` (backing `GET .../connection-google-ads/accounts`)
-and `ListMetaAdsAccounts` (`GET .../connection-meta-ads/accounts`) enumerate the ad accounts
-reachable UPSTREAM with the connection's stored credential, so an operator can pick one instead
-of pasting an account id by hand.
+`ConnectionService.ListGoogleAdsAccounts`, `ListMetaAdsAccounts`, `ListLinkedinAdsAccounts` and
+`ListMicrosoftAdsAccounts` (backing `GET .../connection-{google-ads,meta-ads,linkedin-ads,microsoft-ads}/accounts`)
+enumerate the ad accounts reachable UPSTREAM with the connection's stored credential, so an
+operator can pick one instead of pasting an account id by hand. LinkedIn and Microsoft joined in
+LFXV2-3064; Reddit and X have no handler because their clients expose no `ListAdAccounts`, so
+there is nothing for one to call.
 
-**Both handlers are three lines over one `listAccounts` helper**, parameterized by an
+**Every handler is three lines over one `listAccounts` helper**, parameterized by an
 `accountDiscovery{provider, displayName, notUsableRemedy}` value. The mapping below encodes
 several judgements that are individually easy to get wrong — 404 rather than 503 for a missing
 connection, a 500 that logs but never echoes a decryption failure, a 400 rather than 503 for a
@@ -448,12 +450,17 @@ reaches operators here through the log. A client must treat an absent `reason` a
 conflict"; see `mapAudienceErr` in `internal/service/audience.go` for the populated case.
 
 **The message names no accounts endpoint**, and that constraint is load-bearing rather than
-stylistic. Only Google Ads and Meta have one (`design/connection.go`, `list-google-ads-accounts`
-and `list-meta-ads-accounts`), and since Reddit, X/Twitter and Microsoft Ads tag this defect too
-they reach the same arm — a
-message pointing them at `.../accounts` would prescribe a route that 404s, which reads as a
-service bug rather than a value the caller has to supply. "Save an ad account id on the
-connection" is true of every provider. `assertNoAccountsEndpointPromised` pins it.
+stylistic. FOUR providers now have one — Google Ads, Meta, LinkedIn and Microsoft Ads
+(`design/connection.go`) — but Reddit and X/Twitter still do not, and they tag this defect too,
+so they reach the same arm. A message pointing them at `.../accounts` would prescribe a route
+that 404s, which reads as a service bug rather than a value the caller has to supply. "Save an ad
+account id on the connection" is true of every provider, which is why the shared message says
+that and nothing more. `assertNoAccountsEndpointPromised` pins it.
+
+Note the earlier wording claimed Microsoft's `/accounts` would 404. That was true before
+LFXV2-3064 and false after it — the constraint survives on Reddit and X alone, and stating it in
+terms of a provider that has since gained the route is how a correct rule ends up cited as
+evidence for a wrong fact.
 
 Two DIFFERENT guards protect the empty-vs-nil distinction, and they fail in opposite directions —
 document them separately so a future change preserves each for its own reason:
@@ -497,8 +504,9 @@ The STATUS MAPPING is shared with discovery. `classifyDiscoveryError` was lifted
 between the two; only the operation noun differs. One arm is not shared: a dispatcher with no
 `EmailSearcher` yields `ErrEmailSearchUnsupported`, a separate sentinel from
 `ErrAccountsUnsupported` because the capabilities are independent — HubSpot searches emails and
-has no ad accounts, while Google Ads and Meta are the reverse (they are the only `AccountLister`
-implementors; the remaining ad platforms implement neither). Folding them into one sentinel would
+has no ad accounts, while the ad platforms that implement `AccountLister` are the reverse
+(Google Ads, Meta, LinkedIn and Microsoft as of LFXV2-3064; Reddit and X implement neither,
+having no `ListAdAccounts` in their clients). Folding them into one sentinel would
 make "this platform cannot do X" ambiguous about which X.
 
 An omitted `q` lists rather than fails, because the first screen of a picker nobody has typed into

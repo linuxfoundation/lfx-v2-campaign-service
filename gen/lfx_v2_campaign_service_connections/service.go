@@ -139,6 +139,16 @@ type Service interface {
 	// closed are included with the reason in their label rather than filtered out,
 	// so the caller can see why an account they expected cannot be used.
 	ListMetaAdsAccounts(context.Context, *ListMetaAdsAccountsPayload) (res *ListMetaAdsAccountsResult, err error)
+	// Enumerate the LinkedIn ad accounts accessible via the stored connection
+	// credential. Returns bare numeric account ids, ready to store as the
+	// connection's account_id.
+	ListLinkedinAdsAccounts(context.Context, *ListLinkedinAdsAccountsPayload) (res *ListLinkedinAdsAccountsResult, err error)
+	// Enumerate the Microsoft Advertising accounts accessible via the stored
+	// connection credential, across every customer the credential can reach.
+	// Returns account ids as digits, ready to store as the connection's
+	// account_id; the label carries Microsoft's human-facing account number, which
+	// is what its own UI shows.
+	ListMicrosoftAdsAccounts(context.Context, *ListMicrosoftAdsAccountsPayload) (res *ListMicrosoftAdsAccountsResult, err error)
 	// Search the marketing emails reachable via the stored HubSpot connection,
 	// most-recently-updated first. This is a TEMPLATE picker, not an account
 	// picker: a HubSpot connection is already scoped to the portal its private-app
@@ -168,7 +178,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [45]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "list-meta-ads-accounts", "list-hubspot-emails"}
+var MethodNames = [47]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-hubspot-emails"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's own namespace, ready to store as the
@@ -565,6 +575,23 @@ type ListHubspotEmailsResult struct {
 	Emails []*MarketingEmail
 }
 
+// ListLinkedinAdsAccountsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service list-linkedin-ads-accounts
+// method.
+type ListLinkedinAdsAccountsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// ListLinkedinAdsAccountsResult is the result type of the
+// lfx-v2-campaign-service-connections service list-linkedin-ads-accounts
+// method.
+type ListLinkedinAdsAccountsResult struct {
+	Accounts []*AccessibleAccount
+}
+
 // ListMetaAdsAccountsPayload is the payload type of the
 // lfx-v2-campaign-service-connections service list-meta-ads-accounts method.
 type ListMetaAdsAccountsPayload struct {
@@ -577,6 +604,23 @@ type ListMetaAdsAccountsPayload struct {
 // ListMetaAdsAccountsResult is the result type of the
 // lfx-v2-campaign-service-connections service list-meta-ads-accounts method.
 type ListMetaAdsAccountsResult struct {
+	Accounts []*AccessibleAccount
+}
+
+// ListMicrosoftAdsAccountsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service list-microsoft-ads-accounts
+// method.
+type ListMicrosoftAdsAccountsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// ListMicrosoftAdsAccountsResult is the result type of the
+// lfx-v2-campaign-service-connections service list-microsoft-ads-accounts
+// method.
+type ListMicrosoftAdsAccountsResult struct {
 	Accounts []*AccessibleAccount
 }
 
