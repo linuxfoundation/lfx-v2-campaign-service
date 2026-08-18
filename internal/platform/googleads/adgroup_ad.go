@@ -160,6 +160,26 @@ func (c *Client) adGroupCriterionID(resourceName string) (adGroupID, criterionID
 	return compositeResourceID(resourceName)
 }
 
+// campaignCriterionID is adGroupCriterionID's sibling for campaignCriteria resource names,
+// applying the same four checks: exactly four segments, the "campaignCriteria" kind, THIS
+// client's customer id, and the composite "{campaignId}~{criterionId}" shape.
+//
+// It exists because the campaign path previously used bare resourceID, which returns any
+// non-empty trailing segment. That accepted a 2xx naming another ACCOUNT's criterion, a
+// different resource KIND, another CAMPAIGN's criterion, and even "garbage/4242" — each
+// persisted as a successful geo attachment. A resource name is the only proof of what a record
+// IS, so a lenient parse here is an identity claim nobody checked.
+func (c *Client) campaignCriterionID(resourceName string) (campaignID, criterionID string) {
+	pathParts := strings.Split(resourceName, "/")
+	if len(pathParts) != 4 || pathParts[0] != "customers" || pathParts[2] != "campaignCriteria" {
+		return "", ""
+	}
+	if pathParts[1] != c.account.CustomerID {
+		return "", ""
+	}
+	return compositeResourceID(resourceName)
+}
+
 // compositeResourceID splits a resourceName's trailing "{parentId}~{id}"
 // segment — the shape AdGroupAd and AdGroupCriterion resource names use,
 // unlike every single-id resource this package otherwise handles via

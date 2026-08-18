@@ -449,6 +449,33 @@ audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTI
                                   `targetingSetting.targetRestrictions` (AUDIENCE, bidOnly) on the ad group
                                   create so these segments stay observation-only rather than Google's
                                   default of restricting delivery to the audience alone.
+geoTargets?: string[]           — OPTIONAL ISO 3166-1 alpha-2 country codes the campaign should serve
+                                  in (LFXV2-3283), spelled as in `metaConfig`/`redditConfig`. Each is
+                                  resolved to Google's numeric geo target constant and attached as a
+                                  location criterion at the level the CHANNEL requires: campaign level
+                                  for Search, AD GROUP level for Demand Gen (which rejects
+                                  campaign-level location criteria). Case/whitespace-insensitive and
+                                  de-duplicated; at most 30 entries.
+
+                                  Both channel creates set `geoTargetTypeSetting.positiveGeoTargetType`
+                                  to PRESENCE. Google's default is PRESENCE_OR_INTEREST, under which a
+                                  user anywhere in the world who merely shows INTEREST in the targeted
+                                  country stays eligible — so criteria alone would attach targeting
+                                  that does not restrict spend. It is set unconditionally, so a
+                                  campaign that gains criteria later (by adoption, or by hand in the
+                                  Google Ads UI) restricts by presence rather than reverting to the
+                                  permissive default.
+
+                                  An unsupported code (including a plausible typo like "USA") fails the
+                                  job BEFORE any Google Ads request is made, rather than being dropped —
+                                  a dropped code would create a campaign that spends worldwide while
+                                  reporting success.
+
+                                  Omitted/empty, NO location criteria are created and the campaign
+                                  serves wherever the ad ACCOUNT's defaults allow — usually worldwide.
+                                  That is the pre-LFXV2-3283 behaviour, preserved so callers predating
+                                  this field keep working; the dispatcher logs a WARN when it happens.
+                                  Supply it for any campaign with a target region.
 adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When true, the dispatcher first
                                   looks the composed campaign name up on the account and, if a single
                                   live campaign already carries it, ADOPTS that campaign instead of

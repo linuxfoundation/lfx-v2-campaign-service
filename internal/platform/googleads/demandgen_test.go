@@ -349,3 +349,44 @@ func TestCreateDemandGenAdGroupRejectsAForeignResource(t *testing.T) {
 		t.Error("persisted another customer's ad group id as our AdGroupID")
 	}
 }
+
+// Location criteria alone do NOT restrict delivery. Google defaults positiveGeoTargetType to
+// PRESENCE_OR_INTEREST, so a user anywhere in the world who merely shows INTEREST in the
+// targeted country stays eligible — a "US-targeted" campaign still spends globally, which is the
+// out-of-region spend LFXV2-3283 exists to prevent.
+//
+// Asserted on the Demand Gen payload specifically: it is a SEPARATE struct from campaignCreate
+// (this channel rejects networkSettings and manualCpc), so setting the field on the Search path
+// says nothing about this one. The setting is campaign-level in the Google Ads API and governs
+// the ad-group-level criteria this channel attaches.
+func TestCreateDemandGenCampaign_RestrictsGeoToPresence(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	var bodies []map[string]any
+	srv := captureServer(t, &bodies, &paths, &mu)
+	t.Cleanup(srv.Close)
+
+	if _, err := newDemandGenClient(t, srv.URL).CreateDemandGenCampaign(context.Background(), demandGenInput()); err != nil {
+		t.Fatalf("CreateDemandGenCampaign: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	var found bool
+	for i, p := range paths {
+		if !strings.HasSuffix(p, "campaigns:mutate") {
+			continue
+		}
+		ops, _ := bodies[i]["operations"].([]any)
+		for _, op := range ops {
+			create, _ := op.(map[string]any)["create"].(map[string]any)
+			setting, _ := create["geoTargetTypeSetting"].(map[string]any)
+			if setting["positiveGeoTargetType"] == "PRESENCE" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("Demand Gen campaign create does not set positiveGeoTargetType=PRESENCE; its ad-group geo criteria would be read as PRESENCE_OR_INTEREST and serve worldwide")
+	}
+}
