@@ -1,6 +1,6 @@
 # 2026-08-18 — LFXV2-3313 brief-metrics log scrubbing is now tested
 
-**Change** — added `TestGetBriefMetrics_ConnectionFailureLogsNoErrorText` and
+**Update** — added `TestGetBriefMetrics_ConnectionFailureLogsNoErrorText` and
 `TestGetBriefMetrics_DecryptFailureLogsNoCauseText`.
 
 The scrubbing itself already existed: `GetBriefMetrics` logs the fixed reason token for
