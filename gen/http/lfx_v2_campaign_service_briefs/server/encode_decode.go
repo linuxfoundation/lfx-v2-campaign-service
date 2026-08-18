@@ -1645,6 +1645,145 @@ func EncodeGetCampaignMetricsError(encoder func(context.Context, http.ResponseWr
 	}
 }
 
+// EncodeGetBriefMetricsResponse returns an encoder for responses returned by
+// the lfx-v2-campaign-service-briefs get-brief-metrics endpoint.
+func EncodeGetBriefMetricsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignservicebriefs.BriefMetrics)
+		enc := encoder(ctx, w)
+		body := NewGetBriefMetricsResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeGetBriefMetricsRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-briefs get-brief-metrics endpoint.
+func DecodeGetBriefMetricsRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignservicebriefs.GetBriefMetricsPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignservicebriefs.GetBriefMetricsPayload, error) {
+		var payload *lfxv2campaignservicebriefs.GetBriefMetricsPayload
+		var (
+			projectID   string
+			briefID     string
+			window      *string
+			bearerToken *string
+			err         error
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		briefID = params["brief_id"]
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		windowRaw := r.URL.Query().Get("window")
+		if windowRaw != "" {
+			window = &windowRaw
+		}
+		if window != nil {
+			if !(*window == "today" || *window == "yesterday" || *window == "last_7_days" || *window == "last_14_days" || *window == "last_30_days" || *window == "this_month" || *window == "last_month") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("window", *window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
+			}
+		}
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewGetBriefMetricsPayload(projectID, briefID, window, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeGetBriefMetricsError returns an encoder for errors returned by the
+// get-brief-metrics lfx-v2-campaign-service-briefs endpoint.
+func EncodeGetBriefMetricsError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignservicebriefs.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetBriefMetricsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignservicebriefs.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetBriefMetricsConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignservicebriefs.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetBriefMetricsServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignservicebriefs.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetBriefMetricsInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignservicebriefs.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetBriefMetricsNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // EncodeGenerateEmailCopyResponse returns an encoder for responses returned by
 // the lfx-v2-campaign-service-briefs generate-email-copy endpoint.
 func EncodeGenerateEmailCopyResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
@@ -2485,6 +2624,46 @@ func marshalLfxv2campaignservicebriefsEmailMetricsToEmailMetricsResponseBody(v *
 		Clicks:       v.Clicks,
 		Bounces:      v.Bounces,
 		Unsubscribes: v.Unsubscribes,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsBriefMetricsRowToBriefMetricsRowResponseBody
+// builds a value of type *BriefMetricsRowResponseBody from a value of type
+// *lfxv2campaignservicebriefs.BriefMetricsRow.
+func marshalLfxv2campaignservicebriefsBriefMetricsRowToBriefMetricsRowResponseBody(v *lfxv2campaignservicebriefs.BriefMetricsRow) *BriefMetricsRowResponseBody {
+	res := &BriefMetricsRowResponseBody{
+		CampaignID: v.CampaignID,
+		Platform:   v.Platform,
+		Status:     v.Status,
+		Reason:     v.Reason,
+	}
+	if v.Metrics != nil {
+		res.Metrics = marshalLfxv2campaignservicebriefsCampaignMetricsToCampaignMetricsResponseBody(v.Metrics)
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsCampaignMetricsToCampaignMetricsResponseBody
+// builds a value of type *CampaignMetricsResponseBody from a value of type
+// *lfxv2campaignservicebriefs.CampaignMetrics.
+func marshalLfxv2campaignservicebriefsCampaignMetricsToCampaignMetricsResponseBody(v *lfxv2campaignservicebriefs.CampaignMetrics) *CampaignMetricsResponseBody {
+	if v == nil {
+		return nil
+	}
+	res := &CampaignMetricsResponseBody{
+		CampaignID:         v.CampaignID,
+		PlatformCampaignID: v.PlatformCampaignID,
+		Window:             v.Window,
+		Impressions:        v.Impressions,
+		Clicks:             v.Clicks,
+		CostMicros:         v.CostMicros,
+		Ctr:                v.Ctr,
+	}
+	if v.Email != nil {
+		res.Email = marshalLfxv2campaignservicebriefsEmailMetricsToEmailMetricsResponseBody(v.Email)
 	}
 
 	return res

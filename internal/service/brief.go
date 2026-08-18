@@ -15,6 +15,8 @@ import (
 	"time"
 	"unicode"
 
+	"golang.org/x/sync/errgroup"
+
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -1818,4 +1820,190 @@ func safeErrSummary(err error) string {
 		n++
 	}
 	return b.String()
+}
+
+// briefMetricsConcurrency bounds how many platform metrics reads run at once for ONE
+// brief-wide request.
+//
+// Deliberately small and local rather than shared with the dispatch semaphore: these are
+// read-only GETs that create nothing, so they need none of dispatch's spend-safety
+// ceilings, and borrowing that semaphore would let a metrics read starve a paid create
+// waiting for a slot. A brief carries at most one live campaign per (platform, variant),
+// so in practice this is already close to the natural width.
+const briefMetricsConcurrency = 4
+
+// briefMetricsRow is one campaign's outcome, before it is rendered into the wire type.
+type briefMetricsRow struct {
+	campaign *model.Campaign
+	metrics  *model.CampaignMetrics
+	// window is the window this row was actually READ over, which is not always the
+	// requested one: with no request-level window the default is platform-aware, and X Ads
+	// falls back to a narrower range than the other platforms.
+	window model.MetricsWindow
+	status string
+	reason string
+}
+
+// classifyBriefMetricsErr maps a per-campaign read failure onto the row status vocabulary
+// and a consumer-safe sentence.
+//
+// The mapping is derived from GetCampaignMetrics, which expresses these same states as
+// distinct HTTP responses. An aggregate cannot: one campaign's 409 must not fail the other
+// five, so each becomes a row status instead.
+//
+// The returned reason is a FIXED string chosen here, never the adapter's error text. Those
+// errors can carry a platform's own response body or operator-supplied account identifiers
+// (see the redaction note on GetCampaignMetrics' account-mismatch arm), and this value is
+// rendered to an API consumer.
+func classifyBriefMetricsErr(err error, platform model.Provider) (status, reason string) {
+	switch {
+	case errors.Is(err, ErrMetricsUnsupported):
+		return "unsupported", "metrics reads are not supported for this campaign's platform"
+	case errors.Is(err, ErrMetricsWindowUnsupported):
+		if platform == model.ProviderTwitterAds {
+			return "unsupported", "X Ads supports only today, yesterday, and last_7_days windows (API cap: 7-day queryable range)"
+		}
+		return "unsupported", "this window is not supported for the campaign's platform"
+	case errors.Is(err, ErrCampaignNotProvisioned):
+		return "not_ready", "campaign is not fully provisioned — it has no platform campaign id yet"
+	case errors.Is(err, domain.ErrNoMetricsInWindow):
+		// NOT an error state. The email channel stages a DRAFT, so every read before a human
+		// presses send looks exactly like this; classifying it as a failure would send an
+		// operator to investigate a healthy integration.
+		return "not_ready", "the platform reported no data for this campaign in the requested window — it may not have run inside the window, may not have been sent or started yet, or may no longer exist upstream"
+	case errors.Is(err, domain.ErrCampaignProvenanceUnknown):
+		return "connection_problem", "this campaign does not record which platform account it was created under, so its metrics cannot be resolved safely — it must be re-dispatched before it can be read"
+	case errors.Is(err, ErrCampaignAccountMismatch):
+		return "connection_problem", "the campaign belongs to a different account than this project's current connection — reconnect the original account to read its metrics"
+	case errors.Is(err, domain.ErrSystemConnectionNotUsable), errors.Is(err, domain.ErrConnectionNotUsable):
+		return "connection_problem", "this project's connection for the campaign's platform is not usable — reconnect it to read metrics"
+	default:
+		// Transient by default. An unrecognised failure is far more likely to be an upstream
+		// outage than a permanent state, and `failed` is the status that tells a consumer
+		// retrying may help — the opposite advice from `unsupported`.
+		return "failed", "the platform could not be reached for this campaign"
+	}
+}
+
+// GetBriefMetrics reads live metrics for every campaign on a brief in one request.
+//
+// A per-campaign failure does NOT fail the request. Each row carries its own status, and a
+// row that could not be read carries NO metrics rather than zeroes — a zero is a claim, and
+// substituting one for an unreadable campaign is what turns an outage into an apparent
+// performance result.
+func (s *BriefService) GetBriefMetrics(ctx context.Context, p *briefs.GetBriefMetricsPayload) (*briefs.BriefMetrics, error) {
+	briefRepo, campaignRepo, _, orch, err := s.ready()
+	if err != nil {
+		return nil, err
+	}
+	// Read the brief first so a missing or archived brief is a 404 for the REQUEST, rather
+	// than an empty row set that reads as "this brief has no campaigns".
+	if _, gerr := briefRepo.GetBrief(ctx, p.ProjectID, p.BriefID); gerr != nil {
+		return nil, mapBriefErr(gerr)
+	}
+
+	// Validate the window ONCE, up front. Per-platform defaults are resolved per row below,
+	// because the default is platform-aware (X Ads cannot serve last_30_days).
+	var requested *model.MetricsWindow
+	if p.Window != nil {
+		w := model.MetricsWindow(*p.Window)
+		if !model.IsValidMetricsWindow(w) {
+			return nil, &briefs.BadRequestError{Code: "400", Message: "window must be one of: today, yesterday, last_7_days, last_14_days, last_30_days, this_month, last_month"}
+		}
+		requested = &w
+	}
+
+	campaigns, lerr := campaignRepo.ListCampaignsForBrief(ctx, p.ProjectID, p.BriefID)
+	if lerr != nil {
+		return nil, mapBriefErr(lerr)
+	}
+
+	rows := make([]briefMetricsRow, len(campaigns))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(briefMetricsConcurrency)
+	for i, c := range campaigns {
+		g.Go(func() error {
+			window := defaultMetricsWindowFor(c.Platform)
+			if requested != nil {
+				window = *requested
+			}
+			m, merr := orch.ReadCampaignMetrics(gctx, p.ProjectID, c.Platform, c, window)
+			if merr != nil {
+				status, reason := classifyBriefMetricsErr(merr, c.Platform)
+				// Logged at INFO for not_ready — it is the expected state for a staged email
+				// draft — and WARN otherwise. safeErrSummary, not the raw error: these carry
+				// upstream text and account identifiers.
+				lvl := slog.LevelWarn
+				if status == "not_ready" {
+					lvl = slog.LevelInfo
+				}
+				slog.Log(gctx, lvl, "brief metrics row could not be read",
+					"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", c.ID,
+					"platform", c.Platform, "window", string(window), "row_status", status,
+					"error", safeErrSummary(merr))
+				rows[i] = briefMetricsRow{campaign: c, window: window, status: status, reason: reason}
+				// Never propagated: returning it would cancel gctx and convert one platform's
+				// failure into a partial read of every OTHER platform — the aggregate would
+				// then report failures it never actually attempted.
+				return nil
+			}
+			rows[i] = briefMetricsRow{campaign: c, metrics: m, window: window, status: "ok"}
+			return nil
+		})
+	}
+	// Cannot return non-nil: every g.Go returns nil above. Checked anyway so a later edit
+	// that starts propagating an error cannot silently drop it.
+	if werr := g.Wait(); werr != nil {
+		return nil, mapBriefErr(werr)
+	}
+
+	return renderBriefMetrics(p.BriefID, requested, rows), nil
+}
+
+// renderBriefMetrics converts the internal rows into the wire type.
+//
+// The reported window is the REQUESTED one when the caller named it, and otherwise the
+// literal default rather than any single row's resolved window: with no request-level window
+// the rows can legitimately differ from each other (X Ads falls back to a narrower range), so
+// promoting one row's window to the top level would state a range the other rows do not cover.
+// Each row's own metrics.window remains authoritative for that row.
+func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []briefMetricsRow) *briefs.BriefMetrics {
+	window := string(model.MetricsWindowLast30Days)
+	if requested != nil {
+		window = string(*requested)
+	}
+	out := &briefs.BriefMetrics{
+		BriefID: briefID,
+		Window:  window,
+		Rows:    make([]*briefs.BriefMetricsRow, 0, len(rows)),
+	}
+	for _, r := range rows {
+		wire := &briefs.BriefMetricsRow{
+			CampaignID: r.campaign.ID,
+			Platform:   string(r.campaign.Platform),
+			Status:     r.status,
+		}
+		if r.status == "ok" {
+			// r.window, NOT r.metrics.Window: adapters are not required to echo the window
+			// back, and trusting them would emit "" for one that doesn't, violating the
+			// response enum and causing generated clients to reject an otherwise successful
+			// 200. Same reason GetCampaignMetrics uses its validated window here.
+			wire.Metrics = &briefs.CampaignMetrics{
+				CampaignID:         r.campaign.ID,
+				PlatformCampaignID: r.campaign.PlatformCampaignID,
+				Window:             string(r.window),
+				Impressions:        r.metrics.Impressions,
+				Clicks:             r.metrics.Clicks,
+				CostMicros:         r.metrics.CostMicros,
+				Ctr:                r.metrics.Ctr,
+				Email:              emailMetricsResult(r.metrics.Email),
+			}
+			out.OKCount++
+		} else {
+			reason := r.reason
+			wire.Reason = &reason
+		}
+		out.Rows = append(out.Rows, wire)
+	}
+	return out
 }

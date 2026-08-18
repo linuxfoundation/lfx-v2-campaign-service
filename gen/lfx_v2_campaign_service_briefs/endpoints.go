@@ -27,6 +27,7 @@ type Endpoints struct {
 	AdoptCampaign        goa.Endpoint
 	GetCampaign          goa.Endpoint
 	GetCampaignMetrics   goa.Endpoint
+	GetBriefMetrics      goa.Endpoint
 	GenerateEmailCopy    goa.Endpoint
 	UpdateCampaign       goa.Endpoint
 	ToggleCampaignStatus goa.Endpoint
@@ -51,6 +52,7 @@ func NewEndpoints(s Service) *Endpoints {
 		AdoptCampaign:        NewAdoptCampaignEndpoint(s, a.JWTAuth),
 		GetCampaign:          NewGetCampaignEndpoint(s, a.JWTAuth),
 		GetCampaignMetrics:   NewGetCampaignMetricsEndpoint(s, a.JWTAuth),
+		GetBriefMetrics:      NewGetBriefMetricsEndpoint(s, a.JWTAuth),
 		GenerateEmailCopy:    NewGenerateEmailCopyEndpoint(s, a.JWTAuth),
 		UpdateCampaign:       NewUpdateCampaignEndpoint(s, a.JWTAuth),
 		ToggleCampaignStatus: NewToggleCampaignStatusEndpoint(s, a.JWTAuth),
@@ -73,6 +75,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.AdoptCampaign = m(e.AdoptCampaign)
 	e.GetCampaign = m(e.GetCampaign)
 	e.GetCampaignMetrics = m(e.GetCampaignMetrics)
+	e.GetBriefMetrics = m(e.GetBriefMetrics)
 	e.GenerateEmailCopy = m(e.GenerateEmailCopy)
 	e.UpdateCampaign = m(e.UpdateCampaign)
 	e.ToggleCampaignStatus = m(e.ToggleCampaignStatus)
@@ -330,6 +333,29 @@ func NewGetCampaignMetricsEndpoint(s Service, authJWTFn security.AuthJWTFunc) go
 			return nil, err
 		}
 		return s.GetCampaignMetrics(ctx, p)
+	}
+}
+
+// NewGetBriefMetricsEndpoint returns an endpoint function that calls the
+// method "get-brief-metrics" of service "lfx-v2-campaign-service-briefs".
+func NewGetBriefMetricsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*GetBriefMetricsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.GetBriefMetrics(ctx, p)
 	}
 }
 

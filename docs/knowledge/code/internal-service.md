@@ -199,6 +199,42 @@ The `window` query parameter is a closed, platform-agnostic vocabulary
 query syntax; the mapping (and any platform-specific validation, e.g. an allow-list guard
 against GAQL injection) lives in the platform client package, not here.
 
+## Brief-wide metrics read
+
+`BriefService.GetBriefMetrics` (backing `GET .../briefs/{id}/metrics`) reads every campaign on
+a brief in one request. It is the same read-through as the campaign-scoped handler above,
+fanned out over `ListCampaignsForBrief` with an `errgroup` bounded by
+`briefMetricsConcurrency` (4). That limit is deliberately local rather than the dispatch
+semaphore: these are read-only GETs that create nothing, so they need none of dispatch's
+spend-safety ceilings, and borrowing that semaphore would let a metrics read starve a paid
+create waiting for a slot.
+
+**The failure model is the whole point of the endpoint.** A brief spans several platforms and
+each read can fail independently, so the states the campaign-scoped handler expresses as
+distinct HTTP responses cannot be HTTP responses here — one campaign's 409 must not fail the
+other five. `classifyBriefMetricsErr` maps each sentinel onto a per-row status instead:
+`unsupported` (the 400s), `not_ready` and `connection_problem` (the 409s, split by whether an
+operator has anything to repair), and `failed` (the 503 default). `not_ready` and `failed` are
+deliberately NOT merged — a staged email draft and an ad-platform outage produce the same
+absence of numbers and want opposite responses.
+
+**A non-`ok` row omits `metrics` entirely rather than carrying zeroes.** A zero is a
+measurement; substituting one for a campaign that could not be read is indistinguishable from
+a campaign that genuinely served nothing, and that substitution is what turns an outage into
+an apparent performance result. `ok_count` exists so a consumer can see a cross-campaign total
+covers 2 of 6 before presenting it.
+
+Each `g.Go` returns `nil` even on error, and that is load-bearing rather than sloppy:
+returning the error would cancel the errgroup's context and abandon campaigns whose reads had
+not yet started, so the aggregate would report failures it never actually attempted.
+
+`reason` is a fixed sentence chosen in `classifyBriefMetricsErr`, never the adapter's error
+text, which can carry a platform's own response body or operator-supplied account identifiers
+— the same redaction rule the campaign-scoped handler's account-mismatch arm follows.
+
+There is no cross-channel cost total. `cost_micros` is micro-units of each platform's OWN
+native currency and this service performs no FX conversion, so a sum would carry no currency.
+
 One caveat the vocabulary cannot express: for the HubSpot email channel the window selects
 which EMAILS are in scope by send date, not which events are counted, so the counters are
 the email's totals to date and two different windows containing the send date return

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -136,6 +137,49 @@ func (r *fakeCampaignRepo) GetCampaign(_ context.Context, _, _, campaignID strin
 		return &cp, nil
 	}
 	return nil, errors.New("unused")
+}
+
+// ListCampaignsForBrief mirrors the real query's semantics rather than merely satisfying the
+// interface: it excludes soft-deleted rows and returns the SAME (platform, variant) ordering
+// the SQL guarantees. A fake that returned insertion order would let a brief-metrics test
+// pass against a handler that had stopped depending on a stable order — which is the whole
+// contract the ORDER BY exists to provide.
+func (r *fakeCampaignRepo) ListCampaignsForBrief(_ context.Context, _, briefID string) ([]*model.Campaign, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*model.Campaign, 0)
+	seen := make(map[string]bool)
+	for _, c := range append(append([]*model.Campaign{}, r.upserted...), r.adopted...) {
+		if c == nil || c.BriefID != briefID || c.Status == "deleted" || seen[c.ID] {
+			continue
+		}
+		seen[c.ID] = true
+		out = append(out, c)
+	}
+	for _, c := range r.existing {
+		if c == nil || c.BriefID != briefID || c.Status == "deleted" || seen[c.ID] {
+			continue
+		}
+		seen[c.ID] = true
+		out = append(out, c)
+	}
+	// byID too: it is what the campaign-scoped handler tests populate, and a brief-wide read
+	// that could not see those rows would report every such brief as empty — the fake would
+	// then be answering a different question than the repository it stands in for.
+	for _, c := range r.byID {
+		if c == nil || c.BriefID != briefID || c.Status == "deleted" || seen[c.ID] {
+			continue
+		}
+		seen[c.ID] = true
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Platform != out[j].Platform {
+			return out[i].Platform < out[j].Platform
+		}
+		return out[i].Variant < out[j].Variant
+	})
+	return out, nil
 }
 
 func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, _ string, briefID string, platform model.Provider, variant string) (*model.Campaign, error) {

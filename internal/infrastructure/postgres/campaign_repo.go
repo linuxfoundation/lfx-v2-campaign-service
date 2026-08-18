@@ -259,6 +259,48 @@ const getCampaignQuery = `SELECT ` + campaignCols + ` FROM campaigns
 const getCampaignByPlatformQuery = `SELECT ` + campaignCols + ` FROM campaigns
 	WHERE brief_id=$1 AND platform=$2 AND project_id=$3 AND variant=$4 AND status <> 'deleted'`
 
+// listCampaignsForBriefQuery excludes soft-deleted rows for the same reason
+// getCampaignQuery does: a deleted campaign is invisible to reads.
+//
+// The ORDER BY is a CONTRACT, not a nicety. The caller renders these rows as a table and
+// reads it repeatedly while a campaign runs; without a total order Postgres may return the
+// same rows in a different sequence between two reads and the table would reshuffle under
+// the operator.
+//
+// (platform, variant) is total here because uq_campaigns_brief_platform_variant_live
+// (migration 000022) is UNIQUE on (brief_id, platform, variant) WHERE status <> 'deleted' —
+// the SAME predicate this query filters on — so no id tie-break is needed.
+//
+// created_at would NOT be total: rows dispatched in one job share a transaction timestamp,
+// because now() is TRANSACTION-start time.
+const listCampaignsForBriefQuery = `SELECT ` + campaignCols + ` FROM campaigns
+	WHERE brief_id=$1 AND project_id=$2 AND status <> 'deleted'
+	ORDER BY platform ASC, variant ASC`
+
+// ListCampaignsForBrief returns every live campaign under a brief.
+func (r *CampaignRepo) ListCampaignsForBrief(ctx context.Context, projectID, briefID string) ([]*model.Campaign, error) {
+	rows, err := r.db.Query(ctx, listCampaignsForBriefQuery, briefID, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list campaigns for brief: %w", err)
+	}
+	defer rows.Close()
+
+	// Non-nil zero-length rather than a nil slice: this is the "brief has no campaigns"
+	// answer, and it is an ordinary state rather than an absence of data.
+	out := make([]*model.Campaign, 0)
+	for rows.Next() {
+		c, serr := scanCampaign(rows)
+		if serr != nil {
+			return nil, fmt.Errorf("scan campaign for brief: %w", serr)
+		}
+		out = append(out, c)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, fmt.Errorf("iterate campaigns for brief: %w", rerr)
+	}
+	return out, nil
+}
+
 // GetCampaign returns a single campaign under a brief. Soft-deleted campaigns are
 // invisible to reads: a deleted campaign returns ErrNotFound (404), matching
 // domain.ErrNotFound's contract ("does not exist, or has been soft-deleted") and

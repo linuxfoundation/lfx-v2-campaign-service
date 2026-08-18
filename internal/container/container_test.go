@@ -167,6 +167,9 @@ type stubCampaignRepo struct{}
 func (stubCampaignRepo) GetCampaign(context.Context, string, string, string) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
+func (stubCampaignRepo) ListCampaignsForBrief(context.Context, string, string) ([]*model.Campaign, error) {
+	return nil, nil
+}
 func (stubCampaignRepo) GetCampaignByPlatform(context.Context, string, string, model.Provider, string) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
