@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -699,4 +700,80 @@ func TestDoRequest_429BodyReadFailureStillRetries(t *testing.T) {
 	if got := atomic.LoadInt32(&calls); got != 2 {
 		t.Errorf("expected 2 API attempts (429-read-fail then 200), got %d", got)
 	}
+}
+
+// TestBoundedErrorItems_NonDuplicatesCountsPastTheRetentionCap pins the tally directly, at the
+// decode layer, independent of any CreateCampaign wiring.
+//
+// The retained slice stops at maxDecodedErrorItems, so a consumer that needs to know whether the
+// WHOLE array was duplicates cannot learn it from Items. NonDuplicates is taken during decode,
+// where every element is seen exactly once before the ones past the cap are discarded.
+func TestBoundedErrorItems_NonDuplicatesCountsPastTheRetentionCap(t *testing.T) {
+	dup := func(i int) string {
+		return fmt.Sprintf(`{"Index":%d,"Code":1517,"ErrorCode":"CampaignServiceDuplicateKeyword"}`, i)
+	}
+	rejection := func(i int) string {
+		return fmt.Sprintf(`{"Index":%d,"Code":1042,"ErrorCode":"CampaignServiceEditorialError"}`, i)
+	}
+
+	t.Run("all duplicates past the cap tallies zero", func(t *testing.T) {
+		items := make([]string, 0, 60)
+		for i := 0; i < 60; i++ {
+			items = append(items, dup(i))
+		}
+		var b boundedErrorItems
+		if err := b.UnmarshalJSON([]byte(`[` + strings.Join(items, ",") + `]`)); err != nil {
+			t.Fatalf("UnmarshalJSON: %v", err)
+		}
+		if !b.Truncated {
+			t.Error("Truncated = false, want true: 60 items exceeds the retention cap")
+		}
+		if len(b.Items) != maxDecodedErrorItems {
+			t.Errorf("retained %d items, want the %d cap", len(b.Items), maxDecodedErrorItems)
+		}
+		if b.NonDuplicates != 0 {
+			t.Errorf("NonDuplicates = %d, want 0: every one of the 60 errors is a duplicate", b.NonDuplicates)
+		}
+	})
+
+	t.Run("a rejection discarded past the cap is still tallied", func(t *testing.T) {
+		items := make([]string, 0, 60)
+		for i := 0; i < 60; i++ {
+			if i == 40 { // well past maxDecodedErrorItems, so it is NOT retained
+				items = append(items, rejection(i))
+				continue
+			}
+			items = append(items, dup(i))
+		}
+		var b boundedErrorItems
+		if err := b.UnmarshalJSON([]byte(`[` + strings.Join(items, ",") + `]`)); err != nil {
+			t.Fatalf("UnmarshalJSON: %v", err)
+		}
+		// The proof that the tally is not just reading the retained prefix: the rejection is
+		// absent from Items yet present in the count.
+		if isDuplicateKeywordPartial(b.Items) != true {
+			t.Fatal("precondition: the RETAINED prefix must look wholly duplicate for this to be meaningful")
+		}
+		if b.NonDuplicates != 1 {
+			t.Errorf("NonDuplicates = %d, want 1: the editorial rejection at index 40 was discarded but must still be counted", b.NonDuplicates)
+		}
+	})
+
+	t.Run("null placeholder slots are not rejections", func(t *testing.T) {
+		items := make([]string, 0, 60)
+		for i := 0; i < 60; i++ {
+			if i < 20 {
+				items = append(items, dup(i))
+				continue
+			}
+			items = append(items, `null`)
+		}
+		var b boundedErrorItems
+		if err := b.UnmarshalJSON([]byte(`[` + strings.Join(items, ",") + `]`)); err != nil {
+			t.Fatalf("UnmarshalJSON: %v", err)
+		}
+		if b.NonDuplicates != 0 {
+			t.Errorf("NonDuplicates = %d, want 0: null padding for a succeeded entry is not a rejection", b.NonDuplicates)
+		}
+	})
 }

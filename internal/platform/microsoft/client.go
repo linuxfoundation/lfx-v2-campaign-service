@@ -1028,11 +1028,41 @@ const maxDecodedErrorItems = maxRetainedErrorCodes
 // the invariant structural instead — absence of a rejection in a set KNOWN to be incomplete is
 // never evidence there was none, at any size — and keeps the O(1) memory bound the cap exists
 // for.
+//
+// Refusing outright on Truncated, however, was too strong, and counting the discarded items was
+// not enough to replace it. A reuse retry re-posts the whole batch, so every keyword of a
+// typical ~38-keyword brief returns a duplicate — one error each, past the 16-item cap — and
+// refusing there rejected the ordinary converge-on-reuse case for any brief over 16 keywords.
+//
+// Recording only a COUNT of the discarded entries does not rescue it. The ALL-duplicate test
+// needs to know what each error IS, and a duplicate and a genuine rejection are both exactly
+// one error: a batch of 60 keywords returning 60 errors is fully accounted for by any counting
+// argument whether or not an editorial rejection hides at index 40. Arithmetic over totals can
+// prove how MANY errors exist; it cannot prove they are all duplicates. (Nor is the count even
+// well-defined against the request: PartialErrors is SPARSE, carrying an entry only for a
+// FAILED item, so it legitimately runs shorter than the batch whenever some entries succeeded.)
+//
+// So the classification is done DURING decode, where every element is seen. NonDuplicates
+// tallies the entries that carry an actual error code which is not an already-exists keyword
+// code — including the ones dropped for memory. A consumer can then ask the ALL question of the
+// whole array while still holding only maxDecodedErrorItems of it, which is what lets a
+// large full-duplicate batch converge without ever reading completeness off a prefix.
 type boundedErrorItems struct {
 	Items []msErrorItem
 	// Truncated reports that the body carried MORE error items than were retained, so Items
 	// is a prefix of the real error set rather than the whole of it.
 	Truncated bool
+	// NonDuplicates counts elements carrying an actual error code that is NOT an already-exists
+	// keyword code, over the WHOLE wire array rather than the retained prefix. Null/placeholder
+	// slots carry no code and are not counted. Zero means every error in the entire array — seen
+	// or discarded — was a duplicate, which is the only thing that licenses duplicate-only
+	// classification of a truncated array.
+	//
+	// Only the keyword path consults this; the campaign/ad-group/ad arrays that share this type
+	// compute it and ignore it. That is deliberate — the tally must be taken during decode, which
+	// is the one place every element is visible, and counting is side-effect free, so an unread
+	// value on those paths costs a comparison per item and changes no behaviour.
+	NonDuplicates int
 }
 
 func (b *boundedErrorItems) UnmarshalJSON(data []byte) error {
@@ -1051,6 +1081,12 @@ func (b *boundedErrorItems) UnmarshalJSON(data []byte) error {
 		var it msErrorItem
 		if err := dec.Decode(&it); err != nil {
 			return err
+		}
+		// Classified before the retention test, so the tally describes the WIRE array rather
+		// than the retained prefix. The loop already had to visit this element to advance the
+		// stream, so this is free and stays O(1) in memory.
+		if isNonDuplicateKeywordItem(it) {
+			b.NonDuplicates++
 		}
 		if len(b.Items) < maxDecodedErrorItems {
 			b.Items = append(b.Items, it)

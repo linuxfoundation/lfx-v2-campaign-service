@@ -788,17 +788,35 @@ const (
 // Null placeholder entries are ignored the same way partialErrorsHaveAny ignores them: an
 // index-aligned PartialErrors array can carry zero-value items for the entries that succeeded,
 // and those are not errors to classify.
+// isNonDuplicateKeywordItem reports whether ONE error item carries an actual error code that
+// is not an already-exists keyword code — i.e. whether it is a genuine rejection.
+//
+// This is the single-item core of isDuplicateKeywordPartial, factored out so boundedErrorItems
+// can apply the same test to elements it is about to DISCARD for memory. Keeping one definition
+// is the point: if the set of already-exists spellings ever changes, the streaming tally and
+// the retained-slice predicate cannot drift apart and disagree about whether a batch was wholly
+// duplicate.
+//
+// A null/placeholder slot carries no code and is NOT a rejection: an index-aligned PartialErrors
+// array can null-pad the entries that succeeded, exactly as partialErrorsHaveAny treats them.
+func isNonDuplicateKeywordItem(it msErrorItem) bool {
+	if codeString(it.ErrorCode) == "" && codeString(it.Code) == "" {
+		return false // a null/placeholder slot, not an error
+	}
+	one := []msErrorItem{it}
+	return !partialErrorsHaveCode(one, errCodeDuplicateKeyword) &&
+		!partialErrorsHaveCode(one, errCodeDuplicateKeywordNumeric) &&
+		!partialErrorsHaveCode(one, errCodeKeywordMatchTypeExists) &&
+		!partialErrorsHaveCode(one, errCodeKeywordMatchTypeExistsNumeric)
+}
+
 func isDuplicateKeywordPartial(items []msErrorItem) bool {
 	found := false
 	for _, it := range items {
 		if codeString(it.ErrorCode) == "" && codeString(it.Code) == "" {
 			continue // a null/placeholder slot, not an error
 		}
-		one := []msErrorItem{it}
-		if !partialErrorsHaveCode(one, errCodeDuplicateKeyword) &&
-			!partialErrorsHaveCode(one, errCodeDuplicateKeywordNumeric) &&
-			!partialErrorsHaveCode(one, errCodeKeywordMatchTypeExists) &&
-			!partialErrorsHaveCode(one, errCodeKeywordMatchTypeExistsNumeric) {
+		if isNonDuplicateKeywordItem(it) {
 			return false
 		}
 		found = true
