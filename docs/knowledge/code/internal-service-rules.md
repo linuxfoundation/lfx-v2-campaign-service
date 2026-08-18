@@ -120,6 +120,16 @@ gives the operator two HIGH findings with opposite remedies: one says no budget 
 this, the other says to adjust the budget. **Low CTR needs a delivery floor**, because three impressions and
 no clicks is a 0% CTR that says nothing about the creative.
 
-`isActive` is an allow-list of the statuses where the service believes the campaign reached the
-platform. A pending claim has not necessarily been created upstream, so a zero-delivery item
-against it would report a dispatch problem as a targeting one.
+`isActive` is an allow-list of the statuses where the campaign is meant to be spending, and it
+gates **every** rule — the pacing ones as well as zero delivery.
+
+`Campaign.Status` carries two kinds of value: a provisioning state stamped at create
+(`pending` / `created` / `created_degraded`) and a **run state** set by the status toggle
+(`active` / `paused`). Both live in the same column, and only some of them mean delivery is
+expected. `paused` is a deliberate operator decision, so zero spend is the intended outcome and
+an underspending item tells them to fix something they just chose; `pending` has not necessarily
+reached the platform at all, so its spend figure is not evidence about pacing.
+
+An earlier version listed only the provisioning states, which produced all three errors at once:
+`paused` and `pending` raised underspending, while `active` — the one status where delivery is
+unambiguously expected — raised nothing.

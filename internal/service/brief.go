@@ -1871,6 +1871,10 @@ type briefMetricsRow struct {
 	// deliveryExpected records whether this campaign's flight has run long enough for an
 	// absence of delivery to be evidence. Derived alongside pacing so both read the same `now`.
 	deliveryExpected bool
+	// windowOverlapDays is how much of the READ window falls inside the campaign's flight. Zero
+	// means the window describes a period the campaign did not exist in, so neither its spend
+	// nor its impressions are evidence about anything.
+	windowOverlapDays float64
 }
 
 // classifyBriefMetricsErr maps a per-campaign read failure onto the row status vocabulary
@@ -2061,11 +2065,16 @@ func (s *BriefService) GetBriefMetrics(ctx context.Context, p *briefs.GetBriefMe
 	// spanning midnight must not pace one campaign against a different day than its sibling.
 	now := s.now()
 	for i := range rows {
-		rows[i].pacing = pacingFor(&rows[i], now)
+		// Order matters: pacingFor READS windowOverlapDays, so the overlap has to be computed
+		// first. Deriving it after would hand pacing a zero that means "not yet calculated"
+		// rather than "no overlap", making every row incomputable.
 		if rows[i].campaign != nil {
-			rows[i].deliveryExpected = rules.DeliveryExpected(
-				rules.Flight{Start: rows[i].campaign.StartDate, End: rows[i].campaign.EndDate}, now)
+			flight := rules.Flight{Start: rows[i].campaign.StartDate, End: rows[i].campaign.EndDate}
+			rows[i].deliveryExpected = rules.DeliveryExpected(flight, now)
+			rows[i].windowOverlapDays = rules.WindowDaysWithinFlight(
+				string(rows[i].window), now, rows[i].campaign.StartDate, rows[i].campaign.EndDate)
 		}
+		rows[i].pacing = pacingFor(&rows[i], now)
 	}
 
 	return renderBriefMetrics(p.BriefID, requested, rows), nil
@@ -2100,7 +2109,7 @@ func pacingFor(r *briefMetricsRow, now time.Time) rules.Pacing {
 		// sit wholly or partly before the campaign existed — `last_month` for a campaign that
 		// started last week — and its correct zero spend would then be paced against an
 		// expectation measured from the flight's start.
-		rules.WindowDaysWithinFlight(string(r.window), now, r.campaign.StartDate, r.campaign.EndDate),
+		r.windowOverlapDays,
 		*r.campaign.BudgetAmount,
 		kind,
 		rules.Flight{Start: r.campaign.StartDate, End: r.campaign.EndDate},
@@ -2179,6 +2188,14 @@ func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []b
 		// zero-delivery item for every failed read — reporting an outage as a campaign defect,
 		// which is the precise substitution this endpoint's row statuses exist to prevent.
 		if r.status != "ok" || r.metrics == nil || r.campaign == nil {
+			continue
+		}
+		// A readable row can still describe a period the campaign did not exist in — `last_month`
+		// for a campaign that started this month. Its zero impressions and zero spend are correct
+		// and mean "not running yet", so zero_delivery would report a campaign that never started
+		// as one that failed to start. Pacing already refuses such a window; the delivery rule
+		// must refuse it for the same reason.
+		if r.windowOverlapDays <= 0 {
 			continue
 		}
 		for _, item := range rules.Evaluate(rules.Input{

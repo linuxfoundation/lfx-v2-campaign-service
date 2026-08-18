@@ -54,7 +54,9 @@ func TestEvaluate_ZeroDeliveryNeedsBothSignals(t *testing.T) {
 func TestEvaluate_ZeroDeliveryOnlyForLiveStatuses(t *testing.T) {
 	fires := map[string]bool{
 		"created":          true,
-		"created_degraded": true, // it IS delivering; some variants failed
+		"created_degraded": true,  // it IS delivering; some variants failed
+		"active":           true,  // the RUN state a toggle sets — the clearest case of all
+		"paused":           false, // deliberately stopped; zero spend is the intended outcome
 		"pending":          false,
 		"unconfirmed":      false,
 		"group_created":    false,
@@ -268,5 +270,38 @@ func TestEvaluate_ZeroDeliveryWaitsForTheFlight(t *testing.T) {
 	started.DeliveryExpected = true
 	if got := rulesFired(Evaluate(started)); !contains(got, "zero_delivery") {
 		t.Errorf("zero_delivery did not fire for a started campaign with no delivery; got %v", got)
+	}
+}
+
+// Campaign.Status carries TWO kinds of value — a provisioning state stamped at create
+// (pending/created/created_degraded) and a RUN state set by the toggle (active/paused). The
+// pacing rules must respect the run state too, not just zero_delivery.
+//
+// Before this, `paused` and `pending` both raised underspending — telling an operator to fix a
+// campaign they had deliberately stopped, or one that may never have reached the platform —
+// while `active`, the one state where delivery is genuinely expected, raised nothing at all.
+func TestEvaluate_PacingRespectsTheRunState(t *testing.T) {
+	base := Input{
+		CampaignID: "c1", Platform: "google-ads", BillsPerDelivery: true, DeliveryExpected: true,
+		Impressions: 5000, Clicks: 100, CTRPct: 2, Spend: 10,
+		Pacing: Pacing{Pct: 20, Label: PacingUnderspending, Computable: true},
+	}
+	wants := map[string]bool{
+		"active":           true,
+		"created":          true,
+		"created_degraded": true,
+		"paused":           false,
+		"pending":          false,
+		"deleted":          false,
+	}
+	for status, want := range wants {
+		t.Run(status, func(t *testing.T) {
+			in := base
+			in.Status = status
+			got := contains(rulesFired(Evaluate(in)), "underspending")
+			if got != want {
+				t.Errorf("status %q raised underspending=%v, want %v", status, got, want)
+			}
+		})
 	}
 }

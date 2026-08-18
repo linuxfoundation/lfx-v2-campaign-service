@@ -794,10 +794,16 @@ func TestGetBriefMetrics_WindowPrecedingTheFlightIsNotPaced(t *testing.T) {
 	if row.Pacing.Pct != nil {
 		t.Errorf("pct = %v; the campaign did not exist during this window", *row.Pacing.Pct)
 	}
-	for _, item := range res.ActionItems {
-		if item.Rule == "underspending" {
-			t.Errorf("underspending raised for a window that precedes the campaign: %q", item.Issue)
+	// EVERY rule, not just the pacing ones. This test previously asserted only underspending and
+	// passed while the same row emitted zero_delivery — the window predates the campaign, so its
+	// zero impressions and zero spend are correct and mean "not running yet", but the delivery
+	// rule was still reading them as a campaign that failed to start.
+	if len(res.ActionItems) != 0 {
+		var fired []string
+		for _, item := range res.ActionItems {
+			fired = append(fired, item.Rule)
 		}
+		t.Errorf("a window preceding the campaign raised %v — the campaign did not exist during it", fired)
 	}
 }
 

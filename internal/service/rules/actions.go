@@ -117,7 +117,20 @@ func Evaluate(in Input) []ActionItem {
 	// at 0% of plan, so the pacing item is arithmetically true and actively misleading: the two
 	// items carry OPPOSITE remedies — zero_delivery says no budget change will fix this, while
 	// underspending says to adjust the budget. Emitting both makes the operator pick.
-	if in.Pacing.Computable && !zeroDelivery {
+	// isActive gates these too, not just zero_delivery. Campaign.Status carries TWO kinds of
+	// value — a provisioning state stamped at create (pending / created / created_degraded) and
+	// a RUN state set by the toggle (active / paused) — and only some of them mean the campaign
+	// is meant to be spending:
+	//
+	//   - `paused` is a deliberate operator decision. Zero spend is the INTENDED outcome, so an
+	//     underspending item tells them to fix something they just chose.
+	//   - `pending` has not necessarily reached the platform at all, so its spend figure is not
+	//     evidence about pacing.
+	//
+	// Before this, `paused` and `pending` both raised underspending while `active` — the one
+	// state where delivery is genuinely expected — raised nothing, because isActive listed only
+	// the provisioning states.
+	if in.Pacing.Computable && !zeroDelivery && isActive(in.Status) {
 		switch in.Pacing.Label {
 		case PacingUnderspending:
 			items = append(items, ActionItem{
@@ -177,5 +190,10 @@ const minImpressionsForCTR = 1000
 // Written as an allow-list because `status != deleted` would sweep every future status into
 // "expected to deliver" the moment one is added, with nothing failing to say so.
 func isActive(status string) bool {
-	return status == model.CampaignStatusCreated || status == model.CampaignStatusCreatedDegraded
+	switch status {
+	case model.CampaignStatusCreated, model.CampaignStatusCreatedDegraded, model.CampaignRunActive:
+		return true
+	default:
+		return false
+	}
 }
