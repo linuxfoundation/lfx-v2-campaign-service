@@ -88,7 +88,7 @@ across platforms — the same reason the brief-metrics response refuses a cross-
 
 | Rule | Fires when |
 |---|---|
-| `zero_delivery` | No impressions **and** no spend, on a campaign believed to exist upstream |
+| `zero_delivery` | No impressions **and** no spend, on a **paid-ads** campaign believed to exist upstream. Suppresses the pacing rules below for that campaign |
 | `underspending` | Pacing is computable and below the floor |
 | `budget_constrained` | Pacing is computable and above plan |
 | `low_ctr` | CTR below the threshold, over enough impressions to mean anything |
