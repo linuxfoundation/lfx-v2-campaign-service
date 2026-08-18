@@ -405,12 +405,15 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // which is the Meta case spelled out below. Google Ads had both
 // from the start. Meta is the one provider where the halves came apart — it gained discovery
 // in LFXV2-3062 and stayed required here until LFXV2-3061 supplied the tagging; see the
-// paragraph below MetaAdsConnectionConfig's own godoc. None of the remaining four has BOTH:
-// all four lack discovery, and Microsoft, Reddit and X already tag a missing account with
-// domain.ErrAccountNotSelected (validateMicrosoftConnection, resolveRedditClient, validateTwitterConnection), so LinkedIn
-// alone is missing the tagging as well. Naming the halves separately matters because the bar
-// is the conjunction — a provider that gains discovery tomorrow becomes eligible immediately
-// if it is one of those three, and needs a second change if it is LinkedIn.
+// paragraph below MetaAdsConnectionConfig's own godoc. Of the remaining four, only Microsoft
+// has BOTH, as of LFXV2-3064: Reddit and X still lack discovery, while LinkedIn gained a
+// discovery endpoint in that ticket and is missing the OTHER half. resolveLinkedInCredentials
+// does tag domain.ErrAccountNotSelected, but LinkedInDispatcher.Dispatch never calls it — the
+// create path resolves inline and answers a missing account id with a bare notCreated, so the
+// missing choice is never named. Microsoft, Reddit and X tag it on a path create reaches
+// (validateMicrosoftConnection, resolveRedditClient, validateTwitterConnection). Naming the
+// halves separately matters because the bar is the conjunction — Reddit or X becomes eligible
+// the day it gains discovery, while LinkedIn needs its create path routed through the resolver.
 //
 // That is the bootstrap this enables — credentials first, account chosen afterwards:
 //
@@ -438,10 +441,25 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // this apart from a bad credential. The requirement the rule states is that a half-configured
 // connection is DIAGNOSABLE, not that the API returns a bespoke code for it.
 //
-// LinkedIn, Microsoft, Reddit and X keep Required("account_id"). For them there is still no
-// list to choose from, so relaxing the requirement would create a connection that can never
-// be finished from inside this API: the operator has to obtain the id out-of-band anyway, and
-// the only thing gained is a half-configured row.
+// LinkedIn, Microsoft, Reddit and X keep Required("account_id"), but no longer all for the
+// same reason, and the difference is what tells you how far each is from being relaxed.
+// Reddit and X still have NO list to choose from, so relaxing the requirement would create a
+// connection that can never be finished from inside this API: the operator has to obtain the
+// id out-of-band anyway, and the only thing gained is a half-configured row. LinkedIn and
+// Microsoft DO have a discovery endpoint as of LFXV2-3064 — the list exists. What blocks each
+// differs, and two independent gates are easy to conflate here:
+//
+//   - THIS Required("account_id") gates the PUBLIC connection APIs. LinkedIn stays required
+//     because it lacks the second half — its create path resolves inline and answers a missing
+//     account id with a bare notCreated, so the choice is never named (paragraph above).
+//     Microsoft has both halves and is therefore behaviourally eligible to have it relaxed.
+//   - accountDiscoveryProviders (internal/bootstrap/sysacct.go) gates only whether an
+//     account-less SYSTEM row is installable by the bootstrap CLI. Microsoft is deliberately
+//     not in it yet — that is a change to what the CLI accepts and belongs in its own commit.
+//
+// So Microsoft's exclusion here is a sequencing decision, not a missing capability; an earlier
+// version of this comment named the bootstrap map as its "other half", which contradicted the
+// paragraph above. Relaxing either gate without both halves is what the next rule forbids.
 //
 // Add the requirement back for Google Ads or Meta, or drop it for another provider, only
 // together with that provider's discovery endpoint AND its account_not_selected tagging.
@@ -778,7 +796,12 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	// Account discovery is declared per provider rather than inside connectionMethods:
 	// only providers whose dispatcher implements the AccountLister interface have one, and
 	// a generated method for a provider that cannot answer it would be a 400 by
-	// construction. LinkedIn, X, Reddit and Microsoft follow in their own tickets.
+	// construction.
+	//
+	// Google Ads, Meta, LinkedIn and Microsoft have one. X and Reddit do not: neither
+	// platform client has a ListAdAccounts, so their account id stays hand-entered on the
+	// connection until one is built. Do not add a method here for either without the
+	// dispatcher side — the endpoint would exist and always fail.
 	Method("list-google-ads-accounts", func() {
 		Description("Enumerate the Google Ads ad accounts accessible via the stored connection credential.")
 		Payload(func() {
@@ -845,6 +868,75 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
 			GET("/projects/{project_id}/connection-meta-ads/accounts")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("BadRequest", StatusBadRequest)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("list-linkedin-ads-accounts", func() {
+		Description("Enumerate the LinkedIn ad accounts accessible via the stored connection credential. " +
+			"Returns bare numeric account ids, ready to store as the connection's account_id.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Required("project_id")
+		})
+		Result(func() {
+			// Per-provider example, for the reason spelled out on list-google-ads-accounts:
+			// Goa fabricates lorem-ipsum for an attribute with no example, so omitting one
+			// publishes a false id format rather than none. LinkedIn ids are bare digits.
+			Attribute("accounts", ArrayOf(AccessibleAccount), func() {
+				Example([]map[string]any{
+					{"id": "507404993", "label": "Linux Foundation [USD]"},
+					{"id": "512233445", "label": "CNCF [USD] — on billing hold"},
+				})
+			})
+			Required("accounts")
+		})
+		Error("NotFound", NotFoundError, "Resource not found")
+		Error("BadRequest", BadRequestError, "Bad request")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-linkedin-ads/accounts")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("BadRequest", StatusBadRequest)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("list-microsoft-ads-accounts", func() {
+		Description("Enumerate the Microsoft Advertising accounts accessible via the stored connection " +
+			"credential, across every customer the credential can reach. Returns account ids as " +
+			"digits, ready to store as the connection's account_id; the label carries Microsoft's " +
+			"human-facing account number, which is what its own UI shows.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Required("project_id")
+		})
+		Result(func() {
+			Attribute("accounts", ArrayOf(AccessibleAccount), func() {
+				Example([]map[string]any{
+					{"id": "1234567", "label": "Linux Foundation (X1234567)"},
+					{"id": "7654321", "label": "CNCF (X7654321) — suspended"},
+				})
+			})
+			Required("accounts")
+		})
+		Error("NotFound", NotFoundError, "Resource not found")
+		Error("BadRequest", BadRequestError, "Bad request")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-microsoft-ads/accounts")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)

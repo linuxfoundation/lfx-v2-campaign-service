@@ -1450,6 +1450,48 @@ func BuildListMetaAdsAccountsPayload(lfxV2CampaignServiceConnectionsListMetaAdsA
 	return v, nil
 }
 
+// BuildListLinkedinAdsAccountsPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-linkedin-ads-accounts endpoint from
+// CLI flags.
+func BuildListLinkedinAdsAccountsPayload(lfxV2CampaignServiceConnectionsListLinkedinAdsAccountsProjectID string, lfxV2CampaignServiceConnectionsListLinkedinAdsAccountsBearerToken string) (*lfxv2campaignserviceconnections.ListLinkedinAdsAccountsPayload, error) {
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsListLinkedinAdsAccountsProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListLinkedinAdsAccountsBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsListLinkedinAdsAccountsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListLinkedinAdsAccountsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildListMicrosoftAdsAccountsPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-microsoft-ads-accounts endpoint
+// from CLI flags.
+func BuildListMicrosoftAdsAccountsPayload(lfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsProjectID string, lfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsBearerToken string) (*lfxv2campaignserviceconnections.ListMicrosoftAdsAccountsPayload, error) {
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListMicrosoftAdsAccountsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildListHubspotEmailsPayload builds the payload for the
 // lfx-v2-campaign-service-connections list-hubspot-emails endpoint from CLI
 // flags.

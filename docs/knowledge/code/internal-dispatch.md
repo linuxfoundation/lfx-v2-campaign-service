@@ -435,7 +435,9 @@ the client will actually use.
 `GoogleAdsDispatcher.ListAccounts(ctx, projectID, platform) ([]model.AccessibleAccount, error)`
 enumerates the ad accounts reachable **upstream at the provider** with the connection's stored
 credential. It exists so an operator configuring a connection can pick the right account instead
-of pasting a customer ID by hand. `MetaDispatcher.ListAccounts` is the second implementation.
+of pasting a customer ID by hand. `MetaDispatcher`, `LinkedInDispatcher` and `MicrosoftDispatcher`
+implement it too — four in total, the last two added in LFXV2-3064. Reddit and X do not, because
+their platform clients expose no `ListAdAccounts` for a dispatcher method to call.
 
 **Now fully wired.** The adapter landed one PR ahead of its caller; both halves are present as of
 this change. `internal/service/orchestrator.go` declares `AccountLister` alongside `StatusToggler`
@@ -766,9 +768,10 @@ discovery could not be completed" describes an operation they did not perform.
 
 One arm is NOT shared. A dispatcher with no `EmailSearcher` yields `ErrEmailSearchUnsupported`,
 a separate sentinel from `ErrAccountsUnsupported`, because the two capabilities are genuinely
-independent: HubSpot searches emails and has no ad accounts, while Google Ads and Meta are the
-reverse — they are the only `AccountLister` implementors, and the remaining ad platforms
-(LinkedIn, Reddit, X, Microsoft) implement neither capability. Folding the two sentinels into one
+independent: HubSpot searches emails and has no ad accounts, while the ad platforms that
+implement `AccountLister` are the reverse — Google Ads, Meta, LinkedIn and Microsoft as of
+LFXV2-3064. Reddit and X implement neither capability, their clients having no
+`ListAdAccounts`. Folding the two sentinels into one
 would make "this platform cannot do X" ambiguous about which X.
 
 **Draft emails are returned, with their state — archived ones are absent.** Same reasoning as Meta's disabled

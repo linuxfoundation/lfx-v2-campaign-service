@@ -62,11 +62,19 @@ apart — it gained a discovery endpoint in LFXV2-3062 and was still excluded, b
 as `account_not_selected`) and Meta joined the map. That token reaches an operator through the
 dispatch-failure LOG LINE rather than the polled job result, because `dispatchPlatform` collapses
 every dispatcher error into `"platform campaign creation failed"`; Meta's toggle and metrics need
-no account id, so create — the asynchronous path — is its only account-needing one. None of
-LinkedIn, Microsoft, Reddit and X has BOTH halves: all four lack discovery, and Microsoft, Reddit
-and X already tag a missing account with `domain.ErrAccountNotSelected`, so LinkedIn alone is
-missing the tagging too. Either way an account-less row for them stays a dead row and the map
-keeps them out — see the comment on the map itself for the full reasoning. On a ROTATION the same omission means KEEP, because a rotation should not have to
+no account id, so create — the asynchronous path — is its only account-needing one. Of LinkedIn, Microsoft, Reddit and X, only Microsoft has BOTH halves, as of LFXV2-3064: Reddit and
+X still lack discovery, and LinkedIn — which gained a discovery endpoint in that same ticket — is
+the one provider missing the OTHER half. `resolveLinkedInCredentials` does tag a missing account
+with `domain.ErrAccountNotSelected`, but `LinkedInDispatcher.Dispatch` does not call it; the create
+path resolves inline and returns a bare `notCreated`, so the missing choice is never named.
+Microsoft, Reddit and X all tag it on a path create actually reaches. For Reddit, X and LinkedIn an
+account-less row would stay a DEAD row, which is why the map keeps them out. Microsoft is the
+exception and the distinction is worth keeping: it has both halves, so its absence from the map is
+a SEQUENCING decision rather than a missing capability — admitting it changes what the CLI accepts
+and belongs in its own change. Note also that this map is a different gate from
+`design/connection.go`'s `Required("account_id")`, which governs the public connection APIs; a
+provider can be behaviourally eligible for one and not yet admitted to the other. See the comment
+on the map itself for the full reasoning. On a ROTATION the same omission means KEEP, because a rotation should not have to
 restate the whole row.
 
 Preserve-by-default cannot express a removal, and this scope has no other writer that could —

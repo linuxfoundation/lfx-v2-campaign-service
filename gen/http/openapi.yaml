@@ -2977,6 +2977,63 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/connection-linkedin-ads/accounts:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-linkedin-ads-accounts lfx-v2-campaign-service-connections
+            description: Enumerate the LinkedIn ad accounts accessible via the stored connection credential. Returns bare numeric account ids, ready to store as the connection's account_id.
+            operationId: lfx-v2-campaign-service-connections#list-linkedin-ads-accounts
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/LfxV2CampaignServiceConnectionsListLinkedinAdsAccountsResponseBody'
+                        required:
+                            - accounts
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/connection-linkedin-ads/set-credential:
         post:
             tags:
@@ -3804,6 +3861,63 @@ paths:
             responses:
                 "204":
                     description: No Content response.
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/connection-microsoft-ads/accounts:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-microsoft-ads-accounts lfx-v2-campaign-service-connections
+            description: Enumerate the Microsoft Advertising accounts accessible via the stored connection credential, across every customer the credential can reach. Returns account ids as digits, ready to store as the connection's account_id; the label carries Microsoft's human-facing account number, which is what its own UI shows.
+            operationId: lfx-v2-campaign-service-connections#list-microsoft-ads-accounts
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/LfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsResponseBody'
+                        required:
+                            - accounts
                 "400":
                     description: Bad Request response.
                     schema:
@@ -6649,6 +6763,27 @@ definitions:
                   updated_at: "2026-08-01T17:04:00Z"
         required:
             - emails
+    LfxV2CampaignServiceConnectionsListLinkedinAdsAccountsResponseBody:
+        title: LfxV2CampaignServiceConnectionsListLinkedinAdsAccountsResponseBody
+        type: object
+        properties:
+            accounts:
+                type: array
+                items:
+                    $ref: '#/definitions/AccessibleAccount'
+                example:
+                    - id: "507404993"
+                      label: Linux Foundation [USD]
+                    - id: "512233445"
+                      label: CNCF [USD] — on billing hold
+        example:
+            accounts:
+                - id: "507404993"
+                  label: Linux Foundation [USD]
+                - id: "512233445"
+                  label: CNCF [USD] — on billing hold
+        required:
+            - accounts
     LfxV2CampaignServiceConnectionsListMetaAdsAccountsResponseBody:
         title: LfxV2CampaignServiceConnectionsListMetaAdsAccountsResponseBody
         type: object
@@ -6668,6 +6803,27 @@ definitions:
                   label: Linux Foundation
                 - id: act_1234567890
                   label: CNCF (unsettled)
+        required:
+            - accounts
+    LfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsResponseBody:
+        title: LfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsResponseBody
+        type: object
+        properties:
+            accounts:
+                type: array
+                items:
+                    $ref: '#/definitions/AccessibleAccount'
+                example:
+                    - id: "1234567"
+                      label: Linux Foundation (X1234567)
+                    - id: "7654321"
+                      label: CNCF (X7654321) — suspended
+        example:
+            accounts:
+                - id: "1234567"
+                  label: Linux Foundation (X1234567)
+                - id: "7654321"
+                  label: CNCF (X7654321) — suspended
         required:
             - accounts
     LfxV2CampaignServiceConnectionsSetCredentialGoogleAdsRequestBody:
