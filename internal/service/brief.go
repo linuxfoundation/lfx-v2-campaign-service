@@ -1868,6 +1868,9 @@ type briefMetricsRow struct {
 	// budget and flight. Zero-valued (Computable=false) on every row that carries no
 	// measurement, and on measured rows with no budget or usable flight.
 	pacing rules.Pacing
+	// deliveryExpected records whether this campaign's flight has run long enough for an
+	// absence of delivery to be evidence. Derived alongside pacing so both read the same `now`.
+	deliveryExpected bool
 }
 
 // classifyBriefMetricsErr maps a per-campaign read failure onto the row status vocabulary
@@ -2059,6 +2062,10 @@ func (s *BriefService) GetBriefMetrics(ctx context.Context, p *briefs.GetBriefMe
 	now := s.now()
 	for i := range rows {
 		rows[i].pacing = pacingFor(&rows[i], now)
+		if rows[i].campaign != nil {
+			rows[i].deliveryExpected = rules.DeliveryExpected(
+				rules.Flight{Start: rows[i].campaign.StartDate, End: rows[i].campaign.EndDate}, now)
+		}
 	}
 
 	return renderBriefMetrics(p.BriefID, requested, rows), nil
@@ -2191,6 +2198,10 @@ func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []b
 			// email provider inherits it, and because an unrecognised provider returns "" and
 			// therefore fails closed.
 			BillsPerDelivery: r.campaign.Platform.Kind() == model.ChannelPaidAds,
+			// Whether the flight has begun, and has run long enough for a zero to be evidence
+			// rather than reporting lag. Derived per-row above so it shares the one `now` the
+			// whole response is built against.
+			DeliveryExpected: r.deliveryExpected,
 		}) {
 			out.ActionItems = append(out.ActionItems, &briefs.CampaignActionItem{
 				Rule:       item.Rule,

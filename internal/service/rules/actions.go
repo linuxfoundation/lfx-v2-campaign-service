@@ -53,6 +53,11 @@ type Input struct {
 	// would silently make every low-CTR threshold a hundred times too strict.
 	CTRPct float64
 	Pacing Pacing
+	// DeliveryExpected records whether the campaign's flight has actually begun — and, on a
+	// platform whose reporting lags, whether enough of it has passed for a zero to mean
+	// anything. False before the flight starts and during its first day, mirroring the floor
+	// the pacing rules use.
+	DeliveryExpected bool
 	// BillsPerDelivery records whether this channel charges for delivery at all.
 	//
 	// False for the email channel: HubSpot charges nothing per send and its adapter always
@@ -86,7 +91,15 @@ func Evaluate(in Input) []ActionItem {
 	// campaign never started.
 	// BillsPerDelivery gates the whole rule: on a channel that charges nothing per delivery,
 	// "no spend" is the normal state and says nothing about whether the campaign ran.
-	zeroDelivery := in.BillsPerDelivery && isActive(in.Status) && in.Impressions == 0 && in.Spend == 0
+	//
+	// DeliveryExpected gates it in time. A campaign can be dispatched days before its flight
+	// begins, and one scheduled to start next week has delivered nothing for the same reason it
+	// has spent nothing — it has not started. Without this the rule tells an operator to check
+	// targeting and creative approval for a campaign whose only property is being early. It is
+	// the same guard the pacing rules already got, applied to the one rule that was still
+	// reasoning about delivery without reference to the flight.
+	zeroDelivery := in.BillsPerDelivery && in.DeliveryExpected &&
+		isActive(in.Status) && in.Impressions == 0 && in.Spend == 0
 	if zeroDelivery {
 		items = append(items, ActionItem{
 			Rule: "zero_delivery", Priority: PriorityHigh,

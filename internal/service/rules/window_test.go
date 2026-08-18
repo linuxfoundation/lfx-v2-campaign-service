@@ -101,11 +101,13 @@ func TestWindowDaysWithinFlight_WindowBeforeTheFlight(t *testing.T) {
 // A window that only PARTLY overlaps the flight contributes only the overlapping days.
 func TestWindowDaysWithinFlight_PartialOverlap(t *testing.T) {
 	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
-	// last_7_days spans Aug 12..19. A flight starting Aug 15 overlaps 4 of those days.
+	// last_7_days spans Aug 12..19, clamped to now (Aug 18 noon). A flight starting Aug 15
+	// therefore overlaps Aug 15..18-noon: three and a half days, not four. The half is the part
+	// of today that has not happened yet, which cannot carry spend.
 	start := time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)
-	if got := WindowDaysWithinFlight("last_7_days", now, &start, &end); got != 4 {
-		t.Errorf("overlap = %v days, want 4 (Aug 15..19 of a window spanning Aug 12..19)", got)
+	if got := WindowDaysWithinFlight("last_7_days", now, &start, &end); got != 3.5 {
+		t.Errorf("overlap = %v days, want 3.5 (Aug 15..18-noon of a window spanning Aug 12..19)", got)
 	}
 }
 
@@ -113,13 +115,15 @@ func TestWindowDaysWithinFlight_PartialOverlap(t *testing.T) {
 // running, so a window reaching up to now overlaps it fully.
 func TestWindowDaysWithinFlight_OpenEndedFlight(t *testing.T) {
 	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	// 6.5, not 7: the window is clamped to now, so the remaining half of today is excluded.
+	// The flight bounds are what this test is about — they impose no further constraint.
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if got := WindowDaysWithinFlight("last_7_days", now, &start, nil); got != 7 {
-		t.Errorf("overlap with an open-ended flight = %v, want the full 7", got)
+	if got := WindowDaysWithinFlight("last_7_days", now, &start, nil); got != 6.5 {
+		t.Errorf("overlap with an open-ended flight = %v, want 6.5 (the window, unconstrained by the flight)", got)
 	}
 	// No start either: nothing constrains the window.
-	if got := WindowDaysWithinFlight("last_7_days", now, nil, nil); got != 7 {
-		t.Errorf("overlap with an unbounded flight = %v, want the full 7", got)
+	if got := WindowDaysWithinFlight("last_7_days", now, nil, nil); got != 6.5 {
+		t.Errorf("overlap with an unbounded flight = %v, want 6.5", got)
 	}
 }
 
@@ -143,3 +147,65 @@ func TestWindowDaysWithinFlight_FlightEndsMidWindow(t *testing.T) {
 		t.Errorf("overlap = %v days, want 3 (Aug 12..15 of a window spanning Aug 12..19)", got)
 	}
 }
+
+// A window cannot carry spend from time that has not happened yet.
+//
+// `today` is the case that matters most: at noon the platform reports half a day of spend, and
+// counting it as a full day of plan reports a campaign spending exactly on plan as ~50% — a
+// confident underspending figure derived from the clock rather than from the campaign. The error
+// is a factor of two and is worst early in the day, when an operator is most likely to look.
+func TestWindowDaysWithinFlight_CurrentDayIsNotCountedWhole(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	cases := map[string]struct {
+		at   time.Time
+		want float64
+	}{
+		"today at noon":     {time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC), 0.5},
+		"today at 6am":      {time.Date(2026, 8, 18, 6, 0, 0, 0, time.UTC), 0.25},
+		"today just at 6pm": {time.Date(2026, 8, 18, 18, 0, 0, 0, time.UTC), 0.75},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := WindowDaysWithinFlight("today", tc.at, &start, nil); got != tc.want {
+				t.Errorf("today at %v = %v days, want %v", tc.at.Format("15:04"), got, tc.want)
+			}
+		})
+	}
+
+	// `yesterday` is a COMPLETE day and must stay whole — the clamp must not shave a window
+	// that has already finished.
+	noon := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	if got := WindowDaysWithinFlight("yesterday", noon, &start, nil); got != 1 {
+		t.Errorf("yesterday = %v days, want 1 — it is a finished day and the clamp must not touch it", got)
+	}
+	// So is `last_month`.
+	if got := WindowDaysWithinFlight("last_month", noon, &start, nil); got != 31 {
+		t.Errorf("last_month = %v days, want 31 — a finished month must not be clamped", got)
+	}
+}
+
+// DeliveryExpected shares ComputePacing's floor, so the delivery rule and the pacing rules agree
+// on when an absence is evidence.
+func TestDeliveryExpected(t *testing.T) {
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	cases := map[string]struct {
+		start *time.Time
+		want  bool
+	}{
+		"no start recorded":   {nil, true},
+		"starts next week":    {ptr(now.AddDate(0, 0, 7)), false},
+		"started an hour ago": {ptr(now.Add(-time.Hour)), false},
+		"started 23h ago":     {ptr(now.Add(-23 * time.Hour)), false},
+		"started a day ago":   {ptr(now.AddDate(0, 0, -1)), true},
+		"started a month ago": {ptr(now.AddDate(0, -1, 0)), true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := DeliveryExpected(Flight{Start: tc.start}, now); got != tc.want {
+				t.Errorf("DeliveryExpected = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func ptr(t time.Time) *time.Time { return &t }

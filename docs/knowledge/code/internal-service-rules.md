@@ -50,6 +50,15 @@ campaign with nothing to answer for. `WindowDaysWithinFlight` therefore resolves
 interval and intersects it with the flight; a window that does not overlap at all yields no
 pacing rather than a confident zero.
 
+The interval is also **clamped to now**, because a window cannot carry spend from time that has
+not happened. `today` at noon is half a day of spend, and counting it as a full day of plan
+reports a campaign spending exactly on plan as ~50%. This costs a little accuracy on the rolling
+windows, where the platform reports the whole span and only the final day is partial —
+`last_7_days` at noon reads ~8% ahead — but that bias is bounded by half a day out of the
+window's length and shrinks as the window grows, whereas the unclamped error on `today` is a
+factor of two and worst early in the day. Erring toward "spending ahead" is also the safer
+direction: it never manufactures an underspending item against a healthy campaign.
+
 **Nor is pacing meaningful in a campaign's first day.** A campaign launched a minute into a
 30-day $1000 flight is expected to have spent two cents, so a spend of zero is 0% — a
 HIGH-priority underspending item against a campaign whose only property is being new. It would be
@@ -88,7 +97,7 @@ across platforms — the same reason the brief-metrics response refuses a cross-
 
 | Rule | Fires when |
 |---|---|
-| `zero_delivery` | No impressions **and** no spend, on a **paid-ads** campaign believed to exist upstream. Suppresses the pacing rules below for that campaign |
+| `zero_delivery` | No impressions **and** no spend, on a **paid-ads** campaign believed to exist upstream **whose flight has begun**. Suppresses the pacing rules below for that campaign |
 | `underspending` | Pacing is computable and below the floor |
 | `budget_constrained` | Pacing is computable and above plan |
 | `low_ctr` | CTR below the threshold, over enough impressions to mean anything |
@@ -96,6 +105,11 @@ across platforms — the same reason the brief-metrics response refuses a cross-
 Two guards carry most of the weight. **Zero delivery requires both signals** — impressions alone
 is an unbilled serve, spend alone is a billing entry with no serve, and flagging either trains
 operators to ignore the rule.
+
+It also **waits for the flight**, via the same one-elapsed-day floor the pacing rules use
+(`DeliveryExpected`): a campaign dispatched days before its start date has delivered nothing for
+the same reason it has spent nothing, and the rule would otherwise tell an operator to check
+targeting and creative approval for a campaign whose only property is being early.
 
 It is also **paid-ads only**, and it **suppresses the pacing item**. The email channel bills
 nothing per send and its adapter always reports zero cost, while mapping opens onto impressions —

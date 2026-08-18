@@ -92,11 +92,21 @@ func WindowDaysWithinFlight(window string, now time.Time, flightStart, flightEnd
 	if !ok {
 		return 0
 	}
-	// Deliberately NOT clamped to `now`. A window's day count is what the platform reports
-	// against — `last_7_days` returns seven days of spend whether it is asked at midnight or at
-	// noon — so trimming the final partial day would compare seven days of spend against six and
-	// a half days of plan and report every campaign as 8% ahead. The flight bounds below are the
-	// real constraint, because they decide whether the campaign existed at all.
+	// Clamp the end to `now`: a window cannot carry spend from time that has not happened. At
+	// noon, `today` is half a day of spend, and counting it as a full day of plan reports a
+	// campaign spending exactly on plan as ~50% — the same failure-as-measurement shape in the
+	// opposite direction.
+	//
+	// This costs a little accuracy on the ROLLING windows, where the platform reports the whole
+	// span and only the final day is partial: `last_7_days` at noon becomes 6.5 days of plan
+	// against 7 days of spend, reading ~8% ahead. That bias is bounded by half a day out of the
+	// window's length and shrinks as the window grows, whereas the unclamped error on `today` is
+	// a factor of two and worst at the start of the day when an operator is most likely to look.
+	// Erring toward "spending ahead" is also the safer direction: it never manufactures an
+	// underspending item against a healthy campaign.
+	if we.After(now) {
+		we = now
+	}
 	if flightStart != nil && flightStart.After(ws) {
 		ws = *flightStart
 	}
@@ -107,4 +117,22 @@ func WindowDaysWithinFlight(window string, now time.Time, flightStart, flightEnd
 		return 0
 	}
 	return we.Sub(ws).Hours() / 24
+}
+
+// DeliveryExpected reports whether enough of a campaign's flight has passed for an absence of
+// delivery to mean anything.
+//
+// False before the flight begins — a campaign dispatched days early has delivered nothing
+// because it has not started — and false during its first day, because ad platforms report
+// spend and impressions with a lag, so the opening hours read as zero whatever the campaign is
+// doing. It is the same floor ComputePacing applies, exported so the delivery rule and the
+// pacing rules agree on when a zero is evidence.
+//
+// An absent start is treated as "running": a campaign with no recorded start date began when it
+// began, and refusing to evaluate it would silence the rule for every row that lacks one.
+func DeliveryExpected(flight Flight, now time.Time) bool {
+	if flight.Start == nil {
+		return true
+	}
+	return elapsedDays(*flight.Start, now) >= minElapsedDaysForPacing
 }

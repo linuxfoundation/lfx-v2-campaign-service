@@ -633,10 +633,18 @@ func TestGetBriefMetrics_PacingUsesTheRowsOwnWindow(t *testing.T) {
 	if row.Pacing == nil || row.Pacing.Pct == nil {
 		t.Fatal("no computable pacing")
 	}
-	// Against 7 days of plan ($700) this is 100%. Against the 30-day default it would be ~23%
-	// and raise an underspending item against a campaign that is exactly on track.
-	if math.Abs(*row.Pacing.Pct-100) > 5 {
-		t.Errorf("pacing = %.1f%%, want ~100%% — expected spend must cover the 7-day window this row was read over", *row.Pacing.Pct)
+	// ~108%, not 100%: the window is clamped to now, so `last_7_days` at noon contributes 6.5
+	// days of plan ($650) against the 7 days of spend the platform reports ($700). That bias is
+	// deliberate and bounded — see the clamp's comment in window.go, where erring toward
+	// "spending ahead" is the safer direction because it never manufactures an underspending
+	// item against a healthy campaign.
+	//
+	// What this test is really about is the DENOMINATOR's window: against the 30-day default it
+	// would be ~23% and raise an underspending item against a campaign that is exactly on track.
+	// 108 vs 23 proves the row's own window was used; the exact figure is asserted so a later
+	// change to the clamp cannot pass unnoticed.
+	if math.Abs(*row.Pacing.Pct-107.7) > 1 {
+		t.Errorf("pacing = %.1f%%, want ~107.7%% — expected spend must cover the 7-day window this row was read over, clamped to now", *row.Pacing.Pct)
 	}
 	for _, item := range res.ActionItems {
 		if item.Rule == "underspending" {
@@ -840,5 +848,57 @@ func TestGetBriefMetrics_EmailWithNoOpensIsNotZeroDelivery(t *testing.T) {
 	}
 	if !found {
 		t.Error("zero_delivery did not fire for a paid campaign with no delivery")
+	}
+}
+
+// A campaign dispatched before its flight begins must not be reported as failing to deliver.
+//
+// Pins the WIRING, not just the rule: hardcoding DeliveryExpected at the caller makes this fail.
+// The caller half of this gate went untested twice already on this branch.
+func TestGetBriefMetrics_CampaignBeforeItsFlightIsNotZeroDelivery(t *testing.T) {
+	// Dispatched now, scheduled to start in a week.
+	c := campaignOn("c1", model.ProviderGoogleAds)
+	amount, kind := 1000.0, model.BudgetLifetime
+	start := metricsNow.AddDate(0, 0, 7)
+	end := start.AddDate(0, 0, 30)
+	c.BudgetAmount, c.BudgetType, c.StartDate, c.EndDate = &amount, &kind, &start, &end
+
+	disp := newPerCampaignDispatcher()
+	disp.results["c1"] = &model.CampaignMetrics{Impressions: 0, Clicks: 0, CostMicros: 0, Ctr: 0}
+
+	s := newBriefMetricsService(t, disp, c)
+	s.SetClock(func() time.Time { return metricsNow })
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+	for _, item := range res.ActionItems {
+		if item.Rule == "zero_delivery" {
+			t.Errorf("zero_delivery raised for a campaign that starts in a week: %q", item.Issue)
+		}
+	}
+
+	// A campaign whose flight started a week ago, same zero metrics, DOES fire — or the
+	// assertion above would pass for any reason at all.
+	started := campaignOn("c2", model.ProviderGoogleAds)
+	s2Start := metricsNow.AddDate(0, 0, -7)
+	s2End := metricsNow.AddDate(0, 0, 23)
+	started.BudgetAmount, started.BudgetType, started.StartDate, started.EndDate = &amount, &kind, &s2Start, &s2End
+	disp2 := newPerCampaignDispatcher()
+	disp2.results["c2"] = &model.CampaignMetrics{Impressions: 0, Clicks: 0, CostMicros: 0, Ctr: 0}
+	s2 := newBriefMetricsService(t, disp2, started)
+	s2.SetClock(func() time.Time { return metricsNow })
+	res2, err := s2.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics (started): %v", err)
+	}
+	var found bool
+	for _, item := range res2.ActionItems {
+		if item.Rule == "zero_delivery" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("zero_delivery did not fire for a campaign a week into its flight with no delivery")
 	}
 }
