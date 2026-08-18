@@ -600,25 +600,46 @@ func (o *Orchestrator) StartRecoverySweeper() {
 			case <-o.sweeperCtx.Done():
 				return
 			case <-ticker.C:
-				// Bound each sweep so a slow DB can't wedge the goroutine, but derive it
-				// from sweeperCtx (do NOT detach) so cancelling sweeperCtx at Shutdown
-				// interrupts a sweep already blocked mid-statement rather than letting it
-				// run to its own timeout against a closing pool.
-				sctx, cancel := context.WithTimeout(o.sweeperCtx, jobFinalizeTimeout)
-				n, err := o.jobs.FailStuckJobs(sctx, "job did not complete before a service restart")
-				cancel()
-				if err != nil {
-					// A cancellation here is the expected outcome when Shutdown interrupts
-					// an in-flight sweep, not a real failure — don't log it as an error.
-					if o.sweeperCtx.Err() == nil {
-						slog.ErrorContext(o.sweeperCtx, "periodic stuck-job sweep failed", "error", err)
-					}
-				} else if n > 0 {
-					slog.InfoContext(o.sweeperCtx, "periodic stuck-job sweep recovered jobs", "count", n)
-				}
+				o.runRecoverySweep()
 			}
 		}
 	}()
+}
+
+// runRecoverySweep performs ONE stuck-job recovery pass. Separated from the ticker
+// loop so it is directly testable: the sweep interval is minutes, so a test driving
+// the loop would either sleep for minutes or assert nothing.
+func (o *Orchestrator) runRecoverySweep() {
+	// Bound each sweep so a slow DB can't wedge the goroutine, but derive it
+	// from sweeperCtx (do NOT detach) so cancelling sweeperCtx at Shutdown
+	// interrupts a sweep already blocked mid-statement rather than letting it
+	// run to its own timeout against a closing pool.
+	sctx, cancel := context.WithTimeout(o.sweeperCtx, jobFinalizeTimeout)
+	n, err := o.jobs.FailStuckJobs(sctx, "job did not complete before a service restart")
+	cancel()
+	if err != nil {
+		// A cancellation here is the expected outcome when Shutdown interrupts
+		// an in-flight sweep, not a real failure — don't log it as an error.
+		if o.sweeperCtx.Err() == nil {
+			slog.ErrorContext(o.sweeperCtx, "periodic stuck-job sweep failed", "error", err)
+		}
+		return
+	}
+	if n <= 0 {
+		return
+	}
+	slog.InfoContext(o.sweeperCtx, "periodic stuck-job sweep recovered jobs", "count", n)
+	// Record one terminal transition per row the sweep terminalized. The finalize
+	// path deliberately does NOT record a terminal whose status write failed, which
+	// leaves the running→terminal gap open for exactly the stuck rows; this is where
+	// that gap CLOSES. Without it the gap is permanent, so a stuck-job alert keeps
+	// firing after the rows are already terminal in the database — the mirror image
+	// of the bug the finalize guard fixes, and just as misleading to whoever is on
+	// call. The sweep reports only a COUNT, so each row is recorded as the `failed`
+	// status it sets.
+	for i := int64(0); i < n; i++ {
+		o.dispatchMetrics().RecordJobTransition(o.sweeperCtx, model.JobFailed)
+	}
 }
 
 // jobRetentionSweepInterval is how often the retention sweeper prunes terminal job history.
@@ -999,7 +1020,8 @@ func (o *Orchestrator) run(ctx context.Context, jobID string, brief *model.Campa
 	// A job whose terminal write failed is still `running` in the database and IS the
 	// stuck job the alert hunts, so counting its terminal here would close the gap for
 	// exactly the rows the metric exists to expose. Such rows are terminalized later by
-	// the recovery sweeper (FailStuckJobs), and the gap stays open until they are.
+	// the recovery sweeper (FailStuckJobs), which records the terminal transition for
+	// each row it recovers — that is where the gap closes, and it stays open until then.
 	status := aggregateStatus(results)
 	payload, err := json.Marshal(results)
 	if err != nil {

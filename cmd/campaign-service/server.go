@@ -168,12 +168,7 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 		handler = debug.HTTP()(handler)
 	}
 	handler = otelhttp.NewHandler(handler, "lfx-v2-campaign-service",
-		otelhttp.WithFilter(func(r *http.Request) bool {
-			// Exclude health probes from tracing to avoid steady span
-			// volume from frequent liveness/readiness checks.
-			p := r.URL.Path
-			return p != "/healthz" && p != "/livez" && p != "/readyz"
-		}),
+		otelhttp.WithFilter(func(r *http.Request) bool { return shouldTrace(r.URL.Path) }),
 	)
 	// Wrap the inflight tracker OUTERMOST (applied last), so a request is counted
 	// from the instant it enters the handler chain — before the request-ID / debug /
@@ -293,4 +288,21 @@ func runServerWithContext(ctx context.Context, srv *http.Server, cont *container
 		slog.ErrorContext(ctx, "container close error", log.ErrKey, err)
 	}
 	return nil
+}
+
+// untracedPaths are the endpoints excluded from tracing. Each is polled on a fixed
+// machine cadence forever — the kubelet's probes and the Prometheus collector's
+// scrape — so tracing them mints a steady stream of spans that describe no
+// user-visible work and bury the request traces someone is actually reading.
+var untracedPaths = map[string]struct{}{
+	"/healthz": {},
+	"/livez":   {},
+	"/readyz":  {},
+	"/metrics": {},
+}
+
+// shouldTrace reports whether a request path should produce a span.
+func shouldTrace(path string) bool {
+	_, skip := untracedPaths[path]
+	return !skip
 }

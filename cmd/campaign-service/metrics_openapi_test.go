@@ -81,3 +81,32 @@ func publishesPath(doc, path string) bool {
 	}
 	return false
 }
+
+// TestScrapeAndProbesAreNotTraced pins that the machine-polled endpoints are
+// excluded from tracing.
+//
+// /metrics belongs with the health probes for the same reason they are excluded: a
+// Prometheus collector scrapes on a fixed cadence forever, so tracing it produces a
+// steady stream of spans describing no user-visible work, burying the request traces
+// someone is actually reading. Leaving it in was the drift this pins.
+func TestScrapeAndProbesAreNotTraced(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{"/metrics", false},
+		{"/livez", false},
+		{"/readyz", false},
+		{"/healthz", false},
+		// Real request paths must still be traced.
+		{"/projects/p1/campaign-briefs", true},
+		{"/projects/p1/campaigns/c1/metrics", true},
+		{"/", true},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			if got := shouldTrace(tc.path); got != tc.want {
+				t.Errorf("shouldTrace(%q) = %v, want %v", tc.path, got, tc.want)
+			}
+		})
+	}
+}

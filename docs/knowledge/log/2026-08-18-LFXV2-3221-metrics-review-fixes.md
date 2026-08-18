@@ -33,7 +33,8 @@ row stayed `running` in the database while the counter recorded a terminal, clos
 gap for precisely the rows the alert hunts. The alert went quiet at the moment it should
 have fired. Both finalize paths now route through one `terminalize` helper that records
 only after a successful write; such rows are terminalized later by the recovery sweeper
-(`FailStuckJobs`), and the gap stays open until they are.
+(`FailStuckJobs`), which records the transition for each row it recovers — see the
+follow-on finding below, because at first it did not.
 
 The asymmetry with the RUNNING transition is deliberate and is now written down at both
 sites: RUNNING is recorded on **attempt** (dispatch proceeds regardless, so gating it
@@ -107,3 +108,21 @@ and its function detached **two** of them: `SetIndexer` (flagged in review) and
 `NewOrchestrator` (not flagged, found while fixing the first). godoc attaches such a
 comment to whatever follows, so the block had adopted the `const` declaration. Both are
 reattached. When an insertion strands one doc comment, check its neighbours.
+
+**A guard on one side of a gap implies a guard on the other.** Two follow-on findings
+came from the terminal-transition fix itself. First, the finalize comment claimed the
+running→terminal gap closes when the recovery sweeper terminalizes a stuck row — and it
+did not: `FailStuckJobs` recovered rows without recording any transition, so the gap was
+**permanent** and a stuck-job alert would keep firing after the rows were already
+terminal in the database. That is the mirror image of the original bug and just as
+misleading on call. `runRecoverySweep` (extracted from the ticker loop, since a
+minutes-long interval is untestable in place) now records one `failed` transition per
+recovered row. Second, `/metrics` was left in the traced path set while `/livez` and
+`/readyz` were excluded, so every scrape minted a span describing no user-visible work;
+the exclusion list is now a named `untracedPaths` map behind a `shouldTrace` helper, with
+a test that also pins that a real request path ending in `metrics`
+(`/projects/{id}/campaigns/{id}/metrics`) is still traced.
+
+The general lesson: when a metric's meaning is a GAP between two counters, fixing one
+side changes what the other side must do. Guarding the terminal record was necessary but
+not sufficient — it opened a gap that nothing then closed.

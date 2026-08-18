@@ -556,3 +556,63 @@ func TestTerminalizeRecordsOnlyOnSuccessfulWrite(t *testing.T) {
 		})
 	}
 }
+
+// sweepingJobRepo reports a fixed number of rows recovered by FailStuckJobs, so a
+// test can drive the sweeper's recording path without a database.
+type sweepingJobRepo struct {
+	*fakeJobRepo
+	recovered int64
+}
+
+func (r *sweepingJobRepo) FailStuckJobs(context.Context, string) (int64, error) {
+	return r.recovered, nil
+}
+
+// TestRecoverySweepClosesTheTransitionGap pins that the sweeper records a terminal
+// transition for every row it recovers.
+//
+// The finalize path deliberately does NOT record a terminal whose status write
+// failed, which leaves the running->terminal gap open for exactly the stuck rows.
+// This is where that gap CLOSES. Without it the gap is permanent and a stuck-job
+// alert keeps firing after the rows are already terminal in the database -- the
+// mirror image of the bug the finalize guard fixes, and just as misleading.
+func TestRecoverySweepClosesTheTransitionGap(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		recovered int64
+		want      int
+	}{
+		{"nothing stuck records nothing", 0, 0},
+		{"one recovered row", 1, 1},
+		{"every recovered row is counted", 3, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			jobs := &sweepingJobRepo{fakeJobRepo: newFakeJobRepo(), recovered: tc.recovered}
+			rec := &recordingMetrics{}
+			orch := NewOrchestrator(&fakeCampaignRepo{}, jobs, nil)
+			orch.SetMetrics(rec)
+
+			// Drive ONE pass directly: the ticker interval is minutes, so going through
+			// StartRecoverySweeper would either sleep for minutes or assert nothing.
+			orch.runRecoverySweep()
+
+			if got := countJobStates(rec, model.JobFailed); got != tc.want {
+				t.Errorf("sweep recorded %d terminal transitions for %d recovered rows, want %d",
+					got, tc.recovered, tc.want)
+			}
+		})
+	}
+}
+
+// countJobStates counts recorded transitions matching s.
+func countJobStates(m *recordingMetrics, s model.JobStatus) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, got := range m.jobStates {
+		if got == s {
+			n++
+		}
+	}
+	return n
+}

@@ -78,8 +78,11 @@ recorded only after a **successful** write, via the single `terminalize` helper 
 finalize paths route through: `campaign_job_transitions_total` exists so a stuck job
 shows up as the gap between `running` and the terminal statuses, and a job whose terminal
 write failed is still `running` in the database — counting its terminal would close the
-gap for exactly the rows the alert hunts. Such rows are terminalized later by the
-recovery sweeper, and the gap stays open until they are. Dispatch is idempotent: a brief already
+gap for exactly the rows the alert hunts. The recovery sweeper (`runRecoverySweep`)
+then records one terminal transition per row it recovers — that is where the gap
+CLOSES. Both halves are needed: guarding only the finalize side would leave the gap
+permanently open, so a stuck-job alert would keep firing after the rows were already
+terminal in the database. Dispatch is idempotent: a brief already
 carrying a COMPLETED campaign for a platform is reused rather than re-created. The
 idempotency fast-path lookup (`GetCampaignByPlatform`) distinguishes its outcomes: an
 existing campaign with an upstream id AND a terminal status (`created` /
