@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 	"github.com/stretchr/testify/assert"
@@ -604,4 +605,44 @@ func TestResolveDatabaseURL_IncompletePGVarsAreRefusedNotIgnored(t *testing.T) {
 	assert.Contains(t, err.Error(), "PGPASSWORD")
 	assert.Contains(t, err.Error(), "PGDATABASE")
 	assert.NotContains(t, err.Error(), "explicit", "the error must not echo the DSN")
+}
+
+// TestParseRetention pins that EVERY unusable input falls back to 0 ("use the long default"),
+// never to a short window.
+//
+// CAMPAIGN_JOB_RETENTION governs deletion of campaign_jobs rows, which are the audit trail of
+// real ad spend. The asymmetry matters: falling back keeps MORE history than asked for, which
+// is safe, while any reading of a malformed value as a short window silently destroys records.
+// "30 days" and "7d" are included because they are the plausible typos — neither is a valid Go
+// duration, and both would otherwise be tempting to coerce.
+func TestParseRetention(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want time.Duration
+	}{
+		{"unset", "", 0},
+		{"whitespace", "   ", 0},
+		{"unparseable words", "30 days", 0},
+		{"unparseable shorthand", "7d", 0},
+		{"garbage", "forever", 0},
+		{"zero", "0h", 0},
+		{"negative", "-24h", 0},
+		{"valid hours", "4320h", 4320 * time.Hour},
+		{"valid compound", "1h30m", 90 * time.Minute},
+		{"surrounding whitespace is trimmed", "  720h  ", 720 * time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, parseRetention(tc.in),
+				"a value this service cannot use must fall back to the long default, never to a short window")
+		})
+	}
+}
+
+// TestLoadCampaignJobRetentionFromEnv pins the wiring from the environment variable to the
+// Config field, so a rename or a dropped assignment cannot leave the setting silently inert.
+func TestLoadCampaignJobRetentionFromEnv(t *testing.T) {
+	t.Setenv(constants.EnvCampaignJobRetention, "720h")
+	assert.Equal(t, 720*time.Hour, parseRetention(os.Getenv(constants.EnvCampaignJobRetention)))
+	assert.Equal(t, "CAMPAIGN_JOB_RETENTION", constants.EnvCampaignJobRetention)
 }

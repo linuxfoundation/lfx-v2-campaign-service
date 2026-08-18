@@ -345,4 +345,18 @@ type JobRepository interface {
 	// the given error, returning the count. Called on startup to recover jobs
 	// orphaned by a pod restart (their in-memory dispatch goroutine is gone).
 	FailStuckJobs(ctx context.Context, jobErr string) (int64, error)
+	// PruneTerminalJobs deletes TERMINAL (succeeded/partial/failed) jobs whose
+	// terminal state is older than olderThan, at most limit rows per call,
+	// returning the count. campaign_jobs is otherwise append-only and unbounded.
+	//
+	// Non-terminal (queued/running) jobs are NEVER eligible at any age: an old
+	// non-terminal row is a stuck job, which is the record an operator needs to
+	// investigate, not stale history. Implementations must enumerate the terminal
+	// statuses as an allow-list so a status added later is not swept in silently —
+	// these rows are the audit trail of real ad spend.
+	//
+	// A non-positive olderThan or limit selects the implementation's default rather
+	// than meaning "unbounded": an unset configuration value must not read as
+	// "retain nothing" or "delete everything in one statement".
+	PruneTerminalJobs(ctx context.Context, olderThan time.Duration, limit int) (int64, error)
 }
