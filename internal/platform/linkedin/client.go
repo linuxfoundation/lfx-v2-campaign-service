@@ -453,6 +453,64 @@ func isInReviewPauseRejection(err error) bool {
 	return false
 }
 
+// IsCredentialRejected reports whether err is a LinkedIn refusal of the CREDENTIAL itself —
+// an access token that is expired, revoked, or otherwise no longer honoured — as opposed to a
+// refusal of the request or of the caller's permissions on a resource.
+//
+// It exists because that distinction decides whether a human must reconnect the account or
+// whether waiting/retrying is reasonable, and nothing else in the error can answer it: an
+// expired token and a transient upstream fault both arrive as a failed call. LinkedIn access
+// tokens expire 60 days after issue and this client has no way to renew one (no refresh token
+// is stored — see LFXV2-3281), so this is a condition every long-lived connection reaches.
+//
+// Matched on 401 alone, plus 403 ONLY when the body names a token/credential defect. The two
+// statuses are not interchangeable:
+//
+//   - 401 is the credential itself being rejected. LinkedIn returns it with
+//     serviceErrorCode 65600 (invalid) / 65601 (revoked) / 65602 (expired), but the codes are
+//     not required for the classification — a 401 from a bearer-token API means the token was
+//     not accepted, whatever the code, and matching the status keeps a code LinkedIn adds
+//     later from silently falling through to the 503 arm.
+//   - 403 is overwhelmingly a PERMISSION or scope refusal on a resource the token is
+//     otherwise valid for (wrong ad account, missing rw_ads scope). Treating a bare 403 as an
+//     expired credential would tell an operator to reconnect an account whose token is fine,
+//     and would keep telling them so after they did. It therefore qualifies only when the
+//     body explicitly names the credential.
+//
+// The body is read for internal classification ONLY and is never surfaced: apiError.Error
+// omits it deliberately (an upstream body can reflect request material, including a bearer
+// token echoed by a proxy), and this function returns a bool, so no untrusted text escapes.
+// Mirrors isInReviewPauseRejection, which classifies a 400 the same way and for the same
+// reason.
+func IsCredentialRejected(err error) bool {
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		return false
+	}
+	if ae.StatusCode == http.StatusUnauthorized {
+		return true
+	}
+	if ae.StatusCode != http.StatusForbidden {
+		return false
+	}
+	b := strings.ToLower(ae.Body)
+	// Explicit credential markers only. A scope/permission 403 ("not authorized for this ad
+	// account", "insufficient permissions") must NOT match: its remedy is to grant access or
+	// pick another account, not to reconnect a working token.
+	for _, marker := range []string{
+		"expired_access_token", "expired access token",
+		"revoked_access_token", "revoked access token",
+		"invalid_access_token", "invalid access token",
+		"token has expired", "token is expired", "token expired",
+		"access token", // 403 bodies that name the token as the problem at all
+	} {
+		if strings.Contains(b, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // ErrCampaignNotServable marks an ACTIVATE refused BEFORE any mutating call because the
 // campaign cannot serve (e.g. it has zero creatives). It is a local/state condition, not a
 // platform failure — the caller (dispatcher) maps it to a client 409, not a 503. Exposed as a

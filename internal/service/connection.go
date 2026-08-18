@@ -165,6 +165,8 @@ func unusableConnectionReason(err error) string {
 		return "credentials_absent"
 	case errors.Is(err, domain.ErrAccountNotSelected):
 		return "account_not_selected"
+	case errors.Is(err, domain.ErrCredentialsRejected):
+		return "credentials_rejected"
 	default:
 		return "unclassified"
 	}

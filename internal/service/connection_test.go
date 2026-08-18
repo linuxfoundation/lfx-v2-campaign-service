@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"testing"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
@@ -728,5 +729,42 @@ func TestRedditAdsConversionPixelRoundTripAndClear(t *testing.T) {
 	}
 	if updated.ConversionPixelID != nil && *updated.ConversionPixelID != "" {
 		t.Errorf("an update omitting conversion_pixel_id must CLEAR it (PUT is a full replace), got %v", *updated.ConversionPixelID)
+	}
+}
+
+// TestUnusableConnectionReason pins the fixed vocabulary. The strings are an interface, not
+// prose: the ASYNCHRONOUS dispatch path collapses every dispatcher error into one generic
+// string in the job result, so the token produced here is the ONLY place the specific defect
+// is recorded — a missing case costs the diagnosis outright, and renaming one silently breaks
+// whatever greps for it.
+func TestUnusableConnectionReason(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"inactive", domain.ErrConnectionInactive, "connection_inactive"},
+		{"undecodable", domain.ErrCredentialsUndecodable, "credentials_undecodable"},
+		{"incomplete", domain.ErrCredentialsIncomplete, "credentials_incomplete"},
+		{"provider config", domain.ErrProviderConfigInvalid, "provider_config_invalid"},
+		{"malformed blob", domain.ErrCredentialsMalformed, "credential_blob_malformed"},
+		{"absent", domain.ErrCredentialsAbsent, "credentials_absent"},
+		{"account not selected", domain.ErrAccountNotSelected, "account_not_selected"},
+		// LFXV2-3281. Without this case an expired LinkedIn token — the single most
+		// actionable failure on the credential path, and one every connection reaches at
+		// 60 days — logs as "unclassified", i.e. "cause unknown".
+		{"credentials rejected by the platform", domain.ErrCredentialsRejected, "credentials_rejected"},
+		{"no reason sentinel", domain.ErrConnectionNotUsable, "unclassified"},
+		{"unrelated error", errors.New("boom"), "unclassified"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Wrapped the way the dispatch layer wraps it: alongside the status sentinel and
+			// under a message, so the test exercises errors.Is rather than equality.
+			wrapped := fmt.Errorf("resolve credentials: %w: %w", domain.ErrConnectionNotUsable, tc.err)
+			if got := unusableConnectionReason(wrapped); got != tc.want {
+				t.Errorf("unusableConnectionReason(%v) = %q, want %q", tc.err, got, tc.want)
+			}
+		})
 	}
 }

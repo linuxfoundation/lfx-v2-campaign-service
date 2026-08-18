@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1696,5 +1697,64 @@ func TestIsInReviewPauseRejection_RequiresExplicitMarker(t *testing.T) {
 	// A non-400 in-review body is still not this rejection (status gate must hold).
 	if isInReviewPauseRejection(&apiError{StatusCode: http.StatusInternalServerError, Body: `{"message":"UNDER_REVIEW"}`}) {
 		t.Error("a 500 must not be classified as an in-review pause rejection")
+	}
+}
+
+// TestIsCredentialRejected covers the classifier that decides whether an operator is told to
+// reconnect LinkedIn (LFXV2-3281). Getting the 403 boundary wrong is the expensive direction:
+// a scope/permission refusal misread as an expired token tells an operator to reconnect an
+// account whose token is fine, and keeps telling them so after they do.
+func TestIsCredentialRejected(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		// --- 401: the credential itself was refused, whatever the code ---
+		{"401 expired access token (the live LFXV2-3281 failure)",
+			&apiError{StatusCode: 401, Method: "GET", Path: "adAccounts",
+				Body: `{"code":"EXPIRED_ACCESS_TOKEN","serviceErrorCode":65602}`}, true},
+		{"401 revoked", &apiError{StatusCode: 401, Body: `{"serviceErrorCode":65601}`}, true},
+		{"401 with an unrecognised body still classifies on status alone",
+			&apiError{StatusCode: 401, Body: `{"code":"SOMETHING_LINKEDIN_ADDED_LATER"}`}, true},
+		{"401 with an empty body", &apiError{StatusCode: 401}, true},
+
+		// --- 403: only when the body names the credential ---
+		{"403 naming an expired token", &apiError{StatusCode: 403,
+			Body: `{"message":"The access token used in the request has expired"}`}, true},
+		{"403 scope refusal is NOT a credential defect", &apiError{StatusCode: 403,
+			Body: `{"message":"Not enough permissions to access: adAccounts"}`}, false},
+		{"403 wrong ad account is NOT a credential defect", &apiError{StatusCode: 403,
+			Body: `{"message":"You are not authorized for this ad account"}`}, false},
+		{"403 with an empty body is NOT a credential defect", &apiError{StatusCode: 403}, false},
+
+		// --- everything else stays a platform failure ---
+		{"429 is transient, not a credential defect", &apiError{StatusCode: 429}, false},
+		{"500 is an upstream failure", &apiError{StatusCode: 500}, false},
+		{"400 naming an access token is a request defect, not an expiry",
+			&apiError{StatusCode: 400, Body: `{"message":"invalid field: access token"}`}, false},
+		{"404", &apiError{StatusCode: 404}, false},
+		{"a transport error is ambiguous, not a credential defect",
+			&transportError{Method: "GET", Path: "adAccounts", Err: errors.New("EOF")}, false},
+		{"an unrelated error", errors.New("boom"), false},
+		{"nil", nil, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsCredentialRejected(tc.err); got != tc.want {
+				t.Errorf("IsCredentialRejected(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestIsCredentialRejected_MatchesThroughAWrappedChain: the dispatch layer classifies errors
+// that have been wrapped on their way up, so matching only a bare *apiError would silently
+// stop working the moment a caller added context.
+func TestIsCredentialRejected_MatchesThroughAWrappedChain(t *testing.T) {
+	wrapped := fmt.Errorf("get campaign metrics: %w",
+		fmt.Errorf("fetch analytics: %w", &apiError{StatusCode: 401, Body: `{"serviceErrorCode":65602}`}))
+	if !IsCredentialRejected(wrapped) {
+		t.Error("a wrapped 401 must still classify as a rejected credential")
 	}
 }

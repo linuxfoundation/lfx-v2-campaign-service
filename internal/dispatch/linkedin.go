@@ -193,6 +193,13 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	result, cerr := client.CreateCampaign(ctx, in)
 	if cerr != nil {
 		if result == nil {
+			// A rejected credential proves nothing was created: LinkedIn refused the request
+			// at authentication, before it could reach the create. Tagged so the operator is
+			// told to reconnect rather than shown a generic pre-create failure, and kept
+			// inside notCreated so the orchestrator still RELEASES the dispatch claim.
+			if terr := tagLinkedInCredentialRejection(cerr, "creating a campaign"); terr != cerr {
+				return nil, notCreated(res.systemScoped(terr))
+			}
 			return nil, notCreated(fmt.Errorf("linkedin campaign creation failed before any upstream create: %w", cerr))
 		}
 		// A non-nil result means a permanent resource exists (campaign group, and maybe
@@ -240,6 +247,13 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 		}
 		if linkedin.IsOutcomeUnconfirmed(uerr) {
 			return &unconfirmedToggleError{err: uerr}
+		}
+		// Ordered AFTER IsOutcomeUnconfirmed deliberately. A credential rejection on a
+		// MUTATING call is a definite 4xx and never ambiguous, so the two cannot both fire —
+		// but if LinkedIn ever answered 401 to a request it had already applied, the
+		// unconfirmed classification is the safer of the two to keep: it retains the claim.
+		if terr := tagLinkedInCredentialRejection(uerr, "changing campaign status"); terr != uerr {
+			return res.systemScoped(terr)
 		}
 		return uerr
 	}
@@ -381,7 +395,11 @@ func (d *LinkedInDispatcher) ListAccounts(ctx context.Context, projectID string,
 	client := linkedin.NewClient(linkedin.Credentials{AccessToken: creds.AccessToken}, linkedin.RuntimeConfig{}, d.opts...)
 	adAccounts, lerr := client.ListAdAccounts(ctx)
 	if lerr != nil {
-		return nil, lerr
+		// Discovery is the endpoint an operator hits precisely BECAUSE the connection is
+		// misbehaving, so an expired token must say so here rather than answer a 503 that
+		// reads as "LinkedIn is down". This path resolves credentials WITHOUT the system
+		// fallback, so there is no system attribution to apply.
+		return nil, tagLinkedInCredentialRejection(lerr, "listing ad accounts")
 	}
 	// make(..., 0, n), never nil: a token that legitimately reaches zero ad accounts is an
 	// empty ANSWER, not an error, and Orchestrator.ReadAccounts rejects a nil result as a
@@ -497,10 +515,50 @@ func (d *LinkedInDispatcher) ReadMetrics(ctx context.Context, projectID string, 
 		if errors.Is(err, linkedin.ErrUnsupportedWindow) {
 			return nil, fmt.Errorf("get campaign metrics from linkedin: %w", errors.Join(domain.ErrMetricsWindowUnsupported, err))
 		}
+		// An expired/revoked token answers 409 ("reconnect LinkedIn") instead of the 503
+		// default, which would tell the caller to retry a read that cannot succeed until a
+		// human re-authorises. systemScoped re-attributes it to the LF row when that is where
+		// the token came from, so an expired system token pages an operator rather than
+		// sending every project without its own connection to repair one they do not have.
+		if terr := tagLinkedInCredentialRejection(err, "reading campaign metrics"); terr != err {
+			return nil, res.systemScoped(terr)
+		}
 		return nil, fmt.Errorf("get campaign metrics from linkedin: %w", err)
 	}
 
 	return metrics, nil
+}
+
+// tagLinkedInCredentialRejection re-tags a LinkedIn API error that turned out to be a refusal
+// of the CREDENTIAL rather than of the request, so it stops answering from the 503 default arm.
+//
+// It carries BOTH sentinels for the same reason every other defect on this path does:
+// domain.ErrConnectionNotUsable decides the HTTP status (409 for a project-owned row), and
+// domain.ErrCredentialsRejected names the reason for the log line's fixed vocabulary
+// (unusableConnectionReason). Wrapping only the status sentinel would log the single most
+// knowable failure in the set as "unclassified".
+//
+// It is applied AFTER the call rather than at resolution, which is what makes it different
+// from every sibling helper here: no local check can detect an expired token. The stored blob
+// is complete and well-formed by every test this service can run on it — the token's death is
+// a fact only LinkedIn holds, so the classification can only be made from the response.
+//
+// Callers must apply it via `res.systemScoped(...)` where a system fallback was possible, so an
+// expired LF system token pages an operator (500) instead of telling a project to repair a
+// connection it does not own.
+//
+// A non-credential error is returned UNCHANGED, so callers can apply it unconditionally.
+func tagLinkedInCredentialRejection(err error, action string) error {
+	if err == nil || !linkedin.IsCredentialRejected(err) {
+		return err
+	}
+	// err itself is NOT wrapped into the chain: it is a *linkedin.apiError whose Error()
+	// already omits the untrusted response body, but the message it does render ("LinkedIn API
+	// GET /adAccounts/... -> 401") adds nothing the two sentinels and the action do not, and
+	// keeping the chain free of upstream text keeps this consistent with the other
+	// credential-path errors, none of which echo platform strings.
+	return fmt.Errorf("linkedin rejected the stored access token while %s; it is expired or revoked and must be reconnected: %w: %w",
+		action, domain.ErrConnectionNotUsable, domain.ErrCredentialsRejected)
 }
 
 // linkedinRunStatus maps the service run state (active/paused) to LinkedIn's status enum.

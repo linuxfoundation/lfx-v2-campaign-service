@@ -982,3 +982,168 @@ func TestLinkedIn_UnusableReasonsAreClassified(t *testing.T) {
 		}
 	}
 }
+
+// ---- LFXV2-3281: an expired access token is a credential defect, not a 503 ----
+
+// linkedinExpiredTokenServer returns an httptest server that answers EVERY request with the
+// exact 401 body LinkedIn returned on 2026-08-14, when the live
+// GET /api/campaigns/linkedin/monitor surfaced as a 500 (LFXV2-3281).
+// secretLinkedInToken is a DISTINCTIVE stored access token, used instead of the shared
+// goodLinkedInCreds fixture wherever a test asserts the token does not leak into an error.
+// That fixture's token is the literal "tok" — a substring of the word "token", which the
+// credential-rejection message legitimately contains — so asserting on it would fail against
+// correct code and pass against code that leaked a different token.
+const secretLinkedInToken = "AQV-liveSecretAccessToken-9f3c"
+
+var secretLinkedInCreds = `{"AccessToken":"` + secretLinkedInToken + `"}`
+
+func linkedinExpiredTokenServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"status":401,"code":"EXPIRED_ACCESS_TOKEN","serviceErrorCode":65602,"message":"The token used in the request has expired"}`)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestLinkedIn_ExpiredTokenIsAnUnusableConnectionNotAnUpstreamFailure pins the whole point of
+// LFXV2-3281 on the three paths a live connection uses.
+//
+// Each asserts BOTH sentinels, because they answer different questions and the ticket needs
+// both: ErrConnectionNotUsable is what internal/service/brief.go classifies to reach a 409
+// ("reconnect LinkedIn") instead of the 503 default arm, and ErrCredentialsRejected is what
+// unusableConnectionReason renders into the log's fixed vocabulary. Asserting only the first
+// would let the reason regress to "unclassified" — i.e. "cause unknown" — for the one failure
+// this ticket exists to name.
+func TestLinkedIn_ExpiredTokenIsAnUnusableConnectionNotAnUpstreamFailure(t *testing.T) {
+	srv := linkedinExpiredTokenServer(t)
+
+	newDispatcher := func() *LinkedInDispatcher {
+		return NewLinkedInDispatcher(
+			fakeConnReader{conn: activeLinkedInConn(secretLinkedInCreds)}, identityEncryptor{},
+			linkedin.WithBaseURL(srv.URL),
+			linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 15, 0, 0, 0, 0, time.UTC) }),
+		)
+	}
+
+	tests := []struct {
+		name string
+		call func(d *LinkedInDispatcher) error
+	}{
+		{"read metrics", func(d *LinkedInDispatcher) error {
+			_, err := d.ReadMetrics(context.Background(), "proj", model.ProviderLinkedInAds,
+				&model.Campaign{PlatformCampaignID: "555"}, model.MetricsWindowLast7Days)
+			return err
+		}},
+		{"toggle status", func(d *LinkedInDispatcher) error {
+			return d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds,
+				&model.Campaign{PlatformCampaignID: "555"}, model.CampaignRunPaused)
+		}},
+		{"list accounts", func(d *LinkedInDispatcher) error {
+			_, err := d.ListAccounts(context.Background(), "proj", model.ProviderLinkedInAds)
+			return err
+		}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call(newDispatcher())
+			if err == nil {
+				t.Fatal("an expired access token must be an error")
+			}
+			if !errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Errorf("error = %v, want errors.Is(err, domain.ErrConnectionNotUsable): without it "+
+					"internal/service/brief.go falls through to the 503 default arm and the caller is "+
+					"told to retry a call that cannot succeed until a human reconnects LinkedIn", err)
+			}
+			if !errors.Is(err, domain.ErrCredentialsRejected) {
+				t.Errorf("error = %v, want errors.Is(err, domain.ErrCredentialsRejected): without the "+
+					"reason sentinel unusableConnectionReason logs \"unclassified\"", err)
+			}
+			// The message must direct the operator at the remedy. An expired token is
+			// indistinguishable from a healthy one by every local check, so the message is the
+			// only thing that tells a reader the row is not at fault in a way they can fix by
+			// editing a field.
+			if !strings.Contains(err.Error(), "reconnected") {
+				t.Errorf("error %q should tell the operator the connection must be reconnected", err)
+			}
+			// The untrusted upstream body must never reach the error chain: an upstream body can
+			// reflect request material, including a bearer token echoed by a proxy.
+			for _, leak := range []string{"EXPIRED_ACCESS_TOKEN", "65602", secretLinkedInToken} {
+				if strings.Contains(err.Error(), leak) {
+					t.Errorf("error %q leaked upstream/credential text %q", err, leak)
+				}
+			}
+		})
+	}
+}
+
+// TestLinkedIn_ExpiredTokenOnCreateReleasesTheClaim: an authentication refusal happens BEFORE
+// the create is reached, so nothing was created upstream and the orchestrator must RELEASE the
+// dispatch claim. Getting this wrong wedges the brief: the claim is retained forever for a
+// campaign that provably does not exist, and no retry can clear it.
+func TestLinkedIn_ExpiredTokenOnCreateReleasesTheClaim(t *testing.T) {
+	srv := linkedinExpiredTokenServer(t)
+	d := NewLinkedInDispatcher(
+		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL),
+	)
+
+	cfg := json.RawMessage(`{"linkedInConfig":{
+		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
+		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
+		"targetingProfile":"cloud-native",
+		"targetingProfiles":[{"id":"cloud-native","label":"Cloud Native","skills":["urn:li:skill:1"],"groups":["urn:li:group:100"]}],
+		"variants":[{"introText":"Join us — it's great and long enough","headline":"KubeCon 2099"}]
+	}}`)
+	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+	if err == nil {
+		t.Fatal("an expired access token must fail the dispatch")
+	}
+	var pre interface{ NoUpstreamCreate() bool }
+	if !errors.As(err, &pre) || !pre.NoUpstreamCreate() {
+		t.Fatalf("error = %v, want a preCreateError: a 401 is refused at authentication, before "+
+			"the create is reached, so the claim must be released or the brief wedges", err)
+	}
+	if !errors.Is(err, domain.ErrConnectionNotUsable) || !errors.Is(err, domain.ErrCredentialsRejected) {
+		t.Errorf("error = %v, want both the status and reason sentinels", err)
+	}
+}
+
+// TestLinkedIn_ExpiredSystemTokenIsAttributedToTheLFRow is the case the ticket calls out as
+// worse than one broken connection: the LF system row is the fallback for every project with
+// no LinkedIn connection of its own, so ONE expired system token disables LinkedIn for all of
+// them.
+//
+// Such a project cannot repair a row it does not own. Without the system attribution the 409
+// tells it to fix "this project's connection" — a scope it cannot address — while the operator
+// who could fix it hears nothing. domain.ErrSystemConnectionNotUsable is what routes it to the
+// 500 + ERROR log that pages someone instead.
+func TestLinkedIn_ExpiredSystemTokenIsAttributedToTheLFRow(t *testing.T) {
+	srv := linkedinExpiredTokenServer(t)
+	// The project has NO row of its own; only the system scope answers.
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		model.SystemProjectID: activeLinkedInConn(goodLinkedInCreds),
+	}}
+	d := NewLinkedInDispatcher(repo, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL),
+		linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 15, 0, 0, 0, 0, time.UTC) }),
+	)
+
+	_, err := d.ReadMetrics(context.Background(), "cncf", model.ProviderLinkedInAds,
+		&model.Campaign{PlatformCampaignID: "555"}, model.MetricsWindowLast7Days)
+	if err == nil {
+		t.Fatal("an expired system access token must be an error")
+	}
+	if !errors.Is(err, domain.ErrSystemConnectionNotUsable) {
+		t.Fatalf("error = %v, want errors.Is(err, domain.ErrSystemConnectionNotUsable): without it a "+
+			"project with no connection of its own is handed a 409 telling it to repair the LF row it "+
+			"does not own, and nobody who can fix it is paged", err)
+	}
+	// Still carries the base sentinels: systemScoped WRAPS rather than replaces.
+	if !errors.Is(err, domain.ErrConnectionNotUsable) || !errors.Is(err, domain.ErrCredentialsRejected) {
+		t.Errorf("error = %v, want the base status and reason sentinels preserved under the system tag", err)
+	}
+}

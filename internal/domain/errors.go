@@ -352,6 +352,27 @@ var (
 	// Discovery's own 400 covers its other unusable states.
 	ErrAccountNotSelected = errors.New("no ad account has been selected for the stored connection")
 
+	// ErrCredentialsRejected — the stored credential was well-formed and complete, was sent
+	// to the platform, and the PLATFORM refused it as no longer valid (an expired or revoked
+	// OAuth token). It is wrapped alongside ErrConnectionNotUsable, so it answers 409 like
+	// the other unusable-connection reasons.
+	//
+	// It is the only reason sentinel in this set established by CONTACTING the platform.
+	// Every other one is detected from stored state before any call goes out, which is why
+	// none of them could carry this case: by every local check the row is perfect, and the
+	// defect exists only in the platform's opinion of the token. Classified as
+	// "not usable as configured" nonetheless, because the operative fact is the same one
+	// that sentinel exists to express — no amount of retrying fixes it, and a human must
+	// re-authorise the connection before the call can succeed. Answering the 503 default
+	// instead would promise that waiting might help, which for an expired token it never does.
+	//
+	// It deliberately does NOT distinguish expired from revoked. The platforms do not answer
+	// that question reliably (LinkedIn returns the same 401 for a token past its 60-day life,
+	// one whose grant a user withdrew, and one invalidated by a password change), and the
+	// remedy is identical for all three: reconnect. A sentinel claiming a distinction its
+	// evidence cannot support would read as a diagnosis.
+	ErrCredentialsRejected = errors.New("the platform rejected the stored credential")
+
 	// ErrAdoptionUnsupported indicates the platform has no campaign-adoption capability
 	// wired (no dispatcher, or the dispatcher is not a CampaignAdopter). The platform is
 	// never contacted. Maps to 400, exactly as ErrMetricsUnsupported and

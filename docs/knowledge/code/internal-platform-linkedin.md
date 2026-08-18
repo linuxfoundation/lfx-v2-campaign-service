@@ -206,6 +206,48 @@ offering ids that fail at bind time. An unusable id fails the WHOLE walk rather 
 the row: a response shape that far from the documented one is not the response we think it is,
 and the rest of it is not trustworthy either.
 
+## Credential expiry (no refresh flow exists)
+
+A LinkedIn access token expires **60 days** after issue and **nothing renews it**. This is a
+property of the stored data, not an oversight in this package: the persisted credential blob
+holds exactly one field, `AccessToken` (`design/connection.go`'s `linkedin-ads-credentials`
+requires only `access_token`, and `internal/dispatch.linkedinCreds` decodes only that). There is
+no refresh token, no client id and no client secret in the row, so **no refresh is possible from
+what is stored** — an exchange needs all three. LinkedIn issues a 365-day refresh token only to
+approved applications, and adopting one is a connection-schema change plus a re-consent of every
+existing connection. Tracked separately; see LFXV2-3281.
+
+This makes LinkedIn the only paid-ads provider without a renewal path. Google Ads, Microsoft and
+Reddit each persist a `refresh_token` and exchange it for a short-lived access token per call
+(`internal/bootstrap/sysacct.go`'s `requiredCredentialKeys` is the compact statement of this
+difference).
+
+Because expiry is therefore inevitable rather than exceptional, the failure it produces must be
+LEGIBLE. `IsCredentialRejected` classifies a LinkedIn refusal of the credential itself, and the
+dispatch adapter re-tags it with `domain.ErrConnectionNotUsable` + `domain.ErrCredentialsRejected`
+so it answers **409 "reconnect LinkedIn"** instead of the 503 default arm — which would tell the
+caller to retry a call that cannot succeed until a human acts. Before this, an expired token
+surfaced as a bare 500 with the cause visible only in the server log (observed live on
+2026-08-14).
+
+`ErrCredentialsRejected` is the only reason sentinel in that vocabulary established by
+CONTACTING the platform. Every other one is detected from stored state before any call goes out,
+which is precisely why none of them could carry this case: by every local check the row is
+perfect, and the defect exists only in LinkedIn's opinion of the token.
+
+Matching is on **401 alone**, plus **403 only when the body names the credential**. The two are
+not interchangeable: a 403 is overwhelmingly a scope/permission refusal on a resource the token
+is otherwise valid for, and reading a bare one as an expired token would tell an operator to
+reconnect an account whose token is fine — and keep telling them so after they did. The response
+body is read for classification only and never surfaced (`apiError.Error` omits it, and the
+classifier returns a bool), preserving the no-untrusted-body-in-errors contract.
+
+Where the credentials came from decides who is told. An expired token on the **LF system row** —
+the fallback for every project with no LinkedIn connection of its own — is re-attributed via
+`systemScoped` to `domain.ErrSystemConnectionNotUsable`, answering 500 and an ERROR log that
+pages an operator. A project cannot repair a row it does not own, so the 409 would otherwise
+send it somewhere it cannot succeed while nobody who can fix it hears anything.
+
 ## Dispatch adapter (internal/dispatch)
 
 The `internal/dispatch` linkedin adapter (see [internal/dispatch](internal-dispatch.md))
