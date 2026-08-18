@@ -373,6 +373,11 @@ func (d *MicrosoftDispatcher) ReadMetrics(ctx context.Context, projectID string,
 		// internal/domain/errors.go, which defines only ErrMetricsUnsupported and
 		// ErrMetricsWindowUnsupported). Returning zeroes here instead would be the worse
 		// failure: a timing condition rendered as a measurement.
+		// Success-with-no-rows: the platform answered, but the adapter cannot tell "no
+		// activity" from "no such campaign in scope". Same mapping hubspot.go uses.
+		if errors.Is(err, microsoft.ErrNoRowsInReport) {
+			return nil, fmt.Errorf("get campaign metrics from microsoft: %w", errors.Join(domain.ErrNoMetricsInWindow, err))
+		}
 		if errors.Is(err, microsoft.ErrReportNotReady) {
 			return nil, fmt.Errorf("get campaign metrics from microsoft (report still building; retry shortly): %w", err)
 		}

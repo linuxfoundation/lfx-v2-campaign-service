@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -32,8 +33,11 @@ import (
 // calls, so this client CANNOT wait indefinitely: the platform ingress times out at 60s and
 // a report can take longer than that to build. The poll loop is therefore bounded by
 // reportPollBudget and gives up with ErrReportNotReady rather than hanging the caller. A
-// report that is still building is a "come back later", not a failure of the campaign — the
-// dispatcher maps it to domain.ErrMetricsUnavailable so the UI can say so.
+// report that is still building is a "come back later", not a failure of the campaign. The
+// dispatcher deliberately does NOT map it to either metrics sentinel — both mean 400 ("this
+// cannot work"), and a retryable timing condition is neither unsupported nor permanent — so
+// it propagates as an ordinary wrapped error the caller can retry. There is no retryable
+// sentinel in internal/domain/errors.go today; adding one is what this comment once assumed.
 //
 // UNVERIFIED CONTRACT: no Microsoft Advertising credentials were available when this was
 // written, so the request/response shapes below follow Microsoft's published v13 Reporting
@@ -77,6 +81,11 @@ const (
 // on a later attempt. Callers must not treat it as "this campaign has no metrics".
 var ErrReportNotReady = errors.New("microsoft report not ready within the poll budget")
 
+// ErrNoRowsInReport means the poll reported Success but named no file to download. The
+// adapter cannot tell "the campaign served nothing" from "no such campaign in this
+// account's scope", so it refuses to render either as a measured zero.
+var ErrNoRowsInReport = errors.New("microsoft report completed with no downloadable rows")
+
 // ErrUnsupportedWindow is returned for a model.MetricsWindow this client does not map to a
 // Microsoft date range. Mirrors the reddit client's sentinel so the dispatcher can classify
 // an unsupported window separately from a genuine read failure.
@@ -115,13 +124,16 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	if err != nil {
 		return nil, err
 	}
-	// A Success status with no download URL means the report completed with NO ROWS —
-	// Microsoft omits the file entirely rather than shipping a header-only CSV. That is a
-	// genuine, confirmed zero: the campaign served nothing in the window. Reporting it as
-	// zeroes is correct here precisely BECAUSE the pipeline reported Success; an empty
-	// result from any other path in this file is an error, not a zero.
+	// A Success status with no download URL is reported as ErrNoRowsInReport, NOT as
+	// zeroes. The earlier revision returned a zero here on the reasoning that Microsoft
+	// omits the file rather than shipping a header-only CSV — but that is a claim about
+	// response SHAPE on a contract this file declares UNVERIFIED, and it is the one
+	// assumption whose failure is silent. This adapter also cannot distinguish "no
+	// activity" from "no such campaign in this account's scope", which is exactly why
+	// domain.ErrNoMetricsInWindow exists; the dispatcher maps this sentinel onto it, the
+	// same way internal/dispatch/hubspot.go does.
 	if downloadURL == "" {
-		return &model.CampaignMetrics{CampaignID: campaignID, Window: window}, nil
+		return nil, ErrNoRowsInReport
 	}
 	return c.downloadReport(ctx, downloadURL, campaignID, window)
 }
@@ -137,10 +149,17 @@ func (c *Client) submitReport(ctx context.Context, campaignID string, start, end
 			"Columns": []string{
 				"CampaignId", "Impressions", "Clicks", "Spend",
 			},
+			// Ids go out as json.Number, NOT as strings: Microsoft types these as `long`,
+			// and campaign.go already sends AccountId that way — its comment records that
+			// mistyping it rejects the request outright. A quoted id here would fail
+			// deserialization the first time the gate is flipped on.
 			"Scope": map[string]any{
-				"AccountIds": []string{c.account.AccountID},
+				"AccountIds": []json.Number{json.Number(c.account.AccountID)},
 				"Campaigns": []map[string]any{
-					{"AccountId": c.account.AccountID, "CampaignId": campaignID},
+					{
+						"AccountId":  json.Number(c.account.AccountID),
+						"CampaignId": json.Number(campaignID),
+					},
 				},
 			},
 			"Time": map[string]any{
@@ -149,6 +168,11 @@ func (c *Client) submitReport(ctx context.Context, campaignID string, start, end
 				// {Month,Day,Year} object.
 				"CustomDateRangeStart": toMSDate(start),
 				"CustomDateRangeEnd":   toMSDate(end),
+				// ReportTimeZone is REQUIRED here even though it looks optional: Microsoft
+				// defaults it to Pacific, so a UTC-computed window would aggregate a
+				// different day than the dates above name. That is a silent off-by-one-day
+				// on every window, rendered as a measurement.
+				"ReportTimeZone": "GreenwichMeanTimeDublinEdinburghLisbonLondon",
 			},
 		},
 	}
@@ -259,8 +283,15 @@ func (c *Client) downloadReport(ctx context.Context, downloadURL, campaignID str
 	if err != nil {
 		// Report only whether the transfer is retryable. The *url.Error the transport
 		// returns renders the pre-signed URL, sig= included, in its Error() string.
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, fmt.Errorf("download microsoft report: %w", context.Cause(ctx))
+		// Preserve the sentinel itself, NOT context.Cause: http.Client.Timeout and a
+		// custom RoundTripper both surface these while the caller's context is still
+		// live, and Cause is nil there — wrapping it renders %!w(<nil>) and stops
+		// matching errors.Is entirely.
+		if errors.Is(err, context.Canceled) {
+			return nil, fmt.Errorf("download microsoft report: %w", context.Canceled)
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("download microsoft report: %w", context.DeadlineExceeded)
 		}
 		return nil, errors.New("download microsoft report: transport error")
 	}
@@ -362,13 +393,29 @@ func foldReportRows(records [][]string, campaignID string, window model.MetricsW
 		if err != nil {
 			return nil, fmt.Errorf("spend: %w", err)
 		}
+		// Reject malformed magnitudes rather than folding them in. meta/metrics.go and
+		// reddit/metrics.go both guard this way, and for the same reason: a NaN, a
+		// negative, or a value that wraps int64 becomes a number the dashboard renders
+		// as a measurement. An error here is the honest answer.
+		if imp < 0 {
+			return nil, fmt.Errorf("impressions: negative value %d", imp)
+		}
+		if clk < 0 {
+			return nil, fmt.Errorf("clicks: negative value %d", clk)
+		}
+		if math.IsNaN(spend) || math.IsInf(spend, 0) || spend < 0 {
+			return nil, fmt.Errorf("spend: non-finite or negative value %v", spend)
+		}
+		// Spend is a decimal in the ACCOUNT's currency; CostMicros is micros of that same
+		// currency, matching what the other clients store. math.Round (not +0.5, which
+		// rounds the wrong way for negatives and is why the guard above comes first).
+		scaled := math.Round(spend * 1e6)
+		if scaled >= float64(math.MaxInt64) {
+			return nil, fmt.Errorf("spend: %v exceeds the representable micros range", spend)
+		}
 		out.Impressions += imp
 		out.Clicks += clk
-		// Spend is a decimal in the ACCOUNT's currency; CostMicros is micros of that same
-		// currency, matching what the other clients store. Rounding is applied per row and
-		// then summed, which is what the report itself already did when it rounded each
-		// row's spend to the account's currency precision.
-		out.CostMicros += int64(spend*1e6 + 0.5)
+		out.CostMicros += int64(scaled)
 	}
 	if out.Impressions > 0 {
 		out.Ctr = float64(out.Clicks) / float64(out.Impressions)

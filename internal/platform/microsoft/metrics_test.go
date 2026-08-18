@@ -62,6 +62,7 @@ type msMetricsServer struct {
 
 	mu           sync.Mutex
 	submitBody   map[string]any
+	submitRaw    []byte
 	pollCount    int
 	pollsBefore  int // number of Pending polls before Success
 	reportStatus string
@@ -81,10 +82,12 @@ func newMSMetricsServer(t *testing.T, zipPayload []byte, pollsBefore int) *msMet
 	})
 
 	mux.HandleFunc("/Reporting/v13/GenerateReport/Submit", func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
 		body := map[string]any{}
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		_ = json.Unmarshal(raw, &body)
 		m.mu.Lock()
 		m.submitBody = body
+		m.submitRaw = raw
 		m.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"ReportRequestId":"rr-1"}`)
@@ -192,20 +195,23 @@ func TestGetCampaignMetrics_DownloadOmitsBearerToken(t *testing.T) {
 	}
 }
 
-// TestGetCampaignMetrics_SuccessWithNoURLIsAConfirmedZero covers Microsoft's "report built,
-// no rows" answer. That is the ONE path where zeroes are the truthful result, precisely
-// because the pipeline reported Success.
-func TestGetCampaignMetrics_SuccessWithNoURLIsAConfirmedZero(t *testing.T) {
+// TestGetCampaignMetrics_SuccessWithNoURLIsNotAZero covers Microsoft's "report built, no
+// downloadable file" answer. An earlier revision returned zeroes here, reasoning that
+// Microsoft omits the file rather than shipping a header-only CSV — but that is a SHAPE
+// claim about a contract this client declares unverified, and the adapter cannot tell "the
+// campaign served nothing" from "no such campaign in this account's scope". It must answer
+// the sentinel so the dispatcher can map it to domain.ErrNoMetricsInWindow, never a number.
+func TestGetCampaignMetrics_SuccessWithNoURLIsNotAZero(t *testing.T) {
 	m := newMSMetricsServer(t, nil, 0)
 	m.omitURL = true
 	c := newMetricsClient(t, m)
 
 	got, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowLast30Days)
-	if err != nil {
-		t.Fatalf("GetCampaignMetrics: %v", err)
+	if !errors.Is(err, ErrNoRowsInReport) {
+		t.Errorf("want ErrNoRowsInReport, got err=%v", err)
 	}
-	if got.Impressions != 0 || got.Clicks != 0 || got.CostMicros != 0 {
-		t.Errorf("want a zeroed result, got %+v", got)
+	if got != nil {
+		t.Errorf("a no-rows answer must not render as metrics, got %+v", got)
 	}
 }
 
@@ -326,8 +332,23 @@ func TestGetCampaignMetrics_SubmitBodyShape(t *testing.T) {
 		t.Fatalf("Scope.Campaigns = %v, want exactly the one campaign asked about", scope["Campaigns"])
 	}
 	first, _ := camps[0].(map[string]any)
-	if first["CampaignId"] != "1234567" {
-		t.Errorf("Scope.Campaigns[0].CampaignId = %v, want 1234567", first["CampaignId"])
+	if first["CampaignId"] == nil {
+		t.Errorf("Scope.Campaigns[0] has no CampaignId: %+v", first)
+	}
+	// Assert the WIRE form, not the decoded value: Microsoft types these ids as `long`,
+	// and decoding into `any` turns both a quoted string and a bare number into float64,
+	// so the map cannot tell them apart. A quoted id is rejected by the live API.
+	if bytes.Contains(m.submitRaw, []byte(`"CampaignId":"`)) {
+		t.Errorf("CampaignId went out QUOTED; Microsoft types it as long: %s", m.submitRaw)
+	}
+	if !bytes.Contains(m.submitRaw, []byte(`"CampaignId":1234567`)) {
+		t.Errorf("CampaignId is not a bare number on the wire: %s", m.submitRaw)
+	}
+	if bytes.Contains(m.submitRaw, []byte(`"AccountIds":["`)) {
+		t.Errorf("AccountIds went out QUOTED: %s", m.submitRaw)
+	}
+	if !bytes.Contains(m.submitRaw, []byte(`"ReportTimeZone"`)) {
+		t.Errorf("ReportTimeZone missing; Microsoft defaults to Pacific: %s", m.submitRaw)
 	}
 	// The date must be the object form. A string here would be accepted by our own fake
 	// but rejected by Microsoft — exactly the class of bug a fake cannot catch, so the
@@ -466,5 +487,30 @@ func TestDownloadReportErrorsOmitThePresignedURL(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "nonexistent.invalid.example") {
 		t.Errorf("download URL leaked into the error: %s", err.Error())
+	}
+}
+
+// TestDownloadReportPreservesContextSentinels pins that a cancelled or timed-out download
+// still matches errors.Is. An earlier revision wrapped context.Cause(ctx), which is nil
+// when http.Client.Timeout fires while the caller's context is still live — that renders
+// %!w(<nil>) and silently stops matching the sentinels a caller branches on.
+func TestDownloadReportPreservesContextSentinels(t *testing.T) {
+	c := NewClient(
+		Credentials{ClientID: "cid", ClientSecret: "sec", DeveloperToken: "dev", RefreshToken: "ref"},
+		AccountConfig{AccountID: "9999999", Label: "LF Events"},
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := c.downloadReport(ctx, "https://nonexistent.invalid.example/r.zip?sig=SECRET",
+		"1234567", model.MetricsWindowLast7Days)
+	if err == nil {
+		t.Fatal("expected an error on a cancelled context")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("cancelled download must still match context.Canceled, got %v", err)
+	}
+	if strings.Contains(err.Error(), "SECRET") || strings.Contains(err.Error(), "%!w") {
+		t.Errorf("error is malformed or leaks the URL: %s", err.Error())
 	}
 }
