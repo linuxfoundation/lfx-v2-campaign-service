@@ -616,3 +616,48 @@ func TestCreateCampaign_ShortKeywordResponseIsRefused(t *testing.T) {
 		t.Fatal("a response carrying 2 ids for 3 keywords was accepted; the missing keyword would stay Paused")
 	}
 }
+
+// AddKeywords is a BATCH: a rejection of one keyword sits alongside real ids for the ones that
+// succeeded. `[701, null, 703]` with a PartialError means TWO keywords exist upstream, not none.
+//
+// Those ids must survive the error. They are what the status cascade enables on ACTIVATE, and
+// what stops a reconciliation creating a second copy — a blind retry of the batch would
+// duplicate every keyword that did succeed. Reporting "rejected" with an empty id list said
+// nothing was created, about keywords that were.
+func TestCreateCampaign_PartialKeywordFailureKeepsTheCreatedIDs(t *testing.T) {
+	api := &campaignsAPI{keywordPostBody: `{"KeywordIds":[701,null,703],"PartialErrors":[{"Index":1,"Code":1042,"ErrorCode":"CampaignServiceEditorialError"}]}`}
+	c := newAPIClient(t, api.handler(t))
+
+	res, err := c.CreateCampaign(context.Background(), validInputWithKeywords())
+	if err == nil {
+		t.Fatal("a PartialError must still surface as an error — some keywords were rejected")
+	}
+	if res == nil {
+		t.Fatal("expected a partial result: the campaign, ad group and ad exist upstream")
+	}
+	if len(res.KeywordIDs) != 2 || res.KeywordIDs[0] != "701" || res.KeywordIDs[1] != "703" {
+		t.Errorf("KeywordIDs = %v, want [701 703] — the ids that were created must be persisted", res.KeywordIDs)
+	}
+	// The message must say how many landed, or an operator cannot tell this from a total failure.
+	if !strings.Contains(err.Error(), "2 of 3") {
+		t.Errorf("error does not report the partial count: %v", err)
+	}
+}
+
+// Every entry rejected IS a clean failure: there is nothing upstream to reconcile, so the id
+// list stays empty and the message carries no partial count.
+func TestCreateCampaign_AllKeywordsRejectedIsACleanFailure(t *testing.T) {
+	api := &campaignsAPI{keywordPostBody: `{"KeywordIds":[null,null,null],"PartialErrors":[{"Index":0,"Code":1042,"ErrorCode":"CampaignServiceEditorialError"}]}`}
+	c := newAPIClient(t, api.handler(t))
+
+	res, err := c.CreateCampaign(context.Background(), validInputWithKeywords())
+	if err == nil {
+		t.Fatal("expected an error when every keyword was rejected")
+	}
+	if res != nil && len(res.KeywordIDs) != 0 {
+		t.Errorf("KeywordIDs = %v, want empty — nothing was created", res.KeywordIDs)
+	}
+	if strings.Contains(err.Error(), " of ") {
+		t.Errorf("a total rejection must not claim a partial count: %v", err)
+	}
+}

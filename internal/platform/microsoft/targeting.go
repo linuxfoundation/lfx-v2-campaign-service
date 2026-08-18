@@ -305,12 +305,31 @@ func (c *Client) createKeywords(ctx context.Context, adGroupID string, keywords 
 		// call site maps to UNCONFIRMED.
 		return nil, fmt.Errorf("decode KeywordIds response (%v): %w", uErr, errNoID)
 	}
-	// A definite per-entity rejection (an ACTUAL PartialError, gated on partialErrorsHaveAny so
-	// a null-only placeholder slice does not count) is a clean failure — nothing was created.
-	// Classified BEFORE the id count, because a rejected create legitimately returns fewer ids
-	// and must not be reported as the ambiguous short-response case below.
+	// A PartialError is a definite per-entity rejection, and AddKeywords is a batch: the response
+	// is index-aligned with the request, so a rejection of one keyword sits alongside real ids for
+	// the ones that succeeded. `[701, null, 703]` with one PartialError means TWO keywords exist
+	// upstream, not none.
+	//
+	// Those ids must be carried out with the error. They are what the status cascade enables on
+	// ACTIVATE, and what a reconciliation needs in order to avoid creating a second copy — a blind
+	// retry of this batch would duplicate every keyword that did succeed.
+	//
+	// Gated on partialErrorsHaveAny so a null-only placeholder slice does not count, and
+	// classified BEFORE the cardinality check below, because a rejected entry legitimately
+	// returns fewer usable ids and must not be reported as the ambiguous short-response case.
 	if partialErrorsHaveAny(resp.PartialErrors) {
-		return nil, fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors))
+		created := make([]string, 0, len(resp.KeywordIds))
+		for _, raw := range resp.KeywordIds {
+			if id := numberID(raw); id != "" {
+				created = append(created, id)
+			}
+		}
+		if len(created) == 0 {
+			// Every entry was rejected: a clean failure, nothing to reconcile.
+			return nil, fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors))
+		}
+		return created, fmt.Errorf("%w (%d of %d keywords were created): %s",
+			errPartialFailure, len(created), len(msKeywords), partialErrorCodes(resp.PartialErrors))
 	}
 
 	// The id array is index-aligned with the request. A SHORT array is not a partial success to

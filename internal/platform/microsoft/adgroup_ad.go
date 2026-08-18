@@ -416,17 +416,29 @@ func (c *Client) createAdGroupAndAd(
 			case errors.Is(kerr, context.Canceled) || errors.Is(kerr, context.DeadlineExceeded):
 				return adWithIDPartial(), fmt.Errorf("microsoft-ads keyword step aborted (%s + ad %s; context done, no keywords created): %w", hierState, adID, kerr)
 			case errors.Is(kerr, errPartialFailure):
-				return adWithIDPartial(), fmt.Errorf("microsoft-ads keyword targeting rejected (%s + ad %s): %w", hierState, adID, kerr)
+				// A batch rejection can still have created some keywords, and createKeywords
+				// returns their ids alongside the error. Persist them: they are what ACTIVATE
+				// enables, and what stops a reconciliation creating a second copy of every
+				// keyword that did succeed. Dropping them here reported "rejected" for keywords
+				// that exist upstream.
+				partial := adWithIDPartial()
+				partial.KeywordIDs = keywordIDs
+				if len(keywordIDs) > 0 {
+					*steps = append(*steps, fmt.Sprintf("Keywords partially attached: %d created, some rejected (PAUSED)", len(keywordIDs)))
+					partial.Steps = *steps
+				}
+				return partial, fmt.Errorf("microsoft-ads keyword targeting rejected (%s + ad %s): %w", hierState, adID, kerr)
 			default:
 				return adWithIDPartial(), fmt.Errorf("microsoft-ads keyword targeting failed (%s + ad %s): %w", hierState, adID, kerr)
 			}
 		}
 		r := adWithIDPartial()
 		r.KeywordIDs = keywordIDs
-		// Reports the number of ids PARSED, not the number of keywords sent: the two can differ
-		// for an oversized request whose id array is bounded on decode (see createKeywords), and
-		// claiming a count this run did not actually confirm is the kind of overstatement that
-		// makes a step log untrustworthy.
+		// The two counts cannot diverge: createKeywords caps input at maxKeywords, decodes the id
+		// array through a bound of the same size, and returns success only after finding one
+		// usable id per keyword sent. This previously reported "ids PARSED" because the decode
+		// bound was 16 and an oversized request legitimately came back short — that gap is what
+		// LFXV2-3279 closed, so the count is now a confirmed one rather than a hedged one.
 		*steps = append(*steps, fmt.Sprintf("Keywords attached: %d (PAUSED — enable them with the campaign)", len(keywordIDs)))
 		r.AlreadyExisted = false // this run created keywords, so the tree is not untouched
 		r.Steps = *steps

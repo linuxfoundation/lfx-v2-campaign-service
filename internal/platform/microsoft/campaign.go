@@ -845,7 +845,9 @@ func partialErrorCodes(items []msErrorItem) string {
 // msDate is Microsoft's date object ({Month,Day,Year}), used by ad-group flight dates
 // (a later slice). Microsoft does NOT accept an ISO-8601 string for these fields — it
 // requires the object form — so a helper is provided now to keep the serialization in
-// one reviewed place. Reserved for MS-4.
+// one reviewed place. Not yet used by any slice — the flight-date work will be its first
+// caller, and naming a specific slice here only dates the comment (MS-4 turned out to be the
+// keyword/bid work, which does not touch it).
 type msDate struct {
 	Month int `json:"Month"`
 	Day   int `json:"Day"`
