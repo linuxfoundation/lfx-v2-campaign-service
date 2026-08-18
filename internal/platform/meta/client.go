@@ -412,18 +412,6 @@ type createResponse struct {
 	ID string `json:"id"`
 }
 
-// adImageResponse mirrors Meta's POST /act_<id>/adimages reply. Unlike every other
-// create it does NOT return a top-level id: it returns an "images" OBJECT keyed by
-// an arbitrary per-request key (Meta echoes the source filename, which the caller
-// does not control when uploading by url), each value carrying the content-addressed
-// hash used as link_data.image_hash. Decoding it as a map rather than a fixed key is
-// therefore required, not a stylistic choice.
-type adImageResponse struct {
-	Images map[string]struct {
-		Hash string `json:"hash"`
-	} `json:"images"`
-}
-
 // findCampaignByName looks up an existing campaign in the ad account by exact
 // name match. Meta enforces no name-uniqueness constraint and exposes no create
 // idempotency key (see CreateCampaign's doc comment), so this is OUR safeguard —
@@ -2184,6 +2172,38 @@ func redactCredentials(s string) string {
 	})
 }
 
+// scrubURLFromErr renders a variant-failure error for a PERSISTED step, removing
+// the caller's image URL before the message reaches the sink.
+//
+// Steps are persisted and logged, and the image URL is caller-supplied data that
+// may be a pre-signed URL — a bearer credential whose signature grants time-boxed
+// read access. It is now sent to Meta as link_data.picture, and Meta echoes a
+// rejected parameter's value in error.message, which `do` copies verbatim into
+// APIError.Message. Every hand-built error string in this file already omits the
+// URL; this closes the one path that does not, by scrubbing at the sink rather
+// than at each error site, so a message reflected from upstream cannot smuggle it
+// through. Mirrors displayMetaUTMURL's reason for existing: the full URL still
+// goes to Meta, only the persisted copy is sanitized.
+//
+// The URL is replaced by its redactURL form (scheme+host+path — no query, no
+// fragment, no userinfo) so the step still says WHICH image failed without
+// carrying the signature. An empty imageURL leaves the message untouched.
+func scrubURLFromErr(err error, imageURL string, max int) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	if raw := strings.TrimSpace(imageURL); raw != "" {
+		// Replace the full URL first, then the query-bearing forms an upstream may
+		// have re-encoded. redactURL keeps the identifying prefix.
+		msg = strings.ReplaceAll(msg, raw, redactURL(raw))
+		if esc := url.QueryEscape(raw); esc != raw {
+			msg = strings.ReplaceAll(msg, esc, redactURL(raw))
+		}
+	}
+	return truncate(msg, max)
+}
+
 // truncateErr renders an error's message for inclusion in a user-visible step,
 // clamping it to a reasonable length without splitting a multi-byte rune.
 func truncateErr(err error, max int) string {
@@ -2240,11 +2260,12 @@ type AdVariant struct {
 	Headline    string
 	Description string
 	// ImageURL is an OPTIONAL https URL to a single image for this variant. When
-	// set, CreateCampaign uploads it to Meta (POST /act_<id>/adimages, which fetches
-	// the URL server-side) and attaches the returned hash to the creative's
-	// object_story_spec.link_data.image_hash, so the ad renders as a single-image
-	// ad. When empty the creative is built exactly as before — a bare link ad — so
-	// this field is additive and no existing caller changes behavior.
+	// set, CreateCampaign attaches it to the creative as
+	// object_story_spec.link_data.picture — the documented by-URL field, which Meta
+	// fetches server-side and saves into the ad account's image library — so the ad
+	// renders as a single-image ad. When empty the creative is built exactly as
+	// before — a bare link ad — so this field is additive and no existing caller
+	// changes behavior.
 	//
 	// The URL is fetched by META, not by this service: the client never dereferences
 	// it, which is why no SSRF egress control is needed here. It is still validated
@@ -3069,9 +3090,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// record in Steps and continue.
 			if createOutcomeAmbiguous(verr) {
 				if creativeID != "" {
-					steps = append(steps, fmt.Sprintf("Ad/creative creation outcome UNCONFIRMED for variant %d; it may have been created — verify in Meta Ads Manager before recreating (orphaned creative: %s): %s", i+1, creativeID, truncateErr(verr, 300)))
+					steps = append(steps, fmt.Sprintf("Ad/creative creation outcome UNCONFIRMED for variant %d; it may have been created — verify in Meta Ads Manager before recreating (orphaned creative: %s): %s", i+1, creativeID, scrubURLFromErr(verr, variant.ImageURL, 300)))
 				} else {
-					steps = append(steps, fmt.Sprintf("Ad/creative creation outcome UNCONFIRMED for variant %d; it may have been created — verify in Meta Ads Manager before recreating: %s", i+1, truncateErr(verr, 300)))
+					steps = append(steps, fmt.Sprintf("Ad/creative creation outcome UNCONFIRMED for variant %d; it may have been created — verify in Meta Ads Manager before recreating: %s", i+1, scrubURLFromErr(verr, variant.ImageURL, 300)))
 				}
 				continue
 			}
@@ -3079,9 +3100,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// orphaned creative is visible (can be cleaned up / reused) rather than
 			// silently discarded.
 			if creativeID != "" {
-				steps = append(steps, fmt.Sprintf("Ad %d failed: %s (orphaned creative: %s)", i+1, truncateErr(verr, 300), creativeID))
+				steps = append(steps, fmt.Sprintf("Ad %d failed: %s (orphaned creative: %s)", i+1, scrubURLFromErr(verr, variant.ImageURL, 300), creativeID))
 			} else {
-				steps = append(steps, fmt.Sprintf("Ad %d failed: %s", i+1, truncateErr(verr, 300)))
+				steps = append(steps, fmt.Sprintf("Ad %d failed: %s", i+1, scrubURLFromErr(verr, variant.ImageURL, 300)))
 			}
 			continue
 		}
@@ -3103,67 +3124,25 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	return partialResult(), nil
 }
 
-// uploadAdImage uploads one variant's image to the ad account's image library and
-// returns Meta's content-addressed image hash, for attaching to a creative's
-// link_data.image_hash.
-//
-// The upload is by URL: POST /act_<id>/adimages with a "url" field makes META fetch
-// the image server-side. This service never dereferences the caller's URL itself,
-// which keeps the client free of any outbound fetch (and of the SSRF surface one
-// would bring), and keeps it inside the existing JSON `do` pipeline — a multipart
-// bytes upload would need a second, separately-hardened transport path for no gain.
-//
-// The response shape is Meta's images map, keyed by an arbitrary per-request key
-// (Meta echoes the source filename, which we do not control), so the hash is read
-// from the sole entry rather than from a fixed key.
-//
-// Like every other create here this goes through doCreate, so it is NOT retried on
-// a throttle: /adimages has no idempotency key. Note this call is content-addressed
-// and therefore naturally idempotent upstream (re-uploading identical bytes yields
-// the same hash), but it is left on the create path deliberately — the uniform rule
-// "a mutating POST is never auto-repeated" is what keeps the paid-resource creates
-// safe, and carving out an exception per-endpoint invites the wrong one later.
-func (c *Client) uploadAdImage(ctx context.Context, imageURL string, i int) (string, error) {
-	path := "/" + c.account.AccountID + "/adimages"
-
-	var resp adImageResponse
-	if err := c.doCreate(ctx, path, map[string]any{"url": strings.TrimSpace(imageURL)}, &resp); err != nil {
-		return "", err
-	}
-	if len(resp.Images) == 0 {
-		// A 2xx with no image entry is AMBIGUOUS in the same sense as a create that
-		// returns no id: Meta may have stored the image but we could not read its
-		// hash. Wrap as transportError so the caller classifies it as "may exist"
-		// rather than a definite failure. The image URL is NOT echoed — it is caller
-		// data and may carry a pre-signed query — only the variant ordinal is.
-		return "", &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("ad image upload for variant %d returned no image", i+1)}
-	}
-	// Exactly one image is requested, so exactly one entry is expected. More than one
-	// means the response does not describe the request we made, and picking an
-	// arbitrary entry from a map (Go map iteration order is randomized) could attach a
-	// DIFFERENT image to a paid ad on each run. Refuse rather than guess.
-	if len(resp.Images) > 1 {
-		return "", &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("ad image upload for variant %d returned %d images, expected 1", i+1, len(resp.Images))}
-	}
-	for _, img := range resp.Images {
-		if strings.TrimSpace(img.Hash) == "" {
-			return "", &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("ad image upload for variant %d returned an empty image hash", i+1)}
-		}
-		return img.Hash, nil
-	}
-	// Unreachable: len(resp.Images) == 1 is guaranteed by the checks above.
-	return "", &transportError{Method: http.MethodPost, Path: path, Err: fmt.Errorf("ad image upload for variant %d returned no image", i+1)}
-}
-
 // createVariantAd creates the adcreative and ad for one variant, returning the
 // ad id and creative id.
 //
-// When the variant carries an ImageURL, the image is uploaded FIRST and its hash
-// attached to the creative, so the ad renders as a single-image ad. The upload is
-// ordered before the creative on purpose: an ad image is a free, unpublished
-// library asset, whereas the creative and ad are the resources that matter to
-// clean-up — uploading first means a failure at any step leaves at most a stray
-// library image, never a creative that references an image that failed to upload.
+// When the variant carries an ImageURL it is attached as link_data.picture, the
+// DOCUMENTED by-URL field on AdCreativeLinkData: "URL of a picture to use in the
+// post. Specify this field or image_hash but not both. ... The image specified at
+// the URL will be saved into the ad accounts image library." Meta fetches the image
+// server-side, so this service never dereferences the caller's URL itself — no
+// outbound fetch, and none of the SSRF surface one would bring — and the whole
+// creative stays a single JSON create inside the existing hardened `do` pipeline.
+//
+// An earlier revision uploaded to POST /act_<id>/adimages with a "url" field to get
+// a hash for link_data.image_hash. That was WRONG: the adimages edge documents only
+// `bytes` (base64) and `copy_from` as create parameters — `url` is a field on the
+// RETURNED image object, not an accepted input — so the call would have been
+// rejected live, after the campaign and ad set already existed. `picture` reaches
+// the same by-URL outcome with one fewer round-trip and no undocumented parameter.
+// Because `picture` and `image_hash` are mutually exclusive per the same reference,
+// only `picture` is ever set.
 func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant AdVariant, adSetID, utmURL string, i int) (adID, creativeID string, err error) {
 	linkData := map[string]any{
 		"link":    utmURL,
@@ -3178,16 +3157,11 @@ func (c *Client) createVariantAd(ctx context.Context, in CampaignInput, variant 
 		linkData["description"] = variant.Description
 	}
 	// Attach the image when one was supplied. The URL was already validated up front
-	// (validateVariantImageURL), so a failure here is an upstream/API failure, not a
-	// caller error, and is surfaced to the non-fatal per-variant handler unchanged.
-	if strings.TrimSpace(variant.ImageURL) != "" {
-		imageHash, ierr := c.uploadAdImage(ctx, variant.ImageURL, i)
-		if ierr != nil {
-			// No creative was created yet, so there is no partial id to report — return
-			// the error with empty ids and let the caller classify ambiguity as usual.
-			return "", "", ierr
-		}
-		linkData["image_hash"] = imageHash
+	// (validateVariantImageURL), so a rejection here is an upstream/API failure, not a
+	// caller error. No separate upload call is made: `picture` carries the URL on the
+	// creative create itself, so there is no pre-creative step that can fail.
+	if img := strings.TrimSpace(variant.ImageURL); img != "" {
+		linkData["picture"] = img
 	}
 
 	var creativeResp createResponse

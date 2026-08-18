@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/meta"
-description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, optional single-image ad creatives uploaded by URL to `/adimages` and attached as `link_data.image_hash`, campaign status toggle cascade over ad set and ads, live campaign metrics reads, and ad-account discovery — a paginated `/me/adaccounts` walk that asks about the TOKEN rather than any one account, returns known-bad accounts with their reason instead of filtering them, and fails rather than truncating when the walk cannot be completed."
+description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, optional single-image ad creatives attached by URL as `link_data.picture`, campaign status toggle cascade over ad set and ads, live campaign metrics reads, and ad-account discovery — a paginated `/me/adaccounts` walk that asks about the TOKEN rather than any one account, returns known-bad accounts with their reason instead of filtering them, and fails rather than truncating when the walk cannot be completed."
 resource: "internal/platform/meta"
 tags:
   - platform-client
@@ -44,33 +44,45 @@ with the TS contract is deferred (LFXV2-2665).
 Ad creatives are website-click ads built from `object_story_spec.link_data`
 (page id, the UTM click URL, primary text, headline, optional description). A
 variant may additionally carry an OPTIONAL `AdVariant.ImageURL`, which turns the
-ad into a SINGLE-IMAGE ad: the image is uploaded to the ad account's image
-library (`POST /act_<id>/adimages`) and the returned content-addressed hash is
-attached to that variant's creative as `link_data.image_hash`. The field is
-additive — a variant with no `ImageURL` produces exactly the previous bare-link
-creative and makes no upload call at all.
+ad into a SINGLE-IMAGE ad: the URL is attached to that variant's creative as
+`link_data.picture`. The field is additive — a variant with no `ImageURL`
+produces exactly the previous bare-link creative.
 
-The upload is BY URL: the request sends a `url` field and META fetches the image
-server-side. The client never dereferences the caller's URL, so it acquires no
-outbound-fetch (or SSRF) surface and the upload stays inside the ordinary JSON
-request path rather than needing a separate multipart transport. The URL is still
-validated up front alongside the copy-limit checks (absolute, https, no embedded
-userinfo) so a malformed URL is rejected BEFORE any paid resource exists, rather
-than at the per-variant creative step where the campaign and ad set are already
-created. Meta fetches the URL, so userinfo is rejected specifically to avoid
-handing a basic-auth secret to Meta.
+`picture` is the DOCUMENTED by-URL field on `AdCreativeLinkData`: "URL of a
+picture to use in the post. Specify this field or `image_hash` but not both. ...
+The image specified at the URL will be saved into the ad accounts image library."
+META fetches the image server-side, so the client never dereferences the caller's
+URL and acquires no outbound-fetch (or SSRF) surface, and the whole creative stays
+one JSON create inside the ordinary hardened request path — no second transport.
+Because the reference makes `picture` and `image_hash` mutually exclusive, only
+`picture` is ever sent.
 
-`/adimages` responses are keyed by an arbitrary per-request key (Meta echoes the
-source filename), so the hash is read from the sole map entry rather than a fixed
-key; a reply carrying zero, more than one, or an empty-hash entry is refused as
-AMBIGUOUS rather than guessed at — picking arbitrarily from a Go map would attach
-a different image to a paid ad on each run. Like every other create the upload
-goes through `doCreate` and is therefore NEVER retried on a throttle: `/adimages`
-has no idempotency key. The image upload is ordered BEFORE creative creation so a
-failure leaves at most an unpublished library image, never a creative referencing
-an image that failed to upload; an upload failure is non-fatal per-variant and is
-reported in `Steps` like any other per-variant failure, with the caller's URL kept
-out of the error text (it may carry a pre-signed query).
+An earlier revision instead uploaded to `POST /act_<id>/adimages` with a `url`
+field and attached the returned hash as `link_data.image_hash`. That was wrong:
+the adimages edge documents only `bytes` (base64) and `copy_from` as CREATE
+parameters — `url` is a field on the RETURNED image object, not an accepted
+input — so the call would have been rejected against a live account, after the
+campaign and ad set already existed. `picture` reaches the same by-URL outcome
+with one fewer round-trip and no undocumented parameter. Nothing in the repo
+calls `/adimages` any more.
+
+The URL is validated up front alongside the copy-limit checks (absolute, https,
+no embedded userinfo) so a malformed URL is rejected BEFORE any paid resource
+exists, rather than at the per-variant creative step where the campaign and ad
+set are already created. Meta fetches the URL, so userinfo is rejected
+specifically to avoid handing a basic-auth secret to Meta.
+
+A creative rejected over its picture URL is non-fatal per-variant and is reported
+in `Steps` like any other per-variant failure. Because the URL now travels as a
+creative parameter, Meta can echo it back in `error.message`, which `do` copies
+verbatim into `APIError.Message`; every per-variant failure step therefore renders
+through `scrubURLFromErr`, which replaces the caller's URL (verbatim or
+percent-encoded) with its `redactURL` form before the message reaches the
+persisted `Steps` sink. A caller URL may be pre-signed — the signature is a
+bearer credential — and `Steps` are persisted and logged, so the step keeps the
+identifying scheme+host+path and drops the query, fragment, and userinfo. This
+mirrors `displayMetaUTMURL`: the full value still goes to Meta, only the persisted
+copy is sanitized.
 
 Inputs are validated up front, before any mutating call: geo targets are checked
 against ISO 3166-1 alpha-2 and comprehensively-sanctioned countries are

@@ -1276,9 +1276,9 @@ func TestMeta_ListAccounts_StillRejectsUnusableConnections(t *testing.T) {
 }
 
 // TestMeta_DispatchMapsVariantImageURL pins the WIRE CONTRACT for the per-variant
-// creative image: a caller's `imageUrl` in the dispatch config must reach Meta's
-// /adimages upload, and the hash Meta returns must land on that variant's creative
-// as link_data.image_hash.
+// creative image: a caller's `imageUrl` in the dispatch config must land on that
+// variant's creative as link_data.picture, the documented by-URL field, with no
+// /adimages round-trip (that edge documents only `bytes` and `copy_from`).
 //
 // This is a dispatcher-level test on purpose. meta.AdVariant carries no json tags,
 // so the JSON key is matched case-insensitively against the Go field name — the
@@ -1309,7 +1309,7 @@ func TestMeta_DispatchMapsVariantImageURL(t *testing.T) {
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case strings.HasSuffix(r.URL.Path, "/adimages"):
 			record(r)
-			_, _ = io.WriteString(w, `{"images":{"hero.png":{"hash":"WIRE_HASH_ABC123"}}}`)
+			_, _ = io.WriteString(w, `{"images":{"hero.png":{"hash":"SHOULD_NOT_BE_USED"}}}`)
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
 			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
 		case strings.HasSuffix(r.URL.Path, "/adsets"):
@@ -1360,25 +1360,29 @@ func TestMeta_DispatchMapsVariantImageURL(t *testing.T) {
 		return ""
 	}
 
-	// The upload happened and carried the caller's URL.
-	imgBody := find("/adimages")
-	if imgBody == "" {
-		t.Fatal("no /adimages request — the config's imageUrl never reached the client")
-	}
-	if !strings.Contains(imgBody, "https://cdn.example.org/wire-hero.png") {
-		t.Errorf("/adimages body missing the caller's image URL: %s", imgBody)
+	// The undocumented upload edge must never be called.
+	if imgBody := find("/adimages"); imgBody != "" {
+		t.Errorf("/adimages was called; the url parameter is undocumented: %s", imgBody)
 	}
 
-	// The returned hash landed on the creative...
+	// The caller's URL landed on the creative as picture...
 	creativeBody := find("/adcreatives")
 	if creativeBody == "" {
 		t.Fatal("no /adcreatives request captured")
 	}
-	if !strings.Contains(creativeBody, `"image_hash":"WIRE_HASH_ABC123"`) {
-		t.Errorf("creative body missing image_hash: %s", creativeBody)
+	if !strings.Contains(creativeBody, `"picture":"https://cdn.example.org/wire-hero.png"`) {
+		t.Errorf("creative body missing link_data.picture — the config's imageUrl never reached the client: %s", creativeBody)
 	}
-	// ...and the image URL itself was NOT sent as the creative's click destination.
-	if strings.Contains(creativeBody, "wire-hero.png") {
-		t.Errorf("creative body leaked the image URL as a link/field: %s", creativeBody)
+	// ...and no image_hash accompanies it (the two are mutually exclusive).
+	if strings.Contains(creativeBody, "image_hash") {
+		t.Errorf("creative body sent image_hash alongside picture: %s", creativeBody)
+	}
+	if strings.Contains(creativeBody, "SHOULD_NOT_BE_USED") {
+		t.Errorf("creative body used a hash from the unused upload edge: %s", creativeBody)
+	}
+	// The image URL must NOT be the creative's click destination — that is the
+	// registration/UTM URL. A swap would point the ad at the image file.
+	if !strings.Contains(creativeBody, `"link":"https://events.example/kc?`) {
+		t.Errorf("creative body missing the registration URL as the link: %s", creativeBody)
 	}
 }

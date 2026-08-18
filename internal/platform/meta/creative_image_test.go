@@ -5,9 +5,11 @@ package meta
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -39,13 +41,13 @@ func imageTestClient(srvURL string) *Client {
 	)
 }
 
-// TestCreateCampaignUploadsImageAndAttachesHash is the core mapping test: it asserts
-// the /adimages REQUEST BODY carries the caller's URL, and that the hash Meta
-// returned lands in link_data.image_hash — and in NO other field. Distinctive
-// values are used for every input so a field cross-wiring is detectable.
-func TestCreateCampaignUploadsImageAndAttachesHash(t *testing.T) {
-	imageCap := newBodyCapture()
+// TestCreateCampaignAttachesPictureURL is the core mapping test: it asserts the
+// caller's image URL lands in link_data.picture — the DOCUMENTED by-URL field —
+// that NO /adimages call is made, and that the URL reaches no other field.
+// Distinctive values are used for every input so a field cross-wiring is detectable.
+func TestCreateCampaignAttachesPictureURL(t *testing.T) {
 	creativeCap := newBodyCapture()
+	var imageCalls int32
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -55,9 +57,9 @@ func TestCreateCampaignUploadsImageAndAttachesHash(t *testing.T) {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adimages"):
-			imageCap.set(decodeBody(t, r))
-			// Meta keys the images map by an arbitrary key (the source filename).
-			_, _ = io.WriteString(w, `{"images":{"hero-banner.png":{"hash":"HASH_DISTINCTIVE_9f8e7d","url":"https://scontent.example/x"}}}`)
+			// The undocumented upload edge must never be called.
+			atomic.AddInt32(&imageCalls, 1)
+			_, _ = io.WriteString(w, `{"images":{"x":{"hash":"SHOULD_NOT_BE_USED"}}}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
 			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
@@ -88,41 +90,24 @@ func TestCreateCampaignUploadsImageAndAttachesHash(t *testing.T) {
 	if res.AdCount != 1 {
 		t.Fatalf("ad count = %d, want 1", res.AdCount)
 	}
-
-	// --- /adimages request body ---
-	imgBody := imageCap.get()
-	if imgBody == nil {
-		t.Fatalf("no /adimages request was made")
-	}
-	if got := imgBody["url"]; got != "https://cdn.example.org/distinct-image.png" {
-		t.Errorf("adimages url = %v, want the caller's ImageURL", got)
-	}
-	// The upload must send ONLY the url — no copy fields leaking across.
-	for _, leak := range []string{"image_hash", "message", "name", "link"} {
-		if _, present := imgBody[leak]; present {
-			t.Errorf("adimages body unexpectedly contains %q: %v", leak, imgBody)
-		}
+	// The /adimages "url" parameter is not documented; the by-URL feature must be
+	// delivered by link_data.picture alone, with no upload round-trip.
+	if n := atomic.LoadInt32(&imageCalls); n != 0 {
+		t.Errorf("/adimages called %d times, want 0 — the url parameter is undocumented", n)
 	}
 
-	// --- creative request body ---
-	creativeBody := creativeCap.get()
-	if creativeBody == nil {
-		t.Fatalf("no creative body captured")
-	}
-	oss, ok := creativeBody["object_story_spec"].(map[string]any)
-	if !ok {
-		t.Fatalf("object_story_spec missing: %v", creativeBody["object_story_spec"])
-	}
-	linkData, ok := oss["link_data"].(map[string]any)
-	if !ok {
-		t.Fatalf("link_data missing: %v", oss["link_data"])
-	}
+	linkData := creativeLinkData(t, creativeCap.get())
 
-	// The hash lands in image_hash...
-	if got := linkData["image_hash"]; got != "HASH_DISTINCTIVE_9f8e7d" {
-		t.Errorf("link_data.image_hash = %v, want HASH_DISTINCTIVE_9f8e7d", got)
+	// The URL lands in picture...
+	if got := linkData["picture"]; got != "https://cdn.example.org/distinct-image.png" {
+		t.Errorf("link_data.picture = %v, want the caller's ImageURL", got)
 	}
-	// ...and in NO other field. Each distinctive value must stay in its own slot.
+	// ...and image_hash is never sent alongside it — the reference states the two
+	// are mutually exclusive ("Specify this field or image_hash but not both").
+	if got, present := linkData["image_hash"]; present {
+		t.Errorf("link_data.image_hash must not accompany picture: %v", got)
+	}
+	// Each distinctive value must stay in its own slot.
 	if got := linkData["message"]; got != "PRIMARY_TEXT_MARKER" {
 		t.Errorf("link_data.message = %v, want PRIMARY_TEXT_MARKER", got)
 	}
@@ -132,9 +117,8 @@ func TestCreateCampaignUploadsImageAndAttachesHash(t *testing.T) {
 	if got := linkData["description"]; got != "DESC_MARKER" {
 		t.Errorf("link_data.description = %v, want DESC_MARKER", got)
 	}
-	// The image URL itself must NOT be sent as the creative's click destination —
-	// that is the registration/UTM URL. A swap here would silently point the ad at
-	// the image file.
+	// The image URL must NOT be the creative's click destination — that is the
+	// registration/UTM URL. A swap would silently point the ad at the image file.
 	link, _ := linkData["link"].(string)
 	if !strings.Contains(link, "events.example.org") {
 		t.Errorf("link_data.link = %q, want the registration URL", link)
@@ -142,15 +126,15 @@ func TestCreateCampaignUploadsImageAndAttachesHash(t *testing.T) {
 	if strings.Contains(link, "distinct-image.png") {
 		t.Errorf("link_data.link leaked the image URL: %q", link)
 	}
-	// The raw image URL must not appear anywhere in the creative body.
+	// image_url is NOT a documented AdCreativeLinkData field; never send it.
 	if got, ok := linkData["image_url"]; ok {
-		t.Errorf("link_data.image_url should not be sent, got %v", got)
+		t.Errorf("link_data.image_url is not a documented field, got %v", got)
 	}
 }
 
-// TestCreateCampaignNoImageOmitsImageHash proves the field is additive: a variant
-// with no ImageURL must make NO /adimages call and send NO image_hash key.
-func TestCreateCampaignNoImageOmitsImageHash(t *testing.T) {
+// TestCreateCampaignNoImageOmitsPicture proves the field is additive: a variant
+// with no ImageURL must send NO picture key (and still make no /adimages call).
+func TestCreateCampaignNoImageOmitsPicture(t *testing.T) {
 	creativeCap := newBodyCapture()
 	var imageCalls int32
 
@@ -191,20 +175,19 @@ func TestCreateCampaignNoImageOmitsImageHash(t *testing.T) {
 	}
 
 	linkData := creativeLinkData(t, creativeCap.get())
+	if got, present := linkData["picture"]; present {
+		t.Errorf("link_data.picture present with no ImageURL: %v", got)
+	}
 	if got, present := linkData["image_hash"]; present {
 		t.Errorf("link_data.image_hash present with no ImageURL: %v", got)
 	}
 }
 
-// TestCreateCampaignPerVariantImageIsolation proves each variant gets its OWN
-// hash — a shared/last-write-wins bug would attach one image to every ad.
+// TestCreateCampaignPerVariantImageIsolation proves each variant carries its OWN
+// picture URL — a shared/last-write-wins bug would put one image on every ad.
 func TestCreateCampaignPerVariantImageIsolation(t *testing.T) {
-	var mu struct {
-		urls   []string
-		hashes []string
-	}
 	creativeBodies := make(chan map[string]any, 8)
-	imageURLs := make(chan string, 8)
+	var imageCalls int32
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -214,19 +197,8 @@ func TestCreateCampaignPerVariantImageIsolation(t *testing.T) {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adimages"):
-			b := decodeBody(t, r)
-			u, _ := b["url"].(string)
-			imageURLs <- u
-			// Echo a hash derived from the URL so a mis-pairing is visible.
-			switch {
-			case strings.Contains(u, "alpha"):
-				_, _ = io.WriteString(w, `{"images":{"a.png":{"hash":"HASH_ALPHA"}}}`)
-			case strings.Contains(u, "beta"):
-				_, _ = io.WriteString(w, `{"images":{"b.png":{"hash":"HASH_BETA"}}}`)
-			default:
-				t.Errorf("unexpected image url %q", u)
-				_, _ = io.WriteString(w, `{"images":{"z.png":{"hash":"HASH_UNKNOWN"}}}`)
-			}
+			atomic.AddInt32(&imageCalls, 1)
+			_, _ = io.WriteString(w, `{"images":{"x":{"hash":"SHOULD_NOT_BE_USED"}}}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
 			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
@@ -253,40 +225,36 @@ func TestCreateCampaignPerVariantImageIsolation(t *testing.T) {
 	if res.AdCount != 2 {
 		t.Fatalf("ad count = %d, want 2", res.AdCount)
 	}
-
-	close(imageURLs)
-	for u := range imageURLs {
-		mu.urls = append(mu.urls, u)
-	}
-	if len(mu.urls) != 2 {
-		t.Fatalf("adimages calls = %d, want 2 (one per variant)", len(mu.urls))
+	if n := atomic.LoadInt32(&imageCalls); n != 0 {
+		t.Errorf("/adimages called %d times, want 0", n)
 	}
 
 	close(creativeBodies)
+	var pictures []string
 	for b := range creativeBodies {
 		ld := creativeLinkData(t, b)
-		h, _ := ld["image_hash"].(string)
+		pic, _ := ld["picture"].(string)
 		name, _ := ld["name"].(string)
-		mu.hashes = append(mu.hashes, h)
-		// The pairing is what matters: variant 1's headline must sit with ALPHA.
+		pictures = append(pictures, pic)
+		// The pairing is what matters: variant 1's headline must sit with alpha.png.
 		switch name {
 		case "Alpha head":
-			if h != "HASH_ALPHA" {
-				t.Errorf("variant Alpha got hash %q, want HASH_ALPHA", h)
+			if pic != "https://cdn.example.org/alpha.png" {
+				t.Errorf("variant Alpha got picture %q, want alpha.png", pic)
 			}
 		case "Beta head":
-			if h != "HASH_BETA" {
-				t.Errorf("variant Beta got hash %q, want HASH_BETA", h)
+			if pic != "https://cdn.example.org/beta.png" {
+				t.Errorf("variant Beta got picture %q, want beta.png", pic)
 			}
 		default:
 			t.Errorf("unexpected creative headline %q", name)
 		}
 	}
-	if len(mu.hashes) != 2 {
-		t.Fatalf("creatives = %d, want 2", len(mu.hashes))
+	if len(pictures) != 2 {
+		t.Fatalf("creatives = %d, want 2", len(pictures))
 	}
-	if mu.hashes[0] == mu.hashes[1] {
-		t.Errorf("both creatives got the same hash %q — per-variant isolation broken", mu.hashes[0])
+	if pictures[0] == pictures[1] {
+		t.Errorf("both creatives got the same picture %q — per-variant isolation broken", pictures[0])
 	}
 }
 
@@ -365,107 +333,148 @@ func TestCreateCampaignBadImageURLSpendsNothing(t *testing.T) {
 	}
 }
 
-// TestUploadAdImageResponseShapes covers the ambiguous/malformed upload replies.
-// Each must be an error rather than a silently image-less ad.
-func TestUploadAdImageResponseShapes(t *testing.T) {
-	cases := []struct {
-		name     string
-		response string
-		wantErr  string
-	}{
-		{"no images key", `{}`, "returned no image"},
-		{"empty images map", `{"images":{}}`, "returned no image"},
-		{"empty hash", `{"images":{"a.png":{"hash":""}}}`, "empty image hash"},
-		{"whitespace hash", `{"images":{"a.png":{"hash":"   "}}}`, "empty image hash"},
-		{"two images", `{"images":{"a.png":{"hash":"H1"},"b.png":{"hash":"H2"}}}`, "expected 1"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, tc.response)
-			}))
-			defer srv.Close()
-
-			hash, err := imageTestClient(srv.URL).uploadAdImage(context.Background(), "https://cdn.example.org/a.png", 0)
-			if err == nil {
-				t.Fatalf("uploadAdImage = (%q, nil), want an error", hash)
-			}
-			if hash != "" {
-				t.Errorf("hash = %q on error, want empty", hash)
-			}
-			if !strings.Contains(err.Error(), tc.wantErr) {
-				t.Errorf("error = %q, want it to contain %q", err.Error(), tc.wantErr)
-			}
-			// Every one of these is a 2xx we could not use: it must be classified as
-			// AMBIGUOUS so the caller says "verify" rather than "definitely failed".
-			if !createOutcomeAmbiguous(err) {
-				t.Errorf("error %v should be ambiguous (Meta may have stored the image)", err)
-			}
-		})
-	}
-}
-
-// TestUploadAdImageNotRetriedOnThrottle pins the retry policy: /adimages is a
-// mutating create with no idempotency key, so a 429 must NOT be repeated.
-func TestUploadAdImageNotRetriedOnThrottle(t *testing.T) {
-	var calls int32
+// TestCreativeRejectionNotRetriedOnThrottle pins the retry policy: the creative
+// create carrying the picture URL is a mutating create with no idempotency key,
+// so a 429 must NOT be repeated.
+func TestCreativeRejectionNotRetriedOnThrottle(t *testing.T) {
+	var creativeCalls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&calls, 1)
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusTooManyRequests)
-		_, _ = io.WriteString(w, `{"error":{"message":"rate limited","code":4}}`)
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			atomic.AddInt32(&creativeCalls, 1)
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"message":"rate limited","code":4}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
 	}))
 	defer srv.Close()
 
-	_, err := imageTestClient(srv.URL).uploadAdImage(context.Background(), "https://cdn.example.org/a.png", 0)
-	if err == nil {
-		t.Fatal("uploadAdImage = nil error on 429, want an error")
+	_, err := imageTestClient(srv.URL).CreateCampaign(context.Background(), imageTestInput(
+		AdVariant{PrimaryText: "Join us", Headline: "KubeCon", ImageURL: "https://cdn.example.org/a.png"},
+	))
+	if err != nil {
+		t.Fatalf("CreateCampaign error = %v, want nil (per-variant failure is non-fatal)", err)
 	}
-	if n := atomic.LoadInt32(&calls); n != 1 {
-		t.Errorf("/adimages called %d times on 429, want exactly 1 (creates are never retried)", n)
+	if n := atomic.LoadInt32(&creativeCalls); n != 1 {
+		t.Errorf("adcreatives called %d times on 429, want exactly 1 (creates are never retried)", n)
 	}
 }
 
-// TestUploadAdImageErrorsOmitTheURL proves no caller URL (which may carry a
-// pre-signed query) and no token reaches the error string.
-func TestUploadAdImageErrorsOmitTheURL(t *testing.T) {
+// TestImageURLDoesNotReachStepsWhenMetaEchoesIt is the privacy regression test
+// dealako asked for: a 4xx whose Meta message ECHOES the rejected picture URL
+// verbatim. The pre-signed query is a bearer credential, and Steps are persisted,
+// so neither the signature nor the token may survive into the returned Steps.
+func TestImageURLDoesNotReachStepsWhenMetaEchoesIt(t *testing.T) {
 	const secretURL = "https://cdn.example.org/a.png?X-Amz-Signature=SECRET_SIGNATURE_VALUE&token=SECRET_TOKEN"
 
+	// Each case is a DIFFERENT Steps rendering path in the per-variant handler:
+	// a plain 4xx failure and an ambiguous 5xx (the UNCONFIRMED wording).
 	for _, tc := range []struct {
-		name   string
-		status int
-		body   string
+		name     string
+		status   int
+		wantStep string
 	}{
-		{"2xx no images", http.StatusOK, `{"images":{}}`},
-		{"4xx rejection", http.StatusBadRequest, `{"error":{"message":"bad image","code":100}}`},
-		{"5xx", http.StatusInternalServerError, `{"error":{"message":"boom"}}`},
+		{"4xx rejection renders the failed wording", http.StatusBadRequest, "Ad 1 failed"},
+		{"5xx rejection renders the UNCONFIRMED wording", http.StatusInternalServerError, "UNCONFIRMED"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(tc.status)
-				_, _ = io.WriteString(w, tc.body)
+				switch {
+				case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+					_, _ = io.WriteString(w, `{"data":[]}`)
+				case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777"):
+					_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
+					_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
+				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
+					_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
+				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adcreatives"):
+					// Meta echoes the rejected parameter's value in error.message.
+					w.WriteHeader(tc.status)
+					_, _ = io.WriteString(w, `{"error":{"message":"Invalid parameter picture: could not fetch `+secretURL+`","code":100}}`)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
 			}))
 			defer srv.Close()
 
-			_, err := imageTestClient(srv.URL).uploadAdImage(context.Background(), secretURL, 0)
-			if err == nil {
-				t.Fatal("want an error")
+			res, err := imageTestClient(srv.URL).CreateCampaign(context.Background(), imageTestInput(
+				AdVariant{PrimaryText: "Join us", Headline: "KubeCon", ImageURL: secretURL},
+			))
+			if err != nil {
+				t.Fatalf("CreateCampaign error = %v, want nil (per-variant failure is non-fatal)", err)
 			}
-			msg := err.Error()
+			joined := strings.Join(res.Steps, "\n")
+			if !strings.Contains(joined, tc.wantStep) {
+				t.Fatalf("Steps do not contain %q, so the leak path was not exercised: %v", tc.wantStep, res.Steps)
+			}
 			for _, secret := range []string{"SECRET_SIGNATURE_VALUE", "SECRET_TOKEN", "X-Amz-Signature", "tok-img"} {
-				if strings.Contains(msg, secret) {
-					t.Errorf("error message leaked %q: %s", secret, msg)
+				if strings.Contains(joined, secret) {
+					t.Errorf("persisted Steps leaked %q: %v", secret, res.Steps)
 				}
+			}
+			// The step should still identify WHICH image failed, minus the credential.
+			if !strings.Contains(joined, "cdn.example.org/a.png") {
+				t.Errorf("Steps lost the identifying image path entirely: %v", res.Steps)
 			}
 		})
 	}
 }
 
-// TestCreateCampaignImageFailureIsNonFatalAndReported proves a failed upload does
-// not kill the campaign and does not create a creative or ad for that variant,
-// while a sibling variant still succeeds.
+// TestScrubURLFromErr covers the sink-side scrubber directly, including the forms
+// an upstream may re-encode the URL into.
+func TestScrubURLFromErr(t *testing.T) {
+	const secretURL = "https://cdn.example.org/a.png?sig=SECRET_SIG"
+
+	t.Run("nil error", func(t *testing.T) {
+		if got := scrubURLFromErr(nil, secretURL, 300); got != "" {
+			t.Errorf("scrubURLFromErr(nil) = %q, want empty", got)
+		}
+	})
+	t.Run("verbatim echo is scrubbed", func(t *testing.T) {
+		err := fmt.Errorf("could not fetch %s", secretURL)
+		got := scrubURLFromErr(err, secretURL, 300)
+		if strings.Contains(got, "SECRET_SIG") {
+			t.Errorf("scrubbed message still carries the signature: %q", got)
+		}
+		if !strings.Contains(got, "cdn.example.org/a.png") {
+			t.Errorf("scrubbed message lost the identifying path: %q", got)
+		}
+	})
+	t.Run("percent-encoded echo is scrubbed", func(t *testing.T) {
+		err := fmt.Errorf("could not fetch %s", url.QueryEscape(secretURL))
+		if got := scrubURLFromErr(err, secretURL, 300); strings.Contains(got, "SECRET_SIG") {
+			t.Errorf("percent-encoded echo not scrubbed: %q", got)
+		}
+	})
+	t.Run("empty imageURL leaves the message intact", func(t *testing.T) {
+		err := fmt.Errorf("plain failure")
+		if got := scrubURLFromErr(err, "", 300); got != "plain failure" {
+			t.Errorf("scrubURLFromErr with empty url = %q, want the message unchanged", got)
+		}
+	})
+	t.Run("still truncates", func(t *testing.T) {
+		err := fmt.Errorf("%s", strings.Repeat("x", 500))
+		if got := scrubURLFromErr(err, "", 50); len([]rune(got)) > 51 {
+			t.Errorf("scrubURLFromErr did not clamp length: %d runes", len([]rune(got)))
+		}
+	})
+}
+
+// TestCreateCampaignImageFailureIsNonFatalAndReported proves a creative rejected
+// over its picture URL does not kill the campaign and makes no ad for that
+// variant, while a sibling variant still succeeds.
 func TestCreateCampaignImageFailureIsNonFatalAndReported(t *testing.T) {
 	var creativeCalls, adCalls int32
 
@@ -476,20 +485,20 @@ func TestCreateCampaignImageFailureIsNonFatalAndReported(t *testing.T) {
 			_, _ = io.WriteString(w, `{"data":[]}`)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/act_777"):
 			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adimages"):
-			b := decodeBody(t, r)
-			if u, _ := b["url"].(string); strings.Contains(u, "broken") {
-				w.WriteHeader(http.StatusBadRequest)
-				_, _ = io.WriteString(w, `{"error":{"message":"image could not be fetched","code":100}}`)
-				return
-			}
-			_, _ = io.WriteString(w, `{"images":{"ok.png":{"hash":"HASH_OK"}}}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/campaigns"):
 			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adsets"):
 			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/adcreatives"):
 			atomic.AddInt32(&creativeCalls, 1)
+			b := decodeBody(t, r)
+			oss, _ := b["object_story_spec"].(map[string]any)
+			ld, _ := oss["link_data"].(map[string]any)
+			if pic, _ := ld["picture"].(string); strings.Contains(pic, "broken") {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"error":{"message":"image could not be fetched","code":100}}`)
+				return
+			}
 			_, _ = io.WriteString(w, `{"id":"creative_ok"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/ads"):
 			atomic.AddInt32(&adCalls, 1)
@@ -523,11 +532,11 @@ func TestCreateCampaignImageFailureIsNonFatalAndReported(t *testing.T) {
 	if res.AdCount != 1 {
 		t.Errorf("ad count = %d, want 1 (the image-failing variant makes no ad)", res.AdCount)
 	}
-	if n := atomic.LoadInt32(&creativeCalls); n != 1 {
-		t.Errorf("adcreatives called %d times, want 1 — a failed image upload must NOT create a creative", n)
+	if n := atomic.LoadInt32(&creativeCalls); n != 2 {
+		t.Errorf("adcreatives called %d times, want 2 (one attempt per variant)", n)
 	}
 	if n := atomic.LoadInt32(&adCalls); n != 1 {
-		t.Errorf("ads called %d times, want 1", n)
+		t.Errorf("ads called %d times, want 1 — a rejected creative must NOT create an ad", n)
 	}
 	// The failure must be SURFACED in Steps, not silently dropped.
 	joined := strings.Join(res.Steps, "\n")
