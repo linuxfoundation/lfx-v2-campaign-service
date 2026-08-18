@@ -272,6 +272,28 @@ func (c *Client) submitReport(ctx context.Context, campaignID string, start, end
 				// defaults it to Pacific, so a UTC-computed window would aggregate a
 				// different day than the dates above name. That is a silent off-by-one-day
 				// on every window, rendered as a measurement.
+				//
+				// This value is the CLOSEST to UTC the enum offers; it is not UTC. It maps
+				// to Europe/London, which observes British Summer Time, so from late March
+				// to late October it is UTC+1 and the report day boundary sits one hour
+				// before ours. reportDateRange computes calendar dates in UTC and toMSDate
+				// sends bare Y/M/D, so during BST the window Microsoft aggregates is shifted
+				// one hour earlier than the window this service names.
+				//
+				// No fixed-offset UTC value exists to use instead. The published
+				// ReportTimeZone value set has 75 entries and contains no "UTC",
+				// "Coordinated Universal Time" or Reykjavik member; the only other UTC+0
+				// entry, CasablancaMonrovia, maps to Africa/Casablanca, which observes its
+				// own offset changes and is therefore strictly worse. So this is the best
+				// available approximation, chosen knowingly, and NOT a UTC guarantee.
+				//
+				// The residual error is bounded at one hour at a day boundary, which can
+				// move a click or an impression between two adjacent days. It cannot lose
+				// one: the range is aggregated as a whole, so a shift moves the edge of the
+				// window, it does not drop anything inside it. Totals over a multi-day
+				// window are affected only at the two ends. If per-day exactness is ever
+				// required, the fix is not another enum value — it is to convert the window
+				// to Europe/London before calling toMSDate.
 				"ReportTimeZone": "GreenwichMeanTimeDublinEdinburghLisbonLondon",
 			},
 		},
@@ -683,10 +705,10 @@ func isAffirmative(v string) bool {
 
 // dropTrailerRows removes the copyright/blank trailer lines that follow the data.
 //
-// The trailer is identified POSITIVELY — blank, or a SINGLE-CELL row that cannot be a data
-// row, or a first cell carrying a copyright marker — rather than by being narrower than the
-// header. Width alone is not evidence of a trailer: an earlier revision dropped every row
-// shorter than the header on the reasoning that "a DATA row always carries the full column
+// The trailer is identified POSITIVELY — blank, or a first cell carrying a copyright
+// marker — rather than by being narrower than the header. Width is NEVER evidence of a
+// trailer, at any width: an earlier revision dropped every row shorter than the header on
+// the reasoning that "a DATA row always carries the full column
 // set", which is an assumption about response SHAPE on a contract this file declares
 // UNVERIFIED. A real data row missing a trailing field was therefore discarded silently, and
 // its impressions/clicks/spend vanished into a total that still looked clean — the same
@@ -709,13 +731,18 @@ func isAffirmative(v string) bool {
 // Matching on the marker PREFIX rather than the full sentence is deliberate — the year in
 // the footer is dynamic, so pinning the literal text would break each January.
 //
-// The single-cell rule generalises past the marker instead of enumerating it. A trailer line
-// is one unquoted sentence, so Microsoft's CSV writer emits it as ONE cell, whereas a data
-// row always carries at least the campaign id AND a metric — the fold needs three named
-// columns, so a one-cell row can never satisfy it. This is deliberately narrow: it rejects
-// only rows that could not have been measurements anyway. A wrong rejection here is a silent
-// under-count, which is the failure class this file exists to prevent, so the rule stops at
-// what is provable rather than guessing at trailer text.
+// A single-cell row is NOT dropped, and the width test is not narrowed to one column either.
+// A revision of this function briefly dropped every one-cell row on the reasoning that "the
+// fold needs three named columns, so a one-cell row can never satisfy it" — which is true of
+// the FOLD but says nothing about what the row IS. A data row truncated to its CampaignId is
+// exactly that shape, and dropping it here removes it before the column validation can see
+// it: its impressions/clicks/spend leave the total silently, and the total still looks clean.
+// That is the same defect the paragraph above records, narrowed from "shorter than the
+// header" to "one cell" and no sounder for being narrower. Every non-blank, non-marker row
+// therefore reaches parseReportInt/parseReportFloat, whose short-row error REPORTS the
+// truncation instead of absorbing it. A trailer this file has not anticipated is caught by
+// its marker, and if some future trailer carries neither marker it fails loudly as an
+// unparseable row — the honest failure, not a quiet under-count.
 func dropTrailerRows(rows [][]string) [][]string {
 	out := make([][]string, 0, len(rows))
 	for _, row := range rows {
@@ -729,12 +756,9 @@ func dropTrailerRows(rows [][]string) [][]string {
 		if blank {
 			continue
 		}
-		// A single-cell row after the data section cannot be a measurement: foldReportRows
-		// needs three distinct columns to read one. Dropping it costs nothing and catches
-		// the trailer whatever wording or symbol Microsoft renders it with.
-		if len(row) == 1 {
-			continue
-		}
+		// row[0] is safe unguarded: a zero-length row has no non-blank cell, so the blank
+		// check above has already skipped it. A len(row) > 0 test here would be unreachable
+		// dead code that reads like a live bounds guard.
 		if isReportTrailerCell(row[0]) {
 			continue
 		}
@@ -748,8 +772,9 @@ func dropTrailerRows(rows [][]string) [][]string {
 var reportTrailerMarkers = []string{"©", "@"}
 
 // isReportTrailerCell reports whether a first cell begins with a copyright-trailer marker.
-// Kept separate from the single-cell rule so a trailer that arrives with a stray trailing
-// delimiter — rendering it as two cells rather than one — is still recognised.
+// It is the ONLY positive trailer test besides blankness, and it is width-independent on
+// purpose: a trailer that arrives with a stray trailing delimiter — rendering it as two
+// cells rather than one — is recognised just the same.
 func isReportTrailerCell(cell string) bool {
 	trimmed := strings.TrimSpace(cell)
 	for _, marker := range reportTrailerMarkers {

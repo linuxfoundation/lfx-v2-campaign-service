@@ -429,7 +429,7 @@ report still building is retryable, not unsupported.
 
 Several parsing properties are load-bearing and each is pinned by a test. The CSV is
 **ragged** — a two-column metadata preamble, then the four-column header and data, then a
-one-column `©` trailer — so `FieldsPerRecord = -1` is required; the default field-count lock
+one-column copyright trailer — so `FieldsPerRecord = -1` is required; the default field-count lock
 rejects the whole file at the header row, which would fail every real report. Columns are
 resolved by header NAME, never by position, because Microsoft's writer chooses its own order
 and a positional read would swap Clicks and Spend into plausible wrong numbers; a missing
@@ -441,12 +441,45 @@ The DECOMPRESSED CSV is read into a buffer and size-checked before parsing, not 
 through a bare `io.LimitReader`: `io.LimitReader` signals EOF at its limit rather than
 erroring, so a prefix cut on a row boundary is syntactically complete and `csv.ReadAll`
 accepts it — yielding a short total that reads as authoritative. The trailer is identified
-POSITIVELY (blank, or a first cell starting with `©`) rather than by being narrower than the
-header: width is not evidence of a trailer, and dropping short rows discarded real data whose
-metrics then vanished into a clean-looking total. A short row now reaches the column check and
-is reported. The running TOTALS are overflow-checked as well as the per-row values, mirroring
+POSITIVELY (blank, or a first cell starting with a copyright marker) rather than by being
+narrower than the header. **Both `©` and `@` are accepted as that marker**: Microsoft's
+published sample report and its `ExcludeReportFooter` description both render the footer with
+an `@`, while this repo's fixtures had assumed `©` throughout, so the suite could only prove
+the parser agreed with itself. An unrecognised footer is not dropped quietly — it survives the
+filter, folds in as a data row and fails `parseReportInt`, turning every otherwise-successful
+report into a parse error.
+
+Width is not evidence of a trailer **at any width**, including one column. Dropping short rows
+discarded real data whose metrics then vanished into a clean-looking total; a later revision
+narrowed that rule to single-cell rows only, which is the same defect — a data row truncated to
+its `CampaignId` has exactly that shape. Every non-blank, non-marker row therefore reaches the
+column check and is REPORTED as an error rather than silently dropped. The running TOTALS are
+overflow-checked as well as the per-row values, mirroring
 `reddit/metrics.go` — per-row guards bound each value but say nothing about the sum the
 dashboard renders.
+
+Three properties of the SUBMIT request are load-bearing in the same way. The report is scoped
+by `Scope.Campaigns` ALONE — `Scope.AccountIds` is not sent alongside it, because Microsoft
+documents the scope as a union and sending both would return account-wide totals reported as
+this campaign's. If Microsoft rejects the campaign-only scope (error 2027 /
+`InvalidAccountThruCampaignReportScope`) the error names that tradeoff explicitly, so the first
+live run diagnoses it in one read. Scope ids go out as **quoted strings**, not bare JSON
+numbers — the opposite of `campaign.go`, deliberately: that is Campaign Management v13 and this
+is Reporting v13. Reporting's JSON reference quotes every `long` while leaving `ReportTime`'s
+`int` fields bare, and quoting also avoids the precision loss a 64-bit id would suffer past
+2^53, which would scope the report to the WRONG campaign.
+
+`ReportTimeZone` is sent explicitly because Microsoft otherwise defaults it to Pacific, which
+would aggregate a different day than the UTC-computed dates the request names — a silent
+off-by-one-day on every window. The value used,
+`GreenwichMeanTimeDublinEdinburghLisbonLondon`, is the CLOSEST the enum offers to UTC but is
+**not** UTC: it maps to `Europe/London` and observes British Summer Time, so from late March to
+late October the report day boundary sits one hour before ours. No fixed-offset UTC value
+exists to use instead — the published `ReportTimeZone` value set has 75 entries and contains no
+UTC or Reykjavik member, and the only other UTC+0 entry (`CasablancaMonrovia`) maps to
+`Africa/Casablanca`, which observes its own offset changes. The residual error is bounded at
+one hour at the two ends of the window and can move an event between adjacent days; it cannot
+lose one, since the range is aggregated as a whole.
 
 There is no path in this file where a zero is synthesized. Both empty shapes — a `Success`
 status naming no download URL, and a downloaded CSV whose header is followed by no data rows

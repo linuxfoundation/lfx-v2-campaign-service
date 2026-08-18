@@ -444,8 +444,15 @@ func TestGetCampaignMetrics_SubmitBodyShape(t *testing.T) {
 	if _, ok := scope["AccountIds"]; ok {
 		t.Errorf("Scope.AccountIds decoded from the submit body: %+v", scope)
 	}
-	if !bytes.Contains(m.submitRaw, []byte(`"ReportTimeZone"`)) {
-		t.Errorf("ReportTimeZone missing; Microsoft defaults to Pacific: %s", m.submitRaw)
+	// The VALUE is asserted, not merely the key's presence. A key-only check passes while
+	// the field carries "PacificTimeUSCanadaTijuana" — the very default the field exists to
+	// override — so it could not detect the field being set to the harmful value. The zone
+	// is also the closest to UTC the enum offers rather than UTC itself (it observes BST),
+	// which is recorded at the call site; pinning the literal keeps any future change to it
+	// a deliberate, visible edit rather than a silent re-scoping of every window.
+	if tz, _ := req["Time"].(map[string]any)["ReportTimeZone"].(string); tz != "GreenwichMeanTimeDublinEdinburghLisbonLondon" {
+		t.Errorf("ReportTimeZone = %q, want GreenwichMeanTimeDublinEdinburghLisbonLondon; "+
+			"Microsoft defaults to Pacific, which silently shifts every window by a day: %s", tz, m.submitRaw)
 	}
 	// The date must be the object form. A string here would be accepted by our own fake
 	// but rejected by Microsoft — exactly the class of bug a fake cannot catch, so the
@@ -911,7 +918,7 @@ func TestDropTrailerRows_IdentifiesTrailerPositively(t *testing.T) {
 		{"1234567", "10000", "250", "125.50"},
 		{"1234567", "5000", "100"}, // short DATA row — must SURVIVE
 		{"", "", "", ""},           // blank — must be dropped
-		{},                         // empty record — must be dropped
+		{},                         // empty record — blank by the same test, must be dropped
 		// Both markers, and the trailing space Microsoft's own sample carries.
 		{"©2026 Microsoft Corporation. All rights reserved."},
 		{"@2026 Microsoft Corporation. All rights reserved. "},
@@ -1151,28 +1158,84 @@ func TestFoldReportRows_IncompleteFlagIsCheckedBeforeTheColumns(t *testing.T) {
 	}
 }
 
-// TestDropTrailerRows_SingleCellTrailerWithoutAMarkerIsDropped pins the generic rule, which
-// the marker assertions cannot reach.
+// TestDropTrailerRows_SingleCellDataRowSurvives is the one-column case of the width rule.
 //
-// Every trailer fixture elsewhere in this file starts with "©" or "@", so the marker match
-// alone would satisfy them and the single-cell rule could be deleted unnoticed. The row below
-// carries NEITHER marker, so only the generic rule can reject it. That rule is what covers a
-// footer whose wording or symbol this file has not anticipated — the whole point of not
-// enumerating trailer text on an UNVERIFIED contract.
+// A revision of dropTrailerRows dropped every one-cell row, on the reasoning that the fold
+// needs three named columns so a one-cell row could never be a measurement. That confuses
+// what the fold can READ with what the row IS: a data row truncated to its CampaignId has
+// exactly this shape, and dropping it removes it before any validation can report it.
 //
-// It stays safe because a one-cell row could not have been a measurement anyway: foldReportRows
-// resolves three named columns to read a row, so a single cell can never satisfy it.
-func TestDropTrailerRows_SingleCellTrailerWithoutAMarkerIsDropped(t *testing.T) {
+// This is the same defect as the header-width rule an earlier commit removed, narrowed to one
+// column. Restoring it in any form fails this test.
+func TestDropTrailerRows_SingleCellDataRowSurvives(t *testing.T) {
 	in := [][]string{
 		{"1234567", "10000", "250", "125.50"},
-		{"Copyright 2026 Microsoft Corporation. All rights reserved."}, // no ©, no @
+		{"1234567"}, // a DATA row truncated to its campaign id — must SURVIVE
 	}
 	out := dropTrailerRows(in)
+	if len(out) != 2 {
+		t.Fatalf("kept %d rows, want 2 — a truncated data row was dropped and its metrics "+
+			"would vanish into a total that still looks clean: %v", len(out), out)
+	}
+	if len(out[1]) != 1 || out[1][0] != "1234567" {
+		t.Errorf("the truncated data row must reach the column validation, got %v", out[1])
+	}
+}
+
+// TestFoldReportRows_TruncatedDataRowIsAnErrorNotASilentDrop states the consequence at the
+// level a consumer sees, which the unit assertion above cannot reach.
+//
+// This is the shape that regressed: a data row carrying ONLY CampaignId. Dropped at the
+// trailer filter, it produces no error at all — the remaining rows fold into a total that is
+// short by this row's impressions/clicks/spend and is indistinguishable from a complete
+// measurement. That is the failure class this whole file refuses, so the row must reach the
+// column read and be REPORTED.
+//
+// The assertion is deliberately on "an error occurred", not on the total: a fold that
+// silently returned the other row's numbers would be exactly the defect, so any non-error
+// outcome fails here.
+func TestFoldReportRows_TruncatedDataRowIsAnErrorNotASilentDrop(t *testing.T) {
+	records := [][]string{
+		{"Report Name:", "Campaign Performance Report"},
+		{"CampaignId", "Impressions", "Clicks", "Spend"},
+		{"1234567", "10000", "250", "125.50"},
+		{"1234567"}, // truncated: the metric columns are simply absent
+		{"©2026 Microsoft Corporation. All rights reserved."},
+	}
+	got, err := foldReportRows(records, "1234567", model.MetricsWindowLast30Days)
+	if err == nil {
+		t.Fatalf("truncated data row was accepted silently; metrics = %+v — its numbers "+
+			"vanished into a total that still looks clean", got)
+	}
+	if got != nil {
+		t.Errorf("an errored fold must not also return metrics, got %+v", got)
+	}
+}
+
+// TestDropTrailerRows_EmptyRecordDoesNotPanic pins the ONLY thing that keeps the unguarded
+// row[0] read safe: the blank check runs first.
+//
+// csv.Reader with FieldsPerRecord = -1 can yield a zero-length record, and isReportTrailerCell
+// reads row[0] with no bounds test. That is safe solely because a zero-length row has no
+// non-blank cell, so the blank check skips it before the marker check is reached. Reorder
+// those two checks and this test panics — which is the point: the safety lives in the ORDER,
+// not in a guard, so the order needs a test naming it.
+func TestDropTrailerRows_EmptyRecordDoesNotPanic(t *testing.T) {
+	in := [][]string{
+		{}, // zero-length record
+		{"1234567", "10000", "250", "125.50"},
+	}
+	var out [][]string
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("dropTrailerRows panicked on a zero-length record: %v", r)
+			}
+		}()
+		out = dropTrailerRows(in)
+	}()
 	if len(out) != 1 {
 		t.Fatalf("kept %d rows, want 1 (the data row only): %v", len(out), out)
-	}
-	if out[0][0] != "1234567" {
-		t.Errorf("wrong row survived: %v", out[0])
 	}
 }
 
