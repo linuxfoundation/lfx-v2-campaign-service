@@ -201,9 +201,12 @@ func (c *Client) createCampaignGeoTargeting(ctx context.Context, campaignResourc
 
 	ids := make([]string, 0, len(ops))
 	for i, r := range mr.Results {
-		critID := resourceID(r.ResourceName)
-		if critID == "" {
-			return nil, fmt.Errorf("google-ads geo targeting UNCONFIRMED (campaign %s; malformed criterion resource name %q at index %d — verify in Google Ads before retrying)", campaignID, r.ResourceName, i)
+		returnedCampaignID, critID := c.campaignCriterionID(r.ResourceName)
+		if critID == "" || returnedCampaignID == "" {
+			return nil, fmt.Errorf("google-ads geo targeting UNCONFIRMED (campaign %s; malformed/wrong-kind/wrong-account criterion resource name %q at index %d — verify in Google Ads before retrying)", campaignID, r.ResourceName, i)
+		}
+		if returnedCampaignID != campaignID {
+			return nil, fmt.Errorf("google-ads geo targeting UNCONFIRMED (campaign %s; campaignCriterion resource name %q reports a different campaign id %q — verify in Google Ads before retrying)", campaignID, r.ResourceName, returnedCampaignID)
 		}
 		ids = append(ids, critID)
 	}

@@ -207,20 +207,6 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		NameSuffix: brief.ID,
 	}
 
-	// An untargeted create is ACCEPTED (see googleAdsConfig.GeoTargets for why refusing
-	// would break every caller predating the field) but never SILENT. A campaign created
-	// from a brief with no geo targets spends its whole budget worldwide the moment a
-	// human enables it, which is the defect LFXV2-3283 fixes; when it happens, it should
-	// be findable in the logs rather than inferred from a Google Ads bill. Logged at WARN
-	// for that reason, and it carries no caller values — only the brief id, which the rest
-	// of this file already logs.
-	if len(cfg.GeoTargets) == 0 {
-		slog.WarnContext(ctx, "google ads campaign dispatched with NO geo targeting (it will serve wherever the ad account allows once enabled)",
-			"brief_id", brief.ID,
-			"channel", cfg.Channel,
-		)
-	}
-
 	// login_customer_id is the OPTIONAL manager (MCC) account the ad account is accessed
 	// through; it lives in the connection's ProviderConfig (not the credential blob) and
 	// has been shape-checked above.
@@ -328,6 +314,23 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		// channel's budget on another.
 		return nil, notCreated(fmt.Errorf("google ads: channel %q resolved but has no create path", channel))
 	}
+	// An untargeted create is ACCEPTED (see googleAdsConfig.GeoTargets for why refusing would
+	// break every caller predating the field) but never SILENT: a campaign with no geo targets
+	// spends its whole budget worldwide the moment a human enables it, and that should be
+	// findable in the logs rather than inferred from a Google Ads bill.
+	//
+	// Emitted HERE, after the create returns, rather than before it. Logged earlier it fired for
+	// requests that never reached Google at all — a rejected input, or an ADOPTION of an
+	// existing campaign that may already carry targeting — so it claimed a worldwide spend for
+	// campaigns that were never created. The `result != nil` condition includes the partial
+	// post-campaign failures, where a campaign does exist upstream and the warning is warranted.
+	if len(cfg.GeoTargets) == 0 && result != nil && result.CampaignID != "" {
+		slog.WarnContext(ctx, "google ads campaign created with NO geo targeting (it will serve wherever the ad account allows once enabled)",
+			"brief_id", brief.ID,
+			"channel", channel,
+		)
+	}
+
 	if cerr != nil {
 		if result == nil {
 			return nil, notCreated(fmt.Errorf("google ads campaign creation failed before any upstream create: %w", cerr))

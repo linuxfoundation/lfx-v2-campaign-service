@@ -11,6 +11,8 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -50,9 +52,16 @@ func newGeoClient(t *testing.T, campaignCriteriaH, adGroupCriteriaH http.Handler
 // capturedMutate is a criteria handler that records the request body and replies with
 // `count` results whose resource names are built by `name`.
 func capturedMutate(body *string, count int, name func(i int) string) http.HandlerFunc {
+	// The handler runs on httptest's goroutine while the test goroutine reads `body` after the
+	// request returns. `go test -race` happens not to flag it today because the read is
+	// sequenced after the response, but that is an accident of timing rather than a guarantee —
+	// and every sibling test in this package guards its captures the same way.
+	var mu sync.Mutex
 	return func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
 		*body = string(b)
+		mu.Unlock()
 		parts := make([]string, 0, count)
 		for i := 0; i < count; i++ {
 			parts = append(parts, `{"resourceName":"`+name(i)+`"}`)
@@ -203,9 +212,10 @@ func TestCreateCampaign_AttachesCampaignLevelGeoCriteria(t *testing.T) {
 
 	// Assert the VALUES, not just the count. A length check passes against ids that are
 	// wrong, duplicated, or lifted from another campaign — the stub names the criteria
-	// 222~900 and 222~901 at the campaign level. The ids stay COMPOSITE: a Google Ads criterion
-	// is identified only in combination with its parent, so the campaign half is load-bearing.
-	wantIDs := []string{"222~900", "222~901"}
+	// 222~900 and 222~901 at the campaign level, and this returns the criterion half alone —
+	// campaignCriterionID splits the composite so it can verify the returned campaign id is the
+	// one we asked for, exactly as the ad-group path does. Both paths now agree.
+	wantIDs := []string{"900", "901"}
 	if len(res.GeoCriterionIDs) != len(wantIDs) {
 		t.Fatalf("GeoCriterionIDs = %v, want %v", res.GeoCriterionIDs, wantIDs)
 	}
@@ -352,10 +362,9 @@ func TestCreateDemandGenCampaign_AttachesAdGroupLevelGeoCriteria(t *testing.T) {
 
 	// Assert the VALUES, not just the count. A length check passes against ids that are
 	// wrong, duplicated, or lifted from another campaign — the stub names the criteria
-	// 333~900 and 333~901 at the ad-group level, and this path returns the criterion half ALONE.
-	// That differs from the campaign path deliberately: adGroupCriterionID splits the composite
-	// so it can verify the returned ad-group id is the one we asked for, rejecting a
-	// wrong-parent or cross-account response. Having split it, it keeps the criterion half.
+	// 333~900 and 333~901 at the ad-group level, returning the criterion half alone.
+	// adGroupCriterionID splits the composite so it can verify the returned ad-group id is the
+	// one we asked for, rejecting a wrong-parent or cross-account response.
 	wantIDs := []string{"900", "901"}
 	if len(res.GeoCriterionIDs) != len(wantIDs) {
 		t.Fatalf("GeoCriterionIDs = %v, want %v", res.GeoCriterionIDs, wantIDs)
@@ -461,10 +470,13 @@ func TestCreateCampaign_ShortGeoMutateResponseIsUnconfirmed(t *testing.T) {
 // retry double-creates a paid resource. The location criteria calls are mutating, so a
 // 429 must be surfaced after exactly ONE attempt rather than backed off and repeated.
 func TestCreateCampaign_GeoCriteria429IsNotRetried(t *testing.T) {
-	var attempts int
+	// atomic, not a bare int: the handler increments on httptest's goroutine. An unsynchronised
+	// counter can UNDER-count, which would make this test pass against an implementation that
+	// does retry — the exact defect it exists to catch.
+	var attempts atomic.Int64
 	c := newGeoClient(t,
 		func(w http.ResponseWriter, _ *http.Request) {
-			attempts++
+			attempts.Add(1)
 			w.WriteHeader(http.StatusTooManyRequests)
 			_, _ = io.WriteString(w, `{"error":{"code":8,"status":"RESOURCE_EXHAUSTED"}}`)
 		},
@@ -476,8 +488,8 @@ func TestCreateCampaign_GeoCriteria429IsNotRetried(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for a 429 on the criteria mutate")
 	}
-	if attempts != 1 {
-		t.Errorf("campaignCriteria:mutate was attempted %d times; a mutating create must never be retried (no idempotency key — a retry double-creates a paid resource)", attempts)
+	if got := attempts.Load(); got != 1 {
+		t.Errorf("campaignCriteria:mutate was attempted %d times; a mutating create must never be retried (no idempotency key — a retry double-creates a paid resource)", got)
 	}
 	if res == nil {
 		t.Fatal("expected a non-nil partial result: the campaign exists upstream")
@@ -486,11 +498,13 @@ func TestCreateCampaign_GeoCriteria429IsNotRetried(t *testing.T) {
 
 // The same, for the Demand Gen (ad-group) level.
 func TestCreateDemandGenCampaign_GeoCriteria429IsNotRetried(t *testing.T) {
-	var attempts int
+	// atomic for the same reason as the Search sibling above: an unsynchronised counter can
+	// under-count and let this pass against an implementation that retries.
+	var attempts atomic.Int64
 	c := newGeoClient(t,
 		failHandler(t, "campaignCriteria:mutate"),
 		func(w http.ResponseWriter, _ *http.Request) {
-			attempts++
+			attempts.Add(1)
 			w.WriteHeader(http.StatusTooManyRequests)
 			_, _ = io.WriteString(w, `{"error":{"code":8,"status":"RESOURCE_EXHAUSTED"}}`)
 		})
@@ -500,7 +514,58 @@ func TestCreateDemandGenCampaign_GeoCriteria429IsNotRetried(t *testing.T) {
 	if _, err := c.CreateDemandGenCampaign(context.Background(), in); err == nil {
 		t.Fatal("expected an error for a 429 on the criteria mutate")
 	}
-	if attempts != 1 {
-		t.Errorf("adGroupCriteria:mutate was attempted %d times; a mutating create must never be retried", attempts)
+	if got := attempts.Load(); got != 1 {
+		t.Errorf("adGroupCriteria:mutate was attempted %d times; a mutating create must never be retried", got)
+	}
+}
+
+// The campaign path must validate a criterion's IDENTITY, not merely that a trailing segment
+// exists.
+//
+// It previously used bare resourceID, which returns any non-empty trailing segment. Every case
+// below was ACCEPTED and persisted as a successful geo attachment: another account's criterion,
+// a different resource kind, another campaign's criterion, and a string that is not a resource
+// name at all. A resource name is the only proof of what a record IS, so a lenient parse here is
+// an identity claim nobody checked.
+//
+// Both bots flagged this independently on #139, which is the strongest signal a finding gets.
+func TestCreateCampaign_RejectsCriterionNamesThatAreNotOurs(t *testing.T) {
+	cases := map[string]string{
+		"another account":     "customers/9999999999/campaignCriteria/222~900",
+		"wrong resource kind": "customers/1234567890/adGroupCriteria/222~900",
+		"another campaign":    "customers/1234567890/campaignCriteria/999~900",
+		"not a resource name": "garbage/4242",
+		"extra segments":      "customers/1234567890/campaignCriteria/222~900/extra",
+		"non-composite id":    "customers/1234567890/campaignCriteria/900",
+	}
+	for name, resourceName := range cases {
+		t.Run(name, func(t *testing.T) {
+			var body string
+			c := newGeoClient(t,
+				capturedMutate(&body, 1, func(int) string { return resourceName }),
+				failHandler(t, "adGroupCriteria:mutate (Search geo attaches at CAMPAIGN level)"))
+
+			in := sampleInput()
+			in.GeoTargets = []string{"US"}
+			if _, err := c.CreateCampaign(context.Background(), in); err == nil {
+				t.Fatalf("criterion resource name %q was accepted; it is not this account's campaign criterion", resourceName)
+			}
+		})
+	}
+
+	// The legitimate shape still succeeds, or the guard would be satisfied by rejecting
+	// everything.
+	var body string
+	c := newGeoClient(t,
+		capturedMutate(&body, 1, campaignCriterionName),
+		failHandler(t, "adGroupCriteria:mutate (Search geo attaches at CAMPAIGN level)"))
+	in := sampleInput()
+	in.GeoTargets = []string{"US"}
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("a legitimate criterion name was rejected: %v", err)
+	}
+	if len(res.GeoCriterionIDs) != 1 || res.GeoCriterionIDs[0] != "900" {
+		t.Errorf("GeoCriterionIDs = %v, want [900]", res.GeoCriterionIDs)
 	}
 }
