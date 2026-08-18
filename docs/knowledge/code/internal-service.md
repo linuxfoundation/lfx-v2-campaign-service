@@ -218,6 +218,17 @@ operator has anything to repair), and `failed` (the 503 default). `not_ready` an
 deliberately NOT merged — a staged email draft and an ad-platform outage produce the same
 absence of numbers and want opposite responses.
 
+Two sentinels reach this path WITHOUT `ErrConnectionNotUsable` and so need their own arms
+above the connection ones, or they fall through to the retryable default and tell an operator
+to retry something only a human edit clears: `domain.ErrNotFound` (no connection row for this
+project and provider — a 404 on the campaign-scoped endpoint) and
+`domain.ErrCredentialDecryptionFailed` (a corrupted row or a rotated
+`CREDENTIAL_ENCRYPTION_KEY` — a 500). The decrypt case logs at ERROR rather than WARN, because
+the cheap discriminator between one bad row and a key rotation breaking every project is the
+COUNT of those lines, and it logs NO error text: `domain.Encryptor` is an interface, so its
+error may quote ciphertext or key material, and `safeErrSummary` normalises rather than
+redacts.
+
 **A non-`ok` row omits `metrics` entirely rather than carrying zeroes.** A zero is a
 measurement; substituting one for a campaign that could not be read is indistinguishable from
 a campaign that genuinely served nothing, and that substitution is what turns an outage into

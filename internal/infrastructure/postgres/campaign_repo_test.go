@@ -116,6 +116,10 @@ func TestCampaignRepo_ReadsExcludeSoftDeleted(t *testing.T) {
 		// the local write, because ReplaceCampaign does filter deleted rows.
 		"ClaimCampaignVersion":                     claimCampaignVersionQuery,
 		"ClaimCampaignVersion (no-row classifier)": claimCampaignExistsQuery,
+		// The brief-wide read feeds a metrics table an operator reads to decide whether to
+		// pause a campaign. A soft-deleted row surfacing there would offer them a campaign
+		// that no longer exists to act on.
+		"ListCampaignsForBrief": listCampaignsForBriefQuery,
 	} {
 		t.Run(name, func(t *testing.T) {
 			require.Contains(t, normalizeWS(q), livePredicate,

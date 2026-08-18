@@ -235,6 +235,14 @@ func TestGetBriefMetrics_SentinelsMapToTheirRowStatus(t *testing.T) {
 			err: domain.ErrSystemConnectionNotUsable, platform: model.ProviderLinkedInAds,
 			wantStatus: "connection_problem", wantReason: "not usable",
 		},
+		"stored credentials cannot be decrypted": {
+			err: domain.ErrCredentialDecryptionFailed, platform: model.ProviderGoogleAds,
+			wantStatus: "connection_problem", wantReason: "could not be read",
+		},
+		"no connection row for this project": {
+			err: domain.ErrNotFound, platform: model.ProviderRedditAds,
+			wantStatus: "connection_problem", wantReason: "no connection",
+		},
 		"unrecognised failure defaults to retryable": {
 			err: errors.New("connection reset by peer"), platform: model.ProviderGoogleAds,
 			wantStatus: "failed", wantReason: "could not be reached",
@@ -356,6 +364,36 @@ func TestGetBriefMetrics_InvalidWindowIsRefusedUpFront(t *testing.T) {
 	}
 	if disp.callCount() != 0 {
 		t.Error("the platform was contacted despite an invalid window")
+	}
+}
+
+// A campaign belonging to another project must not appear, even when the brief id collides.
+//
+// The real query filters on BOTH brief_id and project_id; a fake that filtered on brief_id
+// alone would let the project_id predicate be deleted from the SQL with nothing failing —
+// exactly the "reverting a fix changes no test" shape. This test is what makes the fake's
+// tenant filter load-bearing rather than decorative.
+func TestGetBriefMetrics_ExcludesAnotherProjectsCampaign(t *testing.T) {
+	mine := campaignOn("c1", model.ProviderGoogleAds)
+	theirs := campaignOn("c2", model.ProviderMetaAds)
+	theirs.ProjectID = "some-other-foundation" // same brief id, different tenant
+
+	disp := newPerCampaignDispatcher()
+	disp.results["c1"] = &model.CampaignMetrics{Impressions: 10}
+	disp.results["c2"] = &model.CampaignMetrics{Impressions: 999}
+
+	s := newBriefMetricsService(t, disp, mine, theirs)
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+	for _, r := range res.Rows {
+		if r.CampaignID == "c2" {
+			t.Error("another project's campaign appeared in this project's brief metrics")
+		}
+	}
+	if len(res.Rows) != 1 {
+		t.Errorf("got %d rows, want 1 — only this project's campaign", len(res.Rows))
 	}
 }
 

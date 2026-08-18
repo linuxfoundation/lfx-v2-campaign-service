@@ -1875,6 +1875,21 @@ func classifyBriefMetricsErr(err error, platform model.Provider) (status, reason
 		return "connection_problem", "this campaign does not record which platform account it was created under, so its metrics cannot be resolved safely — it must be re-dispatched before it can be read"
 	case errors.Is(err, ErrCampaignAccountMismatch):
 		return "connection_problem", "the campaign belongs to a different account than this project's current connection — reconnect the original account to read its metrics"
+	case errors.Is(err, domain.ErrCredentialDecryptionFailed):
+		// NOT `failed`. Retrying cannot help, and the advice `failed` carries ("try again")
+		// is wrong twice over: this is either one corrupted row or a rotated
+		// CREDENTIAL_ENCRYPTION_KEY failing every project at once, and this path cannot tell
+		// them apart. GetCampaignMetrics answers 500 here for the same reason.
+		//
+		// Placed ABOVE the connection arms because creds.go wraps this WITHOUT
+		// ErrConnectionNotUsable (unlike the other credential defects), so those arms do not
+		// catch it and it would otherwise reach the retryable default.
+		return "connection_problem", "this project's stored credentials for the campaign's platform could not be read — reconnect the platform to read metrics"
+	case errors.Is(err, domain.ErrNotFound):
+		// PERMANENT: no connection row exists for this (project, provider) and the shared
+		// system row did not cover it. There is nothing to retry against — the fix is to
+		// connect the platform. GetCampaignMetrics answers 404.
+		return "connection_problem", "this project has no connection for the campaign's channel — connect it before reading metrics"
 	case errors.Is(err, domain.ErrSystemConnectionNotUsable), errors.Is(err, domain.ErrConnectionNotUsable):
 		return "connection_problem", "this project's connection for the campaign's platform is not usable — reconnect it to read metrics"
 	default:
@@ -1933,14 +1948,31 @@ func (s *BriefService) GetBriefMetrics(ctx context.Context, p *briefs.GetBriefMe
 				// Logged at INFO for not_ready — it is the expected state for a staged email
 				// draft — and WARN otherwise. safeErrSummary, not the raw error: these carry
 				// upstream text and account identifiers.
+				// A decrypt failure is ERROR, not WARN: it is either one corrupted row or a
+				// rotated CREDENTIAL_ENCRYPTION_KEY failing every project at once, and the
+				// cheap discriminator is the COUNT of these lines. Aggregated into per-row
+				// WARNs, a key rotation that breaks every campaign on every brief would page
+				// nobody. GetCampaignMetrics answers 500 here for the same reason.
+				//
+				// not_ready is INFO because it is the ordinary state of a staged email draft.
 				lvl := slog.LevelWarn
-				if status == "not_ready" {
+				switch {
+				case errors.Is(merr, domain.ErrCredentialDecryptionFailed):
+					lvl = slog.LevelError
+				case status == "not_ready":
 					lvl = slog.LevelInfo
 				}
-				slog.Log(gctx, lvl, "brief metrics row could not be read",
+				attrs := []any{
 					"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", c.ID,
 					"platform", c.Platform, "window", string(window), "row_status", status,
-					"error", safeErrSummary(merr))
+				}
+				// NO error text on the decrypt arm. domain.Encryptor is an INTERFACE, so its
+				// error is whatever an implementation returns and may quote ciphertext or key
+				// material; safeErrSummary normalises and truncates, it does not redact.
+				if !errors.Is(merr, domain.ErrCredentialDecryptionFailed) {
+					attrs = append(attrs, "error", safeErrSummary(merr))
+				}
+				slog.Log(gctx, lvl, "brief metrics row could not be read", attrs...)
 				rows[i] = briefMetricsRow{campaign: c, window: window, status: status, reason: reason}
 				// Never propagated: returning it would cancel gctx and convert one platform's
 				// failure into a partial read of every OTHER platform — the aggregate would

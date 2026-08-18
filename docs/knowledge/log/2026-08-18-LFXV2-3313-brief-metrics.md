@@ -64,3 +64,25 @@ test comment rather than claimed as coverage it does not have.
 they differ per platform today, and they belong in their own change once this shape is proven.
 Attribution model does not arise here — `CampaignMetrics` carries impressions, clicks, cost and
 CTR, with no revenue or conversions, because the ad-platform APIs do not return them.
+
+**Fix (review round 1)** — Three findings from the local reviewer trio, all real.
+
+Two sentinels fell through `classifyBriefMetricsErr` to the retryable `failed` default:
+`domain.ErrNotFound` (no connection row — a 404 on the campaign-scoped endpoint) and
+`domain.ErrCredentialDecryptionFailed` (a 500). Both reach this path WITHOUT
+`ErrConnectionNotUsable`, so the connection arms did not catch them, and `failed` told an
+operator to retry a condition only a human edit clears. Verified by compiling a probe against
+the real classifier rather than reading it. The decrypt arm now logs at ERROR — a rotated key
+breaking every project must page someone, and the discriminator is the count of those lines —
+and logs no error text, since `Encryptor` is an interface whose error may quote key material.
+
+The fake's `ListCampaignsForBrief` discarded `projectID` while the real query filters on it,
+so deleting `AND project_id=$2` from the SQL failed nothing. Fixed in the fake and pinned at
+both layers: a service test seeding another project's campaign under the same brief id, and a
+live test doing the same in Postgres. Mutation-verified — replacing the predicate with a
+tautology now fails the live test with "got 2 campaigns, want 1".
+
+`TestCampaignRepo_ReadsExcludeSoftDeleted` inspects query SOURCE to prove every campaigns read
+excludes deleted rows, and the new query was not in its map — so the guard the bundle credits
+with catching exactly this omission did not cover it. Added, and
+`internal-infrastructure-postgres.md` now names six queries rather than five.

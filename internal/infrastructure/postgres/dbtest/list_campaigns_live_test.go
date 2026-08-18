@@ -111,6 +111,54 @@ func TestLiveListCampaignsForBriefOrdersAndExcludesDeleted(t *testing.T) {
 	}
 }
 
+// The project_id predicate is load-bearing and must be revert-binding in SQL, not just in a
+// fake: campaigns carries no foreign key on project_id, so a row can name this brief under a
+// different project and only the WHERE clause keeps it out of another tenant's read.
+func TestLiveListCampaignsForBriefExcludesAnotherProject(t *testing.T) {
+	pool := dbtest.Pool(t)
+	ctx := context.Background()
+	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
+
+	var briefID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO campaign_briefs (project_id, program_type, event_slug)
+		VALUES ($1, 'events', $2) RETURNING id::text`,
+		"cncf", dbtest.UniqueID(t, "slug")).Scan(&briefID); err != nil {
+		t.Fatalf("seed brief: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM campaigns WHERE brief_id=$1`, briefID)
+		if _, err := pool.Exec(context.Background(), `DELETE FROM campaign_briefs WHERE id=$1`, briefID); err != nil {
+			t.Errorf("clean up seeded brief: %v", err)
+		}
+	})
+
+	// Two campaigns under the SAME brief id, different projects. Distinct platforms so the
+	// (brief_id, platform, variant) unique index admits both.
+	for _, row := range []struct{ project, platform string }{
+		{"cncf", string(model.ProviderGoogleAds)},
+		{"some-other-foundation", string(model.ProviderMetaAds)},
+	} {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO campaigns (project_id, brief_id, platform, variant, campaign_name, status)
+			VALUES ($1, $2, $3, $4, 'n/a', 'created')`,
+			row.project, briefID, row.platform, model.VariantDefault); err != nil {
+			t.Fatalf("seed campaign for %s: %v", row.project, err)
+		}
+	}
+
+	got, err := repo.ListCampaignsForBrief(ctx, "cncf", briefID)
+	if err != nil {
+		t.Fatalf("ListCampaignsForBrief: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d campaigns, want 1 — the other project's row must be excluded", len(got))
+	}
+	if got[0].Platform != model.ProviderGoogleAds {
+		t.Errorf("returned %s; the meta row belongs to another project", got[0].Platform)
+	}
+}
+
 // A brief with no campaigns reads as an EMPTY slice rather than an error: that is what every
 // brief looks like before it is dispatched, and the brief-wide metrics read must be able to
 // answer "nothing to measure yet" without failing.

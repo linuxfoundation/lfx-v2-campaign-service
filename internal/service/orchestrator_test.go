@@ -144,20 +144,20 @@ func (r *fakeCampaignRepo) GetCampaign(_ context.Context, _, _, campaignID strin
 // the SQL guarantees. A fake that returned insertion order would let a brief-metrics test
 // pass against a handler that had stopped depending on a stable order — which is the whole
 // contract the ORDER BY exists to provide.
-func (r *fakeCampaignRepo) ListCampaignsForBrief(_ context.Context, _, briefID string) ([]*model.Campaign, error) {
+func (r *fakeCampaignRepo) ListCampaignsForBrief(_ context.Context, projectID, briefID string) ([]*model.Campaign, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]*model.Campaign, 0)
 	seen := make(map[string]bool)
 	for _, c := range append(append([]*model.Campaign{}, r.upserted...), r.adopted...) {
-		if c == nil || c.BriefID != briefID || c.Status == "deleted" || seen[c.ID] {
+		if c == nil || c.BriefID != briefID || c.ProjectID != projectID || c.Status == "deleted" || seen[c.ID] {
 			continue
 		}
 		seen[c.ID] = true
 		out = append(out, c)
 	}
 	for _, c := range r.existing {
-		if c == nil || c.BriefID != briefID || c.Status == "deleted" || seen[c.ID] {
+		if c == nil || c.BriefID != briefID || c.ProjectID != projectID || c.Status == "deleted" || seen[c.ID] {
 			continue
 		}
 		seen[c.ID] = true
@@ -167,7 +167,7 @@ func (r *fakeCampaignRepo) ListCampaignsForBrief(_ context.Context, _, briefID s
 	// that could not see those rows would report every such brief as empty — the fake would
 	// then be answering a different question than the repository it stands in for.
 	for _, c := range r.byID {
-		if c == nil || c.BriefID != briefID || c.Status == "deleted" || seen[c.ID] {
+		if c == nil || c.BriefID != briefID || c.ProjectID != projectID || c.Status == "deleted" || seen[c.ID] {
 			continue
 		}
 		seen[c.ID] = true
