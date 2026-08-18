@@ -270,35 +270,81 @@ func TestLiveRetentionIndexServesThePrune(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.Pool(t)
 
-	var present bool
-	err := pool.QueryRow(ctx, `
-		SELECT EXISTS (SELECT 1 FROM pg_indexes
-		               WHERE tablename='campaign_jobs' AND indexname='idx_campaign_jobs_retention')`).Scan(&present)
+	// EXPLAIN the prune's INNER SELECT — the statement the index exists for — rather than
+	// asking pg_indexes whether an index by that name is present. An index can exist and
+	// still not be usable for this predicate (wrong key column, a partial WHERE that does
+	// not imply the query's status clause), and only the planner can say which.
+	//
+	// enable_seqscan=off is essential and is NOT a way of forcing a pass. On a test-sized
+	// campaign_jobs a sequential scan is genuinely the cheapest plan, so an EXPLAIN of the
+	// default plan would report Seq Scan with the index perfectly correct — the assertion
+	// would fail on row count rather than on indexing. Disabling seqscan asks the question
+	// that actually matters and holds at any table size: CAN the planner use this index for
+	// this predicate? The negative control is real — with idx_campaign_jobs_retention
+	// dropped, this same EXPLAIN still reports Seq Scan, because the only other candidate
+	// (idx_campaign_jobs_recovery) is partial over the complementary statuses.
+	//
+	// A transaction so SET LOCAL is scoped to it and reverts on rollback, and so the SET and
+	// the EXPLAIN are guaranteed to run on the SAME pooled connection.
+	tx, err := pool.Begin(ctx)
 	if err != nil {
-		t.Fatalf("look up the retention index: %v", err)
+		t.Fatalf("begin: %v", err)
 	}
-	if !present {
-		t.Fatal("idx_campaign_jobs_retention is missing: migration 000026 did not apply, and the " +
-			"prune's predicate has no index (idx_campaign_jobs_recovery covers only queued/running)")
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `SET LOCAL enable_seqscan = off`); err != nil {
+		t.Fatalf("disable seqscan: %v", err)
 	}
 
-	// The partial index must cover exactly the terminal vocabulary. A predicate that drifted
-	// from model.JobStatus.Terminal() would leave part of the prune's row set unindexed.
-	var pred string
-	err = pool.QueryRow(ctx, `
-		SELECT indexdef FROM pg_indexes
-		WHERE tablename='campaign_jobs' AND indexname='idx_campaign_jobs_retention'`).Scan(&pred)
+	rows, err := tx.Query(ctx, `
+		EXPLAIN (COSTS OFF, FORMAT TEXT)
+		SELECT id FROM campaign_jobs
+		WHERE status = ANY($1::text[]) AND updated_at < now() - $2::interval
+		ORDER BY updated_at
+		LIMIT 1000`,
+		terminalStatusStrings(), postgres.DefaultJobRetention.String())
 	if err != nil {
-		t.Fatalf("read the retention index definition: %v", err)
+		t.Fatalf("EXPLAIN the prune's inner select: %v", err)
 	}
-	for _, s := range []model.JobStatus{model.JobSucceeded, model.JobPartial, model.JobFailed} {
-		if !strings.Contains(pred, string(s)) {
-			t.Errorf("the retention index predicate does not cover terminal status %q: %s", s, pred)
+	var b strings.Builder
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			rows.Close()
+			t.Fatalf("scan EXPLAIN output: %v", err)
+		}
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read EXPLAIN output: %v", err)
+	}
+	plan := b.String()
+
+	if !strings.Contains(plan, "idx_campaign_jobs_retention") {
+		t.Fatalf("the planner will not use idx_campaign_jobs_retention for the prune's "+
+			"predicate — the prune full-scans the very history it exists to bound, on every "+
+			"replica, forever:\n%s", plan)
+	}
+
+	// The status clause must be absorbed by the index's own partial predicate, leaving no
+	// residual Filter. A recheck here would mean the index covers more rows than the prune
+	// deletes — it would still "be used", while scanning rows it cannot possibly return.
+	if strings.Contains(plan, "Filter:") {
+		t.Errorf("the index scan carries a residual Filter, so the partial predicate does not "+
+			"imply the prune's status clause:\n%s", plan)
+	}
+}
+
+// terminalStatusStrings is the prune's allow-list as the driver sends it, derived from the
+// domain rather than restated — the same source TestTerminalJobStatusesMatchTheDomainVocabulary
+// pins the repository's copy against.
+func terminalStatusStrings() []string {
+	var out []string
+	for _, s := range model.AllJobStatuses {
+		if s.Terminal() {
+			out = append(out, string(s))
 		}
 	}
-	for _, s := range []model.JobStatus{model.JobQueued, model.JobRunning} {
-		if strings.Contains(pred, string(s)) {
-			t.Errorf("the retention index predicate covers NON-terminal status %q: %s", s, pred)
-		}
-	}
+	return out
 }

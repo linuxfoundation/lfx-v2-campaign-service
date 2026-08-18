@@ -25,10 +25,11 @@ import (
 // catch a status ADDED later: a new 'cancelled' that the model calls terminal and the prune
 // does not, or vice versa, fails here instead of being discovered in production.
 func TestTerminalJobStatusesMatchTheDomainVocabulary(t *testing.T) {
-	all := []model.JobStatus{
-		model.JobQueued, model.JobRunning,
-		model.JobSucceeded, model.JobPartial, model.JobFailed,
-	}
+	// Derived from the domain, never restated here. A hand-written copy of the vocabulary
+	// would make this test agree with itself: a status added to the model but forgotten in
+	// the local list would go unclassified, and the "in both directions" guarantee in the
+	// comment above would quietly cover four statuses out of five.
+	all := model.AllJobStatuses
 
 	listed := make(map[string]bool, len(terminalJobStatuses))
 	for _, s := range terminalJobStatuses {

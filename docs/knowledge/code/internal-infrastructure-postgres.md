@@ -277,7 +277,11 @@ These rows are the audit trail of real ad spend, which sets every design choice:
   and no review. `TestTerminalJobStatusesMatchTheDomainVocabulary` pins the list
   against `model.JobStatus.Terminal()` over the WHOLE vocabulary, in both directions,
   and `TestPruneTerminalJobsQueryUsesAnAllowList` rejects a negative predicate in the
-  SQL text (the distinction exists only there).
+  SQL text (the distinction exists only there). That test iterates
+  `model.AllJobStatuses` rather than a local copy of the five statuses: a hand-written
+  list would make it agree with itself, leaving a status added later unclassified while
+  still reporting that it checked "both directions". `TestJobStatus_Terminal` pins
+  `AllJobStatuses` in turn, so adding a status forces it to be deliberately classified.
 - **A queued/running row is never eligible, at any age.** An old non-terminal row is
   not stale history, it is a STUCK JOB — the record someone needs to investigate a
   dispatch that never finished. The recovery sweep (`FailStuckJobs`) transitions those

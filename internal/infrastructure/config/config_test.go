@@ -4,6 +4,7 @@
 package config
 
 import (
+	"flag"
 	"fmt"
 	"net/url"
 	"os"
@@ -641,8 +642,38 @@ func TestParseRetention(t *testing.T) {
 
 // TestLoadCampaignJobRetentionFromEnv pins the wiring from the environment variable to the
 // Config field, so a rename or a dropped assignment cannot leave the setting silently inert.
+//
+// It calls LoadConfig, which is the whole point: an earlier version of this test asserted
+// parseRetention(os.Getenv(...)) directly, which re-implements the line under test instead of
+// running it. Deleting the CampaignJobRetention assignment from LoadConfig left that version
+// green — the operator's window would reach nothing, and the feature would be inert with a
+// passing wiring test. Only reading the field off the value LoadConfig returns can catch that.
 func TestLoadCampaignJobRetentionFromEnv(t *testing.T) {
+	// LoadConfig registers its flags on the global flag.CommandLine and calls flag.Parse, so a
+	// second call would panic with "flag redefined" and the first would try to parse the test
+	// binary's own arguments. Both are replaced for the duration of this test and restored
+	// after, which is what makes calling the real function from a test viable at all.
+	loadConfig := func() *Config {
+		t.Helper()
+		orig := flag.CommandLine
+		origArgs := os.Args
+		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+		os.Args = []string{origArgs[0]}
+		defer func() { flag.CommandLine, os.Args = orig, origArgs }()
+		return LoadConfig()
+	}
+
 	t.Setenv(constants.EnvCampaignJobRetention, "720h")
-	assert.Equal(t, 720*time.Hour, parseRetention(os.Getenv(constants.EnvCampaignJobRetention)))
+	assert.Equal(t, 720*time.Hour, loadConfig().CampaignJobRetention,
+		"CAMPAIGN_JOB_RETENTION must reach Config.CampaignJobRetention through LoadConfig itself")
+
+	// The name is part of the contract: the chart and the docs both spell it out, so a rename
+	// here is a silent break for every deployment that sets it.
 	assert.Equal(t, "CAMPAIGN_JOB_RETENTION", constants.EnvCampaignJobRetention)
+
+	// The fallback arm, also through LoadConfig: an unusable value must leave the field at 0
+	// ("use the long repository default"), never at a short window.
+	t.Setenv(constants.EnvCampaignJobRetention, "30 days")
+	assert.Equal(t, time.Duration(0), loadConfig().CampaignJobRetention,
+		"an unparseable window must fall back to the repository default, never to a short window")
 }

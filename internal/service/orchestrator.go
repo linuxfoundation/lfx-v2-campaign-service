@@ -372,8 +372,10 @@ type Orchestrator struct {
 	sweeperOnce   sync.Once
 	// jobRetention is how long a TERMINAL job is kept before the retention sweeper
 	// prunes it. Zero means "use the repository default" (see
-	// postgres.DefaultJobRetention) — SetJobRetention refuses to install a value
-	// that would delete more than the default does.
+	// postgres.DefaultJobRetention) — SetJobRetention installs any POSITIVE window,
+	// including one shorter (so more deleting) than the default, and refuses only
+	// non-positive values, which are what an unset or unparseable
+	// CAMPAIGN_JOB_RETENTION produces.
 	jobRetention time.Duration
 	// sem is a process-wide semaphore bounding concurrent provider dispatches
 	// across ALL jobs (a per-job errgroup limit would let N concurrent jobs each
