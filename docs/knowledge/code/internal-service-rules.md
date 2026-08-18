@@ -95,7 +95,15 @@ across platforms — the same reason the brief-metrics response refuses a cross-
 
 Two guards carry most of the weight. **Zero delivery requires both signals** — impressions alone
 is an unbilled serve, spend alone is a billing entry with no serve, and flagging either trains
-operators to ignore the rule. **Low CTR needs a delivery floor**, because three impressions and
+operators to ignore the rule.
+
+It is also **paid-ads only**, and it **suppresses the pacing item**. The email channel bills
+nothing per send and its adapter always reports zero cost, while mapping opens onto impressions —
+so a delivered email nobody opened is numerically identical to a campaign that never served, and
+the rule would tell an operator to check targeting and approval for an email delivered exactly as
+intended. And a campaign that never started is trivially at 0% of plan, so emitting both items
+gives the operator two HIGH findings with opposite remedies: one says no budget change will fix
+this, the other says to adjust the budget. **Low CTR needs a delivery floor**, because three impressions and
 no clicks is a 0% CTR that says nothing about the creative.
 
 `isActive` is an allow-list of the statuses where the service believes the campaign reached the

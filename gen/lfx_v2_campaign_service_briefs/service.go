@@ -241,8 +241,10 @@ type BriefMetricsRow struct {
 	// Why this row carries no measurement, in consumer-safe wording. Absent when
 	// status is `ok`.
 	Reason *string
-	// Spend against the flight-prorated plan. Absent when status is not `ok`, or
-	// when this campaign has no budget or usable flight to pace against.
+	// Spend against the flight-prorated plan. Absent when status is not `ok`. On
+	// an `ok` row it is always present: `pct` is absent and `label` is `unknown`
+	// when this campaign has no budget or usable flight to pace against, or when
+	// the window does not overlap the flight.
 	Pacing *CampaignPacing
 }
 

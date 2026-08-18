@@ -792,3 +792,53 @@ func TestGetBriefMetrics_WindowPrecedingTheFlightIsNotPaced(t *testing.T) {
 		}
 	}
 }
+
+// An email send with no opens must not be reported as a campaign that never ran.
+//
+// HubSpot maps opens onto Impressions and always reports CostMicros=0, so a delivered email
+// nobody opened is numerically identical to a paid campaign that never served. This pins the
+// WIRING: hardcoding BillsPerDelivery at the caller makes this test fail, which is what stops the
+// channel distinction regressing while the rules-package tests stay green.
+func TestGetBriefMetrics_EmailWithNoOpensIsNotZeroDelivery(t *testing.T) {
+	email := campaignOn("c1", model.ProviderHubSpot)
+	disp := newPerCampaignDispatcher()
+	// Delivered, but nobody opened: zero "impressions", zero cost — and correct.
+	disp.results["c1"] = &model.CampaignMetrics{
+		Impressions: 0, Clicks: 0, CostMicros: 0, Ctr: 0,
+		Email: &model.EmailMetrics{Sent: 500, Delivered: 495},
+	}
+
+	s := newBriefMetricsService(t, disp, email)
+	s.SetClock(func() time.Time { return metricsNow })
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+
+	for _, item := range res.ActionItems {
+		if item.Rule == "zero_delivery" {
+			t.Errorf("zero_delivery raised for an email delivered to 495 recipients: %q", item.Issue)
+		}
+	}
+
+	// A PAID campaign with the identical numbers still fires, or the assertion above would pass
+	// for any reason at all.
+	paid := campaignOn("c2", model.ProviderGoogleAds)
+	disp2 := newPerCampaignDispatcher()
+	disp2.results["c2"] = &model.CampaignMetrics{Impressions: 0, Clicks: 0, CostMicros: 0, Ctr: 0}
+	s2 := newBriefMetricsService(t, disp2, paid)
+	s2.SetClock(func() time.Time { return metricsNow })
+	res2, err := s2.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics (paid): %v", err)
+	}
+	var found bool
+	for _, item := range res2.ActionItems {
+		if item.Rule == "zero_delivery" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("zero_delivery did not fire for a paid campaign with no delivery")
+	}
+}

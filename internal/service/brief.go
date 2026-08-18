@@ -2185,6 +2185,12 @@ func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []b
 			// ratio would make the low-CTR threshold a hundred times too strict.
 			CTRPct: r.metrics.Ctr * 100,
 			Pacing: r.pacing,
+			// Only a paid-ads channel bills per delivery. HubSpot charges nothing per send and
+			// its adapter always reports CostMicros=0, so "no spend" there is the normal state
+			// rather than a signal. Keyed on Kind() rather than on the provider so a second
+			// email provider inherits it, and because an unrecognised provider returns "" and
+			// therefore fails closed.
+			BillsPerDelivery: r.campaign.Platform.Kind() == model.ChannelPaidAds,
 		}) {
 			out.ActionItems = append(out.ActionItems, &briefs.CampaignActionItem{
 				Rule:       item.Rule,

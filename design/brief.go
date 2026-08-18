@@ -290,11 +290,13 @@ var BriefMetricsRow = Type("brief-metrics-row", func() {
 	Attribute("reason", String, "Why this row carries no measurement, in consumer-safe wording. Absent when status is `ok`.", func() {
 		Example("this window is not supported for the campaign's platform")
 	})
-	// Absent on any row that carries no measurement, and absent on a measured row whose
-	// budget or flight cannot support the arithmetic. Pacing is per-campaign only: cost is
-	// reported in each platform's native currency and this service performs no FX, so pacing
-	// figures must never be totalled or averaged across rows.
-	Attribute("pacing", CampaignPacing, "Spend against the flight-prorated plan. Absent when status is not `ok`, or when this campaign has no budget or usable flight to pace against.")
+	// Absent on any row that carries no measurement. On an `ok` row it is always PRESENT, and
+	// states `unknown` when the arithmetic could not be performed — the absence of a budget is
+	// itself worth reporting, and omitting the object would make "no pacing" indistinguishable
+	// from an older server that did not send one. Pacing is per-campaign only: cost is reported
+	// in each platform's native currency and this service performs no FX, so pacing figures
+	// must never be totalled or averaged across rows.
+	Attribute("pacing", CampaignPacing, "Spend against the flight-prorated plan. Absent when status is not `ok`. On an `ok` row it is always present: `pct` is absent and `label` is `unknown` when this campaign has no budget or usable flight to pace against, or when the window does not overlap the flight.")
 	Required("campaign_id", "platform", "status")
 })
 

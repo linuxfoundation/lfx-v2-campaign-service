@@ -29,7 +29,7 @@ func contains(haystack []string, needle string) bool {
 // unbilled serve, or a billing entry with no serve — and flagging those trains operators to
 // ignore the rule.
 func TestEvaluate_ZeroDeliveryNeedsBothSignals(t *testing.T) {
-	base := Input{CampaignID: "c1", Platform: "reddit-ads", Status: "created"}
+	base := Input{CampaignID: "c1", Platform: "reddit-ads", Status: "created", BillsPerDelivery: true}
 
 	if got := rulesFired(Evaluate(base)); !contains(got, "zero_delivery") {
 		t.Errorf("no impressions and no spend did not fire zero_delivery; fired %v", got)
@@ -62,7 +62,7 @@ func TestEvaluate_ZeroDeliveryOnlyForLiveStatuses(t *testing.T) {
 	}
 	for status, want := range fires {
 		t.Run(status, func(t *testing.T) {
-			got := contains(rulesFired(Evaluate(Input{CampaignID: "c1", Status: status})), "zero_delivery")
+			got := contains(rulesFired(Evaluate(Input{CampaignID: "c1", Status: status, BillsPerDelivery: true})), "zero_delivery")
 			if got != want {
 				t.Errorf("status %q fired=%v, want %v", status, got, want)
 			}
@@ -78,7 +78,7 @@ func TestEvaluate_NoPacingItemWhenPacingIsIncomputable(t *testing.T) {
 	// copying a label across without the flag. Using PacingUnknown here would prove nothing:
 	// it matches no switch arm, so the guard could be deleted and the test would still pass.
 	in := Input{
-		CampaignID: "c1", Status: "created", Impressions: 5000, Spend: 100,
+		CampaignID: "c1", Status: "created", BillsPerDelivery: true, Impressions: 5000, Spend: 100,
 		Pacing: Pacing{Pct: 0, Label: PacingUnderspending, Computable: false},
 	}
 	for _, r := range rulesFired(Evaluate(in)) {
@@ -100,7 +100,7 @@ func TestEvaluate_PacingItems(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			in := Input{
-				CampaignID: "c1", Status: "created", Impressions: 5000, Spend: 100,
+				CampaignID: "c1", Status: "created", BillsPerDelivery: true, Impressions: 5000, Spend: 100,
 				Pacing: Pacing{Pct: 42, Label: tc.label, Computable: true},
 			}
 			if got := rulesFired(Evaluate(in)); !contains(got, tc.want) {
@@ -110,7 +110,7 @@ func TestEvaluate_PacingItems(t *testing.T) {
 	}
 	// A healthy campaign raises nothing.
 	healthy := Input{
-		CampaignID: "c1", Status: "created", Impressions: 5000, Clicks: 100, CTRPct: 2,
+		CampaignID: "c1", Status: "created", BillsPerDelivery: true, Impressions: 5000, Clicks: 100, CTRPct: 2,
 		Spend: 100, Pacing: Pacing{Pct: 95, Label: PacingNormal, Computable: true},
 	}
 	if got := Evaluate(healthy); len(got) != 0 {
@@ -121,12 +121,14 @@ func TestEvaluate_PacingItems(t *testing.T) {
 // Low CTR needs enough impressions to mean anything. Three impressions and no clicks is a 0%
 // CTR that says nothing about the creative.
 func TestEvaluate_LowCTRNeedsDelivery(t *testing.T) {
-	thin := Input{CampaignID: "c1", Status: "created", Impressions: 50, Clicks: 0, CTRPct: 0, Spend: 1}
+	thin := Input{
+		CampaignID: "c1", Status: "created", BillsPerDelivery: true, Impressions: 50, Clicks: 0, CTRPct: 0, Spend: 1}
 	if got := rulesFired(Evaluate(thin)); contains(got, "low_ctr") {
 		t.Error("low_ctr fired on 50 impressions; the figure is not yet meaningful")
 	}
 
-	delivered := Input{CampaignID: "c1", Status: "created", Impressions: 20000, Clicks: 20, CTRPct: 0.1, Spend: 100}
+	delivered := Input{
+		CampaignID: "c1", Status: "created", BillsPerDelivery: true, Impressions: 20000, Clicks: 20, CTRPct: 0.1, Spend: 100}
 	if got := rulesFired(Evaluate(delivered)); !contains(got, "low_ctr") {
 		t.Errorf("low_ctr did not fire on 0.1%% across 20k impressions; fired %v", got)
 	}
@@ -144,7 +146,7 @@ func TestEvaluate_LowCTRNeedsDelivery(t *testing.T) {
 // link without parsing prose that is free to be reworded.
 func TestEvaluate_ItemsCarryIdentityAndAStableToken(t *testing.T) {
 	in := Input{
-		CampaignID: "c-42", Platform: "meta-ads", Status: "created",
+		CampaignID: "c-42", Platform: "meta-ads", Status: "created", BillsPerDelivery: true,
 		Impressions: 20000, CTRPct: 0.05, Spend: 10,
 		Pacing: Pacing{Pct: 10, Label: PacingUnderspending, Computable: true},
 	}
@@ -168,7 +170,7 @@ func TestEvaluate_ItemsCarryIdentityAndAStableToken(t *testing.T) {
 // Both low_ctr boundaries. Neither constant had a test at its edge, so either could move by one
 // without failing anything — and both are deliberate judgements the comments describe at length.
 func TestEvaluate_LowCTRBoundaries(t *testing.T) {
-	base := Input{CampaignID: "c1", Platform: "google-ads", Status: "created", Spend: 100}
+	base := Input{CampaignID: "c1", Platform: "google-ads", Status: "created", Spend: 100, BillsPerDelivery: true}
 
 	t.Run("impressions floor", func(t *testing.T) {
 		// One impression below the floor the figure means nothing; at the floor it does.
@@ -197,4 +199,52 @@ func TestEvaluate_LowCTRBoundaries(t *testing.T) {
 			t.Errorf("low_ctr did not fire at %.2f%%, below the %.2f%% threshold", below.CTRPct, LowCTRThresholdPct)
 		}
 	})
+}
+
+// A campaign that never started is trivially at 0% of plan, so the pacing item is
+// arithmetically true and actively misleading: the two items carry OPPOSITE remedies —
+// zero_delivery says no budget change will fix this, underspending says to adjust the budget.
+func TestEvaluate_ZeroDeliverySuppressesThePacingItem(t *testing.T) {
+	in := Input{
+		CampaignID: "c1", Platform: "google-ads", Status: "created", BillsPerDelivery: true,
+		Impressions: 0, Clicks: 0, Spend: 0,
+		Pacing: Pacing{Pct: 0, Label: PacingUnderspending, Computable: true},
+	}
+	fired := rulesFired(Evaluate(in))
+	if !contains(fired, "zero_delivery") {
+		t.Fatalf("zero_delivery did not fire; got %v", fired)
+	}
+	if contains(fired, "underspending") {
+		t.Errorf("both zero_delivery and underspending fired (%v) — their remedies contradict each other", fired)
+	}
+
+	// But a DELIVERING campaign that is genuinely behind still raises the pacing item, or the
+	// suppression would have disabled the rule wholesale.
+	delivering := in
+	delivering.Impressions, delivering.Spend = 5000, 20
+	if got := rulesFired(Evaluate(delivering)); !contains(got, "underspending") {
+		t.Errorf("underspending did not fire for a delivering campaign behind plan; got %v", got)
+	}
+}
+
+// The email channel bills nothing per send, so "no spend" is its normal state. HubSpot also maps
+// opens onto Impressions, so a delivered email nobody opened is indistinguishable from a campaign
+// that never ran — and zero_delivery would tell an operator to check targeting and approval for
+// an email that was delivered exactly as intended.
+func TestEvaluate_ZeroDeliveryIsPaidAdsOnly(t *testing.T) {
+	email := Input{
+		CampaignID: "c1", Platform: "hubspot", Status: "created", BillsPerDelivery: false,
+		Impressions: 0, Clicks: 0, Spend: 0,
+	}
+	if got := rulesFired(Evaluate(email)); contains(got, "zero_delivery") {
+		t.Errorf("zero_delivery fired on an email send with no opens; got %v", got)
+	}
+
+	// The identical numbers on a paid channel DO fire, or the test above would pass for any
+	// reason at all.
+	paid := email
+	paid.Platform, paid.BillsPerDelivery = "google-ads", true
+	if got := rulesFired(Evaluate(paid)); !contains(got, "zero_delivery") {
+		t.Errorf("zero_delivery did not fire on a paid campaign with no delivery; got %v", got)
+	}
 }

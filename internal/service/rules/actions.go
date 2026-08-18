@@ -53,6 +53,14 @@ type Input struct {
 	// would silently make every low-CTR threshold a hundred times too strict.
 	CTRPct float64
 	Pacing Pacing
+	// BillsPerDelivery records whether this channel charges for delivery at all.
+	//
+	// False for the email channel: HubSpot charges nothing per send and its adapter always
+	// reports CostMicros=0, so "no spend" carries no information there. It also maps opens onto
+	// Impressions, so a delivered email nobody opened looks identical to a campaign that never
+	// ran — and zero_delivery would tell an operator to check targeting and approval for an
+	// email that was delivered exactly as intended.
+	BillsPerDelivery bool
 }
 
 // LowCTRThresholdPct is the floor below which click-through is worth flagging.
@@ -76,7 +84,10 @@ func Evaluate(in Input) []ActionItem {
 	// Both conditions are required: impressions without spend is an unbilled serve, and spend
 	// without impressions is a billing artefact. Either alone is noise; together they mean the
 	// campaign never started.
-	if isActive(in.Status) && in.Impressions == 0 && in.Spend == 0 {
+	// BillsPerDelivery gates the whole rule: on a channel that charges nothing per delivery,
+	// "no spend" is the normal state and says nothing about whether the campaign ran.
+	zeroDelivery := in.BillsPerDelivery && isActive(in.Status) && in.Impressions == 0 && in.Spend == 0
+	if zeroDelivery {
 		items = append(items, ActionItem{
 			Rule: "zero_delivery", Priority: PriorityHigh,
 			CampaignID: in.CampaignID, Platform: in.Platform,
@@ -88,7 +99,12 @@ func Evaluate(in Input) []ActionItem {
 	// Pacing. Only when a figure could actually be derived: an incomputable pacing carries
 	// Pct=0, and firing "underspending at 0%" on a campaign with no recorded budget would be
 	// reporting the absence of data as a finding about spend.
-	if in.Pacing.Computable {
+	//
+	// Suppressed entirely when zero_delivery fired. A campaign that never started is trivially
+	// at 0% of plan, so the pacing item is arithmetically true and actively misleading: the two
+	// items carry OPPOSITE remedies — zero_delivery says no budget change will fix this, while
+	// underspending says to adjust the budget. Emitting both makes the operator pick.
+	if in.Pacing.Computable && !zeroDelivery {
 		switch in.Pacing.Label {
 		case PacingUnderspending:
 			items = append(items, ActionItem{
