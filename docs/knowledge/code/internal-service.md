@@ -213,8 +213,9 @@ create waiting for a slot.
 each read can fail independently, so the states the campaign-scoped handler expresses as
 distinct HTTP responses cannot be HTTP responses here — one campaign's 409 must not fail the
 other five. `classifyBriefMetricsErr` maps each sentinel onto a per-row status instead:
-`unsupported` (the 400s), `not_ready` and `connection_problem` (the 409s, split by whether an
-operator has anything to repair), and `failed` (the 503 default). `not_ready` and `failed` are
+`unsupported` (the 400s), `not_ready` (a 409 — the campaign has nothing to report yet),
+`connection_problem` (a 404, three 409s or a 500 depending on the defect; they collapse because
+the remedy is identical, an operator repairs the connection) and `failed` (the 503 default). `not_ready` and `failed` are
 deliberately NOT merged — a staged email draft and an ad-platform outage produce the same
 absence of numbers and want opposite responses.
 

@@ -1884,7 +1884,13 @@ func classifyBriefMetricsErr(err error, platform model.Provider) (status, reason
 		// Placed ABOVE the connection arms because creds.go wraps this WITHOUT
 		// ErrConnectionNotUsable (unlike the other credential defects), so those arms do not
 		// catch it and it would otherwise reach the retryable default.
-		return "connection_problem", "this project's stored credentials for the campaign's platform could not be read — reconnect the platform to read metrics"
+		// Operator-scoped wording deliberately: "reconnect the platform" is WRONG for the two
+		// causes this sentinel actually covers. A rotated CREDENTIAL_ENCRYPTION_KEY is repaired
+		// by fixing the deployment, not by any reconnect, and when the credentials came from
+		// the shared LF fallback the project has no connection of its own to reconnect. This
+		// path cannot tell the two apart, so the message names neither and points at the one
+		// actor who can act on either.
+		return "connection_problem", "this campaign's stored credentials could not be decrypted — an operator must investigate before metrics can be read"
 	case errors.Is(err, domain.ErrNotFound):
 		// PERMANENT: no connection row exists for this (project, provider) and the shared
 		// system row did not cover it. There is nothing to retry against — the fix is to

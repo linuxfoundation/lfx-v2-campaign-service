@@ -249,7 +249,7 @@ func TestGetBriefMetrics_SentinelsMapToTheirRowStatus(t *testing.T) {
 		},
 		"stored credentials cannot be decrypted": {
 			err: domain.ErrCredentialDecryptionFailed, platform: model.ProviderGoogleAds,
-			wantStatus: "connection_problem", wantReason: "could not be read",
+			wantStatus: "connection_problem", wantReason: "could not be decrypted",
 		},
 		"no connection row for this project": {
 			err: domain.ErrNotFound, platform: model.ProviderRedditAds,

@@ -132,3 +132,16 @@ The shared window semantics — the HubSpot caveat and `defaultMetricsWindowFor`
 sitting under the brief-wide heading after the insertion, where a reader tracing the
 campaign-scoped read would stop before reaching them. They now have their own section stating
 that they apply to both handlers.
+
+**Fix (bot review)** — Two more, both the same shape as findings already fixed on this branch.
+
+The decrypt arm's reason said "reconnect the platform to read metrics". That remedy is wrong for
+both causes the sentinel covers: a rotated `CREDENTIAL_ENCRYPTION_KEY` is repaired by fixing the
+deployment, and when the credentials came from the shared LF fallback the project has no
+connection of its own to reconnect. This path cannot tell the two apart, so the message now names
+neither and points at the operator, who can act on either.
+
+`internal-service.md` still described `connection_problem` as one of "the 409s" after the bucket
+grew to absorb a 404 and a 500 — the same claim the full-branch sweep caught in the Goa design
+comment, in a second place. Both now describe the collapse by its RULE (identical remedy) rather
+than by a status code.
