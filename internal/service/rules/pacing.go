@@ -159,9 +159,13 @@ func ComputePacing(spend float64, spendDays float64, budget float64, kind Budget
 	if flight.Start != nil {
 		start = *flight.Start
 	}
+	// The flight's end DATE means "through the end of that day", so it is normalised to the
+	// FOLLOWING midnight before being used as an exclusive bound — see flightEndInstant. Using
+	// the raw midnight cut the final day off every flight: `total` lost a day, and `elapsed` was
+	// clamped to a moment already past.
 	end := now
-	if flight.End != nil {
-		end = *flight.End
+	if e := flightEndInstant(flight.End); e != nil {
+		end = *e
 	}
 	// A flight that has not begun has no plan-to-date to compare against. Without this the
 	// elapsed floor of one day invents a day of expected spend, and a campaign scheduled to
@@ -288,4 +292,37 @@ func minTime(a, b time.Time) time.Time {
 		return a
 	}
 	return b
+}
+
+// flightEndInstant converts a flight's end DATE into the instant the flight actually stops.
+//
+// `end_date` is a DATE column (migration 000002) and means "through the END of that day", so the
+// midnight time.Time it decodes to is the START of the final day, not the finish of the flight.
+// Every platform adapter already reads it that way — Meta sends `EndDate + "T23:59:59+0000"`
+// (internal/platform/meta/client.go), X adds a day and asks for the following midnight
+// (internal/platform/twitter/metrics.go), LinkedIn uses end-of-day. This package was the outlier:
+// it used the raw midnight as an EXCLUSIVE bound, so the final day of every flight was treated as
+// having already finished.
+//
+// The damage was not a rounding error. A two-day flight (Aug 17 -> Aug 18) measured one day, so a
+// $100/day campaign that had correctly spent $200 read as 200% and labelled `overspending`; and
+// WindowDaysWithinFlight clamped `today` to a midnight already past, returning 0 overlap and
+// making pacing `unknown` for the whole of every flight's last day — the day an operator is most
+// likely to be looking.
+//
+// The following midnight, matching X's AddDate(0, 0, 1): an exclusive bound at the next midnight
+// covers the final day exactly, and unlike 23:59:59 it loses no part of the last second.
+//
+// nil in, nil out. An absent end is open-ended, not a flight ending at the epoch, and both
+// callers must keep treating it as "still running".
+//
+// One function for both call sites deliberately. ComputePacing and WindowDaysWithinFlight
+// consume the same column for the same purpose, and this defect existed because they each
+// reasoned about it separately; two copies could drift apart again the same way.
+func flightEndInstant(end *time.Time) *time.Time {
+	if end == nil {
+		return nil
+	}
+	e := end.AddDate(0, 0, 1)
+	return &e
 }

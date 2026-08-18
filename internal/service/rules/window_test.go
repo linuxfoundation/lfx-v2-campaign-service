@@ -140,11 +140,19 @@ func TestWindowDaysWithinFlight_UnknownWindow(t *testing.T) {
 // end clamp a finished campaign keeps accruing plan for days it was no longer running.
 func TestWindowDaysWithinFlight_FlightEndsMidWindow(t *testing.T) {
 	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
-	// last_7_days spans Aug 12..19; a flight ending Aug 15 covers 3 of those days.
+	// last_7_days spans Aug 12..19; a flight ending Aug 15 covers FOUR of those days —
+	// the 12th, 13th, 14th and the 15th itself, because end_date runs through the end of its
+	// day. This asserted 3 while the raw midnight was used as an exclusive bound, which is the
+	// clamp silently discarding the flight's final day.
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC)
-	if got := WindowDaysWithinFlight("last_7_days", now, &start, &end); got != 3 {
-		t.Errorf("overlap = %v days, want 3 (Aug 12..15 of a window spanning Aug 12..19)", got)
+	if got := WindowDaysWithinFlight("last_7_days", now, &start, &end); got != 4 {
+		t.Errorf("overlap = %v days, want 4 (Aug 12..16-midnight of a window spanning Aug 12..19)", got)
+	}
+	// The clamp must still BIND, or this test would pass against a function that ignored the
+	// flight end entirely: the unclamped window is 6.5 days.
+	if got := WindowDaysWithinFlight("last_7_days", now, &start, nil); got != 6.5 {
+		t.Errorf("unclamped overlap = %v days, want 6.5 — the end clamp is not what limited the result above", got)
 	}
 }
 
@@ -209,3 +217,49 @@ func TestDeliveryExpected(t *testing.T) {
 }
 
 func ptr(t time.Time) *time.Time { return &t }
+
+// The final day of a flight must produce a real overlap, not zero.
+//
+// This is the second half of the same defect. `end_date` means "through the end of that day", so
+// clamping the window to the RAW midnight of the end date pulled the window's end back to an
+// instant that had already passed. On the last day of every flight `we` landed at or before `ws`
+// and this function returned 0 — which ComputePacing treats as "no overlap" and reports as
+// `unknown`. Pacing therefore went blank for the whole of every flight's final day, the day an
+// operator is most likely to be looking at it.
+func TestWindowDaysWithinFlight_FinalDayOfFlightStillOverlaps(t *testing.T) {
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	start := time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC) // the flight's LAST day is today
+
+	// `today` runs 00:00..now(noon) and lies entirely inside the final day: half a day.
+	if got := WindowDaysWithinFlight("today", now, &start, &end); got != 0.5 {
+		t.Errorf("today on the flight's final day = %v, want 0.5 — 0 is the defect that blanked pacing", got)
+	}
+
+	// The whole two-day flight, read over a 7-day window: Aug 17 00:00 .. now = 1.5 days.
+	if got := WindowDaysWithinFlight("last_7_days", now, &start, &end); got != 1.5 {
+		t.Errorf("last_7_days over a two-day flight = %v, want 1.5", got)
+	}
+
+	// A single-day flight that IS today overlaps `today` by the elapsed half-day.
+	if got := WindowDaysWithinFlight("today", now, &end, &end); got != 0.5 {
+		t.Errorf("a one-day flight running today = %v, want 0.5", got)
+	}
+}
+
+// The day AFTER the flight ends has no overlap — the normalisation must not run a flight on past
+// its end. Without this, `flightEndInstant` would be indistinguishable from ignoring the end.
+func TestWindowDaysWithinFlight_DayAfterTheFlightHasNoOverlap(t *testing.T) {
+	// The flight ended yesterday (Aug 17); it is now noon on the 18th.
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	start := time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC)
+
+	if got := WindowDaysWithinFlight("today", now, &start, &end); got != 0 {
+		t.Errorf("today, a day after the flight ended = %v, want 0", got)
+	}
+	// `yesterday` was the final day and still counts in full.
+	if got := WindowDaysWithinFlight("yesterday", now, &start, &end); got != 1 {
+		t.Errorf("yesterday, the flight's final day = %v, want 1", got)
+	}
+}

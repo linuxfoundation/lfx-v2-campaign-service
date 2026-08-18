@@ -110,8 +110,13 @@ func WindowDaysWithinFlight(window string, now time.Time, flightStart, flightEnd
 	if flightStart != nil && flightStart.After(ws) {
 		ws = *flightStart
 	}
-	if flightEnd != nil && flightEnd.Before(we) {
-		we = *flightEnd
+	// Normalised to the following midnight first: the end DATE means "through the end of that
+	// day", so clamping to the raw midnight excluded the final day entirely. On that last day
+	// the clamp pulled `we` back to or before `ws` and this function returned 0, which
+	// ComputePacing reads as "no overlap" — pacing was `unknown` for the whole final day of
+	// every flight. Shares flightEndInstant with ComputePacing so the two cannot drift.
+	if fe := flightEndInstant(flightEnd); fe != nil && fe.Before(we) {
+		we = *fe
 	}
 	if !we.After(ws) {
 		return 0

@@ -59,6 +59,25 @@ window's length and shrinks as the window grows, whereas the unclamped error on 
 factor of two and worst early in the day. Erring toward "spending ahead" is also the safer
 direction: it never manufactures an underspending item against a healthy campaign.
 
+**The flight's end date runs through the END of its day.** `end_date` is a `DATE` column, so it
+decodes to midnight — the *start* of the final day, not the finish of the flight. Both consumers
+normalise it to the FOLLOWING midnight before using it as an exclusive bound (`flightEndInstant`,
+shared by `ComputePacing` and `WindowDaysWithinFlight` so the two cannot drift apart). Every
+platform adapter already read the column this way — Meta sends `EndDate + "T23:59:59+0000"`, X
+adds a day, LinkedIn uses end-of-day — and this package was the outlier.
+
+Using the raw midnight cut the last day off every flight, in two places at once. `daysBetween`
+counted a two-day flight as one, so a $100/day campaign that had correctly spent $200 was priced
+against a single day of plan and reported 200%, `overspending`. And `WindowDaysWithinFlight`
+clamped the window back to an instant already past, returning a zero overlap that `ComputePacing`
+reads as incomputable — pacing went `unknown` for the whole of every flight's final day, the day
+an operator is most likely to be looking at it. A one-day flight (`start == end`) had zero length
+and tripped the inverted-flight guard, so it was never measurable at all.
+
+The **start** needs no such adjustment and deliberately gets none: midnight of the start date is
+already the instant the flight opens. A campaign starting today has elapsed a genuine fraction of
+a day by noon, which the one-elapsed-day floor below correctly declines to pace.
+
 **Nor is pacing meaningful in a campaign's first day.** A campaign launched a minute into a
 30-day $1000 flight is expected to have spent two cents, so a spend of zero is 0% — a
 HIGH-priority underspending item against a campaign whose only property is being new. It would be

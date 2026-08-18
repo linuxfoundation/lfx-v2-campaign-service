@@ -495,7 +495,10 @@ func budgeted(c *model.Campaign, amount float64, kind model.BudgetType, startOff
 func TestGetBriefMetrics_PacingIsProratedAcrossTheFlight(t *testing.T) {
 	// Day 10 of a 20-day $1000 flight. The default window is 30 days, capped to the 10 elapsed,
 	// so expected-by-now is $500. Spending exactly that is on plan.
-	c := budgeted(campaignOn("c1", model.ProviderGoogleAds), 1000, model.BudgetLifetime, -10, 10)
+	//
+	// End offset +9, not +10: end_date runs through the END of its day, so -10..+9 is the
+	// 20-day flight this case describes. +10 would be 21 days.
+	c := budgeted(campaignOn("c1", model.ProviderGoogleAds), 1000, model.BudgetLifetime, -10, 9)
 	disp := newPerCampaignDispatcher()
 	disp.results["c1"] = &model.CampaignMetrics{Impressions: 10000, Clicks: 200, CostMicros: 500_000_000, Ctr: 0.02}
 
@@ -617,7 +620,10 @@ func TestGetBriefMetrics_LowCTRUsesPercentNotRatio(t *testing.T) {
 // it should — a confident figure about a period nobody asked about.
 func TestGetBriefMetrics_PacingUsesTheRowsOwnWindow(t *testing.T) {
 	// Day 20 of a 40-day $4000 flight: $100/day of plan. Exactly on plan over 7 days = $700.
-	c := budgeted(campaignOn("c1", model.ProviderGoogleAds), 4000, model.BudgetLifetime, -20, 20)
+	//
+	// End offset +19, not +20: end_date runs through the END of its day, so -20..+19 is the
+	// 40-day flight this case describes.
+	c := budgeted(campaignOn("c1", model.ProviderGoogleAds), 4000, model.BudgetLifetime, -20, 19)
 	disp := newPerCampaignDispatcher()
 	disp.results["c1"] = &model.CampaignMetrics{Impressions: 20000, Clicks: 400, CostMicros: 700_000_000, Ctr: 0.02}
 
