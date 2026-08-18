@@ -28,14 +28,29 @@ type microsoftCreds struct {
 	RefreshToken   string
 }
 
+// microsoftKeywordConfig is one entry in microsoftConfig.Keywords — the JSON shape a caller
+// supplies for a positive Search keyword. Maps 1:1 to microsoft.Keyword; kept as a separate
+// JSON-tagged type rather than importing the client's struct directly, mirroring how
+// googleAdsKeywordConfig keeps the wire shape and the platform client's Go type
+// independently named.
+//
+// NOTE the matchType vocabulary differs from Google Ads: Microsoft's enum is PascalCase
+// ("Exact"/"Phrase"/"Broad"), not SCREAMING_CASE. The client accepts either casing so a
+// caller reusing a Google Ads payload is not refused over spelling alone.
+type microsoftKeywordConfig struct {
+	Text      string `json:"text"`
+	MatchType string `json:"matchType"`
+}
+
 // microsoftConfig is the per-platform campaign config the caller passes for Microsoft in
 // CreateCampaigns' Input.Config (delivered here as the Dispatch `config`).
 //
-// Today the Microsoft client creates a PAUSED Search campaign shell with an ad group + a
-// responsive search ad (auto-composed copy); targeting/keywords land in a later phase, so only
-// the budget (and optionally a Campaign.TimeZone enum) is caller-supplied here. Budget is in
-// whole units of the ad ACCOUNT's currency (NOT USD — the client does NO FX conversion), applied
-// as the campaign's DAILY budget, mirroring the meta client.
+// The Microsoft client creates a PAUSED Search campaign with an ad group + a responsive
+// search ad (auto-composed copy), then attaches the keywords supplied here — without them the
+// ad group has nothing to match a query against and the campaign can never serve, even once a
+// human enables it. Budget is in whole units of the ad ACCOUNT's currency (NOT USD — the
+// client does NO FX conversion), applied as the campaign's DAILY budget, mirroring the meta
+// client.
 type microsoftConfig struct {
 	// Budget is whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…), the DAILY
 	// budget. Must be finite and > 0; a NaN/Inf or non-positive value is rejected by the client
@@ -44,6 +59,20 @@ type microsoftConfig struct {
 	// TimeZone is an OPTIONAL Microsoft Campaign.TimeZone enum value. Microsoft marks the field
 	// deprecated but still requires it on Add; when empty the client uses its default.
 	TimeZone string `json:"timeZone"`
+	// Keywords are the positive Search keywords attached to the created ad group. Left empty,
+	// the campaign is created but can NEVER SERVE, and ToggleStatus refuses to activate it —
+	// so a caller that wants a servable campaign must supply at least one.
+	Keywords []microsoftKeywordConfig `json:"keywords"`
+	// CpcBid is an OPTIONAL ad-group max cost-per-click in whole units of the account currency
+	// (no micros, no FX). Omitted/zero means unset, and Microsoft then applies the
+	// account-currency minimum — a documented, serve-capable floor, so omitting it is safe.
+	CpcBid float64 `json:"cpcBid"`
+	// NOTE: there is deliberately no geoTargets field, unlike redditConfig/metaConfig/
+	// linkedInConfig. Microsoft's location targeting takes its own numeric LocationId values
+	// (from Microsoft's geographical-locations file) and accepts ISO-2 country codes NOWHERE,
+	// so a `geoTargets: ["US"]` here could not be honoured without an invented ISO→LocationId
+	// mapping. Carrying the field would advertise targeting this dispatcher silently drops —
+	// worse than not offering it. See internal/platform/microsoft/targeting.go.
 }
 
 // MicrosoftDispatcher creates Microsoft Advertising (Bing) campaigns for the orchestrator.
@@ -94,6 +123,8 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		Budget:          cfg.Budget,
 		TimeZone:        cfg.TimeZone,
 		RegistrationURL: bf.RegistrationURL,
+		Keywords:        microsoftKeywords(cfg.Keywords),
+		CpcBid:          cfg.CpcBid,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: Microsoft
 		// enforces case-insensitive campaign-name uniqueness, so a retry composes the SAME name
 		// and the client's find-first lookup cleanly REUSES the existing campaign
@@ -147,6 +178,24 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		return campaignFromMicrosoft(ctx, result, cfg), fmt.Errorf("microsoft campaign creation UNCONFIRMED (a partial campaign may exist — verify before retrying): %w", cerr)
 	}
 	return campaignFromMicrosoft(ctx, result, cfg), nil
+}
+
+// microsoftKeywords maps the wire-shaped keyword config to the platform client's Keyword
+// type. Returns nil for an empty input so an omitted "keywords" field stays nil rather than
+// becoming an empty non-nil slice (which would read as "targeting was requested and produced
+// nothing"). Mirrors googleAdsKeywords.
+//
+// No validation here: the client owns it (microsoft.validateKeywords), so a create and any
+// future caller cannot drift apart on what a valid keyword is.
+func microsoftKeywords(in []microsoftKeywordConfig) []microsoft.Keyword {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]microsoft.Keyword, len(in))
+	for i, kw := range in {
+		out[i] = microsoft.Keyword{Text: kw.Text, MatchType: kw.MatchType}
+	}
+	return out
 }
 
 // campaignFromMicrosoft maps the client result to the persistence model.
@@ -413,6 +462,23 @@ func microsoftChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
 	return blob.AdGroupID, blob.AdID
 }
 
+// microsoftKeywordIDs pulls the persisted keyword ids out of the result blob, using the same
+// lowerCamel json tags campaignFromMicrosoft marshalled (pinned by a round-trip test). Empty
+// means keyword targeting was never provisioned — either none was supplied or the step failed
+// before any id could be parsed.
+func microsoftKeywordIDs(campaign *model.Campaign) []string {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return nil
+	}
+	var blob struct {
+		KeywordIDs []string `json:"keywordIds"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return nil
+	}
+	return blob.KeywordIDs
+}
+
 // ToggleStatus implements service.StatusToggler for Microsoft Advertising.
 //
 // FULL CASCADE, like reddit: the create path builds the whole Campaign -> AdGroup -> Ad tree
@@ -432,8 +498,19 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 	}
 	adGroupID, adID := microsoftChildIDs(campaign)
 	adGroupID, adID = strings.TrimSpace(adGroupID), strings.TrimSpace(adID)
-	if msStatus == microsoft.StatusActive && (adGroupID == "" || adID == "") {
-		return fmt.Errorf("%w: microsoft campaign %s cannot be activated because it has no fully-created ad group + ad to serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+	if msStatus == microsoft.StatusActive {
+		if adGroupID == "" || adID == "" {
+			return fmt.Errorf("%w: microsoft campaign %s cannot be activated because it has no fully-created ad group + ad to serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
+		// Refuse ACTIVATE when no keyword was ever provisioned. A Search campaign with no
+		// keywords has nothing to match a query against, so enabling it would report success
+		// for a campaign that cannot deliver — the exact false claim ErrCampaignNotProvisioned
+		// exists to prevent. Raised locally, without calling Microsoft: it is a fact about the
+		// persisted row, so the service maps it to a 409 STATE error rather than a platform
+		// failure. Mirrors the google-ads sibling's keyword-criteria gate.
+		if len(microsoftKeywordIDs(campaign)) == 0 {
+			return fmt.Errorf("%w: microsoft campaign %s cannot be activated because keyword targeting is not yet provisioned (at least one keyword is required for a search campaign to serve)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
 	}
 	// An ad with no known parent cannot be changed (the client refuses the pair), and sending
 	// the campaign anyway would report success while the ad's status remained unchanged.
@@ -444,7 +521,10 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 	if err != nil {
 		return err
 	}
-	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, msStatus); uerr != nil {
+	// Keyword ids come from the SAME persisted result blob as the child ids. They are passed
+	// on BOTH the activate and pause paths: keywords are created Paused, so an activate that
+	// skipped them would enable a campaign with nothing eligible to match a query.
+	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, microsoftKeywordIDs(campaign), msStatus); uerr != nil {
 		if microsoft.IsOutcomeUnconfirmed(uerr) {
 			return &unconfirmedToggleError{err: uerr}
 		}
