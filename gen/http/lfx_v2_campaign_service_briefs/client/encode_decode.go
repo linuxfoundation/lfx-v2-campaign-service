@@ -3192,6 +3192,9 @@ func unmarshalBriefMetricsRowResponseBodyToLfxv2campaignservicebriefsBriefMetric
 	if v.Metrics != nil {
 		res.Metrics = unmarshalCampaignMetricsResponseBodyToLfxv2campaignservicebriefsCampaignMetrics(v.Metrics)
 	}
+	if v.Pacing != nil {
+		res.Pacing = unmarshalCampaignPacingResponseBodyToLfxv2campaignservicebriefsCampaignPacing(v.Pacing)
+	}
 
 	return res
 }
@@ -3214,6 +3217,37 @@ func unmarshalCampaignMetricsResponseBodyToLfxv2campaignservicebriefsCampaignMet
 	}
 	if v.Email != nil {
 		res.Email = unmarshalEmailMetricsResponseBodyToLfxv2campaignservicebriefsEmailMetrics(v.Email)
+	}
+
+	return res
+}
+
+// unmarshalCampaignPacingResponseBodyToLfxv2campaignservicebriefsCampaignPacing
+// builds a value of type *lfxv2campaignservicebriefs.CampaignPacing from a
+// value of type *CampaignPacingResponseBody.
+func unmarshalCampaignPacingResponseBodyToLfxv2campaignservicebriefsCampaignPacing(v *CampaignPacingResponseBody) *lfxv2campaignservicebriefs.CampaignPacing {
+	if v == nil {
+		return nil
+	}
+	res := &lfxv2campaignservicebriefs.CampaignPacing{
+		Pct:   v.Pct,
+		Label: *v.Label,
+	}
+
+	return res
+}
+
+// unmarshalCampaignActionItemResponseBodyToLfxv2campaignservicebriefsCampaignActionItem
+// builds a value of type *lfxv2campaignservicebriefs.CampaignActionItem from a
+// value of type *CampaignActionItemResponseBody.
+func unmarshalCampaignActionItemResponseBodyToLfxv2campaignservicebriefsCampaignActionItem(v *CampaignActionItemResponseBody) *lfxv2campaignservicebriefs.CampaignActionItem {
+	res := &lfxv2campaignservicebriefs.CampaignActionItem{
+		Rule:       *v.Rule,
+		Priority:   *v.Priority,
+		CampaignID: *v.CampaignID,
+		Platform:   *v.Platform,
+		Issue:      *v.Issue,
+		Action:     *v.Action,
 	}
 
 	return res

@@ -23,6 +23,7 @@
 * [internal/platform/snowflake](internal-platform-snowflake.md) - Read-only Snowflake client for the email channel: resolves past-edition EVENT_NAME strings from PLATINUM_LFX_ONE for HubSpot BEHAVIORAL_EVENT filters.
 * [internal/service](internal-service.md) - Campaign service business logic, including Readyz (DB-backed readiness) and Livez (process-only liveness).
 * [internal/service/email_copy](internal-service-email-copy.md) - AI-generated email copy (subject, preheader, body, CTA) for campaign briefs using the LiteLLM proxy client. Implements scrape-not-invent, defensive parsing, code-enforced length limits, and graceful degradation when the model is unconfigured.
+* [internal/service/rules](internal-service-rules.md) - One implementation of campaign pacing and operator action items, replacing four UI copies that disagreed on thresholds three ways. Pacing is spend against what a flight expects BY NOW, computed over the same period the spend figure covers, with incomputable kept distinct from zero.
 * [pkg/constants](pkg-constants.md) - Application-wide constants, including PG*, DATABASE_URL and AI_* environment variable names.
 * [pkg/log](pkg-log.md) - Package log provides structured logging utilities for context-aware logging.
 * [pkg/redact](pkg-redact.md) - Renders credential-bearing values into log-safe forms; strips URL userinfo entirely, unlike url.URL.Redacted().
