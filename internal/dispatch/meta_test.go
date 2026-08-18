@@ -1274,3 +1274,111 @@ func TestMeta_ListAccounts_StillRejectsUnusableConnections(t *testing.T) {
 		})
 	}
 }
+
+// TestMeta_DispatchMapsVariantImageURL pins the WIRE CONTRACT for the per-variant
+// creative image: a caller's `imageUrl` in the dispatch config must reach Meta's
+// /adimages upload, and the hash Meta returns must land on that variant's creative
+// as link_data.image_hash.
+//
+// This is a dispatcher-level test on purpose. meta.AdVariant carries no json tags,
+// so the JSON key is matched case-insensitively against the Go field name — the
+// mapping is implicit, and nothing but a test that actually sends `imageUrl` over
+// the wire proves the UI's key decodes. A rename of the field would silently drop
+// every image, creating link-only ads while still reporting success.
+func TestMeta_DispatchMapsVariantImageURL(t *testing.T) {
+	type captured struct {
+		path string
+		body string
+	}
+	var (
+		mu   sync.Mutex
+		reqs []captured
+	)
+	record := func(r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		reqs = append(reqs, captured{path: r.URL.Path, body: string(b)})
+		mu.Unlock()
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "account_status"):
+			_, _ = io.WriteString(w, `{"name":"LF Core","account_status":1}`)
+		case strings.HasSuffix(r.URL.Path, "/adimages"):
+			record(r)
+			_, _ = io.WriteString(w, `{"images":{"hero.png":{"hash":"WIRE_HASH_ABC123"}}}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"120100000000123"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"120200000000456"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			record(r)
+			_, _ = io.WriteString(w, `{"id":"creative_1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad_1"}`)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	clock := func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }
+	d := NewMetaDispatcher(
+		fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{},
+		meta.WithBaseURL(srv.URL), meta.WithClock(clock),
+	)
+
+	// `imageUrl` is the camelCase key the UI would send.
+	cfg := json.RawMessage(`{"metaConfig":{
+		"budget":2500,"startDate":"2099-01-01","endDate":"2099-02-01",
+		"objective":"traffic","geoTargets":["US"],"currencyOffset":100,
+		"variants":[
+			{"headline":"KubeCon 2099","primaryText":"Join us","description":"Cloud native",
+			 "imageUrl":"https://cdn.example.org/wire-hero.png"}
+		]
+	}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMetaAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if camp == nil || camp.PlatformCampaignID != "120100000000123" {
+		t.Fatalf("campaign not mapped: %+v", camp)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	find := func(suffix string) string {
+		for _, rq := range reqs {
+			if strings.HasSuffix(rq.path, suffix) {
+				return rq.body
+			}
+		}
+		return ""
+	}
+
+	// The upload happened and carried the caller's URL.
+	imgBody := find("/adimages")
+	if imgBody == "" {
+		t.Fatal("no /adimages request — the config's imageUrl never reached the client")
+	}
+	if !strings.Contains(imgBody, "https://cdn.example.org/wire-hero.png") {
+		t.Errorf("/adimages body missing the caller's image URL: %s", imgBody)
+	}
+
+	// The returned hash landed on the creative...
+	creativeBody := find("/adcreatives")
+	if creativeBody == "" {
+		t.Fatal("no /adcreatives request captured")
+	}
+	if !strings.Contains(creativeBody, `"image_hash":"WIRE_HASH_ABC123"`) {
+		t.Errorf("creative body missing image_hash: %s", creativeBody)
+	}
+	// ...and the image URL itself was NOT sent as the creative's click destination.
+	if strings.Contains(creativeBody, "wire-hero.png") {
+		t.Errorf("creative body leaked the image URL as a link/field: %s", creativeBody)
+	}
+}
