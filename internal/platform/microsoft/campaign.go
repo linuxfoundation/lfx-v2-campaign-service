@@ -175,12 +175,21 @@ type CampaignResult struct {
 	AdGroupID   string `json:"adGroupId,omitempty"`
 	// AdID identifies the Responsive Search Ad created under the ad group.
 	AdID string `json:"adId,omitempty"`
-	// KeywordIDs are the ids of the keywords attached to the ad group by the MS-4 targeting
-	// step, when the input carried any. Empty means keyword targeting was never attempted
-	// (no input keywords) or failed before any id could be parsed — the two are distinguished
-	// by whether an error accompanied the result, not by this field. The dispatcher's toggle
-	// guard reads it to refuse ACTIVATE on a campaign that has nothing to match a query
-	// against.
+	// KeywordIDs are the ids of the keywords THIS RUN attached to the ad group by the MS-4
+	// targeting step. Empty does NOT mean the ad group has no keywords upstream; it means
+	// this run parsed no ids, which happens when no keyword input was supplied, when the
+	// step failed before any id could be parsed, or when the ad group ALREADY EXISTED and
+	// the keyword step was skipped to avoid duplicating the keywords a prior run created
+	// (see createAdGroupAndAd — v13 offers no keyword read, so those ids are unknowable
+	// here). The first two are distinguished from each other by whether an error accompanied
+	// the result; the third is identifiable by its Steps entry.
+	//
+	// CONSEQUENCE for the dispatcher's toggle guard, which refuses ACTIVATE when this is
+	// empty: on the skip path it refuses a campaign whose keywords do exist upstream. That
+	// is deliberate — the ids needed to enable those keywords are precisely what this run
+	// could not learn, so activating would report success while leaving every keyword
+	// Paused. Refusing is the honest answer, and reconciliation (LFXV2-2665) is what
+	// resolves it.
 	KeywordIDs []string `json:"keywordIds,omitempty"`
 	// AlreadyExisted is true ONLY when this run created NOTHING — i.e. the campaign, the ad
 	// group, AND the ad were all matched as pre-existing (by name / by destination) and no

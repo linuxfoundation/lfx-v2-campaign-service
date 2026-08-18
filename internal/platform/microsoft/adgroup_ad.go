@@ -398,6 +398,43 @@ func (c *Client) createAdGroupAndAd(
 	// leaves a tree that is complete but inert — every earlier step is a prerequisite for it,
 	// and running it earlier would mean keywording an ad group whose ad might still fail.
 	//
+	// A REUSED ad group is NOT re-keyworded, and this is the one step where that rule has
+	// teeth. v13's AddKeywords has NO idempotency key and there is no keyword READ operation
+	// anywhere in this client — no GetKeywordsByAdGroupId, no list, nothing to reconcile
+	// against — so on the reuse path the client cannot know which of these keywords already
+	// hang off the group. Posting them "just in case" is therefore not a retry, it is a
+	// SECOND COPY of every keyword: duplicate criteria, duplicate bids on the same terms,
+	// and real duplicated spend the moment the campaign is enabled. Since the duplicate can
+	// never be detected from here, the only safe direction is not to create it.
+	//
+	// This is the SAME rule findOrCreateAdGroup already applies one step earlier, where a
+	// reused group keeps whatever CpcBid it has rather than being re-bid by a create-only
+	// retry. Keywords are that group's other spend-bearing attribute, so leaving them alone
+	// is the consistent choice, not a special case.
+	//
+	// THE COST, stated plainly rather than buried: a keyword ADDED to the brief between the
+	// first run and this one will not be attached, so the campaign targets the older list.
+	// That is the lesser harm by a wide margin — a missing keyword under-serves and is
+	// visible in the steps below, whereas a duplicated keyword silently doubles the bid on a
+	// term nobody re-approved. Attaching the new one is a human's call in the Bing UI (or a
+	// real reconcile once a keyword read exists); over-spending is nobody's call.
+	if adGroupExisted && len(tgt.keywords) > 0 {
+		// The count reported is the number of SUPPLIED keywords that were not posted — NOT a
+		// count of what the ad group already has, which this client has no way to read and must
+		// not imply it knows.
+		*steps = append(*steps, fmt.Sprintf(
+			"Keywords NOT re-posted: ad group %s already existed, so its existing keywords were left unchanged and the %d supplied keyword(s) were not sent (v13 AddKeywords has no idempotency key and v13 exposes no keyword read, so re-posting would duplicate every keyword and double the bid on those terms). Any keyword added to the brief since the first run must be attached manually.",
+			adGroupID, len(tgt.keywords)))
+
+		r := adWithIDPartial()
+		// AlreadyExisted follows its documented contract: true only when this run created
+		// NOTHING. Reaching here means the ad group pre-existed and no keyword was posted, so
+		// the campaign and ad levels alone decide it.
+		r.AlreadyExisted = alreadyExisted && adExisted
+		r.Steps = *steps
+		return r, nil
+	}
+
 	// A pre-step context check, as at every other step: a cancelled context must not fire a
 	// mutating create whose outcome would then be UNCONFIRMED.
 	if len(tgt.keywords) > 0 {

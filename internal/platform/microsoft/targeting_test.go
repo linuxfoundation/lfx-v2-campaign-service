@@ -661,3 +661,235 @@ func TestCreateCampaign_AllKeywordsRejectedIsACleanFailure(t *testing.T) {
 		t.Errorf("a total rejection must not claim a partial count: %v", err)
 	}
 }
+
+// ---- the reuse path: a found ad group is never re-keyworded -----------------
+
+// TestCreateCampaign_ReusedAdGroupIsNotReKeyworded is the DUPLICATE-SPEND test.
+//
+// v13's AddKeywords has no idempotency key and v13 exposes no keyword READ, so when the ad
+// group is found by name the client cannot tell which keywords already hang off it. Posting
+// them anyway would attach a SECOND copy of every keyword — duplicate bids on the same terms
+// and real duplicated spend. This asserts the POST is absent, and asserts it by capturing the
+// request BODY: keywordSeen stays at its zero value only if nothing was ever decoded into it,
+// so a client that posted an empty or partial keyword batch fails here too rather than
+// sliding past a bare call-count check.
+func TestCreateCampaign_ReusedAdGroupIsNotReKeyworded(t *testing.T) {
+	in := validInputWithKeywords()
+	adGroupName := composeAdGroupName(in)
+	finalURL := buildAdFinalURL(in)
+
+	var keywordBody createKeywordsRequest
+	api := &campaignsAPI{
+		// The ad group and the ad both already exist — the full reuse path a retry takes once
+		// the campaign name matches.
+		adGroupGetBody: `{"AdGroups":[{"Id":111,"Name":` + jsonString(adGroupName) + `}]}`,
+		adGetBody:      `{"Ads":[{"Id":222,"FinalUrls":[` + jsonString(finalURL) + `]}]}`,
+		keywordSeen:    &keywordBody,
+	}
+	var keywordPaths []string
+	base := api.handler(t)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/Keywords") {
+			keywordPaths = append(keywordPaths, r.URL.Path)
+		}
+		base(w, r)
+	})
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+
+	// 1. No request reached the keyword route at all.
+	if len(keywordPaths) != 0 {
+		t.Errorf("a reused ad group must not be re-keyworded, but %d POST(s) reached %v — every keyword would now exist twice", len(keywordPaths), keywordPaths)
+	}
+	// 2. The BODY assertion: nothing was ever decoded into the captured request, so no keyword
+	// batch (not even an empty one) was sent.
+	if keywordBody.AdGroupId != "" || len(keywordBody.Keywords) != 0 {
+		t.Errorf("a keyword request body was sent on the reuse path: AdGroupId=%q Keywords=%+v", keywordBody.AdGroupId, keywordBody.Keywords)
+	}
+	// 3. No ids are claimed for keywords this run did not create. Reporting the ids of a prior
+	// run's keywords would be a fabrication — the client never read them.
+	if len(res.KeywordIDs) != 0 {
+		t.Errorf("KeywordIDs = %v, want empty: this run attached no keywords", res.KeywordIDs)
+	}
+}
+
+// TestCreateCampaign_ReusedAdGroupStepsExplainTheSkippedKeywords pins the OPERATOR-FACING
+// half of the fix. The bug this closes was not only the duplicate POST: it was that the steps
+// said the ad group was "not re-created" while its keywords silently doubled. An operator
+// reading the output must learn what happened to the keywords WITHOUT opening the Bing UI —
+// both that they were left alone, and that a newly-added keyword is therefore unattached.
+func TestCreateCampaign_ReusedAdGroupStepsExplainTheSkippedKeywords(t *testing.T) {
+	in := validInputWithKeywords()
+	adGroupName := composeAdGroupName(in)
+	finalURL := buildAdFinalURL(in)
+	api := &campaignsAPI{
+		adGroupGetBody: `{"AdGroups":[{"Id":111,"Name":` + jsonString(adGroupName) + `}]}`,
+		adGetBody:      `{"Ads":[{"Id":222,"FinalUrls":[` + jsonString(finalURL) + `]}]}`,
+	}
+	c := newAPIClient(t, api.handler(t))
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+
+	joined := strings.Join(res.Steps, "\n")
+	// The skip is STATED, and tied to the ad group it applies to.
+	if !strings.Contains(joined, "Keywords NOT re-posted") {
+		t.Errorf("the steps must state that the keywords were not re-posted, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "111") {
+		t.Errorf("the keyword-skip step must name the reused ad group id 111, got:\n%s", joined)
+	}
+	// The REASON is stated, so the behaviour reads as deliberate rather than as a missing step.
+	if !strings.Contains(joined, "duplicate") {
+		t.Errorf("the steps must say re-posting would duplicate the keywords, got:\n%s", joined)
+	}
+	// The RESIDUAL RISK is stated: a keyword added since the first run is not attached.
+	if !strings.Contains(joined, "manually") {
+		t.Errorf("the steps must tell the operator a newly-added keyword needs attaching manually, got:\n%s", joined)
+	}
+}
+
+// TestCreateCampaign_CreatedAdGroupStillGetsItsKeywords is the counterpart that stops the fix
+// from over-reaching. The skip is conditioned on the ad group having ALREADY EXISTED; a
+// FRESHLY CREATED ad group has no keywords yet, so it must still be keyworded in full. A
+// guard that skipped unconditionally would leave every new campaign inert, and would pass the
+// two tests above.
+func TestCreateCampaign_CreatedAdGroupStillGetsItsKeywords(t *testing.T) {
+	in := validInputWithKeywords()
+	var keywordBody createKeywordsRequest
+	// No adGroupGetBody: the lookup returns an empty list, so the ad group is CREATED (654).
+	api := &campaignsAPI{keywordSeen: &keywordBody}
+	c := newAPIClient(t, api.handler(t))
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+
+	// The body proves the real batch went out, against the ad group this run created.
+	if got := keywordBody.AdGroupId.String(); got != "654" {
+		t.Errorf("AddKeywords AdGroupId = %q, want the newly-created ad group 654", got)
+	}
+	if len(keywordBody.Keywords) != 3 {
+		t.Fatalf("sent %d keywords, want all 3 on a freshly-created ad group: %+v", len(keywordBody.Keywords), keywordBody.Keywords)
+	}
+	if keywordBody.Keywords[0].Text != "kubernetes training" {
+		t.Errorf("keyword[0].Text = %q, want %q", keywordBody.Keywords[0].Text, "kubernetes training")
+	}
+	if len(res.KeywordIDs) != 3 {
+		t.Errorf("KeywordIDs = %v, want 3 ids", res.KeywordIDs)
+	}
+}
+
+// TestCreateCampaign_ReusedAdGroupWithoutKeywordsStillSaysItCannotServe guards the ordering of
+// the new branch against the pre-existing "no keywords supplied" message. The skip branch is
+// gated on len(keywords) > 0, so a reuse with NO keyword input must fall through to the
+// cannot-serve line rather than claiming keywords were preserved that were never supplied.
+func TestCreateCampaign_ReusedAdGroupWithoutKeywordsStillSaysItCannotServe(t *testing.T) {
+	in := validInput() // no keywords
+	name := composeName(in)
+	adGroupName := composeAdGroupName(in)
+	finalURL := buildAdFinalURL(in)
+	// EVERY level is pre-provided, including the campaign, so nothing is created this run —
+	// which is what makes the AlreadyExisted assertion below meaningful.
+	api := &campaignsAPI{
+		getBody:        `{"Campaigns":[{"Id":999,"Name":` + jsonString(name) + `}]}`,
+		adGroupGetBody: `{"AdGroups":[{"Id":111,"Name":` + jsonString(adGroupName) + `}]}`,
+		adGetBody:      `{"Ads":[{"Id":222,"FinalUrls":[` + jsonString(finalURL) + `]}]}`,
+	}
+	c := newAPIClient(t, api.handler(t))
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	joined := strings.Join(res.Steps, "\n")
+	if strings.Contains(joined, "Keywords NOT re-posted") {
+		t.Errorf("no keywords were supplied, so nothing was preserved; the skip line must not appear:\n%s", joined)
+	}
+	if !strings.Contains(joined, "cannot serve") {
+		t.Errorf("the steps must still state the campaign cannot serve without keywords, got:\n%s", joined)
+	}
+	// The whole tree pre-existed and nothing was created, so this is the untouched-tree case.
+	if !res.AlreadyExisted {
+		t.Errorf("AlreadyExisted = false, want true: campaign, ad group and ad all pre-existed and no keyword was created")
+	}
+}
+
+// TestCreateCampaign_ReusedAdGroupWithKeywordsIsNotAnUntouchedTree pins AlreadyExisted on the
+// skip path. Its documented contract is "this run created NOTHING", and on this path that is
+// decided by the campaign and ad levels alone — the keyword step created nothing by
+// construction. A freshly-created AD under a reused group must therefore still make it false.
+func TestCreateCampaign_ReusedAdGroupWithKeywordsIsNotAnUntouchedTree(t *testing.T) {
+	in := validInputWithKeywords()
+	name := composeName(in)
+	adGroupName := composeAdGroupName(in)
+	// The campaign AND the ad group are pre-provided, so the AD is the ONLY entity this run
+	// creates. That isolation is the point: if the campaign were also created here, the
+	// campaign level alone would force AlreadyExisted false and the assertion below would
+	// hold no matter what the ad contributed — passing for the wrong reason.
+	api := &campaignsAPI{
+		getBody:        `{"Campaigns":[{"Id":999,"Name":` + jsonString(name) + `}]}`,
+		adGroupGetBody: `{"AdGroups":[{"Id":111,"Name":` + jsonString(adGroupName) + `}]}`,
+		// adGetBody is left empty: no matching ad, so the AD is CREATED this run.
+	}
+	c := newAPIClient(t, api.handler(t))
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if res.AlreadyExisted {
+		t.Error("AlreadyExisted = true, want false: this run created the ad, so the tree was not untouched")
+	}
+	if res.AdID == "" {
+		t.Error("the ad should have been created on this path")
+	}
+}
+
+// TestCreateCampaign_ReusedTreeWithKeywordsIsStillAnUntouchedTree pins AlreadyExisted on the
+// keyword-SKIP path, where the whole tree pre-existed AND keywords were supplied.
+//
+// This is the case the skip branch newly reaches, and its AlreadyExisted contract is "this
+// run created NOTHING". Nothing IS what this run created: the campaign, ad group and ad were
+// all matched by lookup, and the keyword step deliberately posted nothing. So it must report
+// true. A branch that hardcoded false here would tell the caller the run produced something
+// new — inviting a reconcile for state that is already correct and consistent — and every
+// other assertion about this path (no POST, the steps text, the empty KeywordIDs) would stay
+// green while it did, which is exactly why this needs its own test.
+func TestCreateCampaign_ReusedTreeWithKeywordsIsStillAnUntouchedTree(t *testing.T) {
+	in := validInputWithKeywords()
+	name := composeName(in)
+	adGroupName := composeAdGroupName(in)
+	finalURL := buildAdFinalURL(in)
+	// Every level pre-provided by its lookup: nothing is created at any level this run.
+	api := &campaignsAPI{
+		getBody:        `{"Campaigns":[{"Id":999,"Name":` + jsonString(name) + `}]}`,
+		adGroupGetBody: `{"AdGroups":[{"Id":111,"Name":` + jsonString(adGroupName) + `}]}`,
+		adGetBody:      `{"Ads":[{"Id":222,"FinalUrls":[` + jsonString(finalURL) + `]}]}`,
+	}
+	base := api.handler(t)
+	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		// No CREATE of any kind may be issued — including the keyword create.
+		if r.Method == http.MethodPost && (strings.HasSuffix(p, "/Campaigns") ||
+			strings.HasSuffix(p, "/AdGroups") || strings.HasSuffix(p, "/Ads") ||
+			strings.HasSuffix(p, "/Keywords")) {
+			t.Errorf("create POST %s issued despite every level pre-existing", p)
+		}
+		base(w, r)
+	})
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if !res.AlreadyExisted {
+		t.Error("AlreadyExisted = false, want true: campaign, ad group and ad all pre-existed and the keyword step posted nothing, so this run created nothing")
+	}
+}

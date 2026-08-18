@@ -264,6 +264,22 @@ future work: Microsoft has IGNORED bid strategies on ad groups and keywords sinc
 ("the request will be ignored without error"), so an `AdGroup.BiddingScheme` would be a silent
 no-op — the bid strategy is the CAMPAIGN's (v13 defaults Search to `EnhancedCpcBiddingScheme`).
 
+**A REUSED ad group is NOT re-keyworded** — the keyword counterpart of the reused-bid rule
+above, and the one place where "idempotent retry" has teeth, because getting it wrong spends
+money. `AddKeywords` has **no idempotency key** and v13 exposes **no keyword READ** (there is
+no `GetKeywordsByAdGroupId`, no list, nothing to reconcile against), so when the ad group is
+found by name the client cannot know which keywords already hang off it. Posting the batch
+anyway is not a retry but a SECOND COPY of every keyword: duplicate criteria bidding on the
+same terms, so the campaign pays twice for traffic approved once. Since the duplicate could
+never be detected from here, the step is skipped and the `steps` output says so — that it was
+skipped, why, and that a keyword added since the first run needs attaching by hand. The
+acknowledged cost is that a genuinely-new keyword goes unattached; that is the lesser harm,
+since a missing keyword under-serves visibly while a duplicated one silently doubles a bid.
+**Knock-on:** `KeywordIDs` is empty on this path (no ids were parsed, and none can be read),
+so the dispatcher's ACTIVATE guard refuses the campaign even though its keywords exist
+upstream. Deliberate — the ids needed to enable those Paused keywords are precisely what the
+run could not learn, so activating would claim success while every keyword stayed Paused.
+
 **Ordering and classification.** The keyword step runs LAST, after the ad, because every
 earlier step is its prerequisite and keywording an ad group whose ad might still fail would
 leave paid criteria on an incomplete tree. Both the keyword list and the bid are validated **up
