@@ -338,16 +338,45 @@ func (c *Client) createKeywords(ctx context.Context, adGroupID string, keywords 
 		// duplicates rather than inventing ids for them. errDuplicateKeywords carries that
 		// distinction to the caller, which decides what the tree's state means.
 		//
-		// The duplicate classification is gated on the error array being COMPLETE. It is
+		// The duplicate classification is gated on the error array being ACCOUNTED FOR. It is
 		// ALL-not-ANY precisely so a genuine rejection travelling alongside a duplicate keeps
 		// the batch on the failure path, and that guarantee is only as good as the set the
 		// predicate can see: boundedErrorItems retains maxDecodedErrorItems (16) entries while
-		// this call sends up to maxKeywords (60), so a rejection past the cap was DISCARDED
-		// during decode and the surviving prefix read as all-duplicate. Absence of a rejection
-		// in a truncated array is not evidence there was none, so a truncated array is not
-		// classifiable as duplicate-only and falls through to the rejection path below —
-		// refusing beats a false success.
-		if !resp.PartialErrors.Truncated && isDuplicateKeywordPartial(resp.PartialErrors.Items) {
+		// this call sends up to maxKeywords (60), so a rejection past the cap is DISCARDED
+		// during decode and the surviving prefix reads as all-duplicate.
+		//
+		// Requiring an UNtruncated array was the first answer and it was too strong. A reuse
+		// retry re-posts the whole batch, so every keyword of a ~38-keyword brief comes back a
+		// duplicate — 38 errors, one per keyword — which trips the 16-item cap on every
+		// ordinary retry. Gating on !Truncated therefore refused the very case the duplicate
+		// path exists to converge, and did so for any brief larger than 16 keywords.
+		//
+		// Counting the discarded entries does not fix it either. PartialErrors is SPARSE — it
+		// carries an entry only for a FAILED keyword — so the error count legitimately falls
+		// short of the keywords sent whenever some succeeded, and a count that DOES match is
+		// equally consistent with a genuine rejection hiding past the cap: a duplicate and an
+		// editorial rejection are each exactly one error. No arithmetic over totals can tell
+		// them apart.
+		//
+		// What the ALL test actually needs is to have SEEN every error, so the classification is
+		// performed during decode, where every element passes through even when it is dropped for
+		// memory. NonDuplicates is that tally over the WHOLE wire array; zero means every error
+		// in the array — retained or discarded — was an already-exists keyword. That is the term
+		// that makes the conclusion sound, and it is the one doing the work here.
+		//
+		// isDuplicateKeywordPartial is kept alongside it as a belt-and-braces check rather than
+		// as a second independent term: the enclosing partialErrorsHaveAny already establishes
+		// that a retained item carries an ACTUAL code, so with NonDuplicates == 0 the predicate
+		// cannot currently disagree. It is retained so this branch stays correct on its own
+		// reading — a reader (or a later edit) should not have to consult a different `if` to
+		// see why a null-only placeholder array is not classified as a duplicate batch — and
+		// because both are cheap. Deleting it would move the safety property off this line and
+		// onto a non-local invariant.
+		//
+		// So a large full-duplicate batch converges, while a batch whose rejection sits at index
+		// 40 of 60 is still refused — the tally saw it even though the slice does not hold it.
+		wholeArrayIsDuplicates := resp.PartialErrors.NonDuplicates == 0
+		if wholeArrayIsDuplicates && isDuplicateKeywordPartial(resp.PartialErrors.Items) {
 			return created, fmt.Errorf("%w (%d of %d keywords were created; the rest already existed): %s",
 				errDuplicateKeywords, len(created), len(msKeywords), partialErrorCodes(resp.PartialErrors.Items))
 		}

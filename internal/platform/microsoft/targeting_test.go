@@ -1141,3 +1141,120 @@ func TestCreateCampaign_TruncatedErrorArrayIsNotDuplicateOnlySuccess(t *testing.
 		}
 	}
 }
+
+// TestCreateCampaign_FullDuplicateBatchLargerThanTheCapStillSucceeds pins the LIVENESS half
+// of the truncation contract, opposite TestCreateCampaign_TruncatedErrorArrayIsNotDuplicateOnlySuccess.
+//
+// Refusing to classify a TRUNCATED array is right, but "truncated" alone is the wrong
+// question. The product's typical brief carries ~38 keywords, and a reuse retry re-posts the
+// whole batch, so EVERY keyword comes back a duplicate — one PartialError each, 38 of them,
+// which trips the 16-item retention cap every time. Gating duplicate-only classification on
+// !Truncated therefore refused the ORDINARY reuse case: the converge-on-reuse behaviour was
+// live only for briefs of 16 keywords or fewer.
+//
+// The distinguishing fact is arithmetic, not truncation. A batch where every keyword is a
+// duplicate produces EXACTLY as many error items as keywords sent. When the wire reports 38
+// errors for 38 keywords and every retained error is a duplicate, no discarded item can be a
+// genuine rejection OF A KEYWORD THAT SUCCEEDED — because none succeeded; the count leaves no
+// room for an unaccounted-for entry.
+func TestCreateCampaign_FullDuplicateBatchLargerThanTheCapStillSucceeds(t *testing.T) {
+	// 38 = the product's typical brief, comfortably past maxDecodedErrorItems (16).
+	const n = 38
+	in := validInput()
+	in.Keywords = make([]Keyword, 0, n)
+	for i := 0; i < n; i++ {
+		in.Keywords = append(in.Keywords, Keyword{Text: fmt.Sprintf("keyword %02d", i), MatchType: MatchTypeExact})
+	}
+	name := composeName(in)
+	adGroupName := composeAdGroupName(in)
+	finalURL := buildAdFinalURL(in)
+
+	// Every keyword already attached: a null id slot and a duplicate error for each.
+	ids := make([]string, 0, n)
+	errs := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		ids = append(ids, "null")
+		errs = append(errs, fmt.Sprintf(
+			`{"Index":%d,"Code":1517,"ErrorCode":"CampaignServiceDuplicateKeyword"}`, i))
+	}
+
+	api := &campaignsAPI{
+		getBody:        `{"Campaigns":[{"Id":999,"Name":` + jsonString(name) + `}]}`,
+		adGroupGetBody: `{"AdGroups":[{"Id":111,"Name":` + jsonString(adGroupName) + `}]}`,
+		adGetBody:      `{"Ads":[{"Id":222,"FinalUrls":[` + jsonString(finalURL) + `]}]}`,
+		keywordPostBody: `{"KeywordIds":[` + strings.Join(ids, ",") + `],"PartialErrors":[` +
+			strings.Join(errs, ",") + `]}`,
+	}
+	c := newAPIClient(t, api.handler(t))
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("a full-duplicate reuse retry of %d keywords must converge, not fail: %v", n, err)
+	}
+	if !res.AlreadyExisted {
+		t.Errorf("AlreadyExisted = false, want true: every level pre-existed and all %d keywords were already attached", n)
+	}
+}
+
+// TestCreateCampaign_NullPaddedSuccessesPastTheCapAreNotRejections covers the placeholder half
+// of the decode-time tally.
+//
+// PartialErrors is normally SPARSE (an entry only for a failed keyword), but a body may instead
+// null-pad the entries that SUCCEEDED so the array stays index-aligned with the request. Those
+// padding slots carry no error code and are not rejections. The tally runs over the whole wire
+// array — including elements dropped for memory — so if it counted a null slot as a genuine
+// rejection, a perfectly ordinary mixed batch whose padding falls past the 16-item cap would be
+// refused: here 20 keywords are already attached and 18 are newly created, which is a success
+// carrying 18 ids, not a failure.
+//
+// This pins the placeholder skip specifically at the truncated end of the array, where the
+// retained-slice predicate cannot see the padding and only the streaming tally can misjudge it.
+func TestCreateCampaign_NullPaddedSuccessesPastTheCapAreNotRejections(t *testing.T) {
+	const (
+		n         = 38 // past maxDecodedErrorItems (16), so the padding is discarded during decode
+		duplicate = 20 // already attached; the remaining 18 are created
+	)
+	in := validInput()
+	in.Keywords = make([]Keyword, 0, n)
+	for i := 0; i < n; i++ {
+		in.Keywords = append(in.Keywords, Keyword{Text: fmt.Sprintf("keyword %02d", i), MatchType: MatchTypeExact})
+	}
+	name := composeName(in)
+	adGroupName := composeAdGroupName(in)
+	finalURL := buildAdFinalURL(in)
+
+	ids := make([]string, 0, n)
+	errs := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		if i < duplicate {
+			ids = append(ids, "null")
+			errs = append(errs, fmt.Sprintf(
+				`{"Index":%d,"Code":1517,"ErrorCode":"CampaignServiceDuplicateKeyword"}`, i))
+			continue
+		}
+		// Created, with its slot in PartialErrors null-padded rather than omitted.
+		ids = append(ids, fmt.Sprintf("%d", 700+i))
+		errs = append(errs, `null`)
+	}
+
+	api := &campaignsAPI{
+		getBody:        `{"Campaigns":[{"Id":999,"Name":` + jsonString(name) + `}]}`,
+		adGroupGetBody: `{"AdGroups":[{"Id":111,"Name":` + jsonString(adGroupName) + `}]}`,
+		adGetBody:      `{"Ads":[{"Id":222,"FinalUrls":[` + jsonString(finalURL) + `]}]}`,
+		keywordPostBody: `{"KeywordIds":[` + strings.Join(ids, ",") + `],"PartialErrors":[` +
+			strings.Join(errs, ",") + `]}`,
+	}
+	c := newAPIClient(t, api.handler(t))
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("null padding for the succeeded keywords must not read as a rejection: %v", err)
+	}
+	if len(res.KeywordIDs) != n-duplicate {
+		t.Errorf("KeywordIDs = %d, want the %d newly-created ids", len(res.KeywordIDs), n-duplicate)
+	}
+	// Keywords were created, so the tree is not untouched.
+	if res.AlreadyExisted {
+		t.Error("AlreadyExisted = true, want false: this run created keywords")
+	}
+}
