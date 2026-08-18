@@ -624,6 +624,14 @@ func clipID(s string) string {
 	return s // fewer than max runes
 }
 
+// AccountID reports the ad account id this client is bound to. Exposed so a caller holding a
+// campaign created under a KNOWN account can verify the connection it just resolved still
+// points at that same account before issuing an account-scoped request — Microsoft campaign
+// ids are unique only WITHIN an account, so running such a request under a different account
+// reads as "no activity" at best and another account's campaign at worst. Mirrors
+// googleads.Client.CustomerID.
+func (c *Client) AccountID() string { return c.account.AccountID }
+
 // validateAccountIDs rejects an AccountID (and, when set, CustomerID) that isn't a
 // digits-only id, before any request is built.
 func (c *Client) validateAccountIDs() error {

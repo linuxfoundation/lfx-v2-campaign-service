@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 
@@ -284,6 +285,58 @@ func microsoftChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
 	return blob.AdGroupID, blob.AdID
 }
 
+// microsoftCreationAccountID reports the ad account the campaign was CREATED under, or ""
+// when the persisted result blob does not record it.
+//
+// Prefers the explicit accountId the create path now stamps (microsoft.CampaignResult), and
+// falls back to the aid= query parameter of the microsoftAdsUrl the blob has always carried —
+// so rows written BEFORE the explicit field existed are still checkable rather than silently
+// unguarded. Mirrors googleAdsCreationCustomerID, including its customerId/ocid fallback.
+//
+// An EMPTY return means "unknown, proceed": absence must not become a new failure signal for
+// pre-existing rows, so only a present-AND-different id is treated as a mismatch by callers.
+func microsoftCreationAccountID(campaign *model.Campaign) string {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return ""
+	}
+	var blob struct {
+		AccountID       string `json:"accountId"`
+		MicrosoftAdsURL string `json:"microsoftAdsUrl"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return ""
+	}
+	if id := strings.TrimSpace(blob.AccountID); id != "" {
+		return id
+	}
+	u, err := url.Parse(blob.MicrosoftAdsURL)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(u.Query().Get("aid"))
+}
+
+// verifyMicrosoftAccountMatch refuses an operation on a campaign that was created under a
+// DIFFERENT ad account than the project's current connection resolves to.
+//
+// Microsoft campaign ids are unique only WITHIN an account, and UpdateMicrosoftAds can
+// re-point a project's connection between create and a later read/toggle. Without this check
+// the stored PlatformCampaignID is addressed against the NEW account, where it either matches
+// nothing or — worse — collides with an unrelated campaign, whose numbers would be rendered
+// as this campaign's measurement (on the read path) or whose delivery would be changed (on
+// the toggle path).
+//
+// Shared by ReadMetrics and ToggleStatus so the two cannot drift, and returns
+// domain.ErrCampaignAccountMismatch exactly as the google-ads adapter does.
+func verifyMicrosoftAccountMatch(op string, campaign *model.Campaign, client *microsoft.Client) error {
+	created := microsoftCreationAccountID(campaign)
+	if created == "" || created == client.AccountID() {
+		return nil
+	}
+	return fmt.Errorf("%s: campaign %s was created under microsoft ad account %s but the project's current connection resolves to account %s: %w",
+		op, campaign.PlatformCampaignID, created, client.AccountID(), domain.ErrCampaignAccountMismatch)
+}
+
 // ToggleStatus implements service.StatusToggler for Microsoft Advertising.
 //
 // FULL CASCADE, like reddit: the create path builds the whole Campaign -> AdGroup -> Ad tree
@@ -313,6 +366,12 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 	}
 	client, err := d.resolveMicrosoftClient(ctx, projectID, platform)
 	if err != nil {
+		return err
+	}
+	// Same identity invariant ReadMetrics enforces, and it matters MORE here because this
+	// path MUTATES: on an id collision the update would pause or activate a campaign this
+	// project does not own. Fail before contacting Microsoft, for both PAUSE and ACTIVATE.
+	if err := verifyMicrosoftAccountMatch("toggle microsoft campaign status", campaign, client); err != nil {
 		return err
 	}
 	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, msStatus); uerr != nil {
@@ -359,6 +418,14 @@ func (d *MicrosoftDispatcher) ReadMetrics(ctx context.Context, projectID string,
 	}
 	client, err := d.resolveMicrosoftClient(ctx, projectID, platform)
 	if err != nil {
+		return nil, err
+	}
+	// Prove the persisted campaign belongs to the account the report will be scoped to.
+	// resolveMicrosoftClient returns the project's CURRENT connection, which UpdateMicrosoftAds
+	// can have re-pointed since create; querying the stored id against a different account
+	// yields either a false "no metrics" or ANOTHER campaign's numbers presented as this
+	// campaign's measurement — the failure-as-measurement class this path refuses throughout.
+	if err := verifyMicrosoftAccountMatch("read microsoft campaign metrics", campaign, client); err != nil {
 		return nil, err
 	}
 	metrics, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, window)

@@ -395,6 +395,17 @@ DIRECTION, like reddit's:
   is the one asymmetric shape that IS allowed: it is addressable via its `CampaignId`.
 - **Each child PUT is scoped to its OWN parent** — the ad group to the campaign, the ad to the AD
   GROUP. Passing the campaign id as `AdGroupId` would silently toggle the wrong thing.
+- **The campaign must belong to the account the connection resolves to** (LFXV2-3260). Campaign
+  ids are unique only within an ad account, so after `UpdateMicrosoftAds` re-points a project's
+  connection the stored id can address an unrelated campaign in the NEW account — pausing or
+  activating something this project does not own. The dispatcher's `verifyMicrosoftAccountMatch`
+  refuses that with `domain.ErrCampaignAccountMismatch` (409) above BOTH branches, before any
+  credential resolution or upstream call, and the same helper guards `ReadMetrics`. The account
+  the campaign was created under is carried by `CampaignResult.AccountID` (`accountId` in the
+  persisted blob), which `namePartial` stamps on every result path — success and partial alike —
+  from `c.account.AccountID`. A row recording no account is treated as "unknown, proceed", so
+  campaigns created before the field existed still toggle; the `microsoftAdsUrl`'s `aid=`
+  parameter is read as a fallback before concluding a row is unrecorded.
 
 Two further details belong to this layer specifically:
 
@@ -426,6 +437,15 @@ becomes dead code. The DOWNLOAD is deliberately outside that budget: once `Succe
 reported the file exists, and cutting off the transfer would discard a report already paid
 for. `ErrReportNotReady` is NOT mapped to either metrics sentinel — both mean 400, and a
 report still building is retryable, not unsupported.
+
+The budget covers the SUBMIT as well as the polling, and that is a property of where the
+deadline is taken: `GetCampaignMetrics` computes it before `submitReport` and threads it into
+`pollReport`, which also checks it before its first poll. Taking it inside `pollReport` (the
+shape this file described until LFXV2-3260) left submit unbounded, so a slow submit spent the
+caller's 20s and produced `context deadline exceeded` rather than the retryable sentinel.
+`TestPollBudgetCoversTheSubmitPhase` pins it; the clock it uses advances only across the
+submit, because a clock that advances on every reading expires the budget under both
+placements and would pass against the defect.
 
 Several parsing properties are load-bearing and each is pinned by a test. The CSV is
 **ragged** — a two-column metadata preamble, then the four-column header and data, then a

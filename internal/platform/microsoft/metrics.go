@@ -57,16 +57,24 @@ const (
 	// three services are versioned in lockstep at v13.
 	msReportingBaseURL = "https://reporting.api.bingads.microsoft.com"
 
-	// reportPollBudget bounds the ENTIRE submit+poll phase. The binding deadline is NOT
-	// the 60s platform ingress: Orchestrator.ReadCampaignMetrics wraps every metrics call
-	// in metricsCallTimeout (20s), so the budget must sit under THAT or the caller's
-	// context cancels first and ErrReportNotReady can never be produced — the sentinel,
-	// its message and the dispatcher's classification arm would all be dead code.
+	// reportPollBudget bounds the ENTIRE submit+poll phase. The deadline is taken in
+	// GetCampaignMetrics BEFORE submitReport and threaded into pollReport, so a slow submit
+	// spends the SAME budget the polling does. Taking it inside pollReport instead would
+	// leave the constant describing a guarantee it did not provide: submit would run
+	// unbounded on the caller's context, and a submit that consumed most of the 20s would
+	// surface `context deadline exceeded` from the first poll instead of ErrReportNotReady,
+	// with no download headroom left.
+	//
+	// The binding deadline is NOT the 60s platform ingress: Orchestrator.ReadCampaignMetrics
+	// wraps every metrics call in metricsCallTimeout (20s), so the budget must sit under THAT
+	// or the caller's context cancels first and ErrReportNotReady can never be produced — the
+	// sentinel, its message and the dispatcher's classification arm would all be dead code.
 	// 15s leaves headroom for the download, which is deliberately NOT part of this budget:
 	// once Success is reported the file exists and the transfer is a plain GET, so cutting
 	// it off would discard a report we already paid to build.
 	//
-	// TestReportPollBudgetStaysUnderTheMetricsCallTimeout pins this relationship.
+	// TestReportPollBudgetStaysUnderTheMetricsCallTimeout pins this relationship, and
+	// TestPollBudgetCoversTheSubmitPhase pins that submit time is charged against it.
 	reportPollBudget = 15 * time.Second
 
 	// reportPollInterval is the delay between Poll calls.
@@ -175,11 +183,17 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		return nil, err
 	}
 
+	// Take the submit+poll deadline HERE, before the submit, so reportPollBudget bounds
+	// what its comment says it bounds. A slow submit now eats into the polling allowance
+	// instead of being free, which is what keeps a submit-heavy call answering
+	// ErrReportNotReady (a timing condition the caller can act on) rather than the caller's
+	// own `context deadline exceeded`.
+	deadline := c.now().Add(reportPollBudget)
 	reportID, err := c.submitReport(ctx, campaignID, start, end)
 	if err != nil {
 		return nil, err
 	}
-	downloadURL, err := c.pollReport(ctx, reportID)
+	downloadURL, err := c.pollReport(ctx, reportID, deadline)
 	if err != nil {
 		return nil, err
 	}
@@ -336,13 +350,28 @@ func (c *Client) submitReport(ctx context.Context, campaignID string, start, end
 
 // pollReport polls until the report succeeds, fails, or the budget expires. It returns the
 // download URL, which is EMPTY when the report succeeded with no rows.
-func (c *Client) pollReport(ctx context.Context, reportID string) (string, error) {
-	deadline := c.now().Add(reportPollBudget)
+//
+// deadline is supplied by the caller rather than computed here: it is taken before
+// submitReport so reportPollBudget covers the whole submit+poll phase. A submit that has
+// already overrun the budget therefore reports ErrReportNotReady on the FIRST budget check
+// below, without issuing a poll — the honest answer, since no time is left to wait in.
+func (c *Client) pollReport(ctx context.Context, reportID string, deadline time.Time) (string, error) {
 	for attempt := 0; ; attempt++ {
 		// Check the caller's context BEFORE the budget: a cancelled request should report
 		// cancellation, not a budget expiry it never reached.
 		if err := ctx.Err(); err != nil {
 			return "", fmt.Errorf("poll microsoft report: %w", err)
+		}
+		// Budget check BEFORE the poll, so an overrun is reported as ErrReportNotReady even
+		// when the submit alone exhausted the budget. Without this the first poll always
+		// runs, and a submit that had already blown through the 20s caller timeout would
+		// surface `context deadline exceeded` from pollOnce instead — the caller's error
+		// rather than ours, and not the retryable sentinel this path is built to return.
+		// The check is `!Before` on the CURRENT instant (the bottom-of-loop check below
+		// additionally reserves one sleep interval), so a first poll is still issued
+		// whenever any budget remains: a report that is already built gets collected.
+		if !c.now().Before(deadline) {
+			return "", fmt.Errorf("%w (waited %s)", ErrReportNotReady, reportPollBudget)
 		}
 		status, url, err := c.pollOnce(ctx, reportID)
 		if err != nil {

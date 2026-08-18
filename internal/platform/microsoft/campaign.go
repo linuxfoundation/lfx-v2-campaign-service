@@ -149,6 +149,13 @@ type CampaignInput struct {
 type CampaignResult struct {
 	Platform     string `json:"platform"`
 	AccountLabel string `json:"accountLabel,omitempty"`
+	// AccountID is the ad account the campaign was CREATED under. The dispatcher's
+	// microsoftCreationAccountID reads it to detect a later read/toggle resolving to a
+	// DIFFERENT account (UpdateMicrosoftAds can re-point a project's connection), and treats
+	// an absent one as "unknown, proceed" so rows written before this field existed keep
+	// working. Omitting it on any result path would silently disable that check — every path
+	// here derives from namePartial, which sets it.
+	AccountID    string `json:"accountId,omitempty"`
 	CampaignName string `json:"campaignName"`
 	CampaignID   string `json:"campaignId"`
 	// AdGroupName / AdGroupID identify the ad group created (or found) under the
@@ -390,6 +397,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return &CampaignResult{
 			Platform:        "microsoft-ads",
 			AccountLabel:    c.account.Label,
+			AccountID:       c.account.AccountID,
 			CampaignName:    campaignName,
 			MicrosoftAdsURL: microsoftAdsURL,
 			Steps:           steps,

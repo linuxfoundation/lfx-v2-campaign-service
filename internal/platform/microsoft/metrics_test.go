@@ -1290,3 +1290,79 @@ func TestFoldReportRows_IncompleteFlagIsScopedToThePreamble(t *testing.T) {
 		t.Errorf("impressions = %d, want 10000", got.Impressions)
 	}
 }
+
+// TestPollBudgetCoversTheSubmitPhase pins what reportPollBudget's comment CLAIMS: that it
+// bounds the ENTIRE submit+poll phase, not just the polling.
+//
+// The deadline is taken in GetCampaignMetrics BEFORE submitReport, so submit time is charged
+// against the budget. This test makes the clock advance ONLY while the submit handler runs
+// (a fixed instant before and after), so the two placements are distinguishable:
+//
+//   - deadline taken BEFORE submit (correct): deadline = T0+budget, and by the first poll the
+//     clock already reads T0+budget → ErrReportNotReady, zero polls issued.
+//   - deadline taken AFTER submit (the defect): the clock already reads T0+budget when the
+//     deadline is computed, so deadline = T0+2*budget and polling proceeds normally — the
+//     submit was free.
+//
+// A clock that advanced on every reading could not tell these apart: it would expire the
+// budget either way and the test would pass against the defect. That version of this test DID
+// pass against the reverted fix; this one fails against it.
+func TestPollBudgetCoversTheSubmitPhase(t *testing.T) {
+	var mu sync.Mutex
+	var polls int
+	var submitDone bool
+	mux := http.NewServeMux()
+	mux.HandleFunc("/token", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	})
+	mux.HandleFunc("/Reporting/v13/GenerateReport/Submit", func(w http.ResponseWriter, _ *http.Request) {
+		// The submit is what consumes the budget: from here on the clock reads a full
+		// reportPollBudget later.
+		mu.Lock()
+		submitDone = true
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ReportRequestId":"rr-1"}`)
+	})
+	mux.HandleFunc("/Reporting/v13/GenerateReport/Poll", func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		polls++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ReportRequestStatus":{"Status":"Pending"}}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// A STEP clock, not an advancing one: it returns T0 until the submit has completed and
+	// T0+budget forever after, so elapsed time is attributable to the submit alone.
+	start := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	stepClock := func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		if submitDone {
+			return start.Add(reportPollBudget)
+		}
+		return start
+	}
+
+	c := NewClient(
+		Credentials{ClientID: "cid", ClientSecret: "sec", DeveloperToken: "dev", RefreshToken: "ref"},
+		AccountConfig{AccountID: "9999999", Label: "LF Events"},
+		WithReportingBaseURL(srv.URL),
+		WithTokenURL(srv.URL+"/token"),
+		WithClock(stepClock),
+	)
+
+	_, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowLast7Days)
+	if !errors.Is(err, ErrReportNotReady) {
+		t.Fatalf("a submit that consumed the whole budget must answer ErrReportNotReady, got %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if polls != 0 {
+		t.Errorf("polls = %d, want 0 — the submit spent the whole budget, so no poll may be issued; "+
+			"a non-zero count means the budget was computed AFTER the submit and bounds polling only", polls)
+	}
+}
