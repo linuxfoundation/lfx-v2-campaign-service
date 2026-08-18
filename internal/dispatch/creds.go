@@ -16,11 +16,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // campaignDateLayout is the wire format for the per-platform config start/end dates
@@ -145,10 +147,27 @@ type credsSource struct {
 	// never be served. See credCache for why the row itself is deliberately NOT cached, and
 	// what that buys across replicas.
 	cache *credCache
+	// forceSystemPaidAds makes the LF-owned system account (model.SystemProjectID) the
+	// PRIMARY credential source for every PAID-ADS provider, so resolve ignores the
+	// project's own connection entirely (see resolve / resolveForcedSystem). Read once
+	// from LFX_FORCE_SYSTEM_ADS_ACCOUNT at construction rather than per call — the value
+	// is process-wide config, not per-request. Default false. It never affects HubSpot:
+	// the forced path gates on Provider.IsPaidAds(), so email resolution is untouched
+	// even with the flag on.
+	forceSystemPaidAds bool
 }
 
 func newCredsSource(repo connReader, enc domain.Encryptor) *credsSource {
-	return &credsSource{repo: repo, enc: enc, cache: sharedCredCache(repo, enc)}
+	// Mirrors the dispatch-layer REDDIT_METRICS_ENABLED flag: a process-wide toggle read
+	// from the environment at construction, not threaded through the seven New*Dispatcher
+	// signatures (191 call sites) and Config for a value only credsSource consumes. "true"
+	// and nothing else turns it on, matching the existing flag's exact-match parse.
+	return &credsSource{
+		repo:               repo,
+		enc:                enc,
+		cache:              sharedCredCache(repo, enc),
+		forceSystemPaidAds: os.Getenv(constants.EnvForceSystemAdsAccount) == "true",
+	}
 }
 
 // resolved carries a connection's decrypted credential bytes plus the non-secret
@@ -209,6 +228,15 @@ func (r *resolved) systemScoped(err error) error {
 // orchestrator releases the dispatch claim) when neither scope yields a usable
 // connection — none of those states could have created an upstream campaign.
 func (s *credsSource) resolve(ctx context.Context, projectID string, provider model.Provider) (*resolved, error) {
+	// Forced-primary mode: every PAID-ADS campaign authenticates as the LF-owned system
+	// account, so the project's own connection is not consulted at all. Gated on
+	// IsPaidAds() so HubSpot/email is never redirected to the LF portal (the same trade
+	// systemConn refuses for the fallback). A request already in the system scope drops
+	// through to the normal path below: forcing it would re-issue the identical lookup,
+	// and there is no project connection to override.
+	if s.forceSystemPaidAds && provider.IsPaidAds() && projectID != model.SystemProjectID {
+		return s.resolveForcedSystem(ctx, provider)
+	}
 	conn, err := s.repo.Get(ctx, projectID, provider)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
@@ -239,6 +267,42 @@ func (s *credsSource) resolve(ctx context.Context, projectID string, provider mo
 		return nil, connLoadFailed(provider, err)
 	}
 	return s.resolveConn(ctx, projectID, conn, provider)
+}
+
+// resolveForcedSystem resolves credentials straight from the LF-owned system scope,
+// bypassing the project's own connection. It backs forced-primary mode
+// (LFX_FORCE_SYSTEM_ADS_ACCOUNT) and is reached ONLY for a paid-ads provider on a
+// non-system project — resolve's guard has already checked all three.
+//
+// Unlike the fallback (systemConn), it is UNCONDITIONAL: it does NOT consult Disconnected,
+// because forcing overrides a project's own choice by design — a project that explicitly
+// disconnected its account is still dispatched on the system account. It holds the system
+// row to the same standard as any connection (resolveConn validates + decrypts) and marks
+// the result fromSystem, so a defect an adapter's validator finds later is attributed to
+// the LF row, not to a project connection that does not exist here. Every failure is
+// systemOrigin-tagged and not-created, so a missing or unusable system row FAILS CLOSED:
+// the dispatch never falls through to the project connection the flag means to ignore.
+func (s *credsSource) resolveForcedSystem(ctx context.Context, provider model.Provider) (*resolved, error) {
+	conn, err := s.repo.Get(ctx, model.SystemProjectID, provider)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			// The flag is on but no system row is installed for this provider. Fail closed
+			// with a not-created, system-origin error rather than resolving nothing and
+			// letting a caller retry against a project scope forced mode exists to ignore.
+			return nil, systemOrigin(notCreated(fmt.Errorf(
+				"force-system-account is enabled but no system %s connection is installed: %w",
+				provider, domain.ErrNotFound)))
+		}
+		return nil, systemOrigin(connLoadFailed(provider, err))
+	}
+	res, rerr := s.resolveConn(ctx, model.SystemProjectID, conn, provider)
+	if res != nil {
+		res.fromSystem = true
+	}
+	// Mirror the fallback's tagging so a system row that is present but unusable carries
+	// ErrSystemConnectionNotUsable (systemScoped) under ErrSystemConnectionOrigin
+	// (systemOrigin). On success rerr is nil and both are no-ops.
+	return res, systemOrigin((&resolved{fromSystem: true}).systemScoped(rerr))
 }
 
 // resolveOwned is resolve WITHOUT the system fallback: it consults the project's own scope
