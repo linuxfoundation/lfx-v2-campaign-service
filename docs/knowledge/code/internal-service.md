@@ -82,6 +82,25 @@ and its `Shutdown` drains them (bounded) before the DB pool closes, and on
 startup jobs left non-terminal beyond a staleness cutoff are failed-forward (they
 cannot be safely resumed without provider idempotency keys).
 
+### Background sweepers
+
+The orchestrator runs TWO periodic sweepers, both tracked by `wg` and both owned by
+`sweeperCtx` — which `Shutdown` cancels FIRST, before the dispatch drain, so a sweep
+already blocked in the database is interrupted promptly and its shutdown never eats
+into the drain budget. Both run on every replica with no leader election.
+
+- `StartRecoverySweeper` (every 5m) fails forward jobs stuck past `staleJobCutoff`,
+  complementing the one-time startup scan.
+- `StartJobRetentionSweeper` (hourly, LFXV2-3222) prunes TERMINAL `campaign_jobs`
+  rows past the retention window via `JobRepo.PruneTerminalJobs`, bounding a table
+  that is otherwise append-only. The window comes from `CAMPAIGN_JOB_RETENTION` via
+  `SetJobRetention`, which IGNORES a non-positive value: zero is what an unset or
+  unparseable variable produces, and it must mean "use the long repository default",
+  never "retain nothing". A prune error is logged and dropped — retention failing
+  costs disk, never correctness — and the goroutine keeps running rather than exiting
+  on the first transient error. See the postgres concept for why only terminal
+  statuses are eligible and why they are an allow-list.
+
 ## Campaign status toggle
 
 `BriefService.ToggleCampaignStatus` (backing `PATCH .../campaigns/{id}/status`

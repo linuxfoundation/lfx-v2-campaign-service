@@ -26,6 +26,12 @@ type fakeJobRepo struct {
 	jobs           map[string]*model.CampaignJob
 	counter        int
 	failStuckCalls int
+	// pruneCalls counts PruneTerminalJobs calls, and pruneOlderThan/pruneLimit record the
+	// arguments of the LAST one, so a test can assert the sweeper passes the configured
+	// window through rather than silently substituting its own.
+	pruneCalls     int
+	pruneOlderThan time.Duration
+	pruneLimit     int
 }
 
 func newFakeJobRepo() *fakeJobRepo { return &fakeJobRepo{jobs: map[string]*model.CampaignJob{}} }
@@ -93,6 +99,57 @@ func (r *fakeJobRepo) FailStuckJobs(_ context.Context, jobErr string) (int64, er
 			j.Error = jobErr
 			n++
 		}
+	}
+	return n, nil
+}
+
+func (r *fakeJobRepo) pruneCallCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.pruneCalls
+}
+
+func (r *fakeJobRepo) lastPruneArgs() (time.Duration, int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.pruneOlderThan, r.pruneLimit
+}
+
+// PruneTerminalJobs mirrors the real repo's CONTRACT, not just its signature: it deletes only
+// jobs whose status is terminal and whose UpdatedAt is older than the window, and it honours
+// the batch bound. A stub that deleted everything (or nothing) would let a broken sweeper pass
+// — the point of these tests is that the wrong rows are not removed.
+func (r *fakeJobRepo) PruneTerminalJobs(_ context.Context, olderThan time.Duration, limit int) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pruneCalls++
+	r.pruneOlderThan = olderThan
+	r.pruneLimit = limit
+	if olderThan <= 0 {
+		olderThan = 180 * 24 * time.Hour
+	}
+	if limit <= 0 {
+		limit = 1000
+	}
+	cutoff := time.Now().Add(-olderThan)
+	// Delete in a deterministic order so the batch bound is testable: map iteration order is
+	// randomised, so an unordered stub would drop an arbitrary subset under a LIMIT.
+	ids := make([]string, 0, len(r.jobs))
+	for id := range r.jobs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var n int64
+	for _, id := range ids {
+		if n >= int64(limit) {
+			break
+		}
+		j := r.jobs[id]
+		if !j.Status.Terminal() || !j.UpdatedAt.Before(cutoff) {
+			continue
+		}
+		delete(r.jobs, id)
+		n++
 	}
 	return n, nil
 }

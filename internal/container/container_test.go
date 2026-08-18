@@ -160,6 +160,9 @@ func (r *stubJobRepo) UpdateJobStatus(context.Context, string, model.JobStatus, 
 	return nil
 }
 func (r *stubJobRepo) FailStuckJobs(context.Context, string) (int64, error) { return 0, nil }
+func (r *stubJobRepo) PruneTerminalJobs(context.Context, time.Duration, int) (int64, error) {
+	return 0, nil
+}
 
 // stubCampaignRepo is a minimal in-memory CampaignRepository for the Close test.
 type stubCampaignRepo struct{}

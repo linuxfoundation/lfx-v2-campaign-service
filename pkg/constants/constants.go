@@ -38,6 +38,16 @@ const (
 	// to encrypt connection credentials. Sourced from a Kubernetes secret.
 	EnvCredentialEncryptionKey = "CREDENTIAL_ENCRYPTION_KEY"
 
+	// EnvCampaignJobRetention is how long a TERMINAL campaign job (succeeded, partial or
+	// failed) is kept before the retention sweeper deletes it — a Go duration string such
+	// as "4320h". Optional: unset uses postgres.DefaultJobRetention (180 days).
+	//
+	// These rows are the audit trail of real ad spend, so both failure modes fall back to
+	// the default rather than to a shorter window: an unparseable value and a non-positive
+	// one both leave the default in place. Shortening retention must be an explicit,
+	// well-formed operator choice, never the accidental result of a typo.
+	EnvCampaignJobRetention = "CAMPAIGN_JOB_RETENTION"
+
 	// EnvEventURLNAT64Prefixes is a comma-separated list of the deployment's
 	// NETWORK-SPECIFIC RFC 6052 NAT64 translation prefixes (e.g. "2001:db8:64::/96").
 	//
