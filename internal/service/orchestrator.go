@@ -564,10 +564,20 @@ func (o *Orchestrator) SetJobRetention(d time.Duration) {
 // pruning at once is harmless: the DELETE is bounded and idempotent, so the second simply finds
 // fewer rows.
 func (o *Orchestrator) StartJobRetentionSweeper() {
+	o.StartJobRetentionSweeperWithInterval(jobRetentionSweepInterval)
+}
+
+// StartJobRetentionSweeperWithInterval is StartJobRetentionSweeper with the tick injected.
+//
+// It exists so a test can drive the sweeper LOOP rather than calling PruneTerminalJobs
+// directly: a mis-wired ticker or a select arm returning on the wrong channel would pass
+// every direct-call test while pruning nothing in production. Callers outside tests should
+// use StartJobRetentionSweeper so the interval stays a single constant.
+func (o *Orchestrator) StartJobRetentionSweeperWithInterval(interval time.Duration) {
 	o.wg.Add(1)
 	go func() {
 		defer o.wg.Done()
-		ticker := time.NewTicker(jobRetentionSweepInterval)
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {

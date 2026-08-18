@@ -157,3 +157,38 @@ func TestRetentionSweeperSurvivesARepositoryError(t *testing.T) {
 		t.Fatal("Shutdown did not return after a prune error")
 	}
 }
+
+// TestRetentionSweeperPrunesOncePerTick drives StartJobRetentionSweeper itself rather than
+// calling PruneTerminalJobs directly, which is what every other test in this file does.
+//
+// That distinction is the point: a sweeper that never reaches its prune call — a mis-wired
+// ticker, a select arm that returns on the wrong channel, a goroutine that exits before its
+// first tick — passes every direct-call test in this file while pruning nothing in
+// production. The retention feature would appear tested and be entirely inert.
+//
+// It also closes the loop on the call COUNT. Asserting only the arguments (as the sibling
+// test does) cannot tell one prune from none.
+func TestRetentionSweeperPrunesOncePerTick(t *testing.T) {
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(&fakeCampaignRepo{}, jobs, nil)
+	orch.SetJobRetention(96 * time.Hour)
+
+	// A tick short enough to observe, restored so the production interval is not weakened by
+	// a test. The sweeper reads the package-level constant on every loop.
+	orch.StartJobRetentionSweeperWithInterval(5 * time.Millisecond)
+	t.Cleanup(func() { _ = orch.Shutdown(context.Background(), time.Second) })
+
+	deadline := time.Now().Add(2 * time.Second)
+	for jobs.pruneCallCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	if got := jobs.pruneCallCount(); got == 0 {
+		t.Fatal("the sweeper never called PruneTerminalJobs: every other test in this file " +
+			"calls the repository directly, so a sweeper that never reaches its prune would " +
+			"pass all of them and prune nothing in production")
+	}
+	if gotWindow, _ := jobs.lastPruneArgs(); gotWindow != 96*time.Hour {
+		t.Errorf("sweeper prune window = %s, want 96h", gotWindow)
+	}
+}
