@@ -201,8 +201,18 @@ func TestCreateCampaign_AttachesCampaignLevelGeoCriteria(t *testing.T) {
 		}
 	}
 
-	if len(res.GeoCriterionIDs) != 2 {
-		t.Errorf("GeoCriterionIDs = %v, want 2 ids", res.GeoCriterionIDs)
+	// Assert the VALUES, not just the count. A length check passes against ids that are
+	// wrong, duplicated, or lifted from another campaign — the stub names the criteria
+	// 222~900 and 222~901 at the campaign level. The ids stay COMPOSITE: a Google Ads criterion
+	// is identified only in combination with its parent, so the campaign half is load-bearing.
+	wantIDs := []string{"222~900", "222~901"}
+	if len(res.GeoCriterionIDs) != len(wantIDs) {
+		t.Fatalf("GeoCriterionIDs = %v, want %v", res.GeoCriterionIDs, wantIDs)
+	}
+	for i, want := range wantIDs {
+		if res.GeoCriterionIDs[i] != want {
+			t.Errorf("GeoCriterionIDs[%d] = %q, want %q", i, res.GeoCriterionIDs[i], want)
+		}
 	}
 }
 
@@ -340,8 +350,20 @@ func TestCreateDemandGenCampaign_AttachesAdGroupLevelGeoCriteria(t *testing.T) {
 		}
 	}
 
-	if len(res.GeoCriterionIDs) != 2 {
-		t.Errorf("GeoCriterionIDs = %v, want 2 ids", res.GeoCriterionIDs)
+	// Assert the VALUES, not just the count. A length check passes against ids that are
+	// wrong, duplicated, or lifted from another campaign — the stub names the criteria
+	// 333~900 and 333~901 at the ad-group level, and this path returns the criterion half ALONE.
+	// That differs from the campaign path deliberately: adGroupCriterionID splits the composite
+	// so it can verify the returned ad-group id is the one we asked for, rejecting a
+	// wrong-parent or cross-account response. Having split it, it keeps the criterion half.
+	wantIDs := []string{"900", "901"}
+	if len(res.GeoCriterionIDs) != len(wantIDs) {
+		t.Fatalf("GeoCriterionIDs = %v, want %v", res.GeoCriterionIDs, wantIDs)
+	}
+	for i, want := range wantIDs {
+		if res.GeoCriterionIDs[i] != want {
+			t.Errorf("GeoCriterionIDs[%d] = %q, want %q", i, res.GeoCriterionIDs[i], want)
+		}
 	}
 }
 
