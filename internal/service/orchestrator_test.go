@@ -1657,48 +1657,43 @@ func TestOrchestrator_PreCreateErrorWithPartialRetainsClaim(t *testing.T) {
 	}
 }
 
-// barrierDispatcher makes every concurrent dispatcher goroutine rendezvous BEFORE
-// returning, so all of them observe the same pre-claim state.
+// gatedDispatcher holds the claim WINNER inside Dispatch until the test releases it.
 //
-// A time.Sleep cannot establish this: the degenerate serial interleaving (one goroutine
-// finishing entirely before the next starts) satisfies a sleep and passes vacuously, which
-// means a broken guard would still go green. The barrier makes the contended ordering the
-// ONLY reachable one — every party must arrive before any may proceed — so a regression
-// fails deterministically rather than flakily.
-// Arrivals are counted under a mutex rather than tracked by a WaitGroup because the
-// number of parties that actually reach Dispatch is not known up front: only the claim
-// WINNER gets through, and the losers are skipped before the provider is called. A
-// WaitGroup sized to N would therefore never reach zero.
-type barrierDispatcher struct {
-	mu       sync.Mutex
-	arrived  int
-	want     int
-	release  chan struct{}
-	released bool
+// It is NOT an n-party rendezvous, and deliberately so: the single-flight claim means only
+// ONE caller ever reaches Dispatch for a given (brief, platform) — the losers are skipped
+// before the provider is called. A barrier sized to N could therefore never be satisfied by
+// arrivals, and a test that appeared to wait for N of them would in truth be waiting for
+// nothing. What this gate buys is real: it pins the winner INSIDE the provider call while
+// the losing goroutines run their claim attempts, so the losers observe a live 'pending'
+// row rather than a race that has already resolved. That is the ordering the skip path is
+// specified against.
+type gatedDispatcher struct {
+	// entered is closed by the winner on arrival, so the test can wait for the dispatch
+	// to be genuinely in flight rather than sleeping and hoping.
+	entered chan struct{}
+	// release gates the winner's return until the test opens it.
+	release chan struct{}
+
+	mu      sync.Mutex
+	arrived int
 }
 
-// arrive blocks the caller until `want` parties have arrived, then opens the gate for
-// all of them at once. openGate lets the test release a barrier that can no longer be
-// satisfied (because claim losers never call Dispatch) without leaking blocked goroutines.
-func (d *barrierDispatcher) openGate() {
+// arrivals reports how many callers reached Dispatch. The single-flight claim makes the
+// expected answer exactly 1, and the test asserts that rather than assuming it.
+func (d *gatedDispatcher) arrivals() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if !d.released {
-		d.released = true
-		close(d.release)
-	}
+	return d.arrived
 }
 
-func (d *barrierDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, p model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+func (d *gatedDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
 	d.mu.Lock()
 	d.arrived++
-	reached := d.arrived >= d.want
+	first := d.arrived == 1
 	d.mu.Unlock()
-	if reached {
-		d.openGate()
+	if first {
+		close(d.entered)
 	}
-	// Every party blocks here until the gate opens, so no goroutine can complete its
-	// dispatch before the others have started theirs.
 	<-d.release
 	return &model.Campaign{
 		Status:       "unconfirmed",
@@ -1707,17 +1702,23 @@ func (d *barrierDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, 
 	}, preCreateErr{}
 }
 
-// TestOrchestrator_ConcurrentPreCreatePartialsKeepOneClaim proves the single-flight claim
-// survives the contended case: N dispatches for the SAME (brief, platform) that all reach
-// the provider simultaneously and all come back with the contradictory pairing.
+// TestOrchestrator_ConcurrentPreCreatePartialsKeepOneClaim proves the retain guard holds on
+// the CONTENDED path: while one dispatch sits inside the provider call and will come back
+// with the contradictory pairing, N-1 concurrent dispatches for the same (brief, platform)
+// attempt the claim and must be SKIPPED — and none of them, nor the winner, may release the
+// row.
 //
-// Exactly one may win the claim; the losers must be skipped rather than re-dispatched, and
-// crucially NONE of them may release the winner's row. With the guard reverted, each loser
-// that takes the release path deletes the shared pending row and reopens the slot.
+// The losers are the point. They run their claim attempt against a live 'pending' row (the
+// gate holds the winner in Dispatch until they have), so this exercises the skip path that
+// the serial test cannot reach. With the guard reverted, the winner's release deletes the
+// shared row and reopens the slot for a duplicate PAID create.
+//
+// MUTATION CHECK (verified, compiling): reverting the guard to `if
+// dispatchErrIsPreCreate(derr) {` fails this test.
 func TestOrchestrator_ConcurrentPreCreatePartialsKeepOneClaim(t *testing.T) {
 	const parties = 4
 
-	d := &barrierDispatcher{want: parties, release: make(chan struct{})}
+	d := &gatedDispatcher{entered: make(chan struct{}), release: make(chan struct{})}
 
 	jobs := newFakeJobRepo()
 	camps := &fakeCampaignRepo{}
@@ -1729,28 +1730,103 @@ func TestOrchestrator_ConcurrentPreCreatePartialsKeepOneClaim(t *testing.T) {
 	ids := make([]string, 0, parties)
 	var mu sync.Mutex
 	var starters sync.WaitGroup
-	for range parties {
-		starters.Add(1)
-		go func() {
-			defer starters.Done()
-			id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
-			if err != nil {
-				return
-			}
-			mu.Lock()
-			ids = append(ids, id)
-			mu.Unlock()
-		}()
+	start := func() {
+		defer starters.Done()
+		id, err := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+		if err != nil {
+			return
+		}
+		mu.Lock()
+		ids = append(ids, id)
+		mu.Unlock()
 	}
-	// Every Start has returned, so no further party can arrive at the barrier. If the
-	// claim serialized the dispatches (the common case: one winner, N-1 skipped), the
-	// arrival count never reaches `want`, so open the gate explicitly to unblock the
-	// winner rather than deadlocking.
-	d.openGate()
+
+	// Launch the winner first and WAIT for it to be inside Dispatch. Without this the
+	// losers could all run before any claim exists, and the test would degenerate into
+	// the serial case that TestOrchestrator_PreCreateErrorWithPartialRetainsClaim
+	// already covers.
+	starters.Add(1)
+	go start()
+	select {
+	case <-d.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no dispatch reached the provider")
+	}
+
+	for range parties - 1 {
+		starters.Add(1)
+		go start()
+	}
 	starters.Wait()
 
+	// Start returning is NOT the loser finishing: dispatch runs asynchronously, so a
+	// loser's skip is recorded after its Start has already returned. Wait for every
+	// LOSER's job to finalize BEFORE releasing the winner — that is what guarantees each
+	// loser resolved its claim attempt against the still-held 'pending' row rather than
+	// against a slot the winner had already settled. (The winner cannot finalize yet; it
+	// is parked in Dispatch, so it is excluded here and waited for after the release.)
+	mu.Lock()
+	launched := append([]string(nil), ids...)
+	mu.Unlock()
+	if len(launched) != parties {
+		t.Fatalf("Start succeeded for %d of %d parties; the contended path needs all of them", len(launched), parties)
+	}
+	// Poll until exactly one job remains unfinalized. That one is the winner, parked in
+	// Dispatch behind the gate; every other job has recorded its skip. Polling rather
+	// than sampling once is what makes this settled instead of racing — a loser that has
+	// merely returned from Start has not yet written its result.
+	deadline := time.Now().Add(5 * time.Second)
+	var pending []string
+	for time.Now().Before(deadline) {
+		pending = pending[:0]
+		for _, id := range launched {
+			if j, _ := jobs.GetJob(context.Background(), "", id); len(j.Result) == 0 {
+				pending = append(pending, id)
+			}
+		}
+		if len(pending) == 1 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("jobs still running = %d, want exactly 1 (the claim winner held in Dispatch)", len(pending))
+	}
+
+	// Every claim attempt has now resolved against the held row, so let the winner finish.
+	close(d.release)
+
+	for _, id := range launched {
+		waitForFinalized(t, jobs, id)
+	}
+
+	if got := d.arrivals(); got != 1 {
+		t.Errorf("dispatches that reached the provider = %d, want 1: the single-flight claim "+
+			"must skip the losers rather than re-dispatching them", got)
+	}
+
+	// The losers must be recorded as SKIPPED, which is what makes this the contended
+	// path rather than a second serial run. The count is compared against a literal, not
+	// against `parties`, so shrinking `parties` cannot quietly turn this into the serial
+	// case that TestOrchestrator_PreCreateErrorWithPartialRetainsClaim already covers —
+	// it fails instead.
+	var skipped int
 	for _, id := range ids {
-		waitForTerminal(t, jobs, id)
+		j, _ := jobs.GetJob(context.Background(), "", id)
+		var results []platformResult
+		if err := json.Unmarshal(j.Result, &results); err != nil {
+			t.Fatalf("decode job result: %v", err)
+		}
+		for _, r := range results {
+			if r.Skipped {
+				skipped++
+			}
+		}
+	}
+	const wantSkipped = 3 // parties-1 losers, pinned as a literal on purpose (see above)
+	if skipped != wantSkipped {
+		t.Errorf("skipped platform results = %d, want %d (one per claim loser); "+
+			"without losers this test degenerates into the serial case", skipped, wantSkipped)
 	}
 
 	camps.mu.Lock()

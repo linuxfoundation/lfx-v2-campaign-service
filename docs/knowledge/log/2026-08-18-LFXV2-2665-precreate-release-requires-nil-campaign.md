@@ -46,11 +46,19 @@ passed while proving nothing, because every fixture matched the predicate's own 
 test could only confirm the belief under test. A guard whose safety argument is a predicate is
 pinned only by a case the predicate must exclude.
 
-`TestOrchestrator_ConcurrentPreCreatePartialsKeepOneClaim` covers the contended path with an
-n-party rendezvous barrier rather than a sleep: a sleep is satisfied by the degenerate serial
-interleaving, where one goroutine finishes before the next starts, so a broken guard would pass
-vacuously. Arrivals are counted under a mutex rather than a `WaitGroup` because only the claim
-winner reaches `Dispatch` — a `WaitGroup` sized to N would never reach zero.
+`TestOrchestrator_ConcurrentPreCreatePartialsKeepOneClaim` covers the contended path. It does
+NOT use an n-party rendezvous, and cannot: the single-flight claim means exactly ONE caller ever
+reaches `Dispatch` for a `(brief, platform)` pair, so a barrier waiting for N arrivals would
+wait for arrivals that never come. Instead the winner is held INSIDE the provider call by a
+gate while the N-1 losers run their claim attempts, so each loser resolves against a live
+`pending` row — the ordering the skip path is specified against.
+
+Settling that state needs a poll, not a snapshot: `Start` returns before the asynchronous
+dispatch has recorded its outcome, so the test waits until exactly one job remains unfinalized
+(the gated winner) before counting. The loser count is asserted against a LITERAL 3 rather than
+`parties-1`, so shrinking `parties` fails the test instead of quietly degenerating it into the
+serial case — an earlier draft asserted only the surviving claim and still passed at
+`parties = 1`, which is to say it was not testing concurrency at all.
 
 Both mutations were verified with COMPILING changes: reverting to `if
 dispatchErrIsPreCreate(derr) {` fails both tests, and narrowing to
