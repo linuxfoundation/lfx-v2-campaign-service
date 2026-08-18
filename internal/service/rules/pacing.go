@@ -26,18 +26,31 @@ import (
 // set Meta already used and the one the other three should have. Deliberately NOT LinkedIn's
 // hardcoded 40/90/105: those were never written down anywhere shared, and treating the outlier
 // as the standard would silently move every other platform's alerting.
+// Two boundaries, not three. The shared constants carry a `normal` value (90) as well, but it
+// names the top of a band that labelFor derives from Constrained — the healthy band runs up TO
+// and including Constrained, so a third field would be a knob a caller could turn with no
+// effect, which is worse than not offering it.
 type Thresholds struct {
 	// Underspending is the floor: below this share of expected spend, the campaign is not
 	// delivering the budget it was given.
 	Underspending float64
-	// Normal is the top of the healthy band.
-	Normal float64
-	// Constrained is the point above which the campaign is outrunning its plan.
+	// Constrained is the top of the healthy band, inclusive: a campaign exactly on plan sits
+	// here. Above it the campaign is outrunning its plan.
 	Constrained float64
+	// Overspending is the point above which overspend stops being a warning. ABSOLUTE, matching
+	// the shared constants' own `overspending: 130` — deriving it as a multiple of Constrained
+	// silently moves it whenever Constrained is overridden, which is the one thing a
+	// per-platform override must not do to a boundary nobody asked to change.
+	Overspending float64
 }
 
-// DefaultThresholds is the shared set. Per-platform overrides go through PlatformThresholds.
-var DefaultThresholds = Thresholds{Underspending: 50, Normal: 90, Constrained: 100}
+// DefaultThresholds is the shared set.
+//
+// One set for every platform. Per-platform overrides are not implemented: the four UI
+// implementations differed with no stated reason, which is drift rather than a platform
+// characteristic. If a platform genuinely needs different bands, add the override here WITH the
+// reason — do not reintroduce a silent divergence.
+var DefaultThresholds = Thresholds{Underspending: 50, Constrained: 100, Overspending: 130}
 
 // PacingLabel is the band a campaign's spend falls into.
 type PacingLabel string
@@ -105,7 +118,14 @@ const millisPerDay = float64(24 * time.Hour / time.Millisecond)
 // no FX conversion and platform cost is reported in each platform's native unit, so a pacing
 // figure is only meaningful per campaign; never total or average Pct across platforms.
 func ComputePacing(spend float64, spendDays float64, budget float64, kind BudgetKind, flight Flight, now time.Time, t Thresholds) Pacing {
-	if budget <= 0 || math.IsNaN(spend) || math.IsInf(spend, 0) {
+	// budget gets the SAME finiteness test as spend, not just `<= 0`. NaN and +Inf both fail a
+	// `<= 0` comparison, so an unreadable budget would sail through: NaN renders as the literal
+	// "NaN%" in an operator-facing issue, and +Inf is worse because it is silent — expected
+	// spend becomes infinite, Pct becomes 0, and the campaign raises a HIGH-priority
+	// underspending item reading "0% of expected spend" that is indistinguishable from a real
+	// one. Computable exists to stop exactly this.
+	if budget <= 0 || math.IsNaN(budget) || math.IsInf(budget, 0) ||
+		math.IsNaN(spend) || math.IsInf(spend, 0) {
 		return Pacing{Label: PacingUnknown}
 	}
 	// spendDays is how many days of spend the `spend` figure actually covers. It exists
@@ -126,6 +146,12 @@ func ComputePacing(spend float64, spendDays float64, budget float64, kind Budget
 	if flight.End != nil {
 		end = *flight.End
 	}
+	// A flight that has not begun has no plan-to-date to compare against. Without this the
+	// elapsed floor of one day invents a day of expected spend, and a campaign scheduled to
+	// start next week raises a HIGH-priority underspending item for not having spent yet.
+	if now.Before(start) {
+		return Pacing{Label: PacingUnknown}
+	}
 	if !end.After(start) {
 		// A zero or inverted flight has no days to prorate across. Reporting 0% here would
 		// claim the campaign underspent; it means the schedule is unusable.
@@ -137,29 +163,35 @@ func ComputePacing(spend float64, spendDays float64, budget float64, kind Budget
 	// over a 7-day window must be compared against 7 days of plan; comparing it against 20
 	// days of plan reports a healthy campaign as spending a third of what it should.
 	elapsed := daysBetween(start, minTime(now, end))
+	// Always positive, so it needs no guard: daysBetween floors at 1 and spendDays > 0 is
+	// enforced above. The campaign-has-not-started case that would otherwise land here is
+	// caught earlier by the now.Before(start) check, which returns Unknown rather than letting
+	// the one-day floor invent a day of expected spend.
 	measured := math.Min(spendDays, elapsed)
-	if measured <= 0 {
-		// The window covers no part of the flight — a campaign that has not started, or one
-		// whose window predates it. There is nothing to compare, and 0% would read as a
-		// campaign that failed to spend.
-		return Pacing{Label: PacingUnknown}
-	}
 	var expected float64
 	switch kind {
 	case BudgetDaily:
 		expected = budget * measured
 	default:
+		// Also always positive — same daysBetween floor — and end.After(start) is established
+		// above, so this cannot divide by zero.
 		total := daysBetween(start, end)
-		if total <= 0 {
-			return Pacing{Label: PacingUnknown}
-		}
 		expected = (budget / total) * measured
 	}
-	if expected <= 0 {
-		return Pacing{Label: PacingUnknown}
-	}
+	// No `expected <= 0` guard: a positive budget times a positive measured period cannot reach
+	// zero by any path a `<=` test would catch. It CAN underflow to a denormal that stays
+	// strictly positive, which such a guard would miss anyway — the non-finite check on the
+	// result below is what actually covers that.
 
 	pct := (spend / expected) * 100
+	// Backstop. The input guards above cover unreadable arguments, but arithmetic can still
+	// produce a non-finite result from finite ones: a denormal `expected` (a tiny budget spread
+	// across a long flight) underflows toward zero while staying strictly positive, so the
+	// `expected <= 0` test passes and the division overflows to +Inf. A non-finite percentage is
+	// not a measurement whatever produced it.
+	if math.IsNaN(pct) || math.IsInf(pct, 0) {
+		return Pacing{Label: PacingUnknown}
+	}
 	return Pacing{Pct: pct, Label: labelFor(pct, t), Computable: true}
 }
 
@@ -179,17 +211,12 @@ func labelFor(pct float64, t Thresholds) PacingLabel {
 		return PacingUnderspending
 	case pct <= t.Constrained:
 		return PacingNormal
-	case pct <= t.Constrained*overspendFactor:
+	case pct <= t.Overspending:
 		return PacingConstrained
 	default:
 		return PacingOverspending
 	}
 }
-
-// overspendFactor is how far past plan a campaign runs before it is overspending rather than
-// merely constrained. 1.3 reproduces the shared constants' 130 against a 100 cap, keeping the
-// four bands the UI already renders.
-const overspendFactor = 1.3
 
 // daysBetween counts partial days as whole ones, matching the UI's Math.ceil, and never returns
 // less than one: a campaign in its first hours has one day of expectation, not zero, and a zero

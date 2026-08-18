@@ -74,16 +74,22 @@ func TestComputePacing_Labels(t *testing.T) {
 // backwards makes a daily-budget campaign look wildly over or under depending on flight length.
 func TestComputePacing_DailyBudgetMultipliesElapsedDays(t *testing.T) {
 	flight := Flight{Start: day(-4), End: day(26)} // 4 days elapsed of a 30-day flight
+	// spendDays is 4, matching the elapsed days, so this exercises the spendDays == elapsed
+	// case directly rather than relying on the min() cap to rescue a larger value. The
+	// spendDays < elapsed case has its own test below.
+	//
 	// $100/day for 4 days = $400 expected. Spending exactly that is on plan.
-	got := ComputePacing(400, 10, 100, BudgetDaily, flight, testNow, DefaultThresholds)
-	if !got.Computable || math.Abs(got.Pct-100) > 5 {
+	got := ComputePacing(400, 4, 100, BudgetDaily, flight, testNow, DefaultThresholds)
+	if !got.Computable || math.Abs(got.Pct-100) > 1 {
 		t.Errorf("daily pacing = %.1f%% (computable=%v), want ~100%%", got.Pct, got.Computable)
 	}
-	// Under a LIFETIME reading the same numbers would be wildly off, which is what makes the
-	// distinction load-bearing rather than cosmetic.
-	asLifetime := ComputePacing(400, 10, 100, BudgetLifetime, flight, testNow, DefaultThresholds)
-	if math.Abs(asLifetime.Pct-got.Pct) < 100 {
-		t.Error("daily and lifetime pacing produced similar figures; the branch is not doing anything")
+	// The same numbers read as a LIFETIME budget: $100 spread over 30 days is $3.33/day, so 4
+	// days expects $13.33 and $400 spent is ~3000%. Asserted as a VALUE, not as "far from the
+	// daily figure" — a loose separation check still passes under substantial corruption of
+	// either arm.
+	asLifetime := ComputePacing(400, 4, 100, BudgetLifetime, flight, testNow, DefaultThresholds)
+	if math.Abs(asLifetime.Pct-3000) > 10 {
+		t.Errorf("lifetime pacing = %.1f%%, want ~3000%% ($100 over 30 days = $13.33 expected by day 4)", asLifetime.Pct)
 	}
 }
 
@@ -210,5 +216,66 @@ func TestComputePacing_DailyBudgetUsesTheMeasuredWindow(t *testing.T) {
 	}
 	if got.Label != PacingNormal {
 		t.Errorf("label = %q, want normal", got.Label)
+	}
+}
+
+// An unreadable budget must not become a measurement. NaN and +Inf both fail a `<= 0` test, so
+// without an explicit finiteness check they reach the arithmetic: NaN renders as "NaN%" in an
+// operator-facing issue, and +Inf is worse because it is SILENT — expected spend goes infinite,
+// Pct lands on 0, and the campaign raises a HIGH-priority underspending item that looks exactly
+// like a real one.
+func TestComputePacing_NonFiniteBudgetIsNotAMeasurement(t *testing.T) {
+	flight := Flight{Start: day(-10), End: day(10)}
+	for name, budget := range map[string]float64{
+		"nan":       math.NaN(),
+		"+infinite": math.Inf(1),
+		"-infinite": math.Inf(-1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, kind := range []BudgetKind{BudgetLifetime, BudgetDaily} {
+				got := ComputePacing(500, 10, budget, kind, flight, testNow, DefaultThresholds)
+				if got.Computable {
+					t.Errorf("%s budget (%s) produced a computable %.1f%% labelled %q", name, kind, got.Pct, got.Label)
+				}
+			}
+		})
+	}
+}
+
+// A campaign that has not started cannot be behind on spend. The elapsed floor of one day would
+// otherwise invent a day of expected spend and flag a campaign scheduled to begin next week.
+func TestComputePacing_FutureDatedFlightIsNotUnderspending(t *testing.T) {
+	flight := Flight{Start: day(5), End: day(30)}
+	got := ComputePacing(0, 7, 1000, BudgetLifetime, flight, testNow, DefaultThresholds)
+	if got.Computable {
+		t.Errorf("a flight starting in 5 days produced a computable %.1f%% labelled %q", got.Pct, got.Label)
+	}
+	if got.Label == PacingUnderspending {
+		t.Error("a campaign that has not started was labelled underspending")
+	}
+}
+
+// Finite inputs can still produce a non-finite result: a denormal expected-spend underflows
+// toward zero while staying strictly positive, so the `expected <= 0` test passes and the
+// division overflows.
+func TestComputePacing_UnderflowDoesNotEscapeAsAMeasurement(t *testing.T) {
+	start := testNow.AddDate(-273, 0, 0)
+	end := testNow.AddDate(0, 0, 10)
+	got := ComputePacing(500, 10, 1e-300, BudgetLifetime, Flight{Start: &start, End: &end}, testNow, DefaultThresholds)
+	if got.Computable {
+		t.Errorf("underflowed expected-spend produced a computable %v labelled %q", got.Pct, got.Label)
+	}
+}
+
+// The overspend edge is absolute, not a multiple of Constrained. Deriving it would move a
+// boundary nobody asked to change whenever a platform overrides the constrained cap.
+func TestThresholds_OverspendEdgeIsIndependentOfConstrained(t *testing.T) {
+	flight := Flight{Start: day(-10), End: day(10)} // expected-by-now = half the budget
+	// Constrained raised to 120, overspending left at 130. A campaign at 135% must still be
+	// overspending; a derived edge would have moved it to 156 and labelled this constrained.
+	custom := Thresholds{Underspending: 50, Constrained: 120, Overspending: 130}
+	got := ComputePacing(675, 10, 1000, BudgetLifetime, flight, testNow, custom) // 135%
+	if got.Label != PacingOverspending {
+		t.Errorf("135%% against an absolute 130 edge = %q, want overspending (the edge tracked Constrained)", got.Label)
 	}
 }
