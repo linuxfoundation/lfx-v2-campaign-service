@@ -266,6 +266,43 @@ func (b *boundedNumberIDs) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// boundedKeywordIDs is boundedNumberIDs with a bound sized for KEYWORDS rather than campaigns.
+//
+// The distinction is load-bearing. boundedNumberIDs retains maxDecodedErrorItems (16), which is
+// an ERROR-ARRAY bound: a create sends one campaign, so one id is all that can matter, and 16 is
+// generous. AddKeywords sends up to maxKeywords (60), and every id is meaningful — it is what
+// the status cascade enables on ACTIVATE. Decoding a 60-keyword response through the 16-item
+// bound silently retained the first 16, so activation enabled 16 keywords and left the other 44
+// Paused on a campaign the operator believes is fully live.
+//
+// The streaming shape is kept for the same reason the original has it: a malformed null-padded
+// body must not materialise in full. Only the retention limit differs.
+type boundedKeywordIDs []*json.Number
+
+func (b *boundedKeywordIDs) UnmarshalJSON(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if tok == nil { // JSON null
+		return nil
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '[' {
+		return fmt.Errorf("expected a JSON array for keyword ids")
+	}
+	for dec.More() {
+		var n *json.Number
+		if err := dec.Decode(&n); err != nil {
+			return err
+		}
+		if len(*b) < maxKeywords {
+			*b = append(*b, n)
+		}
+	}
+	return nil
+}
+
 // queryCampaignsRequest is the POST /Campaigns/QueryByAccountId body used by
 // findCampaignByName. The v13 GetCampaignsByAccountId REST operation is a POST with a
 // JSON body (NOT a GET) carrying the required AccountId and the CampaignType to scope

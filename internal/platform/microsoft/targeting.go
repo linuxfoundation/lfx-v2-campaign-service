@@ -154,7 +154,7 @@ type createKeywordsRequest struct {
 // Both arrays are BOUNDED so a malformed 8-MiB body cannot amplify into a huge allocation
 // (see boundedNumberIDs / boundedErrorItems).
 type createKeywordsResponse struct {
-	KeywordIds    boundedNumberIDs  `json:"KeywordIds"`
+	KeywordIds    boundedKeywordIDs `json:"KeywordIds"`
 	PartialErrors boundedErrorItems `json:"PartialErrors"`
 }
 
@@ -317,16 +317,17 @@ func (c *Client) createKeywords(ctx context.Context, adGroupID string, keywords 
 	// be papered over: it means the response does not describe what was sent, so which keywords
 	// exist upstream is unknown → UNCONFIRMED.
 	//
-	// NOTE the bound. boundedNumberIDs retains only the first maxDecodedErrorItems entries by
-	// design (the OOM guard for a malformed body), so for a request larger than that bound a
-	// perfectly good response is EXPECTED to decode short and strict equality cannot be
-	// asserted. The comparison is therefore against the retained count, and only the decoded
-	// ids are returned — which is why the Steps text reports how many ids were PARSED rather
-	// than claiming every keyword sent was created.
+	// FULL cardinality is required: one id per keyword sent, no lowering.
+	//
+	// This previously bounded `want` at maxDecodedErrorItems (16) because KeywordIds decoded
+	// through boundedNumberIDs, whose retention limit is sized for a campaign create (one id) and
+	// for error arrays. A 60-keyword response therefore decoded short BY DESIGN, the check
+	// lowered its own expectation to match, and only 16 ids were persisted — so ACTIVATE enabled
+	// 16 keywords and left the other 44 Paused on a campaign the operator believes is fully live.
+	//
+	// KeywordIds now decodes through boundedKeywordIDs, bounded by maxKeywords, so a valid
+	// response is never short and a short one is a real defect worth refusing.
 	want := len(msKeywords)
-	if want > maxDecodedErrorItems {
-		want = maxDecodedErrorItems
-	}
 	if len(resp.KeywordIds) < want {
 		return nil, fmt.Errorf("microsoft-ads keyword targeting returned %d ids for %d keywords (ad group %s): %w",
 			len(resp.KeywordIds), len(msKeywords), adGroupID, errNoID)

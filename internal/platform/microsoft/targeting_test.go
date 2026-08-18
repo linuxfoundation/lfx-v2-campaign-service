@@ -6,8 +6,10 @@ package microsoft
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -556,5 +558,61 @@ func TestUpdateCampaignAndChildrenStatus_NoKeywordsSkipsTheKeywordPut(t *testing
 	}
 	if keywordCalled {
 		t.Error("with no keyword ids, no /Keywords PUT should be sent")
+	}
+}
+
+// Every keyword id must survive the decode, not just the first sixteen.
+//
+// KeywordIds originally decoded through boundedNumberIDs, whose retention limit
+// (maxDecodedErrorItems = 16) is sized for a campaign create — one id — and for error arrays.
+// AddKeywords sends up to maxKeywords (60), and every id is what the status cascade enables on
+// ACTIVATE. A 60-keyword response therefore decoded short BY DESIGN, the cardinality check
+// lowered its own expectation to match, and 44 keywords stayed Paused on a campaign the operator
+// believes is fully live.
+//
+// 20 is deliberately just past the old bound: enough to fail against it, small enough to read.
+func TestCreateCampaign_RetainsEveryKeywordIDPastTheErrorArrayBound(t *testing.T) {
+	const n = 20
+	in := validInput()
+	in.Keywords = make([]Keyword, 0, n)
+	ids := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		in.Keywords = append(in.Keywords, Keyword{Text: fmt.Sprintf("keyword %02d", i), MatchType: MatchTypeExact})
+		ids = append(ids, strconv.Itoa(700+i))
+	}
+
+	api := &campaignsAPI{keywordPostBody: `{"KeywordIds":[` + strings.Join(ids, ",") + `],"PartialErrors":[]}`}
+	c := newAPIClient(t, api.handler(t))
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if len(res.KeywordIDs) != n {
+		t.Fatalf("KeywordIDs kept %d of %d — ids past the decode bound were dropped, so ACTIVATE would enable only those kept", len(res.KeywordIDs), n)
+	}
+	// Assert the VALUES, not just the count: a bound that silently returned the right number of
+	// wrong ids would pass a length check.
+	for i, want := range ids {
+		if res.KeywordIDs[i] != want {
+			t.Errorf("KeywordIDs[%d] = %q, want %q", i, res.KeywordIDs[i], want)
+		}
+	}
+}
+
+// A response genuinely SHORTER than the request is now a real defect rather than an expected
+// consequence of the decode bound, so it must be refused rather than silently accepted.
+func TestCreateCampaign_ShortKeywordResponseIsRefused(t *testing.T) {
+	in := validInput()
+	in.Keywords = []Keyword{
+		{Text: "one", MatchType: MatchTypeExact},
+		{Text: "two", MatchType: MatchTypeExact},
+		{Text: "three", MatchType: MatchTypeExact},
+	}
+	api := &campaignsAPI{keywordPostBody: `{"KeywordIds":[701,702],"PartialErrors":[]}`}
+	c := newAPIClient(t, api.handler(t))
+
+	if _, err := c.CreateCampaign(context.Background(), in); err == nil {
+		t.Fatal("a response carrying 2 ids for 3 keywords was accepted; the missing keyword would stay Paused")
 	}
 }
