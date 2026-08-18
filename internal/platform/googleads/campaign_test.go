@@ -1047,3 +1047,23 @@ func TestValidateResourceKind_WrongCustomerRejected(t *testing.T) {
 		})
 	}
 }
+
+// The Search half of the PRESENCE assertion — see the Demand Gen sibling in demandgen_test.go
+// for why both channels need their own case. Location criteria alone do not restrict delivery:
+// Google defaults positiveGeoTargetType to PRESENCE_OR_INTEREST, so a "US-targeted" campaign
+// still serves to anyone worldwide showing interest in the US.
+func TestCreateCampaign_RestrictsGeoToPresence(t *testing.T) {
+	var body string
+	c := newCampaignClient(t, okBudget, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+		okCampaign(w, r)
+	})
+
+	if _, err := c.CreateCampaign(context.Background(), sampleInput()); err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if !strings.Contains(body, `"positiveGeoTargetType":"PRESENCE"`) {
+		t.Errorf("Search campaign create does not set PRESENCE — its location criteria would be read as PRESENCE_OR_INTEREST.\nbody=%s", body)
+	}
+}

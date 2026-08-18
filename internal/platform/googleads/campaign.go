@@ -260,14 +260,34 @@ type campaignBudgetCreate struct {
 // because true would require targetGoogleSearch AND opt this into Search Partners,
 // which a generic broker shouldn't assume.
 type campaignCreate struct {
-	Name                           string          `json:"name"`
-	Status                         string          `json:"status"`
-	AdvertisingChannelType         string          `json:"advertisingChannelType"`
-	CampaignBudget                 string          `json:"campaignBudget"`
-	ContainsEuPoliticalAdvertising string          `json:"containsEuPoliticalAdvertising"`
-	NetworkSettings                networkSettings `json:"networkSettings"`
-	ManualCPC                      json.RawMessage `json:"manualCpc"`
+	Name                           string               `json:"name"`
+	Status                         string               `json:"status"`
+	AdvertisingChannelType         string               `json:"advertisingChannelType"`
+	CampaignBudget                 string               `json:"campaignBudget"`
+	ContainsEuPoliticalAdvertising string               `json:"containsEuPoliticalAdvertising"`
+	NetworkSettings                networkSettings      `json:"networkSettings"`
+	GeoTargetTypeSetting           geoTargetTypeSetting `json:"geoTargetTypeSetting"`
+	ManualCPC                      json.RawMessage      `json:"manualCpc"`
 }
+
+// geoTargetTypeSetting decides what a location criterion actually MEANS, and Google's default
+// is the permissive reading.
+//
+// With no setting, positiveGeoTargetType defaults to PRESENCE_OR_INTEREST: a user anywhere in
+// the world who merely shows INTEREST in the targeted country stays eligible. A campaign
+// "targeted at the US" therefore still serves globally, which is exactly the out-of-region spend
+// LFXV2-3283 exists to prevent — the criterion would be attached and the budget would still
+// leak.
+//
+// PRESENCE restricts delivery to people actually in the targeted locations. This is the same
+// class of trap as targetingSetting above: Google's default is the looser one, so silence is a
+// choice rather than an absence of one.
+type geoTargetTypeSetting struct {
+	PositiveGeoTargetType string `json:"positiveGeoTargetType"`
+}
+
+// geoTargetPresence restricts delivery to users physically present in the targeted locations.
+const geoTargetPresence = "PRESENCE"
 
 // targetingSetting / targetRestriction declare, per targeting dimension, whether
 // a criterion of that dimension RESTRICTS delivery or only observes it (bids/
@@ -756,7 +776,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		CampaignBudget:                 budgetResource,
 		ContainsEuPoliticalAdvertising: euPoliticalAdvertisingNo,
 		NetworkSettings:                networkSettings{TargetGoogleSearch: true},
-		ManualCPC:                      json.RawMessage(`{}`),
+		// Always set, not only when geo targets are supplied: an untargeted campaign is
+		// unaffected (there are no location criteria for it to qualify), and a campaign that
+		// gains criteria later — by adoption, or by a human adding them in the Google Ads UI —
+		// then restricts by presence rather than silently reverting to the permissive default.
+		GeoTargetTypeSetting: geoTargetTypeSetting{PositiveGeoTargetType: geoTargetPresence},
+		ManualCPC:            json.RawMessage(`{}`),
 	}
 	campaignReq := mutateRequest{Operations: []mutateOperation{{Create: campaignCreateVal}}}
 	campaignPath := c.customerPath("campaigns:mutate")

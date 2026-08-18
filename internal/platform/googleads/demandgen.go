@@ -29,6 +29,15 @@ type demandGenCampaignCreate struct {
 	CampaignBudget                 string         `json:"campaignBudget"`
 	ContainsEuPoliticalAdvertising string         `json:"containsEuPoliticalAdvertising"`
 	TargetSpend                    map[string]any `json:"targetSpend"`
+	// Carried even though this channel attaches its geo criteria at the AD GROUP level:
+	// geoTargetTypeSetting is a CAMPAIGN-level field in the Google Ads API and governs how
+	// location criteria are interpreted for the whole campaign, ad-group criteria included.
+	// Without it Google defaults to PRESENCE_OR_INTEREST and a "US" ad group still serves to
+	// anyone worldwide showing interest in the US — see the type's doc in campaign.go.
+	//
+	// This is one of the few fields the two channel payloads DO share; they are otherwise
+	// separate because Demand Gen rejects networkSettings and manualCpc.
+	GeoTargetTypeSetting geoTargetTypeSetting `json:"geoTargetTypeSetting"`
 }
 
 // demandGenAdGroupCreate omits the `type` field that the Search path sets to
@@ -128,6 +137,7 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 		AdvertisingChannelType:         advertisingChannelDemandGen,
 		CampaignBudget:                 budgetResource,
 		ContainsEuPoliticalAdvertising: euPoliticalAdvertisingNo,
+		GeoTargetTypeSetting:           geoTargetTypeSetting{PositiveGeoTargetType: geoTargetPresence},
 		// targetSpend, matching the legacy Express implementation's `target_spend: {}` —
 		// which is what serves this channel on app.lfx.dev today.
 		//

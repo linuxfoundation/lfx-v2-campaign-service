@@ -431,6 +431,15 @@ geoTargets?: string[]           — OPTIONAL ISO 3166-1 alpha-2 country codes th
                                   campaign-level location criteria). Case/whitespace-insensitive and
                                   de-duplicated; at most 30 entries.
 
+                                  Both channel creates set `geoTargetTypeSetting.positiveGeoTargetType`
+                                  to PRESENCE. Google's default is PRESENCE_OR_INTEREST, under which a
+                                  user anywhere in the world who merely shows INTEREST in the targeted
+                                  country stays eligible — so criteria alone would attach targeting
+                                  that does not restrict spend. It is set unconditionally, so a
+                                  campaign that gains criteria later (by adoption, or by hand in the
+                                  Google Ads UI) restricts by presence rather than reverting to the
+                                  permissive default.
+
                                   An unsupported code (including a plausible typo like "USA") fails the
                                   job BEFORE any Google Ads request is made, rather than being dropped —
                                   a dropped code would create a campaign that spends worldwide while
