@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/reddit"
-description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation, best-effort campaign metrics reads (UNVERIFIED contract)."
+description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation, campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run)."
 resource: "internal/platform/reddit"
 tags:
   - platform-client
@@ -130,39 +130,93 @@ alone and is retained as the per-entity building block / for callers with only a
 The child ids are read from the persisted `CampaignResult` (`adGroupId`/`adId`) by the reddit
 dispatcher's `ToggleStatus`, which now receives the full persisted `*model.Campaign`.
 
-## Metrics reads — UNVERIFIED, best-effort contract (LFXV2-2995)
+## Metrics reads — contract from Reddit's public OpenAPI spec (LFXV2-3282)
 
 `GetCampaignMetrics(ctx, campaignID, window)` reads impressions, clicks, and spend for a
 campaign. **It is unreachable in a default deployment**: the dispatcher above it
 (`RedditDispatcher.ReadMetrics`) is gated on `REDDIT_METRICS_ENABLED == "true"` and otherwise
-returns `domain.ErrMetricsUnsupported`, so nothing in this section ships as live production
-metrics until the contract below is verified. **Unlike every other client in this package (and unlike the Meta/LinkedIn/X
-metrics clients built against public API docs), Reddit's v3 reporting/metrics endpoint has
-NO public documentation at all** — it lives behind Reddit's gated developer portal and a
-private Postman collection (postman.com/reddit-ads-api). This was investigated and recorded
-as BLOCKED on LFXV2-2995: third-party integrations (Supermetrics, Domo, Unified.to, Bright
-Analytics) prove the capability exists but publish neither the request nor response shape.
+returns `domain.ErrMetricsUnsupported`.
 
-The implementation is inferred ONLY from this package's own proven, already-working v3
-conventions: `POST /ad_accounts/{account_id}/reports` with the same `{"data": {...}}`
-envelope every create/toggle call uses, a `campaign_ids`/`breakdowns`/`fields` body, and a
-response `{"data": [{"campaign_id", "impressions", "clicks", "spend"}]}` array — `spend`
-assumed to be a decimal-currency string (like Meta/LinkedIn's reporting convention) rather
-than pre-scaled to micros (like X's `billed_charge_local_micro`). **None of this has been
-verified against a live Reddit Ads account or Reddit's real (gated) contract**, and every
-field name, the request shape, and the response shape should be treated as a placeholder to
-correct once `adsapi-partner-support@reddit.com` or Postman collection access confirms the
-real endpoint. `dateRangeForWindow` maps the shared `model.MetricsWindow` literal
-(`today`/`last_7_days`/`last_30_days`/`this_month`/`last_month`) to a `YYYY-MM-DD` start/end
-pair, handling the last-month-at-month-end boundary the same way the LinkedIn client's
-`dateRangeForWindow` does. `ErrInvalidCampaignID`/`ErrUnsupportedWindow` are typed sentinels
-(`errors.Is`-discriminable), matching the LinkedIn/X metrics clients' convention.
+The request and response shapes come from Reddit's **official public OpenAPI document**
+(`https://ads-api.reddit.com/api/v3/openapi.json`, linked as "Download Specs" from
+`https://ads-api.reddit.com/docs/v3/`), operation `POST /ad_accounts/{ad_account_id}/reports`,
+schemas `Report` and `ReportMetric`. Reddit's own introduction states the Ads API "is open to
+all developers and does not require allowlisting or approval from Reddit to access".
 
-Response handling distinguishes two cases:
-- An **explicit empty `data` array** (`{"data": []}`) is treated as real "no activity" (zero metrics), not an error — the campaign existed but had no activity during the window.
-- A **missing or malformed `data` field** (absent from the response JSON, or the response is not JSON at all) causes `json.Unmarshal` to fail with a decode error (`unexpected end of JSON input` or similar). This surfaces as the same transport/decode error used for any other malformed metrics response, not as zero-activity. Consumers must not assume missing data means zero activity; they receive an error instead.
+**This supersedes the LFXV2-2995 BLOCKED finding**, which recorded that Reddit published no
+public documentation for v3 reporting and that the shape here was a guess inferred from this
+client's own conventions. That finding is no longer accurate. Reading the spec falsified four
+of the five things previously guessed:
 
-CTR is calculated as clicks/impressions, or 0 when impressions is 0.
+| Element | Previous guess | Spec |
+| --- | --- | --- |
+| Path + method | `POST /ad_accounts/{id}/reports` | correct — the one guess that held |
+| Campaign scoping | `campaign_ids` array | `filter` string DSL, `campaign:id==<id>` |
+| Field names | lowercase `impressions`, `clicks`, `spend` | UPPERCASE enums `IMPRESSIONS`, `CLICKS`, `SPEND`, `CAMPAIGN_ID` |
+| Response `data` | bare array of rows | object with a `metrics` array (plus `pagination`) |
+| `spend` | decimal-currency string, scaled by 1e6 | `int64` already in **microcurrency** |
+| `starts_at`/`ends_at` | bare `YYYY-MM-DD` | `YYYY-MM-DDTHH:00:00Z`, hourly granularity only |
+
+The request schema sets `additionalProperties: false`, so the previous `campaign_ids` key
+would have been rejected outright. `spend` being microcurrency (not a decimal string) is the
+correction with the largest blast radius: the old code multiplied by 1e6, which against the
+real contract would have reported every spend figure one million times too large had it
+decoded at all. Note "microcurrency" means the **ad account's own billing currency**, which
+this client does not read — `CostMicros` is therefore micros of an unspecified currency, as it
+is for X, and must not be summed across platforms.
+
+`CAMPAIGN_ID` is requested as a **field**, not merely a breakdown, so every row carries the id
+the provenance check verifies against. `breakdowns` is omitted so Reddit aggregates over the
+whole window; the accumulation loop still sums correctly if that is wrong. `time_zone_id` is
+omitted because the spec documents it as defaulting to UTC, which is the zone
+`dateRangeForWindow` renders in.
+
+**What remains unverified**: no request has been made against a live Reddit ad account (this
+repository holds no Reddit credentials), which is why the gate stays on. A schema cannot
+express whether a campaign with no activity yields an empty `metrics` array or a row of
+explicit zeros, nor whether `ends_at` is inclusive of its final hour. Both readings are handled
+without a wrong answer, and both are recorded at their site rather than assumed away.
+
+### Refusing rather than reporting a plausible number
+
+Every metric field is decoded as a **pointer**, and a missing or null field is an error. The
+spec types `impressions`, `clicks`, and `spend` as `["integer","null"]`, so Reddit may send an
+explicit null; a value field would decode that to `0`, which is indistinguishable from a
+campaign that genuinely served nothing. This is stricter than the googleads client, which
+treats an empty metric as a real zero — that is correct there because Google Ads is
+*documented* to omit zero-valued metrics, and Reddit's spec documents no such behaviour.
+
+The refusal names which requested fields were absent, so a wrong assumption is diagnosable in
+one read rather than by debugging a decoder. No upstream value, id, or account id is echoed
+into an error; errors report the bare `reports` path because the account id is interpolated
+into the real one.
+
+Response handling distinguishes:
+- An **explicit empty `metrics` array** is real "no activity" (zero metrics), not an error.
+- A **null or missing `data`**, a `data` that is not an object, or a **null/missing `metrics`
+  array** are all decode errors. Consumers must not assume missing data means zero activity.
+
+Rows are validated before accumulation: the row's `campaign_id` must match the requested
+campaign (the `filter` is not trusted to have scoped the report), counters must be
+non-negative, and a row reporting clicks with zero impressions is rejected as impossible —
+the same guard the LinkedIn client applies. Checked additions stop a running total from
+wrapping past `MaxInt64`. CTR is derived from the **totals**, not read from the row's own
+`ctr` field nor averaged per row.
+
+`dateRangeForWindow` maps the shared `model.MetricsWindow` literal
+(`today`/`last_7_days`/`last_30_days`/`this_month`/`last_month`) to the required hourly
+timestamp pair, anchored to the UTC calendar date and handling the last-month-at-month-end
+boundary from a first-of-month anchor (never `AddDate(0,-1,0)`, which normalizes an invalid
+day into the following month). The end bound is the `23:00` hour of its day, since midnight
+would ask for a range stopping as the final day begins. `ValidateMetricsWindow` is
+package-level and clock-free so a caller can reject a window without credentials, and it is
+checked before the account is resolved so a permanent 400 is not masked as a retryable
+connection failure. `ErrInvalidCampaignID`/`ErrUnsupportedWindow` are typed sentinels
+(`errors.Is`-discriminable).
+
+The campaign-id charset guard now protects two interpolation sites, not one: the URL path and
+the `filter` DSL, where a comma would split one filter term into two and silently widen the
+report's scope.
 
 The `model.MetricsWindow`/`model.CampaignMetrics` types and the `service.MetricsReader`
 interface this depends on come from the platform-agnostic metrics foundation
