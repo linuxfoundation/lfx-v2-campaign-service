@@ -348,6 +348,10 @@ type GetBriefMetricsResponseBody struct {
 	// presenting any cross-campaign total — a total over 2 of 6 campaigns is not
 	// the brief's performance.
 	OKCount int `form:"ok_count" json:"ok_count" xml:"ok_count"`
+	// What an operator should look at, derived from the readable rows. Empty means
+	// nothing was flagged among those rows — compare ok_count against the row
+	// count before reading that as an all-clear.
+	ActionItems []*CampaignActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
 }
 
 // GenerateEmailCopyResponseBody is the type of the
@@ -1452,6 +1456,9 @@ type BriefMetricsRowResponseBody struct {
 	// Why this row carries no measurement, in consumer-safe wording. Absent when
 	// status is `ok`.
 	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+	// Spend against the flight-prorated plan. Absent when status is not `ok`, or
+	// when this campaign has no budget or usable flight to pace against.
+	Pacing *CampaignPacingResponseBody `form:"pacing,omitempty" json:"pacing,omitempty" xml:"pacing,omitempty"`
 }
 
 // CampaignMetricsResponseBody is used to define fields on response body types.
@@ -1483,6 +1490,34 @@ type CampaignMetricsResponseBody struct {
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.
 	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
+}
+
+// CampaignPacingResponseBody is used to define fields on response body types.
+type CampaignPacingResponseBody struct {
+	// Spend as a percentage of what this campaign should have spent BY NOW. Absent
+	// when pacing is not computable — never zero-filled, because 0% is a claim
+	// about spend.
+	Pct *float64 `form:"pct,omitempty" json:"pct,omitempty" xml:"pct,omitempty"`
+	// The band pct falls into. `unknown` means no pacing could be derived, which
+	// is NOT the same as being on plan.
+	Label string `form:"label" json:"label" xml:"label"`
+}
+
+// CampaignActionItemResponseBody is used to define fields on response body
+// types.
+type CampaignActionItemResponseBody struct {
+	// Which rule fired, as a stable token.
+	Rule string `form:"rule" json:"rule" xml:"rule"`
+	// How urgently this wants attention.
+	Priority string `form:"priority" json:"priority" xml:"priority"`
+	// The campaign this concerns
+	CampaignID string `form:"campaign_id" json:"campaign_id" xml:"campaign_id"`
+	// The channel that campaign runs on
+	Platform string `form:"platform" json:"platform" xml:"platform"`
+	// What is wrong, in operator-facing wording.
+	Issue string `form:"issue" json:"issue" xml:"issue"`
+	// What to do about it.
+	Action string `form:"action" json:"action" xml:"action"`
 }
 
 // PlatformResultResponseBody is used to define fields on response body types.
@@ -1773,6 +1808,18 @@ func NewGetBriefMetricsResponseBody(res *lfxv2campaignservicebriefs.BriefMetrics
 		}
 	} else {
 		body.Rows = []*BriefMetricsRowResponseBody{}
+	}
+	if res.ActionItems != nil {
+		body.ActionItems = make([]*CampaignActionItemResponseBody, len(res.ActionItems))
+		for i, val := range res.ActionItems {
+			if val == nil {
+				body.ActionItems[i] = nil
+				continue
+			}
+			body.ActionItems[i] = marshalLfxv2campaignservicebriefsCampaignActionItemToCampaignActionItemResponseBody(val)
+		}
+	} else {
+		body.ActionItems = []*CampaignActionItemResponseBody{}
 	}
 	return body
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/rules"
 
 	"goa.design/goa/v3/security"
 )
@@ -56,6 +57,27 @@ type BriefService struct {
 	// llmClient backs GenerateEmailCopy. Nil in every construction that does not call
 	// SetLLMClient, which is why that handler checks it rather than ready().
 	llmClient *llm.Client
+	// clock is the time source for pacing. Injected so date arithmetic is testable at a fixed
+	// instant — a test that reads the wall clock passes or fails by WHEN it is run. Nil means
+	// time.Now, so every existing construction keeps working without naming it.
+	clock func() time.Time
+}
+
+// SetClock overrides the time source used for pacing. For tests.
+func (s *BriefService) SetClock(now func() time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clock = now
+}
+
+// now reads the injected clock, falling back to the wall clock.
+func (s *BriefService) now() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.clock != nil {
+		return s.clock()
+	}
+	return time.Now()
 }
 
 var (
@@ -1842,6 +1864,10 @@ type briefMetricsRow struct {
 	window model.MetricsWindow
 	status string
 	reason string
+	// pacing is derived after the read, on the request goroutine, from the campaign's own
+	// budget and flight. Zero-valued (Computable=false) on every row that carries no
+	// measurement, and on measured rows with no budget or usable flight.
+	pacing rules.Pacing
 }
 
 // classifyBriefMetricsErr maps a per-campaign read failure onto the row status vocabulary
@@ -2025,7 +2051,54 @@ func (s *BriefService) GetBriefMetrics(ctx context.Context, p *briefs.GetBriefMe
 		return nil, mapBriefErr(werr)
 	}
 
-	return renderBriefMetrics(p.BriefID, requested, rows), nil
+	// Pacing and action items are derived HERE, after the fan-out, rather than inside each
+	// goroutine: they are pure arithmetic over data already in hand, and computing them under
+	// the errgroup would put a shared clock read on several goroutines for no benefit. One
+	// `now` for the whole response also keeps the rows consistent with each other — a request
+	// spanning midnight must not pace one campaign against a different day than its sibling.
+	now := s.now()
+	for i := range rows {
+		rows[i].pacing = pacingFor(&rows[i], now)
+	}
+
+	return renderBriefMetrics(p.BriefID, requested, rows, now), nil
+}
+
+// pacingFor derives one row's pacing, or the incomputable zero value.
+//
+// A row with no measurement gets no pacing: its spend is unknown, and pacing derived from an
+// unknown spend would be a figure about nothing.
+func pacingFor(r *briefMetricsRow, now time.Time) rules.Pacing {
+	if r.status != "ok" || r.metrics == nil || r.campaign == nil {
+		return rules.Pacing{Label: rules.PacingUnknown}
+	}
+	if r.campaign.BudgetAmount == nil || r.campaign.BudgetType == nil {
+		return rules.Pacing{Label: rules.PacingUnknown}
+	}
+	kind := rules.BudgetLifetime
+	if *r.campaign.BudgetType == model.BudgetDaily {
+		kind = rules.BudgetDaily
+	}
+	// r.window, not r.metrics.Window: adapters are not required to echo the window back, and a
+	// blank one would resolve to 0 days and silently make every row incomputable. This is the
+	// same reason the wire rendering below uses r.window.
+	return rules.ComputePacing(
+		microsToUnits(r.metrics.CostMicros),
+		rules.WindowDays(string(r.window), now),
+		*r.campaign.BudgetAmount,
+		kind,
+		rules.Flight{Start: r.campaign.StartDate, End: r.campaign.EndDate},
+		now,
+		rules.DefaultThresholds,
+	)
+}
+
+// microsToUnits converts a platform's micro-denominated cost into whole currency units.
+//
+// The unit is the PLATFORM's own currency and this service performs no FX conversion, so the
+// result is only ever compared against that same campaign's budget — never summed across rows.
+func microsToUnits(micros int64) float64 {
+	return float64(micros) / 1_000_000
 }
 
 // renderBriefMetrics converts the internal rows into the wire type.
@@ -2035,7 +2108,7 @@ func (s *BriefService) GetBriefMetrics(ctx context.Context, p *briefs.GetBriefMe
 // the rows can legitimately differ from each other (X Ads falls back to a narrower range), so
 // promoting one row's window to the top level would state a range the other rows do not cover.
 // Each row's own metrics.window remains authoritative for that row.
-func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []briefMetricsRow) *briefs.BriefMetrics {
+func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []briefMetricsRow, now time.Time) *briefs.BriefMetrics {
 	window := string(model.MetricsWindowLast30Days)
 	if requested != nil {
 		window = string(*requested)
@@ -2044,6 +2117,9 @@ func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []b
 		BriefID: briefID,
 		Window:  window,
 		Rows:    make([]*briefs.BriefMetricsRow, 0, len(rows)),
+		// Never nil: an empty list is the JSON `[]` a consumer can iterate, while a nil slice
+		// marshals to `null` and makes "nothing to do" indistinguishable from "not computed".
+		ActionItems: make([]*briefs.CampaignActionItem, 0),
 	}
 	for _, r := range rows {
 		wire := &briefs.BriefMetricsRow{
@@ -2071,7 +2147,45 @@ func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []b
 			reason := r.reason
 			wire.Reason = &reason
 		}
+		// Pacing rides on any row that could derive it, which is only ever an `ok` row.
+		// Pct is a POINTER and stays nil when incomputable: a zero would be read as a campaign
+		// that spent nothing rather than one with no plan to measure against.
+		if r.pacing.Computable {
+			pct := r.pacing.Pct
+			wire.Pacing = &briefs.CampaignPacing{Pct: &pct, Label: string(r.pacing.Label)}
+		} else if r.status == "ok" {
+			wire.Pacing = &briefs.CampaignPacing{Label: string(rules.PacingUnknown)}
+		}
 		out.Rows = append(out.Rows, wire)
+
+		// Action items come only from rows that carry a measurement. A row that could not be
+		// read has no impressions and no spend to look at, and evaluating it would raise a
+		// zero-delivery item for every failed read — reporting an outage as a campaign defect,
+		// which is the precise substitution this endpoint's row statuses exist to prevent.
+		if r.status != "ok" || r.metrics == nil || r.campaign == nil {
+			continue
+		}
+		for _, item := range rules.Evaluate(rules.Input{
+			CampaignID:  r.campaign.ID,
+			Platform:    string(r.campaign.Platform),
+			Status:      r.campaign.Status,
+			Impressions: r.metrics.Impressions,
+			Clicks:      r.metrics.Clicks,
+			SpendUSD:    microsToUnits(r.metrics.CostMicros),
+			// Ctr is a RATIO on the domain model; the rules take a percentage, and passing the
+			// ratio would make the low-CTR threshold a hundred times too strict.
+			CTRPct: r.metrics.Ctr * 100,
+			Pacing: r.pacing,
+		}) {
+			out.ActionItems = append(out.ActionItems, &briefs.CampaignActionItem{
+				Rule:       item.Rule,
+				Priority:   string(item.Priority),
+				CampaignID: item.CampaignID,
+				Platform:   item.Platform,
+				Issue:      item.Issue,
+				Action:     item.Action,
+			})
+		}
 	}
 	return out
 }

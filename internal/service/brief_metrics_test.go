@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"testing"
+	"time"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -469,4 +471,173 @@ func indexOf(h, n string) int {
 		}
 	}
 	return -1
+}
+
+// A fixed instant for the pacing cases. Date arithmetic tested against the wall clock passes or
+// fails by WHEN it is run.
+var metricsNow = time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+
+func budgeted(c *model.Campaign, amount float64, kind model.BudgetType, startOffset, endOffset int) *model.Campaign {
+	start := metricsNow.AddDate(0, 0, startOffset)
+	end := metricsNow.AddDate(0, 0, endOffset)
+	c.BudgetAmount = &amount
+	c.BudgetType = &kind
+	c.StartDate = &start
+	c.EndDate = &end
+	return c
+}
+
+// Pacing is spend against the flight-prorated plan, and it must be computed over the period the
+// SPEND covers rather than the elapsed flight.
+func TestGetBriefMetrics_PacingIsProratedAcrossTheFlight(t *testing.T) {
+	// Day 10 of a 20-day $1000 flight. The default window is 30 days, capped to the 10 elapsed,
+	// so expected-by-now is $500. Spending exactly that is on plan.
+	c := budgeted(campaignOn("c1", model.ProviderGoogleAds), 1000, model.BudgetLifetime, -10, 10)
+	disp := newPerCampaignDispatcher()
+	disp.results["c1"] = &model.CampaignMetrics{Impressions: 10000, Clicks: 200, CostMicros: 500_000_000, Ctr: 0.02}
+
+	s := newBriefMetricsService(t, disp, c)
+	s.SetClock(func() time.Time { return metricsNow })
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+
+	row := rowByCampaign(t, res, "c1")
+	if row.Pacing == nil {
+		t.Fatal("a measured row with a budget and a flight carries no pacing")
+	}
+	if row.Pacing.Pct == nil {
+		t.Fatal("computable pacing carries no pct")
+	}
+	if math.Abs(*row.Pacing.Pct-100) > 5 {
+		t.Errorf("pacing = %.1f%%, want ~100%% (half the budget, half way through)", *row.Pacing.Pct)
+	}
+	if row.Pacing.Label != "normal" {
+		t.Errorf("label = %q, want normal", row.Pacing.Label)
+	}
+	// On plan, healthy CTR, spending: nothing to flag.
+	if len(res.ActionItems) != 0 {
+		t.Errorf("a healthy campaign raised %d action items", len(res.ActionItems))
+	}
+}
+
+// A campaign with no budget has no pacing, and the absence must be visible as `unknown` with an
+// ABSENT pct — not as 0%, which reads as a campaign that spent nothing.
+func TestGetBriefMetrics_NoBudgetYieldsUnknownPacingNotZero(t *testing.T) {
+	c := campaignOn("c1", model.ProviderGoogleAds) // no BudgetAmount
+	disp := newPerCampaignDispatcher()
+	disp.results["c1"] = &model.CampaignMetrics{Impressions: 10000, Clicks: 200, CostMicros: 5_000_000, Ctr: 0.02}
+
+	s := newBriefMetricsService(t, disp, c)
+	s.SetClock(func() time.Time { return metricsNow })
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+
+	row := rowByCampaign(t, res, "c1")
+	if row.Pacing == nil {
+		t.Fatal("an ok row carries no pacing object at all; unknown must be stated, not omitted")
+	}
+	if row.Pacing.Label != "unknown" {
+		t.Errorf("label = %q, want unknown", row.Pacing.Label)
+	}
+	if row.Pacing.Pct != nil {
+		t.Errorf("incomputable pacing carries pct = %v; it must be ABSENT, because 0%% is a claim about spend", *row.Pacing.Pct)
+	}
+	for _, item := range res.ActionItems {
+		if item.Rule == "underspending" || item.Rule == "budget_constrained" {
+			t.Errorf("%s raised against a campaign with no budget — that is the absence of a plan, not a spend finding", item.Rule)
+		}
+	}
+}
+
+// A row that could not be read must raise NO action items. Evaluating it would see zero
+// impressions and zero spend and report every failed read as a dead campaign.
+func TestGetBriefMetrics_UnreadableRowRaisesNoActionItems(t *testing.T) {
+	bad := budgeted(campaignOn("c2", model.ProviderMetaAds), 1000, model.BudgetLifetime, -10, 10)
+	disp := newPerCampaignDispatcher()
+	disp.errs["c2"] = errors.New("meta graph api: 500 internal error")
+
+	s := newBriefMetricsService(t, disp, bad)
+	s.SetClock(func() time.Time { return metricsNow })
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+
+	if len(res.ActionItems) != 0 {
+		t.Errorf("an unreadable row raised %d action items (%+v) — that reports an outage as a campaign defect", len(res.ActionItems), res.ActionItems)
+	}
+	if row := rowByCampaign(t, res, "c2"); row.Pacing != nil {
+		t.Errorf("a row with no measurement carries pacing %+v", row.Pacing)
+	}
+	// And the list is [] rather than null, so a consumer can iterate it unconditionally.
+	if res.ActionItems == nil {
+		t.Error("action_items is nil; it must marshal as [] so empty is distinguishable from absent")
+	}
+}
+
+// The rules see a CTR in PERCENT. The domain model carries a ratio, so a missing conversion
+// makes the threshold a hundred times too strict and flags every healthy campaign.
+func TestGetBriefMetrics_LowCTRUsesPercentNotRatio(t *testing.T) {
+	healthy := budgeted(campaignOn("c1", model.ProviderGoogleAds), 1000, model.BudgetLifetime, -10, 10)
+	poor := budgeted(campaignOn("c2", model.ProviderLinkedInAds), 1000, model.BudgetLifetime, -10, 10)
+	disp := newPerCampaignDispatcher()
+	// 2% CTR — comfortably healthy. As a raw ratio (0.02) it would sit below the 0.3 threshold
+	// and be flagged.
+	disp.results["c1"] = &model.CampaignMetrics{Impressions: 20000, Clicks: 400, CostMicros: 500_000_000, Ctr: 0.02}
+	// 0.1% CTR — genuinely poor.
+	disp.results["c2"] = &model.CampaignMetrics{Impressions: 20000, Clicks: 20, CostMicros: 500_000_000, Ctr: 0.001}
+
+	s := newBriefMetricsService(t, disp, healthy, poor)
+	s.SetClock(func() time.Time { return metricsNow })
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+
+	var flagged []string
+	for _, item := range res.ActionItems {
+		if item.Rule == "low_ctr" {
+			flagged = append(flagged, item.CampaignID)
+		}
+	}
+	if len(flagged) != 1 || flagged[0] != "c2" {
+		t.Errorf("low_ctr flagged %v, want [c2] only — a 2%% CTR is healthy and must not fire", flagged)
+	}
+}
+
+// The window the row was READ over is what pacing must be computed against. Spend from a 7-day
+// window compared to 30 days of plan reports an on-track campaign as spending a fifth of what
+// it should — a confident figure about a period nobody asked about.
+func TestGetBriefMetrics_PacingUsesTheRowsOwnWindow(t *testing.T) {
+	// Day 20 of a 40-day $4000 flight: $100/day of plan. Exactly on plan over 7 days = $700.
+	c := budgeted(campaignOn("c1", model.ProviderGoogleAds), 4000, model.BudgetLifetime, -20, 20)
+	disp := newPerCampaignDispatcher()
+	disp.results["c1"] = &model.CampaignMetrics{Impressions: 20000, Clicks: 400, CostMicros: 700_000_000, Ctr: 0.02}
+
+	s := newBriefMetricsService(t, disp, c)
+	s.SetClock(func() time.Time { return metricsNow })
+	window := string(model.MetricsWindowLast7Days)
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1", Window: &window})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+
+	row := rowByCampaign(t, res, "c1")
+	if row.Pacing == nil || row.Pacing.Pct == nil {
+		t.Fatal("no computable pacing")
+	}
+	// Against 7 days of plan ($700) this is 100%. Against the 30-day default it would be ~23%
+	// and raise an underspending item against a campaign that is exactly on track.
+	if math.Abs(*row.Pacing.Pct-100) > 5 {
+		t.Errorf("pacing = %.1f%%, want ~100%% — expected spend must cover the 7-day window this row was read over", *row.Pacing.Pct)
+	}
+	for _, item := range res.ActionItems {
+		if item.Rule == "underspending" {
+			t.Error("underspending raised against a campaign that is exactly on plan for its window")
+		}
+	}
 }

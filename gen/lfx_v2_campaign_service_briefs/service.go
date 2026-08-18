@@ -222,6 +222,10 @@ type BriefMetrics struct {
 	// presenting any cross-campaign total — a total over 2 of 6 campaigns is not
 	// the brief's performance.
 	OKCount int
+	// What an operator should look at, derived from the readable rows. Empty means
+	// nothing was flagged among those rows — compare ok_count against the row
+	// count before reading that as an all-clear.
+	ActionItems []*CampaignActionItem
 }
 
 type BriefMetricsRow struct {
@@ -237,6 +241,9 @@ type BriefMetricsRow struct {
 	// Why this row carries no measurement, in consumer-safe wording. Absent when
 	// status is `ok`.
 	Reason *string
+	// Spend against the flight-prorated plan. Absent when status is not `ok`, or
+	// when this campaign has no budget or usable flight to pace against.
+	Pacing *CampaignPacing
 }
 
 // Campaign is the result type of the lfx-v2-campaign-service-briefs service
@@ -260,6 +267,21 @@ type Campaign struct {
 	Version int64
 	// ETag header value (mirrors version)
 	Etag *string
+}
+
+type CampaignActionItem struct {
+	// Which rule fired, as a stable token.
+	Rule string
+	// How urgently this wants attention.
+	Priority string
+	// The campaign this concerns
+	CampaignID string
+	// The channel that campaign runs on
+	Platform string
+	// What is wrong, in operator-facing wording.
+	Issue string
+	// What to do about it.
+	Action string
 }
 
 type CampaignCreateInput struct {
@@ -299,6 +321,16 @@ type CampaignMetrics struct {
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.
 	Email *EmailMetrics
+}
+
+type CampaignPacing struct {
+	// Spend as a percentage of what this campaign should have spent BY NOW. Absent
+	// when pacing is not computable — never zero-filled, because 0% is a claim
+	// about spend.
+	Pct *float64
+	// The band pct falls into. `unknown` means no pacing could be derived, which
+	// is NOT the same as being on plan.
+	Label string
 }
 
 type CampaignUpdateInput struct {

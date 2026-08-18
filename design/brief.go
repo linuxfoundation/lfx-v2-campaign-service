@@ -237,6 +237,37 @@ var EmailMetrics = Type("email-metrics", func() {
 	Required("sent", "delivered", "opens", "clicks", "bounces", "unsubscribes")
 })
 
+// CampaignPacing is spend measured against what the flight expects BY NOW.
+//
+// Not against the whole budget: a campaign three days into a thirty-day flight is expected to
+// have spent a tenth of it, so the naive comparison reports every healthy campaign as severely
+// underspending for most of its life.
+var CampaignPacing = Type("campaign-pacing", func() {
+	// Absent, not zero, when pacing could not be derived. A zero here is indistinguishable
+	// from a campaign that spent nothing, and rendering "0% of plan" for a campaign that has
+	// no budget reports the absence of a plan as a failure to follow one.
+	Attribute("pct", Float64, "Spend as a percentage of what this campaign should have spent BY NOW. Absent when pacing is not computable — never zero-filled, because 0% is a claim about spend.", func() { Example(94.2) })
+	Attribute("label", String, "The band pct falls into. `unknown` means no pacing could be derived, which is NOT the same as being on plan.", func() {
+		Enum("underspending", "normal", "constrained", "overspending", "unknown")
+	})
+	Required("label")
+})
+
+// CampaignActionItem is one thing an operator should look at, and what to do about it.
+var CampaignActionItem = Type("campaign-action-item", func() {
+	// A stable token, so a consumer can group, filter or link on it. The issue text is for
+	// humans and may be reworded; keying on prose would break silently when it is.
+	Attribute("rule", String, "Which rule fired, as a stable token.", func() {
+		Enum("zero_delivery", "underspending", "budget_constrained", "low_ctr")
+	})
+	Attribute("priority", String, "How urgently this wants attention.", func() { Enum("HIGH", "MED") })
+	Attribute("campaign_id", String, "The campaign this concerns", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("platform", String, "The channel that campaign runs on", func() { Example("reddit-ads") })
+	Attribute("issue", String, "What is wrong, in operator-facing wording.", func() { Example("No impressions or spend recorded") })
+	Attribute("action", String, "What to do about it.", func() { Example("Check targeting and creative approval status") })
+	Required("rule", "priority", "campaign_id", "platform", "issue", "action")
+})
+
 // BriefMetricsRow is one campaign's slot in the brief-wide metrics read.
 //
 // Every campaign on the brief gets a row, INCLUDING the ones that could not be read. That is
@@ -259,6 +290,11 @@ var BriefMetricsRow = Type("brief-metrics-row", func() {
 	Attribute("reason", String, "Why this row carries no measurement, in consumer-safe wording. Absent when status is `ok`.", func() {
 		Example("this window is not supported for the campaign's platform")
 	})
+	// Absent on any row that carries no measurement, and absent on a measured row whose
+	// budget or flight cannot support the arithmetic. Pacing is per-campaign only: cost is
+	// reported in each platform's native currency and this service performs no FX, so pacing
+	// figures must never be totalled or averaged across rows.
+	Attribute("pacing", CampaignPacing, "Spend against the flight-prorated plan. Absent when status is not `ok`, or when this campaign has no budget or usable flight to pace against.")
 	Required("campaign_id", "platform", "status")
 })
 
@@ -274,7 +310,16 @@ var BriefMetrics = Type("brief-metrics", func() {
 	// produce a number with no currency and no meaning. Impressions and clicks are unitless
 	// and could be summed, but are left to the consumer alongside ok_count rather than
 	// presented here as a whole-brief figure the row set may not support.
-	Required("brief_id", "window", "rows", "ok_count")
+	// Derived from the rows above, on the service side, so every consumer applies the same
+	// thresholds. Four UI implementations previously derived these independently and disagreed
+	// three ways on the underspending floor; one of them disagreed with itself, labelling at 50
+	// while alerting at 40.
+	//
+	// Empty is a real answer meaning nothing needs attention. It is NOT a claim that every row
+	// was readable — rows that could not be read raise no items, so check ok_count before
+	// presenting an empty list as an all-clear.
+	Attribute("action_items", ArrayOf(CampaignActionItem), "What an operator should look at, derived from the readable rows. Empty means nothing was flagged among those rows — compare ok_count against the row count before reading that as an all-clear.")
+	Required("brief_id", "window", "rows", "ok_count", "action_items")
 })
 
 // EmailCopy holds AI-generated email copy for a campaign brief.
