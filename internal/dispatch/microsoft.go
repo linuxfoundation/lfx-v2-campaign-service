@@ -31,14 +31,29 @@ type microsoftCreds struct {
 	RefreshToken   string
 }
 
+// microsoftKeywordConfig is one entry in microsoftConfig.Keywords — the JSON shape a caller
+// supplies for a positive Search keyword. Maps 1:1 to microsoft.Keyword; kept as a separate
+// JSON-tagged type rather than importing the client's struct directly, mirroring how
+// googleAdsKeywordConfig keeps the wire shape and the platform client's Go type
+// independently named.
+//
+// NOTE the matchType vocabulary differs from Google Ads: Microsoft's enum is PascalCase
+// ("Exact"/"Phrase"/"Broad"), not SCREAMING_CASE. The client accepts either casing so a
+// caller reusing a Google Ads payload is not refused over spelling alone.
+type microsoftKeywordConfig struct {
+	Text      string `json:"text"`
+	MatchType string `json:"matchType"`
+}
+
 // microsoftConfig is the per-platform campaign config the caller passes for Microsoft in
 // CreateCampaigns' Input.Config (delivered here as the Dispatch `config`).
 //
-// Today the Microsoft client creates a PAUSED Search campaign shell with an ad group + a
-// responsive search ad (auto-composed copy); targeting/keywords land in a later phase, so only
-// the budget (and optionally a Campaign.TimeZone enum) is caller-supplied here. Budget is in
-// whole units of the ad ACCOUNT's currency (NOT USD — the client does NO FX conversion), applied
-// as the campaign's DAILY budget, mirroring the meta client.
+// The Microsoft client creates a PAUSED Search campaign with an ad group + a responsive
+// search ad (auto-composed copy), then attaches the keywords supplied here — without them the
+// ad group has nothing to match a query against and the campaign can never serve, even once a
+// human enables it. Budget is in whole units of the ad ACCOUNT's currency (NOT USD — the
+// client does NO FX conversion), applied as the campaign's DAILY budget, mirroring the meta
+// client.
 type microsoftConfig struct {
 	// Budget is whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…), the DAILY
 	// budget. Must be finite and > 0; a NaN/Inf or non-positive value is rejected by the client
@@ -47,6 +62,20 @@ type microsoftConfig struct {
 	// TimeZone is an OPTIONAL Microsoft Campaign.TimeZone enum value. Microsoft marks the field
 	// deprecated but still requires it on Add; when empty the client uses its default.
 	TimeZone string `json:"timeZone"`
+	// Keywords are the positive Search keywords attached to the created ad group. Left empty,
+	// the campaign is created but can NEVER SERVE, and ToggleStatus refuses to activate it —
+	// so a caller that wants a servable campaign must supply at least one.
+	Keywords []microsoftKeywordConfig `json:"keywords"`
+	// CpcBid is an OPTIONAL ad-group max cost-per-click in whole units of the account currency
+	// (no micros, no FX). Omitted/zero means unset, and Microsoft then applies the
+	// account-currency minimum — a documented, serve-capable floor, so omitting it is safe.
+	CpcBid float64 `json:"cpcBid"`
+	// NOTE: there is deliberately no geoTargets field, unlike redditConfig/metaConfig/
+	// linkedInConfig. Microsoft's location targeting takes its own numeric LocationId values
+	// (from Microsoft's geographical-locations file) and accepts ISO-2 country codes NOWHERE,
+	// so a `geoTargets: ["US"]` here could not be honoured without an invented ISO→LocationId
+	// mapping. Carrying the field would advertise targeting this dispatcher silently drops —
+	// worse than not offering it. See internal/platform/microsoft/targeting.go.
 }
 
 // MicrosoftDispatcher creates Microsoft Advertising (Bing) campaigns for the orchestrator.
@@ -97,6 +126,8 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		Budget:          cfg.Budget,
 		TimeZone:        cfg.TimeZone,
 		RegistrationURL: bf.RegistrationURL,
+		Keywords:        microsoftKeywords(cfg.Keywords),
+		CpcBid:          cfg.CpcBid,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: Microsoft
 		// enforces case-insensitive campaign-name uniqueness, so a retry composes the SAME name
 		// and the client's find-first lookup cleanly REUSES the existing campaign
@@ -150,6 +181,24 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		return campaignFromMicrosoft(ctx, result, cfg), fmt.Errorf("microsoft campaign creation UNCONFIRMED (a partial campaign may exist — verify before retrying): %w", cerr)
 	}
 	return campaignFromMicrosoft(ctx, result, cfg), nil
+}
+
+// microsoftKeywords maps the wire-shaped keyword config to the platform client's Keyword
+// type. Returns nil for an empty input so an omitted "keywords" field stays nil rather than
+// becoming an empty non-nil slice (which would read as "targeting was requested and produced
+// nothing"). Mirrors googleAdsKeywords.
+//
+// No validation here: the client owns it (microsoft.validateKeywords), so a create and any
+// future caller cannot drift apart on what a valid keyword is.
+func microsoftKeywords(in []microsoftKeywordConfig) []microsoft.Keyword {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]microsoft.Keyword, len(in))
+	for i, kw := range in {
+		out[i] = microsoft.Keyword{Text: kw.Text, MatchType: kw.MatchType}
+	}
+	return out
 }
 
 // campaignFromMicrosoft maps the client result to the persistence model.
@@ -223,10 +272,141 @@ func validateMicrosoftConnection(projectID string, res *resolved) (creds microso
 	if accountID == "" {
 		// BOTH sentinels: ErrConnectionNotUsable decides the HTTP status, ErrAccountNotSelected
 		// names the reason for the log line's fixed vocabulary (unusableConnectionReason).
+		// creds is returned ALONGSIDE the error rather than zeroed: by this point the
+		// credential has passed every other check, and the discovery path needs exactly
+		// that — a valid credential on a connection that has chosen no account. Every
+		// dispatch caller checks err first and so cannot observe the value.
 		return creds, "", fmt.Errorf("%w: %w: microsoft connection for project %s has no account id (customer account id)",
 			domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected, projectID)
 	}
 	return creds, accountID, nil
+}
+
+// ListAccounts discovers the Microsoft Advertising accounts reachable via the project's
+// stored, encrypted connection credential, across every customer that credential can reach.
+//
+// It satisfies the service-side AccountLister interface, which Orchestrator.ReadAccounts
+// type-asserts on the dispatcher for the requested platform.
+//
+// It deliberately does NOT require an account id. Discovery exists to answer "which ad
+// account should this connection use?", so demanding one would make the endpoint reachable
+// only by connections that no longer need it — the account-less connection it is meant to
+// rescue is exactly the one it would refuse. Meta's discovery path draws the same
+// distinction; see resolveMetaDiscoveryClient.
+func (d *MicrosoftDispatcher) ListAccounts(ctx context.Context, projectID string, platform model.Provider) ([]model.AccessibleAccount, error) {
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	// Shares validateMicrosoftConnection with the dispatch path rather than repeating its
+	// status/decode/completeness rules: duplicating them would let the two drift, so a
+	// credential rejected at dispatch could be accepted here — which makes a discovery
+	// endpoint actively misleading rather than merely permissive. Only the account-id
+	// outcome is tolerated, and only because it is the state this endpoint serves.
+	creds, _, verr := validateMicrosoftConnection(projectID, res)
+	if verr != nil && !errors.Is(verr, domain.ErrAccountNotSelected) {
+		return nil, res.systemScoped(verr)
+	}
+	// AccountConfig is left ZERO — no AccountID and, deliberately, no CustomerID.
+	//
+	// Naming an ACCOUNT would narrow the response to a subset of the question, which is the
+	// same reason meta's discovery client carries a zero AccountConfig. CustomerID is the
+	// less obvious half: passing the connection's stored one looks like harmless scoping,
+	// but discoveryCustomerIDs treats a configured customer as the COMPLETE answer and
+	// returns early without enumerating any other. An ordinary configured connection would
+	// therefore have listed only that one customer's accounts while this endpoint's own
+	// description promises every customer the credential reaches — the endpoint would have
+	// contradicted itself for exactly the connections most likely to use it.
+	//
+	// Empty means "discover them", which is the question being asked.
+	client := microsoft.NewClient(
+		microsoft.Credentials{
+			ClientID:       creds.ClientID,
+			ClientSecret:   creds.ClientSecret,
+			DeveloperToken: creds.DeveloperToken,
+			RefreshToken:   creds.RefreshToken,
+		},
+		microsoft.AccountConfig{},
+		d.opts...,
+	)
+	adAccounts, lerr := client.ListAdAccounts(ctx)
+	if lerr != nil {
+		return nil, lerr
+	}
+	// make(..., 0, n), never nil: a credential that legitimately reaches zero accounts is
+	// an empty ANSWER, not an error, and Orchestrator.ReadAccounts rejects a nil result as
+	// a contract violation precisely so empty keeps its meaning.
+	accounts := make([]model.AccessibleAccount, 0, len(adAccounts))
+	for _, a := range adAccounts {
+		accounts = append(accounts, model.AccessibleAccount{ID: a.ID, Label: microsoftAccountLabel(a)})
+	}
+	return accounts, nil
+}
+
+// microsoftAccountLabel builds the string a picker shows for one account.
+//
+// It never returns "" for an account carrying any identifying information: Name is nillable
+// in Microsoft's schema, so it falls back to the account Number and then to the id — a blank
+// row in a picker is unpickable, and the id is what actually gets stored. The Number is
+// appended when both are present because it is what the Microsoft Advertising UI shows, so
+// a user recognises the account by it rather than by the id.
+//
+// Unusable accounts are LABELLED, not filtered — the same discipline meta's discovery uses.
+// Dropping them would answer "your credential reaches no accounts" about an account sitting
+// right there; returning them unmarked is worse still, because a suspended, paused or
+// viewer-only account then looks exactly as selectable as a writable one and the refusal
+// arrives later at dispatch, with no way back to this list.
+//
+// The client carries purpose-built renderings for exactly this: StatusLabel() maps a
+// KNOWN-BAD lifecycle status ("" for a good or unrecognised one, so an unexpected value is
+// never labelled as a defect), and PauseLabel() names who paused it, rendering an
+// undocumented flag verbatim rather than guessing. Role is reported separately because it is
+// a different question — an ACTIVE, unpaused account the credential can only READ is still
+// unusable for a create, and Usable() already encodes that deny-list.
+func microsoftAccountLabel(a microsoft.AdAccount) string {
+	name := strings.TrimSpace(a.Name)
+	number := strings.TrimSpace(a.Number)
+	switch {
+	case name != "" && number != "":
+		name += " (" + number + ")"
+	case name == "" && number != "":
+		name = number
+	case name == "":
+		name = a.ID
+	}
+
+	var notes []string
+	if s := a.StatusLabel(); s != "" {
+		notes = append(notes, s)
+	}
+	if p := a.PauseLabel(); p != "" {
+		notes = append(notes, p)
+	}
+	// Only when nothing above already explains it. Usable() is false for TWO independent
+	// reasons and they are not the same message to an operator: a status that is not "Active"
+	// (including an ABSENT or unrecognised one, which StatusLabel renders as nothing), and a
+	// role with no evidence of write. Blaming the role for a missing status sends someone to
+	// check permissions that are fine — {Status:"", RoleID:41} is writable and unconfirmed,
+	// not read-only. Saying "read-only" twice for an account that is also suspended would be
+	// noise, which is why this arm runs only when nothing above spoke.
+	if len(notes) == 0 && !a.Usable() {
+		// The SAME comparison Usable() makes, deliberately — not a trimmed one. This arm's only
+		// job is to explain a decision Usable() already took, so any predicate that can disagree
+		// with it explains the wrong thing: for Status " Active " the exact gate denies (padding
+		// is not "Active") while a trimmed test reads it as Active and blames the role instead —
+		// reintroducing precisely the role-blaming mislabel this arm exists to remove. Padding is
+		// unlikely (Status is unmarshalled from AccountLifeCycleStatus with no normalization) but
+		// the coupling is the point: if Usable() ever starts trimming, this must trim with it.
+		if a.Status != "Active" {
+			notes = append(notes, "account status could not be confirmed")
+		} else {
+			notes = append(notes, "not writable with this credential")
+		}
+	}
+	if len(notes) > 0 {
+		return name + " — " + strings.Join(notes, ", ")
+	}
+	return name
 }
 
 // resolveMicrosoftClient resolves + validates the project's connection and builds a client
@@ -337,6 +517,23 @@ func verifyMicrosoftAccountMatch(op string, campaign *model.Campaign, client *mi
 		op, campaign.PlatformCampaignID, created, client.AccountID(), domain.ErrCampaignAccountMismatch)
 }
 
+// microsoftKeywordIDs pulls the persisted keyword ids out of the result blob, using the same
+// lowerCamel json tags campaignFromMicrosoft marshalled (pinned by a round-trip test). Empty
+// means keyword targeting was never provisioned — either none was supplied or the step failed
+// before any id could be parsed.
+func microsoftKeywordIDs(campaign *model.Campaign) []string {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return nil
+	}
+	var blob struct {
+		KeywordIDs []string `json:"keywordIds"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return nil
+	}
+	return blob.KeywordIDs
+}
+
 // ToggleStatus implements service.StatusToggler for Microsoft Advertising.
 //
 // FULL CASCADE, like reddit: the create path builds the whole Campaign -> AdGroup -> Ad tree
@@ -356,8 +553,16 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 	}
 	adGroupID, adID := microsoftChildIDs(campaign)
 	adGroupID, adID = strings.TrimSpace(adGroupID), strings.TrimSpace(adID)
-	if msStatus == microsoft.StatusActive && (adGroupID == "" || adID == "") {
-		return fmt.Errorf("%w: microsoft campaign %s cannot be activated because it has no fully-created ad group + ad to serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+	if msStatus == microsoft.StatusActive {
+		if adGroupID == "" || adID == "" {
+			return fmt.Errorf("%w: microsoft campaign %s cannot be activated because it has no fully-created ad group + ad to serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
+		// Refuse ACTIVATE when no keyword was ever provisioned. A Search campaign with no
+		// keywords has nothing to match a query against, so enabling it would report success
+		// for a campaign that cannot deliver — the exact false claim ErrCampaignNotProvisioned
+		// exists to prevent. Raised locally, without calling Microsoft: it is a fact about the
+		// persisted row, so the service maps it to a 409 STATE error rather than a platform
+		// failure. Mirrors the google-ads sibling's keyword-criteria gate.
 	}
 	// An ad with no known parent cannot be changed (the client refuses the pair), and sending
 	// the campaign anyway would report success while the ad's status remained unchanged.
@@ -368,13 +573,25 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 	if err != nil {
 		return err
 	}
-	// Same identity invariant ReadMetrics enforces, and it matters MORE here because this
-	// path MUTATES: on an id collision the update would pause or activate a campaign this
-	// project does not own. Fail before contacting Microsoft, for both PAUSE and ACTIVATE.
+	// Provenance BEFORE the mutation: a campaign id is unique only within an ad account, so a
+	// connection re-pointed since create would address an unrelated campaign — and this path
+	// CHANGES delivery, so a collision pauses or activates someone else's campaign.
 	if err := verifyMicrosoftAccountMatch("toggle microsoft campaign status", campaign, client); err != nil {
 		return err
 	}
-	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, msStatus); uerr != nil {
+	// AFTER provenance, deliberately. "This row's keywords were never provisioned" is only a
+	// meaningful answer once the row is known to belong to the resolved account: on a
+	// re-pointed connection the keyword ids describe a campaign in a DIFFERENT account, so
+	// answering 409-not-provisioned there would explain the wrong campaign. Ordering the two
+	// the other way made TestMicrosoft_ToggleStatus_ForeignAccountIs409AndNeverMutates report
+	// a missing-keyword error for a foreign-account campaign.
+	if msStatus == microsoft.StatusActive && len(microsoftKeywordIDs(campaign)) == 0 {
+		return fmt.Errorf("%w: microsoft campaign %s cannot be activated because keyword targeting is not yet provisioned (at least one keyword is required for a search campaign to serve)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+	}
+	// Keyword ids come from the SAME persisted result blob as the child ids. They are passed
+	// on BOTH the activate and pause paths: keywords are created Paused, so an activate that
+	// skipped them would enable a campaign with nothing eligible to match a query.
+	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, microsoftKeywordIDs(campaign), msStatus); uerr != nil {
 		if microsoft.IsOutcomeUnconfirmed(uerr) {
 			return &unconfirmedToggleError{err: uerr}
 		}

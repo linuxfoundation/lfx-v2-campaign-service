@@ -60,6 +60,8 @@ type Endpoints struct {
 	SetCredentialHubspot      goa.Endpoint
 	ListGoogleAdsAccounts     goa.Endpoint
 	ListMetaAdsAccounts       goa.Endpoint
+	ListLinkedinAdsAccounts   goa.Endpoint
+	ListMicrosoftAdsAccounts  goa.Endpoint
 	ListHubspotEmails         goa.Endpoint
 }
 
@@ -113,6 +115,8 @@ func NewEndpoints(s Service) *Endpoints {
 		SetCredentialHubspot:      NewSetCredentialHubspotEndpoint(s, a.JWTAuth),
 		ListGoogleAdsAccounts:     NewListGoogleAdsAccountsEndpoint(s, a.JWTAuth),
 		ListMetaAdsAccounts:       NewListMetaAdsAccountsEndpoint(s, a.JWTAuth),
+		ListLinkedinAdsAccounts:   NewListLinkedinAdsAccountsEndpoint(s, a.JWTAuth),
+		ListMicrosoftAdsAccounts:  NewListMicrosoftAdsAccountsEndpoint(s, a.JWTAuth),
 		ListHubspotEmails:         NewListHubspotEmailsEndpoint(s, a.JWTAuth),
 	}
 }
@@ -164,6 +168,8 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.SetCredentialHubspot = m(e.SetCredentialHubspot)
 	e.ListGoogleAdsAccounts = m(e.ListGoogleAdsAccounts)
 	e.ListMetaAdsAccounts = m(e.ListMetaAdsAccounts)
+	e.ListLinkedinAdsAccounts = m(e.ListLinkedinAdsAccounts)
+	e.ListMicrosoftAdsAccounts = m(e.ListMicrosoftAdsAccounts)
 	e.ListHubspotEmails = m(e.ListHubspotEmails)
 }
 
@@ -1191,6 +1197,54 @@ func NewListMetaAdsAccountsEndpoint(s Service, authJWTFn security.AuthJWTFunc) g
 			return nil, err
 		}
 		return s.ListMetaAdsAccounts(ctx, p)
+	}
+}
+
+// NewListLinkedinAdsAccountsEndpoint returns an endpoint function that calls
+// the method "list-linkedin-ads-accounts" of service
+// "lfx-v2-campaign-service-connections".
+func NewListLinkedinAdsAccountsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ListLinkedinAdsAccountsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ListLinkedinAdsAccounts(ctx, p)
+	}
+}
+
+// NewListMicrosoftAdsAccountsEndpoint returns an endpoint function that calls
+// the method "list-microsoft-ads-accounts" of service
+// "lfx-v2-campaign-service-connections".
+func NewListMicrosoftAdsAccountsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ListMicrosoftAdsAccountsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ListMicrosoftAdsAccounts(ctx, p)
 	}
 }
 

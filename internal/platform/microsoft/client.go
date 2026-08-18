@@ -1063,7 +1063,27 @@ const maxDecodedErrorItems = maxRetainedErrorCodes
 // array (so it never truncates/corrupts a large valid body) but only RETAINS the first
 // maxDecodedErrorItems elements — later elements are decoded into a scratch and dropped, so
 // a pathological fault with thousands of tiny items can't balloon memory before the cap.
-type boundedErrorItems []msErrorItem
+//
+// Truncation is RECORDED rather than silent, because at least one consumer's correctness
+// depends on completeness rather than on a sample. isDuplicateKeywordPartial is ALL-not-ANY:
+// it concludes "every rejection here is an already-exists duplicate" and lets the caller
+// report the batch as a no-op success. Reading that conclusion off a truncated array is
+// unsound — AddKeywords sends up to maxKeywords (60) and only 16 errors are retained, so a
+// genuine editorial rejection at index 40 was discarded BEFORE classification and the batch
+// was reported as duplicate-only success, which is exactly what ALL exists to prevent.
+//
+// Widening the bound to maxKeywords was the other candidate and was rejected: it fixes the
+// 60-keyword case but leaves the invariant resting on a size coincidence, so it breaks again
+// the moment maxKeywords rises or a body null-pads past the bound. Recording truncation makes
+// the invariant structural instead — absence of a rejection in a set KNOWN to be incomplete is
+// never evidence there was none, at any size — and keeps the O(1) memory bound the cap exists
+// for.
+type boundedErrorItems struct {
+	Items []msErrorItem
+	// Truncated reports that the body carried MORE error items than were retained, so Items
+	// is a prefix of the real error set rather than the whole of it.
+	Truncated bool
+}
 
 func (b *boundedErrorItems) UnmarshalJSON(data []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -1082,10 +1102,14 @@ func (b *boundedErrorItems) UnmarshalJSON(data []byte) error {
 		if err := dec.Decode(&it); err != nil {
 			return err
 		}
-		if len(*b) < maxDecodedErrorItems {
-			*b = append(*b, it)
+		if len(b.Items) < maxDecodedErrorItems {
+			b.Items = append(b.Items, it)
+			continue
 		}
-		// else: parsed to advance the stream, then discarded (bounds memory).
+		// Parsed to advance the stream, then discarded (bounds memory) — but the fact that
+		// something WAS discarded is retained, so a consumer that needs completeness can tell
+		// it is looking at a prefix.
+		b.Truncated = true
 	}
 	return nil
 }
@@ -1129,7 +1153,7 @@ func parseErrorCodes(body []byte) []string {
 	if !add(env.ErrorCode) || !add(env.Code) {
 		return codes
 	}
-	for _, group := range []boundedErrorItems{env.Errors, env.OperationErrors, env.BatchErrors, env.PartialErrors} {
+	for _, group := range [][]msErrorItem{env.Errors.Items, env.OperationErrors.Items, env.BatchErrors.Items, env.PartialErrors.Items} {
 		for _, it := range group {
 			if !add(it.ErrorCode) || !add(it.Code) {
 				return codes

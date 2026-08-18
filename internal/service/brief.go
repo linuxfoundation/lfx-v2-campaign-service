@@ -15,11 +15,14 @@ import (
 	"time"
 	"unicode"
 
+	"golang.org/x/sync/errgroup"
+
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/indexer"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/rules"
 
 	"goa.design/goa/v3/security"
 )
@@ -54,6 +57,27 @@ type BriefService struct {
 	// llmClient backs GenerateEmailCopy. Nil in every construction that does not call
 	// SetLLMClient, which is why that handler checks it rather than ready().
 	llmClient *llm.Client
+	// clock is the time source for pacing. Injected so date arithmetic is testable at a fixed
+	// instant — a test that reads the wall clock passes or fails by WHEN it is run. Nil means
+	// time.Now, so every existing construction keeps working without naming it.
+	clock func() time.Time
+}
+
+// SetClock overrides the time source used for pacing. For tests.
+func (s *BriefService) SetClock(now func() time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clock = now
+}
+
+// now reads the injected clock, falling back to the wall clock.
+func (s *BriefService) now() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.clock != nil {
+		return s.clock()
+	}
+	return time.Now()
 }
 
 var (
@@ -1818,4 +1842,393 @@ func safeErrSummary(err error) string {
 		n++
 	}
 	return b.String()
+}
+
+// briefMetricsConcurrency bounds how many platform metrics reads run at once for ONE
+// brief-wide request.
+//
+// Deliberately small and local rather than shared with the dispatch semaphore: these are
+// read-only GETs that create nothing, so they need none of dispatch's spend-safety
+// ceilings, and borrowing that semaphore would let a metrics read starve a paid create
+// waiting for a slot. A brief carries at most one live campaign per (platform, variant),
+// so in practice this is already close to the natural width.
+const briefMetricsConcurrency = 4
+
+// briefMetricsRow is one campaign's outcome, before it is rendered into the wire type.
+type briefMetricsRow struct {
+	campaign *model.Campaign
+	metrics  *model.CampaignMetrics
+	// window is the window this row was actually READ over, which is not always the
+	// requested one: with no request-level window the default is platform-aware, and X Ads
+	// falls back to a narrower range than the other platforms.
+	window model.MetricsWindow
+	status string
+	reason string
+	// pacing is derived after the read, on the request goroutine, from the campaign's own
+	// budget and flight. Zero-valued (Computable=false) on every row that carries no
+	// measurement, and on measured rows with no budget or usable flight.
+	pacing rules.Pacing
+	// deliveryExpected records whether this campaign's flight has run long enough for an
+	// absence of delivery to be evidence. Derived alongside pacing so both read the same `now`.
+	deliveryExpected bool
+	// windowOverlapDays is how much of the READ window falls inside the campaign's flight. Zero
+	// means the window describes a period the campaign did not exist in, so neither its spend
+	// nor its impressions are evidence about anything.
+	windowOverlapDays float64
+}
+
+// classifyBriefMetricsErr maps a per-campaign read failure onto the row status vocabulary
+// and a consumer-safe sentence.
+//
+// The mapping is derived from GetCampaignMetrics, which expresses these same states as
+// distinct HTTP responses. An aggregate cannot: one campaign's 409 must not fail the other
+// five, so each becomes a row status instead.
+//
+// The returned reason is a FIXED string chosen here, never the adapter's error text. Those
+// errors can carry a platform's own response body or operator-supplied account identifiers
+// (see the redaction note on GetCampaignMetrics' account-mismatch arm), and this value is
+// rendered to an API consumer.
+func classifyBriefMetricsErr(err error, platform model.Provider) (status, reason string) {
+	switch {
+	case errors.Is(err, ErrMetricsUnsupported):
+		return "unsupported", "metrics reads are not supported for this campaign's platform"
+	case errors.Is(err, ErrMetricsWindowUnsupported):
+		if platform == model.ProviderTwitterAds {
+			return "unsupported", "X Ads supports only today, yesterday, and last_7_days windows (API cap: 7-day queryable range)"
+		}
+		return "unsupported", "this window is not supported for the campaign's platform"
+	case errors.Is(err, ErrCampaignNotProvisioned):
+		return "not_ready", "campaign is not fully provisioned — it has no platform campaign id yet"
+	case errors.Is(err, domain.ErrNoMetricsInWindow):
+		// NOT an error state. The email channel stages a DRAFT, so every read before a human
+		// presses send looks exactly like this; classifying it as a failure would send an
+		// operator to investigate a healthy integration.
+		return "not_ready", "the platform reported no data for this campaign in the requested window — it may not have run inside the window, may not have been sent or started yet, or may no longer exist upstream"
+	case errors.Is(err, domain.ErrCampaignProvenanceUnknown):
+		return "connection_problem", "this campaign does not record which platform account it was created under, so its metrics cannot be resolved safely — it must be re-dispatched before it can be read"
+	case errors.Is(err, ErrCampaignAccountMismatch):
+		return "connection_problem", "the campaign belongs to a different account than this project's current connection — reconnect the original account to read its metrics"
+	case errors.Is(err, domain.ErrCredentialDecryptionFailed):
+		// NOT `failed`. Retrying cannot help, and the advice `failed` carries ("try again")
+		// is wrong twice over: this is either one corrupted row or a rotated
+		// CREDENTIAL_ENCRYPTION_KEY failing every project at once, and this path cannot tell
+		// them apart. GetCampaignMetrics answers 500 here for the same reason.
+		//
+		// Placed ABOVE the connection arms because creds.go wraps this WITHOUT
+		// ErrConnectionNotUsable (unlike the other credential defects), so those arms do not
+		// catch it and it would otherwise reach the retryable default.
+		// Operator-scoped wording deliberately: "reconnect the platform" is WRONG for the two
+		// causes this sentinel actually covers. A rotated CREDENTIAL_ENCRYPTION_KEY is repaired
+		// by fixing the deployment, not by any reconnect, and when the credentials came from
+		// the shared LF fallback the project has no connection of its own to reconnect. This
+		// path cannot tell the two apart, so the message names neither and points at the one
+		// actor who can act on either.
+		return "connection_problem", "this campaign's stored credentials could not be decrypted — an operator must investigate before metrics can be read"
+	case errors.Is(err, domain.ErrNotFound):
+		// PERMANENT: no connection row exists for this (project, provider) and the shared
+		// system row did not cover it. There is nothing to retry against — the fix is to
+		// connect the platform. GetCampaignMetrics answers 404.
+		return "connection_problem", "this project has no connection for the campaign's channel — connect it before reading metrics"
+	case errors.Is(err, domain.ErrSystemConnectionNotUsable):
+		// Its OWN arm, above the general one, because the remedy differs and the general
+		// wording is unfollowable here: this fires when the project has NO connection of its
+		// own and fell back to the shared LF system row, so there is nothing for the project
+		// to reconnect. creds.go wraps this ALONGSIDE ErrConnectionNotUsable, so a merged arm
+		// silently answers with the wrong instruction — which is what makes the tag decorative.
+		return "connection_problem", "this project has no connection of its own for the campaign's platform and the shared LF connection is not usable — an operator must repair it"
+	case errors.Is(err, domain.ErrAccountNotSelected):
+		// Above the general arm: production wraps this ALONGSIDE ErrConnectionNotUsable, so a
+		// merged arm matches first and tells the operator to reconnect credentials when the
+		// actual fix is choosing an ad account on the connection they already have.
+		return "connection_problem", "no ad account has been selected on this project's connection for the campaign's platform — choose one to read metrics"
+	case errors.Is(err, domain.ErrConnectionNotUsable):
+		return "connection_problem", "this project's connection for the campaign's platform is not usable — reconnect it to read metrics"
+	default:
+		// Transient by default. An unrecognised failure is far more likely to be an upstream
+		// outage than a permanent state, and `failed` is the status that tells a consumer
+		// retrying may help — the opposite advice from `unsupported`.
+		return "failed", "the platform could not be reached for this campaign"
+	}
+}
+
+// GetBriefMetrics reads live metrics for every campaign on a brief in one request.
+//
+// A per-campaign failure does NOT fail the request. Each row carries its own status, and a
+// row that could not be read carries NO metrics rather than zeroes — a zero is a claim, and
+// substituting one for an unreadable campaign is what turns an outage into an apparent
+// performance result.
+func (s *BriefService) GetBriefMetrics(ctx context.Context, p *briefs.GetBriefMetricsPayload) (*briefs.BriefMetrics, error) {
+	briefRepo, campaignRepo, _, orch, err := s.ready()
+	if err != nil {
+		return nil, err
+	}
+	// Read the brief first so a missing or archived brief is a 404 for the REQUEST, rather
+	// than an empty row set that reads as "this brief has no campaigns".
+	if _, gerr := briefRepo.GetBrief(ctx, p.ProjectID, p.BriefID); gerr != nil {
+		return nil, mapBriefErr(gerr)
+	}
+
+	// Validate the window ONCE, up front. Per-platform defaults are resolved per row below,
+	// because the default is platform-aware (X Ads cannot serve last_30_days).
+	var requested *model.MetricsWindow
+	if p.Window != nil {
+		w := model.MetricsWindow(*p.Window)
+		if !model.IsValidMetricsWindow(w) {
+			return nil, &briefs.BadRequestError{Code: "400", Message: "window must be one of: today, yesterday, last_7_days, last_14_days, last_30_days, this_month, last_month"}
+		}
+		requested = &w
+	}
+
+	campaigns, lerr := campaignRepo.ListCampaignsForBrief(ctx, p.ProjectID, p.BriefID)
+	if lerr != nil {
+		return nil, mapBriefErr(lerr)
+	}
+
+	rows := make([]briefMetricsRow, len(campaigns))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(briefMetricsConcurrency)
+	for i, c := range campaigns {
+		g.Go(func() error {
+			window := defaultMetricsWindowFor(c.Platform)
+			if requested != nil {
+				window = *requested
+			}
+			m, merr := orch.ReadCampaignMetrics(gctx, p.ProjectID, c.Platform, c, window)
+			if merr != nil {
+				status, reason := classifyBriefMetricsErr(merr, c.Platform)
+				// Logged at INFO for not_ready — it is the expected state for a staged email
+				// draft — and WARN otherwise. safeErrSummary, not the raw error: these carry
+				// upstream text and account identifiers.
+				// A decrypt failure is ERROR, not WARN: it is either one corrupted row or a
+				// rotated CREDENTIAL_ENCRYPTION_KEY failing every project at once, and the
+				// cheap discriminator is the COUNT of these lines. Aggregated into per-row
+				// WARNs, a key rotation that breaks every campaign on every brief would page
+				// nobody. GetCampaignMetrics answers 500 here for the same reason.
+				//
+				// not_ready is INFO because it is the ordinary state of a staged email draft.
+				lvl := slog.LevelWarn
+				switch {
+				case errors.Is(merr, domain.ErrCredentialDecryptionFailed),
+					errors.Is(merr, domain.ErrSystemConnectionNotUsable):
+					// Both are OPERATOR-scope defects on shared infrastructure: a rotated key
+					// or a broken LF system row fails every project that depends on it, and
+					// the discriminator is the COUNT of these lines. Left at WARN they page
+					// nobody. GetCampaignMetrics answers 500 for both for the same reason.
+					lvl = slog.LevelError
+				case status == "not_ready":
+					lvl = slog.LevelInfo
+				}
+				attrs := []any{
+					"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", c.ID,
+					"platform", c.Platform, "window", string(window), "row_status", status,
+				}
+				// What may be logged depends on the CLASS of failure, not on convenience.
+				//
+				// safeErrSummary normalises and truncates; it does not REDACT. A decrypt error
+				// comes from the Encryptor INTERFACE and may quote ciphertext or key material,
+				// and an unusable-connection cause can embed fragments of a decrypted blob. So
+				// neither gets error text: connection failures log the fixed reason TOKEN that
+				// GetCampaignMetrics logs, and the decrypt arm logs nothing at all.
+				//
+				// This matters more here than on the campaign-scoped handler: a brief-wide read
+				// fans out across every campaign, so one malformed credential row would write
+				// its fragments once per campaign into centralised logs.
+				switch {
+				case errors.Is(merr, domain.ErrCredentialDecryptionFailed):
+					// Nothing. Not even a reason token — the cause is the encryptor's.
+				case status == "connection_problem":
+					attrs = append(attrs, "reason", unusableConnectionReason(merr))
+				default:
+					attrs = append(attrs, "error", safeErrSummary(merr))
+				}
+				slog.Log(gctx, lvl, "brief metrics row could not be read", attrs...)
+				rows[i] = briefMetricsRow{campaign: c, window: window, status: status, reason: reason}
+				// Never propagated: returning it would cancel gctx and convert one platform's
+				// failure into a partial read of every OTHER platform — the aggregate would
+				// then report failures it never actually attempted.
+				return nil
+			}
+			rows[i] = briefMetricsRow{campaign: c, metrics: m, window: window, status: "ok"}
+			return nil
+		})
+	}
+	// Cannot return non-nil: every g.Go returns nil above. Checked anyway so a later edit
+	// that starts propagating an error cannot silently drop it.
+	if werr := g.Wait(); werr != nil {
+		return nil, mapBriefErr(werr)
+	}
+
+	// Pacing and action items are derived HERE, after the fan-out, rather than inside each
+	// goroutine: they are pure arithmetic over data already in hand, and computing them under
+	// the errgroup would put a shared clock read on several goroutines for no benefit. One
+	// `now` for the whole response also keeps the rows consistent with each other — a request
+	// spanning midnight must not pace one campaign against a different day than its sibling.
+	now := s.now()
+	for i := range rows {
+		// Order matters: pacingFor READS windowOverlapDays, so the overlap has to be computed
+		// first. Deriving it after would hand pacing a zero that means "not yet calculated"
+		// rather than "no overlap", making every row incomputable.
+		if rows[i].campaign != nil {
+			flight := rules.Flight{Start: rows[i].campaign.StartDate, End: rows[i].campaign.EndDate}
+			rows[i].deliveryExpected = rules.DeliveryExpected(flight, now)
+			rows[i].windowOverlapDays = rules.WindowDaysWithinFlight(
+				string(rows[i].window), now, rows[i].campaign.StartDate, rows[i].campaign.EndDate)
+		}
+		rows[i].pacing = pacingFor(&rows[i], now)
+	}
+
+	return renderBriefMetrics(p.BriefID, requested, rows), nil
+}
+
+// pacingFor derives one row's pacing, or the incomputable zero value.
+//
+// A row with no measurement gets no pacing: its spend is unknown, and pacing derived from an
+// unknown spend would be a figure about nothing.
+func pacingFor(r *briefMetricsRow, now time.Time) rules.Pacing {
+	// The nil checks are belt-and-braces, not load-bearing: today `status == "ok"` already
+	// implies both pointers are set, because the only assignment that produces that status sets
+	// them together and ReadCampaignMetrics converts a (nil, nil) return into an error. They
+	// are kept so that a future fan-out path which leaves a row unassigned degrades to "no
+	// pacing" instead of panicking a request. Reverting them fails no test, by construction.
+	if r.status != "ok" || r.metrics == nil || r.campaign == nil {
+		return rules.Pacing{Label: rules.PacingUnknown}
+	}
+	if r.campaign.BudgetAmount == nil || r.campaign.BudgetType == nil {
+		return rules.Pacing{Label: rules.PacingUnknown}
+	}
+	kind := rules.BudgetLifetime
+	if *r.campaign.BudgetType == model.BudgetDaily {
+		kind = rules.BudgetDaily
+	}
+	// r.window, not r.metrics.Window: adapters are not required to echo the window back, and a
+	// blank one would resolve to 0 days and silently make every row incomputable. This is the
+	// same reason the wire rendering below uses r.window.
+	return rules.ComputePacing(
+		microsToUnits(r.metrics.CostMicros),
+		// The overlap of the window with the FLIGHT, not the window's bare length. A window can
+		// sit wholly or partly before the campaign existed — `last_month` for a campaign that
+		// started last week — and its correct zero spend would then be paced against an
+		// expectation measured from the flight's start.
+		r.windowOverlapDays,
+		*r.campaign.BudgetAmount,
+		kind,
+		rules.Flight{Start: r.campaign.StartDate, End: r.campaign.EndDate},
+		now,
+		rules.DefaultThresholds,
+	)
+}
+
+// microsToUnits converts a platform's micro-denominated cost into whole currency units.
+//
+// The unit is the PLATFORM's own currency and this service performs no FX conversion, so the
+// result is only ever compared against that same campaign's budget — never summed across rows.
+func microsToUnits(micros int64) float64 {
+	return float64(micros) / 1_000_000
+}
+
+// renderBriefMetrics converts the internal rows into the wire type.
+//
+// The reported window is the REQUESTED one when the caller named it, and otherwise the
+// literal default rather than any single row's resolved window: with no request-level window
+// the rows can legitimately differ from each other (X Ads falls back to a narrower range), so
+// promoting one row's window to the top level would state a range the other rows do not cover.
+// Each row's own metrics.window remains authoritative for that row.
+func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []briefMetricsRow) *briefs.BriefMetrics {
+	window := string(model.MetricsWindowLast30Days)
+	if requested != nil {
+		window = string(*requested)
+	}
+	out := &briefs.BriefMetrics{
+		BriefID: briefID,
+		Window:  window,
+		Rows:    make([]*briefs.BriefMetricsRow, 0, len(rows)),
+		// Never nil: an empty list is the JSON `[]` a consumer can iterate, while a nil slice
+		// marshals to `null` and makes "nothing to do" indistinguishable from "not computed".
+		ActionItems: make([]*briefs.CampaignActionItem, 0),
+	}
+	for _, r := range rows {
+		wire := &briefs.BriefMetricsRow{
+			CampaignID: r.campaign.ID,
+			Platform:   string(r.campaign.Platform),
+			Status:     r.status,
+		}
+		if r.status == "ok" {
+			// r.window, NOT r.metrics.Window: adapters are not required to echo the window
+			// back, and trusting them would emit "" for one that doesn't, violating the
+			// response enum and causing generated clients to reject an otherwise successful
+			// 200. Same reason GetCampaignMetrics uses its validated window here.
+			wire.Metrics = &briefs.CampaignMetrics{
+				CampaignID:         r.campaign.ID,
+				PlatformCampaignID: r.campaign.PlatformCampaignID,
+				Window:             string(r.window),
+				Impressions:        r.metrics.Impressions,
+				Clicks:             r.metrics.Clicks,
+				CostMicros:         r.metrics.CostMicros,
+				Ctr:                r.metrics.Ctr,
+				Email:              emailMetricsResult(r.metrics.Email),
+			}
+			out.OKCount++
+		} else {
+			reason := r.reason
+			wire.Reason = &reason
+		}
+		// Pacing rides on any row that could derive it, which is only ever an `ok` row.
+		// Pct is a POINTER and stays nil when incomputable: a zero would be read as a campaign
+		// that spent nothing rather than one with no plan to measure against.
+		if r.pacing.Computable {
+			pct := r.pacing.Pct
+			wire.Pacing = &briefs.CampaignPacing{Pct: &pct, Label: string(r.pacing.Label)}
+		} else if r.status == "ok" {
+			wire.Pacing = &briefs.CampaignPacing{Label: string(rules.PacingUnknown)}
+		}
+		out.Rows = append(out.Rows, wire)
+
+		// Action items come only from rows that carry a measurement. A row that could not be
+		// read has no impressions and no spend to look at, and evaluating it would raise a
+		// zero-delivery item for every failed read — reporting an outage as a campaign defect,
+		// which is the precise substitution this endpoint's row statuses exist to prevent.
+		if r.status != "ok" || r.metrics == nil || r.campaign == nil {
+			continue
+		}
+		// A readable row can still describe a period the campaign did not exist in — `last_month`
+		// for a campaign that started this month. Its zero impressions and zero spend are correct
+		// and mean "not running yet", so zero_delivery would report a campaign that never started
+		// as one that failed to start. Pacing already refuses such a window; the delivery rule
+		// must refuse it for the same reason.
+		if r.windowOverlapDays <= 0 {
+			continue
+		}
+		for _, item := range rules.Evaluate(rules.Input{
+			CampaignID:  r.campaign.ID,
+			Platform:    string(r.campaign.Platform),
+			Status:      r.campaign.Status,
+			Impressions: r.metrics.Impressions,
+			Clicks:      r.metrics.Clicks,
+			Spend:       microsToUnits(r.metrics.CostMicros),
+			// Ctr is a RATIO on the domain model; the rules take a percentage, and passing the
+			// ratio would make the low-CTR threshold a hundred times too strict.
+			CTRPct: r.metrics.Ctr * 100,
+			Pacing: r.pacing,
+			// Only a paid-ads channel bills per delivery. HubSpot charges nothing per send and
+			// its adapter always reports CostMicros=0, so "no spend" there is the normal state
+			// rather than a signal. Keyed on Kind() rather than on the provider so a second
+			// email provider inherits it, and because an unrecognised provider returns "" and
+			// therefore fails closed.
+			BillsPerDelivery: r.campaign.Platform.Kind() == model.ChannelPaidAds,
+			// Whether the flight has begun, and has run long enough for a zero to be evidence
+			// rather than reporting lag. Derived per-row above so it shares the one `now` the
+			// whole response is built against.
+			DeliveryExpected: r.deliveryExpected,
+		}) {
+			out.ActionItems = append(out.ActionItems, &briefs.CampaignActionItem{
+				Rule:       item.Rule,
+				Priority:   string(item.Priority),
+				CampaignID: item.CampaignID,
+				Platform:   item.Platform,
+				Issue:      item.Issue,
+				Action:     item.Action,
+			})
+		}
+	}
+	return out
 }

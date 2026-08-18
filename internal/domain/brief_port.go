@@ -110,6 +110,14 @@ type CampaignReader interface {
 	// unique slot. Empty is normalized to model.VariantDefault, which is what every
 	// provider that does not sub-divide uses.
 	GetCampaignByPlatform(ctx context.Context, projectID, briefID string, platform model.Provider, variant string) (*model.Campaign, error)
+	// ListCampaignsForBrief returns every live campaign under a brief, ordered so a
+	// consumer's rows are stable across reads. Soft-deleted rows are excluded, matching
+	// GetCampaign — a deleted campaign is invisible to reads.
+	//
+	// Returns an EMPTY slice, not an error, when the brief has no campaigns: a brief that
+	// has never been dispatched is an ordinary state, and the caller (a brief-wide metrics
+	// read) must be able to answer "nothing to measure yet" without it being a failure.
+	ListCampaignsForBrief(ctx context.Context, projectID, briefID string) ([]*model.Campaign, error)
 	// ClaimCampaignDispatch atomically claims the right to dispatch (brief,
 	// platform) by inserting a placeholder campaign row (status 'pending') via
 	// INSERT ... ON CONFLICT (brief_id, platform) DO NOTHING. Exactly one worker

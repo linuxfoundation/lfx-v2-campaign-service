@@ -330,6 +330,30 @@ type GetCampaignMetricsResponseBody struct {
 	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
 }
 
+// GetBriefMetricsResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
+// response body.
+type GetBriefMetricsResponseBody struct {
+	// Brief UUID
+	BriefID string `form:"brief_id" json:"brief_id" xml:"brief_id"`
+	// The window REQUESTED for this read. Per-platform defaults still apply when
+	// it is omitted, so an individual row may have been read over a narrower
+	// window than this — X Ads caps queryable ranges at 7 days. Each row's own
+	// metrics.window is what that row actually covers.
+	Window string `form:"window" json:"window" xml:"window"`
+	// One row per campaign on the brief, in a stable order. Includes rows that
+	// could not be read.
+	Rows []*BriefMetricsRowResponseBody `form:"rows" json:"rows" xml:"rows"`
+	// How many rows carry a measurement. Compare against the length of rows before
+	// presenting any cross-campaign total — a total over 2 of 6 campaigns is not
+	// the brief's performance.
+	OKCount int `form:"ok_count" json:"ok_count" xml:"ok_count"`
+	// What an operator should look at, derived from the readable rows. Empty means
+	// nothing was flagged among those rows — compare ok_count against the row
+	// count before reading that as an all-clear.
+	ActionItems []*CampaignActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
+}
+
 // GenerateEmailCopyResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
 // response body.
@@ -1024,6 +1048,59 @@ type GetCampaignMetricsNotFoundResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetBriefMetricsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
+// response body for the "BadRequest" error.
+type GetBriefMetricsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetBriefMetricsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
+// response body for the "Conflict" error.
+type GetBriefMetricsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetBriefMetricsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type GetBriefMetricsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetBriefMetricsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
+// response body for the "InternalServerError" error.
+type GetBriefMetricsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetBriefMetricsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-brief-metrics" endpoint HTTP
+// response body for the "NotFound" error.
+type GetBriefMetricsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GenerateEmailCopyBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "generate-email-copy" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -1365,6 +1442,86 @@ type EmailMetricsResponseBody struct {
 	Unsubscribes int64 `form:"unsubscribes" json:"unsubscribes" xml:"unsubscribes"`
 }
 
+// BriefMetricsRowResponseBody is used to define fields on response body types.
+type BriefMetricsRowResponseBody struct {
+	// Campaign UUID
+	CampaignID string `form:"campaign_id" json:"campaign_id" xml:"campaign_id"`
+	// The channel this campaign runs on
+	Platform string `form:"platform" json:"platform" xml:"platform"`
+	// Whether this row carries a measurement. ONLY `ok` does.
+	Status string `form:"status" json:"status" xml:"status"`
+	// The measurement. Present if and ONLY if status is `ok`; absent otherwise —
+	// never zero-filled, because a zero is a claim.
+	Metrics *CampaignMetricsResponseBody `form:"metrics,omitempty" json:"metrics,omitempty" xml:"metrics,omitempty"`
+	// Why this row carries no measurement, in consumer-safe wording. Absent when
+	// status is `ok`.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+	// Spend against the flight-prorated plan. Absent when status is not `ok`. On
+	// an `ok` row it is always present: `pct` is absent and `label` is `unknown`
+	// when this campaign has no budget or usable flight to pace against, or when
+	// the window does not overlap the flight.
+	Pacing *CampaignPacingResponseBody `form:"pacing,omitempty" json:"pacing,omitempty" xml:"pacing,omitempty"`
+}
+
+// CampaignMetricsResponseBody is used to define fields on response body types.
+type CampaignMetricsResponseBody struct {
+	// Campaign UUID
+	CampaignID string `form:"campaign_id" json:"campaign_id" xml:"campaign_id"`
+	// The id the CHANNEL returned when the campaign was created. On an ad platform
+	// that is its campaign id; on the email channel it is the HubSpot
+	// marketing-email id of the cloned draft, which is what the metrics read
+	// queries by.
+	PlatformCampaignID string `form:"platform_campaign_id" json:"platform_campaign_id" xml:"platform_campaign_id"`
+	// The reporting window that was REQUESTED. On the ad platforms it is also the
+	// period the counters cover. On the email channel it is not: it selects which
+	// emails are in scope by their send date, and the counters are then that
+	// email's totals to date — see the email object.
+	Window string `form:"window" json:"window" xml:"window"`
+	// Impressions over the window on an ad platform; opens to date on the email
+	// channel
+	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
+	// Clicks over the window on an ad platform; clicks to date on the email channel
+	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
+	// Cost over the window, in micro-units of the platform's native currency
+	// (platform-dependent: USD for LinkedIn/Reddit, X's billing unit for Twitter,
+	// etc.). Always 0 on the email channel, which bills no per-send cost — do not
+	// blend that 0 into a cross-channel cost-per-acquisition.
+	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
+	// Clicks/Impressions, 0 when Impressions is 0
+	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+	// Email-channel counters. Present only for the email channel (HubSpot); absent
+	// for every ad platform.
+	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
+}
+
+// CampaignPacingResponseBody is used to define fields on response body types.
+type CampaignPacingResponseBody struct {
+	// Spend as a percentage of what this campaign should have spent BY NOW. Absent
+	// when pacing is not computable — never zero-filled, because 0% is a claim
+	// about spend.
+	Pct *float64 `form:"pct,omitempty" json:"pct,omitempty" xml:"pct,omitempty"`
+	// The band pct falls into. `unknown` means no pacing could be derived, which
+	// is NOT the same as being on plan.
+	Label string `form:"label" json:"label" xml:"label"`
+}
+
+// CampaignActionItemResponseBody is used to define fields on response body
+// types.
+type CampaignActionItemResponseBody struct {
+	// Which rule fired, as a stable token.
+	Rule string `form:"rule" json:"rule" xml:"rule"`
+	// How urgently this wants attention.
+	Priority string `form:"priority" json:"priority" xml:"priority"`
+	// The campaign this concerns
+	CampaignID string `form:"campaign_id" json:"campaign_id" xml:"campaign_id"`
+	// The channel that campaign runs on
+	Platform string `form:"platform" json:"platform" xml:"platform"`
+	// What is wrong, in operator-facing wording.
+	Issue string `form:"issue" json:"issue" xml:"issue"`
+	// What to do about it.
+	Action string `form:"action" json:"action" xml:"action"`
+}
+
 // PlatformResultResponseBody is used to define fields on response body types.
 type PlatformResultResponseBody struct {
 	// Platform this result is for
@@ -1629,6 +1786,42 @@ func NewGetCampaignMetricsResponseBody(res *lfxv2campaignservicebriefs.CampaignM
 	}
 	if res.Email != nil {
 		body.Email = marshalLfxv2campaignservicebriefsEmailMetricsToEmailMetricsResponseBody(res.Email)
+	}
+	return body
+}
+
+// NewGetBriefMetricsResponseBody builds the HTTP response body from the result
+// of the "get-brief-metrics" endpoint of the "lfx-v2-campaign-service-briefs"
+// service.
+func NewGetBriefMetricsResponseBody(res *lfxv2campaignservicebriefs.BriefMetrics) *GetBriefMetricsResponseBody {
+	body := &GetBriefMetricsResponseBody{
+		BriefID: res.BriefID,
+		Window:  res.Window,
+		OKCount: res.OKCount,
+	}
+	if res.Rows != nil {
+		body.Rows = make([]*BriefMetricsRowResponseBody, len(res.Rows))
+		for i, val := range res.Rows {
+			if val == nil {
+				body.Rows[i] = nil
+				continue
+			}
+			body.Rows[i] = marshalLfxv2campaignservicebriefsBriefMetricsRowToBriefMetricsRowResponseBody(val)
+		}
+	} else {
+		body.Rows = []*BriefMetricsRowResponseBody{}
+	}
+	if res.ActionItems != nil {
+		body.ActionItems = make([]*CampaignActionItemResponseBody, len(res.ActionItems))
+		for i, val := range res.ActionItems {
+			if val == nil {
+				body.ActionItems[i] = nil
+				continue
+			}
+			body.ActionItems[i] = marshalLfxv2campaignservicebriefsCampaignActionItemToCampaignActionItemResponseBody(val)
+		}
+	} else {
+		body.ActionItems = []*CampaignActionItemResponseBody{}
 	}
 	return body
 }
@@ -2361,6 +2554,62 @@ func NewGetCampaignMetricsNotFoundResponseBody(res *lfxv2campaignservicebriefs.N
 	return body
 }
 
+// NewGetBriefMetricsBadRequestResponseBody builds the HTTP response body from
+// the result of the "get-brief-metrics" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetBriefMetricsBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *GetBriefMetricsBadRequestResponseBody {
+	body := &GetBriefMetricsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetBriefMetricsConflictResponseBody builds the HTTP response body from
+// the result of the "get-brief-metrics" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetBriefMetricsConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *GetBriefMetricsConflictResponseBody {
+	body := &GetBriefMetricsConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetBriefMetricsServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "get-brief-metrics" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetBriefMetricsServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *GetBriefMetricsServiceUnavailableResponseBody {
+	body := &GetBriefMetricsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetBriefMetricsInternalServerErrorResponseBody builds the HTTP response
+// body from the result of the "get-brief-metrics" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetBriefMetricsInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *GetBriefMetricsInternalServerErrorResponseBody {
+	body := &GetBriefMetricsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetBriefMetricsNotFoundResponseBody builds the HTTP response body from
+// the result of the "get-brief-metrics" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewGetBriefMetricsNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *GetBriefMetricsNotFoundResponseBody {
+	body := &GetBriefMetricsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGenerateEmailCopyBadRequestResponseBody builds the HTTP response body
 // from the result of the "generate-email-copy" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -2831,6 +3080,18 @@ func NewGetCampaignMetricsPayload(projectID string, briefID string, campaignID s
 	v.ProjectID = projectID
 	v.BriefID = briefID
 	v.CampaignID = campaignID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetBriefMetricsPayload builds a lfx-v2-campaign-service-briefs service
+// get-brief-metrics endpoint payload.
+func NewGetBriefMetricsPayload(projectID string, briefID string, window *string, bearerToken *string) *lfxv2campaignservicebriefs.GetBriefMetricsPayload {
+	v := &lfxv2campaignservicebriefs.GetBriefMetricsPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
 	v.Window = window
 	v.BearerToken = bearerToken
 

@@ -502,13 +502,24 @@ func TestRotationRefusesWhenTheRowMovedUnderIt(t *testing.T) {
 // lifecycle state only where BOTH halves of a completable lifecycle are present — the
 // dispatcher can enumerate the accounts a credential reaches, AND the path that needs an
 // account id refuses an empty one by NAMING the missing choice, so the operator is told to go
-// and use that enumeration. Google Ads and Meta have both; none of the remaining four has both.
-// All four lack discovery, which is on its own enough to keep them out — LinkedIn additionally
-// answers an empty account id with a generic failure, while Microsoft, Reddit and X already tag
-// theirs with domain.ErrAccountNotSelected. So an account-less LinkedIn system row installs,
-// reports success, and then fails every dispatch with nothing an operator can do to complete it;
-// for the other three the failure at least names the missing choice, and there is still no
-// endpoint that could tell the operator what to put there. That is the same installable-and-dead shape
+// and use that enumeration. Providers holding BOTH halves are in accountDiscoveryProviders and
+// may be installed credentials-first; every other provider is refused an empty account id.
+//
+// The membership is deliberately described as a rule rather than a roster: this comment has been
+// corrected three times by naming which providers sit on which side, and each correction was
+// falsified by the next ticket that moved one. Read accountDiscoveryProviders for the current
+// set. Microsoft is the one member worth calling out, because the rule does not explain it — it
+// holds both halves as of LFXV2-3064 and is still excluded, which is a sequencing decision, not
+// a capability gap.
+//
+// What this test actually exercises: LinkedIn's refusal directly (an empty account id must be
+// rejected), with Google Ads and Meta as the ALLOWED cases. The other excluded providers are
+// refused by the same map check but are not separately invoked here — the guard is one branch,
+// so covering it once covers them, but do not read this comment as a claim of per-provider
+// coverage.
+//
+// (This map gates the bootstrap CLI only; the public connection APIs are gated separately by
+// Required("account_id") in design/connection.go.) That is the same installable-and-dead shape
 // requiredConfigKeys already guards, applied to the one column that is not part of
 // ProviderConfig.
 //

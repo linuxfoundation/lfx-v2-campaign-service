@@ -1964,6 +1964,176 @@ func DecodeGetCampaignMetricsResponse(decoder func(*http.Response) goahttp.Decod
 	}
 }
 
+// BuildGetBriefMetricsRequest instantiates a HTTP request object with method
+// and path set to call the "lfx-v2-campaign-service-briefs" service
+// "get-brief-metrics" endpoint
+func (c *Client) BuildGetBriefMetricsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+		briefID   string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.GetBriefMetricsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "get-brief-metrics", "*lfxv2campaignservicebriefs.GetBriefMetricsPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: GetBriefMetricsLfxV2CampaignServiceBriefsPath(projectID, briefID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "get-brief-metrics", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeGetBriefMetricsRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs get-brief-metrics server.
+func EncodeGetBriefMetricsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.GetBriefMetricsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "get-brief-metrics", "*lfxv2campaignservicebriefs.GetBriefMetricsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		if p.Window != nil {
+			values.Add("window", *p.Window)
+		}
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeGetBriefMetricsResponse returns a decoder for responses returned by
+// the lfx-v2-campaign-service-briefs get-brief-metrics endpoint. restoreBody
+// controls whether the response body should be restored after having been read.
+// DecodeGetBriefMetricsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - error: internal error
+func DecodeGetBriefMetricsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body GetBriefMetricsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-brief-metrics", err)
+			}
+			err = ValidateGetBriefMetricsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-brief-metrics", err)
+			}
+			res := NewGetBriefMetricsBriefMetricsOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetBriefMetricsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-brief-metrics", err)
+			}
+			err = ValidateGetBriefMetricsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-brief-metrics", err)
+			}
+			return nil, NewGetBriefMetricsBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body GetBriefMetricsConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-brief-metrics", err)
+			}
+			err = ValidateGetBriefMetricsConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-brief-metrics", err)
+			}
+			return nil, NewGetBriefMetricsConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body GetBriefMetricsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-brief-metrics", err)
+			}
+			err = ValidateGetBriefMetricsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-brief-metrics", err)
+			}
+			return nil, NewGetBriefMetricsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body GetBriefMetricsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-brief-metrics", err)
+			}
+			err = ValidateGetBriefMetricsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-brief-metrics", err)
+			}
+			return nil, NewGetBriefMetricsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body GetBriefMetricsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "get-brief-metrics", err)
+			}
+			err = ValidateGetBriefMetricsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "get-brief-metrics", err)
+			}
+			return nil, NewGetBriefMetricsNotFound(&body)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "get-brief-metrics", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildGenerateEmailCopyRequest instantiates a HTTP request object with method
 // and path set to call the "lfx-v2-campaign-service-briefs" service
 // "generate-email-copy" endpoint
@@ -3004,6 +3174,80 @@ func unmarshalEmailMetricsResponseBodyToLfxv2campaignservicebriefsEmailMetrics(v
 		Clicks:       *v.Clicks,
 		Bounces:      *v.Bounces,
 		Unsubscribes: *v.Unsubscribes,
+	}
+
+	return res
+}
+
+// unmarshalBriefMetricsRowResponseBodyToLfxv2campaignservicebriefsBriefMetricsRow
+// builds a value of type *lfxv2campaignservicebriefs.BriefMetricsRow from a
+// value of type *BriefMetricsRowResponseBody.
+func unmarshalBriefMetricsRowResponseBodyToLfxv2campaignservicebriefsBriefMetricsRow(v *BriefMetricsRowResponseBody) *lfxv2campaignservicebriefs.BriefMetricsRow {
+	res := &lfxv2campaignservicebriefs.BriefMetricsRow{
+		CampaignID: *v.CampaignID,
+		Platform:   *v.Platform,
+		Status:     *v.Status,
+		Reason:     v.Reason,
+	}
+	if v.Metrics != nil {
+		res.Metrics = unmarshalCampaignMetricsResponseBodyToLfxv2campaignservicebriefsCampaignMetrics(v.Metrics)
+	}
+	if v.Pacing != nil {
+		res.Pacing = unmarshalCampaignPacingResponseBodyToLfxv2campaignservicebriefsCampaignPacing(v.Pacing)
+	}
+
+	return res
+}
+
+// unmarshalCampaignMetricsResponseBodyToLfxv2campaignservicebriefsCampaignMetrics
+// builds a value of type *lfxv2campaignservicebriefs.CampaignMetrics from a
+// value of type *CampaignMetricsResponseBody.
+func unmarshalCampaignMetricsResponseBodyToLfxv2campaignservicebriefsCampaignMetrics(v *CampaignMetricsResponseBody) *lfxv2campaignservicebriefs.CampaignMetrics {
+	if v == nil {
+		return nil
+	}
+	res := &lfxv2campaignservicebriefs.CampaignMetrics{
+		CampaignID:         *v.CampaignID,
+		PlatformCampaignID: *v.PlatformCampaignID,
+		Window:             *v.Window,
+		Impressions:        *v.Impressions,
+		Clicks:             *v.Clicks,
+		CostMicros:         *v.CostMicros,
+		Ctr:                *v.Ctr,
+	}
+	if v.Email != nil {
+		res.Email = unmarshalEmailMetricsResponseBodyToLfxv2campaignservicebriefsEmailMetrics(v.Email)
+	}
+
+	return res
+}
+
+// unmarshalCampaignPacingResponseBodyToLfxv2campaignservicebriefsCampaignPacing
+// builds a value of type *lfxv2campaignservicebriefs.CampaignPacing from a
+// value of type *CampaignPacingResponseBody.
+func unmarshalCampaignPacingResponseBodyToLfxv2campaignservicebriefsCampaignPacing(v *CampaignPacingResponseBody) *lfxv2campaignservicebriefs.CampaignPacing {
+	if v == nil {
+		return nil
+	}
+	res := &lfxv2campaignservicebriefs.CampaignPacing{
+		Pct:   v.Pct,
+		Label: *v.Label,
+	}
+
+	return res
+}
+
+// unmarshalCampaignActionItemResponseBodyToLfxv2campaignservicebriefsCampaignActionItem
+// builds a value of type *lfxv2campaignservicebriefs.CampaignActionItem from a
+// value of type *CampaignActionItemResponseBody.
+func unmarshalCampaignActionItemResponseBodyToLfxv2campaignservicebriefsCampaignActionItem(v *CampaignActionItemResponseBody) *lfxv2campaignservicebriefs.CampaignActionItem {
+	res := &lfxv2campaignservicebriefs.CampaignActionItem{
+		Rule:       *v.Rule,
+		Priority:   *v.Priority,
+		CampaignID: *v.CampaignID,
+		Platform:   *v.Platform,
+		Issue:      *v.Issue,
+		Action:     *v.Action,
 	}
 
 	return res

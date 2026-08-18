@@ -230,6 +230,20 @@ var metaAdsAccountDiscovery = accountDiscovery{
 		"with access_token set",
 }
 
+var linkedInAdsAccountDiscovery = accountDiscovery{
+	provider:    model.ProviderLinkedInAds,
+	displayName: "linkedin ads",
+	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
+		"with access_token set",
+}
+
+var microsoftAdsAccountDiscovery = accountDiscovery{
+	provider:    model.ProviderMicrosoftAds,
+	displayName: "microsoft ads",
+	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
+		"with client_id, client_secret, developer_token and refresh_token set",
+}
+
 // hubspotEmailDiscovery reuses the account-discovery status mapping for the email-template
 // search. Not account discovery — HubSpot has no ad account to choose, since the connection is
 // scoped to the portal its token authenticates against — but every arm of that mapping applies
@@ -419,6 +433,34 @@ func (s *ConnectionService) ListMetaAdsAccounts(ctx context.Context, p *conn.Lis
 	return &conn.ListMetaAdsAccountsResult{Accounts: accounts}, nil
 }
 
+// ListLinkedinAdsAccounts enumerates the ad accounts the stored LinkedIn credential reaches.
+//
+// LinkedIn's ids arrive as bare digits and are returned that way: that is the form the
+// connection's account_id takes (both are constrained to ^[0-9]+$), so the answer is directly
+// assignable rather than needing the caller to reconstruct a URN.
+func (s *ConnectionService) ListLinkedinAdsAccounts(ctx context.Context, p *conn.ListLinkedinAdsAccountsPayload) (*conn.ListLinkedinAdsAccountsResult, error) {
+	accounts, err := s.listAccounts(ctx, p.ProjectID, linkedInAdsAccountDiscovery)
+	if err != nil {
+		return nil, err
+	}
+	return &conn.ListLinkedinAdsAccountsResult{Accounts: accounts}, nil
+}
+
+// ListMicrosoftAdsAccounts enumerates the Microsoft Advertising accounts the stored credential
+// reaches, across every customer it can see.
+//
+// The id returned is the account id as digits — the form account_id takes. Microsoft's
+// human-facing account NUMBER (e.g. "X1234567") rides in the label instead: it is what the
+// Microsoft Advertising UI shows, so a user recognises the account by it, but it is not the
+// value to store.
+func (s *ConnectionService) ListMicrosoftAdsAccounts(ctx context.Context, p *conn.ListMicrosoftAdsAccountsPayload) (*conn.ListMicrosoftAdsAccountsResult, error) {
+	accounts, err := s.listAccounts(ctx, p.ProjectID, microsoftAdsAccountDiscovery)
+	if err != nil {
+		return nil, err
+	}
+	return &conn.ListMicrosoftAdsAccountsResult{Accounts: accounts}, nil
+}
+
 // ─── HubSpot (email channel) ───
 
 // ListHubspotEmails searches the marketing emails reachable through the project's stored
@@ -456,9 +498,12 @@ func (s *ConnectionService) ListHubspotEmails(ctx context.Context, p *conn.ListH
 		// ErrEmailSearchUnsupported is the one arm classifyDiscoveryError cannot carry: it
 		// keys on ErrAccountsUnsupported, and the two are separate sentinels precisely
 		// because the capabilities are independent — HubSpot searches emails and has no ad
-		// accounts, while Google Ads and Meta are the reverse. Only those two implement
-		// AccountLister; the remaining ad platforms implement neither, so the two directions
-		// are demonstrated by example rather than by a claim over every provider.
+		// accounts, while the AccountLister-capable platforms are the reverse — they enumerate
+		// accounts and search no emails. Not "the ad platforms": Reddit and X are ad platforms
+		// and implement neither capability, which is the membership distinction below. Stated as the SHAPE rather than by naming which providers
+		// implement AccountLister: that membership grows (LinkedIn and Microsoft joined
+		// Google Ads and Meta), and an enumerating comment is falsified by the next one
+		// added without anything failing.
 		if errors.Is(serr, ErrEmailSearchUnsupported) {
 			return nil, &conn.BadRequestError{Code: "400", Message: d.label() + " is not supported for this platform"}
 		}

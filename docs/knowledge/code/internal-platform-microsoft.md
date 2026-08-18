@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/microsoft"
-description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token + developer-token auth, request layer with 429 retry and status-aware error classification incl. BatchErrors (MS-1), and PAUSED find-or-create Campaign->AdGroup->ResponsiveSearchAd creation over the POST /<Entity> + POST /<Entity>/QueryBy… transport, idempotent by case-insensitive-unique NAME for the campaign and ad group but by DESTINATION URL for the ad (ads have no stable name and v13 permits duplicate RSAs) (MS-2/MS-2.5), plus ad-account discovery against the SEPARATE Customer Management v13 service on a different host, the one call that is not account-scoped (LFXV2-3064), and campaign metrics through the asynchronous Reporting v13 service — submit/poll/download folded into one bounded call, default-OFF behind MICROSOFT_METRICS_ENABLED while the contract is unverified (LFXV2-3260)."
+description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token + developer-token auth, request layer with 429 retry and status-aware error classification incl. BatchErrors (MS-1), and PAUSED find-or-create Campaign->AdGroup->ResponsiveSearchAd creation over the POST /<Entity> + POST /<Entity>/QueryBy… transport, idempotent by case-insensitive-unique NAME for the campaign and ad group but by DESTINATION URL for the ad (ads have no stable name and v13 permits duplicate RSAs) (MS-2/MS-2.5), keyword targeting via the DEDICATED POST /Keywords resource plus an ad-group CpcBid, without which a created Search campaign has nothing to match a query against and can never serve (MS-4/LFXV2-3279), plus ad-account discovery against the SEPARATE Customer Management v13 service on a different host, the one call that is not account-scoped (LFXV2-3064), and campaign metrics through the asynchronous Reporting v13 service — submit/poll/download folded into one bounded call, default-OFF behind MICROSOFT_METRICS_ENABLED while the contract is unverified (LFXV2-3260)."
 resource: "internal/platform/microsoft"
 tags:
   - platform-client
@@ -214,6 +214,141 @@ ad's `FinalUrls` is the registration URL with LFX `utm_*` params SET (`buildAdFi
 preserves every other query param). `AlreadyExisted` is true only when the campaign, ad
 group, AND ad ALL pre-existed (this run created nothing); creating any level makes it false.
 
+## Keyword targeting + ad-group bid (MS-4)
+
+MS-2.5 produced a tree that was structurally complete and **commercially inert**: a Search ad
+group with zero keywords has nothing to match a query against, so enabling the campaign in the
+Bing UI would spend nothing and serve nothing. `targeting.go` (LFXV2-3279) closes that gap.
+
+**Keywords are their own resource, NOT AdGroupCriterions.** They are created with
+`POST CampaignManagement/v13/Keywords` — the historical `AddKeywords` operation, still the v13
+path. This is the one place where reasoning by analogy to the google-ads sibling
+(`adGroupCriteria:mutate`) produces a create that fails every time: the `AdGroupCriterions`
+endpoint does exist and is spelled "Criterions", but its `AdGroupCriterionType` enum has **no
+`Keyword` member** (Age, Audience, … Webpage), so keywords cannot be routed through it.
+`AdGroupId` is a **sibling** of the `Keywords` array (as `CampaignId` is for AddAdGroups and
+`AdGroupId` for AddAds), not a field of the Keyword object, and a Keyword is **flat**
+(`{Text, MatchType, Status}`) with no `Type` discriminator and no nested `Criterion` — unlike
+the polymorphic Ad body. The response is `KeywordIds` + a **flat** `PartialErrors` array (the
+`NestedPartialErrors` shape belongs to the criterion endpoints this client does not use).
+
+**Match types are `Exact`/`Phrase`/`Broad`**, PascalCase — not the google-ads SCREAMING_CASE.
+`canonicalMatchType` accepts either casing and emits Microsoft's, so a caller reusing a Google
+Ads payload is not refused over spelling, while an UNRECOGNISED value is refused rather than
+defaulted: defaulting a typo would silently broaden or narrow what a paid campaign matches.
+`validateKeywords` caps text at **100 characters** (Google Ads caps the same field at 80),
+rejects control runes and empty text, bounds the list at `maxKeywords` (60, matching the
+sibling — a 20-cap was observed refusing the product's own AI brief generator, which emits
+~38), and de-duplicates by (matchType, **case-folded** text) while SENDING the caller's
+original casing. A bad entry is a HARD error, never a silent drop: unlike ad copy there is no
+defensible placeholder for a keyword, since substituting one would put an invented search term
+on a paid campaign in the caller's name.
+
+**Keywords are created PAUSED** — a deliberate divergence from googleads/targeting.go, which
+creates criteria ENABLED and argues the paused ancestors are gate enough. That argument makes
+the keyword list the one part of the tree no human need ever review: it would start spending
+the moment the campaign and ad group are enabled, which is the documented next step. The cost
+of PAUSED is one bulk-enable on a list the operator should be reading anyway; the cost of
+ENABLED is unreviewed spend. The status cascade enables them, so the service-driven path is not
+made harder (see Status toggle).
+
+**Bids.** `AdGroup.CpcBid` is a `Bid` object (`{"Amount": N}`) — a plain decimal in the ACCOUNT
+currency, no micros. It is a POINTER and is **omitted when unset**, which is the load-bearing
+detail: Microsoft documents that an ad group with no bid is "set to the minimum depending on
+your account's currency", a documented, serve-capable floor, whereas an explicit `{"Amount":0}`
+is a zero bid — a different and worse thing. The client therefore invents no default bid; the
+currency-correct minimum beats any constant this client could hardcode across every account
+currency. A REUSED ad group keeps its existing bid: silently re-bidding a group a previous run
+or a human configured would change what a live campaign pays on an idempotent retry. NOTE for
+future work: Microsoft has IGNORED bid strategies on ad groups and keywords since April 2021
+("the request will be ignored without error"), so an `AdGroup.BiddingScheme` would be a silent
+no-op — the bid strategy is the CAMPAIGN's (v13 defaults Search to `EnhancedCpcBiddingScheme`).
+
+**A REUSED ad group IS re-keyworded**, and the reason is a documented Microsoft behaviour
+rather than a preference. `AddKeywords` has **no idempotency key** and v13 exposes **no keyword
+READ** (no `GetKeywordsByAdGroupId`, no list), so when the ad group is found by name the client
+cannot enumerate what already hangs off it. An earlier revision treated that blindness as a
+reason to SKIP the step, believing a re-post would create a SECOND COPY of every keyword and
+double the bid on those terms. **That belief is false.** Microsoft rejects a keyword that
+already exists on the ad group rather than duplicating it:
+
+* `CampaignServiceDuplicateKeyword` (**1517**) — "An attempt was made to create a duplicate of
+  a keyword that already exists."
+* `CampaignServiceKeywordAndMatchTypeCombinationAlreadyExists` (**1542**) — "A keyword with the
+  specified match type already exists."
+
+Comparison is by **normalized** form, not literal text: case, whitespace, accents, number/date
+formatting and punctuation are folded first, so `Car`, `car` and `car.` are one keyword. A
+re-post therefore duplicates nothing — each already-present keyword returns a per-entity
+`PartialError` on a 200 and each genuinely NEW one is created, which is exactly the reconcile
+behaviour the skip approximated, enforced by Microsoft instead of guessed at locally. Both
+codes are recognized under **either** spelling (symbolic enum or numeric `Code`) by
+`isDuplicateKeywordPartial`, and a batch whose only rejections are duplicates is **not** an
+error: it returns the ids of whatever was newly created, with a `steps` line saying the rest
+already existed.
+
+`isDuplicateKeywordPartial` requires **every** actual error to be a duplicate, not merely one
+of them. A batch can mix a duplicate with a GENUINE rejection (editorial disapproval, bad bid,
+over-length term); an ANY test would report that whole batch as success and tell the operator
+the editorially-rejected keyword "already existed" — a keyword that does not exist upstream and
+never will. A mixed batch therefore stays on the `errPartialFailure` path, where the created
+ids are still carried out and the rejection is still surfaced.
+
+**Why the skip had to go.** "The ad group exists" and "its keywords exist" are DIFFERENT facts,
+and they come apart on the FIRST run: if run 1 creates the ad group then fails before the
+keywords land (an ad failure, an UNCONFIRMED keyword step, a 429), run 2 finds the group, skips,
+and returns success with no keywords. The row persists empty `KeywordIDs` and
+`MicrosoftDispatcher.ToggleStatus` then refuses ACTIVATE **forever** with
+`ErrCampaignNotProvisioned` — a campaign no automated path can turn on, with no keyword read
+available to repair it. Posting is both the safe direction and the terminating one.
+
+**Knock-on:** when EVERY supplied keyword was already attached, `KeywordIDs` is still empty — a
+duplicate entry returns a null id slot and v13 has no read to resolve it — so the ACTIVATE guard
+refuses a campaign whose keywords do exist upstream. Deliberate: the ids needed to enable those
+Paused keywords are precisely what the run could not learn, so activating would claim success
+while every keyword stayed Paused. Reconciliation (LFXV2-2665) is what resolves that; the
+keyword-less tree, which is the case that mattered, now provisions on its own.
+
+**Ordering and classification.** The keyword step runs LAST, after the ad, because every
+earlier step is its prerequisite and keywording an ad group whose ad might still fail would
+leave paid criteria on an incomplete tree. Both the keyword list and the bid are validated **up
+front in `CreateCampaign`**, before the campaign create, for the same reason the URL and ad copy
+are: a bad value discovered at the last step would fail after a PAUSED campaign, ad group and ad
+already exist. The create is **not retried on 429** — AddKeywords has no idempotency key, and while
+Microsoft refuses an exact (normalized) duplicate, an automatic in-flight retry is still not
+the place to rely on that: a 429 leaves the batch's outcome unknown, and the reuse path above
+is the deliberate, observable place where a re-post is made. A
+definite `PartialError` is a per-entity rejection, but NOT necessarily a total one: `AddKeywords`
+is a batch with an index-aligned response, so `[701, null, 703]` with one `PartialError` means two
+keywords were created. Those ids travel out WITH the error — they are what the status cascade
+enables on ACTIVATE, and what stops a reconciliation double-creating the entries that succeeded —
+and the message carries the count (`2 of 3 keywords were created`). Only an all-rejected batch is
+a clean failure with nothing to reconcile. A short/null-slot id array with no `PartialError`, or
+an unparseable 2xx, is UNCONFIRMED: the keywords may exist and a blind retry would duplicate them.
+
+`CampaignResult.KeywordIDs` carries the ids, and on a successful create the count equals the
+count SENT: input is capped at `maxKeywords`, the id array decodes through `boundedKeywordIDs`
+(bounded by the same cap rather than by the 16-item error-array bound), and success requires one
+usable id per keyword. The step text previously hedged to a "count PARSED" because that decode
+bound made a valid response come back short — LFXV2-3279 closed that, so the count is now a
+confirmed figure.
+
+**GEO TARGETING IS NOT IMPLEMENTED, and the reason is an API constraint rather than a scoping
+preference.** Microsoft takes location criteria at the CAMPAIGN level
+(`POST /CampaignCriterions` with a `LocationCriterion`), whose `LocationId` — a numeric
+Microsoft identifier — is its ONLY Add-writable element; `DisplayName` and `LocationType` are
+read-only, so a country cannot be named. Those ids come from Microsoft's geographical-locations
+CSV, fetched via `POST /GeoLocationsFileUrl/Query`, which this service does not ingest. The v13
+API accepts an ISO 3166 code for targeting **nowhere** — the ISO table in Microsoft's own
+Geographical Location Codes guide is explicitly scoped to account business addresses, and the
+locations file has no ISO column. Since the sibling dispatchers' `geoTargets` are ISO-2 strings
+("US", "JP"), honouring them here would mean hardcoding an invented ISO→LocationId map on the
+path that spends money, one that silently rots as locations are deprecated. `microsoftConfig`
+therefore carries **no** `geoTargets` field at all: offering one the dispatcher would silently
+drop is worse than not offering it. Doing this properly needs the locations file as a real,
+refreshable input, plus handling for the auto-created `LocationIntentCriterion` (which can
+never be deleted) and the rule that ad-group geo OVERRIDES campaign geo wholesale.
+
 ## Ad-account discovery
 
 `ListAdAccounts` (`accounts.go`) enumerates every Microsoft Advertising account these
@@ -347,9 +482,10 @@ MS-1 is the scaffold (auth + request layer + error classification). MS-2 adds PA
 find-or-create campaign creation (`campaign.go`); MS-2.5 completes the ad group + ad
 (`adgroup_ad.go`). MS-3 registers `microsoft-ads` and wires the stored
 `connection-microsoft-ads` credential into the orchestrator dispatcher
-(`internal/dispatch/microsoft.go`). The **status toggle** (LFXV2-2810) adds
-`UpdateCampaignAndChildrenStatus` on top: a three-level cascade whose ordering, child-id guard and
-outcome classification are described under Status toggle below. **Ad-account discovery**
+(`internal/dispatch/microsoft.go`). MS-4 (LFXV2-3279) attaches KEYWORDS and an ad-group
+CpcBid (`targeting.go`), which is what makes a created campaign able to serve at all. The
+**status toggle** (LFXV2-2810) adds `UpdateCampaignAndChildrenStatus` on top: a cascade whose
+ordering, child-id guard and outcome classification are described under Status toggle below. **Ad-account discovery**
 (LFXV2-3064) adds `ListAdAccounts` against the separate Customer Management service, the
 one call in this package that is NOT account-scoped.
 
@@ -360,8 +496,13 @@ interprets an OAuth2 app (clientId/secret) + a developer token + refreshToken;
 AccountConfig comes from the connection's AccountID (the DIGITS-ONLY
 `CustomerAccountId`, trimmed) plus an optional `customer_id` (the manager/`CustomerId`
 header). The client builds the full Campaign → AdGroup → Ad hierarchy (all PAUSED) — so
-the adapter needs no ad config beyond `microsoftConfig.budget` (the DAILY budget, in the
-ACCOUNT's currency, no FX) and an optional `timeZone`. `NameSuffix = brief.ID` gives
+the adapter's ad config is `microsoftConfig.budget` (the DAILY budget, in the ACCOUNT's
+currency, no FX), an optional `timeZone`, the `keywords` the ad group needs in order to serve
+at all, and an optional `cpcBid`. **`ToggleStatus` refuses to ACTIVATE a campaign whose
+`keywordIds` are empty**, with `ErrCampaignNotProvisioned` (a 409) raised locally without
+calling Microsoft — a Search campaign with no keywords cannot deliver, so enabling it would
+report success for something that serves nothing. PAUSE requires no keywords: refusing it
+would strand a campaign an operator is trying to stop. `NameSuffix = brief.ID` gives
 deterministic retry-safe names (Microsoft enforces case-insensitive campaign-name
 uniqueness, so a retry composes the SAME name and cleanly REUSES the existing campaign
 rather than duplicating it — though `AlreadyExisted` stays false unless the ad group and
@@ -373,13 +514,20 @@ It has a creation dispatcher; its status-TOGGLE capability is described next.
 
 ## Status toggle
 
-`UpdateCampaignAndChildrenStatus` cascades a status across campaign → ad group → ad, ordered by
-DIRECTION, like reddit's:
+`UpdateCampaignAndChildrenStatus` cascades a status across campaign → ad group → ad → keywords,
+ordered by DIRECTION, like reddit's. **Keywords are in the cascade because MS-4 creates them
+PAUSED**: an activate that skipped them would enable the campaign, ad group and ad while every
+keyword stayed Paused, so the campaign would serve nothing while reporting Active — precisely
+the lie the cascade exists to prevent. An EMPTY keyword-id slice skips the PUT rather than
+sending an empty one, and every id is validated BEFORE any mutation (a bad id found mid-cascade
+would fail after the campaign and ad group had already flipped, turning a rejectable input
+error into a partial cascade). Keywords are addressed THROUGH their ad group, so ids supplied
+without one are refused, exactly as an orphan ad is.
 
 - **PAUSE gates the parent FIRST** so delivery stops immediately, even if a child call then fails.
   A failure after the campaign flipped is a PARTIAL apply, reported as `Unconfirmed` rather than a
   plain error, because the parent change did land and a blind retry would misread the state.
-- **ACTIVATE sends AdGroups, then Ads, then Campaigns last** (children before the parent gate) —
+- **ACTIVATE sends AdGroups, then Ads, then Keywords, then Campaigns last** (descendants before the parent gate) —
   NOT a strict leaf-to-root walk: Ads is deeper than AdGroups in the tree, yet AdGroups PUTs first.
   The campaign is only un-gated once its children are already serving; the reverse would briefly
   serve nothing under a live campaign.

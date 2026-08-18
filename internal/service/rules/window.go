@@ -1,0 +1,143 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package rules
+
+import "time"
+
+// WindowDays is how many days of spend a metrics window covers.
+//
+// It exists because ComputePacing needs the period its `spend` argument describes, and the
+// service reads spend over a named window rather than over the flight. Getting this wrong is
+// invisible: every value here is a plausible number of days, so a mistake produces a confident
+// pacing figure about the wrong period rather than an error.
+//
+// The month-relative windows are computed rather than assumed, because their length depends on
+// WHEN they are asked about. `this_month` is 1 day on the first of the month and 31 on the last
+// day of July; treating it as a constant 30 would understate expected spend by a factor of 30
+// early in the month and report a campaign as wildly overspending on day one.
+//
+// Returns 0 for a window it does not recognise. Callers must treat that as "no pacing" rather
+// than substituting a default: a guessed period is exactly the failure this function exists to
+// prevent, and ComputePacing rejects a non-positive spendDays for that reason.
+func WindowDays(window string, now time.Time) float64 {
+	start, end, ok := WindowInterval(window, now)
+	if !ok {
+		return 0
+	}
+	return end.Sub(start).Hours() / 24
+}
+
+// WindowInterval resolves a metrics window to the actual span of time it covers.
+//
+// A day COUNT cannot express a window's position, and position is what decides whether the spend
+// figure and the flight describe the same period at all. `last_month` is 31 days, but those 31
+// days sit entirely BEFORE a flight that started last week — so a spend of zero over that window
+// is correct and means the campaign did not exist yet, not that it failed to spend. Paced against
+// an expectation measured from the flight's start, it reported underspending against a campaign
+// with nothing to answer for.
+//
+// The third return is false for a window this function does not recognise. Callers must treat
+// that as "no pacing" rather than substituting a default.
+func WindowInterval(window string, now time.Time) (start, end time.Time, ok bool) {
+	day := func(t time.Time) time.Time {
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	}
+	switch window {
+	case "today":
+		return day(now), day(now).AddDate(0, 0, 1), true
+	case "yesterday":
+		return day(now).AddDate(0, 0, -1), day(now), true
+	case "last_7_days":
+		// N days ENDING today, inclusive: today-(N-1) .. today+1. Going back a full N from
+		// today would span N+1 days.
+		return day(now).AddDate(0, 0, -6), day(now).AddDate(0, 0, 1), true
+	case "last_14_days":
+		// N days ENDING today, inclusive: today-(N-1) .. today+1. Going back a full N from
+		// today would span N+1 days.
+		return day(now).AddDate(0, 0, -13), day(now).AddDate(0, 0, 1), true
+	case "last_30_days":
+		// N days ENDING today, inclusive: today-(N-1) .. today+1. Going back a full N from
+		// today would span N+1 days.
+		return day(now).AddDate(0, 0, -29), day(now).AddDate(0, 0, 1), true
+	case "this_month":
+		s := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+		return s, day(now).AddDate(0, 0, 1), true
+	case "last_month":
+		s := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).AddDate(0, -1, 0)
+		return s, time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()), true
+	default:
+		return time.Time{}, time.Time{}, false
+	}
+}
+
+// WindowDaysWithinFlight is how many days of a metrics window actually overlap a campaign's
+// flight — the period the spend figure and the plan BOTH describe.
+//
+// This is what ComputePacing's spendDays argument should carry whenever the spend came from a
+// named window. WindowDays alone gives the window's LENGTH, which says nothing about where it
+// sits: `last_month` is 31 days, but for a campaign that started last week those 31 days lie
+// almost entirely before the flight began. Pacing the resulting (correct) zero spend against an
+// expectation measured from the flight's start reported underspending against a campaign that
+// did not exist for most of the window.
+//
+// Returns 0 when the window and the flight do not overlap at all, which ComputePacing treats as
+// incomputable — the honest answer, since the spend figure describes a period the campaign was
+// not running in.
+//
+// An absent flight bound is open-ended on that side: a campaign with no end date is still
+// running, so a window reaching up to now overlaps it.
+func WindowDaysWithinFlight(window string, now time.Time, flightStart, flightEnd *time.Time) float64 {
+	ws, we, ok := WindowInterval(window, now)
+	if !ok {
+		return 0
+	}
+	// Clamp the end to `now`: a window cannot carry spend from time that has not happened. At
+	// noon, `today` is half a day of spend, and counting it as a full day of plan reports a
+	// campaign spending exactly on plan as ~50% — the same failure-as-measurement shape in the
+	// opposite direction.
+	//
+	// This costs a little accuracy on the ROLLING windows, where the platform reports the whole
+	// span and only the final day is partial: `last_7_days` at noon becomes 6.5 days of plan
+	// against 7 days of spend, reading ~8% ahead. That bias is bounded by half a day out of the
+	// window's length and shrinks as the window grows, whereas the unclamped error on `today` is
+	// a factor of two and worst at the start of the day when an operator is most likely to look.
+	// Erring toward "spending ahead" is also the safer direction: it never manufactures an
+	// underspending item against a healthy campaign.
+	if we.After(now) {
+		we = now
+	}
+	if flightStart != nil && flightStart.After(ws) {
+		ws = *flightStart
+	}
+	// Normalised to the following midnight first: the end DATE means "through the end of that
+	// day", so clamping to the raw midnight excluded the final day entirely. On that last day
+	// the clamp pulled `we` back to or before `ws` and this function returned 0, which
+	// ComputePacing reads as "no overlap" — pacing was `unknown` for the whole final day of
+	// every flight. Shares flightEndInstant with ComputePacing so the two cannot drift.
+	if fe := flightEndInstant(flightEnd); fe != nil && fe.Before(we) {
+		we = *fe
+	}
+	if !we.After(ws) {
+		return 0
+	}
+	return we.Sub(ws).Hours() / 24
+}
+
+// DeliveryExpected reports whether enough of a campaign's flight has passed for an absence of
+// delivery to mean anything.
+//
+// False before the flight begins — a campaign dispatched days early has delivered nothing
+// because it has not started — and false during its first day, because ad platforms report
+// spend and impressions with a lag, so the opening hours read as zero whatever the campaign is
+// doing. It is the same floor ComputePacing applies, exported so the delivery rule and the
+// pacing rules agree on when a zero is evidence.
+//
+// An absent start is treated as "running": a campaign with no recorded start date began when it
+// began, and refusing to evaluate it would silence the rule for every row that lacks one.
+func DeliveryExpected(flight Flight, now time.Time) bool {
+	if flight.Start == nil {
+		return true
+	}
+	return elapsedDays(*flight.Start, now) >= minElapsedDaysForPacing
+}
