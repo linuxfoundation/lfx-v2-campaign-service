@@ -33,11 +33,15 @@ import (
 // calls, so this client CANNOT wait indefinitely: the platform ingress times out at 60s and
 // a report can take longer than that to build. The poll loop is therefore bounded by
 // reportPollBudget and gives up with ErrReportNotReady rather than hanging the caller. A
-// report that is still building is a "come back later", not a failure of the campaign. The
+// report that is still building is a "ask again later" (with a fresh report — see below), not
+// a failure of the campaign. The
 // dispatcher deliberately does NOT map it to either metrics sentinel — both mean 400 ("this
 // cannot work"), and a retryable timing condition is neither unsupported nor permanent — so
-// it propagates as an ordinary wrapped error the caller can retry. There is no retryable
-// sentinel in internal/domain/errors.go today; adding one is what this comment once assumed.
+// it propagates as an ordinary wrapped error. There is no retryable sentinel in
+// internal/domain/errors.go today; adding one is what this comment once assumed. Note that
+// "retry" here means "submit a fresh report and hope it builds faster", NOT "collect the one
+// already building" — see ErrReportNotReady, which spells out why the pending id cannot
+// survive the call.
 //
 // UNVERIFIED CONTRACT: no Microsoft Advertising credentials were available when this was
 // written, so the request/response shapes below follow Microsoft's published v13 Reporting
@@ -76,10 +80,38 @@ const (
 	reportDownloadCap = 8 << 20 // 8 MiB
 )
 
+// msErrCodeInvalidScope / msErrNameInvalidScope are Microsoft's reporting error for a
+// report Scope it will not accept, surfaced either as the numeric Code 2027 or as the
+// symbolic ErrorCode enum — the same dual spelling errCodeDuplicateCampaign handles for the
+// Campaign Management service, and the reason both are matched. submitReport names this pair
+// when the campaign-only scope is rejected, so the first live run against a real ad account
+// reads the cause instead of debugging it. See the Scope comment in submitReport.
+const (
+	msErrCodeInvalidScope = "2027"
+	msErrNameInvalidScope = "InvalidAccountThruCampaignReportScope"
+)
+
 // ErrReportNotReady means the report was still building when reportPollBudget ran out.
 // It is NOT a failure of the campaign or the credentials: the same call may well succeed
 // on a later attempt. Callers must not treat it as "this campaign has no metrics".
-var ErrReportNotReady = errors.New("microsoft report not ready within the poll budget")
+//
+// A RETRY DOES NOT RESUME THE PENDING REPORT. reportID is a local in GetCampaignMetrics and
+// is discarded with this error, and the synchronous MetricsReader contract has nowhere to
+// return it — ReadMetrics answers (*model.CampaignMetrics, error) and the orchestrator never
+// persists anything from a metrics read. So every retry calls submitReport afresh and starts
+// a NEW Microsoft report job; it never polls the one that has since finished. The practical
+// consequence: a report that RELIABLY takes longer than reportPollBudget to build is
+// permanently unreadable through this path, however many times the caller retries, because
+// each attempt restarts the clock. Retrying only helps when the build time varies around the
+// budget.
+//
+// Resuming would need the pending ReportRequestId to outlive the call — a persisted
+// report-job row plus an async completion path, i.e. a schema and orchestration change, not
+// a change to this client. That gap is filed in
+// docs/knowledge/log/2026-08-18-LFXV2-3260-scope-union-tradeoff.md. Until it is built, this
+// sentinel means "the report was not ready in time", NOT "the same job will be waiting for
+// you".
+var ErrReportNotReady = errors.New("microsoft report not ready within the poll budget (a retry starts a NEW report; it does not resume this one)")
 
 // ErrNoRowsInReport means the poll reported Success but named no file to download. The
 // adapter cannot tell "the campaign served nothing" from "no such campaign in this
@@ -102,6 +134,10 @@ var ErrUnsupportedWindow = errors.New("unsupported metrics window")
 // Returns ErrReportNotReady if the report is still building when the budget expires, and
 // ErrUnsupportedWindow for a window with no mapping. Both are sentinels the caller is
 // expected to classify; neither means the campaign has zero activity.
+//
+// reportID is deliberately NOT returned alongside ErrReportNotReady: there is no channel for
+// it (see the sentinel's doc comment), so a caller cannot resume a pending report and a
+// retry restarts one. Do not add a comment here claiming otherwise.
 func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, window model.MetricsWindow) (*model.CampaignMetrics, error) {
 	if strings.TrimSpace(campaignID) == "" {
 		return nil, fmt.Errorf("microsoft campaign id is required")
@@ -149,12 +185,31 @@ func (c *Client) submitReport(ctx context.Context, campaignID string, start, end
 			"Columns": []string{
 				"CampaignId", "Impressions", "Clicks", "Spend",
 			},
+			// Scope carries ONLY Campaigns. AccountThroughCampaignReportScope — the type of
+			// CampaignPerformanceReportRequest.Scope — documents, on both of its elements,
+			// that "the report scope includes a UNION of the AccountIds and Campaigns
+			// elements", and the XSD agrees (both minOccurs="0" in an xs:sequence, not an
+			// xs:choice). Sending AccountIds alongside Campaigns therefore widened this
+			// campaign-scoped read to EVERY campaign in the account, which foldReportRows
+			// then summed into an account-wide total reported as one campaign's metrics —
+			// a valid request, no error raised, and a silently wrong number. That is the
+			// failure-as-measurement class this file refuses everywhere else. The nested
+			// AccountId inside Campaigns[] already scopes the request, so dropping
+			// AccountIds loses nothing.
+			//
+			// KNOWN RISK, untestable here: community Q&A threads report error 2027
+			// (InvalidAccountThruCampaignReportScope) when AccountIds is omitted. Those are
+			// not normative — the docs require only "at least one of these elements" — and
+			// no Microsoft credentials exist to settle it (see the UNVERIFIED CONTRACT
+			// banner). We deliberately chose a correct-but-possibly-rejected request over
+			// one that reliably returns the wrong number; submitReport names 2027 explicitly
+			// in its error so the first live run diagnoses it in one read.
+			//
 			// Ids go out as json.Number, NOT as strings: Microsoft types these as `long`,
 			// and campaign.go already sends AccountId that way — its comment records that
 			// mistyping it rejects the request outright. A quoted id here would fail
 			// deserialization the first time the gate is flipped on.
 			"Scope": map[string]any{
-				"AccountIds": []json.Number{json.Number(c.account.AccountID)},
 				"Campaigns": []map[string]any{
 					{
 						"AccountId":  json.Number(c.account.AccountID),
@@ -181,6 +236,19 @@ func (c *Client) submitReport(ctx context.Context, campaignID string, start, end
 	// anything the caller can observe. idempotent=true buys the shared 429 policy.
 	raw, err := c.doReportingRequest(ctx, http.MethodPost, "GenerateReport/Submit", body, true)
 	if err != nil {
+		// If Microsoft rejects the campaign-only scope, say so in the error itself rather
+		// than leaving whoever first runs this against a live account to rediscover the
+		// tradeoff recorded above. 2027 / InvalidAccountThruCampaignReportScope is the code
+		// the community threads name; both spellings are matched because Microsoft returns
+		// a numeric Code on some services and a string ErrorCode on others (see
+		// parseErrorCodes/codeString).
+		var ae *apiError
+		if errors.As(err, &ae) && (ae.hasErrorCode(msErrCodeInvalidScope) || ae.hasErrorCode(msErrNameInvalidScope)) {
+			return "", fmt.Errorf("submit microsoft report: the campaign-only report scope was REJECTED "+
+				"(error %s/%s); Scope.AccountIds may be required after all — see "+
+				"docs/knowledge/log/2026-08-18-LFXV2-3260-scope-union-tradeoff.md: %w",
+				msErrCodeInvalidScope, msErrNameInvalidScope, err)
+		}
 		return "", fmt.Errorf("submit microsoft report: %w", err)
 	}
 	var resp struct {

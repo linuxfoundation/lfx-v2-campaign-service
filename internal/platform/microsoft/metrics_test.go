@@ -346,8 +346,23 @@ func TestGetCampaignMetrics_SubmitBodyShape(t *testing.T) {
 	if !bytes.Contains(m.submitRaw, []byte(`"CampaignId":1234567`)) {
 		t.Errorf("CampaignId is not a bare number on the wire: %s", m.submitRaw)
 	}
-	if bytes.Contains(m.submitRaw, []byte(`"AccountIds":["`)) {
-		t.Errorf("AccountIds went out QUOTED: %s", m.submitRaw)
+	// Scope must be the CAMPAIGN alone. AccountThroughCampaignReportScope UNIONs AccountIds
+	// with Campaigns, so an AccountIds element alongside Campaigns widens this read to every
+	// campaign in the account and foldReportRows sums them into an account-wide total
+	// reported as one campaign's metrics — a valid request that returns a wrong number.
+	//
+	// Asserted on the RAW BYTES as well as the decoded map, and the wire check is the
+	// load-bearing one — for the same reason the id-typing assertions above read raw bytes:
+	// encoding/json collapses distinct wire forms onto the same decoded value, so the map
+	// cannot pin what Microsoft actually receives. (A comma-ok key test does catch a JSON
+	// null, which creates the key; it is kept as a second, independent statement of the same
+	// requirement rather than as the primary evidence.)
+	if bytes.Contains(m.submitRaw, []byte(`"AccountIds"`)) {
+		t.Errorf("Scope.AccountIds is present on the wire; the scope is a UNION, so this "+
+			"returns ACCOUNT-WIDE totals for a campaign-scoped read: %s", m.submitRaw)
+	}
+	if _, ok := scope["AccountIds"]; ok {
+		t.Errorf("Scope.AccountIds decoded from the submit body: %+v", scope)
 	}
 	if !bytes.Contains(m.submitRaw, []byte(`"ReportTimeZone"`)) {
 		t.Errorf("ReportTimeZone missing; Microsoft defaults to Pacific: %s", m.submitRaw)
@@ -363,6 +378,170 @@ func TestGetCampaignMetrics_SubmitBodyShape(t *testing.T) {
 	// Clock is pinned to 2026-08-14; last_7_days starts 6 days earlier, on the 8th.
 	if start["Year"] != float64(2026) || start["Month"] != float64(8) || start["Day"] != float64(8) {
 		t.Errorf("CustomDateRangeStart = %v, want 2026-08-08 for last_7_days at the pinned clock", start)
+	}
+}
+
+// TestSubmitReport_Error2027NamesTheScopeTradeoff pins the legibility half of the scope fix.
+// Dropping Scope.AccountIds is correct per Microsoft's documented UNION semantics, but
+// community reports claim error 2027 when it is omitted and no credentials exist to settle
+// that. If 2027 DOES occur live, the error must name the cause in one read rather than
+// leaving someone to rediscover the tradeoff. Both spellings are exercised because Microsoft
+// returns a numeric Code on some services and a string ErrorCode on others.
+func TestSubmitReport_Error2027NamesTheScopeTradeoff(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"numeric Code", `{"Code":2027,"Message":"scope rejected"}`},
+		{"string ErrorCode", `{"ErrorCode":"InvalidAccountThruCampaignReportScope"}`},
+		{"nested Errors array", `{"Errors":[{"Code":2027}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/token", func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+			})
+			mux.HandleFunc("/Reporting/v13/GenerateReport/Submit", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, tc.body)
+			})
+			srv := httptest.NewServer(mux)
+			t.Cleanup(srv.Close)
+
+			c := NewClient(
+				Credentials{ClientID: "cid", ClientSecret: "sec", DeveloperToken: "dev", RefreshToken: "ref"},
+				AccountConfig{AccountID: "9999999", Label: "LF Events"},
+				WithReportingBaseURL(srv.URL),
+				WithTokenURL(srv.URL+"/token"),
+				WithClock(func() time.Time { return time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC) }),
+			)
+
+			_, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowLast7Days)
+			if err == nil {
+				t.Fatal("expected an error when submit is rejected")
+			}
+			msg := err.Error()
+			// The point of this test is the DIAGNOSIS, not merely that an error happened.
+			// A bare "microsoft-ads POST ... -> 400" is what this fix exists to replace.
+			for _, want := range []string{"campaign-only report scope was REJECTED", "AccountIds", msErrCodeInvalidScope, msErrNameInvalidScope} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("error must name %q so the cause reads in one pass; got: %s", want, msg)
+				}
+			}
+		})
+	}
+}
+
+// TestSubmitReport_UnrelatedErrorDoesNotClaimTheScopeCause guards the other direction: the
+// 2027 arm must not annotate every submit failure with a scope diagnosis it has no evidence
+// for. A misleading cause is worse than a bare status.
+func TestSubmitReport_UnrelatedErrorDoesNotClaimTheScopeCause(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/token", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	})
+	mux.HandleFunc("/Reporting/v13/GenerateReport/Submit", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"Code":1001,"Message":"something else"}`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	c := NewClient(
+		Credentials{ClientID: "cid", ClientSecret: "sec", DeveloperToken: "dev", RefreshToken: "ref"},
+		AccountConfig{AccountID: "9999999", Label: "LF Events"},
+		WithReportingBaseURL(srv.URL),
+		WithTokenURL(srv.URL+"/token"),
+		WithClock(func() time.Time { return time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC) }),
+	)
+
+	_, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowLast7Days)
+	if err == nil {
+		t.Fatal("expected an error when submit is rejected")
+	}
+	if strings.Contains(err.Error(), "campaign-only report scope was REJECTED") {
+		t.Errorf("an unrelated submit failure must NOT be reported as the scope tradeoff: %s", err)
+	}
+}
+
+// TestErrReportNotReady_DoesNotPromiseAResumableReport pins the honest half of defect 2.
+// The pending ReportRequestId is discarded with this sentinel and the synchronous
+// MetricsReader contract has nowhere to return it, so a retry submits a NEW report rather
+// than collecting the pending one. The sentinel's TEXT is what a caller reads in a log, so
+// the disclaimer lives there and not only in a doc comment a reader may never open.
+func TestErrReportNotReady_DoesNotPromiseAResumableReport(t *testing.T) {
+	msg := ErrReportNotReady.Error()
+	for _, want := range []string{"NEW report", "does not resume"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("ErrReportNotReady must state that a retry restarts the report (missing %q): %s", want, msg)
+		}
+	}
+}
+
+// TestGetCampaignMetrics_RetryAfterNotReadySubmitsAFreshReport proves the claim above is a
+// description of real behavior rather than a pessimistic comment: two calls that both time
+// out issue two DISTINCT submits, so the second never polls the first's pending report. If
+// resumption is ever built, this test is the one that must change.
+func TestGetCampaignMetrics_RetryAfterNotReadySubmitsAFreshReport(t *testing.T) {
+	var submits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/token", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	})
+	mux.HandleFunc("/Reporting/v13/GenerateReport/Submit", func(w http.ResponseWriter, _ *http.Request) {
+		submits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"ReportRequestId":"rr-%d"}`, submits)
+	})
+	var polledIDs []string
+	mux.HandleFunc("/Reporting/v13/GenerateReport/Poll", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			ReportRequestID string `json:"ReportRequestId"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		polledIDs = append(polledIDs, body.ReportRequestID)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ReportRequestStatus":{"Status":"Pending"}}`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	newCall := func() error {
+		c := NewClient(
+			Credentials{ClientID: "cid", ClientSecret: "sec", DeveloperToken: "dev", RefreshToken: "ref"},
+			AccountConfig{AccountID: "9999999", Label: "LF Events"},
+			WithReportingBaseURL(srv.URL),
+			WithTokenURL(srv.URL+"/token"),
+			WithClock(advancingClock(time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC), reportPollInterval)),
+		)
+		_, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowLast7Days)
+		return err
+	}
+
+	if err := newCall(); !errors.Is(err, ErrReportNotReady) {
+		t.Fatalf("first call: want ErrReportNotReady, got %v", err)
+	}
+	if err := newCall(); !errors.Is(err, ErrReportNotReady) {
+		t.Fatalf("retry: want ErrReportNotReady, got %v", err)
+	}
+	if submits != 2 {
+		t.Errorf("submits = %d, want 2 — each retry starts a NEW report", submits)
+	}
+	// The retry must NEVER have polled rr-1, the report the first call left building.
+	// This is the defect stated as an assertion: resumption does not happen.
+	var polledFirstAfterRetry bool
+	for _, id := range polledIDs[len(polledIDs)/2:] {
+		if id == "rr-1" {
+			polledFirstAfterRetry = true
+		}
+	}
+	if polledFirstAfterRetry {
+		t.Error("the retry polled rr-1; if resumption now works, ErrReportNotReady's text and the dispatcher message must be updated")
+	}
+	if len(polledIDs) == 0 || polledIDs[0] != "rr-1" {
+		t.Errorf("first call polled %v, want it to poll its own rr-1", polledIDs)
 	}
 }
 

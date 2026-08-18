@@ -331,9 +331,11 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 // builds, then download a zipped CSV — unlike every other platform here, which answers with
 // one synchronous JSON call. The client bounds the submit+poll phase well under the platform
 // ingress timeout and returns microsoft.ErrReportNotReady rather than hanging the caller;
-// that is mapped to domain.ErrMetricsUnavailable below, because a report still building is a
-// "ask again shortly", NOT a campaign with no data. Reporting it as zeroes would turn a
-// timing condition into a measurement.
+// that propagates as an ordinary error below rather than either metrics sentinel, because a
+// report still building is a timing condition, NOT a campaign with no data. Reporting it as
+// zeroes would turn that timing condition into a measurement. Note the retry it invites
+// restarts the report rather than resuming it — the error message says so explicitly, and
+// microsoft.ErrReportNotReady explains why.
 //
 // Because of that, this capability is OFF unless MICROSOFT_METRICS_ENABLED is set to "true".
 // Merely declaring this method is the capability switch — Orchestrator.ReadCampaignMetrics
@@ -379,7 +381,15 @@ func (d *MicrosoftDispatcher) ReadMetrics(ctx context.Context, projectID string,
 			return nil, fmt.Errorf("get campaign metrics from microsoft: %w", errors.Join(domain.ErrNoMetricsInWindow, err))
 		}
 		if errors.Is(err, microsoft.ErrReportNotReady) {
-			return nil, fmt.Errorf("get campaign metrics from microsoft (report still building; retry shortly): %w", err)
+			// State the retry's real semantics rather than an encouraging "retry shortly":
+			// the pending ReportRequestId does not survive the call (see
+			// microsoft.ErrReportNotReady), so a retry SUBMITS A NEW REPORT and never
+			// collects the one that has since finished. A campaign whose report reliably
+			// outlasts the client's poll budget is therefore unreadable through this path
+			// no matter how often it is retried.
+			return nil, fmt.Errorf("get campaign metrics from microsoft (the report was still building when the poll budget expired; "+
+				"retrying SUBMITS A NEW REPORT and will not pick up the pending one, so a report that reliably takes longer than the "+
+				"budget stays unreadable here): %w", err)
 		}
 		return nil, fmt.Errorf("get campaign metrics from microsoft: %w", err)
 	}
