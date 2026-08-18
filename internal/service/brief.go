@@ -1890,7 +1890,14 @@ func classifyBriefMetricsErr(err error, platform model.Provider) (status, reason
 		// system row did not cover it. There is nothing to retry against — the fix is to
 		// connect the platform. GetCampaignMetrics answers 404.
 		return "connection_problem", "this project has no connection for the campaign's channel — connect it before reading metrics"
-	case errors.Is(err, domain.ErrSystemConnectionNotUsable), errors.Is(err, domain.ErrConnectionNotUsable):
+	case errors.Is(err, domain.ErrSystemConnectionNotUsable):
+		// Its OWN arm, above the general one, because the remedy differs and the general
+		// wording is unfollowable here: this fires when the project has NO connection of its
+		// own and fell back to the shared LF system row, so there is nothing for the project
+		// to reconnect. creds.go wraps this ALONGSIDE ErrConnectionNotUsable, so a merged arm
+		// silently answers with the wrong instruction — which is what makes the tag decorative.
+		return "connection_problem", "this project has no connection of its own for the campaign's platform and the shared LF connection is not usable — an operator must repair it"
+	case errors.Is(err, domain.ErrConnectionNotUsable):
 		return "connection_problem", "this project's connection for the campaign's platform is not usable — reconnect it to read metrics"
 	default:
 		// Transient by default. An unrecognised failure is far more likely to be an upstream
@@ -1957,7 +1964,12 @@ func (s *BriefService) GetBriefMetrics(ctx context.Context, p *briefs.GetBriefMe
 				// not_ready is INFO because it is the ordinary state of a staged email draft.
 				lvl := slog.LevelWarn
 				switch {
-				case errors.Is(merr, domain.ErrCredentialDecryptionFailed):
+				case errors.Is(merr, domain.ErrCredentialDecryptionFailed),
+					errors.Is(merr, domain.ErrSystemConnectionNotUsable):
+					// Both are OPERATOR-scope defects on shared infrastructure: a rotated key
+					// or a broken LF system row fails every project that depends on it, and
+					// the discriminator is the COUNT of these lines. Left at WARN they page
+					// nobody. GetCampaignMetrics answers 500 for both for the same reason.
 					lvl = slog.LevelError
 				case status == "not_ready":
 					lvl = slog.LevelInfo

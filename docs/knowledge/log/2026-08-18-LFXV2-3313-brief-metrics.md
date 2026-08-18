@@ -86,3 +86,20 @@ tautology now fails the live test with "got 2 campaigns, want 1".
 excludes deleted rows, and the new query was not in its map — so the guard the bundle credits
 with catching exactly this omission did not cover it. Added, and
 `internal-infrastructure-postgres.md` now names six queries rather than five.
+
+**Fix (full-branch sweep)** — Two cross-commit drift findings, both invisible to a per-commit
+review because each was created by one commit and falsified by the next.
+
+`briefMetricsRowStatusEnum`'s doc mapped `connection_problem` to "A 409". The review round then
+added arms for `ErrNotFound` (404) and `ErrCredentialDecryptionFailed` (500) without touching
+the design comment, so the API contract asserted a single status code for a bucket now covering
+three. It no longer names a code, and states the rule the collapse actually rests on: the
+remedy is identical.
+
+`ErrSystemConnectionNotUsable` shared an arm with `ErrConnectionNotUsable` and inherited its
+"reconnect it" wording — unfollowable in the one case that sentinel exists for, where the
+project has NO connection of its own and fell back to the shared LF row. Split into its own
+arm, raised to ERROR for the same count-is-the-discriminator reason as the decrypt case, and
+the test's `wantReason` tightened from "not usable" (which both arms contain, so it passed
+either way) to a phrase only the system arm carries. Mutation-verified: re-merging the arms now
+fails.

@@ -790,10 +790,13 @@ func metricsWindowEnum() {
 //     reported no data for the window. A 409. Common and benign: an
 //     email campaign staged as a draft reads this way until a human
 //     sends it. NOT an error to surface as a failure.
-//   - connection_problem — the campaign's account provenance is unknown, belongs to a
-//     different account than the current connection, or the connection
-//     (including the LF system fallback) is unusable. A 409. Needs an
-//     operator to fix the connection; retrying will not.
+//   - connection_problem — the connection cannot serve this campaign: no connection row,
+//     provenance unknown, a different account than the current connection,
+//     undecryptable credentials, or an unusable connection including the
+//     LF system fallback. Deliberately does NOT name a single HTTP code —
+//     those defects answer 404, 409 and 500 on the single-campaign
+//     endpoint. They collapse here because the REMEDY is identical: an
+//     operator repairs the connection. Retrying never helps.
 //   - failed             — the platform read itself failed. A 5xx on the single-campaign
 //     endpoint. Transient; retrying may succeed.
 //

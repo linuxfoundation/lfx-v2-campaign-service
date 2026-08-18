@@ -227,7 +227,11 @@ project and provider — a 404 on the campaign-scoped endpoint) and
 the cheap discriminator between one bad row and a key rotation breaking every project is the
 COUNT of those lines, and it logs NO error text: `domain.Encryptor` is an interface, so its
 error may quote ciphertext or key material, and `safeErrSummary` normalises rather than
-redacts.
+redacts. `domain.ErrSystemConnectionNotUsable` keeps its own arm above the general
+connection one for a different reason: the general wording tells the operator to reconnect,
+and this fires precisely when the project has NO connection of its own to reconnect — it fell
+back to the shared LF row. It logs at ERROR alongside the decrypt case, since a broken LF
+system row fails every project depending on it.
 
 **A non-`ok` row omits `metrics` entirely rather than carrying zeroes.** A zero is a
 measurement; substituting one for a campaign that could not be read is indistinguishable from

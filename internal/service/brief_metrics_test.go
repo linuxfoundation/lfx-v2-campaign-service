@@ -231,9 +231,17 @@ func TestGetBriefMetrics_SentinelsMapToTheirRowStatus(t *testing.T) {
 			err: domain.ErrCampaignAccountMismatch, platform: model.ProviderMetaAds,
 			wantStatus: "connection_problem", wantReason: "different account",
 		},
+		// wantReason is deliberately a phrase the GENERAL connection arm does not contain:
+		// "not usable" appears in both, so it passed whether or not the system case had its
+		// own arm — and the general wording tells a project with no connection of its own to
+		// "reconnect it", which it cannot do.
 		"system fallback connection unusable": {
 			err: domain.ErrSystemConnectionNotUsable, platform: model.ProviderLinkedInAds,
-			wantStatus: "connection_problem", wantReason: "not usable",
+			wantStatus: "connection_problem", wantReason: "shared LF connection",
+		},
+		"the project's own connection is unusable": {
+			err: domain.ErrConnectionNotUsable, platform: model.ProviderMetaAds,
+			wantStatus: "connection_problem", wantReason: "reconnect it",
 		},
 		"stored credentials cannot be decrypted": {
 			err: domain.ErrCredentialDecryptionFailed, platform: model.ProviderGoogleAds,
