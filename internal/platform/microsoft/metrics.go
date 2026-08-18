@@ -69,9 +69,29 @@ const (
 	// TestReportPollBudgetStaysUnderTheMetricsCallTimeout pins this relationship.
 	reportPollBudget = 15 * time.Second
 
-	// reportPollInterval is the delay between Poll calls. Microsoft documents a
-	// recommended floor of ~1s; polling faster earns 429s that the shared retry policy
-	// would then have to absorb.
+	// reportPollInterval is the delay between Poll calls.
+	//
+	// An earlier revision of this comment claimed Microsoft "documents a recommended floor
+	// of ~1s". No such statement exists. What the primary source actually says (Request and
+	// Download a Report, step 6) is the opposite of reassuring:
+	//
+	//	"Because most reports should complete within minutes, polling at two to 15-minute
+	//	 intervals should be appropriate for most cases. If the overall polling period
+	//	 exceeds 60 minutes, consider saving the report identifier, exiting the loop, and
+	//	 trying again later."
+	//
+	// That invalidates far more than this constant. If reports complete in MINUTES, then a
+	// reportPollBudget of 15s essentially never observes a finished report — and the budget
+	// cannot be raised, because metricsCallTimeout (20s) and the 60s ingress both sit above
+	// it. Microsoft's own prescription for exactly this case — persist the ReportRequestId,
+	// exit, come back later — is the resumable-report capability ErrReportNotReady already
+	// documents as absent and as needing a persisted job row plus async completion.
+	//
+	// So the interval is left at 1s deliberately: raising it to 5s would only reduce the
+	// number of doomed polls inside a budget that expires regardless, while implying the
+	// synchronous path can work. It cannot, on Microsoft's own numbers. This is why the
+	// whole read stays behind MICROSOFT_METRICS_ENABLED, and why the honest fix is the
+	// async design, not a tuned constant.
 	reportPollInterval = 1 * time.Second
 
 	// reportDownloadCap bounds the ZIP read. A campaign-scoped, aggregate-over-window
