@@ -175,12 +175,27 @@ type CampaignResult struct {
 	KeywordCriteriaIDs  []string `json:"keywordCriteriaIds,omitempty"`
 	AudienceCriteriaIDs []string `json:"audienceCriteriaIds,omitempty"`
 	// GeoCriterionIDs are the location criteria created for CampaignInput.GeoTargets
-	// (LFXV2-3283). Empty when the caller supplied no geo targets — which means the
-	// campaign is UNTARGETED and serves wherever the account allows, not that
-	// targeting was applied and produced no ids. The criteria live at DIFFERENT
-	// levels per channel (campaign for Search, ad group for Demand Gen), so these ids
-	// are campaignCriterion ids on the Search path and adGroupCriterion ids on the
-	// Demand Gen path; reconcile against the level the campaign's channel uses.
+	// (LFXV2-3283).
+	//
+	// EMPTY IS AMBIGUOUS ON ITS OWN, and a reconciler must not read it as "no targets were
+	// asked for". Three states produce an empty slice:
+	//
+	//   - the caller supplied no geo targets, so the campaign is deliberately UNTARGETED and
+	//     serves wherever the account allows;
+	//   - the criteria mutate FAILED, so the campaign exists untargeted but that was not the
+	//     intent;
+	//   - the mutate was UNCONFIRMED, so criteria may exist upstream with ids this run could
+	//     not read — the case where a blind retry would double-create them.
+	//
+	// The returned ERROR is what distinguishes them: a nil error with an empty slice is the
+	// first case and only the first. The second and third always arrive alongside a non-nil
+	// error, and the third says UNCONFIRMED in its text. `CampaignInput.GeoTargets` tells a
+	// caller what was asked for, if it needs to compare.
+	//
+	// The criteria live at DIFFERENT levels per channel (campaign for Search, ad group for
+	// Demand Gen), so these ids are campaignCriterion ids on the Search path and
+	// adGroupCriterion ids on the Demand Gen path; reconcile against the level the campaign's
+	// channel uses.
 	GeoCriterionIDs []string `json:"geoCriterionIds,omitempty"`
 	GoogleAdsURL    string   `json:"googleAdsUrl"`
 	Steps           []string `json:"steps"`

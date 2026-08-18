@@ -51,16 +51,25 @@ func newGeoClient(t *testing.T, campaignCriteriaH, adGroupCriteriaH http.Handler
 
 // capturedMutate is a criteria handler that records the request body and replies with
 // `count` results whose resource names are built by `name`.
-func capturedMutate(body *string, count int, name func(i int) string) http.HandlerFunc {
-	// The handler runs on httptest's goroutine while the test goroutine reads `body` after the
-	// request returns. `go test -race` happens not to flag it today because the read is
-	// sequenced after the response, but that is an accident of timing rather than a guarantee —
-	// and every sibling test in this package guards its captures the same way.
-	var mu sync.Mutex
-	return func(w http.ResponseWriter, r *http.Request) {
+// Returns the handler AND a reader for the captured body. The reader is what makes this safe:
+// the handler writes on httptest's goroutine and the test reads afterwards, so BOTH sides must
+// take the same lock. An earlier version locked only the write, with the mutex local to this
+// function — which looked synchronised and synchronised nothing, because no caller could take
+// the lock to read. Same shape as campaign_test.go's captures.
+func capturedMutate(count int, name func(i int) string) (http.HandlerFunc, func() string) {
+	var (
+		mu   sync.Mutex
+		body string
+	)
+	read := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return body
+	}
+	h := func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		mu.Lock()
-		*body = string(b)
+		body = string(b)
 		mu.Unlock()
 		parts := make([]string, 0, count)
 		for i := 0; i < count; i++ {
@@ -68,6 +77,7 @@ func capturedMutate(body *string, count int, name func(i int) string) http.Handl
 		}
 		_, _ = io.WriteString(w, `{"results":[`+strings.Join(parts, ",")+`]}`)
 	}
+	return h, read
 }
 
 // Criterion ids are NUMERIC in both composite resource names (compositeResourceID
@@ -162,9 +172,9 @@ func TestGeoTargetResource_RendersConstantPath(t *testing.T) {
 // JP=2392) must each land in their OWN operation's location.geoTargetConstant, under
 // `campaign` — not swapped, not collapsed, and not in the adGroup field.
 func TestCreateCampaign_AttachesCampaignLevelGeoCriteria(t *testing.T) {
-	var body string
+	h, readBody := capturedMutate(2, campaignCriterionName)
 	c := newGeoClient(t,
-		capturedMutate(&body, 2, campaignCriterionName),
+		h,
 		failHandler(t, "adGroupCriteria:mutate (Search geo must attach at CAMPAIGN level)"))
 
 	in := sampleInput()
@@ -185,11 +195,11 @@ func TestCreateCampaign_AttachesCampaignLevelGeoCriteria(t *testing.T) {
 			} `json:"create"`
 		} `json:"operations"`
 	}
-	if err := json.Unmarshal([]byte(body), &req); err != nil {
-		t.Fatalf("decode captured body: %v (body=%s)", err, body)
+	if err := json.Unmarshal([]byte(readBody()), &req); err != nil {
+		t.Fatalf("decode captured body: %v (body=%s)", err, readBody())
 	}
 	if len(req.Operations) != 2 {
-		t.Fatalf("got %d operations, want 2 (body=%s)", len(req.Operations), body)
+		t.Fatalf("got %d operations, want 2 (body=%s)", len(req.Operations), readBody())
 	}
 
 	want := []string{"geoTargetConstants/2840", "geoTargetConstants/2392"}
@@ -314,10 +324,10 @@ func TestCreateCampaign_GeoFailureKeepsCampaignPartial(t *testing.T) {
 // criteria, so the payload must carry `adGroup` and must NOT be sent to
 // campaignCriteria:mutate.
 func TestCreateDemandGenCampaign_AttachesAdGroupLevelGeoCriteria(t *testing.T) {
-	var body string
+	h, readBody := capturedMutate(2, adGroupCriterionName)
 	c := newGeoClient(t,
 		failHandler(t, "campaignCriteria:mutate (Demand Gen REJECTS campaign-level location criteria)"),
-		capturedMutate(&body, 2, adGroupCriterionName))
+		h)
 
 	in := sampleInput()
 	in.GeoTargets = []string{"DE", "BR"}
@@ -337,11 +347,11 @@ func TestCreateDemandGenCampaign_AttachesAdGroupLevelGeoCriteria(t *testing.T) {
 			} `json:"create"`
 		} `json:"operations"`
 	}
-	if err := json.Unmarshal([]byte(body), &req); err != nil {
-		t.Fatalf("decode captured body: %v (body=%s)", err, body)
+	if err := json.Unmarshal([]byte(readBody()), &req); err != nil {
+		t.Fatalf("decode captured body: %v (body=%s)", err, readBody())
 	}
 	if len(req.Operations) != 2 {
-		t.Fatalf("got %d operations, want 2 (body=%s)", len(req.Operations), body)
+		t.Fatalf("got %d operations, want 2 (body=%s)", len(req.Operations), readBody())
 	}
 
 	want := []string{"geoTargetConstants/2276", "geoTargetConstants/2076"}
@@ -379,10 +389,10 @@ func TestCreateDemandGenCampaign_AttachesAdGroupLevelGeoCriteria(t *testing.T) {
 // The closing step used to say "no geo targeting set" unconditionally. Once geo is
 // applied that string is a lie, and a step list is what an operator reads.
 func TestCreateDemandGenCampaign_ClosingStepReportsGeoHonestly(t *testing.T) {
-	var body string
+	h, _ := capturedMutate(1, adGroupCriterionName)
 	c := newGeoClient(t,
 		failHandler(t, "campaignCriteria:mutate"),
-		capturedMutate(&body, 1, adGroupCriterionName))
+		h)
 
 	in := sampleInput()
 	in.GeoTargets = []string{"US"}
@@ -447,9 +457,9 @@ func TestCreateDemandGenCampaign_WrongAdGroupInCriterionNameIsUnconfirmed(t *tes
 // A short mutate response (fewer results than operations) means an unknown number of
 // criteria committed — it must be UNCONFIRMED, not a silent partial success.
 func TestCreateCampaign_ShortGeoMutateResponseIsUnconfirmed(t *testing.T) {
-	var body string
+	h, _ := capturedMutate(1, campaignCriterionName)
 	c := newGeoClient(t,
-		capturedMutate(&body, 1, campaignCriterionName), // 1 result for 2 operations
+		h, // 1 result for 2 operations
 		failHandler(t, "adGroupCriteria:mutate"))
 
 	in := sampleInput()
@@ -540,9 +550,10 @@ func TestCreateCampaign_RejectsCriterionNamesThatAreNotOurs(t *testing.T) {
 	}
 	for name, resourceName := range cases {
 		t.Run(name, func(t *testing.T) {
-			var body string
+			// The body is not read here — this case asserts the error, not the request.
+			h, _ := capturedMutate(1, func(int) string { return resourceName })
 			c := newGeoClient(t,
-				capturedMutate(&body, 1, func(int) string { return resourceName }),
+				h,
 				failHandler(t, "adGroupCriteria:mutate (Search geo attaches at CAMPAIGN level)"))
 
 			in := sampleInput()
@@ -555,9 +566,9 @@ func TestCreateCampaign_RejectsCriterionNamesThatAreNotOurs(t *testing.T) {
 
 	// The legitimate shape still succeeds, or the guard would be satisfied by rejecting
 	// everything.
-	var body string
+	h, _ := capturedMutate(1, campaignCriterionName)
 	c := newGeoClient(t,
-		capturedMutate(&body, 1, campaignCriterionName),
+		h,
 		failHandler(t, "adGroupCriteria:mutate (Search geo attaches at CAMPAIGN level)"))
 	in := sampleInput()
 	in.GeoTargets = []string{"US"}
