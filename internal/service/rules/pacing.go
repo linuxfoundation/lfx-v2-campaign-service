@@ -161,7 +161,11 @@ func ComputePacing(spend float64, spendDays float64, budget float64, kind Budget
 	// A flight that has not begun has no plan-to-date to compare against. Without this the
 	// elapsed floor of one day invents a day of expected spend, and a campaign scheduled to
 	// start next week raises a HIGH-priority underspending item for not having spent yet.
-	if now.Before(start) {
+	// !After, not Before: a campaign starting exactly NOW has elapsed zero days, which
+	// daysBetween floors to one, so it would be measured against a full day of plan it has had
+	// no time to spend. A strict Before lets that boundary case through and reports a campaign
+	// that started this second as either overspending or underspending.
+	if !now.After(start) {
 		return Pacing{Label: PacingUnknown}
 	}
 	if !end.After(start) {

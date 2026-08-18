@@ -309,3 +309,24 @@ func TestComputePacing_NilStartWithAnEndIsNotAMeasurement(t *testing.T) {
 		t.Errorf("a normal flight = %.1f%% (computable=%v), want ~100%%", ok.Pct, ok.Computable)
 	}
 }
+
+// A campaign starting exactly NOW has elapsed zero days, which daysBetween floors to one. A
+// strict `now.Before(start)` lets that boundary through and measures the campaign against a full
+// day of plan it has had no time to spend.
+func TestComputePacing_FlightStartingExactlyNowIsNotMeasurable(t *testing.T) {
+	end := testNow.AddDate(0, 0, 10)
+	for name, spend := range map[string]float64{"with spend": 500, "no spend yet": 0} {
+		t.Run(name, func(t *testing.T) {
+			got := ComputePacing(spend, 7, 1000, BudgetLifetime, Flight{Start: &testNow, End: &end}, testNow, DefaultThresholds)
+			if got.Computable {
+				t.Errorf("a flight starting this instant produced a computable %.1f%% labelled %q", got.Pct, got.Label)
+			}
+		})
+	}
+	// One second in, it IS measurable — the guard must not disable pacing for every campaign
+	// whose flight has merely begun.
+	start := testNow.Add(-time.Second)
+	if got := ComputePacing(500, 7, 1000, BudgetLifetime, Flight{Start: &start, End: &end}, testNow, DefaultThresholds); !got.Computable {
+		t.Error("a flight that started one second ago is not measurable; the guard is too broad")
+	}
+}

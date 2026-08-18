@@ -17,3 +17,12 @@ zero-length-flight check already handles.
 
 The lesson generalises past this field: a nil-defaulted input can defeat a guard written against
 the value it defaults to. The guard and the default have to be considered together.
+
+**A third door, found by sweeping the input space rather than reasoning about it.** A flight
+starting exactly `now` also escaped: elapsed is zero days, floored to one, so a campaign that
+began this instant was measured against a full day of plan it had had no time to spend — 500%
+overspending with spend, 0% underspending without. `now.Before(start)` is strict, so the equality
+case slipped through; the guard is `!now.After(start)`.
+
+All three defects are the same shape: **a boundary or default that makes `elapsed` one day when
+the true answer is zero.** Worth checking that shape directly whenever a floor meets a default.
