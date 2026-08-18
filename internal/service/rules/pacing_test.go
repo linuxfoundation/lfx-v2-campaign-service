@@ -520,3 +520,49 @@ func TestComputePacing_FinalDayOfFlightIsPaced(t *testing.T) {
 		t.Errorf("label = %q, want normal", got.Label)
 	}
 }
+
+// A LIFETIME budget with no end date cannot be prorated: there is no flight length to spread it
+// across. Defaulting the end to `now` collapses total into elapsed and treats the whole budget
+// as due today, so a campaign ten days into an open-ended $1000 budget having spent $100 reads
+// 10% and raises a HIGH-priority underspending item against a campaign that may be pacing
+// perfectly for a flight nobody has given an end.
+//
+// A DAILY budget is deliberately unaffected — its rate is explicit, so the missing end costs
+// nothing and it must stay computable.
+func TestComputePacing_LifetimeBudgetNeedsAnEndDate(t *testing.T) {
+	start := testNow.AddDate(0, 0, -10)
+	open := Flight{Start: &start, End: nil}
+
+	for name, spend := range map[string]float64{
+		"far behind":  100,
+		"halfway":     500,
+		"fully spent": 1000,
+	} {
+		t.Run("lifetime/"+name, func(t *testing.T) {
+			got := ComputePacing(spend, 10, 1000, BudgetLifetime, open, testNow, DefaultThresholds)
+			if got.Computable {
+				t.Errorf("open-ended lifetime budget produced a computable %.1f%% labelled %q", got.Pct, got.Label)
+			}
+			if got.Label == PacingUnderspending {
+				t.Error("an open-ended lifetime campaign was labelled underspending")
+			}
+		})
+	}
+
+	// A daily budget with the same open-ended flight IS measurable: $100/day over 10 days
+	// expects $1000, so $500 is 50%.
+	daily := ComputePacing(500, 10, 100, BudgetDaily, open, testNow, DefaultThresholds)
+	if !daily.Computable {
+		t.Fatal("a daily budget needs no end date; the guard must not disable it too")
+	}
+	if math.Abs(daily.Pct-50) > 1 {
+		t.Errorf("daily open-ended pacing = %.1f%%, want ~50%%", daily.Pct)
+	}
+
+	// And a lifetime budget WITH an end is still measurable, or the guard is too broad.
+	end := testNow.AddDate(0, 0, 9)
+	bounded := ComputePacing(500, 10, 1000, BudgetLifetime, Flight{Start: &start, End: &end}, testNow, DefaultThresholds)
+	if !bounded.Computable {
+		t.Error("a bounded lifetime flight is not measurable; the guard is too broad")
+	}
+}

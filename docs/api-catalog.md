@@ -686,8 +686,17 @@ costPerConversion: number
 dailyBudget: number
 totalBudget: number
 pacingPct: number
-pacingLabel: string             — underspending | normal | constrained | overspending | severe
+pacingLabel: string             — underspending | normal | constrained | overspending | unknown
 ```
+
+> **Note on `pacingLabel`.** This block previously listed `severe` and omitted `unknown`. Neither
+> matched what the service emits: LFXV2-3314 moved pacing derivation into `internal/service/rules`
+> and pinned the vocabulary in the Goa design, where the enum is
+> `underspending | normal | constrained | overspending | unknown`. `severe` was never produced.
+> `unknown` is load-bearing rather than a filler value — it is what a row carries when pacing
+> could not be derived at all (no budget, no usable flight, a window that does not overlap the
+> flight, or a campaign in its first day), and it is what stops that state being rendered as a
+> confident `0%`.
 
 ---
 

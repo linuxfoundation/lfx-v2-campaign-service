@@ -173,19 +173,26 @@ const minImpressionsForCTR = 1000
 
 // isActive reports whether the campaign is in a state where delivery is expected.
 //
-// An ALLOW-LIST of this service's own lifecycle values, not an exclusion. The vocabulary is
-// `pending`, `created`, `created_degraded`, `group_created`, `unconfirmed` and `deleted`
-// (model.CampaignStatus*), and only two of those describe something that exists upstream and
-// should be serving:
+// An ALLOW-LIST of this service's own lifecycle values, not an exclusion.
+//
+// `Campaign.Status` carries TWO axes in one column (see model.Campaign.Status): a PROVISIONING
+// state stamped at create — `pending`, `created`, `created_degraded`, `group_created`,
+// `unconfirmed`, `deleted` — and a RUN state set by the status toggle, `active` / `paused`.
+// Delivery is expected on:
 //
 //   - created — the campaign was created and confirmed.
 //   - created_degraded — the campaign was created, but some variants failed. It IS delivering,
 //     so a zero-delivery finding on it is real; excluding it would hide a broken campaign
 //     precisely because it was already partly broken.
+//   - active — the run state a caller sets by resuming. The clearest case of all, and the one an
+//     earlier version of this predicate omitted: it listed only the provisioning states, so a
+//     campaign someone had explicitly resumed raised no findings at all.
 //
-// The rest are deliberately excluded. `pending` is an in-flight claim that may not have reached
-// the platform at all; `unconfirmed` and `group_created` are partial states where a
-// zero-delivery finding would report a dispatch problem as a targeting one; `deleted` is gone.
+// The rest are deliberately excluded. `paused` is a deliberate operator decision, so zero spend
+// is the INTENDED outcome and a finding against it argues with the person who chose it;
+// `pending` is an in-flight claim that may not have reached the platform; `unconfirmed` and
+// `group_created` are partial states where a zero-delivery finding would report a dispatch
+// problem as a targeting one; `deleted` is gone.
 //
 // Written as an allow-list because `status != deleted` would sweep every future status into
 // "expected to deliver" the moment one is added, with nothing failing to say so.

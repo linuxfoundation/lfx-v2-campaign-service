@@ -152,6 +152,22 @@ func ComputePacing(spend float64, spendDays float64, budget float64, kind Budget
 	if flight.Start == nil && flight.End != nil {
 		return Pacing{Label: PacingUnknown}
 	}
+	// The mirror case, and it is NOT symmetric — it applies to lifetime budgets only.
+	//
+	// A lifetime budget is a total to spread across a flight, so prorating it needs the flight's
+	// LENGTH. With no end date there is no length: `end` defaults to now, `total` collapses to
+	// `elapsed`, and the whole budget is treated as due today. A campaign ten days into an
+	// open-ended $1000 budget having spent $100 then reads 10% and raises a HIGH-priority
+	// underspending item, telling an operator to raise spend on a campaign that may be pacing
+	// perfectly for a flight that has not been given an end.
+	//
+	// A DAILY budget is unaffected and stays computable: its rate is explicit, so days elapsed
+	// is all the arithmetic needs and the missing end date costs nothing.
+	//
+	// end_date is nullable in the schema (migration 000002), so this is storable, not theoretical.
+	if kind == BudgetLifetime && flight.End == nil {
+		return Pacing{Label: PacingUnknown}
+	}
 	// An absent start is not an error: a campaign created without one begins when it begins.
 	// Without an end, the flight is open-ended and "expected by now" is measured to now — and
 	// with BOTH absent the zero-length check below returns Unknown anyway.
