@@ -427,8 +427,10 @@ func (o *Orchestrator) SetIndexer(p indexer.Publisher) {
 }
 
 // Upstream operation tokens. COMPILE-TIME CONSTANTS, never derived from a request,
-// a URL or an upstream response — the `operation` label is bounded by this list
-// being the only thing passed to recordUpstream.
+// a URL or an upstream response. These being the only values passed to
+// recordUpstream is the PRIMARY bound on the `operation` label; metrics.safeOperation
+// is a secondary shape guard at the recording boundary, which degrades an id-shaped
+// or otherwise derived string to a bounded token rather than minting series.
 const (
 	opToggleStatus   = "toggle_status"
 	opReadMetrics    = "read_metrics"

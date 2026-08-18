@@ -21,9 +21,11 @@
 // label whose value space is unbounded creates one time series per distinct
 // value, and the series are retained for the whole retention window. NOTHING in
 // this package may carry a campaign id, brief id, project id, job id, account id
-// or URL as a label value. The only labels used are `platform` (mapped through
-// SafePlatform, which collapses anything outside the closed provider set to
-// "unknown") and small closed outcome enums declared as constants below.
+// or URL as a label value. `platform` and the job-status label map through closed
+// sets (SafePlatform / SafeJobStatus) that collapse anything outside them to
+// "unknown", and the dispatch and call outcomes are small closed enums declared as
+// constants below. `operation` is bounded by SHAPE instead of a closed set — see
+// safeOperation for why a map would be the wrong tool there.
 //
 // No metric name, label or help string may carry a credential, DSN or token.
 // Nothing here is derived from request payloads or stored connection state.
