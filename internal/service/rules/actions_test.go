@@ -42,7 +42,7 @@ func TestEvaluate_ZeroDeliveryNeedsBothSignals(t *testing.T) {
 	}
 
 	withSpend := base
-	withSpend.SpendUSD = 12
+	withSpend.Spend = 12
 	if got := rulesFired(Evaluate(withSpend)); contains(got, "zero_delivery") {
 		t.Error("zero_delivery fired on a campaign with recorded spend")
 	}
@@ -78,7 +78,7 @@ func TestEvaluate_NoPacingItemWhenPacingIsIncomputable(t *testing.T) {
 	// copying a label across without the flag. Using PacingUnknown here would prove nothing:
 	// it matches no switch arm, so the guard could be deleted and the test would still pass.
 	in := Input{
-		CampaignID: "c1", Status: "created", Impressions: 5000, SpendUSD: 100,
+		CampaignID: "c1", Status: "created", Impressions: 5000, Spend: 100,
 		Pacing: Pacing{Pct: 0, Label: PacingUnderspending, Computable: false},
 	}
 	for _, r := range rulesFired(Evaluate(in)) {
@@ -100,7 +100,7 @@ func TestEvaluate_PacingItems(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			in := Input{
-				CampaignID: "c1", Status: "created", Impressions: 5000, SpendUSD: 100,
+				CampaignID: "c1", Status: "created", Impressions: 5000, Spend: 100,
 				Pacing: Pacing{Pct: 42, Label: tc.label, Computable: true},
 			}
 			if got := rulesFired(Evaluate(in)); !contains(got, tc.want) {
@@ -111,7 +111,7 @@ func TestEvaluate_PacingItems(t *testing.T) {
 	// A healthy campaign raises nothing.
 	healthy := Input{
 		CampaignID: "c1", Status: "created", Impressions: 5000, Clicks: 100, CTRPct: 2,
-		SpendUSD: 100, Pacing: Pacing{Pct: 95, Label: PacingNormal, Computable: true},
+		Spend: 100, Pacing: Pacing{Pct: 95, Label: PacingNormal, Computable: true},
 	}
 	if got := Evaluate(healthy); len(got) != 0 {
 		t.Errorf("a campaign on plan with healthy CTR raised %v", rulesFired(got))
@@ -121,12 +121,12 @@ func TestEvaluate_PacingItems(t *testing.T) {
 // Low CTR needs enough impressions to mean anything. Three impressions and no clicks is a 0%
 // CTR that says nothing about the creative.
 func TestEvaluate_LowCTRNeedsDelivery(t *testing.T) {
-	thin := Input{CampaignID: "c1", Status: "created", Impressions: 50, Clicks: 0, CTRPct: 0, SpendUSD: 1}
+	thin := Input{CampaignID: "c1", Status: "created", Impressions: 50, Clicks: 0, CTRPct: 0, Spend: 1}
 	if got := rulesFired(Evaluate(thin)); contains(got, "low_ctr") {
 		t.Error("low_ctr fired on 50 impressions; the figure is not yet meaningful")
 	}
 
-	delivered := Input{CampaignID: "c1", Status: "created", Impressions: 20000, Clicks: 20, CTRPct: 0.1, SpendUSD: 100}
+	delivered := Input{CampaignID: "c1", Status: "created", Impressions: 20000, Clicks: 20, CTRPct: 0.1, Spend: 100}
 	if got := rulesFired(Evaluate(delivered)); !contains(got, "low_ctr") {
 		t.Errorf("low_ctr did not fire on 0.1%% across 20k impressions; fired %v", got)
 	}
@@ -145,7 +145,7 @@ func TestEvaluate_LowCTRNeedsDelivery(t *testing.T) {
 func TestEvaluate_ItemsCarryIdentityAndAStableToken(t *testing.T) {
 	in := Input{
 		CampaignID: "c-42", Platform: "meta-ads", Status: "created",
-		Impressions: 20000, CTRPct: 0.05, SpendUSD: 10,
+		Impressions: 20000, CTRPct: 0.05, Spend: 10,
 		Pacing: Pacing{Pct: 10, Label: PacingUnderspending, Computable: true},
 	}
 	items := Evaluate(in)

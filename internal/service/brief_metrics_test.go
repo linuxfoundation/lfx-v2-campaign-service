@@ -641,3 +641,44 @@ func TestGetBriefMetrics_PacingUsesTheRowsOwnWindow(t *testing.T) {
 		}
 	}
 }
+
+// A campaign with a budget but NO start date must not be paced.
+//
+// start_date is nullable in the schema, so this is a storable state. Defaulting the start to
+// `now` makes the flight begin this instant and the one-day elapsed floor then compares a
+// 30-day window of spend against a single day of plan: a campaign exactly on plan reports
+// 500% overspending and raises a budget item against itself.
+func TestGetBriefMetrics_CampaignWithNoStartDateIsNotPaced(t *testing.T) {
+	c := campaignOn("c1", model.ProviderGoogleAds)
+	amount, kind := 1000.0, model.BudgetLifetime
+	end := metricsNow.AddDate(0, 0, 10)
+	c.BudgetAmount = &amount
+	c.BudgetType = &kind
+	c.EndDate = &end // StartDate deliberately left nil
+
+	disp := newPerCampaignDispatcher()
+	disp.results["c1"] = &model.CampaignMetrics{Impressions: 20000, Clicks: 400, CostMicros: 500_000_000, Ctr: 0.02}
+
+	s := newBriefMetricsService(t, disp, c)
+	s.SetClock(func() time.Time { return metricsNow })
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+
+	row := rowByCampaign(t, res, "c1")
+	if row.Pacing == nil {
+		t.Fatal("an ok row must state pacing, even when it is unknown")
+	}
+	if row.Pacing.Label != "unknown" {
+		t.Errorf("label = %q, want unknown — there is no flight to prorate across", row.Pacing.Label)
+	}
+	if row.Pacing.Pct != nil {
+		t.Errorf("pct = %v; a campaign with no start date has no plan-to-date to measure against", *row.Pacing.Pct)
+	}
+	for _, item := range res.ActionItems {
+		if item.Rule == "budget_constrained" || item.Rule == "underspending" {
+			t.Errorf("%s raised against a campaign with no recorded start: %q", item.Rule, item.Issue)
+		}
+	}
+}

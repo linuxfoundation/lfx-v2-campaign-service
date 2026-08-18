@@ -136,8 +136,20 @@ func ComputePacing(spend float64, spendDays float64, budget float64, kind Budget
 		return Pacing{Label: PacingUnknown}
 	}
 
+	// An absent start with a PRESENT end has no flight to prorate across. Defaulting start to
+	// now makes the flight begin this instant, and daysBetween then floors elapsed at one day —
+	// so a 30-day window of spend is compared against a single day of plan and a campaign
+	// exactly on plan reports 500% overspending. start_date is nullable in the schema
+	// (migration 000002), so this is a storable state, not a hypothesis.
+	//
+	// This is the same defect as the future-dated flight below, arriving through the other
+	// door: the now.Before(start) guard cannot catch it, because start was just set TO now.
+	if flight.Start == nil && flight.End != nil {
+		return Pacing{Label: PacingUnknown}
+	}
 	// An absent start is not an error: a campaign created without one begins when it begins.
-	// Without an end, the flight is open-ended and "expected by now" is measured to now.
+	// Without an end, the flight is open-ended and "expected by now" is measured to now — and
+	// with BOTH absent the zero-length check below returns Unknown anyway.
 	start := now
 	if flight.Start != nil {
 		start = *flight.Start

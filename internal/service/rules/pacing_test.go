@@ -279,3 +279,33 @@ func TestThresholds_OverspendEdgeIsIndependentOfConstrained(t *testing.T) {
 		t.Errorf("135%% against an absolute 130 edge = %q, want overspending (the edge tracked Constrained)", got.Label)
 	}
 }
+
+// A nil start with a present end has no flight to prorate across. Defaulting the start to `now`
+// makes the flight begin this instant, and the one-day elapsed floor then compares a 30-day
+// window of spend against a single day of plan — an on-plan campaign reports 500% overspending.
+//
+// start_date is nullable in the schema, so this is a storable state. It is the same defect as
+// the future-dated flight, arriving through the other door: the now.Before(start) guard cannot
+// catch it, because start was just set TO now.
+func TestComputePacing_NilStartWithAnEndIsNotAMeasurement(t *testing.T) {
+	end := testNow.AddDate(0, 0, 10)
+	got := ComputePacing(500, 30, 1000, BudgetLifetime, Flight{Start: nil, End: &end}, testNow, DefaultThresholds)
+	if got.Computable {
+		t.Errorf("a flight with no start produced a computable %.1f%% labelled %q", got.Pct, got.Label)
+	}
+	if got.Label == PacingOverspending {
+		t.Error("a campaign with no recorded start was reported as overspending")
+	}
+
+	// Both absent stays incomputable too, via the zero-length flight check.
+	if both := ComputePacing(500, 30, 1000, BudgetLifetime, Flight{}, testNow, DefaultThresholds); both.Computable {
+		t.Errorf("a flight with no dates at all produced a computable %.1f%%", both.Pct)
+	}
+
+	// And a present start still measures, or the guard would have disabled pacing wholesale.
+	start := testNow.AddDate(0, 0, -10)
+	ok := ComputePacing(500, 10, 1000, BudgetLifetime, Flight{Start: &start, End: &end}, testNow, DefaultThresholds)
+	if !ok.Computable || math.Abs(ok.Pct-100) > 5 {
+		t.Errorf("a normal flight = %.1f%% (computable=%v), want ~100%%", ok.Pct, ok.Computable)
+	}
+}

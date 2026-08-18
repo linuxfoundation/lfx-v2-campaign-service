@@ -44,8 +44,11 @@ type Input struct {
 	Status      string
 	Impressions int64
 	Clicks      int64
-	// SpendUSD is the campaign's cost over the measured window, in whole currency units.
-	SpendUSD float64
+	// Spend is the campaign's cost over the measured window, in whole units of the PLATFORM's
+	// own currency. Deliberately not named SpendUSD: this service performs no FX conversion, so
+	// the unit is whatever the platform bills in. It is only ever compared against that same
+	// campaign's budget, and must never be summed or averaged across campaigns.
+	Spend float64
 	// CTRPct is clicks/impressions as a PERCENTAGE, matching what the UI renders. A ratio
 	// would silently make every low-CTR threshold a hundred times too strict.
 	CTRPct float64
@@ -73,7 +76,7 @@ func Evaluate(in Input) []ActionItem {
 	// Both conditions are required: impressions without spend is an unbilled serve, and spend
 	// without impressions is a billing artefact. Either alone is noise; together they mean the
 	// campaign never started.
-	if isActive(in.Status) && in.Impressions == 0 && in.SpendUSD == 0 {
+	if isActive(in.Status) && in.Impressions == 0 && in.Spend == 0 {
 		items = append(items, ActionItem{
 			Rule: "zero_delivery", Priority: PriorityHigh,
 			CampaignID: in.CampaignID, Platform: in.Platform,

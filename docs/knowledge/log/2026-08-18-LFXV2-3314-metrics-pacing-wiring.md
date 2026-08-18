@@ -1,6 +1,6 @@
 # 2026-08-18 — LFXV2-3314 pacing and action items on the brief-metrics read
 
-**Change** — `GET /projects/{projectId}/briefs/{briefId}/metrics` now returns a `pacing` object
+**Update** — `GET /projects/{projectId}/briefs/{briefId}/metrics` now returns a `pacing` object
 per readable row and a brief-wide `action_items` list, both derived from `internal/service/rules`.
 
 **Why service-side.** Four UI implementations derived these independently and disagreed three

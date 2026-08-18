@@ -2061,7 +2061,7 @@ func (s *BriefService) GetBriefMetrics(ctx context.Context, p *briefs.GetBriefMe
 		rows[i].pacing = pacingFor(&rows[i], now)
 	}
 
-	return renderBriefMetrics(p.BriefID, requested, rows, now), nil
+	return renderBriefMetrics(p.BriefID, requested, rows), nil
 }
 
 // pacingFor derives one row's pacing, or the incomputable zero value.
@@ -2069,6 +2069,11 @@ func (s *BriefService) GetBriefMetrics(ctx context.Context, p *briefs.GetBriefMe
 // A row with no measurement gets no pacing: its spend is unknown, and pacing derived from an
 // unknown spend would be a figure about nothing.
 func pacingFor(r *briefMetricsRow, now time.Time) rules.Pacing {
+	// The nil checks are belt-and-braces, not load-bearing: today `status == "ok"` already
+	// implies both pointers are set, because the only assignment that produces that status sets
+	// them together and ReadCampaignMetrics converts a (nil, nil) return into an error. They
+	// are kept so that a future fan-out path which leaves a row unassigned degrades to "no
+	// pacing" instead of panicking a request. Reverting them fails no test, by construction.
 	if r.status != "ok" || r.metrics == nil || r.campaign == nil {
 		return rules.Pacing{Label: rules.PacingUnknown}
 	}
@@ -2108,7 +2113,7 @@ func microsToUnits(micros int64) float64 {
 // the rows can legitimately differ from each other (X Ads falls back to a narrower range), so
 // promoting one row's window to the top level would state a range the other rows do not cover.
 // Each row's own metrics.window remains authoritative for that row.
-func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []briefMetricsRow, now time.Time) *briefs.BriefMetrics {
+func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []briefMetricsRow) *briefs.BriefMetrics {
 	window := string(model.MetricsWindowLast30Days)
 	if requested != nil {
 		window = string(*requested)
@@ -2171,7 +2176,7 @@ func renderBriefMetrics(briefID string, requested *model.MetricsWindow, rows []b
 			Status:      r.campaign.Status,
 			Impressions: r.metrics.Impressions,
 			Clicks:      r.metrics.Clicks,
-			SpendUSD:    microsToUnits(r.metrics.CostMicros),
+			Spend:       microsToUnits(r.metrics.CostMicros),
 			// Ctr is a RATIO on the domain model; the rules take a percentage, and passing the
 			// ratio would make the low-CTR threshold a hundred times too strict.
 			CTRPct: r.metrics.Ctr * 100,
