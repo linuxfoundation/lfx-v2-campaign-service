@@ -152,7 +152,13 @@ func Evaluate(in Input) []ActionItem {
 	// Low CTR. Guarded on impressions rather than on CTR alone: a campaign with three
 	// impressions and no clicks has a 0% CTR that means nothing, and flagging it trains
 	// operators to ignore the rule.
-	if in.Impressions >= minImpressionsForCTR && in.CTRPct < LowCTRThresholdPct {
+	//
+	// Also gated on the run state, like every other rule here. docs/api-catalog.md states
+	// the contract without exception — "Every rule is gated on the campaign's status ... a
+	// `paused` campaign raises nothing" — and this rule was the one that did not honour it,
+	// so a paused campaign's historical CTR raised an item telling an operator to refresh
+	// creative on something they had deliberately stopped.
+	if isActive(in.Status) && in.Impressions >= minImpressionsForCTR && in.CTRPct < LowCTRThresholdPct {
 		items = append(items, ActionItem{
 			Rule: "low_ctr", Priority: PriorityMedium,
 			CampaignID: in.CampaignID, Platform: in.Platform,

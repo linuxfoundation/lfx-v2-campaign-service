@@ -305,3 +305,31 @@ func TestEvaluate_PacingRespectsTheRunState(t *testing.T) {
 		})
 	}
 }
+
+// TestEvaluate_EveryRuleRespectsTheRunState pins the catalog's contract without exception:
+// "Every rule is gated on the campaign's status ... a `paused` campaign raises nothing."
+//
+// The pre-existing run-state test used CTRPct: 2 — above LowCTRThresholdPct — so the low_ctr
+// rule could not fire in it either way, and its ungated state went unnoticed. This input is
+// chosen to trip EVERY rule if the gate were removed from any of them.
+func TestEvaluate_EveryRuleRespectsTheRunState(t *testing.T) {
+	paused := Input{
+		CampaignID: "c1", Platform: "google_ads", Status: "paused",
+		BillsPerDelivery: true, DeliveryExpected: true,
+		Impressions: 20000, Clicks: 20, CTRPct: 0.1, Spend: 100,
+		Pacing: Pacing{Computable: true, Pct: 10, Label: PacingUnderspending},
+	}
+	if got := Evaluate(paused); len(got) != 0 {
+		for _, it := range got {
+			t.Errorf("a paused campaign raised %q; the catalog says it raises nothing", it.Rule)
+		}
+	}
+
+	// The mirror case: the same input on an active campaign MUST still raise, or the test
+	// above would pass against a rule set that never fires at all.
+	active := paused
+	active.Status = "active"
+	if got := Evaluate(active); len(got) == 0 {
+		t.Error("the same input on an active campaign raised nothing; the gate is over-broad")
+	}
+}
