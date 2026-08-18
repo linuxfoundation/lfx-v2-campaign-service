@@ -472,12 +472,37 @@ func TestParseErrorCodes(t *testing.T) {
 	if err := json.Unmarshal([]byte(arr), &many); err != nil {
 		t.Fatalf("boundedErrorItems must parse a large valid array without error: %v", err)
 	}
-	if len(many) != maxDecodedErrorItems {
-		t.Errorf("boundedErrorItems retained %d items, want the %d cap", len(many), maxDecodedErrorItems)
+	if len(many.Items) != maxDecodedErrorItems {
+		t.Errorf("boundedErrorItems retained %d items, want the %d cap", len(many.Items), maxDecodedErrorItems)
+	}
+	// Truncation is RECORDED, not silent. A consumer whose correctness needs the WHOLE error
+	// set (isDuplicateKeywordPartial, which is ALL-not-ANY) must be able to tell that it is
+	// looking at a prefix; without this flag it reads a discarded rejection as absent.
+	if !many.Truncated {
+		t.Error("an array longer than the cap must record Truncated")
+	}
+	// An array that FITS is not truncated — the flag must not be set unconditionally, or every
+	// duplicate-only batch would be refused.
+	var few boundedErrorItems
+	if err := json.Unmarshal([]byte(`[{"ErrorCode":"X"},{"ErrorCode":"Y"}]`), &few); err != nil {
+		t.Fatalf("a short array must parse: %v", err)
+	}
+	if few.Truncated {
+		t.Error("an array within the cap must NOT record Truncated")
+	}
+	// Exactly AT the cap is not truncated either: nothing was discarded.
+	var exact boundedErrorItems
+	atCap := `[` + strings.Repeat(`{"ErrorCode":"X"},`, maxDecodedErrorItems-1) + `{"ErrorCode":"Y"}]`
+	if err := json.Unmarshal([]byte(atCap), &exact); err != nil {
+		t.Fatalf("an at-cap array must parse: %v", err)
+	}
+	if len(exact.Items) != maxDecodedErrorItems || exact.Truncated {
+		t.Errorf("an array of exactly the cap must retain all %d and NOT be truncated, got %d/%v",
+			maxDecodedErrorItems, len(exact.Items), exact.Truncated)
 	}
 	// A JSON null and a non-array are handled gracefully.
 	var nul boundedErrorItems
-	if err := json.Unmarshal([]byte(`null`), &nul); err != nil || nul != nil {
+	if err := json.Unmarshal([]byte(`null`), &nul); err != nil || nul.Items != nil || nul.Truncated {
 		t.Errorf("null must decode to a nil slice, got err=%v val=%v", err, nul)
 	}
 	var bad boundedErrorItems
