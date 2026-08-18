@@ -2642,6 +2642,9 @@ func marshalLfxv2campaignservicebriefsBriefMetricsRowToBriefMetricsRowResponseBo
 	if v.Metrics != nil {
 		res.Metrics = marshalLfxv2campaignservicebriefsCampaignMetricsToCampaignMetricsResponseBody(v.Metrics)
 	}
+	if v.Pacing != nil {
+		res.Pacing = marshalLfxv2campaignservicebriefsCampaignPacingToCampaignPacingResponseBody(v.Pacing)
+	}
 
 	return res
 }
@@ -2664,6 +2667,37 @@ func marshalLfxv2campaignservicebriefsCampaignMetricsToCampaignMetricsResponseBo
 	}
 	if v.Email != nil {
 		res.Email = marshalLfxv2campaignservicebriefsEmailMetricsToEmailMetricsResponseBody(v.Email)
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsCampaignPacingToCampaignPacingResponseBody
+// builds a value of type *CampaignPacingResponseBody from a value of type
+// *lfxv2campaignservicebriefs.CampaignPacing.
+func marshalLfxv2campaignservicebriefsCampaignPacingToCampaignPacingResponseBody(v *lfxv2campaignservicebriefs.CampaignPacing) *CampaignPacingResponseBody {
+	if v == nil {
+		return nil
+	}
+	res := &CampaignPacingResponseBody{
+		Pct:   v.Pct,
+		Label: v.Label,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsCampaignActionItemToCampaignActionItemResponseBody
+// builds a value of type *CampaignActionItemResponseBody from a value of type
+// *lfxv2campaignservicebriefs.CampaignActionItem.
+func marshalLfxv2campaignservicebriefsCampaignActionItemToCampaignActionItemResponseBody(v *lfxv2campaignservicebriefs.CampaignActionItem) *CampaignActionItemResponseBody {
+	res := &CampaignActionItemResponseBody{
+		Rule:       v.Rule,
+		Priority:   v.Priority,
+		CampaignID: v.CampaignID,
+		Platform:   v.Platform,
+		Issue:      v.Issue,
+		Action:     v.Action,
 	}
 
 	return res

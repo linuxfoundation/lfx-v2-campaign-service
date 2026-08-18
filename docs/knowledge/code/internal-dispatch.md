@@ -108,6 +108,17 @@ it (a blind retry could double-create). Adapters drive that decision:
   The retained row is recorded as a recoverable orphan; its upstream id may be empty
   until reconciled.
 
+The two bullets are INDEPENDENT preconditions on the release, and the orchestrator enforces
+both — `dispatchErrIsPreCreate(derr) && campaign == nil`. `NoUpstreamCreate` is only the
+ADAPTER's assertion about its own error, while a non-nil campaign is evidence from the same
+return that a resource was built; when they disagree the evidence wins and the claim is
+RETAINED. Every adapter today returns `preCreateError` with a nil campaign, so the second
+term guards a future adapter rather than a live path — but a release here frees the
+`(brief, platform)` slot and authorizes a duplicate PAID create, so the conservative term is
+kept regardless. The guard tests `campaign == nil` alone, never `PlatformCampaignID != ""`,
+for the reason the bullet above gives: the id-less name-only partial is precisely the shape
+that must retain.
+
 ## Registration
 
 Adapters are registered in `internal/container` (`registerDispatchers`), called from

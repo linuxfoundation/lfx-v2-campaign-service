@@ -121,6 +121,23 @@ type CampaignInput struct {
 	// shapes and createAdGroupTargeting for why they're observation-only rather than
 	// restrictive.
 	AudienceSegments []string
+	// GeoTargets are ISO 3166-1 alpha-2 country codes the campaign should serve
+	// in (LFXV2-3283), resolved to Google's numeric geo target constants by
+	// validateGeoTargets and attached as location criteria.
+	//
+	// Optional at this layer, and the default is the pre-LFXV2-3283 behaviour:
+	// left empty, NO location criteria are created and the campaign serves
+	// wherever the ACCOUNT's defaults allow — which for an event campaign is
+	// usually the whole world, and is the defect this field exists to let a
+	// caller fix. It is optional rather than required because this client is
+	// also used to adopt/manage campaigns whose targeting a human set in the
+	// Google Ads UI; the DISPATCHER is where a missing geo is worth warning
+	// about, since only it knows the campaign was created from a brief.
+	//
+	// The ATTACH LEVEL differs per channel and is not a detail the caller
+	// controls: Search takes campaign-level criteria, Demand Gen rejects those
+	// and takes ad-group-level ones. See geo.go.
+	GeoTargets []string
 }
 
 // CampaignResult reports what CreateCampaign created. The Google Ads hierarchy is
@@ -157,8 +174,31 @@ type CampaignResult struct {
 	// before any criterion resource name could be parsed.
 	KeywordCriteriaIDs  []string `json:"keywordCriteriaIds,omitempty"`
 	AudienceCriteriaIDs []string `json:"audienceCriteriaIds,omitempty"`
-	GoogleAdsURL        string   `json:"googleAdsUrl"`
-	Steps               []string `json:"steps"`
+	// GeoCriterionIDs are the location criteria created for CampaignInput.GeoTargets
+	// (LFXV2-3283).
+	//
+	// EMPTY IS AMBIGUOUS ON ITS OWN, and a reconciler must not read it as "no targets were
+	// asked for". Three states produce an empty slice:
+	//
+	//   - the caller supplied no geo targets, so the campaign is deliberately UNTARGETED and
+	//     serves wherever the account allows;
+	//   - the criteria mutate FAILED, so the campaign exists untargeted but that was not the
+	//     intent;
+	//   - the mutate was UNCONFIRMED, so criteria may exist upstream with ids this run could
+	//     not read — the case where a blind retry would double-create them.
+	//
+	// The returned ERROR is what distinguishes them: a nil error with an empty slice is the
+	// first case and only the first. The second and third always arrive alongside a non-nil
+	// error, and the third says UNCONFIRMED in its text. `CampaignInput.GeoTargets` tells a
+	// caller what was asked for, if it needs to compare.
+	//
+	// The criteria live at DIFFERENT levels per channel (campaign for Search, ad group for
+	// Demand Gen), so these ids are campaignCriterion ids on the Search path and
+	// adGroupCriterion ids on the Demand Gen path; reconcile against the level the campaign's
+	// channel uses.
+	GeoCriterionIDs []string `json:"geoCriterionIds,omitempty"`
+	GoogleAdsURL    string   `json:"googleAdsUrl"`
+	Steps           []string `json:"steps"`
 }
 
 // mutateOperation is one {create: <resource>} entry in a :mutate request.
@@ -220,14 +260,34 @@ type campaignBudgetCreate struct {
 // because true would require targetGoogleSearch AND opt this into Search Partners,
 // which a generic broker shouldn't assume.
 type campaignCreate struct {
-	Name                           string          `json:"name"`
-	Status                         string          `json:"status"`
-	AdvertisingChannelType         string          `json:"advertisingChannelType"`
-	CampaignBudget                 string          `json:"campaignBudget"`
-	ContainsEuPoliticalAdvertising string          `json:"containsEuPoliticalAdvertising"`
-	NetworkSettings                networkSettings `json:"networkSettings"`
-	ManualCPC                      json.RawMessage `json:"manualCpc"`
+	Name                           string               `json:"name"`
+	Status                         string               `json:"status"`
+	AdvertisingChannelType         string               `json:"advertisingChannelType"`
+	CampaignBudget                 string               `json:"campaignBudget"`
+	ContainsEuPoliticalAdvertising string               `json:"containsEuPoliticalAdvertising"`
+	NetworkSettings                networkSettings      `json:"networkSettings"`
+	GeoTargetTypeSetting           geoTargetTypeSetting `json:"geoTargetTypeSetting"`
+	ManualCPC                      json.RawMessage      `json:"manualCpc"`
 }
+
+// geoTargetTypeSetting decides what a location criterion actually MEANS, and Google's default
+// is the permissive reading.
+//
+// With no setting, positiveGeoTargetType defaults to PRESENCE_OR_INTEREST: a user anywhere in
+// the world who merely shows INTEREST in the targeted country stays eligible. A campaign
+// "targeted at the US" therefore still serves globally, which is exactly the out-of-region spend
+// LFXV2-3283 exists to prevent — the criterion would be attached and the budget would still
+// leak.
+//
+// PRESENCE restricts delivery to people actually in the targeted locations. This is the same
+// class of trap as targetingSetting above: Google's default is the looser one, so silence is a
+// choice rather than an absence of one.
+type geoTargetTypeSetting struct {
+	PositiveGeoTargetType string `json:"positiveGeoTargetType"`
+}
+
+// geoTargetPresence restricts delivery to users physically present in the targeted locations.
+const geoTargetPresence = "PRESENCE"
 
 // targetingSetting / targetRestriction declare, per targeting dimension, whether
 // a criterion of that dimension RESTRICTS delivery or only observes it (bids/
@@ -431,6 +491,11 @@ type campaignPreflight struct {
 	descriptions     []string
 	keywords         []Keyword
 	audienceSegments []string
+	// geoConstantIDs are the resolved Google geo target constant ids (NOT the
+	// caller's country codes) for CampaignInput.GeoTargets. Resolved during the
+	// preflight so an unmapped country code fails BEFORE the budget mutate,
+	// rather than after a paid campaign exists — see validateGeoTargets.
+	geoConstantIDs []string
 }
 
 // ValidateCampaignInput runs exactly the input validation CreateCampaign runs before it
@@ -559,6 +624,14 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
+	// Resolve geo BEFORE the first (budget) mutate, for the same reason as the ad-group
+	// inputs above: an unmapped country code is pure local input validation, and refusing
+	// it only after the budget and campaign have committed would orphan a real paid
+	// campaign over a typo like "USA".
+	geoConstantIDs, err := validateGeoTargets(in.GeoTargets)
+	if err != nil {
+		return nil, err
+	}
 
 	return &campaignPreflight{
 		amountMicros:     amountMicros,
@@ -570,6 +643,7 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		descriptions:     descriptions,
 		keywords:         keywords,
 		audienceSegments: audienceSegments,
+		geoConstantIDs:   geoConstantIDs,
 	}, nil
 }
 
@@ -605,6 +679,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	finalURL, adGroupName := pf.finalURL, pf.adGroupName
 	headlines, descriptions := pf.headlines, pf.descriptions
 	keywords, audienceSegments := pf.keywords, pf.audienceSegments
+	geoConstantIDs := pf.geoConstantIDs
 
 	var steps []string
 	googleAdsURL := "https://ads.google.com/aw/campaigns?ocid=" + c.account.CustomerID
@@ -701,7 +776,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		CampaignBudget:                 budgetResource,
 		ContainsEuPoliticalAdvertising: euPoliticalAdvertisingNo,
 		NetworkSettings:                networkSettings{TargetGoogleSearch: true},
-		ManualCPC:                      json.RawMessage(`{}`),
+		// Always set, not only when geo targets are supplied: an untargeted campaign is
+		// unaffected (there are no location criteria for it to qualify), and a campaign that
+		// gains criteria later — by adoption, or by a human adding them in the Google Ads UI —
+		// then restricts by presence rather than silently reverting to the permissive default.
+		GeoTargetTypeSetting: geoTargetTypeSetting{PositiveGeoTargetType: geoTargetPresence},
+		ManualCPC:            json.RawMessage(`{}`),
 	}
 	campaignReq := mutateRequest{Operations: []mutateOperation{{Create: campaignCreateVal}}}
 	campaignPath := c.customerPath("campaigns:mutate")
@@ -732,6 +812,21 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	res := budgetPartial()
 	res.CampaignID = campaignID
 	res.Steps = steps
+
+	// Location criteria go on the CAMPAIGN for Search (Demand Gen differs — see
+	// geo.go). Attached here, immediately after the campaign create and BEFORE the
+	// ad group, so a geo failure surfaces with as little built on top of it as
+	// possible. Like every step past the campaign create, a failure is returned
+	// ALONGSIDE the non-nil res: the campaign exists and is PAUSED either way.
+	if len(geoConstantIDs) > 0 {
+		geoIDs, geoErr := c.createCampaignGeoTargeting(ctx, campaignResource, campaignID, geoConstantIDs)
+		if geoErr != nil {
+			return res, geoErr
+		}
+		res.GeoCriterionIDs = geoIDs
+		steps = append(steps, fmt.Sprintf("Geo targeting applied: %d location criteria (%s)", len(geoIDs), strings.Join(in.GeoTargets, ", ")))
+		res.Steps = steps
+	}
 
 	// The campaign+budget are now committed. GA-3: extend the shell with a PAUSED
 	// ad group + responsive search ad. Any failure here (ambiguous, duplicate, or

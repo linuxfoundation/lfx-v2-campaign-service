@@ -348,6 +348,10 @@ type GetBriefMetricsResponseBody struct {
 	// presenting any cross-campaign total — a total over 2 of 6 campaigns is not
 	// the brief's performance.
 	OKCount *int `form:"ok_count,omitempty" json:"ok_count,omitempty" xml:"ok_count,omitempty"`
+	// What an operator should look at, derived from the readable rows. Empty means
+	// nothing was flagged among those rows — compare ok_count against the row
+	// count before reading that as an all-clear.
+	ActionItems []*CampaignActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
 }
 
 // GenerateEmailCopyResponseBody is the type of the
@@ -1482,6 +1486,11 @@ type BriefMetricsRowResponseBody struct {
 	// Why this row carries no measurement, in consumer-safe wording. Absent when
 	// status is `ok`.
 	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+	// Spend against the flight-prorated plan. Absent when status is not `ok`. On
+	// an `ok` row it is always present: `pct` is absent and `label` is `unknown`
+	// when this campaign has no budget or usable flight to pace against, or when
+	// the window does not overlap the flight.
+	Pacing *CampaignPacingResponseBody `form:"pacing,omitempty" json:"pacing,omitempty" xml:"pacing,omitempty"`
 }
 
 // CampaignMetricsResponseBody is used to define fields on response body types.
@@ -1513,6 +1522,34 @@ type CampaignMetricsResponseBody struct {
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.
 	Email *EmailMetricsResponseBody `form:"email,omitempty" json:"email,omitempty" xml:"email,omitempty"`
+}
+
+// CampaignPacingResponseBody is used to define fields on response body types.
+type CampaignPacingResponseBody struct {
+	// Spend as a percentage of what this campaign should have spent BY NOW. Absent
+	// when pacing is not computable — never zero-filled, because 0% is a claim
+	// about spend.
+	Pct *float64 `form:"pct,omitempty" json:"pct,omitempty" xml:"pct,omitempty"`
+	// The band pct falls into. `unknown` means no pacing could be derived, which
+	// is NOT the same as being on plan.
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+}
+
+// CampaignActionItemResponseBody is used to define fields on response body
+// types.
+type CampaignActionItemResponseBody struct {
+	// Which rule fired, as a stable token.
+	Rule *string `form:"rule,omitempty" json:"rule,omitempty" xml:"rule,omitempty"`
+	// How urgently this wants attention.
+	Priority *string `form:"priority,omitempty" json:"priority,omitempty" xml:"priority,omitempty"`
+	// The campaign this concerns
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// The channel that campaign runs on
+	Platform *string `form:"platform,omitempty" json:"platform,omitempty" xml:"platform,omitempty"`
+	// What is wrong, in operator-facing wording.
+	Issue *string `form:"issue,omitempty" json:"issue,omitempty" xml:"issue,omitempty"`
+	// What to do about it.
+	Action *string `form:"action,omitempty" json:"action,omitempty" xml:"action,omitempty"`
 }
 
 // CampaignUpdateInputRequestBody is used to define fields on request body
@@ -2516,6 +2553,14 @@ func NewGetBriefMetricsBriefMetricsOK(body *GetBriefMetricsResponseBody) *lfxv2c
 		}
 		v.Rows[i] = unmarshalBriefMetricsRowResponseBodyToLfxv2campaignservicebriefsBriefMetricsRow(val)
 	}
+	v.ActionItems = make([]*lfxv2campaignservicebriefs.CampaignActionItem, len(body.ActionItems))
+	for i, val := range body.ActionItems {
+		if val == nil {
+			v.ActionItems[i] = nil
+			continue
+		}
+		v.ActionItems[i] = unmarshalCampaignActionItemResponseBodyToLfxv2campaignservicebriefsCampaignActionItem(val)
+	}
 
 	return v
 }
@@ -3312,6 +3357,9 @@ func ValidateGetBriefMetricsResponseBody(body *GetBriefMetricsResponseBody) (err
 	if body.OKCount == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("ok_count", "body"))
 	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", "body"))
+	}
 	if body.Window != nil {
 		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days" || *body.Window == "last_14_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
@@ -3320,6 +3368,13 @@ func ValidateGetBriefMetricsResponseBody(body *GetBriefMetricsResponseBody) (err
 	for _, e := range body.Rows {
 		if e != nil {
 			if err2 := ValidateBriefMetricsRowResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := ValidateCampaignActionItemResponseBody(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -4747,6 +4802,11 @@ func ValidateBriefMetricsRowResponseBody(body *BriefMetricsRowResponseBody) (err
 			err = goa.MergeErrors(err, err2)
 		}
 	}
+	if body.Pacing != nil {
+		if err2 := ValidateCampaignPacingResponseBody(body.Pacing); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
 	return
 }
 
@@ -4782,6 +4842,54 @@ func ValidateCampaignMetricsResponseBody(body *CampaignMetricsResponseBody) (err
 	if body.Email != nil {
 		if err2 := ValidateEmailMetricsResponseBody(body.Email); err2 != nil {
 			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateCampaignPacingResponseBody runs the validations defined on
+// campaign-pacingResponseBody
+func ValidateCampaignPacingResponseBody(body *CampaignPacingResponseBody) (err error) {
+	if body.Label == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("label", "body"))
+	}
+	if body.Label != nil {
+		if !(*body.Label == "underspending" || *body.Label == "normal" || *body.Label == "constrained" || *body.Label == "overspending" || *body.Label == "unknown") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.label", *body.Label, []any{"underspending", "normal", "constrained", "overspending", "unknown"}))
+		}
+	}
+	return
+}
+
+// ValidateCampaignActionItemResponseBody runs the validations defined on
+// campaign-action-itemResponseBody
+func ValidateCampaignActionItemResponseBody(body *CampaignActionItemResponseBody) (err error) {
+	if body.Rule == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("rule", "body"))
+	}
+	if body.Priority == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("priority", "body"))
+	}
+	if body.CampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
+	}
+	if body.Platform == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform", "body"))
+	}
+	if body.Issue == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("issue", "body"))
+	}
+	if body.Action == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action", "body"))
+	}
+	if body.Rule != nil {
+		if !(*body.Rule == "zero_delivery" || *body.Rule == "underspending" || *body.Rule == "budget_constrained" || *body.Rule == "low_ctr") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.rule", *body.Rule, []any{"zero_delivery", "underspending", "budget_constrained", "low_ctr"}))
+		}
+	}
+	if body.Priority != nil {
+		if !(*body.Priority == "HIGH" || *body.Priority == "MED") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.priority", *body.Priority, []any{"HIGH", "MED"}))
 		}
 	}
 	return
