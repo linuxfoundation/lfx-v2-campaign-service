@@ -231,6 +231,20 @@ app:
     REDDIT_METRICS_ENABLED:
       value: "false"
 
+    # Opts this deployment IN to Microsoft Advertising metrics reads. Default off
+    # for the same reason as REDDIT_METRICS_ENABLED above: the v13 Reporting
+    # contract was implemented from Microsoft's published documentation and has
+    # NOT been exercised against a live Microsoft Advertising account, so a
+    # guessed request/response shape would return a 200 that looks authoritative.
+    # Microsoft's pipeline is also unlike every other platform's — an
+    # asynchronous submit/poll/download returning a zipped CSV — so there is more
+    # surface to be wrong about than a single JSON GET. Any value other than
+    # "true" is treated as off, so a typo fails closed.
+    # Flip to "true" only after the shape is verified against a live Microsoft
+    # ad account; at that point the gate is removed and this key goes away.
+    MICROSOFT_METRICS_ENABLED:
+      value: "false"
+
     # Comma-separated NETWORK-SPECIFIC RFC 6052 NAT64 prefixes for this cluster,
     # e.g. "2001:db8:64::/96". Empty is correct for a cluster with no NAT64, and is
     # the default because a wrong value is worse than none.

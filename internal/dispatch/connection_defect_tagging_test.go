@@ -235,9 +235,6 @@ func TestTwitter_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
 	)
 }
 
-// Microsoft has no ReadMetrics: campaign performance lives in the Reporting API v13, which is
-// asynchronous (submit → poll → download), so the adapter exposes only the two synchronous
-// paths. See docs/api-catalog.md.
 // TestLinkedIn_UnusableConnectionIsTaggedOnEveryPath covers the two entry points LFXV2-3196
 // routed through resolveLinkedInCredentials.
 //
@@ -278,6 +275,9 @@ func TestLinkedIn_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
 }
 
 func TestMicrosoft_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
+	// As with Reddit: the metrics read is env-gated ahead of the resolve, so without this
+	// ReadMetrics returns ErrMetricsUnsupported and never reaches the helper under test.
+	t.Setenv(constants.EnvMicrosoftMetricsEnabled, "true")
 	srv := unreachablePlatform(t)
 	camp := &model.Campaign{Platform: model.ProviderMicrosoftAds, PlatformCampaignID: "999"}
 	runConnDefectSuite(t,
@@ -298,6 +298,10 @@ func TestMicrosoft_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
 				},
 				"ToggleStatus": func() error {
 					return d.ToggleStatus(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.CampaignRunPaused)
+				},
+				"ReadMetrics": func() error {
+					_, err := d.ReadMetrics(context.Background(), "proj", model.ProviderMicrosoftAds, camp, model.MetricsWindowLast7Days)
+					return err
 				},
 			}
 		},

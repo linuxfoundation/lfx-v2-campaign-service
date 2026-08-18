@@ -57,6 +57,17 @@ disabled path costs one env read. With the gate off the read returns
 `ErrMetricsUnsupported`, which the service maps to the same 400 a platform with
 no metrics adapter at all returns.
 
+`MICROSOFT_METRICS_ENABLED` is the same kind of gate on the same terms, and defaults
+to `"false"` for the same reason: the Microsoft Advertising v13 Reporting contract
+was implemented from Microsoft's published documentation and has NOT been exercised
+against a live ad account (LFXV2-3260). It fails closed identically — only exactly
+`"true"` enables the read — and is likewise read per call
+(`MicrosoftDispatcher.ReadMetrics`), so flipping it needs a pod restart but no
+rebuild. Microsoft's pipeline has more surface to be wrong about than any other
+platform's: an asynchronous submit/poll/download returning a zipped CSV rather than
+one synchronous JSON GET. With the gate off, a Microsoft metrics read returns the
+same 400 as Reddit's.
+
 Probes: `livez` restarts a hung process (never touches the DB); `readyz` gates
 traffic on DB connectivity. The `startupProbe` on `/readyz` carries a ~90s
 `failureThreshold` budget for a database cold start. This budget is meaningful

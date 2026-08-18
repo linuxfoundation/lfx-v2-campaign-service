@@ -71,6 +71,20 @@ const (
 	// live Reddit ad account, at which point the default flips and this constant goes away.
 	EnvRedditMetricsEnabled = "REDDIT_METRICS_ENABLED"
 
+	// EnvMicrosoftMetricsEnabled opts a deployment IN to Microsoft Advertising metrics
+	// reads. Unset or any value other than "true" leaves them off, and the metrics
+	// endpoint answers 400 "not supported for this campaign's platform" for Microsoft
+	// campaigns — the same shape Reddit uses above, for the same reason.
+	//
+	// Microsoft's v13 Reporting contract was implemented from published documentation and
+	// has NOT been exercised against a live Microsoft Advertising account: no credentials
+	// were available. The pipeline is also unlike every other platform's — an asynchronous
+	// submit/poll/download returning a zipped CSV — so there is more surface to be wrong
+	// about than a single JSON GET. Default-off keeps an unverified read from looking
+	// authoritative until someone runs it against a real account, at which point the
+	// default flips and this constant goes away.
+	EnvMicrosoftMetricsEnabled = "MICROSOFT_METRICS_ENABLED"
+
 	// LLM settings, used ONLY to generate email copy (LFXV2-2775). Optional as a GROUP:
 	// with url or key unset, the GenerateEmailCopy endpoint returns 503 (service unavailable).
 	// The service itself starts successfully with or without these configured.
