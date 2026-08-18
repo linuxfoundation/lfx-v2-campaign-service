@@ -105,6 +105,13 @@ func TestComputePacing_IncomputableStatesAreNotZeroPercent(t *testing.T) {
 		"negative budget":              {-100, Flight{Start: day(-10), End: day(10)}},
 		"flight ends before it starts": {1000, Flight{Start: day(10), End: day(-10)}},
 		"zero-length flight":           {1000, Flight{Start: day(0), End: day(0)}},
+		// The two above both have a start at or after now, so they exit at the
+		// !now.After(start) guard and never reach the inverted-flight check. These two have a
+		// PAST start, which is the only way to reach it — and it is a storable state:
+		// start_date and end_date are plain nullable DATE columns with no CHECK constraint and
+		// no service-side ordering validation, so a typo'd end date produces exactly this.
+		"started, but ends before it started": {1000, Flight{Start: day(-10), End: day(-20)}},
+		"started, zero-length":                {1000, Flight{Start: day(-10), End: day(-10)}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -328,5 +335,30 @@ func TestComputePacing_FlightStartingExactlyNowIsNotMeasurable(t *testing.T) {
 	start := testNow.Add(-time.Second)
 	if got := ComputePacing(500, 7, 1000, BudgetLifetime, Flight{Start: &start, End: &end}, testNow, DefaultThresholds); !got.Computable {
 		t.Error("a flight that started one second ago is not measurable; the guard is too broad")
+	}
+}
+
+// A flight that has already ENDED must stop accruing expected spend at its end date. Without
+// clamping, expected spend keeps growing with wall-clock time and a fully-delivered campaign
+// drifts into `underspending` the longer it sits finished.
+func TestComputePacing_CompletedFlightStopsAccruingPlan(t *testing.T) {
+	// A 10-day flight that ended 5 days ago, fully spent. Expected spend is the whole $1000
+	// (10 of 10 days elapsed), so $1000 spent is 100% — not 66% as it would be if the plan
+	// kept prorating across the 15 days since the start.
+	//
+	// spendDays is 30, deliberately ABOVE the flight length: `measured` is
+	// min(spendDays, elapsed), so a spendDays at or below the flight length caps the result
+	// and masks whether `elapsed` was clamped at all. Only a spendDays large enough to let
+	// `elapsed` be the binding term can detect a missing minTime.
+	flight := Flight{Start: day(-15), End: day(-5)}
+	got := ComputePacing(1000, 30, 1000, BudgetLifetime, flight, testNow, DefaultThresholds)
+	if !got.Computable {
+		t.Fatal("a completed flight is still measurable")
+	}
+	if math.Abs(got.Pct-100) > 1 {
+		t.Errorf("a fully-spent completed flight = %.1f%%, want ~100%% (expected spend must stop at the end date)", got.Pct)
+	}
+	if got.Label == PacingUnderspending {
+		t.Error("a fully-delivered campaign was labelled underspending because the plan kept accruing past its end")
 	}
 }
