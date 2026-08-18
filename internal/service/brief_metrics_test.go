@@ -744,3 +744,51 @@ func TestGetBriefMetrics_DecryptFailureLogsNoCauseText(t *testing.T) {
 		t.Errorf("a decrypt failure was not logged at ERROR:\n%s", logged)
 	}
 }
+
+// A window that precedes the campaign's flight must not be paced at the ENDPOINT either.
+//
+// The overlap fix lives in the rules package, but the endpoint chooses which figure to pass. This
+// pins the wiring: passing the window's bare LENGTH instead of its overlap with the flight makes
+// this test fail, which is what stops the fix regressing at the caller while the unit tests stay
+// green.
+func TestGetBriefMetrics_WindowPrecedingTheFlightIsNotPaced(t *testing.T) {
+	// Flight begins on the 13th of the current month; `last_month` lies entirely before it.
+	c := campaignOn("c1", model.ProviderGoogleAds)
+	amount, kind := 1000.0, model.BudgetLifetime
+	start := time.Date(metricsNow.Year(), metricsNow.Month(), 13, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 0, 30)
+	c.BudgetAmount = &amount
+	c.BudgetType = &kind
+	c.StartDate = &start
+	c.EndDate = &end
+
+	disp := newPerCampaignDispatcher()
+	// Zero spend is CORRECT for this window — the campaign did not exist during it.
+	disp.results["c1"] = &model.CampaignMetrics{Impressions: 0, Clicks: 0, CostMicros: 0, Ctr: 0}
+
+	s := newBriefMetricsService(t, disp, c)
+	s.SetClock(func() time.Time { return metricsNow })
+	window := string(model.MetricsWindowLastMonth)
+	res, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{
+		ProjectID: "cncf", BriefID: "b1", Window: &window,
+	})
+	if err != nil {
+		t.Fatalf("GetBriefMetrics: %v", err)
+	}
+
+	row := rowByCampaign(t, res, "c1")
+	if row.Pacing == nil {
+		t.Fatal("an ok row must state pacing even when unknown")
+	}
+	if row.Pacing.Label != "unknown" {
+		t.Errorf("label = %q, want unknown — the window precedes the flight entirely", row.Pacing.Label)
+	}
+	if row.Pacing.Pct != nil {
+		t.Errorf("pct = %v; the campaign did not exist during this window", *row.Pacing.Pct)
+	}
+	for _, item := range res.ActionItems {
+		if item.Rule == "underspending" {
+			t.Errorf("underspending raised for a window that precedes the campaign: %q", item.Issue)
+		}
+	}
+}

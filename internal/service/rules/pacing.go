@@ -4,7 +4,7 @@
 // Package rules turns a campaign's measured performance into the action items an operator
 // should act on.
 //
-// It exists because the same five concepts were implemented four times in the UI's BFF —
+// It exists because the same concepts were implemented four times in the UI's BFF —
 // linkedin-ads, meta-ads, reddit-ads and campaign-metrics — with thresholds that drifted apart
 // accidentally rather than by design. At the time this package was written those four disagreed
 // on the underspending floor three ways (40, 50, and a shared constant of 50 that only one of
@@ -99,6 +99,11 @@ const (
 
 const millisPerDay = float64(24 * time.Hour / time.Millisecond)
 
+// minElapsedDaysForPacing is how much of a flight must have run before spend-against-plan says
+// anything. One full day: below that the expected figure is a rounding artefact, and platform
+// reporting lag means the measured spend is not trustworthy either.
+const minElapsedDaysForPacing = 1.0
+
 // ComputePacing derives spend-against-plan for one campaign.
 //
 // `now` is injected rather than read from the clock so the arithmetic is testable at a fixed
@@ -143,7 +148,7 @@ func ComputePacing(spend float64, spendDays float64, budget float64, kind Budget
 	// (migration 000002), so this is a storable state, not a hypothesis.
 	//
 	// This is the same defect as the future-dated flight below, arriving through the other
-	// door: the now.Before(start) guard cannot catch it, because start was just set TO now.
+	// door: the now.After(start) guard cannot catch it, because start was just set TO now.
 	if flight.Start == nil && flight.End != nil {
 		return Pacing{Label: PacingUnknown}
 	}
@@ -178,10 +183,29 @@ func ComputePacing(spend float64, spendDays float64, budget float64, kind Budget
 	// over the whole elapsed flight. A campaign 20 days into a flight whose spend was read
 	// over a 7-day window must be compared against 7 days of plan; comparing it against 20
 	// days of plan reports a healthy campaign as spending a third of what it should.
-	elapsed := daysBetween(start, minTime(now, end))
+	// elapsedDays, not daysBetween: rounding the elapsed period up to a whole day invents plan
+	// the campaign has had no time to spend. `total` below still uses daysBetween, where the
+	// floor is protecting a divisor rather than inflating a numerator.
+	elapsed := elapsedDays(start, minTime(now, end))
+
+	// Below a day, pacing is arithmetically computable and operationally meaningless. A campaign
+	// launched a minute into a 30-day $1000 flight is expected to have spent two CENTS, so a
+	// spend of zero is 0% — a HIGH-priority underspending item against a campaign whose only
+	// property is being new.
+	//
+	// It would be wrong even with perfect data, and the data is not perfect: ad platforms report
+	// spend with a lag, so the first hours of any campaign read as zero regardless of what it is
+	// actually doing. Every campaign would raise this item every time it launched, which is how
+	// an alert becomes noise operators learn to skip.
+	//
+	// Unknown rather than a forced `normal`: nothing has been measured yet, and saying "on plan"
+	// would be the same substitution in the other direction.
+	if elapsed < minElapsedDaysForPacing {
+		return Pacing{Label: PacingUnknown}
+	}
 	// Always positive, so it needs no guard: daysBetween floors at 1 and spendDays > 0 is
 	// enforced above. The campaign-has-not-started case that would otherwise land here is
-	// caught earlier by the now.Before(start) check, which returns Unknown rather than letting
+	// caught earlier by the !now.After(start) check, which returns Unknown rather than letting
 	// the one-day floor invent a day of expected spend.
 	measured := math.Min(spendDays, elapsed)
 	var expected float64
@@ -234,12 +258,29 @@ func labelFor(pct float64, t Thresholds) PacingLabel {
 	}
 }
 
-// daysBetween counts partial days as whole ones, matching the UI's Math.ceil, and never returns
-// less than one: a campaign in its first hours has one day of expectation, not zero, and a zero
-// would make every early campaign's expected spend zero and its pacing incomputable.
+// daysBetween counts partial days as whole ones, matching the UI's Math.ceil.
+//
+// The one-day floor applies to the flight's TOTAL length, where it is a divisor and a zero would
+// make expected spend infinite. It must NOT be applied to elapsed time — see elapsedDays.
 func daysBetween(from, to time.Time) float64 {
 	d := math.Ceil(float64(to.Sub(from)/time.Millisecond) / millisPerDay)
 	return math.Max(1, d)
+}
+
+// elapsedDays is how much of the flight has actually passed, as a FRACTION of a day where less
+// than one has elapsed.
+//
+// It exists because rounding elapsed time up to a whole day manufactures expected spend that the
+// campaign has had no time to spend. A campaign launched one minute ago was measured against a
+// full day of plan, reported 0% and raised a HIGH-priority underspending item against itself —
+// the same defect as the future-dated flight and the nil start date, arriving through a third
+// door. The !now.After(start) guard pins only the instant of launch; this covers the 24 hours
+// after it.
+//
+// Not floored at one, deliberately: the caller establishes now > start before calling, so the
+// result is always positive, and expected spend scales smoothly from the first minute.
+func elapsedDays(from, to time.Time) float64 {
+	return float64(to.Sub(from)/time.Millisecond) / millisPerDay
 }
 
 func minTime(a, b time.Time) time.Time {

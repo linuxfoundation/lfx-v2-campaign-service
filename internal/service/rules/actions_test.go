@@ -164,3 +164,37 @@ func TestEvaluate_ItemsCarryIdentityAndAStableToken(t *testing.T) {
 		}
 	}
 }
+
+// Both low_ctr boundaries. Neither constant had a test at its edge, so either could move by one
+// without failing anything — and both are deliberate judgements the comments describe at length.
+func TestEvaluate_LowCTRBoundaries(t *testing.T) {
+	base := Input{CampaignID: "c1", Platform: "google-ads", Status: "created", Spend: 100}
+
+	t.Run("impressions floor", func(t *testing.T) {
+		// One impression below the floor the figure means nothing; at the floor it does.
+		below := base
+		below.Impressions, below.CTRPct = minImpressionsForCTR-1, 0.1
+		if contains(rulesFired(Evaluate(below)), "low_ctr") {
+			t.Errorf("low_ctr fired at %d impressions, one below the floor", below.Impressions)
+		}
+		at := base
+		at.Impressions, at.CTRPct = minImpressionsForCTR, 0.1
+		if !contains(rulesFired(Evaluate(at)), "low_ctr") {
+			t.Errorf("low_ctr did not fire at exactly %d impressions, the floor", at.Impressions)
+		}
+	})
+
+	t.Run("ctr threshold", func(t *testing.T) {
+		// The threshold is the bottom of the ACCEPTABLE band: exactly at it is not low.
+		at := base
+		at.Impressions, at.CTRPct = 20000, LowCTRThresholdPct
+		if contains(rulesFired(Evaluate(at)), "low_ctr") {
+			t.Errorf("low_ctr fired at exactly %.2f%%, which is the threshold, not below it", LowCTRThresholdPct)
+		}
+		below := base
+		below.Impressions, below.CTRPct = 20000, LowCTRThresholdPct-0.01
+		if !contains(rulesFired(Evaluate(below)), "low_ctr") {
+			t.Errorf("low_ctr did not fire at %.2f%%, below the %.2f%% threshold", below.CTRPct, LowCTRThresholdPct)
+		}
+	})
+}

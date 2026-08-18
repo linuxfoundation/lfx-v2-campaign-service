@@ -126,14 +126,46 @@ func TestComputePacing_IncomputableStatesAreNotZeroPercent(t *testing.T) {
 	}
 }
 
-// A campaign in its first hours has one day of expectation, not zero. A zero would make expected
-// spend zero and pacing incomputable for every campaign on its launch day.
-func TestComputePacing_PartialFirstDayCountsAsOne(t *testing.T) {
-	start := testNow.Add(-2 * time.Hour)
+// A campaign in its first day has no meaningful pacing.
+//
+// This test previously asserted the opposite — that a partial first day counts as a whole one —
+// which is what made a campaign launched minutes ago report 0% and raise a HIGH-priority
+// underspending item against itself. Two hours into a 30-day $3000 flight the expected spend is
+// $8, and the platform has not reported the real figure yet either.
+func TestComputePacing_FirstDayIsNotPaced(t *testing.T) {
 	end := testNow.AddDate(0, 0, 30)
-	got := ComputePacing(10, 10, 3000, BudgetLifetime, Flight{Start: &start, End: &end}, testNow, DefaultThresholds)
+	for name, gap := range map[string]time.Duration{
+		"one minute": time.Minute,
+		"one hour":   time.Hour,
+		"two hours":  2 * time.Hour,
+		"half a day": 12 * time.Hour,
+		"23 hours":   23 * time.Hour,
+	} {
+		t.Run(name, func(t *testing.T) {
+			start := testNow.Add(-gap)
+			got := ComputePacing(0, 30, 3000, BudgetLifetime, Flight{Start: &start, End: &end}, testNow, DefaultThresholds)
+			if got.Computable {
+				t.Errorf("%v into the flight produced a computable %.1f%% labelled %q", gap, got.Pct, got.Label)
+			}
+			if got.Label == PacingUnderspending {
+				t.Errorf("%v into the flight was labelled underspending", gap)
+			}
+		})
+	}
+
+	// A full day in, it IS measured — the floor must not disable pacing wholesale.
+	//
+	// The flight spans start(-1d) to end(+30d), which daysBetween counts as 31 days, so one day
+	// of a $3000 plan is $96.77 rather than $100. Asserted against the real figure: rounding it
+	// to a tidier number would either fail against correct code or need a tolerance wide enough
+	// to stop binding anything.
+	start := testNow.AddDate(0, 0, -1)
+	got := ComputePacing(96.77, 30, 3000, BudgetLifetime, Flight{Start: &start, End: &end}, testNow, DefaultThresholds)
 	if !got.Computable {
-		t.Fatal("a campaign hours into its flight must still have computable pacing")
+		t.Fatal("a campaign a full day into its flight must be measured; the floor is too broad")
+	}
+	if math.Abs(got.Pct-100) > 1 {
+		t.Errorf("one day in, one day of plan spent = %.1f%%, want ~100%%", got.Pct)
 	}
 }
 
@@ -292,7 +324,7 @@ func TestThresholds_OverspendEdgeIsIndependentOfConstrained(t *testing.T) {
 // window of spend against a single day of plan — an on-plan campaign reports 500% overspending.
 //
 // start_date is nullable in the schema, so this is a storable state. It is the same defect as
-// the future-dated flight, arriving through the other door: the now.Before(start) guard cannot
+// the future-dated flight, arriving through the other door: the now.After(start) guard cannot
 // catch it, because start was just set TO now.
 func TestComputePacing_NilStartWithAnEndIsNotAMeasurement(t *testing.T) {
 	end := testNow.AddDate(0, 0, 10)
@@ -318,8 +350,8 @@ func TestComputePacing_NilStartWithAnEndIsNotAMeasurement(t *testing.T) {
 }
 
 // A campaign starting exactly NOW has elapsed zero days, which daysBetween floors to one. A
-// strict `now.Before(start)` lets that boundary through and measures the campaign against a full
-// day of plan it has had no time to spend.
+// a strict `now.Before(start)` would let that boundary through, measuring the campaign against a
+// full day of plan it has had no time to spend.
 func TestComputePacing_FlightStartingExactlyNowIsNotMeasurable(t *testing.T) {
 	end := testNow.AddDate(0, 0, 10)
 	for name, spend := range map[string]float64{"with spend": 500, "no spend yet": 0} {
@@ -330,11 +362,12 @@ func TestComputePacing_FlightStartingExactlyNowIsNotMeasurable(t *testing.T) {
 			}
 		})
 	}
-	// One second in, it IS measurable — the guard must not disable pacing for every campaign
-	// whose flight has merely begun.
-	start := testNow.Add(-time.Second)
+	// A full day in it IS measurable — the guard must not disable pacing for every campaign
+	// whose flight has merely begun. (One second in is NOT measurable, but that is the
+	// first-day floor's job, not this guard's — see TestComputePacing_FirstDayIsNotPaced.)
+	start := testNow.AddDate(0, 0, -1)
 	if got := ComputePacing(500, 7, 1000, BudgetLifetime, Flight{Start: &start, End: &end}, testNow, DefaultThresholds); !got.Computable {
-		t.Error("a flight that started one second ago is not measurable; the guard is too broad")
+		t.Error("a flight that started a day ago is not measurable; the guard is too broad")
 	}
 }
 

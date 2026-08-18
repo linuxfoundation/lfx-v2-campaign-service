@@ -2089,7 +2089,11 @@ func pacingFor(r *briefMetricsRow, now time.Time) rules.Pacing {
 	// same reason the wire rendering below uses r.window.
 	return rules.ComputePacing(
 		microsToUnits(r.metrics.CostMicros),
-		rules.WindowDays(string(r.window), now),
+		// The overlap of the window with the FLIGHT, not the window's bare length. A window can
+		// sit wholly or partly before the campaign existed — `last_month` for a campaign that
+		// started last week — and its correct zero spend would then be paced against an
+		// expectation measured from the flight's start.
+		rules.WindowDaysWithinFlight(string(r.window), now, r.campaign.StartDate, r.campaign.EndDate),
 		*r.campaign.BudgetAmount,
 		kind,
 		rules.Flight{Start: r.campaign.StartDate, End: r.campaign.EndDate},

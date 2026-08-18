@@ -42,6 +42,22 @@ caller state the period rather than assume it.
 Expected spend is computed over `min(spendDays, elapsed)`: a window wider than the flight cannot
 manufacture plan days that have not yet elapsed.
 
+**A day count is not enough on its own, because it carries no position.** `last_month` is 31 days,
+but for a campaign that started last week those days sit almost entirely *before* the flight
+began — so a spend of zero over that window is correct and means the campaign did not exist yet.
+Paced against an expectation measured from the flight's start it reported underspending against a
+campaign with nothing to answer for. `WindowDaysWithinFlight` therefore resolves the window to an
+interval and intersects it with the flight; a window that does not overlap at all yields no
+pacing rather than a confident zero.
+
+**Nor is pacing meaningful in a campaign's first day.** A campaign launched a minute into a
+30-day $1000 flight is expected to have spent two cents, so a spend of zero is 0% — a
+HIGH-priority underspending item against a campaign whose only property is being new. It would be
+wrong even with perfect data, and ad platforms report spend with a lag, so the first hours read
+as zero regardless of what the campaign is doing. Below one elapsed day, pacing is `unknown`.
+Elapsed time is also measured as a FRACTION of a day rather than rounded up, so expected spend
+scales smoothly instead of jumping to a full day's plan the instant a flight begins.
+
 ## Incomputable is not zero
 
 `Pacing.Computable` is false when there is no budget, no usable flight, or no measurable period.
