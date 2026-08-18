@@ -4,10 +4,13 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 
@@ -469,4 +472,73 @@ func indexOf(h, n string) int {
 		}
 	}
 	return -1
+}
+
+// A connection failure must log the fixed reason TOKEN, never the cause's text.
+//
+// safeErrSummary normalises and truncates; it does not REDACT. An unusable-connection cause can
+// embed fragments of a decrypted credential blob, and this handler fans out across every
+// campaign on the brief — so one malformed credential row would write those fragments once per
+// campaign into centralised logs. The campaign-scoped handler omits error text on these arms for
+// the same reason; this test is what stops a later edit reintroducing safeErrSummary here.
+func TestGetBriefMetrics_ConnectionFailureLogsNoErrorText(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	secret := "AKIAIOSFODNN7EXAMPLE-decrypted-blob-fragment"
+	disp := newPerCampaignDispatcher()
+	disp.errs["c1"] = fmt.Errorf("%w: %s", domain.ErrConnectionNotUsable, secret)
+
+	s := newBriefMetricsService(t, disp, campaignOn("c1", model.ProviderGoogleAds))
+	if _, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"}); err != nil {
+		t.Fatalf("a connection failure must not fail the request: %v", err)
+	}
+
+	logged := buf.String()
+	if strings.Contains(logged, secret) {
+		t.Errorf("the wrapped cause reached the log sink:\n%s", logged)
+	}
+	// The line must still exist and still say WHY, or the assertion above would pass simply by
+	// logging nothing at all.
+	if !strings.Contains(logged, "brief metrics row could not be read") {
+		t.Fatalf("no log line was written for the failed row:\n%s", logged)
+	}
+	if !strings.Contains(logged, "reason=") {
+		t.Errorf("the connection arm logged no reason token, so an operator cannot tell what to fix:\n%s", logged)
+	}
+}
+
+// A decrypt failure logs NO error text at all — not even a reason token. The cause comes from
+// the Encryptor INTERFACE and may quote ciphertext or key material, so there is nothing on it
+// that is safe to render.
+func TestGetBriefMetrics_DecryptFailureLogsNoCauseText(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	secret := "ciphertext-0xDEADBEEF-key-material"
+	disp := newPerCampaignDispatcher()
+	disp.errs["c1"] = fmt.Errorf("%w: %s", domain.ErrCredentialDecryptionFailed, secret)
+
+	s := newBriefMetricsService(t, disp, campaignOn("c1", model.ProviderGoogleAds))
+	if _, err := s.GetBriefMetrics(context.Background(), &briefs.GetBriefMetricsPayload{ProjectID: "cncf", BriefID: "b1"}); err != nil {
+		t.Fatalf("a decrypt failure must not fail the whole request: %v", err)
+	}
+
+	logged := buf.String()
+	if strings.Contains(logged, secret) {
+		t.Errorf("the encryptor's cause reached the log sink:\n%s", logged)
+	}
+	if strings.Contains(logged, "error=") {
+		t.Errorf("the decrypt arm logged an error field; it must log none:\n%s", logged)
+	}
+	// A rotated key fails every project at once and the cheap discriminator is the COUNT of
+	// these lines, so the line itself must exist and be at ERROR — aggregated into per-row
+	// WARNs it would page nobody.
+	if !strings.Contains(logged, "level=ERROR") {
+		t.Errorf("a decrypt failure was not logged at ERROR:\n%s", logged)
+	}
 }
