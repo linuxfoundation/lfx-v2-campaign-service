@@ -317,7 +317,7 @@ func (c *Client) createKeywords(ctx context.Context, adGroupID string, keywords 
 	// Gated on partialErrorsHaveAny so a null-only placeholder slice does not count, and
 	// classified BEFORE the cardinality check below, because a rejected entry legitimately
 	// returns fewer usable ids and must not be reported as the ambiguous short-response case.
-	if partialErrorsHaveAny(resp.PartialErrors) {
+	if partialErrorsHaveAny(resp.PartialErrors.Items) {
 		created := make([]string, 0, len(resp.KeywordIds))
 		for _, raw := range resp.KeywordIds {
 			if id := numberID(raw); id != "" {
@@ -325,28 +325,38 @@ func (c *Client) createKeywords(ctx context.Context, adGroupID string, keywords 
 			}
 		}
 		// A DUPLICATE rejection is not a failure — it is Microsoft confirming the keyword is
-		// already on the ad group. v13 exposes no keyword read, so a re-run against a reused
-		// ad group cannot know which keywords are already attached and re-posts the whole
+		// already on the ad group. This client calls no keyword read, so a re-run against a
+		// reused ad group cannot know which keywords are already attached and re-posts the whole
 		// batch; the ones that exist come back as CampaignServiceDuplicateKeyword (1517) or
 		// CampaignServiceKeywordAndMatchTypeCombinationAlreadyExists (1542), matched on the
 		// NORMALIZED form (case, whitespace, accents and punctuation are folded). Treating
 		// that as a rejection would report "keyword targeting rejected" for an ad group whose
 		// targeting is exactly what was asked for.
 		//
-		// The ids of the pre-existing keywords are NOT recoverable here — a duplicate entry
-		// gets a null id slot and there is no read to resolve it — so this reports the
+		// The ids of the pre-existing keywords are NOT recoverable by this client — a duplicate
+		// entry gets a null id slot and this client calls no keyword read — so this reports the
 		// duplicates rather than inventing ids for them. errDuplicateKeywords carries that
 		// distinction to the caller, which decides what the tree's state means.
-		if isDuplicateKeywordPartial(resp.PartialErrors) {
+		//
+		// The duplicate classification is gated on the error array being COMPLETE. It is
+		// ALL-not-ANY precisely so a genuine rejection travelling alongside a duplicate keeps
+		// the batch on the failure path, and that guarantee is only as good as the set the
+		// predicate can see: boundedErrorItems retains maxDecodedErrorItems (16) entries while
+		// this call sends up to maxKeywords (60), so a rejection past the cap was DISCARDED
+		// during decode and the surviving prefix read as all-duplicate. Absence of a rejection
+		// in a truncated array is not evidence there was none, so a truncated array is not
+		// classifiable as duplicate-only and falls through to the rejection path below —
+		// refusing beats a false success.
+		if !resp.PartialErrors.Truncated && isDuplicateKeywordPartial(resp.PartialErrors.Items) {
 			return created, fmt.Errorf("%w (%d of %d keywords were created; the rest already existed): %s",
-				errDuplicateKeywords, len(created), len(msKeywords), partialErrorCodes(resp.PartialErrors))
+				errDuplicateKeywords, len(created), len(msKeywords), partialErrorCodes(resp.PartialErrors.Items))
 		}
 		if len(created) == 0 {
 			// Every entry was rejected: a clean failure, nothing to reconcile.
-			return nil, fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors))
+			return nil, fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors.Items))
 		}
 		return created, fmt.Errorf("%w (%d of %d keywords were created): %s",
-			errPartialFailure, len(created), len(msKeywords), partialErrorCodes(resp.PartialErrors))
+			errPartialFailure, len(created), len(msKeywords), partialErrorCodes(resp.PartialErrors.Items))
 	}
 
 	// The id array is index-aligned with the request. A SHORT array is not a partial success to

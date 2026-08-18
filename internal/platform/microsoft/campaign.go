@@ -180,7 +180,8 @@ type CampaignResult struct {
 	// this run parsed no ids, which happens when no keyword input was supplied, when the
 	// step failed before any id could be parsed, or when EVERY supplied keyword was already
 	// attached and Microsoft refused it as a duplicate (a duplicate entry returns a null id
-	// slot, and v13 offers no keyword read with which to resolve it). The first two are
+	// slot, and this client calls no keyword read with which to resolve it — v13 does expose
+	// one, see createKeywords). The first two are
 	// distinguished from each other by whether an error accompanied the result; the third is
 	// identifiable by its Steps entry and carries no error.
 	//
@@ -744,10 +745,11 @@ func isDuplicateCampaignNameErr(err error) bool { return errors.Is(err, errDupli
 // distinguishable so the ad-group cascade can treat "already attached" as the success it is
 // rather than as a rejection.
 //
-// This is what makes re-posting to a REUSED ad group safe. v13 has no keyword read, so a
-// re-run cannot enumerate what is already attached and posts the whole batch; Microsoft
+// This is what makes re-posting to a REUSED ad group safe. This client calls no keyword read,
+// so a re-run cannot enumerate what is already attached and posts the whole batch; Microsoft
 // refuses each already-present keyword instead of creating a second copy, so no criterion is
-// duplicated and no bid is doubled.
+// duplicated and no bid is doubled. (v13 DOES offer the read — Keywords/QueryByAdGroupId — so
+// this is a gap in this client, not an API limit; see createKeywords for the citation.)
 var errDuplicateKeywords = fmt.Errorf("%w (keyword already exists on the ad group)", errPartialFailure)
 
 // Microsoft's PartialError codes for a keyword that already exists on the ad group. As with
@@ -841,8 +843,8 @@ func firstCampaignID(body []byte) (string, error) {
 		if uerr := json.Unmarshal(b, &resp); uerr != nil {
 			return nil, nil, uerr
 		}
-		partials = resp.PartialErrors
-		return resp.CampaignIds, resp.PartialErrors, nil
+		partials = resp.PartialErrors.Items
+		return resp.CampaignIds, resp.PartialErrors.Items, nil
 	})
 	if err != nil && errors.Is(err, errPartialFailure) && isDuplicateCampaignPartial(partials) {
 		return "", fmt.Errorf("%w: %s", errDuplicateName, partialErrorCodes(partials))
@@ -1153,11 +1155,11 @@ func (c *Client) putStatus(ctx context.Context, path string, req any, entity str
 	// error but contains no valid error codes — partialErrorsHaveAny returns false, which would
 	// report success for a status Microsoft never confirmed. Reject any non-empty list that
 	// yields no valid codes (mirroring the create path's handling of null-only error responses).
-	if len(resp.PartialErrors) > 0 && !partialErrorsHaveAny(resp.PartialErrors) {
+	if len(resp.PartialErrors.Items) > 0 && !partialErrorsHaveAny(resp.PartialErrors.Items) {
 		return &transportError{Method: http.MethodPut, Path: path, err: fmt.Errorf("decode %s status response: PartialErrors present but contains no valid error codes", entity)}
 	}
-	if partialErrorsHaveAny(resp.PartialErrors) {
-		return fmt.Errorf("microsoft-ads rejected the %s status update: %s", entity, partialErrorCodes(resp.PartialErrors))
+	if partialErrorsHaveAny(resp.PartialErrors.Items) {
+		return fmt.Errorf("microsoft-ads rejected the %s status update: %s", entity, partialErrorCodes(resp.PartialErrors.Items))
 	}
 	return nil
 }

@@ -520,8 +520,8 @@ func TestFirstCampaignID_BoundsMaterialization(t *testing.T) {
 	if len(resp.CampaignIds) > maxDecodedErrorItems {
 		t.Errorf("CampaignIds retained %d, want <= the %d cap", len(resp.CampaignIds), maxDecodedErrorItems)
 	}
-	if len(resp.PartialErrors) > maxDecodedErrorItems {
-		t.Errorf("PartialErrors retained %d, want <= the %d cap", len(resp.PartialErrors), maxDecodedErrorItems)
+	if len(resp.PartialErrors.Items) > maxDecodedErrorItems {
+		t.Errorf("PartialErrors retained %d, want <= the %d cap", len(resp.PartialErrors.Items), maxDecodedErrorItems)
 	}
 }
 

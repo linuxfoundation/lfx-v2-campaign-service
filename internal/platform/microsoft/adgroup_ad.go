@@ -425,7 +425,8 @@ func (c *Client) createAdGroupAndAd(
 	// failure, an UNCONFIRMED keyword step, a 429), run 2 finds the group, skips, and returns
 	// SUCCESS with no keywords. The persisted row then carries empty KeywordIDs, and
 	// MicrosoftDispatcher.ToggleStatus refuses ACTIVATE forever with ErrCampaignNotProvisioned
-	// — a campaign that can never be turned on, and no keyword read with which to repair it.
+	// — a campaign that can never be turned on, and this client calls no keyword read with
+	// which to repair it.
 	//
 	// Posting is therefore both the safe direction AND the one that terminates: the duplicate
 	// is refused by Microsoft, and the keyword-less tree finishes provisioning.
@@ -452,12 +453,32 @@ func (c *Client) createAdGroupAndAd(
 			// It sits above errPartialFailure because errDuplicateKeywords WRAPS it, so the
 			// broad arm would otherwise win and report a rejection.
 			//
-			// The ids of the pre-existing keywords are NOT knowable (a duplicate entry gets a
-			// null id slot, and v13 has no keyword read), so KeywordIDs carries only what THIS
-			// run created. When that is empty the tree is correct upstream but this run learned
-			// no ids, and the dispatcher's ACTIVATE guard still refuses — the honest answer,
-			// since enabling keywords requires their ids. Reconciliation (LFXV2-2665) is what
-			// resolves that; inventing ids here would be worse than refusing.
+			// The ids of the pre-existing keywords are not knowable FROM THIS RESPONSE (a
+			// duplicate entry gets a null id slot), so KeywordIDs carries only what THIS run
+			// created. When that is empty the tree is correct upstream but this run learned no
+			// ids, and the dispatcher's ACTIVATE guard still refuses — the honest answer, since
+			// enabling keywords requires their ids. Inventing ids here would be worse than
+			// refusing.
+			//
+			// v13 DOES expose a keyword read that would resolve them:
+			// POST .../CampaignManagement/v13/Keywords/QueryByAdGroupId takes an AdGroupId and
+			// returns Keyword objects carrying Id, Status, Text and MatchType.
+			// https://learn.microsoft.com/en-us/advertising/campaign-management-service/getkeywordsbyadgroupid?view=bingads-13
+			// This client does not call it yet — a GAP in this client, NOT a limit of the API.
+			//
+			// The distinction is worth stating because the opposite claim survived several
+			// rounds here: it was established by enumerating THIS CLIENT's files (which really
+			// do contain no keyword read) and then promoted to an API-wide claim without ever
+			// being checked against Microsoft's documentation. An absence in our code is not
+			// evidence of an absence in the vendor's API.
+			//
+			// KNOWN GAP this leaves open. On a MIXED batch (some new, some already present)
+			// only the NEW ids persist, so MicrosoftDispatcher.ToggleStatus enables exactly
+			// those and the pre-existing keywords stay PAUSED. The campaign reports live while
+			// partly inert, and the ACTIVATE guard does NOT catch it because the guard fires on
+			// len(KeywordIDs) == 0 and the enabled subset is non-empty. Reading the ad group's
+			// keywords through QueryByAdGroupId is what closes it; that is a separate change
+			// with its own review, deliberately not built here.
 			case isDuplicateKeywordErr(kerr):
 				r := adWithIDPartial()
 				r.KeywordIDs = keywordIDs
@@ -467,7 +488,7 @@ func (c *Client) createAdGroupAndAd(
 						len(keywordIDs), adGroupID))
 				} else {
 					*steps = append(*steps, fmt.Sprintf(
-						"Keywords NOT re-created: all %d supplied keyword(s) already existed on ad group %s and were left unchanged (Microsoft refuses a duplicate rather than creating a second copy, so no keyword was duplicated and no bid doubled). Their ids are not readable in v13, so this run recorded none.",
+						"Keywords NOT re-created: all %d supplied keyword(s) already existed on ad group %s and were left unchanged (Microsoft refuses a duplicate rather than creating a second copy, so no keyword was duplicated and no bid doubled). Their ids are not returned by this response, so this run recorded none; they can be read from the ad group if needed.",
 						len(tgt.keywords), adGroupID))
 				}
 				// This run created something only if at least one keyword was new.
@@ -585,14 +606,14 @@ func (c *Client) findOrCreateAdGroup(ctx context.Context, campaignID, name strin
 		if uErr := json.Unmarshal(b, &resp); uErr != nil {
 			return nil, nil, uErr
 		}
-		return resp.AdGroupIds, resp.PartialErrors, nil
+		return resp.AdGroupIds, resp.PartialErrors.Items, nil
 	})
 	if err != nil {
 		// A DUPLICATE-ad-group rejection (a race lost between the find-first lookup and this
 		// create) means the group now EXISTS — reconcile by re-looking it up by name rather
 		// than surfacing a hard failure (mirrors the campaign duplicate-name handling). Ad
 		// group names are unique per campaign, so the re-lookup returns the winner's id.
-		if isDuplicateAdGroupPartial(resp.PartialErrors) {
+		if isDuplicateAdGroupPartial(resp.PartialErrors.Items) {
 			existingID, ferr := c.findAdGroupByName(ctx, campaignID, name)
 			if ferr == nil && existingID != "" {
 				return existingID, true, nil
@@ -801,7 +822,7 @@ func (c *Client) findOrCreateResponsiveSearchAd(ctx context.Context, adGroupID s
 		if uErr := json.Unmarshal(b, &resp); uErr != nil {
 			return nil, nil, uErr
 		}
-		return resp.AdIds, resp.PartialErrors, nil
+		return resp.AdIds, resp.PartialErrors.Items, nil
 	})
 	if err != nil {
 		return "", false, err

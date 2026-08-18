@@ -750,10 +750,12 @@ func TestCreateCampaign_ReusedAdGroupDuplicateKeywordsSucceed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an all-duplicate keyword batch means the keywords are already attached, so it must NOT be an error: %v", err)
 	}
-	// No ids are invented for keywords this run did not create. v13 exposes no keyword read,
-	// so a duplicate's id is genuinely unknowable and must not be fabricated.
+	// No ids are invented for keywords this run did not create. A duplicate entry returns a
+	// null id slot, and this client calls no keyword read, so the id is not knowable HERE and
+	// must not be fabricated. (v13 does expose Keywords/QueryByAdGroupId; calling it is a
+	// separate change — see createKeywords.)
 	if len(res.KeywordIDs) != 0 {
-		t.Errorf("KeywordIDs = %v, want empty: a duplicate entry returns a null id slot and v13 has no keyword read", res.KeywordIDs)
+		t.Errorf("KeywordIDs = %v, want empty: a duplicate entry returns a null id slot and this client calls no keyword read", res.KeywordIDs)
 	}
 	joined := strings.Join(res.Steps, "\n")
 	if !strings.Contains(joined, "already existed") {
@@ -1069,5 +1071,73 @@ func TestCreateCampaign_ReusedTreeWithAllDuplicateKeywordsIsStillAnUntouchedTree
 	}
 	if !res.AlreadyExisted {
 		t.Error("AlreadyExisted = false, want true: every level pre-existed and every keyword was already attached, so this run created nothing")
+	}
+}
+
+// TestCreateCampaign_TruncatedErrorArrayIsNotDuplicateOnlySuccess pins the invariant that
+// isDuplicateKeywordPartial must never conclude "all duplicates" from a set it knows is
+// incomplete.
+//
+// The predicate is deliberately ALL-not-ANY so that a batch mixing a duplicate with a GENUINE
+// rejection stays on the failure path. But it only ever sees the RETAINED errors:
+// boundedErrorItems keeps the first maxDecodedErrorItems (16) entries and parses-and-discards
+// the rest, while AddKeywords sends up to maxKeywords (60). So a batch whose first 16 errors
+// are duplicates and whose genuine editorial rejection sits at index 40 had that rejection
+// dropped BEFORE classification: the predicate saw an all-duplicate set and the run reported
+// duplicate-only success — precisely the outcome ALL exists to prevent.
+//
+// This is the same hazard the id array already paid for: KeywordIds was moved off
+// boundedNumberIDs because a 16-item bound sized for a campaign create truncated a 60-keyword
+// response. The ids were widened; the error array was not.
+//
+// Absence of a rejection in a truncated array is not evidence there was none, so a truncated
+// array must fall through to the rejection path.
+func TestCreateCampaign_TruncatedErrorArrayIsNotDuplicateOnlySuccess(t *testing.T) {
+	const (
+		n              = 60 // maxKeywords: the batch size that makes truncation reachable
+		rejectionIndex = 40 // past maxDecodedErrorItems (16), so it is discarded during decode
+	)
+	in := validInput()
+	in.Keywords = make([]Keyword, 0, n)
+	for i := 0; i < n; i++ {
+		in.Keywords = append(in.Keywords, Keyword{Text: fmt.Sprintf("keyword %02d", i), MatchType: MatchTypeExact})
+	}
+	adGroupName := composeAdGroupName(in)
+	finalURL := buildAdFinalURL(in)
+
+	// Every keyword is refused: the first 40 and the last 19 as duplicates, and keyword 40 as a
+	// GENUINE editorial rejection. All id slots are null, so no id can mask the classification.
+	ids := make([]string, 0, n)
+	errs := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		ids = append(ids, "null")
+		if i == rejectionIndex {
+			errs = append(errs, fmt.Sprintf(
+				`{"Index":%d,"Code":1042,"ErrorCode":"CampaignServiceEditorialError"}`, i))
+			continue
+		}
+		errs = append(errs, fmt.Sprintf(
+			`{"Index":%d,"Code":1517,"ErrorCode":"CampaignServiceDuplicateKeyword"}`, i))
+	}
+
+	api := &campaignsAPI{
+		adGroupGetBody: `{"AdGroups":[{"Id":111,"Name":` + jsonString(adGroupName) + `}]}`,
+		adGetBody:      `{"Ads":[{"Id":222,"FinalUrls":[` + jsonString(finalURL) + `]}]}`,
+		keywordPostBody: `{"KeywordIds":[` + strings.Join(ids, ",") + `],"PartialErrors":[` +
+			strings.Join(errs, ",") + `]}`,
+	}
+	c := newAPIClient(t, api.handler(t))
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("a batch whose genuine rejection was truncated away must NOT be reported as duplicate-only success")
+	}
+	// The operator must not be told every keyword already existed: keyword 40 does not exist
+	// upstream and never will.
+	if res != nil {
+		joined := strings.Join(res.Steps, "\n")
+		if strings.Contains(joined, "already existed") {
+			t.Errorf("a truncated error array must not claim the keywords already existed, got:\n%s", joined)
+		}
 	}
 }
