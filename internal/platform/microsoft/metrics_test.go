@@ -11,8 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -512,5 +514,180 @@ func TestDownloadReportPreservesContextSentinels(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "SECRET") || strings.Contains(err.Error(), "%!w") {
 		t.Errorf("error is malformed or leaks the URL: %s", err.Error())
+	}
+}
+
+// TestParseReportZip_OversizeCSVIsRefusedNotTruncated proves an oversized DECOMPRESSED CSV
+// is an error rather than a partial total.
+//
+// The payload is aligned so that byte reportDownloadCap+1 falls exactly on a row boundary.
+// That matters: io.LimitReader signals EOF at its limit rather than erroring, so a prefix cut
+// on a boundary is SYNTACTICALLY COMPLETE and csv.ReadAll accepts it without complaint. The
+// pre-fix code therefore returned a clean-looking total that was short by every row past the
+// limit — a wrong number, not a failure. Only the size check catches this; a parse error
+// would not have been raised.
+func TestParseReportZip_OversizeCSVIsRefusedNotTruncated(t *testing.T) {
+	header := "\"CampaignId\",\"Impressions\",\"Clicks\",\"Spend\"\n"
+	row := "\"1234567\",\"1\",\"0\",\"0.00\"\n"
+	// Pad a preamble line so (preamble+header) + k*len(row) lands exactly on cap+1.
+	pad := 0
+	for (reportDownloadCap+1-len(header)-pad)%len(row) != 0 {
+		pad++
+	}
+	var b strings.Builder
+	if pad > 0 {
+		b.WriteString(strings.Repeat("#", pad-1) + "\n")
+	}
+	b.WriteString(header)
+	rowsWithinCap := (reportDownloadCap + 1 - b.Len()) / len(row)
+	totalRows := rowsWithinCap + 5000
+	for i := 0; i < totalRows; i++ {
+		b.WriteString(row)
+	}
+
+	got, err := parseReportZip(buildReportZip(t, b.String()), "1234567", model.MetricsWindowLast7Days)
+	if err == nil {
+		t.Fatalf("expected an oversize error; got Impressions=%d from a CSV of %d rows — %d rows were silently dropped",
+			got.Impressions, totalRows, int64(totalRows)-got.Impressions)
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("error should report the size cap, got: %v", err)
+	}
+}
+
+// TestParseReportZip_AtCapIsAccepted pins the boundary the +1 exists to draw: a CSV exactly
+// AT the cap is valid, so the guard above rejects only what genuinely exceeds it.
+func TestParseReportZip_AtCapIsAccepted(t *testing.T) {
+	header := "\"CampaignId\",\"Impressions\",\"Clicks\",\"Spend\"\n"
+	row := "\"1234567\",\"1\",\"0\",\"0.00\"\n"
+	pad := 0
+	for (reportDownloadCap-len(header)-pad)%len(row) != 0 {
+		pad++
+	}
+	var b strings.Builder
+	if pad > 0 {
+		b.WriteString(strings.Repeat("#", pad-1) + "\n")
+	}
+	b.WriteString(header)
+	rows := (reportDownloadCap - b.Len()) / len(row)
+	for i := 0; i < rows; i++ {
+		b.WriteString(row)
+	}
+	if b.Len() != reportDownloadCap {
+		t.Fatalf("test setup: csv is %d bytes, wanted exactly %d", b.Len(), reportDownloadCap)
+	}
+
+	got, err := parseReportZip(buildReportZip(t, b.String()), "1234567", model.MetricsWindowLast7Days)
+	if err != nil {
+		t.Fatalf("a CSV exactly at the cap must be accepted: %v", err)
+	}
+	if got.Impressions != int64(rows) {
+		t.Errorf("impressions = %d, want %d — every row at the cap must be counted", got.Impressions, rows)
+	}
+}
+
+// TestGetCampaignMetrics_ShortDataRowIsAnErrorNotADrop proves a data row with a missing
+// trailing field is REFUSED rather than silently discarded.
+//
+// The trailer filter used to drop any row narrower than the header, on the stated assumption
+// that "a DATA row always carries the full column set" — an assumption about a contract this
+// file declares UNVERIFIED. A short row's impressions/clicks/spend then vanished into a total
+// that still looked clean. This is the same class the missing-column guard refuses by name.
+func TestGetCampaignMetrics_ShortDataRowIsAnErrorNotADrop(t *testing.T) {
+	const shortRow = `"Report Name:","Campaign Performance Report"
+
+"CampaignId","Impressions","Clicks","Spend"
+"1234567","10000","250","125.50"
+"1234567","5000","100"
+"©2026 Microsoft Corporation. All rights reserved."
+`
+	m := newMSMetricsServer(t, buildReportZip(t, shortRow), 0)
+	c := newMetricsClient(t, m)
+
+	got, err := c.GetCampaignMetrics(context.Background(), "1234567", model.MetricsWindowToday)
+	if err == nil {
+		t.Fatalf("expected an error for a truncated data row; got impressions=%d clicks=%d cost=%d — the short row was dropped silently",
+			got.Impressions, got.Clicks, got.CostMicros)
+	}
+	if !strings.Contains(err.Error(), "wanted column") {
+		t.Errorf("error should come from the short-row column check, got: %v", err)
+	}
+}
+
+// TestDropTrailerRows_IdentifiesTrailerPositively proves the filter keeps a short DATA row
+// (so it can reach the column check) while still removing the blank and © trailer lines.
+func TestDropTrailerRows_IdentifiesTrailerPositively(t *testing.T) {
+	in := [][]string{
+		{"1234567", "10000", "250", "125.50"},
+		{"1234567", "5000", "100"}, // short DATA row — must SURVIVE
+		{"", "", "", ""},           // blank — must be dropped
+		{},                         // empty record — must be dropped
+		{"©2026 Microsoft Corporation. All rights reserved."}, // trailer — must be dropped
+	}
+	out := dropTrailerRows(in)
+	if len(out) != 2 {
+		t.Fatalf("kept %d rows, want 2 (both data rows): %v", len(out), out)
+	}
+	if len(out[1]) != 3 {
+		t.Errorf("the short data row must survive so parseReportInt can report it, got %v", out[1])
+	}
+}
+
+// TestFoldReportRows_TotalsAreOverflowChecked proves the running TOTALS are guarded, not just
+// the per-row values.
+//
+// Each row below is individually valid — the per-row guards accept it. Only the accumulation
+// wraps. Note every case needs TWO rows: the total starts at zero, so a single row can never
+// trip a guard on the running total.
+func TestFoldReportRows_TotalsAreOverflowChecked(t *testing.T) {
+	maxI64 := strconv.FormatInt(math.MaxInt64, 10)
+	// A spend whose micros are ~60% of MaxInt64: valid alone, overflowing when doubled.
+	bigSpend := strconv.FormatFloat(float64(math.MaxInt64)/1e6*0.6, 'f', 2, 64)
+
+	cases := []struct {
+		name    string
+		csv     string
+		wantErr string
+	}{
+		{
+			name:    "impressions",
+			csv:     "\"CampaignId\",\"Impressions\",\"Clicks\",\"Spend\"\n\"1\",\"" + maxI64 + "\",\"0\",\"0.00\"\n\"1\",\"" + maxI64 + "\",\"0\",\"0.00\"\n",
+			wantErr: "impressions: total would overflow",
+		},
+		{
+			name:    "clicks",
+			csv:     "\"CampaignId\",\"Impressions\",\"Clicks\",\"Spend\"\n\"1\",\"0\",\"" + maxI64 + "\",\"0.00\"\n\"1\",\"0\",\"" + maxI64 + "\",\"0.00\"\n",
+			wantErr: "clicks: total would overflow",
+		},
+		{
+			name:    "cost",
+			csv:     "\"CampaignId\",\"Impressions\",\"Clicks\",\"Spend\"\n\"1\",\"0\",\"0\",\"" + bigSpend + "\"\n\"1\",\"0\",\"0\",\"" + bigSpend + "\"\n",
+			wantErr: "spend: cost total would overflow",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseReportZip(buildReportZip(t, tc.csv), "1", model.MetricsWindowToday)
+			if err == nil {
+				t.Fatalf("expected an overflow error; got impressions=%d clicks=%d cost=%d (a wrapped total renders as a measurement)",
+					got.Impressions, got.Clicks, got.CostMicros)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error = %v, want it to contain %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestFoldReportRows_MultiRowTotalsStillSum guards the overflow checks against being written
+// so tightly they reject ordinary multi-row reports. The realistic CSV has two data rows.
+func TestFoldReportRows_MultiRowTotalsStillSum(t *testing.T) {
+	got, err := parseReportZip(buildReportZip(t, realisticCSV), "1234567", model.MetricsWindowToday)
+	if err != nil {
+		t.Fatalf("parseReportZip: %v", err)
+	}
+	if got.Impressions != 15000 || got.Clicks != 350 || got.CostMicros != 200_000_000 {
+		t.Errorf("impressions=%d clicks=%d cost=%d, want 15000/350/200000000",
+			got.Impressions, got.Clicks, got.CostMicros)
 	}
 }

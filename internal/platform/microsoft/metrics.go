@@ -341,7 +341,23 @@ func parseReportZip(data []byte, campaignID string, window model.MetricsWindow) 
 
 	// The decompressed size is bounded independently of the ZIP's compressed size, so a
 	// small archive cannot expand into an unbounded read.
-	cr := csv.NewReader(io.LimitReader(rc, reportDownloadCap+1))
+	//
+	// The buffer is read to completion and size-checked BEFORE parsing, rather than being
+	// streamed into csv.Reader through a bare io.LimitReader. io.LimitReader reports EOF at
+	// its limit — it does not error — so a truncated-but-syntactically-complete PREFIX of an
+	// oversized CSV parses cleanly and yields FEWER rows, which then fold into a total that
+	// reads as authoritative. That is the failure this file refuses everywhere else: a
+	// number that is wrong rather than an error. cap+1 so a file AT the cap is
+	// distinguishable from one that exceeds it, mirroring the compressed-side check in
+	// downloadReport.
+	decompressed, err := io.ReadAll(io.LimitReader(rc, reportDownloadCap+1))
+	if err != nil {
+		return nil, fmt.Errorf("read microsoft report csv: %w", err)
+	}
+	if len(decompressed) > reportDownloadCap {
+		return nil, fmt.Errorf("microsoft report csv exceeds %d bytes", reportDownloadCap)
+	}
+	cr := csv.NewReader(bytes.NewReader(decompressed))
 	// FieldsPerRecord = -1 permits a RAGGED file, which Microsoft's report writer always
 	// produces: the CSV opens with a two-column metadata preamble ("Report Name:", …), then
 	// the four-column header and data, then a one-column copyright trailer. The default
@@ -413,9 +429,25 @@ func foldReportRows(records [][]string, campaignID string, window model.MetricsW
 		if scaled >= float64(math.MaxInt64) {
 			return nil, fmt.Errorf("spend: %v exceeds the representable micros range", spend)
 		}
+		// Checked accumulation. The per-row guards above bound each VALUE; they say nothing
+		// about the running TOTAL, which is what the dashboard renders. Without these, many
+		// individually-valid rows wrap int64 into a negative — a number, not an error.
+		// Mirrors the same three checked additions in reddit/metrics.go. Note each guard
+		// needs TWO rows to trip: the total starts at zero, so a single row can never
+		// exercise it.
+		scaledMicros := int64(scaled)
+		if imp > 0 && out.Impressions > math.MaxInt64-imp {
+			return nil, fmt.Errorf("impressions: total would overflow")
+		}
 		out.Impressions += imp
+		if clk > 0 && out.Clicks > math.MaxInt64-clk {
+			return nil, fmt.Errorf("clicks: total would overflow")
+		}
 		out.Clicks += clk
-		out.CostMicros += int64(scaled)
+		if scaledMicros > 0 && out.CostMicros > math.MaxInt64-scaledMicros {
+			return nil, fmt.Errorf("spend: cost total would overflow")
+		}
+		out.CostMicros += scaledMicros
 	}
 	if out.Impressions > 0 {
 		out.Ctr = float64(out.Clicks) / float64(out.Impressions)
@@ -433,7 +465,7 @@ func reportHeaderAndRows(records [][]string) (header []string, rows [][]string, 
 	for i, row := range records {
 		for _, cell := range row {
 			if strings.EqualFold(strings.TrimSpace(cell), "CampaignId") {
-				return row, dropTrailerRows(records[i+1:], len(row)), nil
+				return row, dropTrailerRows(records[i+1:]), nil
 			}
 		}
 	}
@@ -441,17 +473,19 @@ func reportHeaderAndRows(records [][]string) (header []string, rows [][]string, 
 }
 
 // dropTrailerRows removes the copyright/blank trailer lines that follow the data.
-func dropTrailerRows(rows [][]string, width int) [][]string {
+//
+// The trailer is identified POSITIVELY — blank, or a first cell beginning with "©" — rather
+// than by being narrower than the header. Width is not evidence of a trailer: an earlier
+// revision dropped every row shorter than the header on the reasoning that "a DATA row
+// always carries the full column set", which is an assumption about response SHAPE on a
+// contract this file declares UNVERIFIED. A real data row missing a trailing field was
+// therefore discarded silently, and its impressions/clicks/spend vanished into a total that
+// still looked clean — the same indistinguishable-zero failure the missing-column guard in
+// foldReportRows refuses by name. A short row now survives this filter and reaches
+// parseReportInt/parseReportFloat, whose existing short-row error reports it.
+func dropTrailerRows(rows [][]string) [][]string {
 	out := make([][]string, 0, len(rows))
 	for _, row := range rows {
-		// A trailer line is shorter than the header, or blank. A DATA row always carries
-		// the full column set.
-		if len(row) < width {
-			continue
-		}
-		if strings.HasPrefix(strings.TrimSpace(row[0]), "©") {
-			continue
-		}
 		blank := true
 		for _, cell := range row {
 			if strings.TrimSpace(cell) != "" {
@@ -460,6 +494,9 @@ func dropTrailerRows(rows [][]string, width int) [][]string {
 			}
 		}
 		if blank {
+			continue
+		}
+		if len(row) > 0 && strings.HasPrefix(strings.TrimSpace(row[0]), "©") {
 			continue
 		}
 		out = append(out, row)

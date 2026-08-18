@@ -418,22 +418,35 @@ pipeline is `POST Reporting/v13/GenerateReport/Submit` (returns a `ReportRequest
 `POST .../Poll` (`Pending` | `Success` | `Error`, plus a pre-signed download URL) -> `GET`
 that URL for a **ZIP containing one CSV**. It is REST/JSON, not SOAP.
 
-The `service.MetricsReader` contract is synchronous and the platform ingress times out at
-60s, so the submit+poll phase is bounded by `reportPollBudget` (20s) and gives up with
-`ErrReportNotReady`. The DOWNLOAD is deliberately outside that budget: once `Success` is
+The `service.MetricsReader` contract is synchronous, so the submit+poll phase is bounded by
+`reportPollBudget` (15s) and gives up with `ErrReportNotReady`. The binding deadline is NOT
+the 60s platform ingress but `Orchestrator.ReadCampaignMetrics`'s 20s `metricsCallTimeout`;
+the budget must stay under THAT or the caller's context cancels first and the sentinel
+becomes dead code. The DOWNLOAD is deliberately outside that budget: once `Success` is
 reported the file exists, and cutting off the transfer would discard a report already paid
 for. `ErrReportNotReady` is NOT mapped to either metrics sentinel — both mean 400, and a
 report still building is retryable, not unsupported.
 
-Three properties are load-bearing and each is pinned by a test. The CSV is **ragged** —
-a two-column metadata preamble, then the four-column header and data, then a one-column `©`
-trailer — so `FieldsPerRecord = -1` is required; the default field-count lock rejects the
-whole file at the header row, which would fail every real report. Columns are resolved by
-header NAME, never by position, because Microsoft's writer chooses its own order and a
-positional read would swap Clicks and Spend into plausible wrong numbers; a missing metric
-column is refused rather than defaulted to zero. And the download request carries NO bearer
-token: the URL is pre-signed storage, so attaching our OAuth credential would disclose it to
-a host that neither needs nor expects it.
+Several parsing properties are load-bearing and each is pinned by a test. The CSV is
+**ragged** — a two-column metadata preamble, then the four-column header and data, then a
+one-column `©` trailer — so `FieldsPerRecord = -1` is required; the default field-count lock
+rejects the whole file at the header row, which would fail every real report. Columns are
+resolved by header NAME, never by position, because Microsoft's writer chooses its own order
+and a positional read would swap Clicks and Spend into plausible wrong numbers; a missing
+metric column is refused rather than defaulted to zero. And the download request carries NO
+bearer token: the URL is pre-signed storage, so attaching our OAuth credential would disclose
+it to a host that neither needs nor expects it.
+
+The DECOMPRESSED CSV is read into a buffer and size-checked before parsing, not streamed
+through a bare `io.LimitReader`: `io.LimitReader` signals EOF at its limit rather than
+erroring, so a prefix cut on a row boundary is syntactically complete and `csv.ReadAll`
+accepts it — yielding a short total that reads as authoritative. The trailer is identified
+POSITIVELY (blank, or a first cell starting with `©`) rather than by being narrower than the
+header: width is not evidence of a trailer, and dropping short rows discarded real data whose
+metrics then vanished into a clean-looking total. A short row now reaches the column check and
+is reported. The running TOTALS are overflow-checked as well as the per-row values, mirroring
+`reddit/metrics.go` — per-row guards bound each value but say nothing about the sum the
+dashboard renders.
 
 The one path where zeroes are truthful is a `Success` status with no download URL —
 Microsoft's "report built, no rows". Every other empty outcome in this file is an error.
