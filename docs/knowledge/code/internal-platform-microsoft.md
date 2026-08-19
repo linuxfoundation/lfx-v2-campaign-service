@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/microsoft"
-description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token + developer-token auth, request layer with 429 retry and status-aware error classification incl. BatchErrors (MS-1), and PAUSED find-or-create Campaign->AdGroup->ResponsiveSearchAd creation over the POST /<Entity> + POST /<Entity>/QueryBy… transport, idempotent by case-insensitive-unique NAME for the campaign and ad group but by DESTINATION URL for the ad (ads have no stable name and v13 permits duplicate RSAs) (MS-2/MS-2.5), keyword targeting via the DEDICATED POST /Keywords resource plus an ad-group CpcBid, without which a created Search campaign has nothing to match a query against and can never serve (MS-4/LFXV2-3279), plus ad-account discovery against the SEPARATE Customer Management v13 service on a different host, the one call that is not account-scoped (LFXV2-3064)."
+description: "Microsoft Advertising (Bing Ads) Campaign Management REST v13 client: OAuth2 refresh-token + developer-token auth, request layer with 429 retry and status-aware error classification incl. BatchErrors (MS-1), and PAUSED find-or-create Campaign->AdGroup->ResponsiveSearchAd creation over the POST /<Entity> + POST /<Entity>/QueryBy… transport, idempotent by case-insensitive-unique NAME for the campaign and ad group but by DESTINATION URL for the ad (ads have no stable name and v13 permits duplicate RSAs) (MS-2/MS-2.5), keyword targeting via the DEDICATED POST /Keywords resource plus an ad-group CpcBid, without which a created Search campaign has nothing to match a query against and can never serve (MS-4/LFXV2-3279), plus ad-account discovery against the SEPARATE Customer Management v13 service on a different host, the one call that is not account-scoped (LFXV2-3064), and campaign metrics through the asynchronous Reporting v13 service — submit/poll/download folded into one bounded call, default-OFF behind MICROSOFT_METRICS_ENABLED while the contract is unverified (LFXV2-3260)."
 resource: "internal/platform/microsoft"
 tags:
   - platform-client
@@ -361,9 +361,12 @@ discovery is not a Campaign Management call. It is
 Microsoft splits its API by service across DIFFERENT hosts, so `msCustomerBaseURL` and
 `WithCustomerBaseURL` sit alongside the campaign base rather than replacing it, and the
 tests point the two at different servers — a call routed to the wrong service would
-otherwise look correct. (This is still the synchronous REST/JSON surface; the SOAP,
-submit-and-poll Reporting API that tabled Microsoft metrics reads is a third service
-again.) The version segment is NOT a second knob: `WithAPIVersion` sets `c.apiVersion`
+otherwise look correct. Reporting is a THIRD service again
+(`reporting.api.bingads.microsoft.com`, reached via `msReportingBaseURL` /
+`WithReportingBaseURL` / `doReportingRequest`) — see the metrics section below. It is
+REST/JSON like the other two, NOT SOAP; what makes it different is that it is
+ASYNCHRONOUS (submit, poll, then download a zipped CSV). The version segment is NOT a
+second knob: `WithAPIVersion` sets `c.apiVersion`
 for both hosts, because Microsoft versions the two services in lockstep — a caller
 pinning a version is pinning the client, not one of its halves.
 
@@ -540,6 +543,17 @@ without one are refused, exactly as an orphan ad is.
   is the one asymmetric shape that IS allowed: it is addressable via its `CampaignId`.
 - **Each child PUT is scoped to its OWN parent** — the ad group to the campaign, the ad to the AD
   GROUP. Passing the campaign id as `AdGroupId` would silently toggle the wrong thing.
+- **The campaign must belong to the account the connection resolves to** (LFXV2-3260). Campaign
+  ids are unique only within an ad account, so after `UpdateMicrosoftAds` re-points a project's
+  connection the stored id can address an unrelated campaign in the NEW account — pausing or
+  activating something this project does not own. The dispatcher's `verifyMicrosoftAccountMatch`
+  refuses that with `domain.ErrCampaignAccountMismatch` (409) above BOTH branches, before any
+  credential resolution or upstream call, and the same helper guards `ReadMetrics`. The account
+  the campaign was created under is carried by `CampaignResult.AccountID` (`accountId` in the
+  persisted blob), which `namePartial` stamps on every result path — success and partial alike —
+  from `c.account.AccountID`. A row recording no account is treated as "unknown, proceed", so
+  campaigns created before the field existed still toggle; the `microsoftAdsUrl`'s `aid=`
+  parameter is read as a fallback before concluding a row is unrecorded.
 
 Two further details belong to this layer specifically:
 
@@ -554,3 +568,102 @@ Two further details belong to this layer specifically:
   PRESENCE separately and reports absence as unconfirmed — otherwise a proxy error page that happens
   to parse would let the service persist a status Microsoft never confirmed. The valid empty forms
   (`null`, `[]`) are still accepted.
+
+## Metrics read (asynchronous, default-OFF)
+
+`GetCampaignMetrics(ctx, campaignID, window)` answers the same question as every other client
+platform clients, but Microsoft is the only one whose reporting is ASYNCHRONOUS. The
+pipeline is `POST Reporting/v13/GenerateReport/Submit` (returns a `ReportRequestId`) ->
+`POST .../Poll` (`Pending` | `Success` | `Error`, plus a pre-signed download URL) -> `GET`
+that URL for a **ZIP containing one CSV**. It is REST/JSON, not SOAP.
+
+The `service.MetricsReader` contract is synchronous, so the submit+poll phase is bounded by
+`reportPollBudget` (15s) and gives up with `ErrReportNotReady`. The binding deadline is NOT
+the 60s platform ingress but `Orchestrator.ReadCampaignMetrics`'s 20s `metricsCallTimeout`;
+the budget must stay under THAT or the caller's context cancels first and the sentinel
+becomes dead code. The DOWNLOAD is deliberately outside that budget: once `Success` is
+reported the file exists, and cutting off the transfer would discard a report already paid
+for. `ErrReportNotReady` is NOT mapped to either metrics sentinel — both mean 400, and a
+report still building is retryable, not unsupported.
+
+The budget covers the SUBMIT as well as the polling, and that is a property of where the
+deadline is taken: `GetCampaignMetrics` computes it before `submitReport` and threads it into
+`pollReport`, which also checks it before its first poll. Taking it inside `pollReport` (the
+shape this file described until LFXV2-3260) left submit unbounded, so a slow submit spent the
+caller's 20s and produced `context deadline exceeded` rather than the retryable sentinel.
+`TestPollBudgetCoversTheSubmitPhase` pins it; the clock it uses advances only across the
+submit, because a clock that advances on every reading expires the budget under both
+placements and would pass against the defect.
+
+Several parsing properties are load-bearing and each is pinned by a test. The CSV is
+**ragged** — a two-column metadata preamble, then the four-column header and data, then a
+one-column copyright trailer — so `FieldsPerRecord = -1` is required; the default field-count lock
+rejects the whole file at the header row, which would fail every real report. Columns are
+resolved by header NAME, never by position, because Microsoft's writer chooses its own order
+and a positional read would swap Clicks and Spend into plausible wrong numbers; a missing
+metric column is refused rather than defaulted to zero. And the download request carries NO
+bearer token: the URL is pre-signed storage, so attaching our OAuth credential would disclose
+it to a host that neither needs nor expects it.
+
+The DECOMPRESSED CSV is read into a buffer and size-checked before parsing, not streamed
+through a bare `io.LimitReader`: `io.LimitReader` signals EOF at its limit rather than
+erroring, so a prefix cut on a row boundary is syntactically complete and `csv.ReadAll`
+accepts it — yielding a short total that reads as authoritative. The trailer is identified
+POSITIVELY (blank, or a first cell starting with a copyright marker) rather than by being
+narrower than the header. **Both `©` and `@` are accepted as that marker**: Microsoft's
+published sample report and its `ExcludeReportFooter` description both render the footer with
+an `@`, while this repo's fixtures had assumed `©` throughout, so the suite could only prove
+the parser agreed with itself. An unrecognised footer is not dropped quietly — it survives the
+filter, folds in as a data row and fails `parseReportInt`, turning every otherwise-successful
+report into a parse error.
+
+Width is not evidence of a trailer **at any width**, including one column. Dropping short rows
+discarded real data whose metrics then vanished into a clean-looking total; a later revision
+narrowed that rule to single-cell rows only, which is the same defect — a data row truncated to
+its `CampaignId` has exactly that shape. Every non-blank, non-marker row therefore reaches the
+column check and is REPORTED as an error rather than silently dropped. The running TOTALS are
+overflow-checked as well as the per-row values, mirroring
+`reddit/metrics.go` — per-row guards bound each value but say nothing about the sum the
+dashboard renders.
+
+Three properties of the SUBMIT request are load-bearing in the same way. The report is scoped
+by `Scope.Campaigns` ALONE — `Scope.AccountIds` is not sent alongside it, because Microsoft
+documents the scope as a union and sending both would return account-wide totals reported as
+this campaign's. If Microsoft rejects the campaign-only scope (error 2027 /
+`InvalidAccountThruCampaignReportScope`) the error names that tradeoff explicitly, so the first
+live run diagnoses it in one read. Scope ids go out as **quoted strings**, not bare JSON
+numbers — the opposite of `campaign.go`, deliberately: that is Campaign Management v13 and this
+is Reporting v13. Reporting's JSON reference quotes every `long` while leaving `ReportTime`'s
+`int` fields bare, and quoting also avoids the precision loss a 64-bit id would suffer past
+2^53, which would scope the report to the WRONG campaign.
+
+`ReportTimeZone` is sent explicitly because Microsoft otherwise defaults it to Pacific, which
+would aggregate a different day than the UTC-computed dates the request names — a silent
+off-by-one-day on every window. The value used,
+`GreenwichMeanTimeDublinEdinburghLisbonLondon`, is the CLOSEST the enum offers to UTC but is
+**not** UTC: it maps to `Europe/London` and observes British Summer Time, so from late March to
+late October the report day boundary sits one hour before ours. No fixed-offset UTC value
+exists to use instead — the published `ReportTimeZone` value set has 75 entries and contains no
+UTC or Reykjavik member, and the only other UTC+0 entry (`CasablancaMonrovia`) maps to
+`Africa/Casablanca`, which observes its own offset changes. The residual error is bounded at
+one hour at the two ends of the window and can move an event between adjacent days; it cannot
+lose one, since the range is aggregated as a whole.
+
+There is no path in this file where a zero is synthesized. Both empty shapes — a `Success`
+status naming no download URL, and a downloaded CSV whose header is followed by no data rows
+— answer `ErrNoRowsInReport`, which the dispatcher maps onto `domain.ErrNoMetricsInWindow`.
+The adapter cannot tell "the campaign served nothing" from "no such campaign in this
+account's scope", and the two shapes carry identically little information, so neither is
+rendered as a measured zero.
+
+A report Microsoft flags as partial is refused too. `ReturnOnlyCompleteData` is sent `false`
+so a window including today can build at all, which means the totals may be an under-count;
+Microsoft signals that in the CSV preamble rather than the HTTP status. The parser reads
+that flag and answers `ErrReportDataIncomplete` instead of returning the numbers, because
+`model.CampaignMetrics` has no field for "provisional" and a partial total is
+indistinguishable from a complete measurement of a smaller number.
+
+Reads are gated behind `MICROSOFT_METRICS_ENABLED` (chart default `"false"`), mirroring
+`REDDIT_METRICS_ENABLED`: the v13 Reporting contract was implemented from published
+documentation and has not been exercised against a live Microsoft Advertising account, and a
+guessed read returning 200 looks authoritative to every consumer.

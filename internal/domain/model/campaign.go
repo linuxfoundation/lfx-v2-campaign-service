@@ -346,6 +346,21 @@ const (
 	JobFailed    JobStatus = "failed"
 )
 
+// AllJobStatuses is the WHOLE job status vocabulary, in the order the constants above
+// declare it. It exists so tests that must reason over every status can iterate this
+// instead of restating the list.
+//
+// A test that hand-copies the vocabulary silently stops covering a status added later —
+// it keeps agreeing with its own copy while the new status goes unclassified. The one
+// that matters is the retention prune: its allow-list decides which rows get DELETED, and
+// those rows are the audit trail of real ad spend. Deriving from here means adding a
+// status to this list is what forces the classification to be made deliberately.
+//
+// Must stay in step with the campaign_jobs status CHECK constraint (migration 000002).
+var AllJobStatuses = []JobStatus{
+	JobQueued, JobRunning, JobSucceeded, JobPartial, JobFailed,
+}
+
 // Terminal reports whether the job has reached a final state.
 func (s JobStatus) Terminal() bool {
 	switch s {

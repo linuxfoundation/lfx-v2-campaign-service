@@ -1,0 +1,59 @@
+-- Copyright The Linux Foundation and each contributor to LFX.
+-- SPDX-License-Identifier: MIT
+
+-- Support the terminal-job retention prune (JobRepo.PruneTerminalJobs), which runs on
+-- EVERY replica once per jobRetentionSweepInterval:
+--
+--   DELETE FROM campaign_jobs WHERE id IN (
+--     SELECT id FROM campaign_jobs
+--     WHERE status IN ('succeeded','partial','failed') AND updated_at < now() - <window>
+--     ORDER BY updated_at LIMIT <n>)
+--
+-- The existing indexes cannot serve that predicate. idx_campaign_jobs_brief_id is keyed on
+-- brief_id, and idx_campaign_jobs_recovery (000004) is a PARTIAL index restricted to
+-- WHERE status IN ('queued','running') — the exact COMPLEMENT of the rows this prune
+-- touches, so it is unusable here by construction. Without a matching index the prune does
+-- a full scan of campaign_jobs on every pass, and the table it is scanning is precisely the
+-- unbounded terminal history the prune exists to bound: the scan cost grows with the
+-- backlog, on every replica, forever.
+--
+-- A PARTIAL index over only the three TERMINAL statuses keyed on updated_at gives the inner
+-- SELECT a direct ordered path to the oldest prunable rows (or a cheap proof that there are
+-- none, which is the steady state once retention is caught up). Restricting it to terminal
+-- rows also keeps it off the write path for the live set: a queued/running row is not in
+-- this index, so the hot insert-and-update cycle of an in-flight job pays nothing for it,
+-- and the index does not grow with the non-terminal churn.
+--
+-- The status list is spelled out as a literal ALLOW-LIST rather than a NOT IN over the
+-- non-terminal ones. A future status added to the CHECK constraint must be classified
+-- deliberately: with NOT IN it would silently become both indexed and prunable, which for a
+-- table that records real ad spend means it would start being deleted with no code change.
+-- Kept in sync with model.JobStatus.Terminal() and pinned by
+-- TestPruneTerminalJobsIndexMatchesTheTerminalVocabulary.
+--
+-- Ordered by updated_at, not created_at: updated_at is when the job REACHED its terminal
+-- state, which is the age retention is defined against. A job created long ago but finished
+-- recently is recent history, and created_at ordering would prune it first.
+--
+-- Separate migration (not an edit to 000004): golang-migrate records applied versions and
+-- never re-runs them, so amending an applied migration silently skips every database that
+-- already ran it.
+--
+-- CONCURRENTLY, and alone in this file. An earlier revision of this comment claimed
+-- golang-migrate wraps each migration in a transaction so CONCURRENTLY could not be used —
+-- that is backwards. 000008 and 000018 both record the verified fact: the pgx/v5
+-- golang-migrate driver executes each migration with a bare ExecContext and does NOT wrap
+-- it in a transaction. Nineteen migration files already use CONCURRENTLY, and
+-- migrations/README.md makes "CONCURRENTLY alone in its file" the standing rule.
+--
+-- The old justification was also self-undermining: it argued a brief write lock is fine
+-- because campaign_jobs is small, on the very migration whose PR exists because the table
+-- grows without bound. A plain CREATE INDEX takes an ACCESS EXCLUSIVE lock, so on the
+-- deployment that most needs this prune — one with millions of accumulated rows — it would
+-- block every job write for the duration of the build.
+--
+-- Nothing else may be added to this file: a second statement would put both into one
+-- implicit transaction, which CONCURRENTLY forbids.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_campaign_jobs_retention
+    ON campaign_jobs (updated_at)
+    WHERE status IN ('succeeded', 'partial', 'failed');

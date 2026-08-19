@@ -9,11 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"os"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // microsoftCreds is the credential shape stored (encrypted) for a Microsoft Advertising
@@ -462,6 +465,58 @@ func microsoftChildIDs(campaign *model.Campaign) (adGroupID, adID string) {
 	return blob.AdGroupID, blob.AdID
 }
 
+// microsoftCreationAccountID reports the ad account the campaign was CREATED under, or ""
+// when the persisted result blob does not record it.
+//
+// Prefers the explicit accountId the create path now stamps (microsoft.CampaignResult), and
+// falls back to the aid= query parameter of the microsoftAdsUrl the blob has always carried —
+// so rows written BEFORE the explicit field existed are still checkable rather than silently
+// unguarded. Mirrors googleAdsCreationCustomerID, including its customerId/ocid fallback.
+//
+// An EMPTY return means "unknown, proceed": absence must not become a new failure signal for
+// pre-existing rows, so only a present-AND-different id is treated as a mismatch by callers.
+func microsoftCreationAccountID(campaign *model.Campaign) string {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return ""
+	}
+	var blob struct {
+		AccountID       string `json:"accountId"`
+		MicrosoftAdsURL string `json:"microsoftAdsUrl"`
+	}
+	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
+		return ""
+	}
+	if id := strings.TrimSpace(blob.AccountID); id != "" {
+		return id
+	}
+	u, err := url.Parse(blob.MicrosoftAdsURL)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(u.Query().Get("aid"))
+}
+
+// verifyMicrosoftAccountMatch refuses an operation on a campaign that was created under a
+// DIFFERENT ad account than the project's current connection resolves to.
+//
+// Microsoft campaign ids are unique only WITHIN an account, and UpdateMicrosoftAds can
+// re-point a project's connection between create and a later read/toggle. Without this check
+// the stored PlatformCampaignID is addressed against the NEW account, where it either matches
+// nothing or — worse — collides with an unrelated campaign, whose numbers would be rendered
+// as this campaign's measurement (on the read path) or whose delivery would be changed (on
+// the toggle path).
+//
+// Shared by ReadMetrics and ToggleStatus so the two cannot drift, and returns
+// domain.ErrCampaignAccountMismatch exactly as the google-ads adapter does.
+func verifyMicrosoftAccountMatch(op string, campaign *model.Campaign, client *microsoft.Client) error {
+	created := microsoftCreationAccountID(campaign)
+	if created == "" || created == client.AccountID() {
+		return nil
+	}
+	return fmt.Errorf("%s: campaign %s was created under microsoft ad account %s but the project's current connection resolves to account %s: %w",
+		op, campaign.PlatformCampaignID, created, client.AccountID(), domain.ErrCampaignAccountMismatch)
+}
+
 // microsoftKeywordIDs pulls the persisted keyword ids out of the result blob, using the same
 // lowerCamel json tags campaignFromMicrosoft marshalled (pinned by a round-trip test). Empty
 // means keyword targeting was never provisioned — either none was supplied or the step failed
@@ -508,9 +563,6 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 		// exists to prevent. Raised locally, without calling Microsoft: it is a fact about the
 		// persisted row, so the service maps it to a 409 STATE error rather than a platform
 		// failure. Mirrors the google-ads sibling's keyword-criteria gate.
-		if len(microsoftKeywordIDs(campaign)) == 0 {
-			return fmt.Errorf("%w: microsoft campaign %s cannot be activated because keyword targeting is not yet provisioned (at least one keyword is required for a search campaign to serve)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
-		}
 	}
 	// An ad with no known parent cannot be changed (the client refuses the pair), and sending
 	// the campaign anyway would report success while the ad's status remained unchanged.
@@ -520,6 +572,21 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 	client, err := d.resolveMicrosoftClient(ctx, projectID, platform)
 	if err != nil {
 		return err
+	}
+	// Provenance BEFORE the mutation: a campaign id is unique only within an ad account, so a
+	// connection re-pointed since create would address an unrelated campaign — and this path
+	// CHANGES delivery, so a collision pauses or activates someone else's campaign.
+	if err := verifyMicrosoftAccountMatch("toggle microsoft campaign status", campaign, client); err != nil {
+		return err
+	}
+	// AFTER provenance, deliberately. "This row's keywords were never provisioned" is only a
+	// meaningful answer once the row is known to belong to the resolved account: on a
+	// re-pointed connection the keyword ids describe a campaign in a DIFFERENT account, so
+	// answering 409-not-provisioned there would explain the wrong campaign. Ordering the two
+	// the other way made TestMicrosoft_ToggleStatus_ForeignAccountIs409AndNeverMutates report
+	// a missing-keyword error for a foreign-account campaign.
+	if msStatus == microsoft.StatusActive && len(microsoftKeywordIDs(campaign)) == 0 {
+		return fmt.Errorf("%w: microsoft campaign %s cannot be activated because keyword targeting is not yet provisioned (at least one keyword is required for a search campaign to serve)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 	}
 	// Keyword ids come from the SAME persisted result blob as the child ids. They are passed
 	// on BOTH the activate and pause paths: keywords are created Paused, so an activate that
@@ -531,4 +598,103 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 		return uerr
 	}
 	return nil
+}
+
+// ReadMetrics implements the OPTIONAL service.MetricsReader capability for Microsoft
+// Advertising, reading campaign performance through the v13 Reporting service.
+//
+// Microsoft's reporting pipeline is asynchronous — submit a report request, poll until it
+// builds, then download a zipped CSV — unlike every other platform here, which answers with
+// one synchronous JSON call. The client bounds the submit+poll phase well under the platform
+// ingress timeout and returns microsoft.ErrReportNotReady rather than hanging the caller;
+// that propagates as an ordinary error below rather than either metrics sentinel, because a
+// report still building is a timing condition, NOT a campaign with no data. Reporting it as
+// zeroes would turn that timing condition into a measurement. Note the retry it invites
+// restarts the report rather than resuming it — the error message says so explicitly, and
+// microsoft.ErrReportNotReady explains why.
+//
+// Because of that, this capability is OFF unless MICROSOFT_METRICS_ENABLED is set to "true".
+// Merely declaring this method is the capability switch — Orchestrator.ReadCampaignMetrics
+// discovers MetricsReader by type assertion, and the published endpoint then calls it — so
+// without the flag an UNVERIFIED request/response shape would ship as production metrics that
+// return 200 and look authoritative. The v13 Reporting contract this client implements was
+// written from Microsoft's published documentation and has not been exercised against a live
+// Microsoft Advertising account; nothing in the response carries that caveat. The gate is
+// checked here rather than at construction so a deployment can flip it without a rebuild.
+//
+// Disabled reads answer domain.ErrMetricsUnsupported, which the service maps to the same 400
+// a platform with no metrics support at all returns — the accurate answer while the contract
+// is unverified. Delete the gate once the shape is confirmed against a live ad account.
+func (d *MicrosoftDispatcher) ReadMetrics(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, window model.MetricsWindow) (*model.CampaignMetrics, error) {
+	if os.Getenv(constants.EnvMicrosoftMetricsEnabled) != "true" {
+		return nil, fmt.Errorf("microsoft metrics reads are disabled (%s is not \"true\") while the reporting contract is unverified: %w",
+			constants.EnvMicrosoftMetricsEnabled, domain.ErrMetricsUnsupported)
+	}
+	if campaign == nil || campaign.PlatformCampaignID == "" {
+		return nil, fmt.Errorf("campaign has no platform campaign ID")
+	}
+	client, err := d.resolveMicrosoftClient(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	// Prove the persisted campaign belongs to the account the report will be scoped to.
+	// resolveMicrosoftClient returns the project's CURRENT connection, which UpdateMicrosoftAds
+	// can have re-pointed since create; querying the stored id against a different account
+	// yields either a false "no metrics" or ANOTHER campaign's numbers presented as this
+	// campaign's measurement — the failure-as-measurement class this path refuses throughout.
+	if err := verifyMicrosoftAccountMatch("read microsoft campaign metrics", campaign, client); err != nil {
+		return nil, err
+	}
+	metrics, err := client.GetCampaignMetrics(ctx, campaign.PlatformCampaignID, window)
+	if err != nil {
+		// Classify the two conditions the caller must NOT read as "no data":
+		// an unsupported window, and a report that had not finished building.
+		if errors.Is(err, microsoft.ErrUnsupportedWindow) {
+			return nil, fmt.Errorf("get campaign metrics from microsoft: %w: %w", domain.ErrMetricsWindowUnsupported, err)
+		}
+		// A report still building is deliberately NOT mapped to either metrics sentinel:
+		// both mean 400 ("this cannot work"), and a retryable timing condition is neither
+		// unsupported nor permanent. It propagates as an ordinary error, which the service
+		// layer's metrics switch answers from its default arm — a 503, not a 500 (see the
+		// ConnServiceUnavailableError default in internal/service/brief.go). That is the
+		// right code for this condition: a 503 promises that waiting might help, and for a
+		// report whose build time varies around the poll budget it genuinely might. It
+		// stays on the default arm until a distinct retryable sentinel exists (there is
+		// none today; see internal/domain/errors.go, which defines only
+		// ErrMetricsUnsupported, ErrMetricsWindowUnsupported and ErrNoMetricsInWindow).
+		// Returning zeroes here instead would be the worse failure: a timing condition
+		// rendered as a measurement.
+		// Success-with-no-rows: the platform answered, but the adapter cannot tell "no
+		// activity" from "no such campaign in scope". Same mapping hubspot.go uses.
+		if errors.Is(err, microsoft.ErrNoRowsInReport) {
+			return nil, fmt.Errorf("get campaign metrics from microsoft: %w", errors.Join(domain.ErrNoMetricsInWindow, err))
+		}
+		if errors.Is(err, microsoft.ErrReportDataIncomplete) {
+			// Microsoft flagged the report's own data as still aggregating. Like
+			// ErrReportNotReady this is a TIMING condition, not a campaign with no data, so
+			// it must not become either metrics sentinel — both mean 400, and a 400 tells
+			// the caller to stop asking. It rides the default 503 arm instead, which is the
+			// honest code here: waiting genuinely does help, because the same window
+			// re-read after Microsoft finishes processing returns complete numbers.
+			//
+			// What it must NOT do is return the partial totals. They would be a 200 that
+			// under-counts, indistinguishable from a complete measurement of a smaller
+			// number — the failure-as-measurement class this pipeline refuses throughout.
+			return nil, fmt.Errorf("get campaign metrics from microsoft (microsoft flagged the report data as "+
+				"incomplete, so the totals would under-count; re-read once the window has finished processing): %w", err)
+		}
+		if errors.Is(err, microsoft.ErrReportNotReady) {
+			// State the retry's real semantics rather than an encouraging "retry shortly":
+			// the pending ReportRequestId does not survive the call (see
+			// microsoft.ErrReportNotReady), so a retry SUBMITS A NEW REPORT and never
+			// collects the one that has since finished. A campaign whose report reliably
+			// outlasts the client's poll budget is therefore unreadable through this path
+			// no matter how often it is retried.
+			return nil, fmt.Errorf("get campaign metrics from microsoft (the report was still building when the poll budget expired; "+
+				"retrying SUBMITS A NEW REPORT and will not pick up the pending one, so a report that reliably takes longer than the "+
+				"budget stays unreadable here): %w", err)
+		}
+		return nil, fmt.Errorf("get campaign metrics from microsoft: %w", err)
+	}
+	return metrics, nil
 }

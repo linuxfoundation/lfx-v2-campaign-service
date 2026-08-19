@@ -15,6 +15,7 @@ import (
 	connsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/config"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/metrics"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 )
 
@@ -34,7 +35,7 @@ func TestConnectionRoutesAreMounted(t *testing.T) {
 	briefEndpoints := briefsvc.NewEndpoints(service.NewBriefService(nil, nil, nil, nil))
 	audienceEndpoints := audiencesvc.NewEndpoints(service.NewAudienceService(nil))
 
-	mux, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, audienceEndpoints)
+	mux, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, nil)
 	if err != nil {
 		t.Fatalf("buildMux: %v", err)
 	}
@@ -72,13 +73,70 @@ func TestBuildMuxNilEndpointsFailsLoud(t *testing.T) {
 	briefEndpoints := briefsvc.NewEndpoints(service.NewBriefService(nil, nil, nil, nil))
 	audienceEndpoints := audiencesvc.NewEndpoints(service.NewAudienceService(nil))
 
-	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, nil, briefEndpoints, audienceEndpoints); err == nil {
+	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, nil, briefEndpoints, audienceEndpoints, nil); err == nil {
 		t.Error("expected buildMux to fail loudly when connEndpoints is nil, got nil error")
 	}
-	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, nil, audienceEndpoints); err == nil {
+	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, nil, audienceEndpoints, nil); err == nil {
 		t.Error("expected buildMux to fail loudly when briefEndpoints is nil, got nil error")
 	}
-	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, nil); err == nil {
+	if _, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, nil, nil); err == nil {
 		t.Error("expected buildMux to fail loudly when audienceEndpoints is nil, got nil error")
+	}
+}
+
+// TestMetricsRouteIsMountedAndUnauthenticated pins the /metrics contract:
+// mounted when a registry is supplied, served without any credential, and
+// carrying the Prometheus text format. The unauthenticated part is deliberate
+// and matches /livez and /readyz — the scraper has no bearer token — so a future
+// change that puts the metrics handler behind the auth middleware must fail here.
+func TestMetricsRouteIsMountedAndUnauthenticated(t *testing.T) {
+	endpoints := svc.NewEndpoints(service.NewCampaignService(nil))
+	connEndpoints := connsvc.NewEndpoints(service.NewConnectionService(nil, nil))
+	briefEndpoints := briefsvc.NewEndpoints(service.NewBriefService(nil, nil, nil, nil))
+	audienceEndpoints := audiencesvc.NewEndpoints(service.NewAudienceService(nil))
+
+	reg, err := metrics.New()
+	if err != nil {
+		t.Fatalf("metrics.New: %v", err)
+	}
+
+	mux, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, reg)
+	if err != nil {
+		t.Fatalf("buildMux: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	// No Authorization header: the scrape must succeed anyway.
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+
+	if rec.Code == http.StatusNotFound {
+		t.Fatal("GET /metrics returned 404 — the route is not mounted")
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /metrics without credentials returned %d, want 200 (the endpoint must be unauthenticated)", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/plain") {
+		t.Errorf("Content-Type = %q, want the Prometheus text exposition format", ct)
+	}
+}
+
+// TestMetricsRouteAbsentWithoutRegistry pins the other half: with no registry the
+// route is NOT mounted, rather than mounted and serving an empty body. An empty
+// 200 would tell a scraper the target is healthy and reporting nothing.
+func TestMetricsRouteAbsentWithoutRegistry(t *testing.T) {
+	endpoints := svc.NewEndpoints(service.NewCampaignService(nil))
+	connEndpoints := connsvc.NewEndpoints(service.NewConnectionService(nil, nil))
+	briefEndpoints := briefsvc.NewEndpoints(service.NewBriefService(nil, nil, nil, nil))
+	audienceEndpoints := audiencesvc.NewEndpoints(service.NewAudienceService(nil))
+
+	mux, err := buildMux(context.Background(), &config.Config{}, endpoints, connEndpoints, briefEndpoints, audienceEndpoints, nil)
+	if err != nil {
+		t.Fatalf("buildMux: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("GET /metrics with no registry returned %d, want 404", rec.Code)
 	}
 }

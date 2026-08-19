@@ -178,6 +178,101 @@ func (r *JobRepo) FailStuckJobs(ctx context.Context, jobErr string) (int64, erro
 	return tag.RowsAffected(), nil
 }
 
+// DefaultJobRetention is how long a TERMINAL campaign job is kept before pruning.
+//
+// Deliberately long. A campaign job is the audit trail of real ad spend: it records that a
+// brief was dispatched, to which platforms, and what each one returned. Deleting one destroys
+// the only in-service record of a paid campaign creation, so the default errs heavily toward
+// keeping it — 180 days outlives a quarterly spend review and any realistic
+// "why was this campaign created?" investigation, while still bounding a table that is
+// otherwise append-only and grows with every dispatch forever.
+//
+// Operators may shorten it via CAMPAIGN_JOB_RETENTION, but the default must never be the
+// aggressive choice: a deployment that never sets the variable is the common case, and the
+// cost of keeping a row too long is disk, while the cost of deleting one too early is an
+// unrecoverable gap in the spend record.
+const DefaultJobRetention = 180 * 24 * time.Hour
+
+// jobPrunePassLimit bounds ONE delete so a first prune over a large backlog cannot hold a long
+// transaction, lock the table against live dispatch writes, or spike replication lag. The
+// sweeper prunes every pass, so a backlog drains over several passes rather than in one
+// statement.
+const jobPrunePassLimit = 1000
+
+// terminalJobStatuses is the ALLOW-LIST of statuses a prune may delete.
+//
+// An allow-list, never `status NOT IN ('queued','running')` or `status != 'running'`. A future
+// status added to the CHECK constraint (a 'cancelled', a 'retrying') would be swept in silently
+// by any negative predicate — deleting records of real money spent, with no code change and no
+// review. Adding one here is a deliberate act; forgetting to is merely conservative, which is
+// the correct direction for this table.
+//
+// Must stay identical to the terminal arm of model.JobStatus.Terminal(); pinned by
+// TestTerminalJobStatusesMatchTheDomainVocabulary.
+var terminalJobStatuses = []string{
+	string(model.JobSucceeded),
+	string(model.JobPartial),
+	string(model.JobFailed),
+}
+
+// pruneTerminalJobsQuery deletes TERMINAL job history only.
+//
+// queued/running rows are NEVER eligible, at any age. A non-terminal row that is old is not
+// stale history — it is a STUCK JOB, and a stuck job is exactly the record someone needs to
+// investigate why a dispatch never finished. (The recovery sweeper transitions those to
+// 'failed' after staleJobCutoff, at which point they become terminal and start their retention
+// window from that transition — so nothing is retained forever, but nothing is deleted while it
+// still looks live either.)
+//
+// Age is measured on updated_at, the moment the job REACHED its terminal state, not created_at.
+// A job created months ago but completed yesterday is recent history and must not be pruned on
+// the strength of its creation date.
+//
+// Deleting by id via a bounded, ordered subquery keeps the statement short and its row set
+// predictable. The partial index added in migration 000026 (updated_at, WHERE status IN the
+// three terminal values) serves the inner SELECT directly; without it this is a full scan of
+// the very history the prune exists to bound.
+//
+// No FOR UPDATE SKIP LOCKED, unlike the outbox DRAIN. The drain needs it because it claims rows
+// it will then publish — an at-most-once side effect outside the transaction, so two pods
+// claiming the same row would double-publish. A DELETE has no such side effect: it takes its
+// own row locks, and if two replicas' sweeps overlap, the second simply finds fewer rows and
+// deletes fewer. The outbox PRUNE (pruneQuery) is the right comparison and it does not use
+// SKIP LOCKED either. What multi-replica safety requires here is only that the statement be
+// bounded and idempotent, which LIMIT + "delete what is already terminal and old" both are.
+const pruneTerminalJobsQuery = `DELETE FROM campaign_jobs WHERE id IN (
+	SELECT id FROM campaign_jobs
+	WHERE status = ANY($1::text[]) AND updated_at < now() - $2::interval
+	ORDER BY updated_at
+	LIMIT $3
+)`
+
+// PruneTerminalJobs deletes TERMINAL jobs whose terminal state is older than olderThan,
+// returning the number of rows removed. Non-terminal jobs are never eligible — see
+// pruneTerminalJobsQuery.
+//
+// Without this campaign_jobs grows with EVERY brief dispatch and never shrinks. It also makes
+// the stuck-job recovery sweep progressively more expensive: that sweep's partial index covers
+// only queued/running rows, but the table it lives on keeps growing, and terminal history is
+// pure ballast for every plan that touches it.
+//
+// A zero or negative olderThan falls back to DefaultJobRetention rather than pruning
+// everything: a mis-parsed or unset configuration value must not be readable as "retain
+// nothing". Same for limit and jobPrunePassLimit.
+func (r *JobRepo) PruneTerminalJobs(ctx context.Context, olderThan time.Duration, limit int) (int64, error) {
+	if olderThan <= 0 {
+		olderThan = DefaultJobRetention
+	}
+	if limit <= 0 {
+		limit = jobPrunePassLimit
+	}
+	tag, err := r.db.Exec(ctx, pruneTerminalJobsQuery, terminalJobStatuses, olderThan.String(), limit)
+	if err != nil {
+		return 0, fmt.Errorf("prune terminal jobs: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 func scanJob(row pgx.Row) (*model.CampaignJob, error) {
 	var (
 		j        model.CampaignJob
