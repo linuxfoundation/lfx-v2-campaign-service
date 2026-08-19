@@ -23,6 +23,19 @@ type TokenVerifier interface {
 // actorCtxKey is the context key under which the authenticated actor is stored.
 type actorCtxKey struct{}
 
+// bearerChallenge is the WWW-Authenticate value sent with every 401. RFC 9110 §15.5.2
+// requires a 401 to carry at least one challenge, and Goa emits this one by mapping the
+// generated error's WwwAuthenticate field onto the header (see design/connection.go's
+// UnauthorizedError) — so an empty string here would produce a spec-violating bare 401
+// rather than no header at all.
+//
+// It is the bare scheme, with no `realm` and no `error="invalid_token"` parameter. Both
+// are optional, and both would reintroduce exactly what the opaque message avoids: an
+// `error` code names WHICH check failed, which is the reason-specific signal
+// TestAuthenticate_RejectionMessagesAreOpaque exists to keep off the wire. The three
+// services share the one constant so a challenge cannot drift between them.
+const bearerChallenge = "Bearer"
+
 // authGuard holds the token verifier shared by the three authenticated services, embedded
 // rather than duplicated so all three admit one answer to "is this token good?".
 type authGuard struct {
@@ -56,11 +69,16 @@ func (g *authGuard) HasTokenVerifier() bool {
 //
 // The bool says whose fault the failure is: true when THIS service could not perform the
 // check (no verifier wired, Heimdall's JWKS unreachable), false when the token itself was
-// refused. Callers map the first to 503 and the second to 400. Both were 400 before, which
+// refused. Callers map the first to 503 and the second to 401. Both were 400 before, which
 // told a caller holding a perfectly valid token that their credential was bad, and told
 // them not to retry a condition that clears when the dependency recovers. The verdict is
 // not derivable from the message — "invalid bearer token" is deliberately the same string
 // for every token-side refusal — so it is returned separately rather than sniffed.
+//
+// The token-side refusal is 401 rather than 400 because the request is WELL-FORMED and the
+// credential is what must be replaced: 400 conflated an expired token with an invalid
+// payload, which want opposite client handling (refresh and retry vs. do not retry), and
+// made auth failures indistinguishable from payload errors in status-based alerting.
 //
 // A nil verifier REJECTS rather than bypasses: before
 // this, a request reaching the pod without passing Heimdall had its claims believed, so

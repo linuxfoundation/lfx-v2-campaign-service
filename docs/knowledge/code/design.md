@@ -27,9 +27,12 @@ mismatch). PATCH takes a dedicated `AudienceUpdateInput` (all fields optional, n
 immutable `platform`) rather than the create-time `AudienceInput` (where `platform`
 is required) — so a status-only or suppression-only patch is valid without resending
 the immutable platform. Every method is gated on `campaign_manager` at the gateway via
-`JWTAuth`, which can reject any request with a `BadRequest` (400) — so every brief,
-audience **and connection** method declares `BadRequest` regardless of whether it accepts
-a body. The binding `platforms` selection is constrained to the known provider enum.
+`JWTAuth`, which can reject any request with an `Unauthorized` (401, carrying a
+`WWW-Authenticate: Bearer` challenge) — so every brief, audience **and connection** method
+declares `Unauthorized`, and still declares `BadRequest` for payload/path validation,
+regardless of whether it accepts a body. The 401 arrived with LFXV2-3057; before it a
+refused token and an invalid payload shared one status, which a client cannot act on
+differently even though the remedies are opposite. The binding `platforms` selection is constrained to the known provider enum.
 
 **A declared error is not documentation; it is the encoder.** Goa builds each method's
 error encoder from that method's `Error(...)` list, so a typed error the method does not

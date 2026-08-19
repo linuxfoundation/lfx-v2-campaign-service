@@ -266,18 +266,31 @@ func TestBriefService_SetBackend_LateBinding(t *testing.T) {
 	}
 }
 
-// A missing bearer token is a client-side problem and must map to 400, not 500
-// (a 500 misrepresents it as a server fault and can trigger ops alerting).
+// A missing bearer token is a CREDENTIAL problem and must map to 401, not 500 (a 500
+// misrepresents it as a server fault and can trigger ops alerting) and not 400 (which
+// conflated it with a malformed payload — a client cannot then tell "refresh and retry"
+// from "do not retry unchanged", and the two want opposite handling).
 //
 // The verifier has to be WIRED for this to be the case it claims. Without one the guard
 // takes its own no-verifier branch, which is a 503 — this service failing, not the caller
 // — and the assertion below would pass for the wrong reason before that split existed.
-func TestBriefService_JWTAuth_EmptyTokenIsBadRequest(t *testing.T) {
+func TestBriefService_JWTAuth_EmptyTokenIsUnauthorized(t *testing.T) {
 	s := NewBriefService(nil, nil, nil, nil)
 	s.SetTokenVerifier(&stubVerifier{})
 	_, err := s.JWTAuth(context.Background(), "", nil)
-	if _, ok := err.(*briefs.BadRequestError); !ok {
-		t.Fatalf("expected *briefs.BadRequestError for empty token, got %T (%v)", err, err)
+	ue, ok := err.(*briefs.UnauthorizedError)
+	if !ok {
+		t.Fatalf("expected *briefs.UnauthorizedError for empty token, got %T (%v)", err, err)
+	}
+	// The status alone is not the contract: RFC 9110 §15.5.2 makes the challenge
+	// mandatory on a 401, and it reaches the wire only because Goa maps this field onto
+	// the WWW-Authenticate header. An empty one is a spec-violating bare 401 that no
+	// status assertion would catch.
+	if ue.WwwAuthenticate != "Bearer" {
+		t.Errorf("WwwAuthenticate = %q, want %q", ue.WwwAuthenticate, "Bearer")
+	}
+	if ue.Code != "401" {
+		t.Errorf("Code = %q, want \"401\"", ue.Code)
 	}
 }
 

@@ -705,20 +705,40 @@ source instead: it parses the `container` package and fails if any non-test call
 verifier-injecting helper. Reachability is a source property, so a new construction site is
 caught whether or not a unit test can boot the path it is on.
 
-Rejections are 400, not 401: the design declares no Unauthorized type and
-`commonBriefErrors` documents 400 as the JWTAuth rejection status (401 is a follow-up).
+Rejections are **401** as of LFXV2-3057, carrying a `WWW-Authenticate: Bearer` challenge
+(RFC 9110 §15.5.2). `UnauthorizedError` is declared in `design/connection.go` and reaches
+every method through `authErrors()` (connections) and `commonBriefErrors()` (briefs and
+audiences). 400 conflated a refused credential with a malformed payload: a client could not
+tell "token expired, refresh and retry" from "payload invalid, do not retry" — opposite
+handling, and a refresh is exactly the retry a 401 should trigger — and status-based
+alerting counted every auth failure as a client payload error, so an expired credential or
+a JWKS outage read as a spike in malformed requests rather than an auth incident.
+BadRequest stays declared everywhere alongside it: it is still the status for payload and
+path-parameter validation, which the bodyless reads reach through the generated decoder.
+
+The challenge is a FIELD of the error, not a framework constant — Goa's Response-level
+`Header()` maps an attribute onto a response header and has no fixed-string form, so
+`www_authenticate` is a Required attribute on the type, mapped in
+`connectionAuthErrorResponses`/`briefErrorResponses`, and filled from the one shared
+`bearerChallenge` constant in `auth.go`. Drop that Header mapping and the field silently
+serializes into the JSON body: the status is still 401, every encoder still has its
+Unauthorized case, and the response violates the RFC —
+`TestEveryConnectionUnauthorizedEncoderSetsTheChallenge` is what catches it. The challenge
+is the bare scheme, with no `realm` and no `error="invalid_token"`: an `error` code names
+WHICH check failed, which is exactly the reason-specific signal the opaque message keeps
+off the wire.
 
 But not every rejection is about the token. `authenticate` returns a third value, an
 `unavailable bool`, saying whose fault the failure is: true when THIS service could not
 perform the check — no verifier wired, or Heimdall's JWKS unreachable
 (`domain.ErrKeyUnavailable`) — false when the token itself was refused. The three `JWTAuth`
 impls map the first to `ConnServiceUnavailableError` (**503**) and the second to
-`BadRequestError` (400). Both were 400 before, which answered a JWKS outage by telling every
+`UnauthorizedError` (401). Both were 400 before, which answered a JWKS outage by telling every
 caller holding a valid credential that theirs was bad, and telling them not to retry.
 The verdict is returned separately rather than sniffed from the message: "invalid bearer
 token" is deliberately the *same* string for every token-side refusal, so it cannot carry
 the distinction. The nil-actor branch — a verifier that accepts but names nobody — stays on
-the 400 side on purpose: it is indistinguishable from a refusal seen from outside, and
+the 401 side on purpose: it is indistinguishable from a refusal seen from outside, and
 `TestAuthenticate_RejectionMessagesAreOpaque` pins that a caller cannot learn which of the
 two happened.
 `attributedActor` still warns on a nil actor although no served route can reach it with

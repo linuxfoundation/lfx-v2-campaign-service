@@ -32,12 +32,18 @@ func (s *ConnectionService) JWTAuth(ctx context.Context, token string, _ *securi
 	switch {
 	case unavailable:
 		// The check could not be PERFORMED — no verifier wired, or Heimdall's JWKS is
-		// unreachable. Nothing was established about the caller's token, so 400 would
-		// blame a caller who may be holding a perfectly good one and tell them not to
-		// retry an outage that clears on its own.
+		// unreachable. Nothing was established about the caller's token, so 401 would
+		// blame a caller who may be holding a perfectly good one and send them to refresh
+		// a credential that was never the problem, for an outage that clears on its own.
 		return ctx, &conn.ConnServiceUnavailableError{Code: "503", Message: msg}
 	case msg != "":
-		return ctx, &conn.BadRequestError{Code: "400", Message: msg}
+		// 401, not 400: the request is well-formed and it is the CREDENTIAL that must be
+		// replaced. 400 conflated an expired token with an invalid payload — opposite
+		// client handling (refresh and retry vs. do not retry unchanged) — and made every
+		// auth failure read as a malformed-request spike in status-based alerting.
+		// The message is unchanged and stays reason-independent: the status says which
+		// KIND of thing is wrong, never which check failed.
+		return ctx, &conn.UnauthorizedError{Code: "401", Message: msg, WwwAuthenticate: bearerChallenge}
 	}
 	return ctx, nil
 }

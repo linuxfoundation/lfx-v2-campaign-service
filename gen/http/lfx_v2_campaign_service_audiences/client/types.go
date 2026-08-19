@@ -186,6 +186,16 @@ type CreateAudienceNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// CreateAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "create-audience" endpoint HTTP
+// response body for the "Unauthorized" error.
+type CreateAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetAudienceBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-audiences" service "get-audience" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -239,6 +249,16 @@ type GetAudienceNotFoundResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "get-audience" endpoint HTTP
+// response body for the "Unauthorized" error.
+type GetAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ListAudiencesBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-audiences" service "list-audiences" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -286,6 +306,16 @@ type ListAudiencesInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-audiences" service "list-audiences" endpoint HTTP
 // response body for the "NotFound" error.
 type ListAudiencesNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListAudiencesUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "list-audiences" endpoint HTTP
+// response body for the "Unauthorized" error.
+type ListAudiencesUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -365,6 +395,16 @@ type UpdateAudiencePreconditionRequiredResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// UpdateAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "update-audience" endpoint HTTP
+// response body for the "Unauthorized" error.
+type UpdateAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // BuildAudienceBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-audiences" service "build-audience" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -412,6 +452,16 @@ type BuildAudienceInternalServerErrorResponseBody struct {
 // "lfx-v2-campaign-service-audiences" service "build-audience" endpoint HTTP
 // response body for the "NotFound" error.
 type BuildAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// BuildAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-audiences" service "build-audience" endpoint HTTP
+// response body for the "Unauthorized" error.
+type BuildAudienceUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -580,6 +630,18 @@ func NewCreateAudienceNotFound(body *CreateAudienceNotFoundResponseBody) *lfxv2c
 	return v
 }
 
+// NewCreateAudienceUnauthorized builds a lfx-v2-campaign-service-audiences
+// service create-audience endpoint Unauthorized error.
+func NewCreateAudienceUnauthorized(body *CreateAudienceUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceaudiences.UnauthorizedError {
+	v := &lfxv2campaignserviceaudiences.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetAudienceAudienceOK builds a "lfx-v2-campaign-service-audiences"
 // service "get-audience" endpoint result from a HTTP "OK" response.
 func NewGetAudienceAudienceOK(body *GetAudienceResponseBody, etag *string) *lfxv2campaignserviceaudiences.Audience {
@@ -660,6 +722,18 @@ func NewGetAudienceNotFound(body *GetAudienceNotFoundResponseBody) *lfxv2campaig
 	return v
 }
 
+// NewGetAudienceUnauthorized builds a lfx-v2-campaign-service-audiences
+// service get-audience endpoint Unauthorized error.
+func NewGetAudienceUnauthorized(body *GetAudienceUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceaudiences.UnauthorizedError {
+	v := &lfxv2campaignserviceaudiences.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewListAudiencesResultOK builds a "lfx-v2-campaign-service-audiences"
 // service "list-audiences" endpoint result from a HTTP "OK" response.
 func NewListAudiencesResultOK(body *ListAudiencesResponseBody) *lfxv2campaignserviceaudiences.ListAudiencesResult {
@@ -730,6 +804,18 @@ func NewListAudiencesNotFound(body *ListAudiencesNotFoundResponseBody) *lfxv2cam
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewListAudiencesUnauthorized builds a lfx-v2-campaign-service-audiences
+// service list-audiences endpoint Unauthorized error.
+func NewListAudiencesUnauthorized(body *ListAudiencesUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceaudiences.UnauthorizedError {
+	v := &lfxv2campaignserviceaudiences.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -840,6 +926,18 @@ func NewUpdateAudiencePreconditionRequired(body *UpdateAudiencePreconditionRequi
 	return v
 }
 
+// NewUpdateAudienceUnauthorized builds a lfx-v2-campaign-service-audiences
+// service update-audience endpoint Unauthorized error.
+func NewUpdateAudienceUnauthorized(body *UpdateAudienceUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceaudiences.UnauthorizedError {
+	v := &lfxv2campaignserviceaudiences.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewBuildAudienceAudienceAccepted builds a
 // "lfx-v2-campaign-service-audiences" service "build-audience" endpoint result
 // from a HTTP "Accepted" response.
@@ -919,6 +1017,18 @@ func NewBuildAudienceNotFound(body *BuildAudienceNotFoundResponseBody) *lfxv2cam
 		Code:    *body.Code,
 		Message: *body.Message,
 	}
+
+	return v
+}
+
+// NewBuildAudienceUnauthorized builds a lfx-v2-campaign-service-audiences
+// service build-audience endpoint Unauthorized error.
+func NewBuildAudienceUnauthorized(body *BuildAudienceUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceaudiences.UnauthorizedError {
+	v := &lfxv2campaignserviceaudiences.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
 
 	return v
 }
@@ -1140,6 +1250,18 @@ func ValidateCreateAudienceNotFoundResponseBody(body *CreateAudienceNotFoundResp
 	return
 }
 
+// ValidateCreateAudienceUnauthorizedResponseBody runs the validations defined
+// on create-audience_Unauthorized_response_body
+func ValidateCreateAudienceUnauthorizedResponseBody(body *CreateAudienceUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetAudienceBadRequestResponseBody runs the validations defined on
 // get-audience_BadRequest_response_body
 func ValidateGetAudienceBadRequestResponseBody(body *GetAudienceBadRequestResponseBody) (err error) {
@@ -1205,6 +1327,18 @@ func ValidateGetAudienceNotFoundResponseBody(body *GetAudienceNotFoundResponseBo
 	return
 }
 
+// ValidateGetAudienceUnauthorizedResponseBody runs the validations defined on
+// get-audience_Unauthorized_response_body
+func ValidateGetAudienceUnauthorizedResponseBody(body *GetAudienceUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateListAudiencesBadRequestResponseBody runs the validations defined on
 // list-audiences_BadRequest_response_body
 func ValidateListAudiencesBadRequestResponseBody(body *ListAudiencesBadRequestResponseBody) (err error) {
@@ -1261,6 +1395,18 @@ func ValidateListAudiencesInternalServerErrorResponseBody(body *ListAudiencesInt
 // ValidateListAudiencesNotFoundResponseBody runs the validations defined on
 // list-audiences_NotFound_response_body
 func ValidateListAudiencesNotFoundResponseBody(body *ListAudiencesNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListAudiencesUnauthorizedResponseBody runs the validations defined
+// on list-audiences_Unauthorized_response_body
+func ValidateListAudiencesUnauthorizedResponseBody(body *ListAudiencesUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -1359,6 +1505,18 @@ func ValidateUpdateAudiencePreconditionRequiredResponseBody(body *UpdateAudience
 	return
 }
 
+// ValidateUpdateAudienceUnauthorizedResponseBody runs the validations defined
+// on update-audience_Unauthorized_response_body
+func ValidateUpdateAudienceUnauthorizedResponseBody(body *UpdateAudienceUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateBuildAudienceBadRequestResponseBody runs the validations defined on
 // build-audience_BadRequest_response_body
 func ValidateBuildAudienceBadRequestResponseBody(body *BuildAudienceBadRequestResponseBody) (err error) {
@@ -1415,6 +1573,18 @@ func ValidateBuildAudienceInternalServerErrorResponseBody(body *BuildAudienceInt
 // ValidateBuildAudienceNotFoundResponseBody runs the validations defined on
 // build-audience_NotFound_response_body
 func ValidateBuildAudienceNotFoundResponseBody(body *BuildAudienceNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateBuildAudienceUnauthorizedResponseBody runs the validations defined
+// on build-audience_Unauthorized_response_body
+func ValidateBuildAudienceUnauthorizedResponseBody(body *BuildAudienceUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
