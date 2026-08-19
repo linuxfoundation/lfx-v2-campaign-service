@@ -686,12 +686,35 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// POST /CampaignCriterions/QueryByIds distinguishes the two, and only the locations that
 	// are genuinely missing are attached. A read FAILURE is propagated rather than treated as
 	// "no criteria": "we could not check" must not collapse into the re-attach path.
+	//
+	// SCOPE — this is CAMPAIGN-level targeting only, and that is a real bound worth stating.
+	// Microsoft lets an AD GROUP carry its own location criteria, and when it does they
+	// OVERRIDE the campaign's for that group. This client never creates ad-group location
+	// criteria (only campaign-level ones, here), so a tree it builds end to end has exactly one
+	// place geo is decided. The gap is a REUSED ad group that a human added ad-group-level geo
+	// to outside this service: findOrCreateAdGroup matches by name and does not read its
+	// criteria, so that group's locations would govern delivery while this step reports the
+	// campaign targeting it attached. Closing it needs an ad-group criterion read
+	// (/AdGroupCriterions) in the reuse path, which is a separate change from campaign-level
+	// targeting; it is NOT claimed to be handled here. The same reuse discipline would apply:
+	// read, reconcile what is genuinely missing, refuse on a conflict.
 	if len(geoLocationIDs) > 0 {
 		wanted := geoLocationIDs
 		if alreadyExisted {
-			existing, rerr := c.existingLocationIDs(ctx, campaignID)
+			existing, excluded, rerr := c.existingLocationIDs(ctx, campaignID)
 			if rerr != nil {
 				return campaignPartial(), fmt.Errorf("microsoft-ads could not read the existing location criteria of reused campaign %s, so its geo targeting cannot be confirmed or safely completed (do not enable it until verified): %w", campaignID, rerr)
+			}
+			// A requested target that the campaign already EXCLUDES is refused, not attached.
+			// Microsoft applies exclusions AFTER inclusions, so adding a positive criterion on
+			// top of a NegativeCampaignCriterion does NOT override it — the country stays
+			// excluded while this run reports the targeting as attached, which is the same
+			// silent wrong-geo outcome the polarity check exists to prevent. Removing the
+			// exclusion is not this broker's call either: it is a deliberate decision made on a
+			// live campaign, so the conflict is surfaced for a human instead.
+			if conflicts := intersectExcluded(geoLocationIDs, excluded); len(conflicts) > 0 {
+				return campaignPartial(), fmt.Errorf("microsoft-ads geo targeting CONFLICTS with existing exclusions on reused campaign %s: location(s) %s are requested as targets but are already EXCLUDED by a negative campaign criterion, and Microsoft applies exclusions after inclusions, so attaching them would not take effect (remove the exclusions in Microsoft Advertising, or target different countries, before retrying)",
+					campaignID, strings.Join(conflicts, ", "))
 			}
 			missing := make([]string, 0, len(geoLocationIDs))
 			for _, id := range geoLocationIDs {

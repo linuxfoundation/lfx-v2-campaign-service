@@ -945,32 +945,40 @@ type queryCampaignCriterionsResponse struct {
 // A READ, so it is retried on 429. Any failure is propagated rather than being reported as an
 // empty set: "we could not check" must never collapse into "there is no targeting", which would
 // send the caller down the re-attach path and duplicate every criterion.
-func (c *Client) existingLocationIDs(ctx context.Context, campaignID string) (map[string]struct{}, error) {
+// It returns the POSITIVE targets and, separately, the LocationIds that are EXCLUDED by a
+// NegativeCampaignCriterion. The two are distinct answers: an excluded location is neither
+// "already targeted" (so the caller must not skip) nor safely attachable (so the caller must
+// not blindly attach either), and collapsing them into one set is what made an exclusion read
+// as a satisfied target.
+func (c *Client) existingLocationIDs(ctx context.Context, campaignID string) (map[string]struct{}, []string, error) {
 	body, err := c.doRequest(ctx, http.MethodPost, "CampaignCriterions/QueryByIds", queryCampaignCriterionsRequest{
 		CampaignCriterionIds: nil, // null => every criterion of this type on the campaign
 		CampaignId:           json.Number(campaignID),
 		CriterionType:        readCriterionTypeLocation,
 	}, true)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var resp queryCampaignCriterionsResponse
 	if uErr := json.Unmarshal(body, &resp); uErr != nil {
-		return nil, fmt.Errorf("decode CampaignCriterions/QueryByIds response: %w", uErr)
+		return nil, nil, fmt.Errorf("decode CampaignCriterions/QueryByIds response: %w", uErr)
 	}
 	// A TRUNCATED error array cannot be read as "no errors" here for the same reason it cannot
 	// on the add path: an error past the decode cap was DISCARDED, so a clean-looking prefix is
 	// not evidence the read succeeded. Under-reporting the existing criteria sends the reuse
 	// path into re-attaching locations that are already there.
 	if resp.PartialErrors.Truncated {
-		return nil, errors.New("microsoft-ads location criterion read returned a truncated error array, so the campaign's existing targeting cannot be determined")
+		return nil, nil, errors.New("microsoft-ads location criterion read returned a truncated error array, so the campaign's existing targeting cannot be determined")
 	}
 	if partialErrorsHaveAny(resp.PartialErrors.Items) {
 		// A read that partly failed does not describe the campaign's targeting, so it cannot be
 		// used to decide whether to attach.
-		return nil, fmt.Errorf("microsoft-ads location criterion read reported errors: %s", partialErrorCodes(resp.PartialErrors.Items))
+		return nil, nil, fmt.Errorf("microsoft-ads location criterion read reported errors: %s", partialErrorCodes(resp.PartialErrors.Items))
 	}
 	out := make(map[string]struct{}, len(resp.CampaignCriterions))
+	// LocationIds carried by a NegativeCampaignCriterion, i.e. EXCLUDED. Collected so the
+	// caller can refuse when one collides with a requested target — see the arm below.
+	var excluded []string
 	for _, cc := range resp.CampaignCriterions {
 		id := numberID(cc.Criterion.LocationId)
 		if id == "" {
@@ -989,20 +997,32 @@ func (c *Client) existingLocationIDs(ctx context.Context, campaignID string) (ma
 		// answers spend money, so the read refuses instead — the same discipline the truncation
 		// and PartialErrors guards above apply.
 		if cc.Type == nil {
-			return nil, fmt.Errorf("microsoft-ads location criterion read returned a criterion (location %s) with no Type, so it cannot be told apart from an exclusion and the campaign's existing targeting cannot be determined", id)
+			return nil, nil, fmt.Errorf("microsoft-ads location criterion read returned a criterion (location %s) with no Type, so it cannot be told apart from an exclusion and the campaign's existing targeting cannot be determined", id)
 		}
 		if *cc.Type == campaignCriterionTypeNegative {
-			// A known exclusion is classified, not an error — it simply is not a positive
-			// target, so it does not enter the set and the location is attached as requested.
+			// A known EXCLUSION. It does not enter the target set — but it must also be
+			// REPORTED, not merely skipped, and that distinction is the whole point.
+			//
+			// Skipping alone reproduces the bug this polarity check was added to fix, one
+			// step later: the reuse path would see the location as missing, attach a positive
+			// criterion, and report success — while Microsoft applies exclusions AFTER
+			// inclusions, so the country stays excluded and the run claims the targeting is in
+			// place. Attaching a target on top of an exclusion does not override it.
+			//
+			// Removing the exclusion is NOT something this client may do on its own: it is a
+			// deliberate targeting decision somebody made on a live campaign, and silently
+			// deleting it would be this broker overriding an operator. So the conflict is
+			// surfaced and the create refuses.
+			excluded = append(excluded, id)
 			continue
 		}
 		if *cc.Type != campaignCriterionTypeBiddable {
-			return nil, fmt.Errorf("microsoft-ads location criterion read returned an unrecognised criterion type %q (location %s), so the campaign's existing targeting cannot be determined",
+			return nil, nil, fmt.Errorf("microsoft-ads location criterion read returned an unrecognised criterion type %q (location %s), so the campaign's existing targeting cannot be determined",
 				truncate(*cc.Type, maxErrorBodyChars), id)
 		}
 		out[id] = struct{}{}
 	}
-	return out, nil
+	return out, excluded, nil
 }
 
 // nestedTruncated reports whether any collection's own BatchErrors array was truncated during
@@ -1015,4 +1035,24 @@ func nestedTruncated(items []msNestedErrorCollection) bool {
 		}
 	}
 	return false
+}
+
+// intersectExcluded returns the wanted LocationIds that appear in excluded, preserving the
+// caller's order. Separate from the read so the read reports FACTS (what is attached, what is
+// excluded) and the create path owns the POLICY (a collision refuses).
+func intersectExcluded(wanted, excluded []string) []string {
+	if len(wanted) == 0 || len(excluded) == 0 {
+		return nil
+	}
+	blocked := make(map[string]struct{}, len(excluded))
+	for _, id := range excluded {
+		blocked[id] = struct{}{}
+	}
+	var out []string
+	for _, id := range wanted {
+		if _, bad := blocked[id]; bad {
+			out = append(out, id)
+		}
+	}
+	return out
 }
