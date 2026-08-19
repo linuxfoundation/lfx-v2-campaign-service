@@ -50,8 +50,20 @@ enforced on the system row:
   because LinkedIn issues refresh tokens only to MDP-approved partners. It matters most on this
   path: the system row is the fallback for every project that has connected nothing, so a partial
   paste installs at exit 0, silently fails `CanRefresh()`, and resurfaces ~60 days later as the
-  expired-token outage refresh exists to prevent. A member present but empty or whitespace-only
-  counts as ABSENT, matching the required-key loop, so it cannot half-satisfy the group.
+  expired-token outage refresh exists to prevent. **The loop distinguishes THREE outcomes, not
+  two, and the third exists because of a boundary the guard cannot see.** The all-or-none guard
+  is `len(present) == 0 || len(absent) == 0 → nil`, so a member folded into `absent` is
+  indistinguishable from one never supplied. That was fine for one bad member out of three, but
+  when EVERY member is present and none is a usable string the absence is UNANIMOUS: `present`
+  is empty, the guard returns nil, and the malformed blob is persisted for dispatch to fail on,
+  decoding into an all-zero `linkedinCreds`. A guard misses that combination precisely because
+  the fault is uniform. So a member that is present but not a non-empty JSON string is now
+  collected separately as a TYPE fault and refused on its own terms — not folded into `present`
+  either, which would report `"client_id": 123` as an all-or-none violation and send an operator
+  hunting for a field they did supply. Genuine omission still means "absent", so a bearer-only
+  row installs unchanged. The required-key loop was swept for the same shape: it cannot leak,
+  because every outcome there is fatal with no escape hatch, but it reported a mistyped key as
+  "missing", so it now separates the two for the message alone.
 - **Shape rules** (`valueShapes`) come from TWO sources, because that is where they live:
   `design/connection.go` `Pattern()` for LinkedIn, Meta and X, and the runtime validators for
   Google Ads, Microsoft and Reddit, whose designs check presence alone. Mirroring only the design

@@ -312,6 +312,28 @@ var (
 	// right one.
 	ErrApplicationCredentialsInvalid = errors.New("the stored application credentials were rejected by the platform")
 
+	// ErrTokenRequestRejected — the platform refused the token REQUEST on protocol
+	// grounds (RFC 6749 §5.2 `invalid_request`, `unsupported_grant_type` or
+	// `invalid_scope`), so neither stored credential was ever evaluated.
+	//
+	// It is separate from ErrApplicationCredentialsInvalid because the OWNER differs, and
+	// the owner is the whole point of this vocabulary. An invalid application credential is
+	// something an operator stored and can correct. A refused request is something THIS
+	// SERVICE built: there is no field on a connection whose editing makes a malformed
+	// refresh request well-formed, and `invalid_scope` names a parameter our LinkedIn
+	// client does not even send. Reporting it as an application-credential fault produces a
+	// connection-repair 409 that sends an operator to audit a correct configuration — the
+	// same "actionable and provably useless" remedy the ErrCredentialsExpired split was
+	// created to retire, one taxonomy level down.
+	//
+	// The remedy it carries is "file a bug against this service", which is why it must not
+	// share a reason token with either credential fault: an operator greping the reason
+	// vocabulary needs to see that nothing they own is broken.
+	//
+	// PERMANENT, never retryable: nothing about waiting corrects a request this service is
+	// constructing wrongly.
+	ErrTokenRequestRejected = errors.New("the platform rejected the token request itself; this is a service defect")
+
 	// ErrCredentialsAbsent — the connection row exists but its credential column is
 	// EMPTY. Nothing was decrypted because there was nothing to decrypt.
 	//

@@ -68,24 +68,45 @@ application credential, and the two have opposite remedies, so `fetchToken` pars
 RFC 6749 §5.2's `error`. Only the parsed code is matched against a local constant;
 `error_description` is never read and no upstream byte reaches the message.
 
-**All six §5.2 codes are handled, and they split by REMEDY rather than one at a
-time.** The codes are a CLOSED set, so enumerating them once means only a body
-outside the RFC — or one that cannot be read — reaches a fallback. Exactly ONE code,
-`invalid_grant`, describes a dead grant: the RFC reserves it for an authorization
-grant or refresh token that is "invalid, expired, revoked, does not match the
-redirection URI ..., or was issued to another client", and that is the case a member
-re-authorization repairs. The other five — `invalid_client`, `invalid_request`,
-`unauthorized_client`, `unsupported_grant_type`, `invalid_scope` — describe the
-CLIENT or the REQUEST: a wrong `client_id`/`client_secret` or deleted app, a
-malformed request, an app not approved for this grant type (on LinkedIn, the
-Marketing Developer Platform case), an unsupported grant, or a bad scope. **None is
-repaired by a member re-authorization**, so all five take
-`ErrApplicationCredentialsInvalid`, whose remedy is "an operator must correct the
-connection". A binary `invalid_client`-or-expired split sent four of those five to
-"re-authorize the connection" — advice that is actionable and provably useless, and
-worse than no advice because the member repeats an authorization whose result was
-never the problem. The sentinel is deliberately a little wider than its name: the
-remedy is identical across the five, and the remedy is what a caller acts on.
+**All six §5.2 codes are handled, and they split THREE ways — by who can repair
+them, not by taxonomy.** The codes are a CLOSED set, so enumerating them once means
+only a body outside the RFC — or one that cannot be read — reaches a fallback.
+
+| §5.2 code | sentinel | who repairs it |
+| --- | --- | --- |
+| `invalid_grant` | `ErrCredentialsExpired` | the MEMBER re-authorizes |
+| `invalid_client`, `unauthorized_client` | `ErrApplicationCredentialsInvalid` | an OPERATOR edits the connection |
+| `invalid_request`, `unsupported_grant_type`, `invalid_scope` | `ErrTokenRequestRejected` | WE fix the service |
+
+Exactly ONE code, `invalid_grant`, describes a dead grant: the RFC reserves it for an
+authorization grant or refresh token that is "invalid, expired, revoked, does not
+match the redirection URI ..., or was issued to another client", and that is the case
+a member re-authorization repairs. A binary `invalid_client`-or-expired split sent
+the other five to "re-authorize the connection" — advice that is actionable and
+provably useless, and worse than no advice because the member repeats an
+authorization whose result was never the problem.
+
+**Correcting that produced a second, subtler version of the same defect, and the
+three-way split is the fix.** Folding all five non-grant codes onto
+`ErrApplicationCredentialsInvalid` is true in its negative claim — no member
+re-authorization repairs any of them — but the positive claim does not follow. Only
+`invalid_client` and `unauthorized_client` name the APPLICATION REGISTRATION, which is
+something an operator stored and can go and correct. `invalid_request`,
+`unsupported_grant_type` and `invalid_scope` name the REQUEST or the PROTOCOL: LinkedIn
+refused the SHAPE of what this service constructed, so neither stored credential was
+evaluated at all. Reporting them as an application-credential fault emits a
+connection-repair 409 telling an operator their `client_id`/`client_secret` are wrong,
+sending them to audit a correct configuration — the same actionable-and-useless remedy
+one taxonomy level down. `invalid_scope` is the clearest case: this client sends **no
+`scope` parameter at all** on a `refresh_token` grant, so there is no scope field on a
+connection anyone could fix.
+
+Those three therefore take `ErrTokenRequestRejected`, which reaches the caller as
+`reason=token_request_rejected`. It is the only reason in the connection vocabulary
+that points at this service rather than at the caller's configuration: the remedy is
+"file a bug", and its message says so explicitly rather than naming any credential.
+No sentinel here is wider than its name — each exists because a call site acts on it
+differently.
 
 **The fallback is a choice, not an accident.** An absent, non-JSON or unrecognised
 code takes the EXPIRED arm. That asymmetry is picked because its failure mode is
@@ -101,12 +122,16 @@ consumer of this classification matches structurally (`errors.Is`), so an
 to all of them — it carries neither a reason sentinel nor `ErrConnectionNotUsable`
 and falls through to the generic retryable 503, the same opaque surface the split
 exists to retire. It is therefore its own typed error unwrapping to the exported
-`ErrApplicationCredentialsInvalid`. The dispatch layer re-tags an expired credential
-as `ErrConnectionNotUsable` + `ErrCredentialsExpired`, and a rejected application
-credential as `ErrConnectionNotUsable` + `domain.ErrApplicationCredentialsInvalid`:
-the shared sentinel keeps BOTH out of the retryable bucket and out of an opaque 500,
-while the distinct reason carries the remedy — the member re-authorizes for one, the
-operator who configured the connection corrects it for the other. No token, secret
+`ErrApplicationCredentialsInvalid`, and a refused token request its own typed error
+unwrapping to `ErrTokenRequestRejected`. The dispatch layer (`linkedinExpiry`) re-tags
+each as `ErrConnectionNotUsable` plus its own reason sentinel: the shared sentinel
+keeps ALL THREE out of the retryable bucket and out of an opaque 500, while the
+distinct reason carries the remedy — the member re-authorizes, the operator who
+configured the connection corrects it, or we fix the service. **`linkedinExpiry` and
+`linkedinConnectionDefect` must list the same sentinels.** The predicate is what call
+sites guard on, so a sentinel re-tagged by the first but missing from the second is
+classified correctly and then never reached — which is exactly how `invalid_client`
+was stranded on the generic arm before. No token, secret
 or upstream body is ever logged or echoed into an error.
 
 **A 401 answering a MUTATING request states two facts, not one.** "Reconnect this

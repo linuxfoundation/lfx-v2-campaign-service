@@ -921,24 +921,38 @@ func TestInvalidGrantStillReportsAnExpiredCredential(t *testing.T) {
 	}
 }
 
-// TestNonGrantOAuthCodesAreApplicationFaults pins the correction to the binary split.
+// TestNonGrantOAuthCodesSplitByWhoCanRepairThem pins the THREE-way classification.
 //
-// RFC 6749 §5.2 defines six token-endpoint codes and only ONE of them — invalid_grant —
-// describes an expired or revoked grant. The other five describe the CLIENT or the REQUEST:
-// a member re-authorization cannot repair any of them, so classifying them as
-// ErrCredentialsExpired hands the operator a remedy that is actionable and provably useless.
-// They take the application-credentials sentinel, whose remedy is "correct the connection".
+// This test previously asserted a two-way split, and it was WRONG for three of the five codes
+// it covered. It required `invalid_request`, `unsupported_grant_type` and `invalid_scope` to
+// unwrap to ErrApplicationCredentialsInvalid, which resolves to a connection-repair 409
+// telling an operator that their stored client_id/client_secret are wrong. Those three
+// describe the REQUEST or the PROTOCOL — LinkedIn never evaluated either credential — so the
+// remedy was actionable and provably useless, the exact failure the invalid_client split was
+// built to retire, one taxonomy level down. It passed against that defect because the fixture
+// and the code shared the assumption that "not a dead grant" implies "an operator's fault".
 //
-// invalid_client already had this treatment; the other four are what this test adds. Each is
-// asserted on BOTH 400 and 401, since LinkedIn uses either for the same fault.
-func TestNonGrantOAuthCodesAreApplicationFaults(t *testing.T) {
-	for _, code := range []string{
-		"invalid_client",
-		"invalid_request",
-		"unauthorized_client",
-		"unsupported_grant_type",
-		"invalid_scope",
-	} {
+// RFC 6749 §5.2 defines six codes and they split by WHO can repair them:
+//
+//   - invalid_grant                                  → the MEMBER re-authorizes.
+//   - invalid_client, unauthorized_client            → an OPERATOR edits the connection.
+//   - invalid_request, unsupported_grant_type,
+//     invalid_scope                                  → WE fix the service.
+//
+// Each is asserted on BOTH 400 and 401, since LinkedIn uses either for the same fault, and
+// each asserts the two sentinels it must NOT carry as well as the one it must — a test that
+// only checks the positive passes against a classifier that returns everything.
+func TestNonGrantOAuthCodesSplitByWhoCanRepairThem(t *testing.T) {
+	cases := map[string]struct {
+		want, notA, notB error
+	}{
+		"invalid_client":         {ErrApplicationCredentialsInvalid, ErrCredentialsExpired, ErrTokenRequestRejected},
+		"unauthorized_client":    {ErrApplicationCredentialsInvalid, ErrCredentialsExpired, ErrTokenRequestRejected},
+		"invalid_request":        {ErrTokenRequestRejected, ErrCredentialsExpired, ErrApplicationCredentialsInvalid},
+		"unsupported_grant_type": {ErrTokenRequestRejected, ErrCredentialsExpired, ErrApplicationCredentialsInvalid},
+		"invalid_scope":          {ErrTokenRequestRejected, ErrCredentialsExpired, ErrApplicationCredentialsInvalid},
+	}
+	for code, tc := range cases {
 		for _, status := range []int{http.StatusBadRequest, http.StatusUnauthorized} {
 			t.Run(fmt.Sprintf("%s/%d", code, status), func(t *testing.T) {
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -949,14 +963,16 @@ func TestNonGrantOAuthCodesAreApplicationFaults(t *testing.T) {
 
 				c := NewClient(refreshableCreds(), RuntimeConfig{}, withTokenURL(srv.URL))
 				_, err := c.accessTokenValue(context.Background())
-				if !errors.Is(err, ErrApplicationCredentialsInvalid) {
-					t.Errorf("%s must unwrap to ErrApplicationCredentialsInvalid: it describes the "+
-						"client or the request, not a dead grant, so no member re-authorization "+
-						"repairs it (err = %v)", code, err)
+				if !errors.Is(err, tc.want) {
+					t.Errorf("%s must unwrap to %v — that is the only remedy that can repair it (err = %v)",
+						code, tc.want, err)
 				}
-				if errors.Is(err, ErrCredentialsExpired) {
-					t.Errorf("%s classified as ErrCredentialsExpired — that remedy tells a member to "+
-						"re-authorize, which cannot fix an application or request fault (err = %v)", code, err)
+				for _, wrong := range []error{tc.notA, tc.notB} {
+					if errors.Is(err, wrong) {
+						t.Errorf("%s also classified as %v, which names a DIFFERENT owner: the caller "+
+							"acts on the reason token, so carrying two hands out a remedy that cannot "+
+							"work (err = %v)", code, wrong, err)
+					}
 				}
 				// The classification travels; the upstream body never does.
 				for _, leak := range []string{"sk-LEAKME", "app 99"} {
@@ -965,6 +981,37 @@ func TestNonGrantOAuthCodesAreApplicationFaults(t *testing.T) {
 					}
 				}
 			})
+		}
+	}
+}
+
+// TestTokenRequestRejectedNamesNoOperatorRemedy pins the MESSAGE, not only the sentinel.
+//
+// The sentinel decides the reason token; the message is what a human reads in a persisted
+// campaign Step. An ErrTokenRequestRejected whose text told someone to correct their
+// credentials would reproduce the defect this split fixed while every errors.Is assertion
+// above stayed green.
+func TestTokenRequestRejectedNamesNoOperatorRemedy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_scope"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewClient(refreshableCreds(), RuntimeConfig{}, withTokenURL(srv.URL))
+	_, err := c.accessTokenValue(context.Background())
+	if err == nil {
+		t.Fatal("invalid_scope was accepted")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "defect in this service") {
+		t.Errorf("the message must say the fault is OURS; an operator reading it otherwise goes and "+
+			"audits a correct connection: %q", msg)
+	}
+	for _, wrongRemedy := range []string{"are wrong or unknown to LinkedIn", "expired, revoked or invalid"} {
+		if strings.Contains(msg, wrongRemedy) {
+			t.Errorf("the message carries a credential remedy (%q) for a fault in which neither "+
+				"credential was evaluated: %q", wrongRemedy, msg)
 		}
 	}
 }

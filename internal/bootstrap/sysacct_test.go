@@ -971,3 +971,118 @@ func TestPaddedLinkedInRefreshTrioIsRefused(t *testing.T) {
 		}
 	})
 }
+
+// TestAllMalformedLinkedInRefreshTrioIsRefused drives the boundary combination the
+// all-or-none guard could not see: EVERY member of the group present, and NONE of them a
+// usable string.
+//
+// The guard is `len(present) == 0 || len(absent) == 0 → return nil`, which is correct for
+// what it was written for — no member supplied is a legitimate bearer-only row. But a
+// non-string value used to be folded into `absent`, so three malformed members produced
+// present=0, absent=3, unanimous absence, and the guard waved the blob through to
+// canonicalCredentials. Dispatch then cannot decode it into linkedinCreds.
+//
+// A test with ONE bad member and two good ones passes against that bug: it leaves
+// present=2, absent=1, and the all-or-none arm fires for the wrong reason. Only a
+// UNIFORM fault reaches the hole, which is precisely why a guard misses it — the
+// condition it tests is satisfied by the failure being total.
+//
+// The refusal must also NOT be the all-or-none message. `"client_id": 123` reported as
+// "supplied refresh_token but missing client_id" sends an operator looking for a field
+// they did supply, so the type fault gets its own refusal naming the offending keys.
+func TestAllMalformedLinkedInRefreshTrioIsRefused(t *testing.T) {
+	for name, tc := range map[string]struct {
+		creds    string
+		wantKeys []string
+	}{
+		// The case the guard could not see: all three present, none a string.
+		"all three are numbers": {
+			`{"access_token":"tok","refresh_token":1,"client_id":2,"client_secret":3}`,
+			[]string{"client_id", "client_secret", "refresh_token"}},
+		"all three are objects": {
+			`{"access_token":"tok","refresh_token":{},"client_id":{"a":1},"client_secret":{}}`,
+			[]string{"client_id", "client_secret", "refresh_token"}},
+		"all three are explicit null": {
+			`{"access_token":"tok","refresh_token":null,"client_id":null,"client_secret":null}`,
+			[]string{"client_id", "client_secret", "refresh_token"}},
+		"all three are arrays": {
+			`{"access_token":"tok","refresh_token":[],"client_id":["ci"],"client_secret":[]}`,
+			[]string{"client_id", "client_secret", "refresh_token"}},
+		"all three are booleans": {
+			`{"access_token":"tok","refresh_token":true,"client_id":false,"client_secret":true}`,
+			[]string{"client_id", "client_secret", "refresh_token"}},
+		"all three are blank strings": {
+			`{"access_token":"tok","refresh_token":"","client_id":"   ","client_secret":"\t"}`,
+			[]string{"client_id", "client_secret", "refresh_token"}},
+		// A single malformed member alongside two good ones must ALSO be refused, and must
+		// name the TYPE fault rather than reporting the good members as an all-or-none
+		// violation. This is the case the old code got right by accident and described wrongly.
+		"one number among two good members": {
+			`{"access_token":"tok","refresh_token":"rt","client_id":123,"client_secret":"cs"}`,
+			[]string{"client_id"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := &stubRepo{getErr: domain.ErrNotFound}
+			err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+				model.ProviderLinkedInAds, "509123456", false,
+				map[string]string{"org_id": "123"}, []byte(tc.creds))
+			if err == nil || repo.created != nil {
+				t.Fatalf("err = %v, created = %+v; want a refusal: a blob whose refresh trio holds no "+
+					"strings installs cleanly on the SYSTEM row and fails at every dispatch, where "+
+					"linkedinCreds cannot decode it",
+					err, repo.created)
+			}
+			if !strings.Contains(err.Error(), "not as a non-empty string") {
+				t.Errorf("err = %v, want the TYPE-fault refusal: reporting a present-but-mistyped key "+
+					"as an all-or-none violation sends an operator looking for a field they supplied", err)
+			}
+			for _, k := range tc.wantKeys {
+				if !strings.Contains(err.Error(), k) {
+					t.Errorf("err = %v, want it to name the offending key %s", err, k)
+				}
+			}
+		})
+	}
+}
+
+// TestBearerOnlyLinkedInRowStillInstalls is the counterweight to the test above. The fix
+// must distinguish GENUINELY OMITTED from PRESENT-BUT-MISTYPED, and a fix that refused
+// both would satisfy every rejection assertion while making the LF system row
+// uninstallable for the majority of apps — LinkedIn issues refresh tokens only to approved
+// Marketing Developer Platform partners, so supplying none of the trio is the common case.
+//
+// TestInstallAcceptsBothValidLinkedInCredentialShapes covers this too; it is restated here
+// because it is the mutation that a wrong version of THIS fix would survive.
+func TestBearerOnlyLinkedInRowStillInstalls(t *testing.T) {
+	repo := &stubRepo{getErr: domain.ErrNotFound}
+	if err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderLinkedInAds, "509123456", false,
+		map[string]string{"org_id": "123"}, []byte(`{"access_token":"tok"}`)); err != nil {
+		t.Fatalf("a bearer-only LinkedIn row was refused: %v — omission is not a type fault, and "+
+			"most apps hold no refresh token at all", err)
+	}
+	if repo.created == nil {
+		t.Fatal("a valid bearer-only credential must reach the repository")
+	}
+}
+
+// TestMistypedRequiredKeyIsNotReportedAsMissing sweeps the REQUIRED-key loop for the same
+// shape. That loop has no all-or-none escape hatch — every outcome is fatal, so a uniform
+// type fault cannot slip through it the way it slipped through the conditional group — but
+// it collapsed omitted, non-string and blank into one "are missing" message, which names
+// the wrong correction for two of the three.
+func TestMistypedRequiredKeyIsNotReportedAsMissing(t *testing.T) {
+	repo := &stubRepo{getErr: domain.ErrNotFound}
+	err := InstallSystemCredentials(context.Background(), repo, fakeEnc{},
+		model.ProviderGoogleAds, "5091234567", false, nil,
+		[]byte(`{"refresh_token":"rt","client_id":99,"client_secret":"cs","developer_token":"dt"}`))
+	if err == nil || repo.created != nil {
+		t.Fatalf("err = %v, created = %+v; want a refusal", err, repo.created)
+	}
+	if strings.Contains(err.Error(), "are missing") {
+		t.Errorf("a SUPPLIED but mistyped client_id was reported as missing: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not as a non-empty string") || !strings.Contains(err.Error(), "client_id") {
+		t.Errorf("err = %v, want the type-fault refusal naming client_id", err)
+	}
+}

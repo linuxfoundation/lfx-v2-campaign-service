@@ -64,17 +64,26 @@ func canonicalCredentials(provider model.Provider, credsJSON []byte) ([]byte, er
 		}
 		folded[credentialKey(k)] = v
 	}
-	var missing, padded []string
+	var missing, mistyped, padded []string
 	for _, want := range requiredCredentialKeys[provider] {
 		// Decoded as a STRING, not merely checked for presence: every dispatcher
 		// unmarshals these fields into string struct members, so `"client_id": 123`
 		// or `"  "` installs cleanly, exits 0, and fails at dispatch — the exact
 		// deferred failure this validation exists to prevent.
+		//
+		// Omitted and present-but-not-a-string are reported SEPARATELY, matching
+		// validateConditionalGroups below. Here the distinction is only about the
+		// MESSAGE — every outcome in this loop is fatal, so there is no all-or-none
+		// escape hatch for a uniform type fault to slip through — but "credentials are
+		// missing client_id" for `"client_id": 123` sends an operator hunting for a
+		// field they did supply, and the two faults are corrected differently.
 		var v string
 		raw, ok := folded[credentialKey(want)]
 		switch {
-		case !ok || json.Unmarshal(raw, &v) != nil || strings.TrimSpace(v) == "":
+		case !ok:
 			missing = append(missing, want)
+		case json.Unmarshal(raw, &v) != nil, strings.TrimSpace(v) == "":
+			mistyped = append(mistyped, want)
 		case v != strings.TrimSpace(v):
 			// Surrounding whitespace is REFUSED, not trimmed away. Testing only the
 			// trimmed value while encrypting the original was the same deferred failure
@@ -91,6 +100,11 @@ func canonicalCredentials(provider model.Provider, credsJSON []byte) ([]byte, er
 	if len(missing) > 0 {
 		sort.Strings(missing)
 		return nil, fmt.Errorf("bootstrap: %s credentials are missing %s", provider, strings.Join(missing, ", "))
+	}
+	if len(mistyped) > 0 {
+		sort.Strings(mistyped)
+		return nil, fmt.Errorf("bootstrap: %s credentials supply %s but not as a non-empty string; every dispatcher decodes these into string fields, so the row would install cleanly and fail at dispatch",
+			provider, strings.Join(mistyped, ", "))
 	}
 	if len(padded) > 0 {
 		sort.Strings(padded)
@@ -127,14 +141,34 @@ func validateConditionalGroups(provider model.Provider, folded map[string]json.R
 	if !ok {
 		return nil
 	}
-	var present, absent, padded []string
+	var present, absent, padded, mistyped []string
 	for _, want := range group {
-		// Same decode discipline as the required-key loop above: a non-string or a
-		// whitespace-only value is not a supplied credential, so it counts as absent
-		// rather than satisfying the group and installing an unusable trio.
+		// Three outcomes, not two. A key that is genuinely OMITTED is absent, and absence
+		// is legitimate here — a bearer-only LinkedIn row supplies none of the trio. A key
+		// that is PRESENT but is not a non-empty JSON string is a TYPE FAULT, and folding
+		// it into `absent` was the defect: when every member of the group is malformed the
+		// absence is UNANIMOUS, `present` is empty, the all-or-none guard returns nil, and
+		// the malformed blob is persisted for dispatch to fail on decoding into
+		// linkedinCreds. The guard cannot see a uniform fault by construction, so the type
+		// fault is collected separately and refused on its own terms.
+		//
+		// It is NOT folded into `present` either: that would report an all-or-none
+		// violation ("supplied refresh_token but missing client_id") for what is actually
+		// `"client_id": 123`, sending the operator to look for a field they did supply.
 		var v string
 		raw, found := folded[credentialKey(want)]
-		if found && json.Unmarshal(raw, &v) == nil && strings.TrimSpace(v) != "" {
+		if !found {
+			absent = append(absent, want)
+			continue
+		}
+		if json.Unmarshal(raw, &v) != nil {
+			// Present and not a JSON string at all: a number, object, array or null.
+			// Every dispatcher unmarshals these into string struct members, so this
+			// blob decodes to an all-zero struct at dispatch, far from the operator.
+			mistyped = append(mistyped, want)
+			continue
+		}
+		if strings.TrimSpace(v) != "" {
 			// Surrounding whitespace is REFUSED here for the same reason the required-key
 			// loop refuses it, and this loop is where the refresh trio is reached at all:
 			// requiredCredentialKeys[linkedin-ads] is {"access_token"} ONLY, so the padding
@@ -150,7 +184,16 @@ func validateConditionalGroups(provider model.Provider, folded map[string]json.R
 			present = append(present, want)
 			continue
 		}
-		absent = append(absent, want)
+		// A supplied-but-blank string ("" or "   ") is a supplied key holding no
+		// credential. It is the same type as the field it should be, so it is a value
+		// fault rather than a type fault, but it is equally unusable: refusing it here
+		// keeps a whitespace-only client_secret from satisfying the group.
+		mistyped = append(mistyped, want)
+	}
+	if len(mistyped) > 0 {
+		sort.Strings(mistyped)
+		return fmt.Errorf("bootstrap: %s credentials supply %s but not as a non-empty string; every dispatcher decodes these into string fields, so the row would install cleanly and fail at dispatch",
+			provider, strings.Join(mistyped, ", "))
 	}
 	if len(padded) > 0 {
 		sort.Strings(padded)

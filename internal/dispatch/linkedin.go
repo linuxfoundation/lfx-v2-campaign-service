@@ -81,12 +81,14 @@ func linkedinConnectionLabel(res *resolved) string {
 // that simply aged out reaches the caller as a generic upstream failure whose cause
 // is visible only in a server log.
 //
-// It re-tags an invalid APPLICATION credential (linkedin.ErrApplicationCredentialsInvalid,
-// LinkedIn's `invalid_client`) the same way, onto its own reason sentinel. Both are permanent
-// connection defects that must not reach the retryable 503 arm, which is why one helper covers
-// them; only the REMEDY differs, and that is exactly what the distinct reason sentinel carries.
-// Re-tagging it as ErrCredentialsExpired instead would send an operator whose client_id holds a
-// typo to re-authorize a member — actionable, and provably unable to help.
+// It re-tags two further permanent token-exchange faults the same way, each onto its own
+// reason sentinel: an invalid APPLICATION credential (linkedin.ErrApplicationCredentialsInvalid
+// — LinkedIn's `invalid_client`/`unauthorized_client`) and a token REQUEST LinkedIn refused on
+// protocol grounds (linkedin.ErrTokenRequestRejected — `invalid_request`,
+// `unsupported_grant_type`, `invalid_scope`). All three are permanent connection-path defects
+// that must not reach the retryable 503 arm, which is why one helper covers them; only the
+// REMEDY differs, and that is exactly what the distinct reason sentinels carry — the member
+// re-authorizes, the operator edits the connection, or we fix the service.
 //
 // A no-op for every other error, so call sites can apply it unconditionally. The
 // client's message already names the connection; no credential material is added.
@@ -94,6 +96,12 @@ func linkedinExpiry(err error) error {
 	switch {
 	case err == nil:
 		return err
+	case errors.Is(err, linkedin.ErrTokenRequestRejected):
+		// Checked FIRST. This arm means LinkedIn never evaluated either stored credential,
+		// so both credential remedies below are wrong for it: one sends a member through a
+		// re-authorization and the other sends an operator to audit their client_id, and
+		// neither can make a malformed refresh request well-formed.
+		return fmt.Errorf("%w: %w: %w", domain.ErrConnectionNotUsable, domain.ErrTokenRequestRejected, err)
 	case errors.Is(err, linkedin.ErrApplicationCredentialsInvalid):
 		// Checked BEFORE the expiry arm. The two sentinels are disjoint today, but if an
 		// error ever carried both, the operator-actionable reading is the one that must win:
@@ -107,15 +115,21 @@ func linkedinExpiry(err error) error {
 	}
 }
 
-// linkedinConnectionDefect reports whether err is a PERMANENT connection defect that
-// linkedinExpiry re-tags — an expired member credential or a rejected application credential.
+// linkedinConnectionDefect reports whether err is a PERMANENT connection-path defect that
+// linkedinExpiry re-tags — an expired member credential, a rejected application credential,
+// or a token request LinkedIn refused on protocol grounds.
+//
+// It must list every sentinel linkedinExpiry handles. A sentinel added there and missed here
+// is re-tagged correctly and then never reached, which is the exact shape of the
+// `invalid_client` bug described below.
 //
 // The call sites guard on this rather than on ErrCredentialsExpired alone. Guarding on the
 // expiry sentinel is what stranded `invalid_client` on the generic arm: linkedinExpiry would
 // have classified it correctly, but the `if` in front of it never let it through.
 func linkedinConnectionDefect(err error) bool {
 	return errors.Is(err, linkedin.ErrCredentialsExpired) ||
-		errors.Is(err, linkedin.ErrApplicationCredentialsInvalid)
+		errors.Is(err, linkedin.ErrApplicationCredentialsInvalid) ||
+		errors.Is(err, linkedin.ErrTokenRequestRejected)
 }
 
 // linkedinCredentials maps the decrypted stored credentials onto the client's

@@ -66,6 +66,46 @@ func (e *applicationCredentialsError) Error() string {
 
 func (e *applicationCredentialsError) Unwrap() error { return ErrApplicationCredentialsInvalid }
 
+// ErrTokenRequestRejected marks a token exchange LinkedIn refused with an RFC 6749 §5.2
+// code that describes the REQUEST or the PROTOCOL rather than either credential:
+// `invalid_request` (malformed, missing or repeated parameter), `unsupported_grant_type`
+// (the server does not implement the grant this client asked for) or `invalid_scope`
+// (an invalid, unknown or malformed scope — which this client does not even send, so a
+// scope fault can only originate here or in a proxy).
+//
+// It is deliberately NEITHER of the two sentinels above, and this split corrects an
+// over-correction. Folding these three into ErrApplicationCredentialsInvalid produced a
+// connection-repair 409 telling an operator that their stored client_id/client_secret are
+// wrong. They are not: the credentials were never evaluated. What LinkedIn rejected is the
+// SHAPE of the request this service constructed, and editing a credential cannot repair a
+// malformed refresh request — the same "actionable and provably useless" failure the
+// invalid_client split existed to retire, aimed at a different remedy.
+//
+// The correct remedy is neither "re-authorize" nor "edit your credentials": it is "this is
+// a service defect, file a bug". Nothing an operator owns is broken.
+//
+// PERMANENT, never retryable: nothing about waiting changes a request this client is
+// building wrongly.
+var ErrTokenRequestRejected = errors.New("linkedin rejected the token request itself")
+
+// tokenRequestRejectedError names the connection whose refresh could not be attempted
+// because the request was refused on protocol grounds. Like its two siblings it carries
+// no token material — only the operator-set connection label, which is never secret, and
+// the status, which is recorded for classification and never rendered.
+type tokenRequestRejectedError struct {
+	Connection string
+	StatusCode int
+}
+
+func (e *tokenRequestRejectedError) Error() string {
+	return fmt.Sprintf("linkedin: %s could not be refreshed because LinkedIn rejected the token "+
+		"REQUEST itself (malformed request, unsupported grant type, or invalid scope) — this is a "+
+		"defect in this service, not in the stored connection; editing credentials or "+
+		"re-authorizing will not help", e.Connection)
+}
+
+func (e *tokenRequestRejectedError) Unwrap() error { return ErrTokenRequestRejected }
+
 // credentialsExpiredError names the connection a human must reconnect. It
 // deliberately carries NO token material — only the operator-set connection
 // label, a short cause, and the request coordinates the outcome classifier needs.
@@ -342,14 +382,36 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 		// ignored; the parsed `error` code is matched against a fixed local allow-list and
 		// never rendered, so no upstream byte reaches the message on any arm.
 		if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnauthorized {
-			if _, appFault := oauthAppFaultCodes[oauthErrorCode(buf.Bytes())]; appFault {
-				// Operator/implementation fault: the client_id/client_secret pair is wrong,
-				// unknown to LinkedIn or the app was deleted (invalid_client); the app is
-				// not authorized for this grant type (unauthorized_client); or the request
-				// itself is malformed, uses an unsupported grant, or asks for an invalid
-				// scope. Deliberately NOT an ErrCredentialsExpired — that resolves to
-				// "re-authorize", and no member re-authorization repairs any of these.
-				// Whoever configured the connection, or this client, must correct it.
+			code := oauthErrorCode(buf.Bytes())
+			if _, reqFault := oauthRequestFaultCodes[code]; reqFault {
+				// Service/protocol fault: LinkedIn refused the SHAPE of the request, so
+				// neither stored credential was ever evaluated. Returning the application-
+				// credentials classification here — as this client briefly did — produces a
+				// connection-repair 409 telling an operator to correct a client_id that
+				// LinkedIn never looked at. Editing a credential cannot make a malformed
+				// refresh request well-formed; only a change to this service can.
+				//
+				// Typed for the same structural reason as its two siblings: an error that
+				// unwraps to nothing carries neither this reason nor
+				// domain.ErrConnectionNotUsable and falls through to the generic retryable
+				// 503. Only the classification travels; no upstream byte is rendered.
+				return "", &tokenRequestRejectedError{
+					Connection: c.creds.ConnectionLabel(),
+					StatusCode: resp.StatusCode,
+				}
+			}
+			if _, appFault := oauthAppFaultCodes[code]; appFault {
+				// OPERATOR fault, and only that: the client_id/client_secret pair is
+				// wrong, unknown to LinkedIn or the app was deleted (invalid_client), or
+				// the app is not authorized for this grant type (unauthorized_client —
+				// on LinkedIn, an app lacking Marketing Developer Platform approval for
+				// refresh-token grants). Both name the APPLICATION registration, which is
+				// what an operator stored and can correct.
+				//
+				// Deliberately NOT ErrCredentialsExpired — that resolves to "re-authorize",
+				// and no member re-authorization repairs an application credential. Equally
+				// deliberately, the three REQUEST/PROTOCOL codes are no longer routed here:
+				// see oauthRequestFaultCodes above.
 				//
 				// It is returned as a TYPED error, not a bare fmt.Errorf. Every arm that
 				// acts on this classification matches structurally (errors.Is), so an
@@ -473,26 +535,34 @@ func (c *Client) warnIfRefreshTokenNearExpiry(ctx context.Context, deadline time
 //	revoked, does not match the redirection URI ..., or was issued to another client."
 //
 // The other five describe the CLIENT or the REQUEST, and no member re-authorization repairs
-// any of them:
+// any of them. They are NOT one bucket, however — they split again by WHO can act:
+//
+// Two name the APPLICATION REGISTRATION, which an OPERATOR stored and can correct
+// (ErrApplicationCredentialsInvalid, remedy: "edit the connection's app credentials"):
 //
 //	invalid_client        — client authentication failed: unknown client_id, wrong
 //	                        client_secret, or a deleted app.
-//	invalid_request       — the request is malformed, missing a required parameter, or
-//	                        repeats one. A defect in what THIS CLIENT sent.
 //	unauthorized_client   — the client is not authorized to use this grant type; on LinkedIn
 //	                        this is the app lacking refresh-token grant (a Marketing Developer
 //	                        Platform approval), not a token that aged out.
-//	unsupported_grant_type— the server does not support this grant type at all.
-//	invalid_scope         — the requested scope is invalid, unknown or malformed.
 //
-// Sending "re-authorize the connection" for any of those five is worse than sending nothing:
-// it is actionable, and it provably cannot work — the member repeats an authorization whose
-// result was never the problem, and the failure recurs unchanged. They are application- and
-// implementation-level faults, so they take ErrApplicationCredentialsInvalid, whose remedy is
-// "an operator must correct the connection/app". That sentinel is slightly wider than its name
-// (it also covers a malformed request or an unsupported grant), which is deliberate: the
-// remedy is identical for all five, and it is the remedy — not the taxonomy — that the caller
-// acts on. Splitting them further would add sentinels no call site could treat differently.
+// Three name the REQUEST or the PROTOCOL, which only THIS SERVICE builds
+// (ErrTokenRequestRejected, remedy: "this is a service defect, file a bug"):
+//
+//	invalid_request       — the request is malformed, missing a required parameter, or
+//	                        repeats one. A defect in what THIS CLIENT sent.
+//	unsupported_grant_type— the server does not support this grant type at all.
+//	invalid_scope         — the requested scope is invalid, unknown or malformed. This client
+//	                        sends no scope parameter on a refresh_token grant at all, so this
+//	                        can only originate here or in a proxy in front of us.
+//
+// Sending "re-authorize the connection" for any of the five is worse than sending nothing:
+// it is actionable, and it provably cannot work. But collapsing all five onto the OPERATOR
+// remedy repeats that mistake one level down — an operator told their stored client_id is
+// wrong, for a request whose credentials LinkedIn never evaluated, audits a correct
+// configuration and finds nothing. Three remedies, three owners: the member re-authorizes,
+// the operator edits the connection, or we fix the service. Each sentinel exists because a
+// call site acts on it differently; none is wider than its name.
 const (
 	oauthErrorInvalidClient      = "invalid_client"
 	oauthErrorInvalidGrant       = "invalid_grant"
@@ -507,10 +577,27 @@ const (
 // connection or this client's request, and none is repaired by a member re-authorization.
 var oauthAppFaultCodes = map[string]struct{}{
 	oauthErrorInvalidClient:      {},
-	oauthErrorInvalidRequest:     {},
 	oauthErrorUnauthorizedClient: {},
-	oauthErrorUnsupportedGrant:   {},
-	oauthErrorInvalidScope:       {},
+}
+
+// oauthRequestFaultCodes are the RFC 6749 §5.2 codes that describe the REQUEST or the
+// PROTOCOL — not a dead grant, and not either stored credential. They take
+// ErrTokenRequestRejected, whose remedy is "file a bug against this service".
+//
+// They were briefly folded into oauthAppFaultCodes. That was wrong in the same way the
+// original binary split was wrong, one step further along: it is true that no member
+// re-authorization repairs them, but it does not follow that an OPERATOR can. The stored
+// client_id/client_secret are not evaluated at all when LinkedIn refuses the request's
+// shape, so a connection-repair 409 sends someone to audit a correct configuration —
+// exactly the outcome the invalid_client split was built to prevent.
+//
+// invalid_scope is the clearest of the three: this client sends NO scope parameter on a
+// refresh_token grant, so LinkedIn can only be objecting to something this service or a
+// proxy in front of it put there. There is no scope field on a connection to correct.
+var oauthRequestFaultCodes = map[string]struct{}{
+	oauthErrorInvalidRequest:   {},
+	oauthErrorUnsupportedGrant: {},
+	oauthErrorInvalidScope:     {},
 }
 
 // oauthErrorCode extracts the RFC 6749 §5.2 `error` code from a token-endpoint error

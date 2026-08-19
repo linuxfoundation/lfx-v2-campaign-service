@@ -344,3 +344,47 @@ func TestLinkedinExpiryTagsApplicationCredentialDefect(t *testing.T) {
 		t.Error("an upstream outage must stay retryable and NOT be treated as a connection defect")
 	}
 }
+
+// TestLinkedinExpiryTagsTokenRequestRejected pins the THIRD bucket, the one whose remedy
+// belongs to nobody outside this codebase.
+//
+// linkedin.ErrTokenRequestRejected covers the RFC 6749 §5.2 codes that describe the REQUEST
+// (`invalid_request`, `unsupported_grant_type`, `invalid_scope`). Routing it onto
+// domain.ErrApplicationCredentialsInvalid — which is what this dispatcher did before the
+// three-way split — produced a connection-repair 409 telling an operator their stored
+// client_id/client_secret are wrong, for a request in which LinkedIn evaluated neither.
+//
+// The three reason sentinels must be MUTUALLY disjoint. Each selects a different remedy with
+// a different owner, so an arm carrying two hands a caller contradictory instructions, and
+// unusableConnectionReason returns whichever the switch reaches first — a silent misdiagnosis.
+func TestLinkedinExpiryTagsTokenRequestRejected(t *testing.T) {
+	base := fmt.Errorf("linkedin: %q rejected the token request: %w", "LF LinkedIn", linkedin.ErrTokenRequestRejected)
+
+	got := linkedinExpiry(base)
+
+	if !errors.Is(got, domain.ErrConnectionNotUsable) {
+		t.Error("want ErrConnectionNotUsable: a refused token request is permanent, so it must not " +
+			"reach the retryable 503 arm asking a caller to retry a defect only a code change fixes")
+	}
+	if !errors.Is(got, domain.ErrTokenRequestRejected) {
+		t.Error("want domain.ErrTokenRequestRejected as the machine-readable reason")
+	}
+	if errors.Is(got, domain.ErrApplicationCredentialsInvalid) {
+		t.Error("must NOT claim the stored application credentials were rejected — LinkedIn never " +
+			"evaluated them, and that remedy sends an operator to audit a correct configuration")
+	}
+	if errors.Is(got, domain.ErrCredentialsExpired) {
+		t.Error("must NOT claim the credentials expired — that remedy is a member re-authorization, " +
+			"which cannot make a malformed refresh request well-formed")
+	}
+	if !errors.Is(got, linkedin.ErrTokenRequestRejected) {
+		t.Error("the originating cause must be preserved for anything classifying at the client layer")
+	}
+	// The predicate every call site guards on must recognise it too. A sentinel that
+	// linkedinExpiry re-tags but linkedinConnectionDefect does not list is re-tagged
+	// correctly and then never reached — the exact shape of the original invalid_client bug.
+	if !linkedinConnectionDefect(base) {
+		t.Error("linkedinConnectionDefect must recognise a rejected token request, or linkedinExpiry " +
+			"is never applied to it and it falls through to the generic retryable arm")
+	}
+}

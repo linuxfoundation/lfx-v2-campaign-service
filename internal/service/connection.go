@@ -164,6 +164,11 @@ func unusableConnectionReason(err error) string {
 		return "credential_blob_malformed"
 	case errors.Is(err, domain.ErrCredentialsAbsent):
 		return "credentials_absent"
+	case errors.Is(err, domain.ErrTokenRequestRejected):
+		// Before BOTH credential arms. This one means neither credential was evaluated, so
+		// reporting either of theirs would name a remedy nobody outside this codebase can
+		// apply. It is the only reason token in this vocabulary that points at us.
+		return "token_request_rejected"
 	case errors.Is(err, domain.ErrApplicationCredentialsInvalid):
 		// Before the expired arm: an error carrying both must report the OPERATOR-actionable
 		// reason, since "re-authorize the member" cannot repair an application credential.
