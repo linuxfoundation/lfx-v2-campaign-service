@@ -891,15 +891,32 @@ poison a project-owned entry.
 **The credential cache alone does not remove the OAuth exchange; the CLIENT cache does.** Each
 platform client caches its access token on the instance, so a client rebuilt per resolve re-mints
 the token however cheap the credential lookup became — measured at five token-endpoint hits across
-five resolves. `GoogleAdsDispatcher` therefore also caches the built `*googleads.Client`
-(`clientCache`), keyed and validated by the same (row id, version) identity as the credential, so a
-rotation invalidates the client in the same step. A client is exactly as stale as the credential it
-was built from; validating it any more loosely would let a revoked credential keep authenticating
-inside a cached token. The discovery path is deliberately excluded (it builds an account-agnostic
-client with an empty CustomerID), as is adoption's owned-connection path, which is a one-shot
-rather than the polling loop this exists for. `Dispatch` also builds its client directly: it makes
-roughly twenty calls on the one instance, so its token is already amortised across them, and the
-locals it validates inline would become redundant.
+five resolves. `GoogleAdsDispatcher`, `RedditDispatcher` and `MicrosoftDispatcher` therefore also
+cache the built client (`clientCache`), keyed and validated by the same (row id, version) identity
+as the credential, so a rotation invalidates the client in the same step. A client is exactly as
+stale as the credential it was built from; validating it any more loosely would let a revoked
+credential keep authenticating inside a cached token. Discovery paths are deliberately excluded —
+Google Ads' builds an account-agnostic client with an empty CustomerID, and Microsoft's
+`ListAccounts` builds a ZERO `AccountConfig` (no account AND no customer, because naming either
+narrows the answer discovery exists to give), so caching it under the connection's identity would
+let a discovery call and a dispatch call serve each other's client. Google Ads' adoption
+owned-connection path is likewise excluded as a one-shot rather than the polling loop this exists
+for.
+
+**Sharing one client instance across concurrent callers is a per-client property, verified per
+provider rather than inherited.** All three cached clients guard their token cache and in-flight
+refresh handle with a mutex and stash no per-call state on the receiver, so the instance is safe to
+share. Microsoft needed the check most: it is the client with multi-customer discovery, so a
+`CustomerID` mutated per call would have made a shared instance serve one caller against another's
+customer — it does not, because the customer id travels as a per-call argument
+(`doCustomerRequest` / `accountsInfoForCustomer`) rather than on the receiver. A future provider
+whose client stashes per-call state must NOT be wired to this cache without changing the client
+first.
+
+**LinkedIn, Meta and X/Twitter are not yet wired** — a deliberate partial rollout under LFXV2-3033,
+deferred only because open PRs owned those files at the time (cs#148, cs#152, cs#158). They still
+rebuild per resolve and still re-mint a token per operation; wiring them is a follow-up that
+should follow this same pattern rather than inventing a second mechanism.
 
 Client construction is COALESCED per identity, not merely cached. A cold key under a burst is the
 case the warm-key reuse does not cover: N callers all miss, each builds its own client, and each
@@ -921,8 +938,9 @@ version)` — the same four components the cache entry is validated on, so a bur
 rotation OR a reconnect cannot be served the other's plaintext — so
 N simultaneous callers perform one decrypt. That is a decrypt guarantee only — each caller
 receives its own clone and builds its own client, and the access token is cached on the client
-INSTANCE, so collapsing the token exchange is the separate job of the client cache below (wired
-today only into Google Ads; Reddit and Microsoft still rebuild per resolve and still re-mint).
+INSTANCE, so collapsing the token exchange is the separate job of the client cache above (wired
+into Google Ads, Reddit and Microsoft; LinkedIn, Meta and X/Twitter still rebuild per resolve and
+still re-mint).
 The version in that
 key is load-bearing: without it a caller that had read the ROTATED row could join a leader's
 pre-rotation flight and receive the superseded credential. Callers each receive a shallow COPY of

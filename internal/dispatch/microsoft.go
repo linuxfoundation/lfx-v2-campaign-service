@@ -85,12 +85,28 @@ type microsoftConfig struct {
 // MicrosoftDispatcher creates Microsoft Advertising (Bing) campaigns for the orchestrator.
 type MicrosoftDispatcher struct {
 	creds *credsSource
-	opts  []microsoft.Option
+	// clients caches the built *microsoft.Client per connection, exactly as GoogleAdsDispatcher
+	// does. The credential cache alone does not remove the OAuth exchange: the access token is
+	// cached ON the client instance (microsoft.Client's accessToken/tokenExpiry), so a client
+	// rebuilt per call re-mints it however cheap the credential lookup became. Entries are
+	// validated against the same row id and version as the credential, so a rotated credential
+	// cannot be served through a stale client.
+	//
+	// Sharing one instance across concurrent callers is safe for this client specifically. That
+	// needed checking separately from Google Ads rather than assumed: this client is the one
+	// with multi-customer discovery, so a CustomerID mutated per call would have made a shared
+	// instance serve one caller's request against another's customer. It does not — the only
+	// fields written after construction are the token cache and the in-flight refresh handle,
+	// both exclusively under c.tokenMu (client.go accessTokenValue/fetchToken), and the customer
+	// id travels as a per-call argument (doCustomerRequest / accountsInfoForCustomer) rather
+	// than being stashed on the receiver.
+	clients *clientCache
+	opts    []microsoft.Option
 }
 
 // NewMicrosoftDispatcher builds the adapter from the connection repo + encryptor.
 func NewMicrosoftDispatcher(repo connReader, enc domain.Encryptor, opts ...microsoft.Option) *MicrosoftDispatcher {
-	return &MicrosoftDispatcher{creds: newCredsSource(repo, enc), opts: opts}
+	return &MicrosoftDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts}
 }
 
 // Dispatch implements service.PlatformDispatcher for Microsoft Advertising. It builds the FULL
@@ -148,20 +164,11 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// (connection.go buildMicrosoftAdsResult / CreateMicrosoftAds), NOT `login_customer_id`
 	// (that is the Google Ads key). Reading the wrong key would silently drop the CustomerId
 	// header and break MCC-scoped accounts. Trimmed for the same reason as the account id.
-	client := microsoft.NewClient(
-		microsoft.Credentials{
-			ClientID:       creds.ClientID,
-			ClientSecret:   creds.ClientSecret,
-			DeveloperToken: creds.DeveloperToken,
-			RefreshToken:   creds.RefreshToken,
-		},
-		microsoft.AccountConfig{
-			AccountID:  accountID,
-			CustomerID: strings.TrimSpace(res.providerConfig["customer_id"]),
-			Label:      res.label,
-		},
-		d.opts...,
-	)
+	//
+	// Built through the client cache (see cachedMicrosoftClient), so a dispatch burst reuses ONE
+	// client — and therefore ONE OAuth token — instead of re-minting per call. Every validation
+	// above still runs on the FRESH row on every dispatch; only construction is cached.
+	client := d.cachedMicrosoftClient(brief.ProjectID, platform, res, creds, accountID)
 
 	// The Microsoft client's contract (mirrors the siblings): a non-nil result with an error is
 	// an UNCONFIRMED partial (the campaign/tree MAY exist upstream — verify before retrying),
@@ -425,20 +432,59 @@ func (d *MicrosoftDispatcher) resolveMicrosoftClient(ctx context.Context, projec
 	if err != nil {
 		return nil, err
 	}
-	return microsoft.NewClient(
-		microsoft.Credentials{
-			ClientID:       creds.ClientID,
-			ClientSecret:   creds.ClientSecret,
-			DeveloperToken: creds.DeveloperToken,
-			RefreshToken:   creds.RefreshToken,
-		},
-		microsoft.AccountConfig{
-			AccountID:  accountID,
-			CustomerID: strings.TrimSpace(res.providerConfig["customer_id"]),
-			Label:      res.label,
-		},
-		d.opts...,
-	), nil
+	return d.cachedMicrosoftClient(projectID, platform, res, creds, accountID), nil
+}
+
+// cachedMicrosoftClient returns the client for this connection, building it only when there is no
+// live entry for the row identity the credential just resolved from.
+//
+// Reusing the CLIENT is what removes the OAuth exchange — the token is cached on the instance, so
+// a client rebuilt per call re-mints it however cheap the credential lookup became. The validation
+// is the credential's own (row id + version), so a rotation invalidates the client in the same
+// step that invalidates the credential; a stale client is a stale credential.
+//
+// It takes the already-validated creds and account id rather than re-deriving them, so the
+// status/decode/completeness rules still run on the FRESH row on every call: only construction is
+// cached, and a connection that has since gone inactive is refused by its caller before it ever
+// reaches this cache.
+//
+// Not applied to the DISCOVERY path, which deliberately builds a client with a ZERO AccountConfig
+// — no account and no customer — because naming either narrows the answer discovery exists to give.
+// That client is a different object under the same connection identity, so caching it under this
+// key would let a discovery call and a dispatch call serve each other's client.
+func (d *MicrosoftDispatcher) cachedMicrosoftClient(projectID string, platform model.Provider, res *resolved, creds microsoftCreds, accountID string) *microsoft.Client {
+	key, connID, version := res.cacheIdentity(projectID, platform)
+	build := func() *microsoft.Client {
+		return microsoft.NewClient(
+			microsoft.Credentials{
+				ClientID:       creds.ClientID,
+				ClientSecret:   creds.ClientSecret,
+				DeveloperToken: creds.DeveloperToken,
+				RefreshToken:   creds.RefreshToken,
+			},
+			microsoft.AccountConfig{
+				AccountID:  accountID,
+				CustomerID: strings.TrimSpace(res.providerConfig["customer_id"]),
+				Label:      res.label,
+			},
+			d.opts...,
+		)
+	}
+	built, err := d.clients.buildOnce(key, connID, version, func() (any, error) {
+		return build(), nil
+	})
+	if err != nil {
+		// Unreachable: the closure above never returns an error. Build directly rather than
+		// propagating, so this helper keeps its total signature.
+		return build()
+	}
+	client, isClient := built.(*microsoft.Client)
+	if !isClient {
+		// Unreachable: this cache is written only by the closure above. Rebuild rather than
+		// assert, so a future second writer cannot turn a type confusion into a panic.
+		return build()
+	}
+	return client
 }
 
 // microsoftRunStatus maps the service's run-state vocabulary to Microsoft's Status enum.
