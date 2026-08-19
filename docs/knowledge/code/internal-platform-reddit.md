@@ -130,6 +130,14 @@ alone and is retained as the per-entity building block / for callers with only a
 The child ids are read from the persisted `CampaignResult` (`adGroupId`/`adId`) by the reddit
 dispatcher's `ToggleStatus`, which now receives the full persisted `*model.Campaign`.
 
+`CampaignResult` also carries `accountId` (LFXV2-3050), stamped from `c.account.AccountID` at
+every construction site including the partial-result paths, so the dispatcher's provenance guard
+can refuse a toggle or metrics read whose connection has since been re-pointed to another ad
+account. Reddit has NO recoverable fallback for it: `redditUrl` is the bare
+`https://ads.reddit.com` constant and never carried an account, so a row written before this
+field existed records no provenance at all and is treated as "unknown, proceed". See
+`internal-dispatch.md` for the guard itself.
+
 ## Metrics reads — UNVERIFIED, best-effort contract (LFXV2-2995)
 
 `GetCampaignMetrics(ctx, campaignID, window)` reads impressions, clicks, and spend for a

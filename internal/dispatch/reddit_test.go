@@ -775,10 +775,12 @@ func TestReddit_ToggleStatus_ForeignAccountIs409AndNeverMutates(t *testing.T) {
 					t.Errorf("Reddit must not be mutated for a campaign owned by another ad account: %s %s", r.Method, r.URL.Path)
 				}))
 				defer api.Close()
-				// The token exchange happens while BUILDING the client, before the campaign
-				// row is consulted, so it is not part of what the guard prevents.
-				tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+				// reddit.NewClient only constructs the client — refreshToken is called lazily
+				// from request(), so with the guard in place NEITHER this token endpoint nor
+				// the Ads API is contacted. It is wired purely so the success-path tests below
+				// can share this shape; being reached here would itself be a defect.
+				tok := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+					t.Error("no token may be fetched for a campaign owned by another ad account: the guard runs before request() would refresh one")
 				}))
 				defer tok.Close()
 				// activeRedditConn resolves to account t2_acct; the rows record t2_other.

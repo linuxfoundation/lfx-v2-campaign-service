@@ -312,6 +312,47 @@ closed on absent provenance because a bare HubSpot email id carries no recoverab
 at all. The comparison is against `Client.AccountID()` (the ad account), NOT the MCC parent
 `customer_id`.
 
+**LinkedIn, Meta, Reddit and X carry the same invariant** (LFXV2-3050), closing the four
+adapters that had none: a campaign created under account A was silently read, toggled and
+measured against account B, which the system-account fallback (LFXV2-3040) makes reachable.
+Each stamps its creating account into the result blob (`AccountID` on every
+`CampaignResult`), reads it back through a `<platform>CreationAccountID` helper, and shares one
+`verify<Platform>AccountMatch` between `ToggleStatus` and `ReadMetrics` so the two cannot
+drift. The absent-means-"unknown, proceed" contract is identical to the Google Ads and
+Microsoft pair.
+
+The RECOVERABLE FALLBACK differs per platform, and the difference is load-bearing. LinkedIn
+parses the account out of the `linkedInUrl` path (`/campaignmanager/accounts/<id>/campaigns`),
+taking the segment that FOLLOWS the literal `accounts` marker so an unexpected path shape
+fails closed rather than reading the wrong segment; Meta parses the `act=` parameter of
+`metaUrl`. Reddit and X have NO fallback — `RedditURL` and `TwitterURL` are the bare
+ads-manager constants (`https://ads.reddit.com`, `https://ads.x.com`) and never carried an
+account — so a row written before the stamp existed records no provenance anywhere and is
+waved through; only a re-dispatch can give it one.
+
+Meta needs a NORMALISATION the others do not: the connection stores `act_777` while `metaUrl`
+carries the bare digits `777`, so a raw comparison would report every legacy row as a mismatch.
+`normalizeMetaAccountID` puts both sides in one vocabulary, and anything that is not
+`act_<digits>` — including a bare `act_` — normalises to `""` so malformed provenance lands in
+the "unknown, proceed" arm instead of acting as a real account and manufacturing a false 409.
+
+Meta also needs the absence question asked of the CURRENT side, which no other platform does.
+Because `ToggleStatus` and `ReadMetrics` deliberately do not require an account selection (see
+`requireMetaAccountID` above), a connection whose account was cleared via `PUT` still resolves
+to an empty id — an ABSENCE, not a different account. Treating it as one would 409 exactly the
+paths that section documents as servable, for any row recording provenance, which via the
+`act=` fallback is nearly every historical row. All four guards therefore proceed when EITHER
+side is unknown; on LinkedIn, Reddit and X that arm is unreachable (each resolver refuses an
+account-less connection with `domain.ErrAccountNotSelected` first) and says so rather than
+depending on an unpinned precondition.
+
+ORDERING is load-bearing on all four. The provenance check runs BEFORE each platform's
+narrower provisioning guard — Meta's ad-set check, Reddit's child-id check, X's line-item
+check, and LinkedIn's creative-servability check (which lives INSIDE the client call, so
+running it first would also contact LinkedIn). On a re-pointed connection those guards describe
+a campaign in a DIFFERENT account, so answering "not provisioned" would explain the wrong
+campaign. This is the same trap `verifyMicrosoftAccountMatch` records at the keyword gate.
+
 **Meta** also implements it: `MetaDispatcher.ReadMetrics` resolves the connection the same way
 `ToggleStatus`/`Dispatch` do, then calls `meta.Client.GetCampaignMetrics`, which issues a single
 `GET /{campaign-id}/insights` Graph API request for `impressions`, `clicks`, `spend` over a

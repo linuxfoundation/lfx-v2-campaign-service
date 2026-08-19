@@ -771,8 +771,9 @@ func TestTwitter_ReadMetrics_ZeroCampaignActivity(t *testing.T) {
 }
 
 // TestTwitter_ToggleStatus_ForeignAccountIs409AndNeverMutates pins the account-provenance
-// guard on the TOGGLE path. Every X Ads endpoint this client calls is nested under
-// /accounts/{account_id}/, and campaign ids are unique only WITHIN an account, so once a
+// guard on the TOGGLE path. The mutating endpoints this test covers are nested under
+// /accounts/{account_id}/ (the metrics read is account-scoped too, but as the trailing-segment
+// /stats/accounts/{account_id}), and campaign ids are unique only WITHIN an account, so once a
 // project's connection is re-pointed the stored id addressed against the new account can
 // collide with an unrelated campaign and PAUSE OR ACTIVATE something this project does not
 // own. The refusal must be a non-retryable ErrCampaignAccountMismatch (409) raised before X is

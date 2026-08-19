@@ -321,8 +321,10 @@ func twitterCreationAccountID(campaign *model.Campaign) string {
 // verifyTwitterAccountMatch refuses an operation on a campaign that was created under a
 // DIFFERENT ad account than the project's current connection resolves to.
 //
-// X Ads campaign ids are unique only WITHIN an ad account — every endpoint this client calls
-// is nested under /accounts/{account_id}/ — and a project's connection can be re-pointed
+// X Ads campaign ids are unique only WITHIN an ad account — every endpoint this client calls is
+// account-scoped, whether by the nested /accounts/{account_id}/... form the mutating calls use
+// or the /stats/accounts/{account_id} form the metrics read uses — and a connection can be
+// re-pointed
 // between create and a later read/toggle. Without this check the stored PlatformCampaignID is
 // addressed against the NEW account, where it either matches nothing — rendered on the read
 // path as a campaign with genuinely zero activity — or collides with an unrelated campaign,
@@ -427,9 +429,10 @@ func (d *TwitterDispatcher) ReadMetrics(ctx context.Context, projectID string, p
 	}
 	// Prove the persisted campaign belongs to the account this read is scoped to.
 	// resolveTwitterClient returns the project's CURRENT connection, which can have been
-	// re-pointed since create; the stats endpoint is nested under /accounts/{account_id}/, so
-	// reading the stored campaign id under a different account yields either a false "no data"
-	// or ANOTHER campaign's numbers presented as this campaign's measurement.
+	// re-pointed since create; the stats endpoint is account-scoped as
+	// /stats/accounts/{account_id} (a trailing segment, not the nested form the mutating calls
+	// use), so reading the stored campaign id under a different account yields either a false
+	// "no data" or ANOTHER campaign's numbers presented as this campaign's measurement.
 	if err := verifyTwitterAccountMatch("read x ads campaign metrics", campaign, client); err != nil {
 		return nil, err
 	}

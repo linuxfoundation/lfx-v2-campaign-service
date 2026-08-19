@@ -196,6 +196,15 @@ without calling the dispatcher) AND that caller setting `ReconcileByName`. Until
 both land the lookup is exercised only by tests, which is the intended state — the
 capability is in place and deliberately unreached rather than on by default.
 
+`CampaignResult` carries `AccountID` (LFXV2-3050), stamped at all six construction sites
+including the partial-result paths, so the dispatcher's provenance guard can refuse a toggle or
+metrics read whose connection has since been re-pointed. It is stored VERBATIM as the connection
+carries it — the `act_<digits>` form comes from `design/connection.go`'s `^act_[0-9]+$`
+constraint, not from this field — and the field is UNTAGGED like the rest of this struct, so the
+persisted key is the Go field name. Rows written before it existed stay checkable via the `act=`
+parameter of `metaUrl`, which carries the digits with the `act_` prefix STRIPPED; the dispatcher
+normalises both sides. See `internal-dispatch.md` for the guard itself.
+
 ## Campaign status toggle
 
 `UpdateCampaignAndChildrenStatus(ctx, campaignID, adSetID, status)` pauses/resumes a campaign
